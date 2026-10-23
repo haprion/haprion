@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import dns_profiles
+from haprion import dns_profiles, exit_codes
 from haprion.cli import cert_job
 from haprion.config import (
     DEFAULT_POLICY_PATH,
@@ -77,7 +77,9 @@ def _key_id(value: object) -> str:
         or len(value) != 16
         or any(c not in "0123456789abcdef" for c in value)
     ):
-        raise HelperProtocolError("parameters.key_id must be a 16-character key ID", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.key_id must be a 16-character key ID", exit_code=exit_codes.REFUSED
+        )
     return value
 
 
@@ -125,7 +127,7 @@ def main(
         if not isinstance(remove, bool):
             raise dns_profiles.ProfileError("remove must be true or false")
     except (dns_profiles.ProfileError, HelperProtocolError, binascii.Error, ValueError) as exc:
-        return refuse("bad_input", str(exc), 65)
+        return refuse("bad_input", str(exc), exit_codes.REFUSED)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -136,7 +138,7 @@ def main(
         return refuse(
             "dependency_unavailable",
             "runtime policy.acme.dns_profiles is not configured",
-            78,
+            exit_codes.CONFIG,
         )
 
     selected = None
@@ -147,9 +149,13 @@ def main(
                 selected = candidate
                 break
     except KeyFileError as exc:
-        return refuse("dependency_unavailable", str(exc), 78)
+        return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)
     if selected is None:
-        return refuse("profile_key_unavailable", "the profile's private key is not configured", 78)
+        return refuse(
+            "profile_key_unavailable",
+            "the profile's private key is not configured",
+            exit_codes.CONFIG,
+        )
 
     try:
         opened = dns_profiles.open_profile(
@@ -161,7 +167,7 @@ def main(
         )
     except dns_profiles.ProfileError as exc:
         errors.write(f"ERROR: [profile_binding_mismatch] {exc}\n")
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -175,13 +181,15 @@ def main(
                     details={"profile": profile_id, "binding": "sealed_profile"},
                 ),
             ),
+            exit_codes.BLOCKED,
         )
-        return 65
 
     if remove:
         try:
             if policy.certificate_registry is None:
-                raise ConfigError("no certificate registry is configured", exit_code=78)
+                raise ConfigError(
+                    "no certificate registry is configured", exit_code=exit_codes.CONFIG
+                )
             registry = load_registry(policy.certificate_registry, require_secure=require_secure)
             registry_references = tuple(
                 entry.certificate_id
@@ -193,20 +201,20 @@ def main(
                 dns_profiles.credentials_path(profile_policy.directory, profile_id),
             )
         except (ConfigError, dns_profiles.ProfileError) as exc:
-            return refuse("dependency_unavailable", str(exc), 78)
+            return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)
         references = tuple(sorted(set(registry_references) | set(renewal_references)))
         if references:
             return refuse(
                 "profile_in_use",
                 f"profile {profile_id!r} is referenced by certificate(s): {', '.join(references)}",
-                65,
+                exit_codes.REFUSED,
             )
         try:
             dns_profiles.remove_materialized(
                 profile_policy, profile_id, require_secure=require_secure
             )
         except dns_profiles.ProfileError as exc:
-            return refuse("dependency_unavailable", str(exc), 78)
+            return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)
         result = {
             "profile": opened.profile_id,
             "provider": opened.provider_id,
@@ -221,7 +229,7 @@ def main(
                 profile_policy, opened, require_secure=require_secure
             )
         except dns_profiles.ProfileError as exc:
-            return refuse("dependency_unavailable", str(exc), 78)
+            return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)
         result = {
             "profile": materialized.profile_id,
             "provider": materialized.provider.id,
@@ -230,7 +238,7 @@ def main(
             "plugin": materialized.provider.plugin,
         }
 
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -239,8 +247,8 @@ def main(
             request_id=request.request_id,
             result=result,
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

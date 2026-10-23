@@ -17,7 +17,6 @@ hook asks for; an operator checking what a run *would* change leaves it off.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -25,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
-from haprion import ui_interface
+from haprion import exit_codes, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import (
     DEFAULT_LOCK_PATH,
@@ -37,10 +36,9 @@ from haprion.cert_publish import (
 )
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope, failure, new_request_id
+from haprion.helper_protocol import write_document
 
 OPERATION = "cert_publish"
-EXIT_NOT_ROOT = 77
-EXIT_USAGE = 64
 CERT_DEPLOY = "haprion-cert-deploy"
 
 USAGE = (
@@ -87,7 +85,7 @@ def _parse(argv: list[str], writer: TextIO) -> tuple[list[str] | None, bool, boo
 
 def _usage(writer: TextIO) -> int:
     writer.write(USAGE)
-    return EXIT_USAGE
+    return exit_codes.USAGE
 
 
 def default_deployer(errors: TextIO) -> Deployer:
@@ -138,10 +136,64 @@ def _summary(report: Report, writer: TextIO) -> None:
         writer.write(f"WARNING: [{code}] {message}\n")
 
 
-def _exit_code(report: Report) -> int:
-    if report.failed or any(d.exit_code != 0 for d in report.deployments):
-        return 1
-    return 0
+def publish_exit_code(exc: PublishError) -> int:
+    """The publisher's refusal, in the contract's exit codes.
+
+    Three cases and no default that guesses: a lock is the one refusal the
+    contract calls `blocked` rather than `failed`, a bad request is the caller's,
+    and everything else is the installation's. Written out so a new refusal code
+    in the publisher lands as a decision somebody makes here.
+    """
+
+    if exc.code == "operation_locked":
+        return exit_codes.BLOCKED
+    return exit_codes.USAGE if exc.code == "bad_input" else exit_codes.CONFIG
+
+
+def result_envelope(report: Report, *, request_id: str) -> tuple[dict[str, object], int]:
+    """One report, turned into the one envelope and exit code it means.
+
+    Shared by this command, its helper and the target helper, which
+    publishes the certificate it just retargeted and has to answer in exactly
+    these terms. The command kept a copy of its own until 2026-10-23.
+    """
+
+    warnings = tuple(
+        Message(code=entry.error[0], message=entry.error[1], node=entry.certificate_id)
+        for entry in report.skipped
+        if entry.error
+    ) + tuple(Message(code=code, message=message) for code, message in report.warnings)
+    failed = [entry.certificate_id for entry in report.failed]
+    not_deployed = [item.cluster for item in report.deployments if item.exit_code != 0]
+    if not failed and not not_deployed:
+        return (
+            envelope(
+                operation=OPERATION,
+                outcome="partial" if warnings else "done",
+                cluster=None,
+                request_id=request_id,
+                result=report.as_dict(),
+                warnings=warnings,
+            ),
+            exit_codes.PARTIAL if warnings else exit_codes.OK,
+        )
+    parts = []
+    if failed:
+        parts.append("not published: " + ", ".join(failed))
+    if not_deployed:
+        parts.append("not deployed: " + ", ".join(not_deployed))
+    return (
+        envelope(
+            operation=OPERATION,
+            outcome="failed",
+            cluster=None,
+            request_id=request_id,
+            result=report.as_dict(),
+            warnings=warnings,
+            error=Message(code="publish_failed", message="; ".join(parts)),
+        ),
+        exit_codes.FAILED,
+    )
 
 
 def main(
@@ -180,18 +232,18 @@ def main(
                 message=message,
                 exit_code=exit_code,
             )
-            writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+            write_document(writer, document, exit_code)
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-cert-publish must run as root", EXIT_NOT_ROOT)
+        return refuse("not_root", "haprion-cert-publish must run as root", exit_codes.NOT_ROOT)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
         runtime = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
             str(exc),
             exc.exit_code,
         )
@@ -217,45 +269,12 @@ def main(
             now=now,
         )
     except PublishError as exc:
-        code = 75 if exc.code == "operation_locked" else 64 if exc.code == "bad_input" else 78
-        return refuse(exc.code, str(exc), code)
+        return refuse(exc.code, str(exc), publish_exit_code(exc))
 
-    exit_code = _exit_code(report)
+    document, exit_code = result_envelope(report, request_id=request_id)
     if json_mode:
-        warnings = tuple(
-            Message(code=entry.error[0], message=entry.error[1], node=entry.certificate_id)
-            for entry in report.skipped
-            if entry.error
-        ) + tuple(Message(code=code, message=message) for code, message in report.warnings)
-        if exit_code == 0:
-            document = envelope(
-                operation=OPERATION,
-                outcome="partial" if warnings else "done",
-                cluster=None,
-                result=report.as_dict(),
-                request_id=request_id,
-                warnings=warnings,
-            )
-        else:
-            failed = [entry.certificate_id for entry in report.failed]
-            deploy_failed = [d.cluster for d in report.deployments if d.exit_code != 0]
-            parts = []
-            if failed:
-                parts.append("not published: " + ", ".join(failed))
-            if deploy_failed:
-                parts.append("not deployed: " + ", ".join(deploy_failed))
-            document = envelope(
-                operation=OPERATION,
-                outcome="failed",
-                cluster=None,
-                result=report.as_dict(),
-                request_id=request_id,
-                warnings=warnings,
-                error=Message(code="publish_failed", message="; ".join(parts)),
-            )
-        writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
-    else:
-        _summary(report, writer)
+        return write_document(writer, document, exit_code)
+    _summary(report, writer)
     return exit_code
 
 

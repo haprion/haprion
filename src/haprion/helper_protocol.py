@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO, cast
 
+from haprion import exit_codes
 from haprion.config import CLUSTER_ID
 from haprion.envelope import failure
 
@@ -37,7 +38,7 @@ type ParameterValidator = Callable[[Mapping[str, JsonValue]], None]
 class HelperProtocolError(ValueError):
     """A request crossed the privilege boundary in an invalid form."""
 
-    def __init__(self, message: str, *, exit_code: int = 64):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.USAGE):
         super().__init__(message)
         self.exit_code = exit_code
 
@@ -181,13 +182,15 @@ def _reject_duplicate_keys(pairs: list[tuple[str, JsonValue]]) -> dict[str, Json
     result: dict[str, JsonValue] = {}
     for key, value in pairs:
         if key in result:
-            raise HelperProtocolError(f"duplicate JSON field: {key}", exit_code=65)
+            raise HelperProtocolError(f"duplicate JSON field: {key}", exit_code=exit_codes.REFUSED)
         result[key] = value
     return result
 
 
 def _reject_non_finite_number(value: str) -> None:
-    raise HelperProtocolError(f"non-finite JSON number is not allowed: {value}", exit_code=65)
+    raise HelperProtocolError(
+        f"non-finite JSON number is not allowed: {value}", exit_code=exit_codes.REFUSED
+    )
 
 
 def _read_document(stream: BinaryIO, *, max_bytes: int) -> dict[str, JsonValue]:
@@ -212,14 +215,18 @@ def _read_document(stream: BinaryIO, *, max_bytes: int) -> dict[str, JsonValue]:
     if raw.endswith(b"\n"):
         raw = raw[:-1]
     if len(raw) > max_bytes:
-        raise HelperProtocolError("helper request exceeds the size limit", exit_code=65)
+        raise HelperProtocolError(
+            "helper request exceeds the size limit", exit_code=exit_codes.REFUSED
+        )
     if not raw:
-        raise HelperProtocolError("helper request is empty", exit_code=65)
+        raise HelperProtocolError("helper request is empty", exit_code=exit_codes.REFUSED)
 
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise HelperProtocolError("helper request is not valid UTF-8", exit_code=65) from exc
+        raise HelperProtocolError(
+            "helper request is not valid UTF-8", exit_code=exit_codes.REFUSED
+        ) from exc
 
     try:
         value = json.loads(
@@ -231,18 +238,22 @@ def _read_document(stream: BinaryIO, *, max_bytes: int) -> dict[str, JsonValue]:
         raise
     except json.JSONDecodeError as exc:
         raise HelperProtocolError(
-            "helper request is not one valid JSON document", exit_code=65
+            "helper request is not one valid JSON document", exit_code=exit_codes.REFUSED
         ) from exc
 
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
-        raise HelperProtocolError("helper request must be a JSON object", exit_code=65)
+        raise HelperProtocolError(
+            "helper request must be a JSON object", exit_code=exit_codes.REFUSED
+        )
     return cast(dict[str, JsonValue], value)
 
 
 def _required_string(document: Mapping[str, JsonValue], field: str) -> str:
     value = document.get(field)
     if not isinstance(value, str) or not value:
-        raise HelperProtocolError(f"{field} must be a non-empty string", exit_code=65)
+        raise HelperProtocolError(
+            f"{field} must be a non-empty string", exit_code=exit_codes.REFUSED
+        )
     return value
 
 
@@ -294,7 +305,7 @@ def _request_deadline(seconds: float) -> Iterator[None]:
         yield
     except _RequestTimedOut as exc:
         raise HelperProtocolError(
-            f"no complete request arrived within {seconds:g} s", exit_code=65
+            f"no complete request arrived within {seconds:g} s", exit_code=exit_codes.REFUSED
         ) from exc
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
@@ -359,16 +370,18 @@ def _read_request(
     unknown = sorted(document.keys() - REQUEST_FIELDS)
     if missing:
         raise HelperProtocolError(
-            f"helper request is missing field(s): {', '.join(missing)}", exit_code=65
+            f"helper request is missing field(s): {', '.join(missing)}",
+            exit_code=exit_codes.REFUSED,
         )
     if unknown:
         raise HelperProtocolError(
-            f"helper request contains unknown field(s): {', '.join(unknown)}", exit_code=65
+            f"helper request contains unknown field(s): {', '.join(unknown)}",
+            exit_code=exit_codes.REFUSED,
         )
 
     schema_version = document["schema_version"]
     if type(schema_version) is not int or schema_version != 1:
-        raise HelperProtocolError("schema_version must be 1", exit_code=65)
+        raise HelperProtocolError("schema_version must be 1", exit_code=exit_codes.REFUSED)
 
     operation = _required_string(document, "operation")
     if operation != expected_operation:
@@ -378,15 +391,21 @@ def _read_request(
     try:
         parsed_request_id = uuid.UUID(request_id)
     except ValueError as exc:
-        raise HelperProtocolError("request_id must be a UUID", exit_code=65) from exc
+        raise HelperProtocolError(
+            "request_id must be a UUID", exit_code=exit_codes.REFUSED
+        ) from exc
     if str(parsed_request_id) != request_id.lower():
-        raise HelperProtocolError("request_id must use canonical UUID form", exit_code=65)
+        raise HelperProtocolError(
+            "request_id must use canonical UUID form", exit_code=exit_codes.REFUSED
+        )
 
     requested_lifeline = document.get("lifeline", False)
     if type(requested_lifeline) is not bool:
-        raise HelperProtocolError("lifeline must be true or false", exit_code=65)
+        raise HelperProtocolError("lifeline must be true or false", exit_code=exit_codes.REFUSED)
     if requested_lifeline and not lifeline:
-        raise HelperProtocolError("this helper does not support a lifeline", exit_code=65)
+        raise HelperProtocolError(
+            "this helper does not support a lifeline", exit_code=exit_codes.REFUSED
+        )
 
     if not requested_lifeline and stream.read(1):
         #
@@ -395,19 +414,21 @@ def _read_request(
         # error the parser happens to catch - they are a second request, or a
         # caller that does not agree with this one about what it is sending.
         #
-        raise HelperProtocolError("helper request is followed by more input", exit_code=65)
+        raise HelperProtocolError(
+            "helper request is followed by more input", exit_code=exit_codes.REFUSED
+        )
 
     raw_parameters = document["parameters"]
     if not isinstance(raw_parameters, dict) or not all(
         isinstance(key, str) for key in raw_parameters
     ):
-        raise HelperProtocolError("parameters must be a JSON object", exit_code=65)
+        raise HelperProtocolError("parameters must be a JSON object", exit_code=exit_codes.REFUSED)
     parameters = raw_parameters
     unknown_parameters = sorted(parameters.keys() - allowed_parameter_keys)
     if unknown_parameters:
         raise HelperProtocolError(
             f"parameters contains unknown field(s): {', '.join(unknown_parameters)}",
-            exit_code=65,
+            exit_code=exit_codes.REFUSED,
         )
     if validate_parameters is not None:
         validate_parameters(parameters)
@@ -531,16 +552,22 @@ def read_scoped_request(
     )
 
 
-def write_document(stream: TextIO, document: Mapping[str, Any]) -> None:
-    """Write one helper result to stdout, in the one form every helper uses.
+def write_document(stream: TextIO, document: Mapping[str, Any], exit_code: int) -> int:
+    """Write one helper result to stdout in the one form every helper uses, and hand back its exit.
 
     Sorted keys and no incidental whitespace, so two helpers answering the same
     question produce byte-identical documents and a diff between a fixture and a
     real run is a difference in content rather than in formatting.
+
+    The exit code is checked against the document's outcome before anything is
+    written (`exit_codes.check`): a `blocked` that exited 65 and a `partial`
+    that exited 0 were two answers to one question (review 2026-10-22, 4-1).
     """
 
+    exit_codes.check(document.get("outcome"), exit_code)
     json.dump(document, stream, separators=(",", ":"), sort_keys=True)
     stream.write("\n")
+    return exit_code
 
 
 def config_error_code(exit_code: int) -> str:
@@ -551,7 +578,7 @@ def config_error_code(exit_code: int) -> str:
     or used, which is the installation's problem and not the request's.
     """
 
-    return "bad_input" if exit_code == 64 else "dependency_unavailable"
+    return "bad_input" if exit_code == exit_codes.USAGE else "dependency_unavailable"
 
 
 def write_failure(
@@ -574,7 +601,7 @@ def write_failure(
     that is remembered.
     """
 
-    write_document(
+    return write_document(
         stream,
         failure(
             operation=operation,
@@ -585,5 +612,5 @@ def write_failure(
             exit_code=exit_code,
             details=details,
         ),
+        exit_code,
     )
-    return exit_code

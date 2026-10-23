@@ -22,6 +22,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import Any, BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.config import CERTIFICATE_ID, CLUSTER_ID, RECEIVER_FORMATS, RECEIVER_ID
 from haprion.envelope import failure
 from haprion.helper_protocol import (
@@ -33,7 +34,6 @@ from haprion.helper_protocol import (
     write_document,
 )
 
-EXIT_NOT_ROOT = 77
 #
 # A certificate goes to the targets one person picked on one page, not to an
 # imported list. The ceiling is here so an oversized request is a sentence about
@@ -61,7 +61,7 @@ class Refuse:
         self, code: str, message: str, exit_code: int, details: dict[str, Any] | None = None
     ) -> int:
         self.errors.write(f"ERROR: [{code}] {message}\n")
-        write_document(
+        return write_document(
             self.output,
             failure(
                 operation=self.operation,
@@ -72,8 +72,8 @@ class Refuse:
                 exit_code=exit_code,
                 details=details,
             ),
+            exit_code,
         )
-        return exit_code
 
 
 def read_request(
@@ -94,7 +94,7 @@ def read_request(
 
     require_no_arguments(argv)
     if require_root and os.geteuid() != 0:
-        raise HelperProtocolError(f"{helper_name} must run as root", exit_code=EXIT_NOT_ROOT)
+        raise HelperProtocolError(f"{helper_name} must run as root", exit_code=exit_codes.NOT_ROOT)
     return read_clusterless_request(
         input_stream or sys.stdin.buffer,
         expected_operation=operation,
@@ -117,15 +117,17 @@ def _identifiers(
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise HelperProtocolError(f"parameters.{key} must be a list", exit_code=65)
+        raise HelperProtocolError(f"parameters.{key} must be a list", exit_code=exit_codes.REFUSED)
     if len(raw) > MAX_TARGETS:
         raise HelperProtocolError(
-            f"parameters.{key} names more than {MAX_TARGETS} {what}s", exit_code=65
+            f"parameters.{key} names more than {MAX_TARGETS} {what}s", exit_code=exit_codes.REFUSED
         )
     checked: list[str] = []
     for item in raw:
         if not isinstance(item, str) or not pattern.fullmatch(item):
-            raise HelperProtocolError(f"parameters.{key} contains an invalid {what}", exit_code=65)
+            raise HelperProtocolError(
+                f"parameters.{key} contains an invalid {what}", exit_code=exit_codes.REFUSED
+            )
         checked.append(item)
     #
     # Order preserved and duplicates dropped, so a request that names a target
@@ -160,18 +162,20 @@ def formats(
     if raw is None:
         return {}
     if not isinstance(raw, dict):
-        raise HelperProtocolError(f"parameters.{key} must be an object", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} must be an object", exit_code=exit_codes.REFUSED
+        )
     checked: dict[str, str] = {}
     for receiver_id, form in raw.items():
         if receiver_id not in receivers:
             raise HelperProtocolError(
                 f"parameters.{key} names {receiver_id!r}, which is not in receivers",
-                exit_code=65,
+                exit_code=exit_codes.REFUSED,
             )
         if not isinstance(form, str) or form not in RECEIVER_FORMATS:
             raise HelperProtocolError(
                 f"parameters.{key}[{receiver_id!r}] must be one of {', '.join(RECEIVER_FORMATS)}",
-                exit_code=65,
+                exit_code=exit_codes.REFUSED,
             )
         checked[receiver_id] = form
     return checked
@@ -186,7 +190,7 @@ def format_flags(values: Sequence[str], receivers: Sequence[str]) -> dict[str, s
         if not separator or not receiver_id or not form:
             raise HelperProtocolError(
                 f"--format takes <receiver>=<{'|'.join(RECEIVER_FORMATS)}>, not {value!r}",
-                exit_code=64,
+                exit_code=exit_codes.USAGE,
             )
         parsed[receiver_id] = form
     return formats({"formats": parsed}, receivers)
@@ -199,14 +203,18 @@ def certificates(parameters: Mapping[str, JsonValue], key: str = "certificates")
 def certificate(parameters: Mapping[str, JsonValue], key: str = "certificate") -> str:
     value = parameters.get(key)
     if not isinstance(value, str) or not CERTIFICATE_ID.fullmatch(value):
-        raise HelperProtocolError(f"parameters.{key} must be a certificate ID", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} must be a certificate ID", exit_code=exit_codes.REFUSED
+        )
     return value
 
 
 def flag(parameters: Mapping[str, JsonValue], key: str) -> bool:
     value = parameters.get(key, False)
     if not isinstance(value, bool):
-        raise HelperProtocolError(f"parameters.{key} must be true or false", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} must be true or false", exit_code=exit_codes.REFUSED
+        )
     return value
 
 
@@ -220,7 +228,9 @@ def interface(parameters: Mapping[str, JsonValue]) -> bool:
 
     value = parameters.get("interface", False)
     if not isinstance(value, bool):
-        raise HelperProtocolError("parameters.interface must be true or false", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.interface must be true or false", exit_code=exit_codes.REFUSED
+        )
     return value
 
 

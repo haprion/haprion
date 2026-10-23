@@ -9,6 +9,8 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
+from haprion import exit_codes
+
 from haprion_ui import db, jobs
 from tests.test_dashboard import reading as status_reading
 from tests.test_login import LoginTestCase, configuration
@@ -503,17 +505,13 @@ class WhatTheExitNumberMeans(unittest.TestCase):
         rows = [job(state="failed", outcome="failed", exit_code=code)]
         return jobs.build_job_overview(rows).jobs[0].exit_meaning
 
-    def test_the_codes_the_engine_actually_returns_are_named(self) -> None:
-        for code, expected in (
-            (0, "Finished."),
-            (64, "The request itself was not valid."),
-            (65, "Refused before anything was changed."),
-            (68, "No usable status could be read from the cluster."),
-            (69, "Finished with nodes left unverified."),
-            (75, "Refused: the target had moved, or the cluster was locked."),
-        ):
+    def test_every_code_the_engine_returns_is_named_in_the_engine_s_words(self) -> None:
+        """Review 2026-10-22, 4-1: 68 meant "no usable status" here, whatever the command said."""
+
+        for code, expected in exit_codes.MEANINGS.items():
             with self.subTest(code=code):
                 self.assertEqual(self.meaning(code), expected)
+        self.assertEqual(self.meaning(exit_codes.BLOCKED), exit_codes.MEANINGS[75])
 
     def test_a_signal_is_reported_as_a_signal(self) -> None:
         """Negative codes are what a killed helper leaves behind - -15 and -6 both happened."""

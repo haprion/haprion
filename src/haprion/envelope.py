@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
+
+from haprion import exit_codes
 
 Outcome = Literal["done", "partial", "failed", "blocked"]
 
@@ -57,23 +59,16 @@ def envelope(
     }
 
 
-#
-# The one exit code the contract maps to `blocked` rather than `failed`: the
-# operation did not start because a safety condition or a lock stopped it. Every
-# other non-zero code means the operation was attempted and did not succeed.
-#
-BLOCKED_EXIT = 75
-
-
 def outcome_for_exit(exit_code: int) -> Outcome:
-    """The contract's exit code to outcome mapping, in one place.
+    """The outcome a failure's exit code stands for: `blocked` or `failed`.
 
     Helpers used to decide this at each error site, which is how several early
     failures ended up writing nothing at all: the decision was small enough to
-    forget. Having one function makes the omission visible.
+    forget. The table is `exit_codes`; a failure with `OK` or `PARTIAL` is a
+    contradiction, and `envelope` refuses it.
     """
 
-    return "blocked" if exit_code == BLOCKED_EXIT else "failed"
+    return cast(Outcome, exit_codes.outcome(exit_code))
 
 
 def failure(

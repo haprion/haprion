@@ -85,6 +85,31 @@ the cluster did not converge. `done` includes a verified no-op.
   result fields.
 - Unknown fields inside schema v1 are ignored. Unknown enum values or schema versions are not.
 
+## Exit codes
+
+Every command and helper ends with one of these, from `haprion.exit_codes`. The exit code follows
+the envelope's outcome: `0` is `done`, `69` is `partial`, `75` is `blocked`, and every other code is
+`failed` and says why. A document whose exit code contradicts its outcome is refused before it is
+written. Callers branch on `outcome` and the error `code`; the exit code is for a shell that has no
+document.
+
+| Code | Name | Outcome | Meaning |
+|---|---|---|---|
+| 0 | `OK` | `done` | Finished |
+| 1 | `FAILED` | `failed` | Failed; the message says why (a front end passing on a helper's failure, a run whose nodes did not take it) |
+| 64 | `USAGE` | `failed` | Arguments or the request document are not valid |
+| 65 | `REFUSED` | `failed` | The request was read and refused; nothing was changed |
+| 66 | `NOT_FOUND` | `failed` | What the request names does not exist |
+| 68 | `UNAVAILABLE` | `failed` | Something the command needs could not be read or reached: the nodes' status, a helper, a repository |
+| 69 | `PARTIAL` | `partial` | Some targets verified and some not |
+| 70 | `INTERNAL` | `failed` | An unexpected failure in the command itself |
+| 73 | `CANNOT_CREATE` | `failed` | A file could not be created |
+| 74 | `IO_ERROR` | `failed` | A file could not be written |
+| 75 | `BLOCKED` | `blocked` | Stopped before anything was changed: a lock, a safety condition, a target that moved, every item refused |
+| 77 | `NOT_ROOT` | `failed` | A root helper run as another account |
+| 78 | `CONFIG` | `failed` | The installation lacks what the command needs: an identity, a registry, a section of the runtime policy |
+| 124 | `TIMED_OUT` | `failed` | The command ran out of its time |
+
 ## Stable error codes
 
 Every command supports these common codes where applicable:

@@ -24,12 +24,11 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
+from haprion import exit_codes
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 
 MAX_LINE = 64
 CLUSTER = re.compile(r"[a-z][a-z0-9-]{0,62}")
-EXIT_USAGE = 64
-EXIT_NOT_ROOT = 68
 
 
 def main(
@@ -47,10 +46,10 @@ def main(
     err = error_stream or sys.stderr
     if require_root and os.geteuid() != 0:
         err.write("ERROR: haprion-published-release-helper must run as root.\n")
-        return EXIT_NOT_ROOT
+        return exit_codes.NOT_ROOT
     if argv:
         err.write("ERROR: haprion-published-release-helper takes no arguments.\n")
-        return EXIT_USAGE
+        return exit_codes.USAGE
     #
     # Exactly one line, at most 64 characters: the read cannot swallow an
     # unbounded stream.
@@ -60,7 +59,7 @@ def main(
     cluster_id = words[0] if words else ""
     if CLUSTER.fullmatch(cluster_id) is None:
         err.write("ERROR: invalid cluster name.\n")
-        return EXIT_USAGE
+        return exit_codes.USAGE
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(cluster_id)

@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import cert_import, ndes, ndes_profiles, ui_interface
+from haprion import cert_import, exit_codes, ndes, ndes_profiles, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haprion.cli import cert_job
@@ -26,7 +26,7 @@ from haprion.config import (
 )
 from haprion.dns_profiles import ProfileError
 from haprion.envelope import Message, envelope, failure, new_request_id
-from haprion.helper_protocol import HelperProtocolError
+from haprion.helper_protocol import HelperProtocolError, write_document
 from haprion.ndes_state import (
     request_formats,
     request_is_exportable,
@@ -82,13 +82,13 @@ def enroll(
 
     try:
         if not CERTIFICATE_ID.fullmatch(certificate_id):
-            raise ScepRefusal("bad_input", "invalid certificate ID", 65)
+            raise ScepRefusal("bad_input", "invalid certificate ID", exit_codes.REFUSED)
         policy = load_policy(policy_path, require_secure=require_secure)
         if policy.ndes is None or policy.certificate_registry is None:
             raise ScepRefusal(
                 "dependency_unavailable",
                 "NDES policy and certificate registry must be configured",
-                78,
+                exit_codes.CONFIG,
             )
         if resume and not domains:
             #
@@ -100,7 +100,9 @@ def enroll(
             recorded = record.get("domains") if record else None
             recorded_profile = record.get("profile") if record else None
             if not isinstance(recorded, list) or not isinstance(recorded_profile, str):
-                raise ScepRefusal("bad_input", "no NDES request to resume for this ID", 65)
+                raise ScepRefusal(
+                    "bad_input", "no NDES request to resume for this ID", exit_codes.REFUSED
+                )
             domains = [str(name) for name in recorded]
             profile_id = profile_id or recorded_profile
         if resume and not clusters and not receivers:
@@ -118,37 +120,47 @@ def enroll(
                 "bad_input",
                 "an exportable certificate has no targets and does not serve the interface; "
                 "name no cluster or receiver",
-                65,
+                exit_codes.REFUSED,
             )
         if exportable and any(name.startswith("*.") for name in domains):
             raise ScepRefusal(
-                "bad_input", "an exportable certificate names one host; no wildcard", 65
+                "bad_input",
+                "an exportable certificate names one host; no wildcard",
+                exit_codes.REFUSED,
             )
         if interface and (clusters or receivers):
             raise ScepRefusal(
                 "bad_input",
                 "the interface certificate has no targets; name no cluster or receiver",
-                65,
+                exit_codes.REFUSED,
             )
         if any(name not in receivers for name in formats or ()):
-            raise ScepRefusal("bad_input", "a format names a receiver that is not targeted", 65)
+            raise ScepRefusal(
+                "bad_input", "a format names a receiver that is not targeted", exit_codes.REFUSED
+            )
         requested = ndes.names(domains)
         runtime = load_runtime_config(policy, require_secure=require_secure)
         if any(name not in runtime.clusters for name in clusters):
-            raise ScepRefusal("bad_input", "unknown target cluster", 65)
+            raise ScepRefusal("bad_input", "unknown target cluster", exit_codes.REFUSED)
         if runtime.registry is None or any(
             name not in runtime.registry.receivers for name in receivers
         ):
             raise ScepRefusal(
-                "bad_input", "certificate registry or target receiver is unavailable", 65
+                "bad_input",
+                "certificate registry or target receiver is unavailable",
+                exit_codes.REFUSED,
             )
         existing = runtime.registry.certificates.get(certificate_id)
         if existing is not None and existing.source.kind != "import":
             raise ScepRefusal(
-                "bad_input", "certificate ID already belongs to another source kind", 65
+                "bad_input",
+                "certificate ID already belongs to another source kind",
+                exit_codes.REFUSED,
             )
         if (live / certificate_id).exists():
-            raise ScepRefusal("bad_input", "certificate ID already belongs to an ACME lineage", 65)
+            raise ScepRefusal(
+                "bad_input", "certificate ID already belongs to an ACME lineage", exit_codes.REFUSED
+            )
         profile = ndes_profiles.resolve(policy.ndes, profile_id, require_secure=require_secure)
         with ndes.enroll(
             policy.ndes,
@@ -195,10 +207,12 @@ def enroll(
                         ),
                     ),
                 )
-                return doc, 0
+                return doc, exit_codes.PARTIAL
             if enrolled.material is None:
                 raise ndes.NdesError(
-                    "scep_failed", "issued request has no certificate material", exit_code=1
+                    "scep_failed",
+                    "issued request has no certificate material",
+                    exit_code=exit_codes.FAILED,
                 )
             #
             # Issued is the end of the request either way: a certificate that
@@ -250,7 +264,7 @@ def enroll(
     except ConfigError as exc:
         raise ScepRefusal("dependency_unavailable", str(exc), exc.exit_code) from exc
     except ProfileError as exc:
-        raise ScepRefusal("profile_unavailable", str(exc), 78) from exc
+        raise ScepRefusal("profile_unavailable", str(exc), exit_codes.CONFIG) from exc
     except (ndes.NdesError, cert_import.ImportError_) as exc:
         raise ScepRefusal(exc.code, str(exc), exc.exit_code) from exc
 
@@ -270,17 +284,19 @@ def abandon(
 
     try:
         if not CERTIFICATE_ID.fullmatch(certificate_id):
-            raise ScepRefusal("bad_input", "invalid certificate ID", 65)
+            raise ScepRefusal("bad_input", "invalid certificate ID", exit_codes.REFUSED)
         policy = load_policy(policy_path, require_secure=require_secure)
         if policy.ndes is None:
-            raise ScepRefusal("dependency_unavailable", "NDES policy must be configured", 78)
+            raise ScepRefusal(
+                "dependency_unavailable", "NDES policy must be configured", exit_codes.CONFIG
+            )
         removed = ndes.abandon(policy.ndes, certificate_id, require_secure=require_secure)
     except ConfigError as exc:
         raise ScepRefusal("dependency_unavailable", str(exc), exc.exit_code) from exc
     except ndes.NdesError as exc:
         raise ScepRefusal(exc.code, str(exc), exc.exit_code) from exc
     if not removed:
-        raise ScepRefusal("bad_input", "no NDES request to abandon for this ID", 65)
+        raise ScepRefusal("bad_input", "no NDES request to abandon for this ID", exit_codes.REFUSED)
     return envelope(
         operation=OPERATION,
         outcome="done",
@@ -368,15 +384,15 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-cert-scep must run as root", 77)
+        return refuse("not_root", "haprion-cert-scep must run as root", exit_codes.NOT_ROOT)
     if args.abandon and (
         args.resume or args.profile or args.domain or args.cluster or args.receiver
     ):
-        return refuse("bad_input", "--abandon takes only --id", 65)
+        return refuse("bad_input", "--abandon takes only --id", exit_codes.REFUSED)
     try:
         formats = cert_job.format_flags(args.format, args.receiver)
     except HelperProtocolError as exc:
-        return refuse("bad_input", str(exc), 65)
+        return refuse("bad_input", str(exc), exit_codes.REFUSED)
     try:
         if args.abandon:
             doc, exit_code = abandon(
@@ -409,7 +425,7 @@ def main(
     except ScepRefusal as exc:
         return refuse(exc.code, str(exc), exc.exit_code)
     if args.json:
-        writer.write(json.dumps(doc, separators=(",", ":")) + "\n")
+        write_document(writer, doc, exit_code)
     else:
         writer.write(f"{args.id}: {doc['result']['state']}\n")
         if exit_code:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import BinaryIO, TextIO
 
 from haprion.cli.node_restore_helper import OPERATIONS, STATUS
-from haprion.cli.socket_ask import EXIT_REFUSED, EXIT_SILENT, EXIT_UNAVAILABLE, Service, run
+from haprion.cli.socket_ask import Service, run
 
 SERVICE = Service(
     command="haprion-node-restore-ask",
@@ -21,16 +21,11 @@ SERVICE = Service(
     operations=frozenset(OPERATIONS),
     not_ours="the request is not a restore operation",
     busy_answers=frozenset({STATUS}),
-    succeeded=("done",),
-    blocked_exit=75,
 )
 SOCKET_PATH = SERVICE.socket_path
 TIMEOUT_SECONDS = SERVICE.timeout
 
 __all__ = [
-    "EXIT_REFUSED",
-    "EXIT_SILENT",
-    "EXIT_UNAVAILABLE",
     "SOCKET_PATH",
     "TIMEOUT_SECONDS",
     "main",

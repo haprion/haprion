@@ -23,28 +23,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Any, TextIO
+from typing import TextIO
 
 from haprion.cert_delete import HELPER, OPERATION
 from haprion.cli import cert_delete_helper
-from haprion.cli.cert_target import EXIT_UNAVAILABLE, RunHelper, run_helper, summary
+from haprion.cli.caller import without_answer
+from haprion.cli.cert_target import RunHelper, run_helper, summary
 from haprion.cli.cluster_settings import _through
-from haprion.envelope import failure, new_request_id
-
-ALREADY_GONE = "not_registered"
-
-
-def gone_or_removed(document: dict[str, Any]) -> bool:
-    """Whether every certificate is removed now or was already gone."""
-
-    result = document.get("result")
-    if not isinstance(result, dict) or not result.get("certificates"):
-        return False
-    return all(
-        entry.get("state") == "removed"
-        or (entry.get("state") == "refused" and entry.get("code") == ALREADY_GONE)
-        for entry in result["certificates"]
-    )
+from haprion.envelope import new_request_id
+from haprion.helper_protocol import write_document
 
 
 def main(
@@ -70,27 +57,16 @@ def main(
     try:
         document = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        message = completed.stderr.strip() or "the certificate delete helper gave no answer"
-        errors.write(f"ERROR: {message}\n" if not message.startswith("ERROR") else f"{message}\n")
-        if args.json:
-            writer.write(
-                json.dumps(
-                    failure(
-                        operation=OPERATION,
-                        cluster=None,
-                        request_id=new_request_id(),
-                        code="dependency_unavailable",
-                        message=message[:2048],
-                        exit_code=completed.returncode or EXIT_UNAVAILABLE,
-                    ),
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-                + "\n"
-            )
-        return completed.returncode or EXIT_UNAVAILABLE
+        return without_answer(
+            completed,
+            operation=OPERATION,
+            cluster=None,
+            json_mode=args.json,
+            writer=writer,
+            errors=errors,
+            fallback="the certificate delete helper gave no answer",
+        )
     if args.json:
-        writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
-    else:
-        summary(document, writer)
-    return 0 if gone_or_removed(document) else completed.returncode
+        return write_document(writer, document, completed.returncode)
+    summary(document, writer)
+    return completed.returncode

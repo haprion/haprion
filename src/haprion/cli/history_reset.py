@@ -47,9 +47,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
+from haprion import exit_codes
 from haprion.cli.caller import config_path as _config_path
 from haprion.cli.caller import usage
 from haprion.envelope import Message, envelope, failure
+from haprion.helper_protocol import write_document
 from haprion.history_reset import ResetError, preview
 
 CONFIRMATION = "please reset me"
@@ -85,9 +87,16 @@ def _run_helper(cluster_id: str, request: bytes) -> tuple[int, str, str]:
 
 
 def _publish(cluster_id: str) -> int:
+    """Publish version 1, its progress on stderr.
+
+    On stderr in both modes: the publish's own lines on stdout came before the
+    envelope, and `--json` was not one document (review 2026-10-22, 4-2).
+    """
+
     return subprocess.run(  # noqa: S603 - fixed path, fixed arguments
         [PUBLISH, "-c", cluster_id, BASELINE_MESSAGE],
         check=False,
+        stdout=sys.stderr,
     ).returncode
 
 
@@ -144,14 +153,15 @@ def main(
                     code=code,
                     message=message[:2048],
                     exit_code=exit_code,
-                )
+                ),
+                exit_code,
             )
         else:
             writer.write(f"{message}\n" if message.startswith("ERROR") else f"ERROR: {message}\n")
         return exit_code
 
-    def emit(document: dict[str, object]) -> None:
-        writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+    def emit(document: dict[str, object], exit_code: int) -> int:
+        return write_document(writer, document, exit_code)
 
     try:
         plan = preview(cluster_id, config_path(cluster_id))
@@ -175,7 +185,9 @@ def main(
         confirm = _ask(reader, writer, f"Type '{CONFIRMATION}' to confirm: ")
     if confirm != CONFIRMATION:
         if json_mode:
-            return refuse("not_confirmed", "The phrase did not match. Nothing was changed.", 64)
+            return refuse(
+                "not_confirmed", "The phrase did not match. Nothing was changed.", exit_codes.USAGE
+            )
         writer.write("The phrase did not match. Nothing was changed.\n")
         return 0
 
@@ -202,7 +214,7 @@ def main(
             "unknown",
             "the reset reported success but its answer could not be read. "
             "Check the cluster's state before doing anything else.",
-            70,
+            exit_codes.INTERNAL,
         )
 
     say.write(
@@ -229,7 +241,7 @@ def main(
     }
     if published != 0:
         if json_mode:
-            emit(
+            return emit(
                 envelope(
                     operation=OPERATION,
                     outcome="partial",
@@ -242,28 +254,28 @@ def main(
                             message="the reset succeeded but publishing version 1 did not",
                         ),
                     ),
-                )
+                ),
+                exit_codes.PARTIAL,
             )
-            return published
         writer.write(
             "\nERROR: the reset succeeded but publishing version 1 did not.\n"
             "Until it does, this cluster's published release refers to a version that\n"
             "no longer exists. Fix the cause and run:\n\n"
             f'  haprion-publish -c {cluster_id} "{BASELINE_MESSAGE}"\n'
         )
-        return published
+        return exit_codes.PARTIAL
 
     if json_mode:
-        emit(
+        return emit(
             envelope(
                 operation=OPERATION,
                 outcome="done",
                 cluster=cluster_id,
                 request_id=request_id,
                 result=outcome,
-            )
+            ),
+            exit_codes.OK,
         )
-        return 0
     writer.write(
         "\nThe nodes are already running this configuration - only the release metadata\n"
         "differs. Bring them into step with:\n\n"

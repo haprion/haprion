@@ -18,16 +18,13 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haprion import node_ssh, status_collect
+from haprion import exit_codes, node_ssh, status_collect
 from haprion.config import DeployIdentity, Node
 from haprion.deploy_plan import ReleaseTarget, VipState
 from haprion.object_manifest import MANIFEST_FILE
 from haprion.object_manifest import build as build_manifest
 from haprion.object_manifest import render as render_manifest
 from haprion.status_collect import (
-    EXIT_OK,
-    EXIT_PARTIAL,
-    EXIT_UNAVAILABLE,
     NodeResponse,
     StatusReport,
     collect,
@@ -136,7 +133,7 @@ class CollectTests(unittest.TestCase):
         report = self.both(hash_a=TARGET.hash, hash_b=TARGET.hash)
         self.assertEqual(report.result["summary"]["release_state"], "converged")
         self.assertTrue(all(node["current"] for node in report.result["nodes"]))
-        self.assertEqual(report.exit_code, EXIT_OK)
+        self.assertEqual(report.exit_code, exit_codes.OK)
 
     def test_one_node_on_another_hash_makes_the_cluster_behind(self) -> None:
         report = self.both(hash_a=TARGET.hash, hash_b="b" * 40)
@@ -149,7 +146,7 @@ class CollectTests(unittest.TestCase):
         # Behind is not degraded: both nodes answered, so the reading itself
         # succeeded and the exit code must not claim otherwise.
         #
-        self.assertEqual(report.exit_code, EXIT_OK)
+        self.assertEqual(report.exit_code, exit_codes.OK)
 
     def test_a_node_that_reports_no_release_is_not_compared(self) -> None:
         report = self.both(hash_a=TARGET.hash, hash_b=None)
@@ -198,7 +195,7 @@ class CollectTests(unittest.TestCase):
             ),
             target=TARGET,
         )
-        self.assertEqual(report.exit_code, EXIT_PARTIAL)
+        self.assertEqual(report.exit_code, exit_codes.PARTIAL)
         self.assertEqual(report.result["nodes"][1]["error"]["code"], "ssh_unreachable")
         self.assertEqual([w.code for w in report.warnings], ["ssh_unreachable"])
         self.assertEqual(report.result["summary"]["vip_state"], str(VipState.INCOMPLETE))
@@ -247,7 +244,7 @@ class CollectTests(unittest.TestCase):
             ),
             target=TARGET,
         )
-        self.assertEqual(report.exit_code, EXIT_UNAVAILABLE)
+        self.assertEqual(report.exit_code, exit_codes.UNAVAILABLE)
         envelope = report.as_envelope("alpha", request_id="11111111-1111-4111-8111-111111111111")
         self.assertEqual(envelope["outcome"], "failed")
         self.assertEqual(envelope["error"]["code"], "status_unavailable")
@@ -389,7 +386,7 @@ class AStatusReadIsBounded(unittest.TestCase):
                 elapsed = time.monotonic() - started
                 report = status_collect.collect(NODES[:1], lambda _node: response, target=None)
 
-        self.assertEqual(response.exit_code, status_collect.TIMED_OUT)
+        self.assertEqual(response.exit_code, exit_codes.TIMED_OUT)
         self.assertLess(elapsed, 10)
         error = report.result["nodes"][0]["error"]
         self.assertEqual(error["code"], "ssh_unreachable")

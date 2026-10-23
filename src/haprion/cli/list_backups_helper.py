@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import backup_retention
+from haprion import backup_retention, exit_codes
 from haprion.backup_schedule import ScheduleError, schedule_result
 from haprion.backup_schedule_write import timer_unit
 from haprion.backups import BackupError, backup_list_result
@@ -43,7 +43,6 @@ OPERATION = "list_backups"
 PARAMETERS: frozenset[str] = frozenset({"limit", "node"})
 DEFAULT_LIMIT = 14
 MAX_LIMIT = 1000
-EXIT_NOT_ROOT = 77
 
 
 def _limit(parameters: Mapping[str, Any]) -> int | None:
@@ -62,7 +61,8 @@ def _limit(parameters: Mapping[str, Any]) -> int | None:
         return None
     if not isinstance(raw, int) or isinstance(raw, bool) or not 1 <= raw <= MAX_LIMIT:
         raise HelperProtocolError(
-            f"limit must be null or an integer between 1 and {MAX_LIMIT}", exit_code=65
+            f"limit must be null or an integer between 1 and {MAX_LIMIT}",
+            exit_code=exit_codes.REFUSED,
         )
     return raw
 
@@ -80,7 +80,7 @@ def _node(parameters: Mapping[str, Any]) -> str | None:
     if raw is None:
         return None
     if not isinstance(raw, str) or not NAME.fullmatch(raw):
-        raise HelperProtocolError("node is not a valid node name", exit_code=64)
+        raise HelperProtocolError("node is not a valid node name", exit_code=exit_codes.USAGE)
     return raw
 
 
@@ -109,7 +109,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-list-backups-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-list-backups-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -145,7 +145,7 @@ def main(
         )
 
     if policy.backup_root is None:
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -158,8 +158,8 @@ def main(
                     message="the runtime policy declares no backup_root",
                 ),
             ),
+            exit_codes.REFUSED,
         )
-        return 65
 
     selected = _node(request.parameters)
     nodes = tuple(node for node in cluster.nodes if selected is None or node.name == selected)
@@ -169,7 +169,7 @@ def main(
         # at least one node, and an empty listing would read as "this node has
         # no backups" when the truth is "this cluster has no such node".
         #
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -182,8 +182,8 @@ def main(
                     message=f"cluster {request.cluster} has no node named {selected}",
                 ),
             ),
+            exit_codes.USAGE,
         )
-        return 64
 
     try:
         result, readings = backup_list_result(
@@ -210,7 +210,7 @@ def main(
         if result["schedule"] is not None:
             result["schedule"]["retention"] = backup_retention.read(request.cluster)
     except (BackupError, ScheduleError, backup_retention.RetentionError) as exc:
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -220,8 +220,8 @@ def main(
                 result=None,
                 error=Message(code="backup_metadata_unavailable", message=str(exc)),
             ),
+            exit_codes.REFUSED,
         )
-        return 65
 
     #
     # One unreadable node is `partial`, not `failed`: the other node's backups
@@ -232,7 +232,7 @@ def main(
     #
     unreadable = tuple(reading for reading in readings if reading.error is not None)
     if unreadable:
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -249,10 +249,10 @@ def main(
                     for reading in unreadable
                 ),
             ),
+            exit_codes.PARTIAL,
         )
-        return 0
 
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -261,8 +261,8 @@ def main(
             request_id=request.request_id,
             result=result,
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

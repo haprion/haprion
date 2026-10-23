@@ -37,13 +37,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
-#
-# Exit codes, unchanged from the command this replaces: an operator and any
-# wrapper around it have been reading these.
-#
-EXIT_BLOCKED = 65
-EXIT_NO_STATUS = 68
-EXIT_INCOMPLETE = 69
+from haprion import exit_codes
 
 
 class VipState(StrEnum):
@@ -437,7 +431,7 @@ def _blocking_reason(
     """
 
     if not observation.usable:
-        return "no node returned usable status; deploy blocked", EXIT_NO_STATUS
+        return "no node returned usable status; deploy blocked", exit_codes.BLOCKED
 
     #
     # Two owners among the nodes that answered, whatever the summary says: a
@@ -450,12 +444,12 @@ def _blocking_reason(
         # No override exists for this one, deliberately. Two owners means the
         # pair is already damaged, and deploying can deepen the damage.
         #
-        return "split brain detected; deploy blocked and cannot be overridden", EXIT_BLOCKED
+        return "split brain detected; deploy blocked and cannot be overridden", exit_codes.BLOCKED
 
     if observation.vip_state is VipState.UNKNOWN and not allow_vip_unknown:
         return (
             "VIP ownership is unknown; deploy blocked. CLI override: --allow-vip-unknown",
-            EXIT_BLOCKED,
+            exit_codes.BLOCKED,
         )
 
     return None
@@ -572,7 +566,7 @@ def next_step(
             action=Action.FINISHED,
             reason=f"deploy failed on {failed}; the remaining nodes were not touched",
             outcome=Outcome.FAILED,
-            exit_code=EXIT_INCOMPLETE,
+            exit_code=exit_codes.FAILED,
         )
 
     if target_moved:
@@ -585,7 +579,7 @@ def next_step(
             action=Action.BLOCKED,
             reason="the published target changed while the deploy was starting; nothing was deployed",
             outcome=Outcome.BLOCKED,
-            exit_code=EXIT_BLOCKED,
+            exit_code=exit_codes.BLOCKED,
         )
 
     blocked = _blocking_reason(observation, allow_vip_unknown=allow_vip_unknown)
@@ -602,7 +596,7 @@ def next_step(
                 action=Action.BLOCKED,
                 reason=f"{reason}; {done} already carries the target",
                 outcome=Outcome.PARTIAL,
-                exit_code=EXIT_INCOMPLETE,
+                exit_code=exit_codes.PARTIAL,
             )
         return Step(action=Action.BLOCKED, reason=reason, outcome=Outcome.BLOCKED, exit_code=code)
 
@@ -658,14 +652,14 @@ def _finish(
                 action=Action.FINISHED,
                 reason=f"{', '.join(behind)} is not on the target at the end of the run",
                 outcome=Outcome.PARTIAL,
-                exit_code=EXIT_INCOMPLETE,
+                exit_code=exit_codes.PARTIAL,
             )
         if any(target.is_current(node) is None for node in observation.usable):
             return Step(
                 action=Action.FINISHED,
                 reason="some nodes could not be verified",
                 outcome=Outcome.PARTIAL,
-                exit_code=EXIT_INCOMPLETE,
+                exit_code=exit_codes.PARTIAL,
             )
 
     unverified = len(observation.usable) < observation.configured
@@ -674,7 +668,7 @@ def _finish(
             action=Action.FINISHED,
             reason="some nodes could not be verified",
             outcome=Outcome.PARTIAL,
-            exit_code=EXIT_INCOMPLETE,
+            exit_code=exit_codes.PARTIAL,
         )
 
     return Step(action=Action.FINISHED, outcome=Outcome.DONE, exit_code=0)

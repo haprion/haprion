@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import cert_issue, ndes_renew, ui_interface
+from haprion import cert_issue, exit_codes, ndes_renew, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_issue import (
     CERTBOT_TIMEOUT,
@@ -88,16 +88,17 @@ def invocations(
             return Renewals((), ())
         if not renewal_directory.is_dir():
             raise ConfigError(
-                f"certbot renewal directory is not a directory: {renewal_directory}", exit_code=78
+                f"certbot renewal directory is not a directory: {renewal_directory}",
+                exit_code=exit_codes.CONFIG,
             )
         lineages = tuple(sorted(path.stem for path in renewal_directory.glob("*.conf")))
     except OSError as exc:
         raise ConfigError(
-            f"cannot list certbot renewal configurations: {exc}", exit_code=78
+            f"cannot list certbot renewal configurations: {exc}", exit_code=exit_codes.CONFIG
         ) from exc
 
     if lineages and runtime.registry is None:
-        raise ConfigError("no certificate registry is configured", exit_code=78)
+        raise ConfigError("no certificate registry is configured", exit_code=exit_codes.CONFIG)
     commands: list[RenewalInvocation] = []
     problems: list[tuple[str, str]] = []
     for lineage in lineages:

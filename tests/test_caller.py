@@ -14,6 +14,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from haprion import exit_codes
 from haprion.cli import caller
 
 
@@ -66,7 +67,7 @@ class UsageTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised, redirect_stdout(shown):
             caller.usage("Usage:\n  haprion-list -c <cluster>\n")
 
-        self.assertEqual(raised.exception.code, caller.USAGE_EXIT)
+        self.assertEqual(raised.exception.code, exit_codes.USAGE)
         self.assertEqual(shown.getvalue(), "Usage:\n  haprion-list -c <cluster>\n")
 
     def test_a_usage_string_without_a_final_newline_gets_one(self) -> None:

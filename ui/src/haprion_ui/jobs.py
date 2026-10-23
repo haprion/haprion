@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from haprion import node_enrollment, server_names
+from haprion import exit_codes, node_enrollment, server_names
 from haprion.deploy_run import CERTIFICATES_NOT_DEPLOYED
 from haprion.restore_agent import RUN_ID
 
@@ -71,8 +71,9 @@ class JobView:
     #
     # Verbatim, never translated. A table mapping codes to friendlier sentences
     # would be a second place that has to stay in step with the contract - the
-    # same drift `EXIT_MEANINGS` already documents one instance of - and the
-    # code says more to somebody with proxy experience than a paraphrase would.
+    # drift the exit column's own table had until it read the engine's - and
+    # the code says more to somebody with proxy experience than a paraphrase
+    # would.
     #
     error_code: str | None = None
     #
@@ -871,28 +872,17 @@ def _view(
 #
 # What the number in the exit column means. It is shown because a maintainer
 # reading a bad job wants the precise code, and explained because everyone else
-# is being shown an implementation detail of a command they did not run.
+# is being shown an implementation detail of a command they did not run. The
+# words are the engine's table (review 2026-10-22, 4-1): this page kept its own,
+# and 68 was "no usable status" for a certificate deploy refused for a missing
+# certificate.
 #
-# Two of these are worth knowing about: 65 and 75 both mean "refused", because
-# the engine has two constants named for blocking with different values. That is
-# the engine's to reconcile, not this table's to hide.
-#
-EXIT_MEANINGS = {
-    0: "Finished.",
-    64: "The request itself was not valid.",
-    65: "Refused before anything was changed.",
-    68: "No usable status could be read from the cluster.",
-    69: "Finished with nodes left unverified.",
-    75: "Refused: the target had moved, or the cluster was locked.",
-}
-
-
 def _exit_meaning(code: int | None) -> str:
     if code is None:
         return "The job recorded no exit code."
     if code < 0:
         return f"Stopped by signal {-code}."
-    return EXIT_MEANINGS.get(code, f"The command exited with {code}.")
+    return exit_codes.MEANINGS.get(code, f"The command exited with {code}.")
 
 
 def _unresolved(rows: list[Job]) -> int:

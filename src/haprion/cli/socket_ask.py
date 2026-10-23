@@ -25,15 +25,9 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, TextIO
 
-from haprion import helper_socket
+from haprion import exit_codes, helper_socket
 from haprion.envelope import failure
 from haprion.helper_protocol import MAX_REQUEST_BYTES, write_document
-
-EXIT_USAGE = 64
-EXIT_REFUSED = 1
-EXIT_SILENT = 1
-EXIT_BUSY = 75
-EXIT_UNAVAILABLE = 78
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +58,6 @@ class Service:
     # socket is held by a run still going (the restore's status).
     #
     busy_answers: Collection[str] = field(default_factory=frozenset)
-    succeeded: Collection[str] = ("done", "partial")
-    blocked_exit: int = EXIT_REFUSED
 
 
 def _read(stream: BinaryIO) -> dict[str, Any] | None:
@@ -94,12 +86,12 @@ def run(
     errors: TextIO = error_stream or sys.stderr
     if argv:
         errors.write(f"ERROR: {service.command} accepts no arguments\n")
-        return EXIT_USAGE
+        return exit_codes.USAGE
 
     request = _read(input_stream or sys.stdin.buffer)
     if request is None:
         errors.write("ERROR: the request is not a JSON object of a request's size\n")
-        return EXIT_USAGE
+        return exit_codes.USAGE
     sent = request.get("operation")
     operation = service.operation or sent
     request_id = request.get("request_id")
@@ -110,11 +102,11 @@ def run(
         or (service.cluster_bound and not isinstance(cluster, str))
     ):
         errors.write("ERROR: the request carries no request identity\n")
-        return EXIT_USAGE
+        return exit_codes.USAGE
 
     def answer(code: str, message: str, exit_code: int) -> int:
         errors.write(f"ERROR: [{code}] {message}\n")
-        write_document(
+        return write_document(
             writer,
             failure(
                 operation=operation,
@@ -124,11 +116,11 @@ def run(
                 message=message,
                 exit_code=exit_code,
             ),
+            exit_code,
         )
-        return exit_code
 
     if service.operations is not None and sent not in service.operations:
-        return answer("bad_input", f"{service.not_ours}; nothing was asked", EXIT_USAGE)
+        return answer("bad_input", f"{service.not_ours}; nothing was asked", exit_codes.USAGE)
 
     try:
         reply = helper_socket.ask(
@@ -142,7 +134,7 @@ def run(
             errors.write(
                 f"ERROR: [helper_silent] {exc} It may still be working; its outcome is unknown.\n"
             )
-            return EXIT_SILENT
+            return exit_codes.FAILED
         #
         # The socket takes one connection at a time, and a run still going
         # holds it. For a question that changes nothing, that is the answer.
@@ -150,7 +142,7 @@ def run(
         return answer(
             "restore_busy",
             "A restore step is still running; ask again when it has finished.",
-            EXIT_BUSY,
+            exit_codes.BLOCKED,
         )
     except helper_socket.HelperSilent as exc:
         #
@@ -161,9 +153,9 @@ def run(
         errors.write(
             f"ERROR: [helper_silent] {exc} It may still be working; its outcome is unknown.\n"
         )
-        return EXIT_SILENT
+        return exit_codes.FAILED
     except helper_socket.HelperUnavailable as exc:
-        return answer("dependency_unavailable", f"{exc} {service.install}", EXIT_UNAVAILABLE)
+        return answer("dependency_unavailable", f"{exc} {service.install}", exit_codes.UNAVAILABLE)
 
     #
     # Passed through untouched: it is the helper's document, and the worker
@@ -174,7 +166,5 @@ def run(
     try:
         outcome = json.loads(reply).get("outcome")
     except (ValueError, AttributeError):
-        return EXIT_REFUSED
-    if outcome in service.succeeded:
-        return 0
-    return service.blocked_exit if outcome == "blocked" else EXIT_REFUSED
+        return exit_codes.FAILED
+    return exit_codes.for_outcome(outcome)

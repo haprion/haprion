@@ -74,7 +74,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_registry, node_ssh
+from haprion import cert_registry, exit_codes, node_ssh
 from haprion.cert_inventory import IMPORT_STORE, receiver_files
 from haprion.cert_publish import DEFAULT_LOCK_PATH, prune_receiver_directory, publish_lock
 from haprion.cert_publish import PublishError as LockError
@@ -121,13 +121,17 @@ AUTHORITY_NODE_VERB = "ca-remove"
 # `absent`.
 #
 NODE_REMOVED_LINE = "Removed {certificate_id}."
+#
+# A certificate that is nowhere: not registered, and nothing of it left.
+#
+NOT_REGISTERED = "not_registered"
 CERTBOT_TIMEOUT = 120
 
 
 class DeleteError(Exception):
     """The installation cannot answer the request at all - not one certificate's fault."""
 
-    def __init__(self, code: str, message: str, *, exit_code: int = 78):
+    def __init__(self, code: str, message: str, *, exit_code: int = exit_codes.CONFIG):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
@@ -203,6 +207,21 @@ class Report:
     @property
     def refused(self) -> tuple[str, ...]:
         return tuple(o.certificate_id for o in self.outcomes if o.state == "refused")
+
+    @property
+    def gone(self) -> tuple[str, ...]:
+        """Removed now, or refused only because nothing was left anywhere to remove.
+
+        A deletion asked for again finds nothing and is done: the command said
+        so with exit 0 while its helper answered `blocked`, so the interface
+        and the terminal told one deletion two ways (review 2026-10-22, 4-1).
+        """
+
+        return tuple(
+            o.certificate_id
+            for o in self.outcomes
+            if o.state == "removed" or (o.state == "refused" and o.code == NOT_REGISTERED)
+        )
 
     @property
     def incomplete(self) -> tuple[str, ...]:
@@ -428,7 +447,7 @@ def run_certbot(command: Sequence[str]) -> tuple[int, str]:
     except OSError as exc:
         return 127, f"certbot could not be started: {exc}"
     except subprocess.TimeoutExpired:
-        return 124, f"certbot did not finish within {CERTBOT_TIMEOUT} seconds"
+        return exit_codes.TIMED_OUT, f"certbot did not finish within {CERTBOT_TIMEOUT} seconds"
     return completed.returncode, ((completed.stdout or "") + (completed.stderr or "")).strip()
 
 
@@ -508,7 +527,7 @@ def ask_node(
     try:
         completed = node_ssh.run_bounded(argv, timeout=NODE_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        return 124, f"no answer within {NODE_TIMEOUT_SECONDS} seconds"
+        return exit_codes.TIMED_OUT, f"no answer within {NODE_TIMEOUT_SECONDS} seconds"
     output = (completed.stdout + completed.stderr).strip()
     return completed.returncode, output
 
@@ -587,7 +606,7 @@ def delete(
                 guards_reader=guards_reader,
             )
     except LockError as exc:
-        raise DeleteError(exc.code, str(exc), exit_code=65) from exc
+        raise DeleteError(exc.code, str(exc), exit_code=exit_codes.REFUSED) from exc
 
 
 def retire_displaced_interface(
@@ -832,6 +851,6 @@ def _sweep(
             certificate_id,
             "refused",
             "not in the registry, and nothing of it remains on the manager or the nodes",
-            "not_registered",
+            NOT_REGISTERED,
         )
     return _outcome(certificate_id, tuple(layers), nodes)

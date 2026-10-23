@@ -26,6 +26,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from haprion import exit_codes
 from haprion.object_manifest import MANIFEST_FILE, REPOSITORY_PATH
 
 #
@@ -178,7 +179,7 @@ class LayoutError(Exception):
     (65), so the caller and the helper report the same thing for the same tree.
     """
 
-    def __init__(self, message: str, *, exit_code: int = 65):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.exit_code = exit_code
 

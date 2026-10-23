@@ -25,7 +25,7 @@ from collections.abc import Callable
 from typing import Any, TextIO
 
 from haprion import haproxy_versions, log_forwarding, node_resources
-from haprion.cli.caller import usage
+from haprion.cli.caller import usage, without_answer
 from haprion.cluster_status import (
     StatusError,
     forwarding_current,
@@ -33,7 +33,8 @@ from haprion.cluster_status import (
     parse_status,
 )
 from haprion.envelope import new_request_id
-from haprion.status_collect import EXIT_UNAVAILABLE, OPERATION
+from haprion.helper_protocol import write_document
+from haprion.status_collect import OPERATION
 
 HELPER = "/opt/haprion/current/bin/haprion-status-helper"
 SUDO = "/usr/bin/sudo"
@@ -327,18 +328,21 @@ def main(
         envelope = json.loads(completed.stdout)
     except json.JSONDecodeError:
         #
-        # The helper's own stderr is shown here and nowhere else. This is the
-        # one failure it cannot describe in the envelope - it never got far
-        # enough to write one - and it covers the ordinary causes: no sudo rule,
-        # no helper installed, an unreadable runtime policy.
+        # The one failure the helper cannot describe in its envelope - it
+        # never got far enough to write one.
         #
-        errors.write(completed.stderr.strip() or "ERROR: the status helper returned no result")
-        errors.write("\n")
-        return completed.returncode or EXIT_UNAVAILABLE
+        return without_answer(
+            completed,
+            operation=OPERATION,
+            cluster=cluster_id,
+            json_mode=json_mode,
+            writer=writer,
+            errors=errors,
+            fallback="the status helper returned no result",
+        )
 
     if json_mode:
-        writer.write(json.dumps(envelope, separators=(",", ":"), sort_keys=True) + "\n")
-        return completed.returncode
+        return write_document(writer, envelope, completed.returncode)
 
     try:
         #

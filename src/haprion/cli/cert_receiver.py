@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
+from haprion import exit_codes
 from haprion.cert_lock import DEFAULT_LOCK_PATH
 from haprion.cert_receiver import (
     Locations,
@@ -32,12 +33,11 @@ from haprion.cert_receiver import (
     set_key,
     set_secret,
 )
-from haprion.cli.cert_publish import EXIT_NOT_ROOT
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import envelope, failure, new_request_id
+from haprion.helper_protocol import write_document
 
 OPERATION = "cert_receiver"
-EXIT_USAGE = 64
 
 USAGE = (
     "Usage:\n"
@@ -97,20 +97,20 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
     parsed = Arguments()
     if not argv or argv[0] not in {"add", "list", "remove", "secret", "key"}:
         writer.write(USAGE)
-        raise SystemExit(EXIT_USAGE)
+        raise SystemExit(exit_codes.USAGE)
     parsed.action = argv[0]
     index = 1
     if parsed.action != "list":
         if len(argv) < 2 or argv[1].startswith("-"):
             writer.write(USAGE)
-            raise SystemExit(EXIT_USAGE)
+            raise SystemExit(exit_codes.USAGE)
         parsed.receiver_id = argv[1]
         index = 2
 
     def value() -> str:
         if index + 1 >= len(argv) or argv[index + 1].startswith("-"):
             writer.write(USAGE)
-            raise SystemExit(EXIT_USAGE)
+            raise SystemExit(exit_codes.USAGE)
         return argv[index + 1]
 
     while index < len(argv):
@@ -138,7 +138,7 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
             index += 1
         else:
             writer.write(USAGE)
-            raise SystemExit(EXIT_USAGE)
+            raise SystemExit(exit_codes.USAGE)
     return parsed
 
 
@@ -201,7 +201,7 @@ def main(
                 message=message,
                 exit_code=exit_code,
             )
-            writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+            write_document(writer, document, exit_code)
         return exit_code
 
     #
@@ -217,18 +217,18 @@ def main(
             "bad_input",
             "this makes a password and prints it once: pass --show-password, "
             "or use the interface, which shows it on the page",
-            EXIT_USAGE,
+            exit_codes.USAGE,
         )
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-cert-receiver must run as root", EXIT_NOT_ROOT)
+        return refuse("not_root", "haprion-cert-receiver must run as root", exit_codes.NOT_ROOT)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
         runtime = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
             str(exc),
             exc.exit_code,
         )
@@ -263,7 +263,7 @@ def main(
         hashed = secret_hash(password) if password is not None else None
         if arguments.action == "key":
             if arguments.public_key is None:
-                return refuse("bad_input", "a new key needs --public-key <file>", EXIT_USAGE)
+                return refuse("bad_input", "a new key needs --public-key <file>", exit_codes.USAGE)
             result = set_key(
                 runtime,
                 receiver_id=arguments.receiver_id,

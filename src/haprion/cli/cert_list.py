@@ -18,14 +18,14 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, TextIO
 
-from haprion.cli.caller import usage
+from haprion import exit_codes
+from haprion.cli.caller import usage, without_answer
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
 
 OPERATION = "cert_list"
 HELPER = "/opt/haprion/current/bin/haprion-cert-list-helper"
 SUDO = "/usr/bin/sudo"
-EXIT_UNAVAILABLE = 68
 USAGE = (
     "Usage:\n  haprion-cert-list -c <cluster> [--json]\n  haprion-cert-list --registry [--json]\n"
 )
@@ -221,18 +221,23 @@ def main(
     try:
         document = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        errors.write(completed.stderr.strip() or "ERROR: the certificate helper returned no result")
-        errors.write("\n")
-        return completed.returncode or EXIT_UNAVAILABLE
+        return without_answer(
+            completed,
+            operation=OPERATION,
+            cluster=cluster_id,
+            json_mode=json_mode,
+            writer=writer,
+            errors=errors,
+            fallback="the certificate helper returned no result",
+        )
 
     if json_mode:
-        write_document(writer, document)
-        return completed.returncode
+        return write_document(writer, document, completed.returncode)
     try:
         _render_registry(document, writer) if registry_mode else _render(document, writer)
     except ValueError as exc:
         errors.write(f"ERROR: {exc}\n")
-        return completed.returncode or EXIT_UNAVAILABLE
+        return completed.returncode or exit_codes.UNAVAILABLE
     return completed.returncode
 
 

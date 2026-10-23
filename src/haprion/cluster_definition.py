@@ -47,6 +47,7 @@ from haprion import (
     backups,
     cert_registry,
     change_journal,
+    exit_codes,
     node_enrollment,
     node_publish,
     safe_yaml,
@@ -438,7 +439,9 @@ def sudoers_with(text: str, add: Sequence[str] = (), drop: Sequence[str] = ()) -
     ]
     if not any(line.startswith("User_Alias HAPROXY_EDITORS") for line in lines):
         raise EnrollmentError(
-            "dependency_unavailable", "the operator editing policy names no HAPROXY_EDITORS", 78
+            "dependency_unavailable",
+            "the operator editing policy names no HAPROXY_EDITORS",
+            exit_codes.CONFIG,
         )
     kept = [
         line
@@ -468,7 +471,7 @@ def _checked_sudoers(text: str, tools: Tools) -> None:
             "sudoers_invalid",
             "the editing policy would not parse; nothing was changed. "
             + (checked.stderr.strip() or checked.stdout.strip()),
-            70,
+            exit_codes.INTERNAL,
         )
 
 
@@ -514,7 +517,9 @@ def _candidate(
     registry_path = policy.certificate_registry
     if registry_path is None:
         raise EnrollmentError(
-            "dependency_unavailable", "the runtime policy names no certificate_registry", 78
+            "dependency_unavailable",
+            "the runtime policy names no certificate_registry",
+            exit_codes.CONFIG,
         )
     made: list[Path] = []
     try:
@@ -545,7 +550,9 @@ def _read(path: Path) -> bytes:
         return path.read_bytes()
     except FileNotFoundError:
         raise EnrollmentError(
-            "dependency_unavailable", f"{path} does not exist; it is created by the installer", 78
+            "dependency_unavailable",
+            f"{path} does not exist; it is created by the installer",
+            exit_codes.CONFIG,
         ) from None
 
 
@@ -805,7 +812,9 @@ def _create_repository(
 
 def _checked(completed: subprocess.CompletedProcess[str], what: str) -> None:
     if completed.returncode != 0:
-        raise EnrollmentError("repository_failed", f"{what} failed: {completed.stderr.strip()}", 70)
+        raise EnrollmentError(
+            "repository_failed", f"{what} failed: {completed.stderr.strip()}", exit_codes.INTERNAL
+        )
 
 
 def _remove(made: Sequence[Path]) -> None:
@@ -828,7 +837,7 @@ def plan_add(
             "dependency_unavailable",
             "the runtime policy names no certificate_registry, so clusters are created by hand "
             "here",
-            78,
+            exit_codes.CONFIG,
         )
     if spec.cluster in runtime.clusters:
         raise EnrollmentError("cluster_exists", f"there is already a cluster {spec.cluster!r}")
@@ -1011,7 +1020,9 @@ def add(
         for node in nodes:
             problem = node_enrollment.verify(node, spec.cluster, ask)
             if problem is not None:
-                raise EnrollmentError("node_unverified", f"{problem}. Nothing was changed.", 75)
+                raise EnrollmentError(
+                    "node_unverified", f"{problem}. Nothing was changed.", exit_codes.BLOCKED
+                )
     return Outcome(
         cluster=spec.cluster,
         action="added",
@@ -1044,7 +1055,9 @@ def remove(
         raise EnrollmentError("cluster_unknown", f"there is no cluster {cluster!r}")
     if policy.certificate_registry is None:
         raise EnrollmentError(
-            "dependency_unavailable", "the runtime policy names no certificate_registry", 78
+            "dependency_unavailable",
+            "the runtime policy names no certificate_registry",
+            exit_codes.CONFIG,
         )
     target = runtime.clusters[cluster]
 

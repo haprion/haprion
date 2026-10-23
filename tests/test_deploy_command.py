@@ -25,7 +25,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import node_ssh
+from haprion import exit_codes, node_ssh
 from haprion.cli import deploy, deploy_helper
 from haprion.cluster_lock import hold
 from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
@@ -206,7 +206,7 @@ class StatusIdentityTests(HelperFixture):
             lock_root=self.root / "locks",
             node_trigger=lambda node: 0,
         )
-        self.assertEqual(code, deploy_helper.EXIT_NO_IDENTITY)
+        self.assertEqual(code, exit_codes.CONFIG)
         self.assertIn("status_identity", err.getvalue())
         self.assertNotIn("deploy_identity", err.getvalue())
 
@@ -412,7 +412,7 @@ class HelperBehaviourTests(HelperFixture):
         self.cluster.node("node-a").owns_vip = None
 
         blocked, _, _ = self.run_helper(request())
-        self.assertEqual(blocked, 65)
+        self.assertEqual(blocked, exit_codes.BLOCKED)
 
         self.cluster = pair()
         self.cluster.node("node-a").owns_vip = None
@@ -434,7 +434,7 @@ class HelperBehaviourTests(HelperFixture):
             code = deploy_helper.run_trigger(["ssh", "node-a"], "node-a", shown)
 
         self.assertEqual(asked["timeout"], deploy_helper.TRIGGER_TIMEOUT_SECONDS)
-        self.assertEqual(code, deploy_helper.EXIT_TRIGGER_TIMEOUT)
+        self.assertEqual(code, exit_codes.TIMED_OUT)
         self.assertIn("Fetching...", shown.getvalue())
         self.assertIn("node-a gave no answer within 300 seconds", shown.getvalue())
         self.assertIn("ServerAliveInterval=15", node_ssh.SSH_OPTIONS)
@@ -460,7 +460,7 @@ class CertificatePreflightTests(HelperFixture):
             request(json=True), policy_path=self.runtime(distributed=REFERENCED)
         )
 
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertEqual(self.triggered, [])
         document = assert_contract("haprion-deploy", out)
         self.assertEqual(document["outcome"], "blocked")
@@ -511,7 +511,7 @@ class CertificatePreflightTests(HelperFixture):
             request(json=True), policy_path=self.runtime(distributed=("example.com",))
         )
 
-        self.assertEqual(code, deploy_helper.EXIT_CERTIFICATE_MISSING)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertEqual(self.triggered, [])
         self.assertIn("[certificate_missing]", err)
         self.assertIn("example.net", err)
@@ -549,7 +549,7 @@ class CertificatePreflightTests(HelperFixture):
             policy_path=self.runtime(distributed=REFERENCED, authorities=("corp-root",)),
         )
 
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertEqual(self.triggered, [])
         document = assert_contract("haprion-deploy", out)
         self.assertEqual(document["error"]["code"], "certificates_not_deployed")
@@ -571,7 +571,7 @@ class CertificatePreflightTests(HelperFixture):
 
         code, out, _ = self.run_helper(request(), policy_path=self.runtime(distributed=REFERENCED))
 
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("ERROR: [certificates_not_deployed]", out)
         self.assertIn("Run haprion-cert-deploy -c alpha first, then deploy again", out)
 
@@ -653,7 +653,7 @@ class RefusalContractTests(HelperFixture):
             lock_root=self.root / "locks",
             node_trigger=lambda node: 0,
         )
-        self.assertEqual(code, deploy_helper.EXIT_NO_IDENTITY)
+        self.assertEqual(code, exit_codes.CONFIG)
         document = assert_contract("haprion-deploy", out.getvalue())
         self.assertEqual(document["error"]["code"], "dependency_unavailable")
         self.assertEqual(document["outcome"], "failed")

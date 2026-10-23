@@ -44,7 +44,7 @@ from typing import Any
 
 import psycopg
 import yaml
-from haprion import ndes_profiles
+from haprion import exit_codes, ndes_profiles
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.dns_profiles import ProfileError
 
@@ -55,7 +55,6 @@ OPERATION = "profiles_apply"
 MAX_FILE_BYTES = 256 * 1024
 MAX_PROFILES = 64
 WAIT_SECONDS = job_wait.WAIT_SECONDS
-EXIT_REFUSED = 65
 
 
 class ApplyError(Exception):
@@ -429,11 +428,11 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
     except (ApplyError, config.ConfigError) as exc:
         if args.json:
             print(json.dumps(envelope(None, str(exc))))
-            return EXIT_REFUSED
+            return exit_codes.REFUSED
         for entry in applied:
             print(f"{entry['kind']} {entry['profile']}: job {entry['job']} {entry['state']}")
         print(f"ERROR: {exc}", file=sys.stderr)
-        return EXIT_REFUSED
+        return exit_codes.REFUSED
     result = summary(the_plan, check=args.check, applied=applied)
     if args.json:
         print(json.dumps(envelope(result, None)))
@@ -459,7 +458,7 @@ def command_remove(args: argparse.Namespace, *, sleep: Callable[[float], None] =
             print(json.dumps(envelope(None, message)))
         else:
             print(f"ERROR: {message}", file=sys.stderr)
-        return EXIT_REFUSED
+        return exit_codes.REFUSED
 
     with connect(load_environment()) as connection:
         row = next((row for row in kind.listed(connection) if row.id == args.profile), None)
@@ -554,14 +553,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     contract = envelope if args.command in ("apply", "remove") else None
     if os.geteuid() != 0:
-        return refused(args, "run this with sudo", 77, contract)
+        return refused(args, "run this with sudo", exit_codes.NOT_ROOT, contract)
     try:
         commands = {"apply": command_apply, "remove": command_remove, "list": command_list}
         return commands[args.command](args)
     except AdminError as exc:
-        return refused(args, str(exc), 64, contract)
+        return refused(args, str(exc), exit_codes.USAGE, contract)
     except psycopg.Error as exc:
-        return refused(args, f"database: {exc}", 74, contract)
+        return refused(args, f"database: {exc}", exit_codes.IO_ERROR, contract)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

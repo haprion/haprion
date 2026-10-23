@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from haprion import dnsdist_config, node_ssh
+from haprion import dnsdist_config, exit_codes, node_ssh
 from haprion.cluster_status import addresses_current, forwarding_current, ipvs_current
 from haprion.config import DeployIdentity, Node
 from haprion.deploy_plan import NodeObservation, ReleaseTarget, VipState
@@ -56,14 +56,6 @@ from haprion.release_layout import parse_release_file
 
 OPERATION = "status"
 
-#
-# Carried over unchanged from the command being replaced. A wrapper reads these,
-# and 69 in particular is the difference between "the cluster is degraded" and
-# "the cluster could not be read at all".
-#
-EXIT_OK = 0
-EXIT_PARTIAL = 69
-EXIT_UNAVAILABLE = 68
 
 #
 # The top level of schemas/v1/haprion-status.schema.json#/$defs/node_status. A
@@ -97,10 +89,6 @@ REQUIRED_NODE_STATUS_KEYS = frozenset(
 # broken one.
 #
 STATUS_TIMEOUT_SECONDS = 60
-#
-# What a read that ran out of time reports, in the family of `timeout(1)`.
-#
-TIMED_OUT = 124
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +124,7 @@ def ask_node(node: Node, identity: DeployIdentity) -> NodeResponse:
             timeout=STATUS_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        return NodeResponse(exit_code=TIMED_OUT, stdout="")
+        return NodeResponse(exit_code=exit_codes.TIMED_OUT, stdout="")
     return NodeResponse(exit_code=completed.returncode, stdout=completed.stdout)
 
 
@@ -423,7 +411,7 @@ def _node_result(
             "code": "ssh_unreachable",
             "message": (
                 f"SSH gave no answer within {STATUS_TIMEOUT_SECONDS} seconds"
-                if response.exit_code == TIMED_OUT
+                if response.exit_code == exit_codes.TIMED_OUT
                 else f"SSH failed with exit {response.exit_code}"
             ),
             "node": node.name,
@@ -589,8 +577,8 @@ class StatusReport:
     @property
     def exit_code(self) -> int:
         if self.valid_nodes == self.configured_nodes:
-            return EXIT_OK
-        return EXIT_PARTIAL if self.valid_nodes > 0 else EXIT_UNAVAILABLE
+            return exit_codes.OK
+        return exit_codes.PARTIAL if self.valid_nodes > 0 else exit_codes.UNAVAILABLE
 
     def as_envelope(self, cluster: str, *, request_id: str) -> dict[str, Any]:
         if self.valid_nodes == 0:

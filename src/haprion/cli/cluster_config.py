@@ -5,6 +5,7 @@ import ipaddress
 import sys
 from pathlib import Path
 
+from haprion import exit_codes
 from haprion.cluster_definition import seed_files
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 
@@ -91,7 +92,7 @@ def _seed(
                 parser.error(f"not an IP address: {address}")
     if not directory.is_dir() or any(directory.iterdir()):
         print(f"ERROR: {directory} is not an empty directory", file=sys.stderr)
-        return 73
+        return exit_codes.CANNOT_CREATE
     for relative, content in seed_files(vip or None, source or None).items():
         path = directory / relative
         path.parent.mkdir(parents=True, exist_ok=True)

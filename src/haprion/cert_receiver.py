@@ -47,7 +47,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_registry, ui_interface
+from haprion import cert_registry, exit_codes, ui_interface
 from haprion.cert_lock import DEFAULT_LOCK_PATH
 from haprion.cert_publish import PublishError
 from haprion.config import (
@@ -133,7 +133,7 @@ class ReceiverError(Exception):
         code: str,
         message: str,
         *,
-        exit_code: int = 64,
+        exit_code: int = exit_codes.USAGE,
         details: dict[str, Any] | None = None,
     ):
         super().__init__(message)
@@ -392,11 +392,15 @@ def create_account(owner: str, home: Path, transport: str, tools: Tools) -> None
         [USERADD, "--system", "--home-dir", str(home), "--shell", shell, owner]
     )
     if code != 0:
-        raise ReceiverError("account_failed", f"useradd {owner} failed: {output}", exit_code=74)
+        raise ReceiverError(
+            "account_failed", f"useradd {owner} failed: {output}", exit_code=exit_codes.IO_ERROR
+        )
     code, output = tools.run([PASSWD_BIN, "--lock", owner])
     if code != 0:
         raise ReceiverError(
-            "account_failed", f"{PASSWD_BIN} --lock {owner} failed: {output}", exit_code=74
+            "account_failed",
+            f"{PASSWD_BIN} --lock {owner} failed: {output}",
+            exit_code=exit_codes.IO_ERROR,
         )
 
 
@@ -442,7 +446,7 @@ def create_directory(path: Path, owner: str) -> Layer:
         _own(path, owner, 0o750)
     except OSError as exc:
         raise ReceiverError(
-            "write_failed", f"{path} could not be created: {exc}", exit_code=74
+            "write_failed", f"{path} could not be created: {exc}", exit_code=exit_codes.IO_ERROR
         ) from exc
     return Layer("directory", "created", str(path))
 
@@ -537,7 +541,7 @@ def read_ui_tls(locations: Locations) -> dict[str, str]:
             "dependency_unavailable",
             f"{exc}; an https receiver is served under the interface's own certificate, "
             "which that file names.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         ) from exc
     return {
         "TLS_CERT": str(config.cert),
@@ -562,12 +566,16 @@ def secret_hash(password: str) -> str:
     #
     if not library.crypt_gensalt_rn(b"$y$", 0, None, 0, setting, _CRYPT_OUTPUT_SIZE):
         raise ReceiverError(
-            "dependency_unavailable", "libcrypt made no yescrypt salt", exit_code=69
+            "dependency_unavailable",
+            "libcrypt made no yescrypt salt",
+            exit_code=exit_codes.UNAVAILABLE,
         )
     hashed = crypt(password, setting.value.decode("ascii"))
     if not SECRET_HASH.fullmatch(hashed):
         raise ReceiverError(
-            "dependency_unavailable", "libcrypt made no yescrypt hash", exit_code=69
+            "dependency_unavailable",
+            "libcrypt made no yescrypt hash",
+            exit_code=exit_codes.UNAVAILABLE,
         )
     return hashed
 
@@ -585,7 +593,11 @@ def crypt(password: str, setting: str) -> str:
     #
     hashed = ctypes.string_at(result).decode("ascii") if result else "*"
     if hashed.startswith("*"):
-        raise ReceiverError("dependency_unavailable", "libcrypt refused the setting", exit_code=69)
+        raise ReceiverError(
+            "dependency_unavailable",
+            "libcrypt refused the setting",
+            exit_code=exit_codes.UNAVAILABLE,
+        )
     return hashed
 
 
@@ -682,7 +694,7 @@ def check_snippet_included(locations: Locations) -> None:
             "dependency_unavailable",
             f"{locations.ui_site} could not be read; an https receiver is served from the "
             "interface's own server block, and that is the file it lives in.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         ) from exc
     wanted = f"include {locations.nginx_snippet};"
     if not any(line.strip() == wanted for line in site.splitlines()):
@@ -691,7 +703,7 @@ def check_snippet_included(locations: Locations) -> None:
             f"{locations.ui_site} does not include {locations.nginx_snippet}, so nginx would "
             "never serve the receiver. Rerun install/platform/05-platform-nginx, which adds "
             "the include line to the interface's server block.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         )
 
 
@@ -726,13 +738,15 @@ def _write_checked(
         raise ReceiverError(
             "config_refused",
             f"{what} refused the change and it was taken back: {output}",
-            exit_code=74,
+            exit_code=exit_codes.IO_ERROR,
         )
     if reload is not None:
         code, output = tools.run(reload)
         if code != 0:
             raise ReceiverError(
-                "config_refused", f"{what} could not be reloaded: {output}", exit_code=74
+                "config_refused",
+                f"{what} could not be reloaded: {output}",
+                exit_code=exit_codes.IO_ERROR,
             )
     return Layer("lock", "created", str(path))
 
@@ -748,7 +762,7 @@ def _registry_path(policy: PathPolicy) -> Path:
             "dependency_unavailable",
             "no certificate registry is configured. Add certificate_registry to the runtime "
             "policy.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         )
     return policy.certificate_registry
 
@@ -853,7 +867,9 @@ def add(
     registry = runtime.registry
     if registry is None:
         raise ReceiverError(
-            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+            "dependency_unavailable",
+            "no certificate registry is configured",
+            exit_code=exit_codes.CONFIG,
         )
     if receiver_id in registry.receivers:
         raise ReceiverError(
@@ -869,7 +885,7 @@ def add(
                 "dependency_unavailable",
                 f"an https receiver is served by nginx as {HTTPS_OWNER}, and that account "
                 "does not exist",
-                exit_code=78,
+                exit_code=exit_codes.CONFIG,
             )
     else:
         account = owner or default_owner(receiver_id)
@@ -891,7 +907,7 @@ def add(
                 "dependency_unavailable",
                 "no receiver_root is configured, so there is nowhere to put the directory. "
                 "Add receiver_root to the runtime policy or pass --path.",
-                exit_code=78,
+                exit_code=exit_codes.CONFIG,
             )
         directory = policy.receiver_root / receiver_id
     if not directory.is_absolute():
@@ -952,7 +968,9 @@ def add(
         if isinstance(exc, ReceiverError) and not left:
             raise
         code, exit_code = (
-            (exc.code, exc.exit_code) if isinstance(exc, ReceiverError) else ("write_failed", 74)
+            (exc.code, exc.exit_code)
+            if isinstance(exc, ReceiverError)
+            else ("write_failed", exit_codes.IO_ERROR)
         )
         message = str(exc)
         if left:
@@ -1141,7 +1159,9 @@ def set_secret(
     registry = runtime.registry
     if registry is None:
         raise ReceiverError(
-            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+            "dependency_unavailable",
+            "no certificate registry is configured",
+            exit_code=exit_codes.CONFIG,
         )
     receiver = registry.receivers.get(receiver_id)
     if receiver is None:
@@ -1193,7 +1213,9 @@ def set_key(
     registry = runtime.registry
     if registry is None:
         raise ReceiverError(
-            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+            "dependency_unavailable",
+            "no certificate registry is configured",
+            exit_code=exit_codes.CONFIG,
         )
     receiver = registry.receivers.get(receiver_id)
     if receiver is None:
@@ -1218,7 +1240,7 @@ def set_key(
         raise ReceiverError(
             "write_failed",
             f"{keys} could not be read ({exc}); remove the receiver and register it again",
-            exit_code=74,
+            exit_code=exit_codes.IO_ERROR,
         ) from exc
     lock = LOCK_FROM.search(written[0]) if len(written) == 1 else None
     if lock is None:
@@ -1226,7 +1248,7 @@ def set_key(
             "write_failed",
             f"{keys} does not hold the one locked line it was written with; remove the "
             "receiver and register it again",
-            exit_code=74,
+            exit_code=exit_codes.IO_ERROR,
         )
     options = ["restrict", f'from="{lock.group(1)}"']
     if receiver.transport == "rsync":
@@ -1238,7 +1260,7 @@ def set_key(
         try:
             layer = write_authorized_keys(receiver.path, line)
         except OSError as exc:
-            raise ReceiverError("write_failed", str(exc), exit_code=74) from exc
+            raise ReceiverError("write_failed", str(exc), exit_code=exit_codes.IO_ERROR) from exc
     return Result(receiver_id, "key", (layer,), ())
 
 
@@ -1256,7 +1278,9 @@ def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:
     registry = runtime.registry
     if registry is None:
         raise ReceiverError(
-            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+            "dependency_unavailable",
+            "no certificate registry is configured",
+            exit_code=exit_codes.CONFIG,
         )
     rows: list[dict[str, Any]] = []
     for receiver_id, receiver in sorted(registry.receivers.items()):
@@ -1307,7 +1331,9 @@ def remove(
     registry = runtime.registry
     if registry is None:
         raise ReceiverError(
-            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+            "dependency_unavailable",
+            "no certificate registry is configured",
+            exit_code=exit_codes.CONFIG,
         )
     receiver = registry.receivers.get(receiver_id)
     if receiver is None:
@@ -1364,7 +1390,7 @@ def remove(
     except ReceiverError:
         raise
     except (OSError, cert_registry.RegistryError) as exc:
-        raise ReceiverError("write_failed", str(exc), exit_code=74) from exc
+        raise ReceiverError("write_failed", str(exc), exit_code=exit_codes.IO_ERROR) from exc
     return Result(receiver_id, "removed", tuple(layers))
 
 

@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, TextIO
 
+from haprion import exit_codes
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     VALIDATION_CERTIFICATE,
@@ -53,7 +54,7 @@ from haprion.config import (
     load_policy,
     load_runtime_config,
 )
-from haprion.envelope import BLOCKED_EXIT, envelope, failure
+from haprion.envelope import envelope, failure
 from haprion.git_command import GitError
 from haprion.git_command import git as _git
 from haprion.helper_protocol import (
@@ -115,7 +116,7 @@ MESSAGE = "Revert configuration to version {version}"
 def parse_version(raw: JsonValue) -> int:
     if type(raw) is not int or raw < 1:
         raise HelperProtocolError(
-            "parameters.version must be a positive version number", exit_code=65
+            "parameters.version must be a positive version number", exit_code=exit_codes.REFUSED
         )
     return raw
 
@@ -123,7 +124,7 @@ def parse_version(raw: JsonValue) -> int:
 def parse_expected_commit(raw: JsonValue) -> str:
     if not isinstance(raw, str) or len(raw) != 40 or not all(c in "0123456789abcdef" for c in raw):
         raise HelperProtocolError(
-            "parameters.expected_commit must be a full commit ID", exit_code=65
+            "parameters.expected_commit must be a full commit ID", exit_code=exit_codes.REFUSED
         )
     return raw
 
@@ -134,7 +135,9 @@ def parse_expected_head(raw: JsonValue) -> str | None:
     if raw is None:
         return None
     if not isinstance(raw, str) or len(raw) != 40 or not all(c in "0123456789abcdef" for c in raw):
-        raise HelperProtocolError("parameters.expected_head must be a full commit ID", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.expected_head must be a full commit ID", exit_code=exit_codes.REFUSED
+        )
     return raw
 
 
@@ -217,7 +220,9 @@ def main(
     try:
         require_no_arguments(arguments)
         if require_root and os.geteuid() != 0:
-            raise HelperProtocolError("revert helper must run as root", exit_code=77)
+            raise HelperProtocolError(
+                "revert helper must run as root", exit_code=exit_codes.NOT_ROOT
+            )
         request = read_helper_request(
             stream,
             expected_operation=OPERATION,
@@ -251,7 +256,7 @@ def main(
         # side by side without guessing. Added 2026-08-31 as F1b.
         #
         errors.write(f"ERROR: [{code}] {message}\n")
-        write_document(
+        return write_document(
             output,
             failure(
                 operation=REVERT_OPERATION,
@@ -262,8 +267,8 @@ def main(
                 exit_code=exit_code,
                 details=details,
             ),
+            exit_code,
         )
-        return exit_code
 
     try:
         version = parse_version(request.parameters.get("version"))
@@ -278,7 +283,7 @@ def main(
         return refuse("bad_input", str(exc), exc.exit_code)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
             str(exc),
             exc.exit_code,
         )
@@ -351,7 +356,7 @@ def _revert(
         return refuse(
             "dirty_worktree",
             f"there are unsaved changes in {repo}. Publish or discard them before reverting.",
-            BLOCKED_EXIT,
+            exit_codes.BLOCKED,
         )
 
     branch, head = resolve_head(repo)
@@ -379,7 +384,7 @@ def _revert(
             "expected_target_changed",
             f"this revert was recorded as version {own.version}, and version {from_version} "
             "has been recorded since. It is not run again, so the later version stays.",
-            BLOCKED_EXIT,
+            exit_codes.BLOCKED,
         )
 
     #
@@ -393,7 +398,7 @@ def _revert(
             f"the repository changed during the revert; version {version} no longer "
             f"points at the same commit. Expected {expected_commit}, "
             f"now {actual or 'missing'}. Check the version list and try again.",
-            BLOCKED_EXIT,
+            exit_codes.BLOCKED,
         )
 
     if own is None and expected_head is not None and head != expected_head:
@@ -402,7 +407,7 @@ def _revert(
             f"the configuration moved since the revert was asked for: version {from_version} "
             "was recorded after the version list was read. Nothing was changed; check the "
             "version list and try again.",
-            BLOCKED_EXIT,
+            exit_codes.BLOCKED,
         )
 
     target_tree = _tree_of(repo, expected_commit)
@@ -435,7 +440,7 @@ def _revert(
             group=group,
             change_owner=change_owner,
         )
-        write_document(
+        return write_document(
             output,
             envelope(
                 operation=REVERT_OPERATION,
@@ -476,8 +481,8 @@ def _revert(
                     already_current=installed.already_current,
                 ),
             ),
+            0,
         )
-        return 0
 
     artifact = build_node_artifact(target_files)
     index = build_release_index(target_files)
@@ -508,7 +513,7 @@ def _revert(
             "candidate_invalid",
             f"the content of version {version} is not valid for this cluster today. "
             "No version was created and nothing was published.",
-            65,
+            exit_codes.REFUSED,
             {"diagnostics": result.diagnostics, "restored_version": version},
         )
 
@@ -542,7 +547,7 @@ def _revert(
         change_owner=change_owner,
     )
 
-    write_document(
+    return write_document(
         output,
         envelope(
             operation=REVERT_OPERATION,
@@ -562,8 +567,8 @@ def _revert(
                 already_current=installed.already_current,
             ),
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

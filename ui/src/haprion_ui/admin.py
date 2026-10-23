@@ -36,13 +36,13 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+from haprion import exit_codes
 
 from haprion_ui import account_apply, auth, db, users
 
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
 
-EXIT_REFUSED = 65
 
 # The floor is shared with the web's own password change; see auth.
 MINIMUM_PASSWORD_LENGTH = auth.MINIMUM_PASSWORD_LENGTH
@@ -279,7 +279,7 @@ def command_delete(environment: Environment, args: argparse.Namespace) -> int:
         user_id = _user_id(connection, args.username)
         if not args.yes:
             print(f"would delete {args.username} and its sessions; repeat with --yes to do it")
-            return 64
+            return exit_codes.USAGE
         with connection.cursor() as cursor:
             cursor.execute("delete from app_user where id = %s", (user_id,))
         _audit(connection, "account_deleted", args.username)
@@ -451,7 +451,7 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
             print(json.dumps(account_apply.envelope(None, str(exc))))
         else:
             print(f"ERROR: {exc}", file=sys.stderr)
-        return EXIT_REFUSED
+        return exit_codes.REFUSED
     result = account_apply.summary(the_plan, check=args.check)
     if args.json:
         print(json.dumps(account_apply.envelope(result, None)))
@@ -616,14 +616,14 @@ def main(argv: list[str] | None = None) -> int:
         # role - which reads as a broken installation rather than as the answer
         # to "may I do this".
         #
-        return refused(args, "run this with sudo", 77, contract)
+        return refused(args, "run this with sudo", exit_codes.NOT_ROOT, contract)
     try:
         environment = load_environment()
         return COMMANDS[args.command](environment, args)
     except AdminError as exc:
-        return refused(args, str(exc), 64, contract)
+        return refused(args, str(exc), exit_codes.USAGE, contract)
     except psycopg.Error as exc:
-        return refused(args, f"database: {exc}", 74, contract)
+        return refused(args, f"database: {exc}", exit_codes.IO_ERROR, contract)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

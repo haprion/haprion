@@ -46,6 +46,7 @@ from haprion import (
     cert_registry,
     change_journal,
     cluster_definition,
+    exit_codes,
     node_enrollment,
     node_join,
     node_publish,
@@ -205,7 +206,7 @@ def _refuse(
     request: HelperRequest, output: TextIO, errors: TextIO, code: str, message: str, exit_code: int
 ) -> int:
     errors.write(f"ERROR: [{code}] {message}\n")
-    write_document(
+    return write_document(
         output,
         failure(
             operation=request.operation,
@@ -215,21 +216,25 @@ def _refuse(
             message=message,
             exit_code=exit_code,
         ),
+        exit_code,
     )
-    return exit_code
 
 
 def _text(parameters: Mapping[str, JsonValue], key: str) -> str:
     value = parameters.get(key)
     if not isinstance(value, str) or not value:
-        raise HelperProtocolError(f"parameters.{key} must be a non-empty string", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} must be a non-empty string", exit_code=exit_codes.REFUSED
+        )
     return value
 
 
 def _texts(parameters: Mapping[str, JsonValue], key: str) -> list[str]:
     value = parameters.get(key)
     if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
-        raise HelperProtocolError(f"parameters.{key} must be a list of strings", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} must be a list of strings", exit_code=exit_codes.REFUSED
+        )
     return [str(item) for item in value]
 
 
@@ -239,7 +244,9 @@ def _only(parameters: Mapping[str, JsonValue], allowed: set[str], what: str) -> 
     #
     extra = sorted(set(parameters) - allowed - {"requested_by"})
     if extra:
-        raise HelperProtocolError(f"{what} takes no {', '.join(extra)}", exit_code=65)
+        raise HelperProtocolError(
+            f"{what} takes no {', '.join(extra)}", exit_code=exit_codes.REFUSED
+        )
 
 
 type Work = Callable[[PathPolicy, RuntimeConfig, AskNode, JoinNode], Any]
@@ -255,11 +262,15 @@ def _sealed(value: JsonValue, what: str) -> tuple[str, bytes] | None:
         or set(value) != {"key_id", "ciphertext"}
         or not all(isinstance(value[name], str) and value[name] for name in value)
     ):
-        raise HelperProtocolError(f"{what} must be a key_id and a ciphertext", exit_code=65)
+        raise HelperProtocolError(
+            f"{what} must be a key_id and a ciphertext", exit_code=exit_codes.REFUSED
+        )
     try:
         box = base64.b64decode(str(value["ciphertext"]), validate=True)
     except ValueError:
-        raise HelperProtocolError(f"{what}'s ciphertext is not base64", exit_code=65) from None
+        raise HelperProtocolError(
+            f"{what}'s ciphertext is not base64", exit_code=exit_codes.REFUSED
+        ) from None
     return str(value["key_id"]), box
 
 
@@ -292,7 +303,7 @@ def _keyed(
         raise EnrollmentError(
             "dependency_unavailable",
             "runtime policy.acme.dns_profiles is not configured, so a sealed key cannot be opened",
-            78,
+            exit_codes.CONFIG,
         )
     key_id, box = sealed
     for key in node_join.private_keys(profiles.private_keys, require_secure=require_secure):
@@ -300,7 +311,7 @@ def _keyed(
             opened = node_join.open_join_key(key, box, cluster=cluster, node=enrollment.name)
             return replace(enrollment, join_key=opened)
     raise EnrollmentError(
-        "profile_key_unavailable", "the one-time key's sealing key is not here", 78
+        "profile_key_unavailable", "the one-time key's sealing key is not here", exit_codes.CONFIG
     )
 
 
@@ -331,12 +342,16 @@ def _node_work(
     parameters = request.parameters
     action = _text(parameters, "action")
     if action not in NODE_ACTIONS:
-        raise HelperProtocolError("parameters.action must be add, remove or host", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.action must be add, remove or host", exit_code=exit_codes.REFUSED
+        )
     if action == "host":
         _only(parameters, {"action", "node", "host"}, "a host change")
         moved = _text(parameters, "node")
         if not NAME.fullmatch(moved):
-            raise HelperProtocolError("parameters.node is not a node name", exit_code=65)
+            raise HelperProtocolError(
+                "parameters.node is not a node name", exit_code=exit_codes.REFUSED
+            )
         new_host = node_enrollment.host_name(_text(parameters, "host"))
         return lambda policy, runtime, ask, _join: node_enrollment.change_host(
             policy,
@@ -373,7 +388,9 @@ def _node_work(
     _only(parameters, {"action", "node"}, "a removal")
     name = _text(parameters, "node")
     if not NAME.fullmatch(name):
-        raise HelperProtocolError("parameters.node is not a node name", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.node is not a node name", exit_code=exit_codes.REFUSED
+        )
 
     def publish(remaining: Any) -> dict[str, Any]:
         return publisher(
@@ -404,7 +421,9 @@ def _define_work(
     parameters = request.parameters
     action = _text(parameters, "action")
     if action not in ACTIONS:
-        raise HelperProtocolError("parameters.action must be add or remove", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.action must be add or remove", exit_code=exit_codes.REFUSED
+        )
     if action == "remove":
         _only(parameters, {"action"}, "a removal")
         return lambda policy, runtime, _ask, _join: cluster_definition.remove(
@@ -418,7 +437,9 @@ def _define_work(
         )
     interface = parameters.get("address_interface")
     if interface is not None and not isinstance(interface, str):
-        raise HelperProtocolError("parameters.address_interface must be a string", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.address_interface must be a string", exit_code=exit_codes.REFUSED
+        )
     spec = cluster_definition.definition(
         request.cluster,
         display_name=_text(parameters, "display_name"),
@@ -438,7 +459,9 @@ def _define_work(
     if raw_keys is not None and (
         not isinstance(raw_keys, list) or len(raw_keys) != len(spec.nodes)
     ):
-        raise HelperProtocolError("parameters.join_keys must be one per block", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.join_keys must be one per block", exit_code=exit_codes.REFUSED
+        )
     sealed_keys = [
         _sealed(value, "parameters.join_keys")
         for value in (raw_keys if raw_keys is not None else [None] * len(spec.nodes))
@@ -572,7 +595,9 @@ def main(
     try:
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
-            raise HelperProtocolError("haprion-node-helper must run as root", exit_code=77)
+            raise HelperProtocolError(
+                "haprion-node-helper must run as root", exit_code=exit_codes.NOT_ROOT
+            )
         #
         # Read once, then parsed as the operation it names: the two share a
         # socket, and each is held to its own parameters.
@@ -639,7 +664,7 @@ def main(
                 "dependency_unavailable",
                 "the runtime policy names no status_identity, so a node cannot be asked "
                 "whether it answers as itself",
-                78,
+                exit_codes.CONFIG,
             )
 
         def ask_with_status(node: Node) -> NodeResponse:
@@ -737,7 +762,7 @@ def main(
             errors,
             "internal_error",
             f"a file could not be written ({exc}); every file was put back",
-            74,
+            exit_codes.IO_ERROR,
         )
 
     result = outcome.as_dict()
@@ -758,7 +783,7 @@ def main(
             result["next_command"] = f"haprion-deploy -c {request.cluster}"
     if converged_before is not None:
         result["converged_before"] = converged_before
-    write_document(
+    return write_document(
         output,
         envelope(
             operation=request.operation,
@@ -767,8 +792,8 @@ def main(
             request_id=request.request_id,
             result=result,
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

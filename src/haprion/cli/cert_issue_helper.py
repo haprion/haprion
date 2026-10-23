@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import dns_profiles, ui_interface
+from haprion import dns_profiles, exit_codes, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_issue import (
     RENEWAL_DIRECTORY,
@@ -148,17 +148,23 @@ def main(
             or not domain
             or len(domain.encode("utf-8")) > MAX_DOMAIN_BYTES
         ):
-            raise HelperProtocolError("parameters.domain must be a domain name", exit_code=65)
+            raise HelperProtocolError(
+                "parameters.domain must be a domain name", exit_code=exit_codes.REFUSED
+            )
         renew_flag = request.parameters.get("renew", False)
         if not isinstance(renew_flag, bool):
-            raise HelperProtocolError("parameters.renew must be true or false", exit_code=65)
+            raise HelperProtocolError(
+                "parameters.renew must be true or false", exit_code=exit_codes.REFUSED
+            )
         if renew_flag and set(request.parameters) - {"domain", "renew"}:
             raise HelperProtocolError(
-                "a renewal names the certificate and nothing else", exit_code=65
+                "a renewal names the certificate and nothing else", exit_code=exit_codes.REFUSED
             )
         method = request.parameters.get("method", "renew" if renew_flag else None)
         if not isinstance(method, str) or not method:
-            raise HelperProtocolError("parameters.method must be a string", exit_code=65)
+            raise HelperProtocolError(
+                "parameters.method must be a string", exit_code=exit_codes.REFUSED
+            )
         clusters = cert_job.clusters(request.parameters)
         receivers = cert_job.receivers(request.parameters)
         formats = cert_job.formats(request.parameters, receivers)
@@ -169,7 +175,7 @@ def main(
         if dns_profile_value is not None:
             dns_profile = dns_profiles.check_profile_id(dns_profile_value)
     except (HelperProtocolError, dns_profiles.ProfileError) as exc:
-        return refuse("bad_input", str(exc), 65)
+        return refuse("bad_input", str(exc), exit_codes.REFUSED)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -227,8 +233,7 @@ def main(
         return refuse(exc.code, str(exc), exc.exit_code, exc.details)
 
     document, exit_code = result_envelope(result, request_id=request.request_id)
-    write_document(writer, document)
-    return exit_code
+    return write_document(writer, document, exit_code)
 
 
 if __name__ == "__main__":

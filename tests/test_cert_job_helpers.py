@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml
 
+from haprion import exit_codes
 from haprion.cert_delete import Guards
 from haprion.cli import cert_issue_helper, cert_job, cert_publish_helper, cert_target_helper
 from haprion.envelope import new_request_id
@@ -345,7 +346,7 @@ class WhatRetargetingAnswers(HelperFixture):
             ),
         )
 
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         assert document is not None
         self.assertEqual(document["outcome"], "blocked")
         self.assertEqual(document["error"]["code"], "all_refused")
@@ -472,7 +473,7 @@ class WhatRetargetingAnswers(HelperFixture):
             guards_reader=lambda runtime, ids: Guards(),
         )
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.PARTIAL)
         assert document is not None
         # example.com leaves alpha; the keeper is then alpha's last and is refused.
         self.assertEqual(document["outcome"], "partial")
@@ -501,7 +502,7 @@ class WhatPublishingAnswers(HelperFixture):
             cert_publish_helper, self.request("cert_publish", {"certificates": [], "deploy": False})
         )
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.PARTIAL)
         assert document is not None
         self.assertEqual(document["outcome"], "partial")
         self.assertEqual(

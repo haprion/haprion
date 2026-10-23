@@ -27,13 +27,11 @@ from haprion.cert_publish import (
     Deployer,
     Installer,
     PublishError,
-    Report,
     publish,
 )
 from haprion.cli import cert_job
-from haprion.cli.cert_publish import default_deployer
+from haprion.cli.cert_publish import default_deployer, publish_exit_code, result_envelope
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
-from haprion.envelope import BLOCKED_EXIT, Message, envelope
 from haprion.helper_protocol import (
     HelperProtocolError,
     config_error_code,
@@ -64,65 +62,6 @@ def build_request(
         },
         separators=(",", ":"),
     )
-
-
-def result_envelope(report: Report, *, request_id: str) -> tuple[dict[str, object], int]:
-    """One report, turned into the one envelope and exit code it means.
-
-    Shared with the target helper, which publishes the certificate it just
-    retargeted and has to answer in exactly these terms.
-    """
-
-    warnings = tuple(
-        Message(code=entry.error[0], message=entry.error[1], node=entry.certificate_id)
-        for entry in report.skipped
-        if entry.error
-    ) + tuple(Message(code=code, message=message) for code, message in report.warnings)
-    failed = [entry.certificate_id for entry in report.failed]
-    not_deployed = [item.cluster for item in report.deployments if item.exit_code != 0]
-    if not failed and not not_deployed:
-        return (
-            envelope(
-                operation=OPERATION,
-                outcome="partial" if warnings else "done",
-                cluster=None,
-                request_id=request_id,
-                result=report.as_dict(),
-                warnings=warnings,
-            ),
-            0,
-        )
-    parts = []
-    if failed:
-        parts.append("not published: " + ", ".join(failed))
-    if not_deployed:
-        parts.append("not deployed: " + ", ".join(not_deployed))
-    return (
-        envelope(
-            operation=OPERATION,
-            outcome="failed",
-            cluster=None,
-            request_id=request_id,
-            result=report.as_dict(),
-            warnings=warnings,
-            error=Message(code="publish_failed", message="; ".join(parts)),
-        ),
-        1,
-    )
-
-
-def publish_exit_code(exc: PublishError) -> int:
-    """The publisher's refusal, in the contract's exit codes.
-
-    Three cases and no default that guesses: a lock is the one refusal the
-    contract calls `blocked` rather than `failed`, a bad request is the caller's,
-    and everything else is the installation's. Written out so a new refusal code
-    in the publisher lands as a decision somebody makes here.
-    """
-
-    if exc.code == "operation_locked":
-        return BLOCKED_EXIT
-    return 64 if exc.code == "bad_input" else 78
 
 
 def main(
@@ -195,8 +134,7 @@ def main(
         return refuse(exc.code, str(exc), publish_exit_code(exc))
 
     document, exit_code = result_envelope(report, request_id=request.request_id)
-    write_document(writer, document)
-    return exit_code
+    return write_document(writer, document, exit_code)
 
 
 if __name__ == "__main__":

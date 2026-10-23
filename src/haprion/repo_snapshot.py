@@ -27,6 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from haprion import exit_codes
 from haprion.git_command import GitError
 from haprion.git_command import git as _git
 
@@ -46,7 +47,7 @@ BLOB_MODE = "100644"
 class PublishError(Exception):
     """Publishing cannot proceed. Carries the exit code the CLI reports."""
 
-    def __init__(self, message: str, *, exit_code: int = 65):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.exit_code = exit_code
 
@@ -55,7 +56,7 @@ class ConcurrentUpdate(PublishError):
     """The repository moved while the candidate was being prepared."""
 
     def __init__(self, message: str):
-        super().__init__(message, exit_code=75)
+        super().__init__(message, exit_code=exit_codes.BLOCKED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,7 +238,7 @@ def _identity(repo: Path) -> dict[str, str]:
             raise PublishError(
                 f"the repository has no {setting}. Versions would be recorded under an "
                 "identity nobody chose; set it on the repository before publishing.",
-                exit_code=78,
+                exit_code=exit_codes.CONFIG,
             )
         for variable in variables:
             identity[variable] = value

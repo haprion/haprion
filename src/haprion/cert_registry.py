@@ -43,7 +43,7 @@ from typing import Any
 
 import yaml
 
-from haprion import safe_yaml
+from haprion import exit_codes, safe_yaml
 from haprion.cert_lock import DEFAULT_LOCK_PATH, LOCK_WAIT_SECONDS, hold
 from haprion.config import (
     DEFAULT_RECEIVER_FORMAT,
@@ -73,7 +73,7 @@ class RegistryError(Exception):
     plain text would have its code chosen again at each call site.
     """
 
-    def __init__(self, code: str, message: str, *, exit_code: int = 64):
+    def __init__(self, code: str, message: str, *, exit_code: int = exit_codes.USAGE):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
@@ -91,10 +91,14 @@ def read_document(path: Path) -> dict[str, Any]:
         loaded = safe_yaml.load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise RegistryError(
-            "dependency_unavailable", f"cannot read the registry: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"cannot read the registry: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
     if not isinstance(loaded, dict):
-        raise RegistryError("dependency_unavailable", "the registry is not a mapping", exit_code=78)
+        raise RegistryError(
+            "dependency_unavailable", "the registry is not a mapping", exit_code=exit_codes.CONFIG
+        )
     return loaded
 
 
@@ -112,7 +116,9 @@ def locked(path: Path = DEFAULT_LOCK_PATH, *, wait: int | None = None) -> Iterat
     with hold(
         path,
         wait=LOCK_WAIT_SECONDS if wait is None else wait,
-        refuse=lambda message: RegistryError("operation_locked", message, exit_code=75),
+        refuse=lambda message: RegistryError(
+            "operation_locked", message, exit_code=exit_codes.BLOCKED
+        ),
     ):
         yield
 
@@ -160,7 +166,9 @@ def write(
         metadata = path.stat()
     except OSError as exc:
         raise RegistryError(
-            "dependency_unavailable", f"cannot read the registry: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"cannot read the registry: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
 
     rendered = render(document, certificates, receivers)
@@ -171,7 +179,9 @@ def write(
         # Seen as a traceback once: a sandbox that opened the registry file's
         # readers but not its directory, which is where the temporary goes.
         raise RegistryError(
-            "dependency_unavailable", f"the registry could not be updated: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"the registry could not be updated: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
     try:
         os.fchown(handle, metadata.st_uid, metadata.st_gid)
@@ -237,7 +247,9 @@ def write(
         with contextlib.suppress(OSError):
             os.unlink(temporary)
         raise RegistryError(
-            "dependency_unavailable", f"the registry could not be updated: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"the registry could not be updated: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
 
 

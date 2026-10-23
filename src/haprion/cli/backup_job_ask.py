@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import BinaryIO, TextIO
 
 from haprion.cli.backup_job_helper import OPERATIONS
-from haprion.cli.socket_ask import EXIT_REFUSED, EXIT_SILENT, EXIT_UNAVAILABLE, Service, run
+from haprion.cli.socket_ask import Service, run
 
 SERVICE = Service(
     command="haprion-backup-job-ask",
@@ -20,9 +20,6 @@ SOCKET_PATH = SERVICE.socket_path
 TIMEOUT_SECONDS = SERVICE.timeout
 
 __all__ = [
-    "EXIT_REFUSED",
-    "EXIT_SILENT",
-    "EXIT_UNAVAILABLE",
     "SOCKET_PATH",
     "TIMEOUT_SECONDS",
     "main",

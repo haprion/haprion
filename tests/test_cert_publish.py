@@ -32,7 +32,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_pending, cert_publish
+from haprion import cert_pending, cert_publish, exit_codes
 from haprion.cert_inventory import registry_result
 from haprion.cert_publish import PublishError, publish
 from haprion.cli import cert_publish as command
@@ -576,7 +576,7 @@ class TheCommand(Fixture):
 
         code, out, _ = self.run_command(policy, "--json")
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.PARTIAL)
         document = json.loads(out)
         self.assertEqual(document["operation"], "cert_publish")
         self.assertEqual(document["outcome"], "partial")
@@ -589,8 +589,12 @@ class TheCommand(Fixture):
         self.assertEqual(by_id["lb.example.org"]["status"], "skipped")
         self.assertNotIn("PRIVATE", out)
 
+        #
+        # The terminal's exit is the envelope's outcome too (4-1): it said 0
+        # for the same skipped certificate the JSON called partial.
+        #
         code, out, _ = self.run_command(policy)
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.PARTIAL)
         self.assertIn("example.com: unchanged (cluster alpha)", out)
         self.assertIn("lb.example.org: skipped", out)
 

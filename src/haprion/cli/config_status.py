@@ -25,6 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
+from haprion import exit_codes
 from haprion.cli.caller import config_path as _config_path
 from haprion.cli.caller import usage
 from haprion.git_command import GitError
@@ -119,7 +120,7 @@ def main(
 
     if not is_repo_root(repo):
         errors.write(f"{describe_problem(cluster_id, repo)}\n")
-        return 68
+        return exit_codes.UNAVAILABLE
 
     try:
         saved = current_version(repo)

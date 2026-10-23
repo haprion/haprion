@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import ndes_profiles
+from haprion import exit_codes, ndes_profiles
 from haprion.cli import cert_job
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_registry
 from haprion.dns_profile_keys import KeyFileError, read_private_key
@@ -69,13 +69,15 @@ def main(
         if not isinstance(remove, bool):
             raise ProfileError("remove must be true or false")
     except (ProfileError, binascii.Error):
-        return refuse("bad_input", "NDES profile request has invalid fields", 65)
+        return refuse("bad_input", "NDES profile request has invalid fields", exit_codes.REFUSED)
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
     except ConfigError as exc:
         return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
     if policy.ndes is None:
-        return refuse("dependency_unavailable", "runtime policy.ndes is not configured", 78)
+        return refuse(
+            "dependency_unavailable", "runtime policy.ndes is not configured", exit_codes.CONFIG
+        )
     try:
         selected = None
         for path in policy.ndes.profiles.private_keys:
@@ -84,15 +86,19 @@ def main(
                 selected = candidate
                 break
         if selected is None:
-            return refuse("profile_key_unavailable", "NDES profile key is unavailable", 78)
+            return refuse(
+                "profile_key_unavailable", "NDES profile key is unavailable", exit_codes.CONFIG
+            )
     except KeyFileError:
-        return refuse("dependency_unavailable", "NDES profile key cannot be read", 78)
+        return refuse(
+            "dependency_unavailable", "NDES profile key cannot be read", exit_codes.CONFIG
+        )
     try:
         opened = ndes_profiles.open_profile(
             selected, ciphertext, profile_id=profile_id, revision=revision
         )
     except ProfileError as exc:
-        return refuse("profile_binding_mismatch", str(exc), 65)
+        return refuse("profile_binding_mismatch", str(exc), exit_codes.REFUSED)
     try:
         ndes_profiles.secure_directory(
             policy.ndes.profiles.directory, require_secure=require_secure
@@ -125,7 +131,7 @@ def main(
                         "profile_in_use",
                         f"profile {opened.profile_id!r} is referenced by certificate(s): "
                         + ", ".join(sorted(set(references))),
-                        65,
+                        exit_codes.REFUSED,
                     )
                 ndes_profiles.remove_materialized(
                     policy.ndes, opened.profile_id, require_secure=require_secure
@@ -135,14 +141,14 @@ def main(
         finally:
             os.close(fd)
     except BlockingIOError:
-        return refuse("busy", "another NDES profile apply is running", 75)
+        return refuse("busy", "another NDES profile apply is running", exit_codes.BLOCKED)
     except (ProfileError, OSError, ConfigError):
         return refuse(
             "dependency_unavailable",
             "NDES profile could not be applied; check protected policy and state",
-            78,
+            exit_codes.CONFIG,
         )
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -157,5 +163,5 @@ def main(
                 **({"removed": True} if remove else {}),
             },
         ),
+        0,
     )
-    return 0

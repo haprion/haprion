@@ -22,6 +22,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from haprion import exit_codes
 from haprion.cli import cert_receiver_ask
 from haprion.cli.cert_receiver_helper import build_request
 from tests.test_probe_socket import Listener
@@ -83,7 +84,7 @@ class AcrossTheSocket(unittest.TestCase):
 
         code, out, _ = run(self.request, socket_path=self.path)
 
-        self.assertEqual(code, cert_receiver_ask.EXIT_REFUSED)
+        self.assertEqual(code, exit_codes.FAILED)
         self.assertEqual(json.loads(out)["error"], {"code": "unknown_receiver"})
 
     def test_a_partial_removal_is_an_answer_too(self) -> None:
@@ -92,12 +93,12 @@ class AcrossTheSocket(unittest.TestCase):
 
         code, _, _ = run(self.request, socket_path=self.path)
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.PARTIAL)
 
     def test_nothing_listening_is_an_envelope_that_names_the_unit(self) -> None:
         code, out, err = run(self.request, socket_path=self.path)
 
-        self.assertEqual(code, cert_receiver_ask.EXIT_UNAVAILABLE)
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
         document = json.loads(out)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["operation"], "cert_receiver")
@@ -118,7 +119,7 @@ class AcrossTheSocket(unittest.TestCase):
 
         code, out, err = run(self.request, socket_path=self.path)
 
-        self.assertEqual(code, cert_receiver_ask.EXIT_SILENT)
+        self.assertEqual(code, exit_codes.FAILED)
         self.assertEqual(out, "")
         self.assertIn("[helper_silent]", err)
         self.assertIn("did not answer in time", err)

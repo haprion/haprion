@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import oidc
+from haprion import exit_codes, oidc
 from haprion.cli import cert_job
 from haprion.dns_profile_keys import KeyFileError, read_private_key
 from haprion.envelope import envelope
@@ -64,9 +64,6 @@ KEY_ID = re.compile(r"^[0-9a-f]{16}$")
 CLAIM_PATH = re.compile(r"^[A-Za-z0-9_:./-]{1,128}$")
 TOKEN = re.compile(r"^[A-Za-z0-9._~-]{16,512}$")
 
-EXIT_REFUSED = 64
-EXIT_BAD_INPUT = 65
-EXIT_UNAVAILABLE = 69
 
 __all__ = ["OPERATION", "main"]
 
@@ -76,7 +73,9 @@ def _text(parameters: Any, key: str, *, limit: int = 2048, required: bool = True
     if value is None and not required:
         return ""
     if not isinstance(value, str) or not value or len(value) > limit:
-        raise HelperProtocolError(f"parameters.{key} is missing or too long", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} is missing or too long", exit_code=exit_codes.REFUSED
+        )
     return value
 
 
@@ -85,14 +84,14 @@ def _secret(
 ) -> str:
     key_id = _text(parameters, "key_id", limit=16)
     if not KEY_ID.fullmatch(key_id):
-        raise HelperProtocolError("parameters.key_id is not a key ID", exit_code=65)
+        raise HelperProtocolError("parameters.key_id is not a key ID", exit_code=exit_codes.REFUSED)
     try:
         sealed = base64.b64decode(
             _text(parameters, "client_secret_sealed", limit=8192), validate=True
         )
     except (binascii.Error, ValueError) as exc:
         raise HelperProtocolError(
-            "parameters.client_secret_sealed is not base64", exit_code=65
+            "parameters.client_secret_sealed is not base64", exit_code=exit_codes.REFUSED
         ) from exc
     try:
         key = read_private_key(key_directory / f"{key_id}.key", owner=owner)
@@ -184,11 +183,13 @@ def _exchange(
     verifier = _text(parameters, "verifier", limit=128)
     nonce = _text(parameters, "nonce", limit=128)
     if not TOKEN.fullmatch(verifier) or not TOKEN.fullmatch(nonce):
-        raise HelperProtocolError("the verifier or nonce is not a token", exit_code=65)
+        raise HelperProtocolError(
+            "the verifier or nonce is not a token", exit_code=exit_codes.REFUSED
+        )
     username_claim = _text(parameters, "username_claim", limit=128)
     groups_claim = _text(parameters, "groups_claim", limit=128)
     if not CLAIM_PATH.fullmatch(username_claim) or not CLAIM_PATH.fullmatch(groups_claim):
-        raise HelperProtocolError("a claim is not a claim path", exit_code=65)
+        raise HelperProtocolError("a claim is not a claim path", exit_code=exit_codes.REFUSED)
 
     secret = _secret(
         parameters, issuer=issuer, client_id=client_id, key_directory=key_directory, owner=owner
@@ -257,7 +258,11 @@ def main(
     parameters = request.parameters
     action = parameters.get("action")
     if action not in ACTIONS:
-        return refuse("bad_input", f"parameters.action must be one of {', '.join(ACTIONS)}", 65)
+        return refuse(
+            "bad_input",
+            f"parameters.action must be one of {', '.join(ACTIONS)}",
+            exit_codes.REFUSED,
+        )
 
     try:
         issuer = oidc.issuer_url(_text(parameters, "issuer", limit=512))
@@ -278,9 +283,11 @@ def main(
         return refuse("bad_input", str(exc), exc.exit_code)
     except oidc.OidcError as exc:
         unavailable = exc.code in ("unreachable", "tls", "no_key")
-        return refuse(exc.code, str(exc), EXIT_UNAVAILABLE if unavailable else EXIT_REFUSED)
+        return refuse(
+            exc.code, str(exc), exit_codes.UNAVAILABLE if unavailable else exit_codes.REFUSED
+        )
 
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -289,8 +296,8 @@ def main(
             request_id=request.request_id,
             result=result,
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

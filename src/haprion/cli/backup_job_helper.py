@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import backup_retention, backup_schedule_write, state_backup
+from haprion import backup_retention, backup_schedule_write, exit_codes, state_backup
 from haprion.backup_schedule import Schedule
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope, failure
@@ -27,7 +27,6 @@ RUN = "backup_run"
 SCHEDULE = "backup_schedule"
 OPERATIONS = frozenset({RUN, SCHEDULE})
 HELPER = "/opt/haprion/current/bin/haprion-backup-job-helper"
-EXIT_NOT_ROOT = 77
 
 __all__ = ["HELPER", "RUN", "SCHEDULE", "build_run_request", "build_schedule_request", "main"]
 
@@ -96,14 +95,20 @@ def run_document(
 def _raw(stream: BinaryIO) -> tuple[bytes, str]:
     raw = stream.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
-        raise HelperProtocolError("helper request is larger than allowed", exit_code=65)
+        raise HelperProtocolError(
+            "helper request is larger than allowed", exit_code=exit_codes.REFUSED
+        )
     try:
         document = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise HelperProtocolError("helper request is not valid JSON", exit_code=65) from exc
+        raise HelperProtocolError(
+            "helper request is not valid JSON", exit_code=exit_codes.REFUSED
+        ) from exc
     operation = document.get("operation") if isinstance(document, dict) else None
     if operation not in OPERATIONS:
-        raise HelperProtocolError("operation is not allowed by this helper", exit_code=65)
+        raise HelperProtocolError(
+            "operation is not allowed by this helper", exit_code=exit_codes.REFUSED
+        )
     return raw, str(operation)
 
 
@@ -112,9 +117,11 @@ def _schedule(parameters: Mapping[str, JsonValue]) -> tuple[Schedule, bool]:
     try:
         requested = backup_schedule_write.schedule(parameters)
     except backup_schedule_write.ScheduleWriteError as exc:
-        raise HelperProtocolError(f"parameters: {exc}", exit_code=65) from exc
+        raise HelperProtocolError(f"parameters: {exc}", exit_code=exit_codes.REFUSED) from exc
     if type(enabled) is not bool:
-        raise HelperProtocolError("parameters.enabled must be true or false", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.enabled must be true or false", exit_code=exit_codes.REFUSED
+        )
     return requested, enabled
 
 
@@ -134,7 +141,7 @@ def _refuse(
     exit_code: int,
 ) -> int:
     errors.write(f"ERROR: [{code}] {message}\n")
-    write_document(
+    return write_document(
         writer,
         failure(
             operation=operation,
@@ -144,8 +151,8 @@ def _refuse(
             message=message,
             exit_code=exit_code,
         ),
+        exit_code,
     )
-    return exit_code
 
 
 def main(
@@ -163,10 +170,10 @@ def main(
     errors = error_stream or sys.stderr
     if argv:
         errors.write("ERROR: haprion-backup-job-helper accepts no arguments\n")
-        return 64
+        return exit_codes.USAGE
     if require_root and os.geteuid() != 0:
         errors.write("ERROR: haprion-backup-job-helper must run as root\n")
-        return EXIT_NOT_ROOT
+        return exit_codes.NOT_ROOT
     try:
         raw, operation = _raw(input_stream or sys.stdin.buffer)
         request = read_helper_request(
@@ -208,9 +215,9 @@ def main(
                 request_id=request.request_id,
                 code="schedule_failed",
                 message=str(exc),
-                exit_code=1,
+                exit_code=exit_codes.FAILED,
             )
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=operation,
@@ -219,8 +226,8 @@ def main(
                 request_id=request.request_id,
                 result=result.as_dict(),
             ),
+            0,
         )
-        return 0
 
     try:
         retention = backup_retention.read(request.cluster)
@@ -240,13 +247,12 @@ def main(
             request_id=request.request_id,
             code="backup_busy" if isinstance(exc, state_backup.BackupBusy) else "backup_failed",
             message=str(exc),
-            exit_code=1,
+            exit_code=exit_codes.FAILED,
         )
     document, exit_code = run_document(
         report, cluster=request.cluster, request_id=request.request_id
     )
-    write_document(writer, document)
-    return exit_code
+    return write_document(writer, document, exit_code)
 
 
 if __name__ == "__main__":

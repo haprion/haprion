@@ -29,11 +29,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
+from haprion import exit_codes
 from haprion.cli.caller import CallerError, usage
 from haprion.cli.caller import config_path as _config_path
 from haprion.digits import is_digits
 from haprion.envelope import envelope, failure
 from haprion.git_command import GitError
+from haprion.helper_protocol import write_document
 from haprion.repo_health import describe_problem, is_repo_root, unsaved_changes
 from haprion.repo_snapshot import resolve_head
 from haprion.version_history import count_versions, version_commit, version_summary
@@ -97,7 +99,7 @@ def _target_version(cluster_id: str, requested: str | None, total: int) -> int:
             "Examples:\n"
             f"  haprion-revert -c {cluster_id} 7\n\n"
             f"Run haprion-list -c {cluster_id} to list the versions.",
-            exit_code=64,
+            exit_code=exit_codes.USAGE,
         )
 
     version = int(requested)
@@ -167,8 +169,8 @@ def main(
     cluster_id, requested = _parse([item for item in argv if item != "--json"])
     request_id = str(uuid.uuid4())
 
-    def emit(document: dict[str, object]) -> None:
-        writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+    def emit(document: dict[str, object], exit_code: int) -> int:
+        return write_document(writer, document, exit_code)
 
     def refuse(code: str, message: str, exit_code: int) -> int:
         if json_mode:
@@ -180,7 +182,8 @@ def main(
                     code=code,
                     message=message,
                     exit_code=exit_code,
-                )
+                ),
+                exit_code,
             )
         else:
             writer.write(f"{'' if code == 'not_a_repository' else 'ERROR: '}{message}\n")
@@ -189,7 +192,9 @@ def main(
     try:
         repo = config_path(cluster_id)
         if not is_repo_root(repo):
-            return refuse("not_a_repository", describe_problem(cluster_id, repo), 68)
+            return refuse(
+                "not_a_repository", describe_problem(cluster_id, repo), exit_codes.UNAVAILABLE
+            )
 
         dirty = unsaved_changes(repo)
         if dirty:
@@ -197,7 +202,7 @@ def main(
                 "unsaved_changes",
                 f"there are unsaved changes in {repo}.\n\n{dirty}\n\n"
                 "Publish or discard them before reverting.",
-                65,
+                exit_codes.REFUSED,
             )
 
         total = count_versions(repo)
@@ -220,7 +225,8 @@ def main(
                             "deployment_required": False,
                             "next_command": None,
                         },
-                    )
+                    ),
+                    exit_codes.OK,
                 )
             else:
                 writer.write(f"Version {version} is already current for cluster '{cluster_id}'.\n")
@@ -232,7 +238,9 @@ def main(
         _, head = resolve_head(repo)
         summary = version_summary(repo, version, commit)
     except (CallerError, GitError) as exc:
-        return refuse("bad_input" if exc.exit_code == 64 else "refused", str(exc), exc.exit_code)
+        return refuse(
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "refused", str(exc), exc.exit_code
+        )
 
     if not json_mode:
         writer.write(
@@ -265,14 +273,13 @@ def main(
             return refuse(
                 "helper_failed",
                 (err.strip() or f"the revert failed with exit code {code}.")[:2048],
-                code or 70,
+                code or exit_codes.INTERNAL,
             )
         writer.write(err or f"ERROR: the revert failed with exit code {code}.\n")
-        return code or 70
+        return code or exit_codes.INTERNAL
 
     if json_mode:
-        emit(document)
-        return 0 if document.get("outcome") == "done" else code or 70
+        return emit(document, code)
 
     if document.get("outcome") != "done":
         error = document.get("error") or {}
@@ -280,7 +287,7 @@ def main(
         if diagnostics:
             writer.write(f"{diagnostics}\n")
         writer.write(f"ERROR: {error.get('message', 'the revert did not run.')}\n")
-        return code or 70
+        return code or exit_codes.INTERNAL
 
     result = document.get("result") or {}
     if not result.get("changed"):

@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope
 from haprion.git_command import GitError
@@ -57,7 +58,8 @@ def parse_limit(raw: object) -> int:
         return LIST_LIMIT
     if isinstance(raw, bool) or not isinstance(raw, int) or not 1 <= raw <= MAX_LIST_LIMIT:
         raise HelperProtocolError(
-            f"parameters.limit must be a whole number from 1 to {MAX_LIST_LIMIT}", exit_code=65
+            f"parameters.limit must be a whole number from 1 to {MAX_LIST_LIMIT}",
+            exit_code=exit_codes.REFUSED,
         )
     return raw
 
@@ -72,12 +74,9 @@ def parse_diffs(raw: object) -> tuple[str, ...]:
     ):
         raise HelperProtocolError(
             f"parameters.diffs must be a list of at most {MAX_DIFFS} full commit hashes",
-            exit_code=65,
+            exit_code=exit_codes.REFUSED,
         )
     return tuple(dict.fromkeys(raw))
-
-
-EXIT_NOT_ROOT = 77
 
 
 def main(
@@ -98,7 +97,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-list-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-list-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -141,7 +140,7 @@ def main(
     # the cluster as unreadable while the others keep rendering.
     #
     if not is_repo_root(repo):
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -154,8 +153,8 @@ def main(
                     message=describe_problem(request.cluster, repo),
                 ),
             ),
+            exit_codes.UNAVAILABLE,
         )
-        return 68
 
     target = read_target(Path(cluster.publish_path), cluster.node_path)
     try:
@@ -173,7 +172,7 @@ def main(
                 if commit in versions
             }
     except GitError as exc:
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -183,10 +182,10 @@ def main(
                 result=None,
                 error=Message(code="history_unavailable", message=str(exc)),
             ),
+            exc.exit_code,
         )
-        return exc.exit_code
 
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -195,8 +194,8 @@ def main(
             request_id=request.request_id,
             result=result,
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

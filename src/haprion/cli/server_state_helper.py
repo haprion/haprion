@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     ConfigError,
@@ -75,14 +76,6 @@ PARAMETERS = {
 
 HELPER = "/opt/haprion/current/bin/haprion-server-state-helper"
 SUDO = "/usr/bin/sudo"
-
-EXIT_NOT_ROOT = 77
-EXIT_NO_IDENTITY = 78
-#
-# Some node did not take every server: `partial` when another did, `failed`
-# when none did. Deploy's code for a cluster that did not converge.
-#
-EXIT_INCOMPLETE = 69
 
 
 def build_request(
@@ -176,7 +169,7 @@ def main(
         require_no_arguments(arguments)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "server state helper must run as root", exit_code=EXIT_NOT_ROOT
+                "server state helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         #
         # Read once, then parsed as the operation it names.
@@ -219,9 +212,9 @@ def main(
         except ServerStateError as exc:
             return refuse(exc.code, str(exc), exc.exit_code)
     elif state not in STATES:
-        return refuse("bad_input", f"state must be one of {', '.join(STATES)}", 65)
+        return refuse("bad_input", f"state must be one of {', '.join(STATES)}", exit_codes.REFUSED)
     elif not isinstance(servers, list) or not all(isinstance(entry, str) for entry in servers):
-        return refuse("bad_input", "servers must be a list of host:port", 65)
+        return refuse("bad_input", "servers must be a list of host:port", exit_codes.REFUSED)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -237,7 +230,7 @@ def main(
             "server_state_unavailable",
             "no server state identity is configured. Add server_state_identity with "
             "'user' and 'key' to the runtime policy.",
-            EXIT_NO_IDENTITY,
+            exit_codes.CONFIG,
         )
 
     try:
@@ -258,7 +251,9 @@ def main(
         return refuse(exc.code, str(exc), exc.exit_code)
     except (ConfigError, GitError, PublishError, ModelError, OSError) as exc:
         return refuse(
-            "dependency_unavailable", f"cannot read the cluster's newest version: {exc}", 66
+            "dependency_unavailable",
+            f"cannot read the cluster's newest version: {exc}",
+            exit_codes.NOT_FOUND,
         )
 
     if unblocking:
@@ -274,7 +269,7 @@ def main(
     result = _result(proxy.name, str(state), answers)
     missed = [answer for answer in answers if answer.outcome != "done"]
     if not missed:
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -283,8 +278,8 @@ def main(
                 request_id=request.request_id,
                 result=result,
             ),
+            0,
         )
-        return 0
 
     warnings = tuple(
         Message(
@@ -297,7 +292,7 @@ def main(
         for answer in missed
     )
     taken = len(answers) - len(missed)
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -313,8 +308,8 @@ def main(
                 message=f"no node took {state} for any of the servers",
             ),
         ),
+        exit_codes.PARTIAL if taken else exit_codes.FAILED,
     )
-    return EXIT_INCOMPLETE
 
 
 def _write_unblocked(
@@ -329,7 +324,7 @@ def _write_unblocked(
     result = _unblock_result(name, answers)
     missed = [answer for answer in answers if answer.outcome != "done"]
     if not missed:
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=UNBLOCK_OPERATION,
@@ -338,8 +333,8 @@ def _write_unblocked(
                 request_id=request_id,
                 result=result,
             ),
+            0,
         )
-        return 0
     warnings = tuple(
         Message(
             code="blocking_not_on_node" if answer.outcome == "refused" else "node_unblock_failed",
@@ -349,7 +344,7 @@ def _write_unblocked(
         for answer in missed
     )
     taken = len(answers) - len(missed)
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=UNBLOCK_OPERATION,
@@ -362,8 +357,8 @@ def _write_unblocked(
             if taken
             else Message(code="node_unblock_failed", message="no node lifted the block"),
         ),
+        exit_codes.PARTIAL if taken else exit_codes.FAILED,
     )
-    return EXIT_INCOMPLETE
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.cluster_settings import LOCATION, document_result, load_document
 from haprion.config import (
     DEFAULT_POLICY_PATH,
@@ -34,7 +35,6 @@ from haprion.repo_snapshot import read_tree_files, resolve_head
 
 OPERATION = "cluster_settings"
 PARAMETERS: frozenset[str] = frozenset()
-EXIT_NOT_ROOT = 77
 
 
 def settings_result(cluster: Cluster) -> dict[str, object]:
@@ -68,7 +68,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-cluster-settings-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-cluster-settings-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -108,7 +108,7 @@ def main(
             exit_code=exc.exit_code,
         )
 
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -117,8 +117,8 @@ def main(
             request_id=request.request_id,
             result=result,
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

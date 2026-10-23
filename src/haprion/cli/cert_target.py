@@ -26,15 +26,15 @@ import sys
 from collections.abc import Callable
 from typing import Any, TextIO
 
+from haprion import exit_codes
 from haprion.cert_retarget import HELPER, OPERATION
 from haprion.cli import cert_target_helper
+from haprion.cli.caller import without_answer
 from haprion.cli.cluster_settings import _through
-from haprion.envelope import failure, new_request_id
+from haprion.envelope import new_request_id
+from haprion.helper_protocol import write_document
 
 type RunHelper = Callable[[list[str], str], subprocess.CompletedProcess[str]]
-
-EXIT_USAGE = 64
-EXIT_UNAVAILABLE = 69
 
 
 def run_helper(argv: list[str], request: str) -> subprocess.CompletedProcess[str]:
@@ -96,11 +96,11 @@ def main(
         receiver, separator, form = given.partition("=")
         if not separator or not receiver or not form:
             errors.write(f"ERROR: --format takes <receiver>=<format>, not {given!r}\n")
-            return EXIT_USAGE
+            return exit_codes.USAGE
         formats[receiver] = form
     if not args.cluster and not args.receiver:
         errors.write("ERROR: name at least one --cluster or --receiver\n")
-        return EXIT_USAGE
+        return exit_codes.USAGE
     request = cert_target_helper.build_request(
         new_request_id(),
         certificates=tuple(args.certificates),
@@ -114,27 +114,16 @@ def main(
     try:
         document = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        message = completed.stderr.strip() or "the certificate target helper gave no answer"
-        errors.write(f"ERROR: {message}\n" if not message.startswith("ERROR") else f"{message}\n")
-        if args.json:
-            writer.write(
-                json.dumps(
-                    failure(
-                        operation=OPERATION,
-                        cluster=None,
-                        request_id=new_request_id(),
-                        code="dependency_unavailable",
-                        message=message[:2048],
-                        exit_code=completed.returncode or EXIT_UNAVAILABLE,
-                    ),
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-                + "\n"
-            )
-        return completed.returncode or EXIT_UNAVAILABLE
+        return without_answer(
+            completed,
+            operation=OPERATION,
+            cluster=None,
+            json_mode=args.json,
+            writer=writer,
+            errors=errors,
+            fallback="the certificate target helper gave no answer",
+        )
     if args.json:
-        writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
-    else:
-        summary(document, writer)
+        return write_document(writer, document, completed.returncode)
+    summary(document, writer)
     return completed.returncode

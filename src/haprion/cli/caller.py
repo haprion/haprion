@@ -17,24 +17,22 @@ Both are fixed here, in one place, for all four.
 from __future__ import annotations
 
 import io
+import subprocess
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, TextIO
 
+from haprion import exit_codes
 from haprion.cli import cluster_config
-
-#
-# What a shell command exits with when it was called wrongly, as opposed to when
-# it ran and failed. EX_USAGE from sysexits.h.
-#
-USAGE_EXIT = 64
+from haprion.envelope import failure, new_request_id
+from haprion.helper_protocol import write_document
 
 
 class CallerError(Exception):
     """Something the calling half found, before any privileged step ran."""
 
-    def __init__(self, message: str, *, exit_code: int = 65):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.exit_code = exit_code
 
@@ -77,4 +75,41 @@ def usage(text: str) -> NoReturn:
     """
 
     sys.stdout.write(text if text.endswith("\n") else f"{text}\n")
-    raise SystemExit(USAGE_EXIT)
+    raise SystemExit(exit_codes.USAGE)
+
+
+def without_answer(
+    completed: subprocess.CompletedProcess[str],
+    *,
+    operation: str,
+    cluster: str | None,
+    json_mode: bool,
+    writer: TextIO,
+    errors: TextIO,
+    fallback: str,
+) -> int:
+    """A helper that wrote no document: why on stderr and, with `--json`, the one document anyway.
+
+    The helper's own stderr is the reason - no sudo rule, no helper installed,
+    an unreadable runtime policy - and it is said once, on stderr. The read
+    commands wrote nothing at all to stdout then, so a playbook reading
+    `--json` had no document to read, where the apply commands already wrote
+    their refusal (review 2026-10-22, 4-2).
+    """
+
+    said = completed.stderr.strip() or fallback
+    errors.write(f"{said}\n" if said.startswith("ERROR") else f"ERROR: {said}\n")
+    if json_mode:
+        write_document(
+            writer,
+            failure(
+                operation=operation,
+                cluster=cluster,
+                request_id=new_request_id(),
+                code="dependency_unavailable",
+                message=said.removeprefix("ERROR: ")[:2048],
+                exit_code=exit_codes.UNAVAILABLE,
+            ),
+            exit_codes.UNAVAILABLE,
+        )
+    return exit_codes.UNAVAILABLE

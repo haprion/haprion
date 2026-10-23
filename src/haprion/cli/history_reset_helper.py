@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.helper_protocol import (
     HelperProtocolError,
@@ -68,7 +69,7 @@ def _group_id(name: str) -> int:
         raise ResetError(
             f"the group '{name}' does not exist. The new history would be "
             "unreadable to the management identity.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         ) from exc
 
 
@@ -92,7 +93,9 @@ def main(
     try:
         require_no_arguments(arguments)
         if require_root and os.geteuid() != 0:
-            raise HelperProtocolError("history reset helper must run as root", exit_code=77)
+            raise HelperProtocolError(
+                "history reset helper must run as root", exit_code=exit_codes.NOT_ROOT
+            )
 
         request = read_helper_request(
             stream,
@@ -101,7 +104,8 @@ def main(
         )
         if request.parameters.get("acknowledgement") != ACKNOWLEDGEMENT:
             raise HelperProtocolError(
-                "the request does not carry the operator's acknowledgement", exit_code=77
+                "the request does not carry the operator's acknowledgement",
+                exit_code=exit_codes.NOT_ROOT,
             )
 
         policy = load_policy(policy_path, require_secure=require_secure)

@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import ui_interface
+from haprion import exit_codes, ui_interface
 from haprion.cert_inventory import CertInventoryError, cert_list_result, manager_result
 from haprion.cert_receiver import manager_name
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
@@ -36,7 +36,6 @@ from haprion.helper_protocol import (
 
 OPERATION = "cert_list"
 PARAMETERS: frozenset[str] = frozenset()
-EXIT_NOT_ROOT = 77
 
 
 def main(
@@ -57,7 +56,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-cert-list-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-cert-list-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_scoped_request(
             input_stream or sys.stdin.buffer,
@@ -99,7 +98,7 @@ def main(
             request_id=request.request_id,
             code="certificate_metadata_unavailable",
             message="the runtime policy declares no certificate_root",
-            exit_code=65,
+            exit_code=exit_codes.REFUSED,
         )
 
     # The pending-request field is read from the NDES state root when the
@@ -124,7 +123,7 @@ def main(
             request_id=request.request_id,
             code="certificate_metadata_unavailable",
             message=str(exc),
-            exit_code=65,
+            exit_code=exit_codes.REFUSED,
         )
 
     #
@@ -133,7 +132,7 @@ def main(
     # whole listing for one damaged file would hide the other certificates -
     # including the ones a rollout could still use.
     #
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -142,8 +141,8 @@ def main(
             request_id=request.request_id,
             result=result,
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

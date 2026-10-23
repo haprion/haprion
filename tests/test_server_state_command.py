@@ -27,7 +27,7 @@ import yaml
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
-from haprion import server_state
+from haprion import exit_codes, server_state
 from haprion.cli import server_state as command
 from haprion.cli import server_state_helper
 from haprion.config import DeployIdentity, Node
@@ -250,7 +250,7 @@ class EveryNodeIsAskedForEveryServer(HelperFixture):
 
         code, document, _ = self.run_helper("shop", ["web/198.51.100.10:8080"], "drain", ask=ask)
 
-        self.assertEqual(code, server_state_helper.EXIT_INCOMPLETE)
+        self.assertEqual(code, exit_codes.PARTIAL)
         assert document is not None
         self.assertEqual(document["outcome"], "partial")
         warnings = document["warnings"]
@@ -284,7 +284,7 @@ class EveryNodeIsAskedForEveryServer(HelperFixture):
 
         code, document, _ = self.run_helper("shop", ["web/198.51.100.10:8080"], "ready", ask=ask)
 
-        self.assertEqual(code, server_state_helper.EXIT_INCOMPLETE)
+        self.assertEqual(code, exit_codes.FAILED)
         assert document is not None
         self.assertEqual(document["outcome"], "failed")
         error = document["error"]
@@ -386,7 +386,7 @@ class NothingIsSentForARequestThatIsWrong(HelperFixture):
         self.write_policy(identity=False)
         code, document, _ = self.run_helper("shop", ["web/198.51.100.10:8080"], "drain")
 
-        self.assertEqual(code, server_state_helper.EXIT_NO_IDENTITY)
+        self.assertEqual(code, exit_codes.CONFIG)
         assert document is not None
         error = document["error"]
         assert isinstance(error, dict)
@@ -493,7 +493,7 @@ class EveryNodeLiftsTheBlockTwice(HelperFixture):
 
         code, document, _ = self.run_unblock("store", ["203.0.113.7"], ask)
 
-        self.assertEqual(code, server_state_helper.EXIT_INCOMPLETE)
+        self.assertEqual(code, exit_codes.PARTIAL)
         assert document is not None
         self.assertEqual(document["outcome"], "partial")
         self.assertEqual(asked.count(self.nodes[1]), 1)

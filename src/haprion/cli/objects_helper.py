@@ -22,7 +22,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import crs, geo
+from haprion import crs, exit_codes, geo
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope
 from haprion.git_command import GitError
@@ -45,7 +45,6 @@ OPERATION = "objects"
 #
 PARAMETERS: frozenset[str] = frozenset({"unchanged_since"})
 FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
-EXIT_NOT_ROOT = 77
 
 type ReadTree = Callable[[Path, str], Mapping[str, bytes]]
 type ResolveHead = Callable[[Path], tuple[str, str]]
@@ -72,7 +71,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-objects-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-objects-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -82,7 +81,8 @@ def main(
         known = request.parameters.get("unchanged_since")
         if known is not None and (not isinstance(known, str) or not FINGERPRINT.match(known)):
             raise HelperProtocolError(
-                "parameters.unchanged_since must be a listing fingerprint", exit_code=65
+                "parameters.unchanged_since must be a listing fingerprint",
+                exit_code=exit_codes.REFUSED,
             )
     except HelperProtocolError as exc:
         #
@@ -110,7 +110,7 @@ def main(
         )
 
     def fail(code: str, message: str, exit_code: int) -> int:
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -120,8 +120,8 @@ def main(
                 result=None,
                 error=Message(code=code, message=message),
             ),
+            exit_code,
         )
-        return exit_code
 
     #
     # The network description the generator reads, for each object's VIP and
@@ -151,9 +151,9 @@ def main(
     except GitError as exc:
         return fail("objects_unavailable", str(exc), exc.exit_code)
     except ObjectsError as exc:
-        return fail("objects_invalid", str(exc), 65)
+        return fail("objects_invalid", str(exc), exit_codes.REFUSED)
 
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -163,5 +163,5 @@ def main(
             result=result,
             warnings=warnings,
         ),
+        0,
     )
-    return 0

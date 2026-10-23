@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import crs, geo, peers
+from haprion import crs, exit_codes, geo, peers
 from haprion.candidate_validation import DEFAULT_RUN_ROOT, SandboxValidator, validate_in_sandbox
 from haprion.cli.managed_helper import Change, Refusal, Refuse, Words, _publish, network_of
 from haprion.config import Cluster, ConfigError
@@ -127,7 +127,7 @@ def publish(
         try:
             return generated(base_files, cluster, addresses=addresses)
         except ConfigError as exc:
-            raise Refusal("changes_invalid", str(exc), 65) from exc
+            raise Refusal("changes_invalid", str(exc), exit_codes.REFUSED) from exc
 
     kept = _Kept(request)
     output = io.StringIO()

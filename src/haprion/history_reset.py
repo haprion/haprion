@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from haprion import accounts
+from haprion import accounts, exit_codes
 from haprion.git_command import git
 
 DIRECTORY_MODE = 0o750
@@ -56,7 +56,7 @@ def _foreground_maintenance() -> dict[str, str]:
 
 
 class ResetError(Exception):
-    def __init__(self, message: str, *, exit_code: int = 65):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.exit_code = exit_code
 
@@ -122,7 +122,7 @@ def _identity(repo: Path) -> tuple[str, str]:
         raise ResetError(
             "the repository has no user.name and user.email. The new baseline would be "
             "recorded under an identity nobody chose.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         )
     return name, email
 

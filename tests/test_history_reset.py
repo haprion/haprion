@@ -19,7 +19,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import patch
 
-from haprion import git_command, history_reset
+from haprion import exit_codes, git_command, history_reset
 from haprion.cli import history_reset as history_reset_command
 from haprion.git_command import GitError
 from haprion.history_reset import (
@@ -278,7 +278,7 @@ class TheCommandForAutomation(ResetFixture):
             )
 
         document = assert_contract("haprion-history-reset", out)
-        self.assertEqual((code, document["outcome"]), (1, "partial"))
+        self.assertEqual((code, document["outcome"]), (exit_codes.PARTIAL, "partial"))
         self.assertFalse(document["result"]["published"])
 
     def test_json_without_the_phrase_is_a_usage_error(self) -> None:

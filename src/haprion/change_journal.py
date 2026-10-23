@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from haprion import exit_codes
 from haprion.config import CLUSTER_ID
 
 JOURNAL = Path("/var/lib/haprion/change-journal.json")
@@ -52,7 +53,7 @@ class RecoveryError(Exception):
     """A change that did not finish and cannot be put back without a person."""
 
     code = "change_interrupted"
-    exit_code = 75
+    exit_code = exit_codes.BLOCKED
 
 
 @dataclass(frozen=True, slots=True)

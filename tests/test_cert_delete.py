@@ -22,7 +22,7 @@ from typing import Any
 
 import yaml
 
-from haprion import cert_delete
+from haprion import cert_delete, exit_codes
 from haprion.cert_delete import Guards, delete, read_guards
 from haprion.cert_inventory import FULLCHAIN, PRIVKEY
 from haprion.cert_publish import publish_lock
@@ -548,7 +548,7 @@ class TheHelper(DeleteFixture):
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
         code, document, _ = self.invoke(policy_path, "example.com", "keeper-beta.example")
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.PARTIAL)
         self.assertEqual(document["outcome"], "partial")
         self.assertEqual(document["result"]["refused"], ["keeper-beta.example"])
         self.assertEqual(document["warnings"][0]["code"], "cluster_uncovered")
@@ -562,7 +562,7 @@ class TheHelper(DeleteFixture):
         self.node_answers["node-a.example.com"] = (1, "unknown request: cert-remove")
         self.node_answers["node-b.example.com"] = (1, "unknown request: cert-remove")
         code, document, _ = self.invoke(policy_path, "example.com")
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.PARTIAL)
         self.assertEqual(document["outcome"], "partial")
         self.assertEqual(document["result"]["incomplete"], ["example.com"])
         self.assertNotIn("example.com", self.registered())
@@ -586,12 +586,22 @@ class TheHelper(DeleteFixture):
         self.assertEqual(document["result"]["incomplete"], ["example.com"])
         self.assertIn("example.com", self.registered())
 
+    def test_already_gone_everywhere_is_done(self) -> None:
+        """Asked again, a deletion finds nothing: the command said 0, the helper `blocked` (4-1)."""
+
+        policy_path = self.prepared({})
+        self.nodes_have_nothing()
+        code, document, _ = self.invoke(policy_path, "nobody.example")
+        self.assertEqual(code, exit_codes.OK)
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(document["result"]["certificates"][0]["code"], "not_registered")
+
     def test_every_one_refused_is_blocked_and_nothing_is_touched(self) -> None:
         policy_path = self.prepared({})
         self.nodes_have_nothing()
         before = (self.root / "certificates.yaml").read_bytes()
         code, document, _ = self.invoke(policy_path, "keeper-alpha.example", "nobody.example")
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertEqual(document["outcome"], "blocked")
         self.assertEqual(document["error"]["code"], "all_refused")
         self.assertEqual((self.root / "certificates.yaml").read_bytes(), before)

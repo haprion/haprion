@@ -20,7 +20,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cluster_status, dnsdist_config, status_collect
+from haprion import cluster_status, dnsdist_config, exit_codes, status_collect
 from haprion.cli import status, status_helper
 from haprion.config import Node
 from haprion.status_collect import NodeResponse, ReadNode
@@ -288,7 +288,7 @@ class HelperBoundaryTests(HelperFixture):
             require_secure=False,
             require_root=True,
         )
-        self.assertEqual(code, status_helper.EXIT_NOT_ROOT)
+        self.assertEqual(code, exit_codes.NOT_ROOT)
 
     def test_the_helper_refuses_an_unknown_cluster(self) -> None:
         code, _, err = self.run_helper(request(cluster="gamma"))
@@ -311,7 +311,7 @@ class HelperBoundaryTests(HelperFixture):
             require_secure=False,
             require_root=False,
         )
-        self.assertEqual(code, status_helper.EXIT_NO_IDENTITY)
+        self.assertEqual(code, exit_codes.CONFIG)
         self.assertIn("status_identity", err.getvalue())
 
 
@@ -831,7 +831,7 @@ class CallerTests(HelperFixture):
             ["-c", "alpha"],
             completed("", returncode=1, stderr="sudo: a password is required"),
         )
-        self.assertEqual(code, 1)
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
         self.assertIn("password is required", err)
 
     def test_an_unusable_envelope_is_refused_rather_than_rendered(self) -> None:

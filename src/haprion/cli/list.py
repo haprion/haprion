@@ -27,6 +27,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
+from haprion import exit_codes
 from haprion.cli.caller import CallerError, usage
 from haprion.cli.caller import config_path as _config_path
 from haprion.cli.caller import field as _field
@@ -118,10 +119,12 @@ def _diff(writer: TextIO, cluster_id: str, version: int, config_path: ConfigPath
     try:
         repo = config_path(cluster_id)
         if not is_repo_root(repo):
-            raise CallerError(describe_problem(cluster_id, repo), exit_code=68)
+            raise CallerError(describe_problem(cluster_id, repo), exit_code=exit_codes.UNAVAILABLE)
         commit = version_commit(repo, version)
         if commit is None:
-            raise CallerError(f"cluster '{cluster_id}' has no version {version}.", exit_code=65)
+            raise CallerError(
+                f"cluster '{cluster_id}' has no version {version}.", exit_code=exit_codes.REFUSED
+            )
         found = version_diff(repo, commit)
     except (CallerError, GitError) as exc:
         writer.write(f"ERROR: {exc}\n")
@@ -147,7 +150,7 @@ def main(
     try:
         repo = config_path(cluster_id)
         if not is_repo_root(repo):
-            raise CallerError(describe_problem(cluster_id, repo), exit_code=68)
+            raise CallerError(describe_problem(cluster_id, repo), exit_code=exit_codes.UNAVAILABLE)
         versions = recent_versions(repo)
         #
         # A repository whose branch holds no commit yet. The shell command let
@@ -159,7 +162,7 @@ def main(
             raise CallerError(f"cluster '{cluster_id}' has no versions yet.")
     except (CallerError, GitError) as exc:
         if json_mode:
-            write_document(
+            return write_document(
                 writer,
                 envelope(
                     operation=OPERATION,
@@ -168,14 +171,14 @@ def main(
                     result=None,
                     error=Message(code="history_unavailable", message=str(exc)),
                 ),
+                exc.exit_code,
             )
-            return exc.exit_code
         #
         # A repository problem is printed as cluster-config's own sentence,
         # without the `ERROR:` prefix the shell command reserved for git
         # failures. Both kept as they were.
         #
-        prefix = "" if exc.exit_code == 68 else "ERROR: "
+        prefix = "" if exc.exit_code == exit_codes.UNAVAILABLE else "ERROR: "
         writer.write(f"{prefix}{exc}\n")
         return exc.exit_code
 
@@ -190,7 +193,7 @@ def main(
         target = read_target(
             Path(field(cluster_id, "publish_path")), field(cluster_id, "node_path")
         )
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -198,8 +201,8 @@ def main(
                 cluster=cluster_id,
                 result=history_result(versions, target),
             ),
+            0,
         )
-        return 0
 
     writer.write(f"\nHAProxy configuration history - {cluster_id}\n\n")
     writer.write(ROW.format(version="VERSION", date="DATE", by="BY", comment="COMMENT") + "\n")

@@ -34,9 +34,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TextIO
 
+from haprion import exit_codes
 from haprion.cluster_status import ClusterStatus, NodeStatus, StatusError
 from haprion.deploy_plan import (
-    EXIT_BLOCKED,
     NOTHING_DONE,
     Action,
     CertificateTarget,
@@ -64,12 +64,6 @@ type TriggerNode = Callable[[NodeStatus], int]
 #
 OPERATION = "deploy"
 CERT_OPERATION = "cert_deploy"
-
-#
-# A stop that is not a refusal: the run did what it could and something is left
-# for a human to come back to.
-#
-EXIT_INCOMPLETE = 69
 
 
 @dataclass
@@ -606,10 +600,10 @@ def _out_of_time(
     if any(node.outcome == "updated" for node in report.nodes.values()):
         report.outcome = Outcome.PARTIAL
         report.warnings.append(Message(code="deploy_budget_exhausted", message=message))
-        return DeployRun(EXIT_INCOMPLETE, report)
+        return DeployRun(exit_codes.PARTIAL, report)
     report.outcome = Outcome.BLOCKED
     report.error = Message(code="deploy_budget_exhausted", message=message)
-    return DeployRun(EXIT_BLOCKED, report)
+    return DeployRun(exit_codes.BLOCKED, report)
 
 
 def _certificate_preflight(
@@ -664,7 +658,7 @@ def _certificate_preflight(
                 "next_command": preflight.next_command,
             },
         )
-        return DeployRun(EXIT_BLOCKED, report)
+        return DeployRun(exit_codes.BLOCKED, report)
 
     for name, what in unverified_certificates(observation, preflight.target):
         warning = f"{name} did not report its {what}; they were not checked"
@@ -706,9 +700,9 @@ def _released(
     )
     if touched:
         writer.write("Some nodes carry the target and some do not. Run the same command again.\n")
-        return DeployRun(EXIT_INCOMPLETE, report)
+        return DeployRun(exit_codes.PARTIAL, report)
     writer.write("No node was touched.\n")
-    return DeployRun(EXIT_BLOCKED, report)
+    return DeployRun(exit_codes.BLOCKED, report)
 
 
 def _verify(status: ClusterStatus, node_name: str, target: Target | None) -> bool | None:
@@ -842,4 +836,4 @@ def _report(writer: TextIO, status: ClusterStatus, step: Step, report: DeployRep
     suffix = f"  [{', '.join(codes)}]" if codes else ""
     writer.write(f"\nRESULT: PARTIAL{suffix}\n{step.reason}.\n")
     writer.write("Run the same command again once every node can be read.\n")
-    return step.exit_code or EXIT_INCOMPLETE
+    return exit_codes.PARTIAL

@@ -26,12 +26,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO, cast
 
-from haprion import node_ssh
+from haprion import exit_codes, node_ssh
 from haprion.certificates import CertificateError, target_for
 from haprion.cli.deploy_helper import (
     BUDGET,
-    EXIT_NO_IDENTITY,
-    EXIT_NOT_ROOT,
     read_status,
     run_trigger,
 )
@@ -74,15 +72,12 @@ REQUEST_VERB = "cert-pull"
 #
 AUTHORITY_VERB = "ca-pull"
 
-# EX_CONFIG: the installation is incomplete rather than the caller being wrong.
-EXIT_NO_CERTIFICATE_ROOT = 78
-
 
 def _validate(parameters: Mapping[str, JsonValue]) -> None:
     for key in PARAMETERS:
         value = parameters.get(key, False)
         if not isinstance(value, bool):
-            raise HelperProtocolError(f"{key} must be a boolean", exit_code=65)
+            raise HelperProtocolError(f"{key} must be a boolean", exit_code=exit_codes.REFUSED)
 
 
 def trigger_node(
@@ -139,7 +134,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-cert-deploy-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-cert-deploy-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -188,6 +183,7 @@ def main(
                     message=message,
                     exit_code=exit_code,
                 ),
+                exit_code,
             )
         return exit_code
 
@@ -198,7 +194,7 @@ def main(
         )
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
             str(exc),
             exc.exit_code,
         )
@@ -207,7 +203,7 @@ def main(
         return refuse(
             "dependency_unavailable",
             "no certificate root is configured. Add certificate_root to the runtime policy.",
-            EXIT_NO_CERTIFICATE_ROOT,
+            exit_codes.CONFIG,
         )
 
     identity = policy.cert_deploy_identity
@@ -216,7 +212,7 @@ def main(
             "dependency_unavailable",
             "no certificate deploy identity is configured. Add cert_deploy_identity "
             "with 'user' and 'key' to the runtime policy.",
-            EXIT_NO_IDENTITY,
+            exit_codes.CONFIG,
         )
 
     #
@@ -228,7 +224,7 @@ def main(
     try:
         target = target_for(cluster, policy.certificate_root)
     except CertificateError as exc:
-        return refuse("certificate_missing", str(exc), 68)
+        return refuse("certificate_missing", str(exc), exit_codes.BLOCKED)
 
     #
     # In JSON mode the rollout text goes to stderr, the job's diagnostics, so a
@@ -249,7 +245,7 @@ def main(
             "dependency_unavailable",
             "no status identity is configured. Add status_identity with "
             "'user' and 'key' to the runtime policy.",
-            EXIT_NO_IDENTITY,
+            exit_codes.CONFIG,
         )
 
     read: ReadStatus = status_reader or (
@@ -293,7 +289,9 @@ def main(
 
     if json_mode:
         write_document(
-            writer, outcome.report.as_envelope(request.cluster, request_id=request.request_id)
+            writer,
+            outcome.report.as_envelope(request.cluster, request_id=request.request_id),
+            outcome.exit_code,
         )
     return outcome.exit_code
 

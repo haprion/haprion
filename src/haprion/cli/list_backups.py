@@ -18,7 +18,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, TextIO
 
-from haprion.cli.caller import usage
+from haprion import exit_codes
+from haprion.cli.caller import usage, without_answer
 from haprion.config import ConfigError, load_policy, load_runtime_config
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
@@ -27,7 +28,6 @@ OPERATION = "list_backups"
 HELPER = "/opt/haprion/current/bin/haprion-list-backups-helper"
 SUDO = "/usr/bin/sudo"
 DEFAULT_LIMIT = 14
-EXIT_UNAVAILABLE = 68
 USAGE = (
     "Usage:\n"
     "  haprion-list-backups [-c <cluster>] [--node <name>] [--all] [--json]\n"
@@ -304,10 +304,10 @@ def main(
         return exc.exit_code
     except Ambiguous as exc:
         errors.write(f"ERROR: {exc}\n")
-        return 64
+        return exit_codes.USAGE
     if not clusters:
         errors.write(f"ERROR: no configured cluster has a node named {request.node}\n")
-        return 64
+        return exit_codes.USAGE
 
     worst = 0
     for index, cluster_id in enumerate(clusters):
@@ -317,12 +317,18 @@ def main(
         try:
             document = json.loads(completed.stdout)
         except json.JSONDecodeError:
-            errors.write(completed.stderr.strip() or "ERROR: the backup helper returned no result")
-            errors.write("\n")
-            return completed.returncode or EXIT_UNAVAILABLE
+            return without_answer(
+                completed,
+                operation=OPERATION,
+                cluster=cluster_id,
+                json_mode=request.json_mode,
+                writer=writer,
+                errors=errors,
+                fallback="the backup helper returned no result",
+            )
 
         if request.json_mode:
-            write_document(writer, document)
+            write_document(writer, document, completed.returncode)
             continue
         # One blank line between clusters. Without it the next cluster's heading
         # sits directly under the previous cluster's last backup and reads as
@@ -333,7 +339,7 @@ def main(
             _render(document, writer)
         except ValueError as exc:
             errors.write(f"ERROR: {exc}\n")
-            return completed.returncode or EXIT_UNAVAILABLE
+            return completed.returncode or exit_codes.UNAVAILABLE
     return worst
 
 

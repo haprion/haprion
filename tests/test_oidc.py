@@ -38,7 +38,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 
-from haprion import oidc
+from haprion import exit_codes, oidc
 from haprion.cli import oidc_helper
 from haprion.dns_profile_keys import write_key_pair
 from tests.contract_schema import assert_contract
@@ -644,7 +644,7 @@ class TheHelper(ProviderTestCase):
     def test_a_refusal_is_an_envelope_with_the_code(self) -> None:
         self.provider.discovery_extra = {"issuer": "https://other.example/"}
         code, document = self.run_helper("discover")
-        self.assertEqual(code, 64)
+        self.assertEqual(code, exit_codes.REFUSED)
         self.assertEqual(document["error"]["code"], "issuer_mismatch")
 
     def test_an_unknown_action_is_refused(self) -> None:

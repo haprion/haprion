@@ -21,7 +21,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from haprion import node_ssh
+from haprion import exit_codes, node_ssh
 from haprion.config import NAME
 from haprion.dns_profile_keys import (
     DnsProfilePrivateKey,
@@ -41,7 +41,6 @@ _HEADER_KEYS = frozenset({"schema_version", "cluster", "node", "key_id"})
 # packages, a few minutes behind a slow mirror. The node gives up at 840 s.
 #
 JOIN_TIMEOUT_SECONDS = 870
-TIMED_OUT = 124
 
 
 def seal_join_key(public_key: DnsProfilePublicKey, *, cluster: str, node: str, key: str) -> bytes:
@@ -108,7 +107,9 @@ def ssh_join(
                 timeout=JOIN_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired:
-            return NodeResponse(exit_code=TIMED_OUT, stdout="", stderr="the join timed out")
+            return NodeResponse(
+                exit_code=exit_codes.TIMED_OUT, stdout="", stderr="the join timed out"
+            )
     return NodeResponse(
         exit_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr
     )
@@ -122,4 +123,4 @@ def private_keys(paths: tuple[Path, ...], *, require_secure: bool) -> list[DnsPr
     try:
         return [read_private_key(path, require_secure=require_secure) for path in paths]
     except KeyFileError as exc:
-        raise EnrollmentError("dependency_unavailable", str(exc), 78) from None
+        raise EnrollmentError("dependency_unavailable", str(exc), exit_codes.CONFIG) from None

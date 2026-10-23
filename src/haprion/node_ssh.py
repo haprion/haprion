@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
 
+from haprion import exit_codes
+
 SSH = "/usr/bin/ssh"
 
 #
@@ -97,14 +99,6 @@ def ssh_argv(
         f"{user}@{host}",
         *request,
     ]
-
-
-#
-# What a call stopped at its byte budget ends with: a failed call with nothing
-# on stdout, as a node that could not answer - which every caller already
-# reads as one node with no usable answer.
-#
-EXIT_TOO_LARGE = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,7 +228,7 @@ def run_bounded(
     if ended.too_large:
         return subprocess.CompletedProcess(
             list(argv),
-            EXIT_TOO_LARGE,
+            exit_codes.FAILED,
             stdout="",
             stderr=f"the node answered with more than {max_bytes} bytes and was stopped",
         )

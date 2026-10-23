@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.cert_export import ExportError, export
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cli import cert_job
@@ -71,14 +72,16 @@ def main(
         certificate_id = cert_job.certificate(request.parameters, "id")
         form = request.parameters.get("format")
         if not isinstance(form, str):
-            raise HelperProtocolError("parameters.format must be a string", exit_code=65)
+            raise HelperProtocolError(
+                "parameters.format must be a string", exit_code=exit_codes.REFUSED
+            )
         #
         # Who asked, for the journal line. Held to the trailer rule the
         # version history uses, so a name cannot break the line it is in.
         #
         requested_by = trailer_name(request.parameters.get("requested_by"))
     except (HelperProtocolError, ValueError) as exc:
-        return refuse("bad_input", str(exc), 65)
+        return refuse("bad_input", str(exc), exit_codes.REFUSED)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -93,7 +96,7 @@ def main(
         )
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
             str(exc),
             exc.exit_code,
         )
@@ -101,7 +104,7 @@ def main(
         return refuse(exc.code, str(exc), exc.exit_code)
 
     errors.write(f"exported {certificate_id} as {form} for {requested_by}\n")
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -117,8 +120,8 @@ def main(
                 "content_base64": base64.b64encode(exported.content).decode("ascii"),
             },
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

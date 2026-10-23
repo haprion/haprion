@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from haprion import exit_codes
 from haprion.cert_import import Material, assemble, check, split_blocks
 from haprion.config import CERTIFICATE_ID, HOSTNAME, NdesPolicy
 from haprion.dns_profiles import ProfileError
@@ -35,7 +36,9 @@ ENROLL_TIMEOUT = 90
 
 
 class NdesError(Exception):
-    def __init__(self, code: str, message: str, *, exit_code: int = 65, discard: bool = False):
+    def __init__(
+        self, code: str, message: str, *, exit_code: int = exit_codes.REFUSED, discard: bool = False
+    ):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
@@ -86,12 +89,14 @@ def validate_policy(policy: NdesPolicy, *, require_secure: bool = True) -> None:
                     raise NdesError(
                         "dependency_unavailable",
                         "NDES client ancestors are not protected",
-                        exit_code=78,
+                        exit_code=exit_codes.CONFIG,
                     )
         secure_file(binary, require_secure=require_secure)
         if not os.access(binary, os.X_OK):
             raise NdesError(
-                "dependency_unavailable", f"NDES client is not executable: {binary}", exit_code=78
+                "dependency_unavailable",
+                f"NDES client is not executable: {binary}",
+                exit_code=exit_codes.CONFIG,
             )
 
 
@@ -107,23 +112,25 @@ def secure_file(path: Path, *, require_secure: bool, secret: bool = False) -> by
                 raise NdesError(
                     "dependency_unavailable",
                     "NDES file is not a bounded regular file",
-                    exit_code=78,
+                    exit_code=exit_codes.CONFIG,
                 )
             if require_secure and (info.st_uid != 0 or info.st_mode & (0o077 if secret else 0o022)):
                 raise NdesError(
                     "dependency_unavailable",
                     "NDES files must be root-owned and protected",
-                    exit_code=78,
+                    exit_code=exit_codes.CONFIG,
                 )
             content = handle.read(MAX_BYTES + 1)
             if len(content) > MAX_BYTES:
                 raise NdesError(
-                    "dependency_unavailable", "NDES file exceeds its bounds", exit_code=78
+                    "dependency_unavailable",
+                    "NDES file exceeds its bounds",
+                    exit_code=exit_codes.CONFIG,
                 )
             return content
     except OSError:
         raise NdesError(
-            "dependency_unavailable", f"NDES file unavailable: {path}", exit_code=78
+            "dependency_unavailable", f"NDES file unavailable: {path}", exit_code=exit_codes.CONFIG
         ) from None
 
 
@@ -153,12 +160,16 @@ def command(policy: NdesPolicy, directory: Path, arguments: Sequence[str]) -> st
                 check=False,
             )
             if completed.returncode or output.tell() > 65536:
-                raise NdesError("scep_failed", "Certmonger command failed", exit_code=1)
+                raise NdesError(
+                    "scep_failed", "Certmonger command failed", exit_code=exit_codes.FAILED
+                )
             output.seek(0)
             return output.read(65536).decode("utf-8")
     except (OSError, subprocess.TimeoutExpired, UnicodeError):
         raise NdesError(
-            "dependency_unavailable", "Certmonger command unavailable or timed out", exit_code=78
+            "dependency_unavailable",
+            "Certmonger command unavailable or timed out",
+            exit_code=exit_codes.CONFIG,
         ) from None
 
 
@@ -191,14 +202,16 @@ def instance(policy: NdesPolicy, directory: Path) -> Iterator[None]:
         )
     except OSError:
         raise NdesError(
-            "dependency_unavailable", "Certmonger could not start", exit_code=78
+            "dependency_unavailable", "Certmonger could not start", exit_code=exit_codes.CONFIG
         ) from None
     try:
         deadline = time.monotonic() + 5
         while not (directory / "socket").exists():
             if process.poll() is not None or time.monotonic() >= deadline:
                 raise NdesError(
-                    "dependency_unavailable", "Certmonger private socket unavailable", exit_code=78
+                    "dependency_unavailable",
+                    "Certmonger private socket unavailable",
+                    exit_code=exit_codes.CONFIG,
                 )
             time.sleep(0.05)
         yield
@@ -239,7 +252,7 @@ def wait_for_ca(policy: NdesPolicy, directory: Path, *, timeout: float = CA_DATA
             raise NdesError(
                 "dependency_unavailable",
                 "Certmonger could not fetch the NDES CA certificate",
-                exit_code=78,
+                exit_code=exit_codes.CONFIG,
                 discard=True,
             )
         time.sleep(0.5)
@@ -250,7 +263,10 @@ def status(policy: NdesPolicy, directory: Path) -> str:
     match = re.search(r"^\s*status: ([A-Z_]+)$", text, re.MULTILINE)
     if match is None:
         raise NdesError(
-            "scep_failed", "Certmonger returned no request status", exit_code=1, discard=True
+            "scep_failed",
+            "Certmonger returned no request status",
+            exit_code=exit_codes.FAILED,
+            discard=True,
         )
     return match.group(1)
 
@@ -299,7 +315,9 @@ def _enroll(
     info = directory.stat()
     if require_secure and (info.st_uid != 0 or info.st_mode & 0o077):
         raise NdesError(
-            "dependency_unavailable", "NDES state must be root-owned mode 0700", exit_code=78
+            "dependency_unavailable",
+            "NDES state must be root-owned mode 0700",
+            exit_code=exit_codes.CONFIG,
         )
     record = directory / "request.json"
     expected = {
@@ -415,7 +433,9 @@ def _enroll(
                     )
                     if stray_keys:
                         raise NdesError(
-                            "scep_failed", "certificate output contains a private key", exit_code=1
+                            "scep_failed",
+                            "certificate output contains a private key",
+                            exit_code=exit_codes.FAILED,
                         )
                     chain, _ = split_blocks(
                         secure_file(
@@ -442,14 +462,16 @@ def _enroll(
                     raise NdesError(
                         "scep_failed",
                         "Certmonger enrollment stopped: " + state,
-                        exit_code=1,
+                        exit_code=exit_codes.FAILED,
                         discard=True,
                     )
                 if time.monotonic() >= deadline:
                     if state == "CA_WORKING":
                         return Enrollment("pending", directory)
                     raise NdesError(
-                        "scep_timeout", "Certmonger enrollment timed out: " + state, exit_code=1
+                        "scep_timeout",
+                        "Certmonger enrollment timed out: " + state,
+                        exit_code=exit_codes.FAILED,
                     )
                 time.sleep(0.2)
     finally:
@@ -475,7 +497,7 @@ def enroll(
         check_challenge(profile.challenge)
         secure_directory(policy.state_root, require_secure=require_secure)
     except ProfileError as exc:
-        raise NdesError("dependency_unavailable", str(exc), exit_code=78) from None
+        raise NdesError("dependency_unavailable", str(exc), exit_code=exit_codes.CONFIG) from None
     lock_path = policy.state_root / (
         hashlib.sha256(certificate_id.encode()).hexdigest()[:24] + ".lock"
     )
@@ -490,18 +512,24 @@ def enroll(
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     except OSError:
         raise NdesError(
-            "dependency_unavailable", "protected NDES state is unavailable", exit_code=78
+            "dependency_unavailable",
+            "protected NDES state is unavailable",
+            exit_code=exit_codes.CONFIG,
         ) from None
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise NdesError(
-                "busy", "another enrollment is running for this certificate", exit_code=75
+                "busy",
+                "another enrollment is running for this certificate",
+                exit_code=exit_codes.BLOCKED,
             ) from None
         except OSError:
             raise NdesError(
-                "dependency_unavailable", "protected NDES state is unavailable", exit_code=78
+                "dependency_unavailable",
+                "protected NDES state is unavailable",
+                exit_code=exit_codes.CONFIG,
             ) from None
         try:
             try:
@@ -516,7 +544,9 @@ def enroll(
                 )
             except OSError:
                 raise NdesError(
-                    "dependency_unavailable", "protected NDES state is unavailable", exit_code=78
+                    "dependency_unavailable",
+                    "protected NDES state is unavailable",
+                    exit_code=exit_codes.CONFIG,
                 ) from None
             yield enrollment
         except NdesError as exc:
@@ -539,7 +569,7 @@ def abandon(policy: NdesPolicy, certificate_id: str, *, require_secure: bool = T
     try:
         secure_directory(policy.state_root, require_secure=require_secure)
     except ProfileError as exc:
-        raise NdesError("dependency_unavailable", str(exc), exit_code=78) from None
+        raise NdesError("dependency_unavailable", str(exc), exit_code=exit_codes.CONFIG) from None
     lock_path = policy.state_root / (
         hashlib.sha256(certificate_id.encode()).hexdigest()[:24] + ".lock"
     )
@@ -552,11 +582,15 @@ def abandon(policy: NdesPolicy, certificate_id: str, *, require_secure: bool = T
             os.close(fd)
     except BlockingIOError:
         raise NdesError(
-            "busy", "another enrollment is running for this certificate", exit_code=75
+            "busy",
+            "another enrollment is running for this certificate",
+            exit_code=exit_codes.BLOCKED,
         ) from None
     except OSError:
         raise NdesError(
-            "dependency_unavailable", "protected NDES state is unavailable", exit_code=78
+            "dependency_unavailable",
+            "protected NDES state is unavailable",
+            exit_code=exit_codes.CONFIG,
         ) from None
 
 
@@ -568,7 +602,7 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
         raise NdesError(
             "certificate_mismatch",
             "issued certificate subject or SAN does not match the request",
-            exit_code=1,
+            exit_code=exit_codes.FAILED,
         )
     leaf = directory / "verify-leaf.pem"
     chain = directory / "verify-chain.pem"
@@ -593,7 +627,7 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
             raise NdesError(
                 "untrusted_certificate",
                 "issued certificate chain or server purpose is invalid",
-                exit_code=1,
+                exit_code=exit_codes.FAILED,
             )
 
         def extension(name: str) -> str:
@@ -609,7 +643,7 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
                 raise NdesError(
                     "certificate_mismatch",
                     "issued certificate extensions cannot be read",
-                    exit_code=1,
+                    exit_code=exit_codes.FAILED,
                 )
             return result.stdout
 
@@ -620,7 +654,7 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
             raise NdesError(
                 "certificate_mismatch",
                 "issued certificate is a CA certificate, not an end-entity certificate",
-                exit_code=1,
+                exit_code=exit_codes.FAILED,
             )
         eku = extension("extendedKeyUsage")
         usage = extension("keyUsage")
@@ -645,7 +679,7 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
             raise NdesError(
                 "certificate_mismatch",
                 "issued certificate subject differs from the CSR",
-                exit_code=1,
+                exit_code=exit_codes.FAILED,
             )
         entries = [
             value.strip()
@@ -655,7 +689,9 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
         ]
         if set(entries) != {"DNS:" + value for value in domains}:
             raise NdesError(
-                "certificate_mismatch", "issued certificate has unexpected SAN entries", exit_code=1
+                "certificate_mismatch",
+                "issued certificate has unexpected SAN entries",
+                exit_code=exit_codes.FAILED,
             )
         if (
             "TLS Web Server Authentication" not in eku
@@ -665,11 +701,13 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
             raise NdesError(
                 "certificate_mismatch",
                 "issued certificate lacks the required server EKU or key usages",
-                exit_code=1,
+                exit_code=exit_codes.FAILED,
             )
     except (OSError, subprocess.TimeoutExpired, UnicodeError):
         raise NdesError(
-            "dependency_unavailable", "certificate verification could not run", exit_code=78
+            "dependency_unavailable",
+            "certificate verification could not run",
+            exit_code=exit_codes.CONFIG,
         ) from None
     finally:
         leaf.unlink(missing_ok=True)

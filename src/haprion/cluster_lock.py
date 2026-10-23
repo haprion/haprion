@@ -31,6 +31,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from haprion import exit_codes
+
 DEFAULT_LOCK_ROOT = Path("/run/haprion/locks")
 
 #
@@ -47,13 +49,11 @@ DIRECTORY_MODE = 0o755
 #
 FILE_MODE = 0o600
 
-EXIT_BUSY = 75
-
 
 class LockBusy(Exception):
     """Another operation holds this cluster's lock."""
 
-    def __init__(self, message: str, *, exit_code: int = EXIT_BUSY):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.BLOCKED):
         super().__init__(message)
         self.exit_code = exit_code
 

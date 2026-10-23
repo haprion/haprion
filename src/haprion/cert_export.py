@@ -24,6 +24,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from haprion import exit_codes
 from haprion.cert_inventory import (
     FULLCHAIN,
     IMPORT_STORE,
@@ -49,7 +50,7 @@ COMPATIBLE = ("-certpbe", "PBE-SHA1-3DES", "-keypbe", "PBE-SHA1-3DES", "-macalg"
 class ExportError(Exception):
     """A refused export, with the code it is reported under."""
 
-    def __init__(self, code: str, message: str, exit_code: int = 65):
+    def __init__(self, code: str, message: str, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
@@ -114,14 +115,20 @@ def export(
         privkey = (directory / PRIVKEY).read_bytes()
     except OSError as exc:
         raise ExportError(
-            "dependency_unavailable", f"the material of {certificate_id} cannot be read: {exc}", 78
+            "dependency_unavailable",
+            f"the material of {certificate_id} cannot be read: {exc}",
+            exit_codes.CONFIG,
         ) from exc
     try:
         fingerprint = leaf_fingerprint(fullchain.decode("ascii"))
     except (UnicodeDecodeError, CertificateError) as exc:
-        raise ExportError("invalid_certificate", f"{certificate_id}: {exc}", 78) from exc
+        raise ExportError(
+            "invalid_certificate", f"{certificate_id}: {exc}", exit_codes.CONFIG
+        ) from exc
     if not key_matches(fullchain, privkey):
-        raise ExportError("key_mismatch", "the private key does not belong to the certificate", 78)
+        raise ExportError(
+            "key_mismatch", "the private key does not belong to the certificate", exit_codes.CONFIG
+        )
 
     if form == "pem-key":
         return Export(
@@ -161,7 +168,9 @@ def export(
         for descriptor in descriptors:
             os.close(descriptor)
     if bundle is None:
-        raise ExportError("export_failed", "openssl could not build the PKCS#12 bundle", 70)
+        raise ExportError(
+            "export_failed", "openssl could not build the PKCS#12 bundle", exit_codes.INTERNAL
+        )
     return Export(
         certificate_id,
         form,

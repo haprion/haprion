@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haprion import helper_socket
+from haprion import exit_codes, helper_socket
 from haprion.cli import backup_job_ask, node_ask, node_restore_ask
 
 REQUEST_ID = "11111111-1111-1111-1111-111111111111"
@@ -99,7 +99,7 @@ class AskedThenSilent(unittest.TestCase):
             with self.subTest(client=client.__name__):
                 code, out, _ = self.ask(client, request)
 
-                self.assertEqual(code, 78)
+                self.assertEqual(code, exit_codes.UNAVAILABLE)
                 document = json.loads(out)
                 self.assertEqual(document["outcome"], "failed")
                 self.assertIn("Install", document["error"]["message"])

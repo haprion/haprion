@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import unittest
 
+from haprion import exit_codes
 from haprion.deploy_plan import (
     CertificateRef,
     CertificateTarget,
@@ -218,7 +219,7 @@ class OrderAndBlockingTests(unittest.TestCase):
 
         self.assertEqual(trace, [])
         self.assertIs(outcome, Outcome.BLOCKED)
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
 
     def test_an_unknown_vip_blocks_unless_overridden(self) -> None:
         state = pair(

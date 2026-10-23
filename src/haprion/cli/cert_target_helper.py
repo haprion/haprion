@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import cert_retarget
+from haprion import cert_retarget, exit_codes
 from haprion.cert_delete import NodeRemover, ask_node, read_guards
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer
@@ -42,9 +42,6 @@ from haprion.helper_protocol import (
 PARAMETERS = frozenset({"certificates", "add", "remove", "deploy"})
 
 __all__ = ["HELPER", "SUDO", "build_request", "main", "outcome_of"]
-
-# EX_CONFIG: the installation has no registry, which is not the request's fault.
-EXIT_NO_REGISTRY = 78
 
 
 def build_request(
@@ -84,19 +81,24 @@ def read_change(parameters: Mapping[str, JsonValue]) -> Change:
     present = [key for key in ("add", "remove") if key in parameters]
     if len(present) != 1:
         raise HelperProtocolError(
-            "parameters must carry exactly one of add and remove", exit_code=65
+            "parameters must carry exactly one of add and remove", exit_code=exit_codes.REFUSED
         )
     action = present[0]
     block = parameters.get(action)
     if not isinstance(block, dict):
-        raise HelperProtocolError(f"parameters.{action} must be an object", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{action} must be an object", exit_code=exit_codes.REFUSED
+        )
     unknown = sorted(set(block) - {"clusters", "receivers", "formats"})
     if unknown:
         raise HelperProtocolError(
-            f"parameters.{action} has unknown key(s): {', '.join(unknown)}", exit_code=65
+            f"parameters.{action} has unknown key(s): {', '.join(unknown)}",
+            exit_code=exit_codes.REFUSED,
         )
     if action == "remove" and "formats" in block:
-        raise HelperProtocolError("parameters.remove does not take formats", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.remove does not take formats", exit_code=exit_codes.REFUSED
+        )
     receivers = cert_job.receivers(block)
     change = Change(
         action,
@@ -105,7 +107,9 @@ def read_change(parameters: Mapping[str, JsonValue]) -> Change:
         formats=cert_job.formats(block, receivers),
     )
     if not change.targets:
-        raise HelperProtocolError(f"parameters.{action} names no target", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{action} names no target", exit_code=exit_codes.REFUSED
+        )
     return change
 
 
@@ -114,15 +118,15 @@ def outcome_of(report: Report) -> tuple[Outcome, int]:
     when anything followed and something did not; `failed` when nothing did."""
 
     if not report.outcomes:
-        return "failed", 1
+        return "failed", exit_codes.FAILED
     followed = len(report.changed) + len(report.unchanged)
     if followed == len(report.outcomes) and not report.deploy_failed:
-        return "done", 0
+        return "done", exit_codes.OK
     if len(report.refused) == len(report.outcomes):
-        return "blocked", 65
+        return "blocked", exit_codes.BLOCKED
     if followed or report.incomplete:
-        return "partial", 0
-    return "failed", 1
+        return "partial", exit_codes.PARTIAL
+    return "failed", exit_codes.FAILED
 
 
 def main(
@@ -169,7 +173,9 @@ def main(
     except HelperProtocolError as exc:
         return refuse("bad_input", str(exc), exc.exit_code)
     if not certificates:
-        return refuse("bad_input", "parameters.certificates names no certificate", 65)
+        return refuse(
+            "bad_input", "parameters.certificates names no certificate", exit_codes.REFUSED
+        )
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -181,7 +187,7 @@ def main(
             "dependency_unavailable",
             "no certificate registry is configured. Add certificate_registry to the "
             "runtime policy.",
-            EXIT_NO_REGISTRY,
+            exit_codes.CONFIG,
         )
 
     try:
@@ -228,7 +234,7 @@ def main(
         )
     elif outcome == "failed":
         error = Message(code="retarget_failed", message="no certificate's targets changed")
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -239,8 +245,8 @@ def main(
             warnings=tuple(warnings),
             error=error,
         ),
+        exit_code,
     )
-    return exit_code
 
 
 if __name__ == "__main__":

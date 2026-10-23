@@ -36,10 +36,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import node_restore, restore_agent
+from haprion import exit_codes, node_restore, restore_agent
 from haprion.backup_archive import ArchiveError
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
-from haprion.envelope import BLOCKED_EXIT, Message, envelope, failure
+from haprion.envelope import Message, envelope, failure
 from haprion.helper_protocol import (
     MAX_REQUEST_BYTES,
     HelperProtocolError,
@@ -59,7 +59,6 @@ DISCARD = "node_restore_discard"
 STATUS = "node_restore_status"
 OPERATIONS = frozenset({PREPARE, PREVIEW, RUN, DISCARD, STATUS})
 HELPER = "/opt/haprion/current/bin/haprion-node-restore-helper"
-EXIT_NOT_ROOT = 77
 
 KEYS = {
     PREPARE: frozenset({"run", "node", "archive", "target", "test"}),
@@ -213,14 +212,20 @@ def build_request(
 def _raw(stream: BinaryIO) -> tuple[bytes, str]:
     raw = stream.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
-        raise HelperProtocolError("helper request is larger than allowed", exit_code=65)
+        raise HelperProtocolError(
+            "helper request is larger than allowed", exit_code=exit_codes.REFUSED
+        )
     try:
         document = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise HelperProtocolError("helper request is not valid JSON", exit_code=65) from exc
+        raise HelperProtocolError(
+            "helper request is not valid JSON", exit_code=exit_codes.REFUSED
+        ) from exc
     operation = document.get("operation") if isinstance(document, dict) else None
     if operation not in OPERATIONS:
-        raise HelperProtocolError("operation is not allowed by this helper", exit_code=65)
+        raise HelperProtocolError(
+            "operation is not allowed by this helper", exit_code=exit_codes.REFUSED
+        )
     return raw, str(operation)
 
 
@@ -229,7 +234,7 @@ def _checked(operation: str) -> ParameterValidator:
         try:
             validate(operation, parameters)
         except ParameterProblem as exc:
-            raise HelperProtocolError(f"parameters: {exc}", exit_code=65) from exc
+            raise HelperProtocolError(f"parameters: {exc}", exit_code=exit_codes.REFUSED) from exc
 
     return check
 
@@ -290,10 +295,10 @@ def _answer(
     errors = error_stream or sys.stderr
     if argv:
         errors.write("ERROR: haprion-node-restore-helper accepts no arguments\n")
-        return 64
+        return exit_codes.USAGE
     if require_root and os.geteuid() != 0:
         errors.write("ERROR: haprion-node-restore-helper must run as root\n")
-        return EXIT_NOT_ROOT
+        return exit_codes.NOT_ROOT
     try:
         raw, operation = _raw(input_stream or sys.stdin.buffer)
         request = read_helper_request(
@@ -309,7 +314,7 @@ def _answer(
 
     def refuse(code: str, message: str, exit_code: int) -> int:
         errors.write(f"ERROR: [{code}] {message}\n")
-        write_document(
+        return write_document(
             writer,
             failure(
                 operation=operation,
@@ -319,8 +324,8 @@ def _answer(
                 message=message,
                 exit_code=exit_code,
             ),
+            exit_code,
         )
-        return exit_code
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -331,7 +336,7 @@ def _answer(
     except ConfigError as exc:
         return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
     except RestoreError as exc:
-        return refuse("restore_refused", str(exc), BLOCKED_EXIT)
+        return refuse("restore_refused", str(exc), exit_codes.BLOCKED)
 
     run = str(parameters["run"])
     try:
@@ -347,7 +352,7 @@ def _answer(
                 if owner != request.cluster:
                     raise RestoreError(f"run {run} belongs to cluster {owner}")
             removed = engine.discard(run_root, run)
-            write_document(
+            return write_document(
                 writer,
                 envelope(
                     operation=operation,
@@ -356,8 +361,8 @@ def _answer(
                     request_id=request.request_id,
                     result={"run": run, "removed": removed},
                 ),
+                0,
             )
-            return 0
 
         if operation == STATUS:
             directory = run_root / run
@@ -365,7 +370,7 @@ def _answer(
                 owner = Request.from_dict(engine.read_json(directory / "request.json")).cluster
                 if owner != request.cluster:
                     raise RestoreError(f"run {run} belongs to cluster {owner}")
-            write_document(
+            return write_document(
                 writer,
                 envelope(
                     operation=operation,
@@ -374,8 +379,8 @@ def _answer(
                     request_id=request.request_id,
                     result=engine.status(run_root, run),
                 ),
+                0,
             )
-            return 0
 
         if operation == PREPARE:
             profile = test_profile(parameters["test"])
@@ -401,8 +406,7 @@ def _answer(
                 request_id=request.request_id,
                 result=result,
             )
-            write_document(writer, document)
-            return 0
+            return write_document(writer, document, 0)
 
         stored = Request.from_dict(
             engine.read_json(engine.run_directory(run_root, run) / "request.json")
@@ -429,7 +433,7 @@ def _answer(
                 checks=checks,
             )
             problems = summary["problems"]
-            write_document(
+            return write_document(
                 writer,
                 envelope(
                     operation=operation,
@@ -444,8 +448,8 @@ def _answer(
                     if problems
                     else None,
                 ),
+                exit_codes.BLOCKED if problems else 0,
             )
-            return BLOCKED_EXIT if problems else 0
 
         carried = engine.run(
             run_root,
@@ -461,13 +465,13 @@ def _answer(
             break_traffic=bool(parameters.get("break_traffic", False)),
         )
     except (RestoreError, ArchiveError) as exc:
-        return refuse("restore_refused", str(exc), BLOCKED_EXIT)
+        return refuse("restore_refused", str(exc), exit_codes.BLOCKED)
     except OSError as exc:
-        return refuse("restore_failed", f"the restore could not continue: {exc}", 1)
+        return refuse("restore_failed", f"the restore could not continue: {exc}", exit_codes.FAILED)
 
     done = carried["outcome"] == "done"
     result = {key: value for key, value in carried.items() if key not in {"outcome", "error"}}
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=operation,
@@ -479,8 +483,8 @@ def _answer(
             if done
             else Message(code="restore_failed", message=str(carried.get("error"))[:2048]),
         ),
+        0 if done else 1,
     )
-    return 0 if done else 1
 
 
 if __name__ == "__main__":

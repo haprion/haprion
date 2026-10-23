@@ -50,6 +50,7 @@ from haprion import (
     cert_registry,
     dns_profiles,
     dns_provider_catalog,
+    exit_codes,
     ui_interface,
 )
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE, measure_registered
@@ -130,7 +131,7 @@ class IssueError(Exception):
         code: str,
         message: str,
         *,
-        exit_code: int = 64,
+        exit_code: int = exit_codes.USAGE,
         details: dict[str, Any] | None = None,
     ):
         super().__init__(message)
@@ -271,7 +272,7 @@ def build_request(
             "dependency_unavailable",
             "no certificate registry is configured. Add certificate_registry to the "
             "runtime policy.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         )
     for cluster_id in clusters:
         if not CLUSTER_ID.fullmatch(cluster_id):
@@ -363,7 +364,7 @@ def certbot_invocation(
                 raise IssueError(
                     "dependency_unavailable",
                     "DNS profiles need acme.dns_profiles in the runtime policy",
-                    exit_code=78,
+                    exit_code=exit_codes.CONFIG,
                 )
             try:
                 materialized = dns_profiles.read_materialized(
@@ -371,7 +372,9 @@ def certbot_invocation(
                 )
                 redactions = dns_profiles.materialized_secret_values(materialized)
             except dns_profiles.ProfileError as exc:
-                raise IssueError("dependency_unavailable", str(exc), exit_code=78) from exc
+                raise IssueError(
+                    "dependency_unavailable", str(exc), exit_code=exit_codes.CONFIG
+                ) from exc
             provider = materialized.provider
             authenticator = [f"--{provider.plugin}"]
             environment = {}
@@ -390,7 +393,7 @@ def certbot_invocation(
                 raise IssueError(
                     "dependency_unavailable",
                     "DNS-01 needs --dns-profile or acme.dns_cloudflare_credentials",
-                    exit_code=78,
+                    exit_code=exit_codes.CONFIG,
                 )
             # The policy file predates profiles; the wait is still the
             # catalogue's, so both roads issue a lineage that renews alike.
@@ -410,7 +413,7 @@ def certbot_invocation(
             raise IssueError(
                 "dependency_unavailable",
                 "HTTP-01 needs acme.webroot in the runtime policy",
-                exit_code=78,
+                exit_code=exit_codes.CONFIG,
             )
         authenticator = ["--webroot", "-w", str(acme.webroot)]
         environment = {}
@@ -466,7 +469,9 @@ def renewal_invocation(
 
     if runtime.registry is None:
         raise IssueError(
-            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+            "dependency_unavailable",
+            "no certificate registry is configured",
+            exit_code=exit_codes.CONFIG,
         )
     profile_id = next(
         (
@@ -505,7 +510,7 @@ def renewal_invocation(
                 "dependency_unavailable",
                 f"lineage {lineage!r} names DNS profile {profile_id!r}, but "
                 "acme.dns_profiles is not configured",
-                exit_code=78,
+                exit_code=exit_codes.CONFIG,
             )
         try:
             materialized = dns_profiles.read_materialized(
@@ -513,7 +518,9 @@ def renewal_invocation(
             )
             redactions = dns_profiles.materialized_secret_values(materialized)
         except dns_profiles.ProfileError as exc:
-            raise IssueError("dependency_unavailable", str(exc), exit_code=78) from exc
+            raise IssueError(
+                "dependency_unavailable", str(exc), exit_code=exit_codes.CONFIG
+            ) from exc
         if materialized.provider.credentials_env is not None:
             environment[materialized.provider.credentials_env] = materialized.credentials_path
         timeout = certbot_timeout(materialized.provider.propagation_seconds)
@@ -535,7 +542,9 @@ def renewal_method(conf: Path) -> Method:
                 return "http-01" if value.strip() == "webroot" else "dns-01"
     except OSError as exc:
         raise IssueError(
-            "dependency_unavailable", f"the renewal conf could not be read: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"the renewal conf could not be read: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
     return "dns-01"
 
@@ -561,7 +570,9 @@ def run_certbot(
     except OSError as exc:
         return CertbotResult(127, f"certbot could not be started: {exc}")
     except subprocess.TimeoutExpired:
-        return CertbotResult(124, f"certbot did not finish within {timeout} seconds")
+        return CertbotResult(
+            exit_codes.TIMED_OUT, f"certbot did not finish within {timeout} seconds"
+        )
     output = (completed.stdout or "") + (completed.stderr or "")
     return CertbotResult(completed.returncode, output.strip())
 
@@ -702,7 +713,7 @@ def issue(
         raise IssueError(
             "certbot_failed",
             f"certbot exited {result.returncode} after {certbot_seconds:.0f}s",
-            exit_code=1,
+            exit_code=exit_codes.FAILED,
             details={
                 "diagnostics": diagnostics,
                 "certbot_exit_code": result.returncode,
@@ -737,7 +748,7 @@ def issue(
             now=now or datetime.now(UTC),
         )
     except PublishError as exc:
-        raise IssueError(exc.code, str(exc), exit_code=78) from exc
+        raise IssueError(exc.code, str(exc), exit_code=exit_codes.CONFIG) from exc
 
     retired = cert_delete.retire_displaced_interface(
         displaced,
@@ -787,7 +798,9 @@ def renew(
     registry = runtime.registry
     if registry is None or policy.certificate_registry is None or policy.certificate_root is None:
         raise IssueError(
-            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+            "dependency_unavailable",
+            "no certificate registry is configured",
+            exit_code=exit_codes.CONFIG,
         )
     entry = registry.certificates.get(certificate_id)
     if entry is None:
@@ -808,7 +821,7 @@ def renew(
         entry, certificate_root=policy.certificate_root, live=live, store=store
     )
     if isinstance(measured, str):
-        raise IssueError("dependency_unavailable", measured, exit_code=78)
+        raise IssueError("dependency_unavailable", measured, exit_code=exit_codes.CONFIG)
     _fingerprint, facts, _where = measured
     common = facts.common_name
     domains = tuple(
@@ -840,7 +853,7 @@ def renew(
         raise IssueError(
             "certbot_failed",
             f"certbot exited {result.returncode} after {certbot_seconds:.0f}s",
-            exit_code=1,
+            exit_code=exit_codes.FAILED,
             details={
                 "diagnostics": diagnostics,
                 "certbot_exit_code": result.returncode,
@@ -862,7 +875,7 @@ def renew(
             now=now or datetime.now(UTC),
         )
     except PublishError as exc:
-        raise IssueError(exc.code, str(exc), exit_code=78) from exc
+        raise IssueError(exc.code, str(exc), exit_code=exit_codes.CONFIG) from exc
     return IssueResult(
         request=request,
         certbot_seconds=certbot_seconds,

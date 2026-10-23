@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_delete, cert_registry, cert_request_state, ui_interface
+from haprion import cert_delete, cert_registry, cert_request_state, exit_codes, ui_interface
 from haprion.cert_inventory import (
     FULLCHAIN,
     IMPORT_STORE,
@@ -103,7 +103,7 @@ class ImportError_(Exception):  # noqa: N801 - `ImportError` is Python's; the tr
         code: str,
         message: str,
         *,
-        exit_code: int = 65,
+        exit_code: int = exit_codes.REFUSED,
         details: dict[str, Any] | None = None,
     ):
         super().__init__(message)
@@ -225,7 +225,9 @@ def _openssl(arguments: Sequence[str], *, stdin: str, what: str) -> str:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ImportError_(
-            "dependency_unavailable", f"openssl could not {what}: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"openssl could not {what}: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
     if completed.returncode != 0:
         detail = (completed.stderr or "").strip().splitlines()
@@ -310,7 +312,9 @@ def read_pkcs12(path: Path, password_file: Path | None, *, password: str | None 
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ImportError_(
-                "dependency_unavailable", f"openssl could not read the PKCS#12: {exc}", exit_code=78
+                "dependency_unavailable",
+                f"openssl could not read the PKCS#12: {exc}",
+                exit_code=exit_codes.CONFIG,
             ) from exc
         finally:
             for descriptor in pass_fds:
@@ -359,7 +363,9 @@ def _openssl_file(arguments: Sequence[str], *, what: str) -> str | None:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ImportError_(
-            "dependency_unavailable", f"openssl could not {what}: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"openssl could not {what}: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
     return completed.stdout if completed.returncode == 0 else None
 
@@ -448,7 +454,9 @@ def stored_key(store: Path, certificate_id: str) -> str | None:
         return path.read_text(encoding="ascii")
     except (OSError, UnicodeDecodeError) as exc:
         raise ImportError_(
-            "dependency_unavailable", f"the stored key could not be read: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"the stored key could not be read: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
 
 
@@ -558,7 +566,9 @@ def write_store(store: Path, certificate_id: str, material: Material) -> bool:
     except OSError as exc:
         shutil.rmtree(staging, ignore_errors=True)
         raise ImportError_(
-            "dependency_unavailable", f"the import store could not be written: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"the import store could not be written: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
 
 
@@ -718,7 +728,7 @@ def import_certificate(
             "dependency_unavailable",
             "no certificate registry is configured. Add certificate_registry to the "
             "runtime policy.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         )
     if not CERTIFICATE_ID.fullmatch(certificate_id):
         raise ImportError_("bad_input", f"invalid certificate ID: {certificate_id!r}")
@@ -999,7 +1009,9 @@ def write_authority_store(store: Path, certificate_id: str, blocks: Sequence[str
     except OSError as exc:
         shutil.rmtree(staging, ignore_errors=True)
         raise ImportError_(
-            "dependency_unavailable", f"the import store could not be written: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"the import store could not be written: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
 
 
@@ -1071,7 +1083,7 @@ def import_authority(
             "dependency_unavailable",
             "no certificate registry is configured. Add certificate_registry to the "
             "runtime policy.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         )
     if not CERTIFICATE_ID.fullmatch(certificate_id):
         raise ImportError_("bad_input", f"invalid certificate ID: {certificate_id!r}")

@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import cert_delete
+from haprion import cert_delete, exit_codes
 from haprion.cert_delete import HELPER, OPERATION, SUDO, DeleteError, Report
 from haprion.cert_inventory import IMPORT_STORE
 from haprion.cert_issue import certbot_binary
@@ -68,13 +68,13 @@ def outcome_of(report: Report) -> tuple[Outcome, int]:
     be reached for a certificate nothing else holds.
     """
 
-    if report.outcomes and len(report.removed) == len(report.outcomes):
-        return "done", 0
+    if report.outcomes and len(report.gone) == len(report.outcomes):
+        return "done", exit_codes.OK
     if len(report.refused) == len(report.outcomes):
-        return "blocked", 65
+        return "blocked", exit_codes.BLOCKED
     if report.touched or report.refused:
-        return "partial", 0
-    return "failed", 1
+        return "partial", exit_codes.PARTIAL
+    return "failed", exit_codes.FAILED
 
 
 def main(
@@ -116,7 +116,9 @@ def main(
     except HelperProtocolError as exc:
         return refuse("bad_input", str(exc), exc.exit_code)
     if not certificates:
-        return refuse("bad_input", "parameters.certificates names no certificate", 65)
+        return refuse(
+            "bad_input", "parameters.certificates names no certificate", exit_codes.REFUSED
+        )
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -160,7 +162,7 @@ def main(
             code="delete_failed",
             message="nothing was removed: " + ", ".join(report.incomplete),
         )
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -171,8 +173,8 @@ def main(
             warnings=warnings,
             error=error,
         ),
+        exit_code,
     )
-    return exit_code
 
 
 if __name__ == "__main__":

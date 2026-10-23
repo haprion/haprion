@@ -36,6 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from haprion import exit_codes
 from haprion.cli.cluster_list_helper import run_cluster_list_helper
 from haprion.cli.inventory import run_inventory_helper
 from haprion.cli.list_helper import MAX_DIFFS
@@ -785,7 +786,7 @@ def main(argv: list[str] | None = None) -> int:
             identity, database = db.connected_identity(lock_connection)
             if not db.try_singleton_lock(lock_connection, POLLER_LOCK_KEY):
                 logger.error("another poller holds the lock on %s; exiting", database)
-                return 75
+                return exit_codes.BLOCKED
             logger.info(
                 "polling %d cluster(s) every %ds as %s on %s",
                 len(known),
@@ -814,7 +815,7 @@ def main(argv: list[str] | None = None) -> int:
                 #
                 if not db.holds_singleton_lock(lock_connection, POLLER_LOCK_KEY):
                     logger.error("the poller lock on %s was lost; exiting", database)
-                    return 75
+                    return exit_codes.BLOCKED
                 listed = read_cluster_list()
                 if listed is not None:
                     if listed != known:

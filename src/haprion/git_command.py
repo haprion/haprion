@@ -10,13 +10,15 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from haprion import exit_codes
+
 GIT = "/usr/bin/git"
 
 
 class GitError(Exception):
     """A git invocation failed. Carries the exit code the caller reports."""
 
-    def __init__(self, message: str, *, exit_code: int = 70):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.INTERNAL):
         super().__init__(message)
         self.exit_code = exit_code
 

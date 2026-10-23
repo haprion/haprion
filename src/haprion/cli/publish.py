@@ -31,6 +31,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
+from haprion import exit_codes
 from haprion.cli.caller import CallerError, usage
 from haprion.cli.caller import config_path as _config_path
 from haprion.git_command import GitError
@@ -201,7 +202,7 @@ def main(
         repo = config_path(cluster_id)
         if not is_repo_root(repo):
             writer.write(f"{describe_problem(cluster_id, repo)}\n")
-            return 68
+            return exit_codes.UNAVAILABLE
         _, expected_head = resolve_head(repo)
         _report_managed(repo, writer)
         files = collect_layers(repo)

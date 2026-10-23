@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import dnsdist_config
+from haprion import dnsdist_config, exit_codes
 from haprion.certificates import CERTIFICATE_OPENING, authority_path
 from haprion.config import (
     CERTIFICATE_ID,
@@ -62,9 +62,6 @@ from haprion.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 OPERATION = "probe"
 PARAMETERS = frozenset({"targets", "source", "timeout_ms"})
 
-EXIT_NOT_ROOT = 77
-EXIT_NO_IDENTITY = 78
-EXIT_BAD_INPUT = 65
 
 #
 # `udp` is keepalived's check on a syslog pool (Fas 19b B5): its receivers are
@@ -88,11 +85,11 @@ def _dns_question(
     kind = entry.get("query_type") or DEFAULT_QUERY_TYPE
     if not isinstance(name, str) or not DNS_NAME.match(name):
         raise HelperProtocolError(
-            "a target's query_name is not a DNS name", exit_code=EXIT_BAD_INPUT
+            "a target's query_name is not a DNS name", exit_code=exit_codes.REFUSED
         )
     if kind not in DNS_QUERY_TYPES:
         raise HelperProtocolError(
-            "a target's query_type is not one a dns check may ask", exit_code=EXIT_BAD_INPUT
+            "a target's query_type is not one a dns check may ask", exit_code=exit_codes.REFUSED
         )
     #
     # A name that gives no single address raises `Unresolved`, which `main`
@@ -123,27 +120,27 @@ def _targets(
     """The request's targets, or a refusal naming the field that was wrong."""
 
     if not isinstance(parameters, dict):
-        raise HelperProtocolError("parameters must be an object", exit_code=EXIT_BAD_INPUT)
+        raise HelperProtocolError("parameters must be an object", exit_code=exit_codes.REFUSED)
 
     entries = parameters.get("targets")
     if not isinstance(entries, list) or not entries:
-        raise HelperProtocolError("targets must be a non-empty list", exit_code=EXIT_BAD_INPUT)
+        raise HelperProtocolError("targets must be a non-empty list", exit_code=exit_codes.REFUSED)
     if len(entries) > MAX_TARGETS:
         raise HelperProtocolError(
-            f"at most {MAX_TARGETS} targets may be probed at once", exit_code=EXIT_BAD_INPUT
+            f"at most {MAX_TARGETS} targets may be probed at once", exit_code=exit_codes.REFUSED
         )
 
     targets = []
     for entry in entries:
         if not isinstance(entry, dict):
-            raise HelperProtocolError("a target is not an object", exit_code=EXIT_BAD_INPUT)
+            raise HelperProtocolError("a target is not an object", exit_code=exit_codes.REFUSED)
         host = entry.get("host")
         port = entry.get("port")
         kind = entry.get("type", "tcp")
         if kind == "udp":
             if not isinstance(host, str) or not _is_address(host):
                 raise HelperProtocolError(
-                    "a udp target's host must be an IP address", exit_code=EXIT_BAD_INPUT
+                    "a udp target's host must be an IP address", exit_code=exit_codes.REFUSED
                 )
         #
         # A name, or an address of either family (review 26-10-08, F5): a
@@ -151,20 +148,20 @@ def _targets(
         # does not take.
         #
         elif not isinstance(host, str) or not (HOSTNAME.match(host) or _is_address(host)):
-            raise HelperProtocolError("a target's host is not usable", exit_code=EXIT_BAD_INPUT)
+            raise HelperProtocolError("a target's host is not usable", exit_code=exit_codes.REFUSED)
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
-            raise HelperProtocolError("a target's port is not a port", exit_code=EXIT_BAD_INPUT)
+            raise HelperProtocolError("a target's port is not a port", exit_code=exit_codes.REFUSED)
         if kind not in TYPES:
             raise HelperProtocolError(
-                "a target's type must be tcp, http, dns or udp", exit_code=EXIT_BAD_INPUT
+                "a target's type must be tcp, http, dns or udp", exit_code=exit_codes.REFUSED
             )
         path = entry.get("path", "/") or "/"
         header = entry.get("host_header", "") or ""
         if not isinstance(path, str) or not path.startswith("/") or len(path) > 1024:
-            raise HelperProtocolError("a target's path is not a path", exit_code=EXIT_BAD_INPUT)
+            raise HelperProtocolError("a target's path is not a path", exit_code=exit_codes.REFUSED)
         if not isinstance(header, str) or (header and not HOSTNAME.match(header)):
             raise HelperProtocolError(
-                "a target's host header is not a name", exit_code=EXIT_BAD_INPUT
+                "a target's host header is not a name", exit_code=exit_codes.REFUSED
             )
         #
         # Refused here as well as on the node. The node's own refusal would
@@ -175,12 +172,12 @@ def _targets(
         if min_version not in BACKEND_MIN_VERSION.values():
             raise HelperProtocolError(
                 "a target's min_version is not a TLS version this may ask for",
-                exit_code=EXIT_BAD_INPUT,
+                exit_code=exit_codes.REFUSED,
             )
         authority = entry.get("ca", "") or ""
         if not isinstance(authority, str) or (authority and not CERTIFICATE_ID.match(authority)):
             raise HelperProtocolError(
-                "a target's ca does not name a certificate", exit_code=EXIT_BAD_INPUT
+                "a target's ca does not name a certificate", exit_code=exit_codes.REFUSED
             )
         targets.append(
             Target(
@@ -203,11 +200,11 @@ def _targets(
 
     source = parameters.get("source", "") or ""
     if not isinstance(source, str) or len(source) > 45:
-        raise HelperProtocolError("source must be an address", exit_code=EXIT_BAD_INPUT)
+        raise HelperProtocolError("source must be an address", exit_code=exit_codes.REFUSED)
 
     timeout = parameters.get("timeout_ms", 2000)
     if not isinstance(timeout, int) or isinstance(timeout, bool):
-        raise HelperProtocolError("timeout_ms must be a number", exit_code=EXIT_BAD_INPUT)
+        raise HelperProtocolError("timeout_ms must be a number", exit_code=exit_codes.REFUSED)
     return targets, source, timeout
 
 
@@ -233,7 +230,7 @@ def _authorities(certificate_root: Path | None, targets: list[Target]) -> dict[s
     if certificate_root is None:
         raise HelperProtocolError(
             "a target names a CA but no certificate_root is configured",
-            exit_code=EXIT_BAD_INPUT,
+            exit_code=exit_codes.REFUSED,
         )
     found: dict[str, str] = {}
     for identifier in named:
@@ -243,7 +240,8 @@ def _authorities(certificate_root: Path | None, targets: list[Target]) -> dict[s
                 raw = handle.read(MAX_AUTHORITY_BYTES + 1)
         except OSError:
             raise HelperProtocolError(
-                f"the CA {identifier} is not published on this manager", exit_code=EXIT_BAD_INPUT
+                f"the CA {identifier} is not published on this manager",
+                exit_code=exit_codes.REFUSED,
             ) from None
         text = raw.decode("ascii", errors="replace")
         if (
@@ -252,7 +250,7 @@ def _authorities(certificate_root: Path | None, targets: list[Target]) -> dict[s
             or CERTIFICATE_OPENING not in text
         ):
             raise HelperProtocolError(
-                f"the CA {identifier} is not a certificate bundle", exit_code=EXIT_BAD_INPUT
+                f"the CA {identifier} is not a certificate bundle", exit_code=exit_codes.REFUSED
             )
         found[identifier] = text
     return found
@@ -292,7 +290,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-probe-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-probe-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -320,7 +318,7 @@ def main(
             request_id=request.request_id,
             code="dns_unresolved",
             message=str(exc),
-            exit_code=EXIT_BAD_INPUT,
+            exit_code=exit_codes.REFUSED,
         )
 
     try:
@@ -359,7 +357,7 @@ def main(
             request_id=request.request_id,
             code="probe_unavailable",
             message=message,
-            exit_code=EXIT_NO_IDENTITY,
+            exit_code=exit_codes.CONFIG,
         )
 
     #
@@ -444,8 +442,7 @@ def main(
             ),
         ),
     )
-    write_document(writer, document)
-    return 0 if ran else 68
+    return write_document(writer, document, exit_codes.OK if ran else exit_codes.UNAVAILABLE)
 
 
 if __name__ == "__main__":

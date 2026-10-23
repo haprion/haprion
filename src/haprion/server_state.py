@@ -48,7 +48,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-from haprion import node_ssh
+from haprion import exit_codes, node_ssh
 from haprion.config import DeployIdentity, Node
 from haprion.guid import server_guid
 from haprion.proxy_model import NAME, Proxy
@@ -108,7 +108,7 @@ SERVER = re.compile(
 class ServerStateError(Exception):
     """The request cannot be carried out as written. Nothing was sent to a node."""
 
-    def __init__(self, code: str, message: str, *, exit_code: int = 65):
+    def __init__(self, code: str, message: str, *, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code

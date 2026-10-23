@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from haprion import exit_codes
 from haprion.cli import cert_delete, cert_target
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -81,7 +82,7 @@ class TheTargetCommand(unittest.TestCase):
 
         cert_target.main(
             ["remove", "shop", "--cluster", "beta", "--json"],
-            run=answering(answer, 0, []),
+            run=answering(answer, exit_codes.PARTIAL, []),
             stream_out=out,
         )
 
@@ -89,14 +90,16 @@ class TheTargetCommand(unittest.TestCase):
 
 
 class TheDeleteCommand(unittest.TestCase):
-    def test_already_gone_is_done(self) -> None:
+    def test_the_helper_s_answer_is_the_exit(self) -> None:
+        """Already gone is the helper's `done` now, not a rule of this command's own (4-1)."""
+
         code = cert_delete.main(
             ["shop", "api"],
-            run=answering(gone("api", removed=("shop",)), 65, []),
+            run=answering(gone("api", removed=("shop",)), exit_codes.OK, []),
             stream_out=io.StringIO(),
         )
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.OK)
 
     def test_another_refusal_keeps_the_helpers_code(self) -> None:
         document = gone("api")
@@ -113,7 +116,7 @@ class TheDeleteCommand(unittest.TestCase):
         err = io.StringIO()
         code = cert_delete.main(["api"], run=silent, stream_out=io.StringIO(), stream_err=err)
 
-        self.assertEqual(code, 69)
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
         self.assertIn("password", err.getvalue())
 
 

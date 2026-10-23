@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import ui_interface
+from haprion import exit_codes, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import PublishError, read_material
 from haprion.cli import cert_job
@@ -43,9 +43,6 @@ OPERATION = ui_interface.OPERATION
 PARAMETERS = frozenset({"id"})
 
 __all__ = ["OPERATION", "main"]
-
-EXIT_REFUSED = 64
-EXIT_UNAVAILABLE = 78
 
 
 def main(
@@ -81,7 +78,7 @@ def main(
     refuse = cert_job.Refuse(OPERATION, request, writer, errors)
     certificate_id = request.parameters.get("id")
     if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
-        return refuse("bad_input", "parameters.id is not a certificate ID", 65)
+        return refuse("bad_input", "parameters.id is not a certificate ID", exit_codes.REFUSED)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -91,24 +88,26 @@ def main(
     entry = runtime.registry.certificates.get(certificate_id) if runtime.registry else None
     if entry is None:
         return refuse(
-            "unknown_certificate", f"{certificate_id} is not in the registry", EXIT_REFUSED
+            "unknown_certificate", f"{certificate_id} is not in the registry", exit_codes.REFUSED
         )
     if not entry.interface:
         return refuse(
             "bad_input",
             f"{certificate_id} is not the interface certificate; only the entry marked "
             "interface: true is installed here",
-            EXIT_REFUSED,
+            exit_codes.REFUSED,
         )
 
     try:
         material = read_material(entry, live=live, store=store)
         changed = (installer or ui_interface.install)(material)
     except PublishError as exc:
-        code = EXIT_UNAVAILABLE if exc.code == "dependency_unavailable" else EXIT_REFUSED
+        code = (
+            exit_codes.UNAVAILABLE if exc.code == "dependency_unavailable" else exit_codes.REFUSED
+        )
         return refuse(exc.code, str(exc), code)
 
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -122,8 +121,8 @@ def main(
                 "not_after": material.facts.not_after.strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

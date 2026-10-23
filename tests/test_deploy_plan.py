@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import unittest
 
+from haprion import exit_codes
 from haprion.cluster_status import parse_status
 from haprion.deploy_plan import (
-    EXIT_INCOMPLETE,
     Action,
     Outcome,
     ReleaseTarget,
@@ -242,7 +242,7 @@ class BothNodesReadableTests(unittest.TestCase):
             step = next_step(state, allow_vip_unknown=override)
             self.assertIs(step.action, Action.BLOCKED, override)
             self.assertIs(step.outcome, Outcome.BLOCKED)
-            self.assertEqual(step.exit_code, 65)
+            self.assertEqual(step.exit_code, exit_codes.BLOCKED)
             self.assertIn("split brain", step.reason)
 
     def test_an_indeterminate_answer_blocks_without_the_override(self) -> None:
@@ -255,7 +255,7 @@ class BothNodesReadableTests(unittest.TestCase):
         step = next_step(state)
 
         self.assertIs(step.action, Action.BLOCKED)
-        self.assertEqual(step.exit_code, 65)
+        self.assertEqual(step.exit_code, exit_codes.BLOCKED)
         self.assertIn("--allow-vip-unknown", step.reason)
 
     def test_the_override_turns_it_into_the_zero_owner_row(self) -> None:
@@ -315,7 +315,7 @@ class OneNodeReadableTests(unittest.TestCase):
         step = next_step(state)
 
         self.assertIs(step.action, Action.BLOCKED)
-        self.assertEqual(step.exit_code, 68)
+        self.assertEqual(step.exit_code, exit_codes.BLOCKED)
         self.assertIn("no node returned usable status", step.reason)
 
 
@@ -456,7 +456,7 @@ class CurrentSkipTests(unittest.TestCase):
 
         self.assertEqual(trace, ["deploy:node-b", "deploy:node-a"])
         self.assertIs(outcome, Outcome.PARTIAL)
-        self.assertEqual(code, EXIT_INCOMPLETE)
+        self.assertEqual(code, exit_codes.PARTIAL)
 
     def test_skipping_a_current_node_is_success_not_partial(self) -> None:
         #
@@ -583,7 +583,7 @@ class StopRuleTests(unittest.TestCase):
 
         self.assertEqual(trace, ["deploy:node-a"])
         self.assertIs(outcome, Outcome.FAILED)
-        self.assertEqual(code, 69)
+        self.assertEqual(code, exit_codes.FAILED)
 
     def test_a_target_that_moved_under_the_lock_blocks_everything(self) -> None:
         state = pair(
@@ -596,7 +596,7 @@ class StopRuleTests(unittest.TestCase):
 
         self.assertIs(step.action, Action.BLOCKED)
         self.assertIs(step.outcome, Outcome.BLOCKED)
-        self.assertEqual(step.exit_code, 65)
+        self.assertEqual(step.exit_code, exit_codes.BLOCKED)
         self.assertIn("nothing was deployed", step.reason)
 
     def test_the_target_check_runs_before_the_ownership_checks(self) -> None:

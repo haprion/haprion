@@ -35,8 +35,9 @@ from typing import Any, TextIO
 
 from haprion import node_enrollment, node_publish
 from haprion.cli import cert_deploy, deploy, node_helper
-from haprion.cli.caller import usage
+from haprion.cli.caller import usage, without_answer
 from haprion.envelope import new_request_id
+from haprion.helper_protocol import write_document
 from haprion.node_enrollment import MAX_BLOCK_BYTES
 
 SUDO = "/usr/bin/sudo"
@@ -137,17 +138,27 @@ def document_of(
 
 
 def json_answer(
-    completed: subprocess.CompletedProcess[str], operation: str, writer: TextIO, errors: TextIO
+    completed: subprocess.CompletedProcess[str],
+    operation: str,
+    cluster: str,
+    writer: TextIO,
+    errors: TextIO,
 ) -> int:
-    """`--json`: the helper's envelope as it came, and its exit code."""
+    """`--json`: the helper's envelope as it came and its exit code, or the one document anyway."""
 
     try:
         document = document_of(completed, operation)
     except ValueError as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return completed.returncode or 1
-    writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
-    return completed.returncode if document.get("ok") is not True else 0
+        return without_answer(
+            completed,
+            operation=operation,
+            cluster=cluster,
+            json_mode=True,
+            writer=writer,
+            errors=errors,
+            fallback=str(exc),
+        )
+    return write_document(writer, document, completed.returncode)
 
 
 def _answer(
@@ -196,7 +207,7 @@ def main(
 
     completed = run(request)
     if json_mode:
-        return json_answer(completed, node_helper.OPERATION, writer, errors)
+        return json_answer(completed, node_helper.OPERATION, cluster, writer, errors)
     try:
         result = _answer(completed)
     except ValueError as exc:

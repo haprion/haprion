@@ -21,7 +21,7 @@ from time import monotonic, sleep
 from typing import BinaryIO, Literal, Protocol
 from uuid import uuid4
 
-from haprion import node_ssh, restore_runs
+from haprion import exit_codes, node_ssh, restore_runs
 from haprion.backup_archive import MAX_ARCHIVE_BYTES, ArchiveError, ArchiveFacts, validate
 from haprion.backup_retention import DEFAULT_RETENTION
 from haprion.config import Cluster, DeployIdentity, Node
@@ -165,9 +165,11 @@ def fetch_over_ssh(
         max_bytes=max_bytes,
     )
     if ended.timed_out:
-        return FetchResult(124, "the node state export timed out")
+        return FetchResult(exit_codes.TIMED_OUT, "the node state export timed out")
     if ended.too_large:
-        return FetchResult(65, "the node state export exceeded the archive size limit")
+        return FetchResult(
+            exit_codes.REFUSED, "the node state export exceeded the archive size limit"
+        )
     assert ended.returncode is not None  # noqa: S101 - a call not stopped has its exit code
     return FetchResult(ended.returncode, ended.stderr)
 

@@ -10,7 +10,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import ndes, ndes_profiles
+from haprion import exit_codes, ndes, ndes_profiles
 from haprion.cli import cert_scep, cert_scep_helper
 from haprion.config import NdesPolicy, load_policy
 from haprion.dns_profile_keys import generate, render_private_key
@@ -161,7 +161,7 @@ class HelperBoundary(ScepFixture):
             )
 
         code, doc, errors = run()
-        self.assertEqual(code, 0, errors)
+        self.assertEqual(code, exit_codes.PARTIAL, errors)
         self.assertEqual(doc["outcome"], "partial")
         self.assertEqual(doc["result"]["state"], "pending")
         self.assertEqual(doc["warnings"][0]["code"], "request_pending")
@@ -257,7 +257,7 @@ class HelperBoundary(ScepFixture):
                     "formats": {"lb-01": "pkcs12"},
                 }
             )
-        self.assertEqual(code, 0, errors)
+        self.assertEqual(code, exit_codes.PARTIAL, errors)
         self.assertEqual(
             request_formats(self.ndes_policy.state_root, "web.example.com"), {"lb-01": "pkcs12"}
         )
@@ -350,7 +350,7 @@ class HelperBoundary(ScepFixture):
 
         with mock.patch.object(ndes, "enroll", side_effect=fake_enroll):
             code, doc, errors = self.helper({"id": "web.example.com", "resume": True})
-        self.assertEqual(code, 0, errors)
+        self.assertEqual(code, exit_codes.PARTIAL, errors)
         self.assertEqual(seen["domains"], ("web.example.com", "*.web.example.com"))
         self.assertEqual(seen["profile"].profile_id, "certserver1")
         self.assertTrue(seen["resume"])
@@ -380,5 +380,5 @@ class HelperBoundary(ScepFixture):
                 store=self.store,
                 lock_path=self.lock,
             )
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.PARTIAL)
         self.assertEqual(json.loads(output.getvalue())["result"]["state"], "pending")

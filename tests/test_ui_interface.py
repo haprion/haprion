@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haprion import helper_socket, ui_interface
+from haprion import exit_codes, helper_socket, ui_interface
 from haprion.cert_publish import Material, PublishError, read_material
 from haprion.cli import ui_tls_helper
 from haprion.config import CertificateSource, RegisteredCertificate
@@ -305,7 +305,7 @@ class TheSocketHelper(Fixture):
         code, out, _ = self.ask({"id": "mgr.example.net"}, installer=refusing)
 
         document = assert_contract("haprion-tls-install", out)
-        self.assertEqual(code, 64)
+        self.assertEqual(code, exit_codes.REFUSED)
         self.assertEqual(document["error"]["code"], "name_mismatch")
 
 

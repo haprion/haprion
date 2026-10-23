@@ -24,8 +24,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
+from haprion import exit_codes
 from haprion.cli import changes_publish
-from haprion.cli.caller import usage
+from haprion.cli.caller import usage, without_answer
 from haprion.cluster_settings import MAX_BYTES
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
@@ -33,7 +34,6 @@ from haprion.helper_protocol import write_document
 OPERATION = "cluster_settings"
 HELPER = "/opt/haprion/current/bin/haprion-cluster-settings-helper"
 SUDO = "/usr/bin/sudo"
-EXIT_UNAVAILABLE = 68
 USAGE = (
     "Usage:\n"
     "  haprion-cluster-settings -c <cluster> [--json]\n"
@@ -146,14 +146,27 @@ def _render(result: Mapping[str, Any], cluster: str, writer: TextIO) -> None:
         writer.write(f"on port {metrics.get('port')}, /metrics on every address, for {listed}\n")
 
 
-def _read(cluster: str, run_helper: RunHelper, errors: TextIO) -> tuple[int, Any]:
+def _read(
+    cluster: str,
+    run_helper: RunHelper,
+    errors: TextIO,
+    *,
+    json_mode: bool = False,
+    writer: TextIO | None = None,
+) -> tuple[int, Any]:
     completed = run_helper(cluster, new_request_id())
     try:
         return completed.returncode, json.loads(completed.stdout)
     except json.JSONDecodeError:
-        errors.write(completed.stderr.strip() or "ERROR: the settings helper returned no result")
-        errors.write("\n")
-        return completed.returncode or EXIT_UNAVAILABLE, None
+        return without_answer(
+            completed,
+            operation=OPERATION,
+            cluster=cluster,
+            json_mode=json_mode,
+            writer=writer or sys.stdout,
+            errors=errors,
+            fallback="the settings helper returned no result",
+        ), None
 
 
 def _set(
@@ -170,10 +183,10 @@ def _set(
         text = path.read_bytes()
     except OSError as exc:
         errors.write(f"ERROR: cannot read {path}: {exc.strerror}\n")
-        return 66
+        return exit_codes.NOT_FOUND
     if len(text) > MAX_BYTES:
         errors.write(f"ERROR: {path} is larger than {MAX_BYTES} bytes\n")
-        return 65
+        return exit_codes.REFUSED
     #
     # Built against the head the settings were just read at, so a change that
     # somebody else published in between is refused instead of overwritten.
@@ -185,7 +198,7 @@ def _set(
         head = str(_result(document, OPERATION)["head"])
     except (ValueError, KeyError) as exc:
         errors.write(f"ERROR: {exc}\n")
-        return code or EXIT_UNAVAILABLE
+        return code or exit_codes.UNAVAILABLE
     request = changes_publish.build_request(
         cluster,
         new_request_id(),
@@ -200,7 +213,7 @@ def _set(
     except (json.JSONDecodeError, ValueError) as exc:
         detail = completed.stderr.strip() or str(exc)
         errors.write(f"{detail}\n")
-        return completed.returncode or EXIT_UNAVAILABLE
+        return completed.returncode or exit_codes.UNAVAILABLE
     if result.get("changed"):
         writer.write(f"Published version {result.get('version')} of {cluster}.\n")
     else:
@@ -242,17 +255,16 @@ def main(
             errors=errors,
         )
 
-    code, document = _read(cluster, run_helper, errors)
+    code, document = _read(cluster, run_helper, errors, json_mode=json_mode, writer=writer)
     if document is None:
         return code
     if json_mode:
-        write_document(writer, document)
-        return code
+        return write_document(writer, document, code)
     try:
         _render(_result(document, OPERATION), cluster, writer)
     except ValueError as exc:
         errors.write(f"ERROR: {exc}\n")
-        return code or EXIT_UNAVAILABLE
+        return code or exit_codes.UNAVAILABLE
     return code
 
 

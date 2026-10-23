@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import BinaryIO, TextIO
 
 from haprion.cli.cert_receiver_helper import OPERATION
-from haprion.cli.socket_ask import EXIT_REFUSED, EXIT_SILENT, EXIT_UNAVAILABLE, Service, run
+from haprion.cli.socket_ask import Service, run
 
 SERVICE = Service(
     command="haprion-cert-receiver-ask",
@@ -33,9 +33,6 @@ SOCKET_PATH = SERVICE.socket_path
 TIMEOUT_SECONDS = SERVICE.timeout
 
 __all__ = [
-    "EXIT_REFUSED",
-    "EXIT_SILENT",
-    "EXIT_UNAVAILABLE",
     "SOCKET_PATH",
     "TIMEOUT_SECONDS",
     "main",

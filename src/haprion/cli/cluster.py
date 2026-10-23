@@ -101,7 +101,7 @@ def main(
 
     completed = run(request)
     if args.json:
-        return json_answer(completed, node_helper.DEFINE, writer, errors)
+        return json_answer(completed, node_helper.DEFINE, args.cluster, writer, errors)
     try:
         result = _answer(completed, node_helper.DEFINE)
     except ValueError as exc:

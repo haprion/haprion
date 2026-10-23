@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import cert_request
+from haprion import cert_request, exit_codes
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH
 from haprion.cert_request_state import DEFAULT_KEY_TYPE, KEY_TYPES
@@ -174,11 +174,11 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-cert-request must run as root", 77)
+        return refuse("not_root", "haprion-cert-request must run as root", exit_codes.NOT_ROOT)
     try:
         formats = cert_job.format_flags(args.format, args.receiver)
     except HelperProtocolError as exc:
-        return refuse("bad_input", str(exc), 65)
+        return refuse("bad_input", str(exc), exit_codes.REFUSED)
     try:
         doc, exit_code = request(
             certificate_id=args.id,

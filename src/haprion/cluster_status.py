@@ -22,20 +22,14 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from haprion import exit_codes
 from haprion.deploy_plan import ClusterObservation, NodeObservation, VipState
-
-#
-# Exit codes carried over from the command being replaced: bad input is the
-# caller's fault, anything else means the cluster could not be read.
-#
-EXIT_BAD_INPUT = 64
-EXIT_UNAVAILABLE = 68
 
 
 class StatusError(Exception):
     """The status result could not be used at all."""
 
-    def __init__(self, message: str, *, exit_code: int = EXIT_UNAVAILABLE):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.UNAVAILABLE):
         super().__init__(message)
         self.exit_code = exit_code
 
@@ -598,7 +592,7 @@ def parse_status(payload: object) -> ClusterStatus:
     if not isinstance(result, Mapping):
         error = _mapping(envelope.get("error"))
         message = _text(error.get("message")) or "cluster status unavailable"
-        code = EXIT_BAD_INPUT if error.get("code") == "bad_input" else EXIT_UNAVAILABLE
+        code = exit_codes.USAGE if error.get("code") == "bad_input" else exit_codes.UNAVAILABLE
         raise StatusError(message, exit_code=code)
 
     entries = result.get("nodes")

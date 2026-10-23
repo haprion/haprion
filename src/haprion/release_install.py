@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from haprion import accounts
+from haprion import accounts, exit_codes
 from haprion.release_layout import (
     NODE_DIRECTORIES,
     ReleaseMetadata,
@@ -57,7 +57,7 @@ def default_change_owner(path: Path, uid: int, gid: int) -> None:
 
 
 class InstallError(Exception):
-    def __init__(self, message: str, *, exit_code: int = 65):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.exit_code = exit_code
 
@@ -82,7 +82,7 @@ def _group_id(name: str = PUBLISH_GROUP) -> int:
         raise InstallError(
             f"the group '{name}' does not exist. The nodes read releases as that "
             "identity, so publishing would silently break deployment.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         ) from exc
 
 

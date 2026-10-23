@@ -22,7 +22,7 @@ import sys
 from collections.abc import Callable
 from typing import Any, BinaryIO, TextIO
 
-from haprion import dnsdist_config, server_names
+from haprion import dnsdist_config, exit_codes, server_names
 from haprion.cli import cert_job
 from haprion.envelope import envelope
 from haprion.helper_protocol import HelperProtocolError, write_document
@@ -40,12 +40,18 @@ MAX_NAMES = 20
 def _names(parameters: Any) -> list[str]:
     names = parameters.get("names") if isinstance(parameters, dict) else None
     if not isinstance(names, list) or not names:
-        raise HelperProtocolError("parameters.names must be a non-empty list", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.names must be a non-empty list", exit_code=exit_codes.REFUSED
+        )
     if len(names) > MAX_NAMES:
-        raise HelperProtocolError(f"at most {MAX_NAMES} names at once", exit_code=65)
+        raise HelperProtocolError(
+            f"at most {MAX_NAMES} names at once", exit_code=exit_codes.REFUSED
+        )
     for name in names:
         if not isinstance(name, str) or dnsdist_config.is_address(name) or not HOSTNAME.match(name):
-            raise HelperProtocolError("every name must be a host name", exit_code=65)
+            raise HelperProtocolError(
+                "every name must be a host name", exit_code=exit_codes.REFUSED
+            )
     return list(dict.fromkeys(names))
 
 
@@ -104,7 +110,9 @@ def main(
         names = _names(request.parameters)
         any_address = request.parameters.get("any", False)
         if not isinstance(any_address, bool):
-            raise HelperProtocolError("parameters.any must be true or false", exit_code=65)
+            raise HelperProtocolError(
+                "parameters.any must be true or false", exit_code=exit_codes.REFUSED
+            )
     except HelperProtocolError as exc:
         return refuse("bad_input", str(exc), exc.exit_code)
 
@@ -112,7 +120,7 @@ def main(
     # `done` whatever the names gave: a name that does not resolve is the
     # answer to the question, said per name, as the generator would say it.
     #
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -126,8 +134,8 @@ def main(
                 ]
             },
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

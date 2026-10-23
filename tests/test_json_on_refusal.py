@@ -12,6 +12,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from haprion import exit_codes
 from haprion.cli import cert_delete, cert_target, state_backup
 from tests.contract_schema import assert_contract
 
@@ -47,6 +48,6 @@ class EveryRefusalIsADocument(unittest.TestCase):
             with self.subTest(schema):
                 out = io.StringIO()
                 returned = main(argv, run=silent, stream_out=out, stream_err=io.StringIO())
-                self.assertEqual(returned, 1)
+                self.assertEqual(returned, exit_codes.UNAVAILABLE)
                 answer = assert_contract(schema, out.getvalue())
                 self.assertIn("password", answer["error"]["message"])

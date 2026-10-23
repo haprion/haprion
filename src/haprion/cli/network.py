@@ -15,15 +15,15 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
+from haprion import exit_codes
 from haprion.cli import network_apply
-from haprion.cli.caller import usage
+from haprion.cli.caller import usage, without_answer
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
 
 OPERATION = "network"
 HELPER = "/opt/haprion/current/bin/haprion-network-helper"
 SUDO = "/usr/bin/sudo"
-EXIT_UNAVAILABLE = 68
 USAGE = (
     "Usage:\n"
     "  haprion-network -c <cluster> [--json]\n"
@@ -168,18 +168,23 @@ def main(
     try:
         document = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        errors.write(completed.stderr.strip() or "ERROR: the network helper returned no result")
-        errors.write("\n")
-        return completed.returncode or EXIT_UNAVAILABLE
+        return without_answer(
+            completed,
+            operation=OPERATION,
+            cluster=cluster_id,
+            json_mode=json_mode,
+            writer=writer,
+            errors=errors,
+            fallback="the network helper returned no result",
+        )
 
     if json_mode:
-        write_document(writer, document)
-        return completed.returncode
+        return write_document(writer, document, completed.returncode)
     try:
         _render(document, writer)
     except ValueError as exc:
         errors.write(f"ERROR: {exc}\n")
-        return completed.returncode or EXIT_UNAVAILABLE
+        return completed.returncode or exit_codes.UNAVAILABLE
     return completed.returncode
 
 

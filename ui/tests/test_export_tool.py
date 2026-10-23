@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haprion import backup_schedule, cluster_settings
+from haprion import backup_schedule, cluster_settings, exit_codes
 
 from haprion_ui import (
     account_apply,
@@ -59,7 +59,7 @@ class Engine:
     def __call__(self, argv: Sequence[str]) -> Mapping[str, Any]:
         self.asked.append(tuple(argv))
         if self.refuse == argv[0]:
-            raise export_tool.ExportError(f"{argv[0]}: refused", export_tool.EXIT_UNAVAILABLE)
+            raise export_tool.ExportError(f"{argv[0]}: refused", exit_codes.UNAVAILABLE)
         command, cluster = argv[0], argv[2]
         if command == "haprion-objects" and self.objects is not None:
             return {"objects": self.objects}
@@ -196,7 +196,7 @@ class TheRefusals(Harness):
 
         code, answer = self.export()
 
-        self.assertEqual(code, export_tool.EXIT_REFUSED)
+        self.assertEqual(code, exit_codes.REFUSED)
         self.assertEqual(answer["outcome"], "failed")
         self.assertIn("not empty", answer["error"]["message"])
         self.assertEqual(sorted(path.name for path in self.target.iterdir()), ["keep"])
@@ -208,14 +208,14 @@ class TheRefusals(Harness):
 
         code, answer = self.export()
 
-        self.assertEqual(code, export_tool.EXIT_REFUSED)
+        self.assertEqual(code, exit_codes.REFUSED)
         self.assertIn("not a directory", answer["error"]["message"])
         self.assertEqual(list(elsewhere.iterdir()), [])
 
     def test_a_cluster_nobody_has_is_refused_before_anything_is_written(self) -> None:
         code, answer = self.export("-c", "gamma")
 
-        self.assertEqual(code, export_tool.EXIT_REFUSED)
+        self.assertEqual(code, exit_codes.REFUSED)
         self.assertIn("no such cluster: gamma", answer["error"]["message"])
         self.assertFalse(self.target.exists())
 
@@ -224,7 +224,7 @@ class TheRefusals(Harness):
 
         code, answer = self.export()
 
-        self.assertEqual(code, export_tool.EXIT_UNAVAILABLE)
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
         self.assertIn("haprion-network: refused", answer["error"]["message"])
         self.assertFalse(self.target.exists())
 

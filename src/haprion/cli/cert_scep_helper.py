@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import ui_interface
+from haprion import exit_codes, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haprion.cli import cert_job
@@ -127,7 +127,9 @@ def main(
         certificate_id = cert_job.certificate(request.parameters, "id")
         resume = request.parameters.get("resume", False)
         if not isinstance(resume, bool):
-            raise HelperProtocolError("parameters.resume must be true or false", exit_code=65)
+            raise HelperProtocolError(
+                "parameters.resume must be true or false", exit_code=exit_codes.REFUSED
+            )
         raw_profile = request.parameters.get("profile", "")
         profile_id = "" if resume and raw_profile in ("", None) else check_profile_id(raw_profile)
         raw_domains = request.parameters.get("domains", [])
@@ -141,7 +143,8 @@ def main(
             )
         ):
             raise HelperProtocolError(
-                "parameters.domains must be a non-empty list of DNS names", exit_code=65
+                "parameters.domains must be a non-empty list of DNS names",
+                exit_code=exit_codes.REFUSED,
             )
         domains = tuple(str(name) for name in raw_domains)
         clusters = cert_job.clusters(request.parameters)
@@ -150,7 +153,7 @@ def main(
         interface = cert_job.interface(request.parameters)
         exportable = cert_job.exportable(request.parameters)
     except (HelperProtocolError, ProfileError) as exc:
-        return refuse("bad_input", str(exc), 65)
+        return refuse("bad_input", str(exc), exit_codes.REFUSED)
 
     try:
         document, exit_code = enroll(
@@ -175,8 +178,7 @@ def main(
         )
     except ScepRefusal as exc:
         return refuse(exc.code, str(exc), exc.exit_code)
-    write_document(writer, document)
-    return exit_code
+    return write_document(writer, document, exit_code)
 
 
 if __name__ == "__main__":

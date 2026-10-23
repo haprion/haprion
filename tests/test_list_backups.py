@@ -21,7 +21,7 @@ from unittest import mock
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-from haprion import backup_retention, backups
+from haprion import backup_retention, backups, exit_codes
 from haprion.cli import list_backups, list_backups_helper
 from haprion.config import ConfigError, Node
 
@@ -254,7 +254,7 @@ class HelperTests(unittest.TestCase):
             _archive(root / "node-a", "2026-08-29_05-00-00")
             document, code = self._run(root, {"limit": 10})
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, exit_codes.PARTIAL)
         self.assertEqual(document["outcome"], "partial")
         self.assertFalse(document["ok"])
         self.assertEqual(document["warnings"][0]["node"], "node-b")

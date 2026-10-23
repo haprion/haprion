@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import cert_upload, ui_interface
+from haprion import cert_upload, exit_codes, ui_interface
 from haprion.cert_import import (
     ImportError_,
     assemble,
@@ -74,7 +74,9 @@ def _key_id(value: object) -> str:
         or len(value) != 16
         or any(c not in "0123456789abcdef" for c in value)
     ):
-        raise HelperProtocolError("parameters.key_id must be a 16-character key ID", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.key_id must be a 16-character key ID", exit_code=exit_codes.REFUSED
+        )
     return value
 
 
@@ -117,7 +119,7 @@ def main(
         if authority is not None and authority not in AUTHORITY_SOURCES:
             raise HelperProtocolError(
                 "parameters.authority must be one of: " + ", ".join(AUTHORITY_SOURCES),
-                exit_code=65,
+                exit_code=exit_codes.REFUSED,
             )
         key_id = ""
         ciphertext = b""
@@ -128,7 +130,9 @@ def main(
             key_id = _key_id(request.parameters.get("key_id"))
             encoded = request.parameters.get("ciphertext")
             if not isinstance(encoded, str) or len(encoded) > cert_upload.MAX_CIPHERTEXT * 2:
-                raise HelperProtocolError("parameters.ciphertext must be base64", exit_code=65)
+                raise HelperProtocolError(
+                    "parameters.ciphertext must be base64", exit_code=exit_codes.REFUSED
+                )
             ciphertext = base64.b64decode(encoded, validate=True)
         clusters = cert_job.clusters(request.parameters)
         receivers = cert_job.receivers(request.parameters)
@@ -139,7 +143,7 @@ def main(
                 "a CA certificate goes to clusters only: no receivers, not the interface"
             )
     except (HelperProtocolError, binascii.Error, ValueError) as exc:
-        return refuse("bad_input", str(exc), 65)
+        return refuse("bad_input", str(exc), exit_codes.REFUSED)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -148,7 +152,9 @@ def main(
         return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
     if authority == "ndes":
         if policy.ndes is None:
-            return refuse("dependency_unavailable", "runtime policy.ndes is not configured", 78)
+            return refuse(
+                "dependency_unavailable", "runtime policy.ndes is not configured", exit_codes.CONFIG
+            )
         try:
             result = import_authority(
                 certificate_id=certificate_id,
@@ -165,8 +171,7 @@ def main(
         except ImportError_ as exc:
             return refuse(exc.code, str(exc), exc.exit_code, exc.details or None)
         document, exit_code = result_envelope(result, request_id=request.request_id)
-        write_document(writer, document)
-        return exit_code
+        return write_document(writer, document, exit_code)
     #
     # The same pair that seals DNS profiles (B146): the installation's, named
     # under `acme.dns_profiles` because that is where it was first needed.
@@ -174,7 +179,9 @@ def main(
     profile_policy = policy.acme.dns_profiles if policy.acme is not None else None
     if profile_policy is None:
         return refuse(
-            "dependency_unavailable", "runtime policy.acme.dns_profiles is not configured", 78
+            "dependency_unavailable",
+            "runtime policy.acme.dns_profiles is not configured",
+            exit_codes.CONFIG,
         )
     selected = None
     try:
@@ -184,9 +191,13 @@ def main(
                 selected = candidate
                 break
     except KeyFileError as exc:
-        return refuse("dependency_unavailable", str(exc), 78)
+        return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)
     if selected is None:
-        return refuse("profile_key_unavailable", "the upload's private key is not configured", 78)
+        return refuse(
+            "profile_key_unavailable",
+            "the upload's private key is not configured",
+            exit_codes.CONFIG,
+        )
 
     try:
         opened = cert_upload.open_upload(selected, ciphertext, certificate_id=certificate_id)
@@ -194,7 +205,7 @@ def main(
         return refuse(
             "upload_binding_mismatch",
             str(exc),
-            65,
+            exit_codes.REFUSED,
             {"certificate": certificate_id, "binding": "sealed_upload"},
         )
 
@@ -214,8 +225,7 @@ def main(
                 require_secure=require_secure,
             )
             document, exit_code = result_envelope(result, request_id=request.request_id)
-            write_document(writer, document)
-            return exit_code
+            return write_document(writer, document, exit_code)
         if not keys:
             existing = stored_key(store, certificate_id)
             if existing is None:
@@ -250,8 +260,7 @@ def main(
         return refuse(exc.code, str(exc), exc.exit_code, exc.details or None)
 
     document, exit_code = result_envelope(result, request_id=request.request_id)
-    write_document(writer, document)
-    return exit_code
+    return write_document(writer, document, exit_code)
 
 
 if __name__ == "__main__":

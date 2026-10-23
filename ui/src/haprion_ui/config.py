@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from haprion import accounts
+from haprion import accounts, exit_codes
 
 #
 # A cluster ID is the engine's (`haprion.config.CLUSTER_ID`), and the database's
@@ -64,7 +64,7 @@ ALLOWED_OIDC_KEYS = frozenset({"public_key"})
 class ConfigError(ValueError):
     """The configuration cannot be used. Exit 78, as the contract says for it."""
 
-    def __init__(self, message: str, *, exit_code: int = 78):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.CONFIG):
         super().__init__(message)
         self.exit_code = exit_code
 

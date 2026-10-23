@@ -25,14 +25,11 @@ import time
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import node_restore
+from haprion import exit_codes, node_restore
 from haprion.backup_archive import ArchiveError
 from haprion.cli import node_restore_helper
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.node_restore import Request, RestoreError
-
-EXIT_USAGE = 64
-EXIT_NOT_ROOT = 77
 
 USAGE = """\
 Usage:
@@ -270,7 +267,7 @@ def main(
     errors = error_stream or sys.stderr
     if not argv or argv[0] not in {"prepare", "preview", "run", "discard", "status"}:
         errors.write(USAGE)
-        return EXIT_USAGE
+        return exit_codes.USAGE
     step, rest = argv[0], argv[1:]
     try:
         if step == "prepare":
@@ -310,14 +307,14 @@ def main(
         parameters = _parameters(step, options, run_id)
     except node_restore_helper.ParameterProblem as problem:
         errors.write(f"ERROR: {problem}\n\n{USAGE}")
-        return EXIT_USAGE
+        return exit_codes.USAGE
     except ValueError:
         errors.write(USAGE)
-        return EXIT_USAGE
+        return exit_codes.USAGE
 
     if require_root and os.geteuid() != 0:
         errors.write("ERROR: haprion-node-restore must run as root\n")
-        return EXIT_NOT_ROOT
+        return exit_codes.NOT_ROOT
 
     as_json = "--json" in options
     try:

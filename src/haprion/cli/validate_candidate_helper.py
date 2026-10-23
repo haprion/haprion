@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     MAX_CANDIDATE_BYTES,
@@ -45,7 +46,9 @@ def main(
     try:
         require_no_arguments(arguments)
         if require_root and os.geteuid() != 0:
-            raise HelperProtocolError("candidate validation helper must run as root", exit_code=77)
+            raise HelperProtocolError(
+                "candidate validation helper must run as root", exit_code=exit_codes.NOT_ROOT
+            )
         request = read_helper_request(
             input_stream,
             expected_operation="validate_candidate",
@@ -89,7 +92,7 @@ def main(
         sort_keys=True,
     )
     output_stream.write("\n")
-    return 0 if result.valid else 65
+    return exit_codes.OK if result.valid else exit_codes.REFUSED
 
 
 if __name__ == "__main__":

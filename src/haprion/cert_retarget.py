@@ -53,7 +53,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_pending, cert_registry
+from haprion import cert_pending, cert_registry, exit_codes
 from haprion.cert_delete import (
     AUTHORITY_NODE_VERB,
     NODE_VERB,
@@ -96,7 +96,7 @@ GuardsReader = Callable[[RuntimeConfig, Sequence[str]], Guards]
 class RetargetError(Exception):
     """The installation cannot answer the request at all - not one certificate's fault."""
 
-    def __init__(self, code: str, message: str, *, exit_code: int = 78):
+    def __init__(self, code: str, message: str, *, exit_code: int = exit_codes.CONFIG):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
@@ -313,9 +313,11 @@ def retarget(
             "runtime policy.",
         )
     if change.action not in {"add", "remove"}:
-        raise RetargetError("bad_input", f"unknown action {change.action!r}", exit_code=65)
+        raise RetargetError(
+            "bad_input", f"unknown action {change.action!r}", exit_code=exit_codes.REFUSED
+        )
     if not change.targets:
-        raise RetargetError("bad_input", "the change names no target", exit_code=65)
+        raise RetargetError("bad_input", "the change names no target", exit_code=exit_codes.REFUSED)
 
     if change.action == "add":
         outcomes, touched_clusters = _add(
@@ -377,7 +379,7 @@ def retarget(
                 guards_reader=guards_reader,
             )
     except PublishError as exc:
-        raise RetargetError(exc.code, str(exc), exit_code=65) from exc
+        raise RetargetError(exc.code, str(exc), exit_code=exit_codes.REFUSED) from exc
     return Report("remove", tuple(outcomes))
 
 
@@ -430,9 +432,9 @@ def _add(
         raise RetargetError(
             "dependency_unavailable",
             f"cannot record the clusters about to be added: {exc}",
-            exit_code=75
+            exit_code=exit_codes.BLOCKED
             if isinstance(exc, PublishError) and exc.code == "operation_locked"
-            else 78,
+            else exit_codes.CONFIG,
         ) from exc
     marked = {
         cluster_id: serial

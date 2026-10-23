@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope
 from haprion.git_command import GitError
@@ -30,7 +31,6 @@ from haprion.status_collect import read_target
 
 OPERATION = "inventory"
 PARAMETERS: frozenset[str] = frozenset()
-EXIT_NOT_ROOT = 77
 
 type ReadTree = Callable[[Path, str], Mapping[str, bytes]]
 
@@ -54,7 +54,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-inventory-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-inventory-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -95,7 +95,7 @@ def main(
             files = tree_reader(Path(cluster.config_path), target.hash)
         result = inventory_result(files, target)
     except GitError as exc:
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -105,10 +105,10 @@ def main(
                 result=None,
                 error=Message(code="inventory_unavailable", message=str(exc)),
             ),
+            exc.exit_code,
         )
-        return exc.exit_code
     except InventoryError as exc:
-        write_document(
+        return write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -118,10 +118,10 @@ def main(
                 result=None,
                 error=Message(code="inventory_invalid", message=str(exc)),
             ),
+            exit_codes.REFUSED,
         )
-        return 65
 
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -130,8 +130,8 @@ def main(
             request_id=request.request_id,
             result=result,
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.candidate_validation import validator_version
 from haprion.config import (
     DEFAULT_POLICY_PATH,
@@ -64,9 +65,6 @@ from haprion.status_collect import (
 OPERATION = "status"
 PARAMETERS: frozenset[str] = frozenset()
 
-EXIT_NOT_ROOT = 77
-EXIT_NO_IDENTITY = 78
-
 
 def main(
     argv: list[str] | None = None,
@@ -88,7 +86,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-status-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-status-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -148,7 +146,7 @@ def main(
             request_id=request.request_id,
             code="status_unavailable",
             message=message,
-            exit_code=EXIT_NO_IDENTITY,
+            exit_code=exit_codes.CONFIG,
         )
 
     def default_reader(node: Node) -> NodeResponse:
@@ -171,8 +169,9 @@ def main(
     # nodes run, so a validator newer than a node is visible where the nodes are.
     #
     report.result["summary"]["validator_version"] = (version_reader or validator_version)()
-    write_document(writer, report.as_envelope(request.cluster, request_id=request.request_id))
-    return report.exit_code
+    return write_document(
+        writer, report.as_envelope(request.cluster, request_id=request.request_id), report.exit_code
+    )
 
 
 if __name__ == "__main__":

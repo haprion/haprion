@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from haprion import cert_import
+from haprion import cert_import, exit_codes
 from haprion.cert_import import (
     ImportError_,
     Material,
@@ -28,7 +28,6 @@ from haprion.cert_import import (
 )
 from haprion.cert_inventory import FULLCHAIN, PRIVKEY
 from haprion.cli import cert_import as command
-from haprion.cli.cert_publish import EXIT_NOT_ROOT
 from haprion.config import load_policy, load_runtime_config
 from tests.test_cert_publish import Fixture
 
@@ -431,7 +430,7 @@ class TheCommand(ImportFixture):
             str(self.pki.leaf_key),
             require_root=True,
         )
-        self.assertEqual(code, EXIT_NOT_ROOT)
+        self.assertEqual(code, exit_codes.NOT_ROOT)
         self.assertIn("not_root", err)
 
     def test_pem_files_with_json(self) -> None:

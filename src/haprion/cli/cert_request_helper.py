@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH
 from haprion.cert_request_state import DEFAULT_KEY_TYPE, KEY_TYPES
@@ -114,20 +115,22 @@ def main(
             )
         ):
             raise HelperProtocolError(
-                "parameters.domains must be a non-empty list of DNS names", exit_code=65
+                "parameters.domains must be a non-empty list of DNS names",
+                exit_code=exit_codes.REFUSED,
             )
         domains = tuple(str(name) for name in raw_domains)
         key_type = job.parameters.get("key_type", DEFAULT_KEY_TYPE)
         if not isinstance(key_type, str) or key_type not in KEY_TYPES:
             raise HelperProtocolError(
-                "parameters.key_type must be one of: " + ", ".join(KEY_TYPES), exit_code=65
+                "parameters.key_type must be one of: " + ", ".join(KEY_TYPES),
+                exit_code=exit_codes.REFUSED,
             )
         clusters = cert_job.clusters(job.parameters)
         receivers = cert_job.receivers(job.parameters)
         formats = cert_job.formats(job.parameters, receivers)
         interface = cert_job.interface(job.parameters)
     except HelperProtocolError as exc:
-        return refuse("bad_input", str(exc), 65)
+        return refuse("bad_input", str(exc), exit_codes.REFUSED)
 
     try:
         document, exit_code = request(
@@ -147,8 +150,7 @@ def main(
         )
     except RequestRefusal as exc:
         return refuse(exc.code, str(exc), exc.exit_code)
-    write_document(writer, document)
-    return exit_code
+    return write_document(writer, document, exit_code)
 
 
 if __name__ == "__main__":

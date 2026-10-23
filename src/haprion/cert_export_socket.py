@@ -13,7 +13,7 @@ import binascii
 import json
 import uuid
 
-from haprion import helper_socket
+from haprion import exit_codes, helper_socket
 from haprion.cert_export import Export, ExportError
 
 SOCKET_PATH = "/run/haprion/cert-export.sock"
@@ -53,17 +53,19 @@ def ask(
             request, path=path, timeout=TIMEOUT_SECONDS, what="the certificate export service"
         )
     except helper_socket.HelperUnavailable as error:
-        raise ExportError("dependency_unavailable", str(error), 78) from error
+        raise ExportError("dependency_unavailable", str(error), exit_codes.CONFIG) from error
     try:
         document = json.loads(raw)
     except ValueError as error:
         raise ExportError(
             "dependency_unavailable",
             "the export service answered with something that is not JSON",
-            78,
+            exit_codes.CONFIG,
         ) from error
     if not isinstance(document, dict):
-        raise ExportError("dependency_unavailable", "the export service did not say", 78)
+        raise ExportError(
+            "dependency_unavailable", "the export service did not say", exit_codes.CONFIG
+        )
     result = document.get("result")
     if document.get("outcome") != "done" or not isinstance(result, dict):
         refusal = document.get("error")
@@ -84,5 +86,7 @@ def ask(
         )
     except (KeyError, binascii.Error) as error:
         raise ExportError(
-            "dependency_unavailable", "the export service's answer was incomplete", 78
+            "dependency_unavailable",
+            "the export service's answer was incomplete",
+            exit_codes.CONFIG,
         ) from error

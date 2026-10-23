@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from haprion import exit_codes
 from haprion.cli import state_backup
 from haprion.config import Cluster, DeployIdentity
 from haprion.state_backup import BackupResult, NodeResult
@@ -133,7 +134,7 @@ class StateBackupCommandTests(unittest.TestCase):
     def test_arbitrary_arguments_are_refused(self) -> None:
         errors = io.StringIO()
         code = state_backup.main(["alpha"], error_stream=errors, require_root=False)
-        self.assertEqual(code, state_backup.EXIT_USAGE)
+        self.assertEqual(code, exit_codes.USAGE)
         self.assertEqual(errors.getvalue(), state_backup.USAGE)
 
 

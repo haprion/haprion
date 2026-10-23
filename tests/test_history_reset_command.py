@@ -19,6 +19,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from haprion import exit_codes
 from haprion.cli.history_reset import CONFIRMATION, OPERATION, main
 
 HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"
@@ -213,7 +214,7 @@ class CommandTests(unittest.TestCase):
         with TemporaryDirectory() as raw:
             draft = self.layout(Path(raw))
             code, output, _, _ = self.run_command(draft, f"y\n{CONFIRMATION}\n", publish_code=65)
-            self.assertEqual(code, 65)
+            self.assertEqual(code, exit_codes.PARTIAL)
             self.assertIn("refers to a version that", output)
             self.assertIn("haprion-publish -c alpha", output)
 

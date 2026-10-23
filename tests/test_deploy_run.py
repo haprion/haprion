@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haprion import deploy_run
+from haprion import deploy_run, exit_codes
 from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
 from haprion.deploy_plan import CertificateRef, CertificateTarget, ReleaseTarget
 from haprion.deploy_run import CertificatePreflight, DeployReport
@@ -313,7 +313,7 @@ class BlockedStateTests(unittest.TestCase):
         code, shown = deploy(cluster)
 
         self.assertEqual(cluster.triggered, [])
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("split brain", shown)
 
     def test_split_brain_appearing_mid_run_stops_the_rest(self) -> None:
@@ -336,7 +336,7 @@ class BlockedStateTests(unittest.TestCase):
 
         blocked, shown = deploy(cluster)
         self.assertEqual(cluster.triggered, [])
-        self.assertEqual(blocked, 65)
+        self.assertEqual(blocked, exit_codes.BLOCKED)
         self.assertIn("--allow-vip-unknown", shown)
 
         allowed, shown = deploy(cluster, allow_vip_unknown=True)
@@ -353,7 +353,7 @@ class BlockedStateTests(unittest.TestCase):
         code, shown = deploy(cluster)
 
         self.assertEqual(cluster.triggered, [])
-        self.assertEqual(code, 68)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("no node returned usable status", shown)
 
 
@@ -414,7 +414,7 @@ class ReloadFailureTests(unittest.TestCase):
         code, shown = deploy(cluster)
 
         self.assertEqual(cluster.triggered, ["node-b"])
-        self.assertEqual(code, 69)
+        self.assertEqual(code, exit_codes.FAILED)
         self.assertIn("RESULT: FAILED", shown)
         self.assertIn("the deploy trigger failed on node-b", shown)
 
@@ -541,7 +541,7 @@ class ZeroOwnerTests(unittest.TestCase):
         code, _ = deploy(cluster)
 
         self.assertEqual(cluster.triggered, ["node-a"])
-        self.assertEqual(code, 69)
+        self.assertEqual(code, exit_codes.FAILED)
 
 
 if __name__ == "__main__":
@@ -599,7 +599,7 @@ class StoppingBecauseTheCallerLetGo(unittest.TestCase):
         cluster = pair()
         code, text = self.run_with(cluster, self.Released())
 
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertEqual(LAST_REPORT[0].outcome.value, "blocked")
         self.assertIn("No node was touched", text)
         self.assertEqual(cluster.triggered, [])
@@ -731,7 +731,7 @@ class CertificatePreflightTests(unittest.TestCase):
         code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
 
         self.assertEqual(cluster.triggered, [])
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("ERROR: [certificates_not_deployed]", shown)
         self.assertIn("node-a (missing example-net)", shown)
         self.assertIn("node-b (missing example-net)", shown)
@@ -764,7 +764,7 @@ class CertificatePreflightTests(unittest.TestCase):
         code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
 
         self.assertEqual(cluster.triggered, [])
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("node-b (stale example-net)", shown)
         self.assertNotIn("node-a (", shown)
 
@@ -828,7 +828,7 @@ class CertificatePreflightTests(unittest.TestCase):
         code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
 
         self.assertEqual(cluster.triggered, [])
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("node-b (missing example-net)", shown)
 
     def test_the_check_comes_after_the_cluster_wide_blocks(self) -> None:
@@ -841,7 +841,7 @@ class CertificatePreflightTests(unittest.TestCase):
 
         code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
 
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("split brain", shown)
         self.assertNotIn("certificates_not_deployed", shown)
 
@@ -881,7 +881,7 @@ class CertificatePreflightTests(unittest.TestCase):
         code, shown = deploy(cluster, preflight=preflight(authorities=AUTHORITY))
 
         self.assertEqual(cluster.triggered, [])
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("node-a (missing CA corp-root)", shown)
         report = LAST_REPORT[0]
         assert report.error is not None and report.error.details is not None
@@ -911,7 +911,7 @@ class CertificatePreflightTests(unittest.TestCase):
         code, shown = deploy(cluster, preflight=preflight(*PUBLISHED, authorities=AUTHORITY))
 
         self.assertEqual(cluster.triggered, [])
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("node-b (stale CA corp-root)", shown)
         self.assertNotIn("node-a (", shown)
 
@@ -1082,4 +1082,4 @@ class TheRunKeepsToItsBudget(unittest.TestCase):
         self.assertEqual(cluster.triggered, [])
         self.assertEqual(document["outcome"], "blocked")
         self.assertEqual(document["error"]["code"], "deploy_budget_exhausted")
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.BLOCKED)

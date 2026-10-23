@@ -54,7 +54,7 @@ from typing import Any
 
 import yaml
 
-from haprion import backups, change_journal, safe_yaml
+from haprion import backups, change_journal, exit_codes, safe_yaml
 from haprion.change_journal import FileChange as Change
 from haprion.change_journal import Record
 from haprion.config import (
@@ -126,7 +126,7 @@ ED25519_BLOB_BYTES = 51
 class EnrollmentError(Exception):
     """A refusal with a stable code, in words the page and the terminal show."""
 
-    def __init__(self, code: str, message: str, exit_code: int = 65):
+    def __init__(self, code: str, message: str, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
@@ -495,7 +495,9 @@ def _read(path: Path) -> bytes:
         return path.read_bytes()
     except FileNotFoundError:
         raise EnrollmentError(
-            "dependency_unavailable", f"{path} does not exist; it is created by the installer", 78
+            "dependency_unavailable",
+            f"{path} does not exist; it is created by the installer",
+            exit_codes.CONFIG,
         ) from None
 
 
@@ -792,7 +794,7 @@ def _public(path: Path) -> str:
         return " ".join(path.read_text(encoding="ascii").split()[:2])
     except (OSError, UnicodeDecodeError) as exc:
         raise EnrollmentError(
-            "dependency_unavailable", f"{path} could not be read ({exc})", 78
+            "dependency_unavailable", f"{path} could not be read ({exc})", exit_codes.CONFIG
         ) from None
 
 
@@ -823,7 +825,7 @@ def join_document(
         raise EnrollmentError(
             "dependency_unavailable",
             "the runtime policy names no deploy_identity or status_identity to hand a node",
-            78,
+            exit_codes.CONFIG,
         )
     return {
         "version": 1,
@@ -847,7 +849,9 @@ def join(
         return
     if join_node is None:
         raise EnrollmentError(
-            "dependency_unavailable", "a v2 block needs the helper's join, and there is none", 78
+            "dependency_unavailable",
+            "a v2 block needs the helper's join, and there is none",
+            exit_codes.CONFIG,
         )
     response = join_node(node, enrollment.join_key, document)
     if response.exit_code != 0:
@@ -857,7 +861,7 @@ def join(
             f"{node.mgmt_host} did not join (exit {response.exit_code}){': ' + said if said else ''}. "
             "Nothing was changed here; a block not yet used works again, a used one is made "
             "anew on the node with  sudo haprion-node-key --again",
-            75,
+            exit_codes.BLOCKED,
         )
 
 
@@ -1041,7 +1045,9 @@ def add(
             )
         problem = verify(node, cluster, ask)
         if problem is not None:
-            raise EnrollmentError("node_unverified", f"{problem}. Nothing was changed.", 75)
+            raise EnrollmentError(
+                "node_unverified", f"{problem}. Nothing was changed.", exit_codes.BLOCKED
+            )
     return Outcome(
         node=node,
         cluster=cluster,
@@ -1081,7 +1087,7 @@ def remove(
         raise EnrollmentError(
             "node_owns_vip",
             f"{name} holds the VIP right now. Move the address to another node first.",
-            75,
+            exit_codes.BLOCKED,
         )
     #
     # Before a file is written (B319, Fas 18 finding 73). Removed and left
@@ -1146,7 +1152,7 @@ def change_host(
             raise EnrollmentError(
                 "node_unverified",
                 f"{problem}. {name} is still reached at {node.mgmt_host}; nothing was changed.",
-                75,
+                exit_codes.BLOCKED,
             )
     return Outcome(
         node=moved,

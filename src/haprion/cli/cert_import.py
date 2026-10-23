@@ -16,13 +16,12 @@ handed over from another system.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import ui_interface
+from haprion import exit_codes, ui_interface
 from haprion.cert_import import (
     OPERATION,
     ImportError_,
@@ -36,12 +35,10 @@ from haprion.cert_import import (
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haprion.cli import cert_job
-from haprion.cli.cert_publish import EXIT_NOT_ROOT, default_deployer
+from haprion.cli.cert_publish import default_deployer
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope, failure, new_request_id
-from haprion.helper_protocol import HelperProtocolError
-
-EXIT_USAGE = 64
+from haprion.helper_protocol import HelperProtocolError, write_document
 
 USAGE = (
     "Usage:\n"
@@ -107,7 +104,7 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
     def value() -> str:
         if index + 1 >= len(argv) or argv[index + 1].startswith("-"):
             writer.write(USAGE)
-            raise SystemExit(EXIT_USAGE)
+            raise SystemExit(exit_codes.USAGE)
         return argv[index + 1]
 
     paths = {
@@ -146,7 +143,7 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
             index += 1
         else:
             writer.write(USAGE)
-            raise SystemExit(EXIT_USAGE)
+            raise SystemExit(exit_codes.USAGE)
     if parsed.authority is not None or parsed.ndes_ca:
         #
         # A CA file goes to clusters and nowhere else, and carries nothing
@@ -168,11 +165,11 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
             or parsed.interface
         ):
             writer.write(USAGE)
-            raise SystemExit(EXIT_USAGE)
+            raise SystemExit(exit_codes.USAGE)
         return parsed
     if parsed.certificate_id is None or (parsed.pkcs12 is None and parsed.certificate is None):
         writer.write(USAGE)
-        raise SystemExit(EXIT_USAGE)
+        raise SystemExit(exit_codes.USAGE)
     return parsed
 
 
@@ -275,22 +272,22 @@ def main(
                 message=message,
                 exit_code=exit_code,
             )
-            writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+            write_document(writer, document, exit_code)
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-cert-import must run as root", EXIT_NOT_ROOT)
+        return refuse("not_root", "haprion-cert-import must run as root", exit_codes.NOT_ROOT)
     try:
         formats = cert_job.format_flags(arguments.formats, arguments.receivers)
     except HelperProtocolError as exc:
-        return refuse("bad_input", str(exc), EXIT_USAGE)
+        return refuse("bad_input", str(exc), exit_codes.USAGE)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
         runtime = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
             str(exc),
             exc.exit_code,
         )
@@ -301,7 +298,9 @@ def main(
             if arguments.ndes_ca:
                 if policy.ndes is None:
                     return refuse(
-                        "dependency_unavailable", "runtime policy.ndes is not configured", 78
+                        "dependency_unavailable",
+                        "runtime policy.ndes is not configured",
+                        exit_codes.CONFIG,
                     )
                 source = policy.ndes.issuing_ca
             else:
@@ -323,7 +322,7 @@ def main(
             return refuse(exc.code, str(exc), exc.exit_code)
         document, exit_code = result_envelope(result, request_id=request_id)
         if arguments.json_mode:
-            writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+            write_document(writer, document, exit_code)
         else:
             _summary(result, writer)
         return exit_code
@@ -363,7 +362,7 @@ def main(
 
     document, exit_code = result_envelope(result, request_id=request_id)
     if arguments.json_mode:
-        writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+        write_document(writer, document, exit_code)
     else:
         _summary(result, writer)
         if exit_code:

@@ -16,11 +16,9 @@ import subprocess
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from haprion import exit_codes
 from haprion.envelope import new_request_id
 
-EXIT_REFUSED = 65
-EXIT_NOT_FOUND = 66
-EXIT_UNAVAILABLE = 68
 CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 MAX_MESSAGE = 2048
 
@@ -33,7 +31,7 @@ class Refused(Exception):
         self,
         code: str,
         message: str,
-        exit_code: int = EXIT_REFUSED,
+        exit_code: int = exit_codes.REFUSED,
         details: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
@@ -87,13 +85,13 @@ def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Ma
         raise Refused(
             "unavailable",
             completed.stderr.strip() or f"the {operation} helper returned no result",
-            completed.returncode or EXIT_UNAVAILABLE,
+            completed.returncode or exit_codes.UNAVAILABLE,
         ) from exc
     if not isinstance(answer, Mapping) or answer.get("operation") != operation:
         raise Refused(
             "unavailable",
             f"the {operation} helper returned an invalid result",
-            completed.returncode or EXIT_UNAVAILABLE,
+            completed.returncode or exit_codes.UNAVAILABLE,
         )
     error = answer.get("error")
     if isinstance(error, Mapping):
@@ -101,7 +99,7 @@ def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Ma
         raise Refused(
             str(error.get("code") or "refused"),
             str(error.get("message") or "refused"),
-            completed.returncode or EXIT_REFUSED,
+            completed.returncode or exit_codes.REFUSED,
             details if isinstance(details, Mapping) else None,
         )
     result = answer.get("result")
@@ -109,7 +107,7 @@ def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Ma
         raise Refused(
             "unavailable",
             f"the {operation} helper returned no result",
-            completed.returncode or EXIT_UNAVAILABLE,
+            completed.returncode or exit_codes.UNAVAILABLE,
         )
     return result
 

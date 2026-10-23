@@ -20,10 +20,11 @@ import subprocess
 import sys
 from typing import Any, TextIO
 
-from haprion.cli.caller import usage
+from haprion.cli.caller import usage, without_answer
 from haprion.digits import is_digits
 from haprion.envelope import new_request_id
 from haprion.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS
+from haprion.helper_protocol import write_document
 from haprion.probe_socket import build_request
 from haprion.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 
@@ -252,18 +253,21 @@ def main(argv: list[str] | None = None, *, writer: TextIO | None = None) -> int:
         source=options["source"],
         timeout_ms=UDP_WAIT_MS if options["udp"] else DEFAULT_TIMEOUT_MS,
     )
-    if not completed.stdout.strip():
-        sys.stderr.write(completed.stderr or "ERROR: the helper produced no answer\n")
-        return completed.returncode or 70
     try:
         envelope = json.loads(completed.stdout)
     except ValueError:
-        sys.stderr.write("ERROR: the helper did not answer with JSON\n")
-        return 70
+        return without_answer(
+            completed,
+            operation=OPERATION,
+            cluster=options["cluster"],
+            json_mode=bool(options["json"]),
+            writer=out,
+            errors=sys.stderr,
+            fallback="the helper produced no answer",
+        )
 
     if options["json"]:
-        out.write(json.dumps(envelope, separators=(",", ":"), sort_keys=True) + "\n")
-        return completed.returncode
+        return write_document(out, envelope, completed.returncode)
 
     error = envelope.get("error")
     if error:

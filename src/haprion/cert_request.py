@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_registry
+from haprion import cert_registry, exit_codes
 from haprion.cert_inventory import (
     IMPORT_STORE,
     LETSENCRYPT_LIVE,
@@ -82,7 +82,7 @@ MAX_DOMAINS = 32
 class RequestError(Exception):
     """The request is refused; nothing was written."""
 
-    def __init__(self, code: str, message: str, *, exit_code: int = 65):
+    def __init__(self, code: str, message: str, *, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
@@ -199,14 +199,16 @@ def _openssl(arguments: Sequence[str], *, what: str, cwd: Path) -> str:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RequestError(
-            "dependency_unavailable", f"openssl could not {what}: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"openssl could not {what}: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
     if completed.returncode != 0:
         detail = (completed.stderr or "").strip().splitlines()
         raise RequestError(
             "dependency_unavailable",
             f"openssl could not {what}: {detail[-1] if detail else ''}",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         )
     return completed.stdout
 
@@ -243,7 +245,7 @@ def make_request(
             "dependency_unavailable",
             "no certificate registry is configured. Add certificate_registry to the "
             "runtime policy.",
-            exit_code=78,
+            exit_code=exit_codes.CONFIG,
         )
     if not CERTIFICATE_ID.fullmatch(certificate_id):
         raise RequestError("bad_input", f"invalid certificate ID: {certificate_id!r}")
@@ -324,7 +326,9 @@ def _make(
         staging = Path(tempfile.mkdtemp(prefix=f".{certificate_id}.", dir=store))
     except OSError as exc:
         raise RequestError(
-            "dependency_unavailable", f"the import store could not be written: {exc}", exit_code=78
+            "dependency_unavailable",
+            f"the import store could not be written: {exc}",
+            exit_code=exit_codes.CONFIG,
         ) from exc
     try:
         os.chmod(staging, 0o700)

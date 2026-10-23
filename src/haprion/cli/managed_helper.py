@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import advanced, tls_policy
+from haprion import advanced, exit_codes, tls_policy
 from haprion.candidate_validation import (
     VALIDATION_CERTIFICATE,
     SandboxValidator,
@@ -34,7 +34,7 @@ from haprion.candidate_validation import (
 )
 from haprion.cluster_lock import LockBusy, hold
 from haprion.config import Cluster, ConfigError, PathPolicy, load_policy, load_runtime_config
-from haprion.envelope import BLOCKED_EXIT, envelope, failure
+from haprion.envelope import envelope, failure
 from haprion.git_command import GitError
 from haprion.helper_protocol import (
     MAX_REQUEST_BYTES,
@@ -147,7 +147,7 @@ class Refuse:
         self, code: str, message: str, exit_code: int, details: dict[str, Any] | None = None
     ) -> int:
         self.errors.write(f"ERROR: [{code}] {message}\n")
-        write_document(
+        return write_document(
             self.output,
             failure(
                 operation=self.operation,
@@ -158,16 +158,18 @@ class Refuse:
                 exit_code=exit_code,
                 details=details,
             ),
+            exit_code,
         )
-        return exit_code
 
 
 def text(parameters: Mapping[str, JsonValue], key: str, *, limit: int) -> str:
     value = parameters.get(key)
     if not isinstance(value, str) or not value:
-        raise HelperProtocolError(f"parameters.{key} must be a non-empty string", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} must be a non-empty string", exit_code=exit_codes.REFUSED
+        )
     if len(value.encode("utf-8")) > limit:
-        raise HelperProtocolError(f"parameters.{key} is too long", exit_code=65)
+        raise HelperProtocolError(f"parameters.{key} is too long", exit_code=exit_codes.REFUSED)
     return value
 
 
@@ -180,7 +182,9 @@ def flag(parameters: Mapping[str, JsonValue], key: str) -> bool:
 
     value = parameters.get(key, False)
     if not isinstance(value, bool):
-        raise HelperProtocolError(f"parameters.{key} must be true or false", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} must be true or false", exit_code=exit_codes.REFUSED
+        )
     return value
 
 
@@ -189,11 +193,13 @@ def fence(parameters: Mapping[str, JsonValue]) -> tuple[str, str]:
 
     expected_head = text(parameters, "expected_head", limit=40)
     if not COMMIT_ID.fullmatch(expected_head):
-        raise HelperProtocolError("parameters.expected_head must be a full commit ID", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.expected_head must be a full commit ID", exit_code=exit_codes.REFUSED
+        )
     comment = text(parameters, "comment", limit=MAX_COMMENT_BYTES)
     if CONTROL.search(comment):
         raise HelperProtocolError(
-            "parameters.comment may not contain control characters", exit_code=65
+            "parameters.comment may not contain control characters", exit_code=exit_codes.REFUSED
         )
     return expected_head, comment
 
@@ -210,7 +216,7 @@ def network_of(base_files: Mapping[str, bytes], *, doing: str) -> bytes:
         raise Refusal(
             "network_missing",
             f"this cluster has no network description yet. Publish one before {doing}.",
-            BLOCKED_EXIT,
+            exit_codes.BLOCKED,
         )
     return document
 
@@ -267,7 +273,7 @@ def _publish(
             "dirty_worktree",
             "there are unsaved changes in the cluster worktree. Publish or discard them before "
             f"{words.doing}.",
-            BLOCKED_EXIT,
+            exit_codes.BLOCKED,
         )
 
     branch, head = resolve_head(repo)
@@ -280,7 +286,7 @@ def _publish(
         repo, head, base=change.expected_head, request_id=request.request_id
     )
     if head != change.expected_head and not retry:
-        return refuse("expected_target_changed", words.moved, BLOCKED_EXIT)
+        return refuse("expected_target_changed", words.moved, exit_codes.BLOCKED)
 
     if retry:
         snapshot = committed_snapshot(repo, head)
@@ -320,7 +326,7 @@ def _publish(
         published_files, cluster=request.cluster, config_path=str(cluster.config_path)
     )
     if short is not None:
-        return refuse("stick_counters_short", short, BLOCKED_EXIT)
+        return refuse("stick_counters_short", short, exit_codes.BLOCKED)
 
     def invalid() -> int | None:
         """The sandbox's verdict on the artifact, as a refusal; None when it passes."""
@@ -351,7 +357,9 @@ def _publish(
         }
         diagnostics, ignored = advanced.annotate(validation.diagnostics, generated)
         if not validation.valid:
-            return refuse("candidate_invalid", words.invalid, 65, {"diagnostics": diagnostics})
+            return refuse(
+                "candidate_invalid", words.invalid, exit_codes.REFUSED, {"diagnostics": diagnostics}
+            )
         if ignored:
             #
             # Valid, and still refused: a warning on a pasted line is HAProxy
@@ -364,7 +372,7 @@ def _publish(
                 "advanced_ignored",
                 "HAProxy would ignore a line of an object's advanced config: "
                 + ignored[0].split("parsing ", 1)[-1][:1500],
-                65,
+                exit_codes.REFUSED,
                 {"diagnostics": diagnostics},
             )
         return None
@@ -384,7 +392,7 @@ def _publish(
                 return refused
         problem = stale()
         if problem is not None:
-            return refuse("tls_defaults_stale", problem, BLOCKED_EXIT)
+            return refuse("tls_defaults_stale", problem, exit_codes.BLOCKED)
         metadata = ReleaseMetadata(
             cluster=request.cluster,
             version=count_versions(repo, head),
@@ -398,7 +406,7 @@ def _publish(
             return refused
         problem = stale()
         if problem is not None:
-            return refuse("tls_defaults_stale", problem, BLOCKED_EXIT)
+            return refuse("tls_defaults_stale", problem, exit_codes.BLOCKED)
 
         commit = commit_and_swap(
             repo,
@@ -431,7 +439,7 @@ def _publish(
         group=group,
         change_owner=change_owner,
     )
-    write_document(
+    return write_document(
         output,
         envelope(
             operation=words.operation,
@@ -450,8 +458,8 @@ def _publish(
                 named=change.named,
             ),
         ),
+        0,
     )
-    return 0
 
 
 type Reader = Callable[[Mapping[str, JsonValue]], Callable[[PathPolicy, Cluster], Change]]
@@ -493,7 +501,9 @@ def run(
     try:
         require_no_arguments(arguments)
         if require_root and os.geteuid() != 0:
-            raise HelperProtocolError(f"{words.helper} helper must run as root", exit_code=77)
+            raise HelperProtocolError(
+                f"{words.helper} helper must run as root", exit_code=exit_codes.NOT_ROOT
+            )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
             expected_operation=words.operation,
@@ -516,7 +526,7 @@ def run(
         return refuse("bad_input", str(exc), exc.exit_code)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
             str(exc),
             exc.exit_code,
         )

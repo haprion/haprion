@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from haprion import exit_codes
 from haprion.cli import config_status, published_release_helper
 
 BASE = Path(__file__).resolve().parents[1]
@@ -78,7 +79,7 @@ class PublishedRelease(unittest.TestCase):
 
         self.assertEqual(
             (code, err.getvalue()),
-            (68, "ERROR: haprion-published-release-helper must run as root.\n"),
+            (exit_codes.NOT_ROOT, "ERROR: haprion-published-release-helper must run as root.\n"),
         )
 
     def test_the_status_command_asks_this_helper_in_the_release(self) -> None:

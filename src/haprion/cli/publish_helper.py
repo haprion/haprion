@@ -36,7 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Protocol, TextIO
 
-from haprion import tls_policy
+from haprion import exit_codes, tls_policy
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     MAX_CANDIDATE_BYTES,
@@ -58,7 +58,7 @@ from haprion.config import (
     load_policy,
     load_runtime_config,
 )
-from haprion.envelope import BLOCKED_EXIT, envelope, failure
+from haprion.envelope import envelope, failure
 from haprion.git_command import GitError
 from haprion.helper_protocol import (
     HelperProtocolError,
@@ -137,12 +137,14 @@ def _repository_path(raw: str) -> str:
         or str(path) != raw
         or any(part in (".", "..") for part in path.parts)
     ):
-        raise HelperProtocolError("the request contains an invalid relative path", exit_code=65)
+        raise HelperProtocolError(
+            "the request contains an invalid relative path", exit_code=exit_codes.REFUSED
+        )
     if not raw.startswith(SNAPSHOT_PREFIXES):
         raise HelperProtocolError(
             f"'{raw}' is outside the layers this path publishes "
             f"({', '.join(prefix.rstrip('/') for prefix in SNAPSHOT_PREFIXES)}).",
-            exit_code=65,
+            exit_code=exit_codes.REFUSED,
         )
     return raw
 
@@ -156,25 +158,37 @@ def parse_files(raw_files: JsonValue) -> dict[str, bytes]:
     """
 
     if not isinstance(raw_files, dict) or not raw_files:
-        raise HelperProtocolError("parameters.files must be a non-empty object", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.files must be a non-empty object", exit_code=exit_codes.REFUSED
+        )
     if len(raw_files) > MAX_CANDIDATE_FILES:
-        raise HelperProtocolError("the request contains too many files", exit_code=65)
+        raise HelperProtocolError(
+            "the request contains too many files", exit_code=exit_codes.REFUSED
+        )
 
     files: dict[str, bytes] = {}
     total = 0
     for raw_path in sorted(raw_files):
         content = raw_files[raw_path]
         if not isinstance(raw_path, str) or not isinstance(content, str):
-            raise HelperProtocolError("paths and contents must be strings", exit_code=65)
+            raise HelperProtocolError(
+                "paths and contents must be strings", exit_code=exit_codes.REFUSED
+            )
         path = _repository_path(raw_path)
         encoded = content.encode("utf-8")
         if b"\x00" in encoded:
-            raise HelperProtocolError("published files may not contain NUL", exit_code=65)
+            raise HelperProtocolError(
+                "published files may not contain NUL", exit_code=exit_codes.REFUSED
+            )
         if len(encoded) > MAX_FILE_BYTES:
-            raise HelperProtocolError("the request contains an oversized file", exit_code=65)
+            raise HelperProtocolError(
+                "the request contains an oversized file", exit_code=exit_codes.REFUSED
+            )
         total += len(encoded)
         if total > MAX_CANDIDATE_BYTES:
-            raise HelperProtocolError("the request exceeds the total size limit", exit_code=65)
+            raise HelperProtocolError(
+                "the request exceeds the total size limit", exit_code=exit_codes.REFUSED
+            )
         files[path] = encoded
     return files
 
@@ -188,19 +202,23 @@ def parse_comment(raw_comment: JsonValue) -> str:
     """
 
     if not isinstance(raw_comment, str) or not raw_comment.strip():
-        raise HelperProtocolError("parameters.comment must be a non-empty string", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.comment must be a non-empty string", exit_code=exit_codes.REFUSED
+        )
     if len(raw_comment.encode("utf-8")) > MAX_COMMENT_BYTES:
-        raise HelperProtocolError("parameters.comment is too long", exit_code=65)
+        raise HelperProtocolError("parameters.comment is too long", exit_code=exit_codes.REFUSED)
     if CONTROL.search(raw_comment):
         raise HelperProtocolError(
-            "parameters.comment may not contain control characters", exit_code=65
+            "parameters.comment may not contain control characters", exit_code=exit_codes.REFUSED
         )
     return raw_comment
 
 
 def parse_expected_head(raw_head: JsonValue) -> str:
     if not isinstance(raw_head, str) or not COMMIT_ID.fullmatch(raw_head):
-        raise HelperProtocolError("parameters.expected_head must be a full commit ID", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.expected_head must be a full commit ID", exit_code=exit_codes.REFUSED
+        )
     return raw_head
 
 
@@ -327,7 +345,9 @@ def main(
     try:
         require_no_arguments(arguments)
         if require_root and os.geteuid() != 0:
-            raise HelperProtocolError("publish helper must run as root", exit_code=77)
+            raise HelperProtocolError(
+                "publish helper must run as root", exit_code=exit_codes.NOT_ROOT
+            )
 
         request = read_helper_request(
             stream,
@@ -357,7 +377,7 @@ def main(
         # side by side without guessing. Added 2026-08-31 as F1b.
         #
         errors.write(f"ERROR: [{code}] {message}\n")
-        write_document(
+        return write_document(
             output,
             failure(
                 operation=PUBLISH_OPERATION,
@@ -368,8 +388,8 @@ def main(
                 exit_code=exit_code,
                 details=details,
             ),
+            exit_code,
         )
-        return exit_code
 
     try:
         files = parse_files(request.parameters.get("files"))
@@ -385,7 +405,7 @@ def main(
         return refuse("bad_input", str(exc), exc.exit_code)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
             str(exc),
             exc.exit_code,
         )
@@ -461,7 +481,7 @@ def _publish(
             "the configuration changed after this candidate was prepared. "
             "Nothing was published; run the command again so the candidate "
             "is built on the current version.",
-            BLOCKED_EXIT,
+            exit_codes.BLOCKED,
         )
 
     #
@@ -491,7 +511,7 @@ def _publish(
             "candidate_invalid",
             "the HAProxy configuration is invalid. "
             "No version was created and nothing was published.",
-            65,
+            exit_codes.REFUSED,
             {"diagnostics": result.diagnostics, "candidate_sha256": candidate.sha256},
         )
 
@@ -513,7 +533,7 @@ def _publish(
             current_files, cluster=request.cluster, config_path=str(cluster.config_path)
         )
         if short is not None:
-            return refuse("stick_counters_short", short, BLOCKED_EXIT)
+            return refuse("stick_counters_short", short, exit_codes.BLOCKED)
         #
         # A head whose release was never installed was never checked either: a
         # commit made by hand, a cluster's first version whose publish failed
@@ -536,7 +556,7 @@ def _publish(
             config_path=str(cluster.config_path),
         )
         if stale is not None:
-            return refuse("tls_defaults_stale", stale, BLOCKED_EXIT)
+            return refuse("tls_defaults_stale", stale, exit_codes.BLOCKED)
         installed = install_release(
             cluster.publish_path,
             node_path=cluster.node_path,
@@ -551,7 +571,7 @@ def _publish(
             group=group,
             change_owner=change_owner,
         )
-        write_document(
+        return write_document(
             output,
             envelope(
                 operation=PUBLISH_OPERATION,
@@ -572,8 +592,8 @@ def _publish(
                     review=_fragment_review(current_files),
                 ),
             ),
+            0,
         )
-        return 0
 
     #
     # 3. The artifact, derived here from the candidate tree - not received.
@@ -591,7 +611,7 @@ def _publish(
         published_files, cluster=request.cluster, config_path=str(cluster.config_path)
     )
     if short is not None:
-        return refuse("stick_counters_short", short, BLOCKED_EXIT)
+        return refuse("stick_counters_short", short, exit_codes.BLOCKED)
 
     #
     # 4. Validation, in the sandbox, on exactly those bytes.
@@ -615,7 +635,7 @@ def _publish(
         config_path=str(cluster.config_path),
     )
     if stale is not None:
-        return refuse("tls_defaults_stale", stale, BLOCKED_EXIT)
+        return refuse("tls_defaults_stale", stale, exit_codes.BLOCKED)
 
     #
     # 5. Only now is a version recorded, and only if nobody moved the branch
@@ -649,7 +669,7 @@ def _publish(
         change_owner=change_owner,
     )
 
-    write_document(
+    return write_document(
         output,
         envelope(
             operation=PUBLISH_OPERATION,
@@ -671,8 +691,8 @@ def _publish(
                 review=_fragment_review(published_files),
             ),
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

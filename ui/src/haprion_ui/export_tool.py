@@ -38,7 +38,7 @@ from typing import Any
 
 import psycopg
 import yaml
-from haprion import backup_retention, backup_schedule, cluster_settings
+from haprion import backup_retention, backup_schedule, cluster_settings, exit_codes
 from haprion.config import ConfigError
 from haprion.digits import is_digits
 
@@ -46,8 +46,6 @@ from haprion_ui import account_apply, config, profile_apply, settings_apply, set
 from haprion_ui.admin import AdminError, connect, load_environment, refused
 
 OPERATION = "export"
-EXIT_REFUSED = 65
-EXIT_UNAVAILABLE = 69
 BIN = Path("/usr/bin")
 TIMEOUT_SECONDS = 120
 
@@ -55,7 +53,7 @@ type ReadEngine = Callable[[Sequence[str]], Mapping[str, Any]]
 
 
 class ExportError(Exception):
-    def __init__(self, message: str, exit_code: int = EXIT_REFUSED) -> None:
+    def __init__(self, message: str, exit_code: int = exit_codes.REFUSED) -> None:
         super().__init__(message)
         self.exit_code = exit_code
 
@@ -69,20 +67,20 @@ def read_engine(argv: Sequence[str]) -> Mapping[str, Any]:
             command, capture_output=True, text=True, check=False, timeout=TIMEOUT_SECONDS
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        raise ExportError(f"{argv[0]}: {exc}", EXIT_UNAVAILABLE) from exc
+        raise ExportError(f"{argv[0]}: {exc}", exit_codes.UNAVAILABLE) from exc
     try:
         answer = json.loads(completed.stdout)
     except json.JSONDecodeError:
         said = completed.stderr.strip() or f"exit {completed.returncode}"
-        raise ExportError(f"{' '.join(argv)}: {said}", EXIT_UNAVAILABLE) from None
+        raise ExportError(f"{' '.join(argv)}: {said}", exit_codes.UNAVAILABLE) from None
     error = answer.get("error") if isinstance(answer, Mapping) else None
     if isinstance(error, Mapping):
         raise ExportError(
-            f"{' '.join(argv)}: {error.get('code')}: {error.get('message')}", EXIT_UNAVAILABLE
+            f"{' '.join(argv)}: {error.get('code')}: {error.get('message')}", exit_codes.UNAVAILABLE
         )
     result = answer.get("result") if isinstance(answer, Mapping) else None
     if not isinstance(result, Mapping):
-        raise ExportError(f"{' '.join(argv)}: no result", EXIT_UNAVAILABLE)
+        raise ExportError(f"{' '.join(argv)}: no result", exit_codes.UNAVAILABLE)
     return result
 
 
@@ -126,7 +124,7 @@ def cluster_settings_text(reading: Mapping[str, Any]) -> str:
     try:
         parsed = cluster_settings.load_mapping(document)
     except ConfigError as exc:
-        raise ExportError(f"cluster settings: {exc}", EXIT_UNAVAILABLE) from exc
+        raise ExportError(f"cluster settings: {exc}", exit_codes.UNAVAILABLE) from exc
     return cluster_settings.dump_document(parsed).decode("utf-8")
 
 
@@ -294,7 +292,7 @@ def command_export(args: argparse.Namespace, *, read: ReadEngine = read_engine) 
             clusters, written = collect(connection, settings, args.cluster, read)
         write_tree(directory, written.files, _owner(), written.directories)
     except (ExportError, config.ConfigError) as exc:
-        code = exc.exit_code if isinstance(exc, ExportError) else EXIT_REFUSED
+        code = exc.exit_code if isinstance(exc, ExportError) else exit_codes.REFUSED
         return refused(args, str(exc), code, envelope)
     result = {
         "directory": str(directory),
@@ -331,13 +329,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if os.geteuid() != 0:
-        return refused(args, "run this with sudo", 77, envelope)
+        return refused(args, "run this with sudo", exit_codes.NOT_ROOT, envelope)
     try:
         return command_export(args)
     except AdminError as exc:
-        return refused(args, str(exc), 64, envelope)
+        return refused(args, str(exc), exit_codes.USAGE, envelope)
     except psycopg.Error as exc:
-        return refused(args, f"database: {exc}", 74, envelope)
+        return refused(args, f"database: {exc}", exit_codes.IO_ERROR, envelope)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

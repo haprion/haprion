@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     ConfigError,
@@ -35,7 +36,6 @@ from haprion.helper_protocol import (
 
 OPERATION = "cluster_list"
 HELPER = "/opt/haprion/current/bin/haprion-cluster-list-helper"
-EXIT_NOT_ROOT = 77
 SUDO = "/usr/bin/sudo"
 
 
@@ -97,7 +97,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-cluster-list-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-cluster-list-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_clusterless_request(
             input_stream or sys.stdin.buffer, expected_operation=OPERATION
@@ -121,7 +121,7 @@ def main(
             exit_code=exc.exit_code,
         )
 
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -130,8 +130,8 @@ def main(
             request_id=request.request_id,
             result=result,
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

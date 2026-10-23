@@ -23,7 +23,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import node_ssh
+from haprion import exit_codes, node_ssh
 from haprion.cli import cert_deploy, cert_deploy_helper
 from haprion.cluster_lock import hold
 from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
@@ -205,7 +205,7 @@ class ConfigurationTests(HelperFixture):
 
         code, _, err = self.run_helper(request(), policy_path=policy)
 
-        self.assertEqual(code, 68)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertIn("example-net", err)
         self.assertEqual(self.requests, [])
 
@@ -338,7 +338,7 @@ class RefusalContractTests(HelperFixture):
         code, out, _ = self.run_helper(request(json=True), policy_path=policy)
 
         document = assert_contract("haprion-cert-deploy", out)
-        self.assertEqual(code, 68)
+        self.assertEqual(code, exit_codes.BLOCKED)
         self.assertEqual(document["error"]["code"], "certificate_missing")
         self.assertEqual(self.requests, [])
 

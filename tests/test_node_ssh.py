@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from time import monotonic
 
-from haprion import node_ssh
+from haprion import exit_codes, node_ssh
 
 
 def child(code: str) -> list[str]:
@@ -45,7 +45,7 @@ class AnAnswerIsReadWithinItsBudget(unittest.TestCase):
             max_bytes=1024 * 1024,
         )
         self.assertLess(monotonic() - started, 10)
-        self.assertEqual(completed.returncode, node_ssh.EXIT_TOO_LARGE)
+        self.assertEqual(completed.returncode, exit_codes.FAILED)
         self.assertEqual(completed.stdout, "")
         self.assertIn("more than 1048576 bytes", completed.stderr)
 

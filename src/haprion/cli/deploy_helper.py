@@ -35,7 +35,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO, cast
 
-from haprion import node_ssh
+from haprion import exit_codes, node_ssh
 from haprion.certificates import CertificateError, target_for
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
@@ -63,11 +63,6 @@ from haprion.status_collect import STATUS_TIMEOUT_SECONDS, ask_node, collect, re
 OPERATION = "deploy_cluster"
 PARAMETERS = frozenset({"allow_vip_unknown", "json", "expected_version"})
 FLAGS = ("allow_vip_unknown", "json")
-#
-# The version the caller saw has moved: nothing was touched, and the operator
-# decides about the new one. Blocked, like a busy cluster.
-#
-EXIT_TARGET_CHANGED = 75
 
 
 #
@@ -77,7 +72,6 @@ EXIT_TARGET_CHANGED = 75
 # measured at a few seconds; five minutes is a stop, not a schedule.
 #
 TRIGGER_TIMEOUT_SECONDS = 300
-EXIT_TRIGGER_TIMEOUT = 124
 #
 # The run's whole time (review 2026-10-22, 6-9): the worker gives a deploy job
 # 900 s, and 60 s of that is left for the last reading and the answer. A node
@@ -90,32 +84,19 @@ BUDGET = Budget(
     reading=STATUS_TIMEOUT_SECONDS,
 )
 
-EXIT_NOT_ROOT = 68
-
-#
-# The value `cert-deploy` exits with when a referenced certificate is not in
-# the distribution directory. The same fault gets the same code and the same
-# error string from both commands, so a wrapper reading either sees one event.
-#
-EXIT_CERTIFICATE_MISSING = 68
-
-#
-# EX_CONFIG: the installation is incomplete, which is neither the caller's
-# mistake nor a cluster problem.
-#
-EXIT_NO_IDENTITY = 78
-
 
 def _validate(parameters: Mapping[str, JsonValue]) -> None:
     for key in FLAGS:
         value = parameters.get(key, False)
         if not isinstance(value, bool):
-            raise HelperProtocolError(f"{key} must be a boolean", exit_code=65)
+            raise HelperProtocolError(f"{key} must be a boolean", exit_code=exit_codes.REFUSED)
     expected = parameters.get("expected_version")
     if expected is not None and (
         not isinstance(expected, int) or isinstance(expected, bool) or expected < 1
     ):
-        raise HelperProtocolError("expected_version must be a positive integer", exit_code=65)
+        raise HelperProtocolError(
+            "expected_version must be a positive integer", exit_code=exit_codes.REFUSED
+        )
 
 
 def read_status(cluster: Cluster, identity: DeployIdentity) -> ClusterStatus:
@@ -172,7 +153,7 @@ def run_trigger(argv: list[str], node: str, writer: TextIO) -> int:
             f"{node} gave no answer within {TRIGGER_TIMEOUT_SECONDS} seconds; "
             "its status decides what it runs\n"
         )
-        return EXIT_TRIGGER_TIMEOUT
+        return exit_codes.TIMED_OUT
     if completed.stdout:
         writer.write(completed.stdout.rstrip() + "\n")
     if completed.stderr:
@@ -201,7 +182,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-deploy-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-deploy-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -253,6 +234,7 @@ def main(
                     message=message,
                     exit_code=exit_code,
                 ),
+                exit_code,
             )
         return exit_code
 
@@ -263,7 +245,7 @@ def main(
         )
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
             str(exc),
             exc.exit_code,
         )
@@ -279,7 +261,7 @@ def main(
             "dependency_unavailable",
             "no deploy identity is configured. Add deploy_identity with "
             "'user' and 'key' to the runtime policy.",
-            EXIT_NO_IDENTITY,
+            exit_codes.CONFIG,
         )
 
     #
@@ -311,7 +293,7 @@ def main(
                 next_command=f"haprion-cert-deploy -c {request.cluster}",
             )
         except CertificateError as exc:
-            return refuse("certificate_missing", str(exc), EXIT_CERTIFICATE_MISSING)
+            return refuse("certificate_missing", str(exc), exit_codes.BLOCKED)
 
     #
     # In JSON mode the human-readable stream goes to stderr rather than being
@@ -335,7 +317,7 @@ def main(
             "dependency_unavailable",
             "no status identity is configured. Add status_identity with "
             "'user' and 'key' to the runtime policy.",
-            EXIT_NO_IDENTITY,
+            exit_codes.CONFIG,
         )
 
     read: ReadStatus = status_reader or (
@@ -377,7 +359,7 @@ def main(
                     "nothing_published",
                     f"nothing is published for {request.cluster} yet. No node was touched; "
                     "publish a change first.",
-                    EXIT_TARGET_CHANGED,
+                    exit_codes.BLOCKED,
                 )
             if expected_version is not None and (target.version != expected_version):
                 now = f"v{target.version}"
@@ -386,7 +368,7 @@ def main(
                     f"the published version is now {now}, not v{expected_version}, which this "
                     "deploy was started for. No node was touched; look at the new version and "
                     "deploy again.",
-                    EXIT_TARGET_CHANGED,
+                    exit_codes.BLOCKED,
                 )
             outcome = run(
                 read,
@@ -403,7 +385,9 @@ def main(
 
     if json_mode:
         write_document(
-            writer, outcome.report.as_envelope(request.cluster, request_id=request.request_id)
+            writer,
+            outcome.report.as_envelope(request.cluster, request_id=request.request_id),
+            outcome.exit_code,
         )
     return outcome.exit_code
 

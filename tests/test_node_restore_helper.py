@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haprion import keyring_package, node_package, node_restore
+from haprion import exit_codes, keyring_package, node_package, node_restore
 from haprion.cli import node_restore_ask, node_restore_helper
 from haprion.cli.node_restore_helper import (
     DISCARD,
@@ -437,7 +437,7 @@ class Ask(unittest.TestCase):
             error_stream=io.StringIO(),
             socket_path="/nonexistent/node-restore.sock",
         )
-        self.assertEqual(code, 78)
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
         document = assert_contract("haprion-node-restore-preview", output.getvalue())
         self.assertEqual(document["error"]["code"], "dependency_unavailable")
 

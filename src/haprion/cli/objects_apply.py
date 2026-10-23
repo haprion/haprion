@@ -27,10 +27,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import server_names
+from haprion import exit_codes, server_names
 from haprion.cli import changes_publish
 from haprion.cli.apply_common import (
-    EXIT_NOT_FOUND,
     Refused,
     RunHelper,
     RunPublish,
@@ -105,7 +104,7 @@ def read_files(targets: Sequence[str]) -> dict[str, str]:
         elif path.is_file():
             files.append(path)
         else:
-            raise Refused("not_found", f"{target}: no such file or directory", EXIT_NOT_FOUND)
+            raise Refused("not_found", f"{target}: no such file or directory", exit_codes.NOT_FOUND)
     documents: dict[str, str] = {}
     origin: dict[str, Path] = {}
     for path in files:
@@ -117,7 +116,7 @@ def read_files(targets: Sequence[str]) -> dict[str, str]:
         try:
             data = path.read_bytes()
         except OSError as exc:
-            raise Refused("unreadable", f"{path}: {exc.strerror}", EXIT_NOT_FOUND) from exc
+            raise Refused("unreadable", f"{path}: {exc.strerror}", exit_codes.NOT_FOUND) from exc
         if len(data) > MAX_MODEL_BYTES:
             raise Refused("too_long", f"{path}: larger than {MAX_MODEL_BYTES} bytes")
         try:
@@ -137,7 +136,9 @@ def stored(result: Mapping[str, Any]) -> tuple[str | None, dict[str, str]]:
 
     entries = result.get("objects")
     if not isinstance(entries, list):
-        raise Refused("unavailable", "the objects helper returned no object list", 68)
+        raise Refused(
+            "unavailable", "the objects helper returned no object list", exit_codes.UNAVAILABLE
+        )
     commit = result.get("commit")
     return (
         commit if isinstance(commit, str) else None,
@@ -321,13 +322,15 @@ def main(
             )
     except Refused as refused:
         if args.json:
-            write_document(writer, envelope(OPERATION, cluster, "failed", None, refused))
+            write_document(
+                writer, envelope(OPERATION, cluster, "failed", None, refused), refused.exit_code
+            )
         else:
             errors.write(refused.report())
         return refused.exit_code
     summary = _summary(plan, check=args.check, versions=versions)
     if args.json:
-        write_document(writer, envelope(OPERATION, cluster, "done", summary, None))
+        write_document(writer, envelope(OPERATION, cluster, "done", summary, None), 0)
     else:
         _render(cluster, plan, summary, writer)
     return 0

@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from haprion import dns_profiles
+from haprion import dns_profiles, exit_codes
 from haprion.cli import dns_profile_apply_helper
 from haprion.config import PathPolicy
 from haprion.dns_profile_keys import generate, render_private_key
@@ -117,7 +117,7 @@ class Applying(ApplyFixture):
         for override, expected in cases:
             with self.subTest(expected=expected):
                 code, document, errors = self.invoke(self.request(**override))
-                self.assertEqual(code, 65)
+                self.assertEqual(code, exit_codes.BLOCKED)
                 self.assertEqual(document["outcome"], "blocked")
                 answer = json.dumps(document) + errors
                 self.assertIn(expected, answer)

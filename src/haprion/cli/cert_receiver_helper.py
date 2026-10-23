@@ -28,7 +28,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import cert_receiver
+from haprion import cert_receiver, exit_codes
 from haprion.cert_lock import DEFAULT_LOCK_PATH
 from haprion.cert_receiver import Locations, ReceiverError, Result, Tools
 from haprion.cli import cert_job
@@ -69,9 +69,6 @@ MAX_ALLOW = 32
 
 __all__ = ["HELPER", "OPERATION", "build_request", "main"]
 
-# EX_CONFIG: the installation has no registry, which is not the request's fault.
-EXIT_NO_REGISTRY = 78
-
 
 def build_request(
     request_id: str,
@@ -109,9 +106,13 @@ def build_request(
 def _text(parameters: Mapping[str, JsonValue], key: str, limit: int) -> str:
     value = parameters.get(key)
     if not isinstance(value, str) or not value:
-        raise HelperProtocolError(f"parameters.{key} must be a non-empty string", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} must be a non-empty string", exit_code=exit_codes.REFUSED
+        )
     if len(value) > limit:
-        raise HelperProtocolError(f"parameters.{key} is longer than {limit}", exit_code=65)
+        raise HelperProtocolError(
+            f"parameters.{key} is longer than {limit}", exit_code=exit_codes.REFUSED
+        )
     return value
 
 
@@ -121,7 +122,7 @@ def _allow(parameters: Mapping[str, JsonValue]) -> tuple[str, ...]:
         return ()
     if not isinstance(raw, list) or len(raw) > MAX_ALLOW:
         raise HelperProtocolError(
-            f"parameters.allow must be a list of at most {MAX_ALLOW}", exit_code=65
+            f"parameters.allow must be a list of at most {MAX_ALLOW}", exit_code=exit_codes.REFUSED
         )
     #
     # Shape only: a string short enough to be an address or a network. Whether
@@ -129,7 +130,9 @@ def _allow(parameters: Mapping[str, JsonValue]) -> tuple[str, ...]:
     #
     for item in raw:
         if not isinstance(item, str) or not item or len(item) > 64:
-            raise HelperProtocolError("parameters.allow contains a non-address", exit_code=65)
+            raise HelperProtocolError(
+                "parameters.allow contains a non-address", exit_code=exit_codes.REFUSED
+            )
     return tuple(str(item) for item in raw)
 
 
@@ -168,11 +171,13 @@ def main(
     try:
         receiver_id = _text(parameters, "receiver", 63)
         if not RECEIVER_ID.fullmatch(receiver_id):
-            raise HelperProtocolError("parameters.receiver is not a receiver ID", exit_code=65)
+            raise HelperProtocolError(
+                "parameters.receiver is not a receiver ID", exit_code=exit_codes.REFUSED
+            )
         action = _text(parameters, "action", 8)
         if action not in ACTIONS:
             raise HelperProtocolError(
-                "parameters.action must be add, remove, secret or key", exit_code=65
+                "parameters.action must be add, remove, secret or key", exit_code=exit_codes.REFUSED
             )
         transport = public_key = hashed = None
         allow: tuple[str, ...] = ()
@@ -187,19 +192,23 @@ def main(
             extra = sorted(set(parameters) - {"receiver", "action", "public_key"})
             if extra or "public_key" not in parameters:
                 raise HelperProtocolError(
-                    "a new key takes the receiver and its public_key only", exit_code=65
+                    "a new key takes the receiver and its public_key only",
+                    exit_code=exit_codes.REFUSED,
                 )
             public_key = _text(parameters, "public_key", MAX_PUBLIC_KEY)
         elif action == "secret":
             extra = sorted(set(parameters) - {"receiver", "action", "secret_hash"})
             if extra or hashed is None:
                 raise HelperProtocolError(
-                    "a new secret takes the receiver and its secret_hash only", exit_code=65
+                    "a new secret takes the receiver and its secret_hash only",
+                    exit_code=exit_codes.REFUSED,
                 )
         else:
             extra = sorted(set(parameters) - {"receiver", "action"})
             if extra:
-                raise HelperProtocolError(f"a removal takes no {', '.join(extra)}", exit_code=65)
+                raise HelperProtocolError(
+                    f"a removal takes no {', '.join(extra)}", exit_code=exit_codes.REFUSED
+                )
     except HelperProtocolError as exc:
         return refuse("bad_input", str(exc), exc.exit_code)
 
@@ -213,7 +222,7 @@ def main(
             "dependency_unavailable",
             "no certificate registry is configured. Add certificate_registry to the "
             "runtime policy.",
-            EXIT_NO_REGISTRY,
+            exit_codes.CONFIG,
         )
 
     try:
@@ -260,7 +269,7 @@ def main(
         return refuse(exc.code, str(exc), exc.exit_code, exc.details)
 
     failed = [layer for layer in result.layers if layer.state == "failed"]
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -269,8 +278,8 @@ def main(
             request_id=request.request_id,
             result=result.as_dict(),
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

@@ -16,7 +16,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from haprion.cluster_lock import EXIT_BUSY, LockBusy, hold
+from haprion import exit_codes
+from haprion.cluster_lock import LockBusy, hold
 
 SOURCE = str(Path(__file__).resolve().parents[1] / "src")
 
@@ -58,7 +59,7 @@ class LockTests(unittest.TestCase):
         with hold("alpha", root=self.root):
             result = contend("alpha", self.root)
 
-        self.assertEqual(result.returncode, EXIT_BUSY)
+        self.assertEqual(result.returncode, exit_codes.BLOCKED)
         self.assertIn("another operation is already running for cluster 'alpha'", result.stdout)
 
     def test_the_refusal_names_who_holds_it(self) -> None:
@@ -116,7 +117,7 @@ class LockTests(unittest.TestCase):
             path.write_text("not json at all")
             result = contend("alpha", self.root)
 
-        self.assertEqual(result.returncode, EXIT_BUSY)
+        self.assertEqual(result.returncode, exit_codes.BLOCKED)
         self.assertIn("another operation is already running", result.stdout)
 
     def test_a_stale_file_from_a_dead_holder_does_not_block(self) -> None:
@@ -134,7 +135,7 @@ class LockTests(unittest.TestCase):
 
 class RaisedErrorTests(unittest.TestCase):
     def test_the_busy_error_carries_its_exit_code(self) -> None:
-        self.assertEqual(LockBusy("busy").exit_code, EXIT_BUSY)
+        self.assertEqual(LockBusy("busy").exit_code, exit_codes.BLOCKED)
 
 
 if __name__ == "__main__":

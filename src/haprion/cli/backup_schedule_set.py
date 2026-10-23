@@ -25,16 +25,14 @@ import sys
 from collections.abc import Callable
 from typing import Any, TextIO
 
-from haprion import backup_retention, backup_schedule_write, helper_socket
+from haprion import backup_retention, backup_schedule_write, exit_codes, helper_socket
 from haprion.backup_schedule import Schedule, schedule_result
 from haprion.cli import backup_job_helper
 from haprion.cli.backup_job_ask import SOCKET_PATH, TIMEOUT_SECONDS
 from haprion.envelope import Message, envelope, failure, new_request_id
+from haprion.helper_protocol import write_document
 
 OPERATION = "backup_schedule"
-EXIT_NOT_ROOT = 77
-EXIT_USAGE = 64
-EXIT_UNAVAILABLE = 69
 
 type Ask = Callable[[dict[str, Any]], str]
 type Current = Callable[[str], tuple[dict[str, Any] | None, int]]
@@ -117,33 +115,30 @@ def main(
 
     def refuse(code: str, message: str, exit_code: int) -> int:
         if args.json:
-            writer.write(
-                json.dumps(
-                    failure(
-                        operation=OPERATION,
-                        cluster=args.cluster,
-                        request_id=request_id,
-                        code=code,
-                        message=message,
-                        exit_code=exit_code,
-                    ),
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-                + "\n"
+            write_document(
+                writer,
+                failure(
+                    operation=OPERATION,
+                    cluster=args.cluster,
+                    request_id=request_id,
+                    code=code,
+                    message=message,
+                    exit_code=exit_code,
+                ),
+                exit_code,
             )
         errors.write(f"ERROR: [{code}] {message}\n")
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-backup-schedule must run as root", EXIT_NOT_ROOT)
+        return refuse("not_root", "haprion-backup-schedule must run as root", exit_codes.NOT_ROOT)
     try:
         wanted = requested(args)
         timer, retention = read(args.cluster)
     except backup_schedule_write.ScheduleWriteError as exc:
-        return refuse("bad_input", str(exc), EXIT_USAGE)
+        return refuse("bad_input", str(exc), exit_codes.USAGE)
     except backup_retention.RetentionError as exc:
-        return refuse("dependency_unavailable", str(exc), 78)
+        return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)
     enabled = not args.disable
     if not differs(wanted, enabled, timer, retention):
         result = {"cluster": args.cluster, **wanted.as_dict(), "enabled": enabled}
@@ -155,7 +150,7 @@ def main(
             result={**result, "schedule": timer or {}, "changed": False},
         )
         if args.json:
-            writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+            write_document(writer, document, exit_codes.OK)
         else:
             writer.write(f"{args.cluster}: the backup schedule is as asked; nothing to change.\n")
         return 0
@@ -175,7 +170,7 @@ def main(
             warnings=(Message(code="check", message="--check: nothing was changed"),),
         )
         if args.json:
-            writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+            write_document(writer, document, exit_codes.OK)
         else:
             writer.write(f"{args.cluster}: would set the backup schedule to {wanted.calendar()}\n")
         return 0
@@ -187,15 +182,16 @@ def main(
     try:
         answer = json.loads(ask(request))
     except (helper_socket.HelperUnavailable, json.JSONDecodeError) as exc:
-        return refuse("dependency_unavailable", str(exc) or "no answer", EXIT_UNAVAILABLE)
+        return refuse("dependency_unavailable", str(exc) or "no answer", exit_codes.UNAVAILABLE)
     if isinstance(answer.get("result"), dict):
         answer["result"]["changed"] = answer.get("ok") is True
+    exit_code = exit_codes.for_outcome(answer.get("outcome"))
     if args.json:
-        writer.write(json.dumps(answer, separators=(",", ":"), sort_keys=True) + "\n")
+        write_document(writer, answer, exit_code)
     elif answer.get("ok") is True:
         state = "on" if enabled else "off"
         writer.write(f"{args.cluster}: backup schedule {wanted.calendar()}, timer {state}.\n")
     else:
         error = answer.get("error") or {}
         writer.write(f"ERROR: [{error.get('code')}] {error.get('message')}\n")
-    return 0 if answer.get("ok") is True else int(answer.get("exit_code") or 1)
+    return exit_code

@@ -32,6 +32,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.cli import (
     cert_list_helper,
     cluster_settings_helper,
@@ -55,7 +56,6 @@ OPERATION = "readings"
 PARAMETERS = frozenset({"reads"})
 HELPER = "/opt/haprion/current/bin/haprion-readings-helper"
 SUDO = "/usr/bin/sudo"
-EXIT_NOT_ROOT = 77
 #
 # What each reading's `stderr` is cut to in the answer: enough for the error a
 # helper writes there, never a page of it.
@@ -114,14 +114,20 @@ def run_readings_helper(
 def _reads(parameters: Mapping[str, JsonValue]) -> dict[str, dict[str, JsonValue]]:
     raw = parameters.get("reads")
     if not isinstance(raw, dict) or not raw:
-        raise HelperProtocolError("parameters.reads must name at least one reading", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.reads must name at least one reading", exit_code=exit_codes.REFUSED
+        )
     unknown = sorted(set(raw) - set(READINGS))
     if unknown:
-        raise HelperProtocolError(f"unknown reading(s): {', '.join(unknown)}", exit_code=65)
+        raise HelperProtocolError(
+            f"unknown reading(s): {', '.join(unknown)}", exit_code=exit_codes.REFUSED
+        )
     reads: dict[str, dict[str, JsonValue]] = {}
     for name, value in raw.items():
         if not isinstance(value, dict):
-            raise HelperProtocolError(f"parameters.reads.{name} must be an object", exit_code=65)
+            raise HelperProtocolError(
+                f"parameters.reads.{name} must be an object", exit_code=exit_codes.REFUSED
+            )
         reads[name] = value
     return reads
 
@@ -148,7 +154,7 @@ def read_one(
             require_root=require_root,
         )
     except Exception as exc:  # noqa: BLE001 - one reading that breaks is that reading's answer
-        code, errors = 70, io.StringIO(f"ERROR: {type(exc).__name__}: {exc}\n")
+        code, errors = exit_codes.INTERNAL, io.StringIO(f"ERROR: {type(exc).__name__}: {exc}\n")
     try:
         answer: Any = json.loads(output.getvalue()) if output.getvalue().strip() else None
     except json.JSONDecodeError:
@@ -175,7 +181,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haprion-readings-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-readings-helper must run as root", exit_code=exit_codes.NOT_ROOT
             )
         request = read_scoped_request(
             input_stream or sys.stdin.buffer,
@@ -186,7 +192,9 @@ def main(
         cluster = request.cluster if isinstance(request, HelperRequest) else None
         if cluster is None and not set(reads) <= MANAGER_READINGS:
             refused = ", ".join(sorted(set(reads) - MANAGER_READINGS))
-            raise HelperProtocolError(f"reading(s) that need a cluster: {refused}", exit_code=65)
+            raise HelperProtocolError(
+                f"reading(s) that need a cluster: {refused}", exit_code=exit_codes.REFUSED
+            )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
@@ -207,7 +215,7 @@ def main(
         )
         for name, parameters in reads.items()
     }
-    write_document(
+    return write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -216,8 +224,8 @@ def main(
             request_id=request.request_id,
             result={"reads": answers},
         ),
+        0,
     )
-    return 0
 
 
 if __name__ == "__main__":

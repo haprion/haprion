@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import cluster_settings, crs, geo, held_ports, peers, server_names
+from haprion import cluster_settings, crs, exit_codes, geo, held_ports, peers, server_names
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     SandboxValidator,
@@ -143,10 +143,13 @@ def _objects(parameters: Mapping[str, JsonValue]) -> dict[str, bytes | None]:
         return {}
     raw = parameters["objects"]
     if not isinstance(raw, dict) or not raw:
-        raise HelperProtocolError("parameters.objects must be a non-empty object", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.objects must be a non-empty object", exit_code=exit_codes.REFUSED
+        )
     if len(raw) > MAX_OBJECTS:
         raise HelperProtocolError(
-            f"parameters.objects carries more than {MAX_OBJECTS} objects", exit_code=65
+            f"parameters.objects carries more than {MAX_OBJECTS} objects",
+            exit_code=exit_codes.REFUSED,
         )
 
     objects: dict[str, bytes | None] = {}
@@ -154,18 +157,21 @@ def _objects(parameters: Mapping[str, JsonValue]) -> dict[str, bytes | None]:
         if not NAME.fullmatch(name):
             raise HelperProtocolError(
                 f"{name} is not a usable object name - {name_refusal(name)}; use {NAME_RULE}",
-                exit_code=65,
+                exit_code=exit_codes.REFUSED,
             )
         if document is None:
             objects[name] = None
             continue
         if not isinstance(document, str) or not document:
             raise HelperProtocolError(
-                f"parameters.objects.{name} must be a document or null", exit_code=65
+                f"parameters.objects.{name} must be a document or null",
+                exit_code=exit_codes.REFUSED,
             )
         encoded = document.encode("utf-8")
         if len(encoded) > MAX_MODEL_BYTES:
-            raise HelperProtocolError(f"parameters.objects.{name} is too long", exit_code=65)
+            raise HelperProtocolError(
+                f"parameters.objects.{name} is too long", exit_code=exit_codes.REFUSED
+            )
         objects[name] = encoded
     return objects
 
@@ -183,7 +189,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
     if not objects and network is None and settings is None:
         raise HelperProtocolError(
             "a publish carries at least one of parameters.objects, network or settings",
-            exit_code=65,
+            exit_code=exit_codes.REFUSED,
         )
     expected_head, comment = fence(parameters)
     allow_certificate_mismatch = flag(parameters, "allow_certificate_mismatch")
@@ -221,7 +227,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                 try:
                     load_document(network, ownership_vip=cluster.vip, location=network_location())
                 except ConfigError as exc:
-                    raise Refusal("network_invalid", str(exc), 65) from exc
+                    raise Refusal("network_invalid", str(exc), exit_codes.REFUSED) from exc
                 network_document = network
             canonical: bytes | None = None
             if settings is not None:
@@ -235,7 +241,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                         cluster_settings.load_document(settings)
                     )
                 except ConfigError as exc:
-                    raise Refusal("settings_invalid", str(exc), 65) from exc
+                    raise Refusal("settings_invalid", str(exc), exit_codes.REFUSED) from exc
             #
             # Asked when objects or the network change, as coverage is: what
             # binds on a VIP is decided there. A node that did not answer is
@@ -260,7 +266,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     held_ports=held.held,
                 )
             except ConfigError as exc:
-                raise Refusal("changes_invalid", str(exc), 65) from exc
+                raise Refusal("changes_invalid", str(exc), exit_codes.REFUSED) from exc
             #
             # The changed objects' server names the manager cannot resolve
             # (finding 72): said, never refused - the node's check decides.

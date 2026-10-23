@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from haprion import exit_codes
 from haprion.git_command import git as _git
 from haprion.helper_protocol import HelperProtocolError
 
@@ -362,7 +363,9 @@ def request_names(
     try:
         return requester(parameters, environ, interface_account=interface_account)
     except UnfitName as exc:
-        raise HelperProtocolError(f"parameters.requested_by {exc}", exit_code=65) from exc
+        raise HelperProtocolError(
+            f"parameters.requested_by {exc}", exit_code=exit_codes.REFUSED
+        ) from exc
 
 
 def version_message(message: str, request_id: str, names: tuple[str, str]) -> str:

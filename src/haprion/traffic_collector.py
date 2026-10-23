@@ -20,7 +20,7 @@ from typing import Any
 
 import psycopg
 
-from haprion import node_ssh
+from haprion import exit_codes, node_ssh
 from haprion.config import CLUSTER_ID
 from haprion.proxy_model import NAME as OBJECT_NAME
 from haprion.proxy_model import WAF_DECIDING_RULES, waf_field
@@ -1630,7 +1630,7 @@ def _entry() -> None:
             "usage: haprion-traffic-collector (--check-config|--config|--replay-database) <path>",
             file=sys.stderr,
         )
-        raise SystemExit(64)
+        raise SystemExit(exit_codes.USAGE)
     try:
         config = load_config(Path(sys.argv[2]))
         if sys.argv[1] == "--check-config":
@@ -1648,5 +1648,5 @@ def _entry() -> None:
             code = collect(config)
     except (CollectorError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        raise SystemExit(65) from exc
+        raise SystemExit(exit_codes.REFUSED) from exc
     raise SystemExit(code)

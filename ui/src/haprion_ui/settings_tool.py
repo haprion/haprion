@@ -22,11 +22,10 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+from haprion import exit_codes
 
 from haprion_ui import backups, config, db, feature_switch, job_wait, settings_apply
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment, refused
-
-EXIT_REFUSED = 65
 
 
 def known_clusters(connection: Any, settings: config.Config) -> tuple[tuple[str, ...], bool]:
@@ -130,7 +129,7 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
             print(json.dumps(settings_apply.envelope(None, str(exc))))
         else:
             print(f"ERROR: {exc}", file=sys.stderr)
-        return EXIT_REFUSED
+        return exit_codes.REFUSED
     result = settings_apply.summary(outcome, check=args.check)
     if args.json:
         print(json.dumps(settings_apply.envelope(result, None)))
@@ -221,13 +220,13 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     contract = settings_apply.envelope if args.command in ("apply",) else None
     if os.geteuid() != 0:
-        return refused(args, "run this with sudo", 77, contract)
+        return refused(args, "run this with sudo", exit_codes.NOT_ROOT, contract)
     try:
         return command_apply(args) if args.command == "apply" else command_show(args)
     except AdminError as exc:
-        return refused(args, str(exc), 64, contract)
+        return refused(args, str(exc), exit_codes.USAGE, contract)
     except psycopg.Error as exc:
-        return refused(args, f"database: {exc}", 74, contract)
+        return refused(args, f"database: {exc}", exit_codes.IO_ERROR, contract)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

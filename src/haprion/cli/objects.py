@@ -16,8 +16,9 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
+from haprion import exit_codes
 from haprion.cli import objects_apply
-from haprion.cli.caller import usage
+from haprion.cli.caller import usage, without_answer
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
 from haprion.proxy_model import ModelError, advanced_placement
@@ -25,9 +26,6 @@ from haprion.proxy_model import ModelError, advanced_placement
 OPERATION = "objects"
 HELPER = "/opt/haprion/current/bin/haprion-objects-helper"
 SUDO = "/usr/bin/sudo"
-EXIT_UNAVAILABLE = 68
-EXIT_NOT_FOUND = 66
-EXIT_REFUSED = 65
 USAGE = (
     "Usage:\n"
     "  haprion-objects -c <cluster> [--show <name> | --advanced <name> | --json]\n"
@@ -140,7 +138,7 @@ def _show(document: Mapping[str, Any], name: str, writer: TextIO, errors: TextIO
         writer.write(str(entry.get("document", "")))
         return 0
     errors.write(f"ERROR: this cluster stores no object named {name}\n")
-    return EXIT_NOT_FOUND
+    return exit_codes.NOT_FOUND
 
 
 def _advanced(document: Mapping[str, Any], name: str, writer: TextIO, errors: TextIO) -> int:
@@ -157,7 +155,7 @@ def _advanced(document: Mapping[str, Any], name: str, writer: TextIO, errors: Te
             placement = advanced_placement(name, str(entry.get("document", "")).encode())
         except ModelError as exc:
             errors.write(f"ERROR: {exc}\n")
-            return EXIT_REFUSED
+            return exit_codes.REFUSED
         if placement is None:
             writer.write(f"{name} has no advanced config.\n")
             return 0
@@ -168,9 +166,9 @@ def _advanced(document: Mapping[str, Any], name: str, writer: TextIO, errors: Te
             writer.write(f"{line.number:>4}  {line.fate:<8} {line.where or '-':<21} {line.text}\n")
             if line.reason and line.fate != "placed":
                 writer.write(f"{'':>15}{line.reason}\n")
-        return EXIT_REFUSED if placement.refused else 0
+        return exit_codes.REFUSED if placement.refused else 0
     errors.write(f"ERROR: this cluster stores no object named {name}\n")
-    return EXIT_NOT_FOUND
+    return exit_codes.NOT_FOUND
 
 
 def main(
@@ -199,13 +197,18 @@ def main(
     try:
         document = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        errors.write(completed.stderr.strip() or "ERROR: the objects helper returned no result")
-        errors.write("\n")
-        return completed.returncode or EXIT_UNAVAILABLE
+        return without_answer(
+            completed,
+            operation=OPERATION,
+            cluster=cluster_id,
+            json_mode=json_mode,
+            writer=writer,
+            errors=errors,
+            fallback="the objects helper returned no result",
+        )
 
     if json_mode:
-        write_document(writer, document)
-        return completed.returncode
+        return write_document(writer, document, completed.returncode)
     try:
         if show is not None and advanced:
             return completed.returncode or _advanced(document, show, writer, errors)
@@ -214,7 +217,7 @@ def main(
         _render(document, writer)
     except ValueError as exc:
         errors.write(f"ERROR: {exc}\n")
-        return completed.returncode or EXIT_UNAVAILABLE
+        return completed.returncode or exit_codes.UNAVAILABLE
     return completed.returncode
 
 

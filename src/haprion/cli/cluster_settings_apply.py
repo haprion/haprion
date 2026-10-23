@@ -18,10 +18,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
+from haprion import exit_codes
 from haprion.cli import changes_publish
 from haprion.cli.apply_common import (
-    EXIT_NOT_FOUND,
-    EXIT_UNAVAILABLE,
     Refused,
     RunHelper,
     RunPublish,
@@ -79,7 +78,7 @@ def main(
         try:
             text = path.read_bytes()
         except OSError as exc:
-            raise Refused("unreadable", f"{path}: {exc.strerror}", EXIT_NOT_FOUND) from exc
+            raise Refused("unreadable", f"{path}: {exc.strerror}", exit_codes.NOT_FOUND) from exc
         if len(text) > MAX_BYTES:
             raise Refused("too_long", f"{path}: larger than {MAX_BYTES} bytes")
         try:
@@ -89,7 +88,9 @@ def main(
         reading = answer_of(run_helper(cluster, new_request_id()), READ_OPERATION)
         head = reading.get("head")
         if not isinstance(head, str):
-            raise Refused("unavailable", "the settings helper returned no head", EXIT_UNAVAILABLE)
+            raise Refused(
+                "unavailable", "the settings helper returned no head", exit_codes.UNAVAILABLE
+            )
         fields = document_result(wanted)
         changed = fields != stored_fields(reading, fields)
         versions: list[Mapping[str, Any]] = []
@@ -104,7 +105,9 @@ def main(
             versions = [answer_of(run_publish(request), changes_publish.OPERATION)]
     except Refused as refused:
         if args.json:
-            write_document(writer, envelope(OPERATION, cluster, "failed", None, refused))
+            write_document(
+                writer, envelope(OPERATION, cluster, "failed", None, refused), refused.exit_code
+            )
         else:
             errors.write(refused.report())
         return refused.exit_code
@@ -119,8 +122,7 @@ def main(
         "deployment_required": bool(published),
     }
     if args.json:
-        write_document(writer, envelope(OPERATION, cluster, "done", summary, None))
-        return 0
+        return write_document(writer, envelope(OPERATION, cluster, "done", summary, None), 0)
     if not changed:
         writer.write(f"{cluster}: {LOCATION} is as the file says; nothing to change.\n")
         return 0

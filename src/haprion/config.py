@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from haprion import accounts, safe_yaml
+from haprion import accounts, exit_codes, safe_yaml
 
 DEFAULT_POLICY_PATH = Path("/etc/haprion/runtime-policy.yaml")
 MAX_CONFIG_BYTES = 1024 * 1024
@@ -63,7 +63,7 @@ CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
 
 
 class ConfigError(ValueError):
-    def __init__(self, message: str, *, exit_code: int = 65):
+    def __init__(self, message: str, *, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.exit_code = exit_code
 
@@ -583,14 +583,14 @@ class RuntimeConfig:
 
     def cluster(self, cluster_id: str) -> Cluster:
         if not CLUSTER_ID.fullmatch(cluster_id):
-            raise ConfigError("invalid cluster ID", exit_code=64)
+            raise ConfigError("invalid cluster ID", exit_code=exit_codes.USAGE)
         try:
             return self.clusters[cluster_id]
         except KeyError as exc:
             valid = ", ".join(sorted(self.clusters))
             raise ConfigError(
                 f"unknown cluster '{cluster_id}'. Valid clusters: {valid}",
-                exit_code=64,
+                exit_code=exit_codes.USAGE,
             ) from exc
 
 
@@ -617,20 +617,26 @@ def _secure_yaml(path: Path, *, require_secure: bool) -> dict[str, Any]:
     try:
         metadata = path.lstat()
     except OSError as exc:
-        raise ConfigError(f"cannot stat configuration file: {exc}", exit_code=68) from exc
+        raise ConfigError(
+            f"cannot stat configuration file: {exc}", exit_code=exit_codes.UNAVAILABLE
+        ) from exc
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise ConfigError("configuration file must be a regular non-symlink", exit_code=68)
+        raise ConfigError(
+            "configuration file must be a regular non-symlink", exit_code=exit_codes.UNAVAILABLE
+        )
     if metadata.st_size > MAX_CONFIG_BYTES:
-        raise ConfigError("configuration file exceeds 1 MiB", exit_code=68)
+        raise ConfigError("configuration file exceeds 1 MiB", exit_code=exit_codes.UNAVAILABLE)
     if require_secure and (metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o022):
         raise ConfigError(
             "configuration file must be root-owned and not group/other-writable",
-            exit_code=68,
+            exit_code=exit_codes.UNAVAILABLE,
         )
     try:
         loaded = safe_yaml.load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
-        raise ConfigError(f"cannot read configuration file: {exc}", exit_code=68) from exc
+        raise ConfigError(
+            f"cannot read configuration file: {exc}", exit_code=exit_codes.UNAVAILABLE
+        ) from exc
     return _mapping(loaded, str(path))
 
 

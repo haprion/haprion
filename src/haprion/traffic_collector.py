@@ -46,6 +46,14 @@ RETENTION_DAYS = 14
 #
 MAX_PARALLEL_NODES = 8
 MIRROR_MARGIN_DAYS = 1
+#
+# What the staging parts may hold of their filesystem, and the free space they
+# must leave: the node's own budget (haprion-traffic-log-prune), kept here on
+# the manager's copy of every node's days (B356). A node bounds what it holds;
+# the manager holds the days of every node, longer than a node may.
+#
+SPACE_SHARE = 0.25
+FREE_SHARE = 0.10
 SSH_TIMEOUT_SECONDS = 30
 # A node names its day file from its own UTC clock.  During the first minutes
 # after the manager has crossed midnight, the node may therefore still append
@@ -666,6 +674,59 @@ def _retire_staging(
             path.unlink()
         except OSError as exc:
             print(f"retired part {name}: {exc}", file=sys.stderr)
+
+
+def _over_budget(held: int, capacity: int, free: int) -> bool:
+    return held > capacity * SPACE_SHARE or free < capacity * FREE_SHARE
+
+
+def _staging_budget(config: CollectorConfig, *, today: date) -> bool:
+    """Remove the oldest finished days' parts while staging is over its budget.
+
+    Whole days, every node's at once, never today, and each with the marker
+    that says the day is complete, so it is not fetched again. Answers whether
+    staging is still over its budget - today alone, or another hand on the
+    filesystem - in which case the run fetches nothing.
+    """
+
+    try:
+        space = os.statvfs(config.staging)
+    except OSError:
+        return False
+    capacity = space.f_blocks * space.f_frsize
+    free = space.f_bavail * space.f_frsize
+    days: dict[str, list[tuple[Path, int]]] = {}
+    held = 0
+    for path in config.staging.glob("*--*--*.jsonl"):
+        try:
+            metadata = path.lstat()
+        except OSError:
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            continue
+        held += metadata.st_size
+        day = path.name.rsplit("--", 1)[-1][: -len(".jsonl")]
+        if day != today.isoformat():
+            days.setdefault(day, []).append((path, metadata.st_size))
+    for day in sorted(days):
+        if not _over_budget(held, capacity, free):
+            break
+        for part, size in sorted(days[day]):
+            checkpoint = _database_checkpoint(config, part)
+            ingested = config.database is None or _checkpoint_offset(checkpoint, size=size) == size
+            _replace(part.with_name(part.name[: -len(".jsonl")] + ".done"), b"", 0o600)
+            part.unlink()
+            if checkpoint.exists() or checkpoint.is_symlink():
+                _regular(checkpoint, maximum=32)
+                checkpoint.unlink()
+            held -= size
+            free += size
+            lost = "" if ingested else ", with records the database did not have yet"
+            print(
+                f"{part.name}: removed before its time: the mirror is over its space budget{lost}",
+                file=sys.stderr,
+            )
+    return _over_budget(held, capacity, free)
 
 
 def _database_checkpoint(config: CollectorConfig, part: Path) -> Path:
@@ -1506,12 +1567,23 @@ def collect(
         selected = fetch or (lambda node, day, offset: ssh_fetch(config, node, day, offset))
         selected_waf = fetch_waf_page or (lambda node, cursor: ssh_fetch_waf(config, node, cursor))
 
+        full = _staging_budget(config, today=attempted.astimezone(UTC).date())
+
         def one(target: NodeTarget) -> _NodeRun:
             problem = None
-            try:
-                collect_node(config, target, now=attempted, fetch=selected, window=window)
-            except (CollectorError, OSError) as exc:
-                problem = str(exc)
+            if full:
+                #
+                # Nothing more is fetched while the copy cannot shrink: the
+                # node keeps its own, within its own budget, and the next run
+                # looks again.
+                #
+                problem = "the mirror is over its space budget; nothing was fetched"
+                _write_meta(config, target, attempted=attempted, outcome="budget", success=False)
+            else:
+                try:
+                    collect_node(config, target, now=attempted, fetch=selected, window=window)
+                except (CollectorError, OSError) as exc:
+                    problem = str(exc)
             if config.database is None:
                 return _NodeRun(problem)
             #

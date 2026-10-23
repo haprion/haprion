@@ -305,8 +305,10 @@ restart or deploy anything on its own.
 
 ## Step 11 — retention
 
-`./11-platform-retention` installs `haprion-retention` and a daily timer, and runs
-`haprion-retention horizon` once, which creates the daily partitions ahead and removes nothing.
+`./11-platform-retention` installs `haprion-retention`, a daily timer and an hourly one that keeps
+the traffic and WAF partitions within a quarter of the database's volume (`haprion-retention
+budget`), and runs `haprion-retention horizon` once, which creates the daily partitions ahead and
+removes nothing.
 
 **A root command, because no application role holds `delete` on any table and
 none is going to.** The audit trail, the login attempts and the job queue follow

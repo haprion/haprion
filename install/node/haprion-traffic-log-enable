@@ -56,8 +56,19 @@ rsyslog_writer() {
     echo "${found:-root}"
 }
 
+#
+# What one hour's file may hold, from the retention pass that keeps the rest of
+# the budget: one formula, in the script beside this one (B356).
+#
+hour_cap() {
+    "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/haprion-traffic-log-prune" --hour-cap
+}
+
 render_rule() {
-    cat <<'CONF'
+    local cap
+    cap="$(hour_cap)" || die "cannot measure the traffic log's filesystem"
+    [[ "$cap" =~ ^[1-9][0-9]*$ ]] || die "the hour limit is not a number: ${cap}"
+    sed "s/@HOUR_CAP@/${cap}/" <<'CONF'
 # Installed by haprion-traffic-log-enable. Do not edit by hand.
 #
 # HAProxy tags this second, opt-in stream "haproxy-traffic"; the ordinary
@@ -69,13 +80,14 @@ render_rule() {
 # without that, every JSON record would additionally be appended to the classic
 # log, doubling the volume of the file an operator reads by hand.
 #
-# The day file is named from the current UTC date, not from the message
+# The file is named from the current UTC date and hour, not from the message
 # timestamp. The collector treats a finished day as immutable, and only a
 # monotonic clock source guarantees that a closed file is never appended to
-# after the rollover.
+# after the rollover. An hour is a file of its own so that the size limit
+# below stops one hour rather than the rest of the day.
 
 template(name="haprion-traffic-file" type="string"
-         string="/var/log/haprion/traffic-%$now-utc%.jsonl")
+         string="/var/log/haprion/traffic-%$now-utc%T%$hour-utc%.jsonl")
 # Only the message, from its second character. HAProxy already emits one
 # complete JSON object per record, and a syslog header in front of it would
 # make the file something other than the JSONL the reader and the interface
@@ -99,6 +111,14 @@ template(name="haprion-traffic-line" type="string"
 # also written to the classic log through the global target under the tag
 # "haproxy", so on this tag it is a duplicate, and dropping it loses nothing.
 # The leading space is the RFC3164 separator the template above skips.
+#
+# Each hour's file stops at a size: a twenty-fourth of the share of this
+# filesystem the traffic log may hold, so a day cannot take more than that
+# however much arrives. Measured against rsyslog 8.2512: the limit holds on a
+# dynamic file name, stops only the file that reached it, survives a restart
+# and lets at most one batch past. There is no rotation command, on purpose:
+# rsyslog then refuses the write and says so in its own log. The rest of that
+# hour is dropped; the hours already written stay.
 if ($programname == "haproxy-traffic") then {
     if ($msg startswith " {") then {
         action(type="omfile"
@@ -106,7 +126,8 @@ if ($programname == "haproxy-traffic") then {
                template="haprion-traffic-line"
                fileCreateMode="0640"
                dirCreateMode="0750"
-               createDirs="off")
+               createDirs="off"
+               rotation.sizeLimit="@HOUR_CAP@")
     }
     stop
 }

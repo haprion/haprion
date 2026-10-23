@@ -177,6 +177,20 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         enabled = [line for line in self.recorded() if line.startswith("systemctl enable")]
         self.assertTrue(any("haprion-node-restore-helper.socket" in line for line in enabled))
 
+    def test_a_timer_a_later_release_added_to_a_step_comes_with_the_step_s_first(self) -> None:
+        """The traffic partitions' hourly budget (B356) belongs to step 11, which ran before it existed."""
+
+        done = self.refresh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+        for kind in ("service", "timer"):
+            self.assertEqual(
+                (self.systemd / f"haprion-retention-budget.{kind}").read_text(),
+                (PLATFORM / f"examples/haprion-retention-budget.{kind}.example").read_text(),
+            )
+        enabled = [line for line in self.recorded() if line.startswith("systemctl enable")]
+        self.assertTrue(any("haprion-retention-budget.timer" in line for line in enabled))
+
     def test_what_its_step_did_not_install_stays_out(self) -> None:
         done = self.refresh()
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -198,7 +212,12 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
                 for line in recorded
             )
         )
-        self.assertIn("systemctl restart haprion-retention.timer", recorded)
+        self.assertTrue(
+            any(
+                line.startswith("systemctl restart ") and "haprion-retention.timer" in line.split()
+                for line in recorded
+            )
+        )
         self.assertLess(recorded.index("nginx -t"), recorded.index("systemctl reload nginx"))
 
     def test_a_second_run_changes_nothing(self) -> None:
@@ -224,6 +243,8 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         self.assertIn(
             "systemctl disable --quiet --now haprion-node-restore-helper.socket", recorded
         )
+        self.assertFalse((self.systemd / "haprion-retention-budget.timer").exists())
+        self.assertIn("systemctl disable --quiet --now haprion-retention-budget.timer", recorded)
         self.assertIn("systemctl daemon-reload", recorded)
         self.assertIn("systemctl reload nginx", recorded)
         self.assertEqual((self.keep / "manifest").read_text(), "")

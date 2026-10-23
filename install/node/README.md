@@ -18,7 +18,7 @@
 | `haprion-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haprion-traffic-log-read` | returns bounded, whole JSONL records for one validated UTC day and cursor, or the WAF engine's journal lines after a journal cursor (`waf <cursor>`) |
 | `haprion-traffic-log-enable` | installs or removes the node's rsyslog route and its retention timer |
-| `haprion-traffic-log-prune` | deletes traffic day files past the 14-day window, or the oldest over the space budget, whole and never renamed |
+| `haprion-traffic-log-prune` | deletes traffic days past the 14-day window, or the oldest over the space budget, whole and never renamed; prints the hour limit the rsyslog rule writes |
 
 ## Nothing environment-specific is compiled in
 
@@ -59,13 +59,18 @@ out of every backup.
 The traffic-log reader is attested as part of the same bundle. Its account, read group and empty
 `authorized_keys` file are prepared by step 4. Step 4 does not turn the stream on: run
 `sudo haprion-traffic-log-enable` on a node whose published configuration enables the second log
-stream, and `--disable` to take it away again. It also installs the daily retention timer. The
+stream, and `--disable` to take it away again. It also installs the hourly retention timer. The
 collector key is still to come; until the route is installed no structured traffic file is written,
 and the empty account accepts no connection either way.
 
-Retention deletes whole day files and never renames one. logrotate would move the file a fetch is
+Retention deletes whole days and never renames a file. logrotate would move the file a fetch is
 reading between two names, with no instant at which both names resolve - a run landing in that gap
 reads an empty file and reports success, which is worse than an error.
+
+rsyslog writes each hour to `traffic-YYYY-MM-DDTHH.jsonl` and stops that file at a twenty-fourth of
+the space budget (`rotation.sizeLimit`, with no rotation command: the rest of the hour is dropped
+and rsyslog logs that it refused). A day therefore never holds more than the budget. The reader
+serves a day as its hours in order, so the collector still asks for a day and an offset.
 
 `/var/log/haprion` is `syslog:_haprion-logs` mode **2750**, and the set-group-id bit is
 load-bearing. rsyslog drops to `syslog:syslog` before it opens a log file, so it cannot place a

@@ -36,10 +36,13 @@ requests a day × 800 bytes × 14  +  disk_mib of every receiver  +  margin for 
 
 At one million requests a day that is about 10 GiB of day files, plus 1 GiB a receiver. A full
 root filesystem stops journald and apt as well as the log, so leave the system its own margin. The
-day files are also held to a space budget, checked every hour: when they hold more than a quarter
-of their filesystem, or less than a tenth of it is free, the oldest finished days go before their
-fourteen, each with a warning in the system log. Today's file is never removed, so a filesystem
-of its own for `/var/log/haprion` is still the way to keep a flood of requests off the root.
+traffic log is held to a space budget of a quarter of its filesystem. rsyslog writes each hour to a
+file of its own and stops that file at a twenty-fourth of the budget, so one day can never hold more
+than the budget, however many requests arrive; what comes after an hour's limit is dropped until
+the next hour, with a warning in the system log. Every hour the oldest finished days go before
+their fourteen while the files hold more than the budget or less than a tenth of the filesystem is
+free, each with a warning too. The manager keeps the same share of its own disk for its copy and
+for the traffic tables in PostgreSQL ([the manual](user-manual.md#keeping-jobs-sessions-and-metric-history-bounded)).
 
 **Who reaches the interface.** The web interface changes what the clusters serve, so it belongs
 on a network only its administrators reach - a management network, or a VPN into one - and not

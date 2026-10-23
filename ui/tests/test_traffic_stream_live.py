@@ -243,6 +243,7 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
         return self.classic().read_text() if self.classic().exists() else ""
 
     def test_one_request_is_one_record_and_everything_else_is_classic(self) -> None:
+        started = datetime.now(UTC)
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
             connection.putrequest("GET", "/?q=must-not-appear", skip_host=True)
@@ -266,8 +267,12 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
         )
 
         files = self.day_files()
-        today = datetime.now(UTC).date().isoformat()
-        self.assertEqual([path.name for path in files], [f"traffic-{today}.jsonl"])
+        #
+        # The hour's own file (B356), whichever hour the one record fell in.
+        #
+        hours = {f"traffic-{moment:%Y-%m-%dT%H}.jsonl" for moment in (started, datetime.now(UTC))}
+        self.assertEqual(len(files), 1, files)
+        self.assertIn(files[0].name, hours)
         lines = files[0].read_bytes().splitlines()
         self.assertEqual(len(lines), 1, lines)
         self.assertTrue(lines[0].startswith(b"{"), lines[0])

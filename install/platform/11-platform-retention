@@ -4,7 +4,8 @@
 #
 #     sudo ./11-platform-retention <answers-file>
 #
-# Installs haprion-retention and a daily timer. Required: the metric, traffic
+# Installs haprion-retention, a daily timer and an hourly one for the traffic
+# partitions' space budget. Required: the metric, traffic
 # and WAF tables are partitioned by day with no default partition, and this is
 # what creates the days ahead - without it the poller's samples have nowhere to
 # go and the WAF matches are dropped (review 2026-10-22, 3-2). Separate from
@@ -36,20 +37,26 @@ log "  ok       /usr/sbin/haprion-retention"
 
 step "Timer"
 unit="haprion-retention"
-for kind in service timer; do
-    install_file "/etc/systemd/system/${unit}.${kind}" root:root 644 \
-        "$(cat "examples/haprion-retention.${kind}.example")"
+#
+# Two timers: the nightly pruning and rollup, and the hourly space budget for
+# the traffic and WAF partitions.
+#
+for timer in haprion-retention haprion-retention-budget; do
+    for kind in service timer; do
+        install_file "/etc/systemd/system/${timer}.${kind}" root:root 644 \
+            "$(cat "examples/${timer}.${kind}.example")"
+    done
 done
 systemctl daemon-reload
 log "  reloaded systemd"
-systemctl enable --quiet --now "${unit}.timer"
-log "  enabled  daily pruning and rollup"
+systemctl enable --quiet --now "${unit}.timer" haprion-retention-budget.timer
+log "  enabled  daily pruning and rollup, and the hourly space budget"
 
 #
 # Asked of the running system rather than assumed from a clean enable. A timer
 # that is enabled but whose next run is never is retention that will not happen.
 #
-systemctl list-timers --no-pager --no-legend "${unit}.timer" | sed 's/^/  /'
+systemctl list-timers --no-pager --no-legend "${unit}.timer" haprion-retention-budget.timer | sed 's/^/  /'
 
 step "The partitions ahead"
 #
@@ -67,6 +74,7 @@ step "What the first run will remove"
 # something, or it is decoration.
 #
 /usr/sbin/haprion-retention prune --dry-run
+/usr/sbin/haprion-retention budget --dry-run
 
 step "What must not be able to do this"
 #
@@ -89,5 +97,7 @@ done
 step "Done"
 log "  ${unit}.timer runs daily: prunes finished jobs older than a week, keeping the 20 most recent,"
 log "           rolls up metric hours, and rotates traffic-log partitions at the configured retention"
+log "  haprion-retention-budget.timer runs hourly: drops the oldest traffic days only while they hold"
+log "           more than a quarter of the database's volume or leave less than a tenth of it free"
 log "  nothing has been deleted yet; run it now with:"
 log "    sudo haprion-retention prune"

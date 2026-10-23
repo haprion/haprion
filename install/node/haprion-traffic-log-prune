@@ -1,18 +1,22 @@
 #!/usr/bin/python3
-"""Delete traffic day files older than the retention window, or over its space budget.
+"""Delete traffic days older than the retention window, or over their space budget.
 
-Deleting whole day files, never renaming one. logrotate would move the file the
+Deleting whole files, never renaming one. logrotate would move the file the
 collector is reading between two names, and there is no instant at which both
 the old and the new name are visible - so a rotation could land exactly where a
 fetch is, and the run would silently see an empty file rather than an error.
-A finished day file is immutable here, and disappears whole.
+A finished file is immutable here, and disappears whole.
 
 The window is days, and a flood of requests fills a disk well within it
 (security review S05, B307). So the oldest finished days also go, whole, while
-the day files hold more than SPACE_SHARE of their filesystem or less than
+the traffic files hold more than SPACE_SHARE of their filesystem or less than
 FREE_SHARE of it is free - and each such removal is a warning in the system
-log, which the node forwards. Today's file is never touched: rsyslog is writing
-it and the collector reading it.
+log, which the node forwards. Today is never touched: rsyslog is writing it and
+the collector reading it. It is bounded where it is written instead (B356):
+rsyslog writes each hour to a file of its own and stops that file at
+`hour_cap()`, a twenty-fourth of the share, so a day cannot hold more than the
+share whatever arrives. `--hour-cap` prints that limit for the rule
+haprion-traffic-log-enable writes.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+import sys
 import syslog
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -35,7 +40,13 @@ RETENTION_DAYS = 14
 #
 SPACE_SHARE = 0.25
 FREE_SHARE = 0.10
-DAY_FILE = re.compile(r"^traffic-([0-9]{4}-[0-9]{2}-[0-9]{2})\.jsonl$")
+HOURS = 24
+MIN_HOUR_CAP = 1024 * 1024
+#
+# A day's files: a whole-day file, as nodes wrote before the hours had files of
+# their own, and an hour each. The name sorts in the order they were written.
+#
+DAY_FILE = re.compile(r"^traffic-([0-9]{4}-[0-9]{2}-[0-9]{2})(?:T([01][0-9]|2[0-3]))?\.jsonl$")
 
 
 def expired(name: str, today: date) -> bool:
@@ -57,7 +68,11 @@ def prune(root: Path, *, today: date | None = None) -> list[str]:
     when = today or datetime.now(UTC).date()
     removed: list[str] = []
     try:
-        names = sorted(os.listdir(root))
+        #
+        # The last hour of a day first: the reader then sees a day that is
+        # going as its beginning, or as gone (haprion-traffic-log-read).
+        #
+        names = sorted(os.listdir(root), reverse=True)
     except FileNotFoundError:
         return removed
 
@@ -77,11 +92,35 @@ def prune(root: Path, *, today: date | None = None) -> list[str]:
         except OSError:
             continue
         removed.append(name)
-    return removed
+    return sorted(removed)
+
+
+def _capacity(root: Path) -> int:
+    """The size of the filesystem the traffic files are written to.
+
+    The directory's own, or the one it will be made on when it is not there
+    yet: haprion-traffic-log-enable renders its rule before 04-node-prepare
+    has necessarily created it.
+    """
+
+    path = root
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    space = os.statvfs(path)
+    return space.f_blocks * space.f_frsize
+
+
+def hour_cap(root: Path) -> int:
+    """What one hour's file may hold: a twenty-fourth of the space share.
+
+    Never below MIN_HOUR_CAP: rsyslog reads a limit of 0 as none at all.
+    """
+
+    return max(MIN_HOUR_CAP, int(_capacity(root) * SPACE_SHARE) // HOURS)
 
 
 def over_budget(root: Path, *, today: date | None = None) -> list[str]:
-    """Remove the oldest finished day files while the budget is exceeded."""
+    """Remove the oldest finished days, whole, while the budget is exceeded."""
 
     when = today or datetime.now(UTC).date()
     removed: list[str] = []
@@ -92,7 +131,7 @@ def over_budget(root: Path, *, today: date | None = None) -> list[str]:
         return removed
     capacity = space.f_blocks * space.f_frsize
     free = space.f_bavail * space.f_frsize
-    days: list[tuple[str, int]] = []
+    days: dict[str, list[tuple[str, int]]] = {}
     held = 0
     for name in names:
         match = DAY_FILE.fullmatch(name)
@@ -106,29 +145,61 @@ def over_budget(root: Path, *, today: date | None = None) -> list[str]:
             continue
         held += metadata.st_size
         if match.group(1) != when.isoformat():
-            days.append((name, metadata.st_size))
-    for name, size in days:
+            days.setdefault(match.group(1), []).append((name, metadata.st_size))
+    for day in sorted(days):
         if held <= capacity * SPACE_SHARE and free >= capacity * FREE_SHARE:
             break
-        try:
-            os.unlink(root / name)
-        except OSError:
-            continue
-        held -= size
-        free += size
-        removed.append(name)
-    return removed
+        for name, size in reversed(days[day]):
+            try:
+                os.unlink(root / name)
+            except OSError:
+                continue
+            held -= size
+            free += size
+            removed.append(name)
+    return sorted(removed)
 
 
-def main() -> int:
+def capped(root: Path, *, now: datetime | None = None) -> str | None:
+    """The hour just ended, when its file reached the cap and lost what came after.
+
+    The pass runs once an hour, so each hour is looked at once. rsyslog says it
+    too, in its own words, the moment it happens.
+    """
+
+    hour = (now or datetime.now(UTC)) - timedelta(hours=1)
+    name = f"traffic-{hour:%Y-%m-%dT%H}.jsonl"
+    try:
+        metadata = os.lstat(root / name)
+        cap = hour_cap(root)
+    except OSError:
+        return None
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < cap:
+        return None
+    return name
+
+
+def _warn(message: str) -> None:
+    print(message)
+    syslog.syslog(syslog.LOG_WARNING, f"haprion-traffic-log-prune: {message}")
+
+
+def main(arguments: list[str]) -> int:
+    if arguments == ["--hour-cap"]:
+        print(hour_cap(LOG_ROOT))
+        return 0
+    if arguments:
+        print("usage: haprion-traffic-log-prune [--hour-cap]", file=sys.stderr)
+        return 64
     for name in prune(LOG_ROOT):
         print(f"removed {name}")
     for name in over_budget(LOG_ROOT):
-        message = f"removed {name} before its time: the traffic log is over its space budget"
-        print(message)
-        syslog.syslog(syslog.LOG_WARNING, f"haprion-traffic-log-prune: {message}")
+        _warn(f"removed {name} before its time: the traffic log is over its space budget")
+    full = capped(LOG_ROOT)
+    if full is not None:
+        _warn(f"{full} reached its size limit: the rest of that hour's records were not kept")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

@@ -3,7 +3,8 @@
 
 Two requests, one forced command (the collector's single key):
 
-    YYYY-MM-DD OFFSET   the traffic log's day file, from a byte offset
+    YYYY-MM-DD OFFSET   the traffic log's day, from a byte offset: its hourly
+                        files read as one (B356)
     waf CURSOR | waf -  the WAF engine's journal, after a journal cursor or
                         from its oldest entry (Fas 21, B234)
 """
@@ -74,6 +75,33 @@ def _empty(wanted: date, offset: int, *, size: int = 0, reset: bool = False) -> 
     )
 
 
+def _segments(root: Path, wanted: date) -> list[Path]:
+    """A day's files in the order rsyslog wrote them.
+
+    Each hour is a file of its own, so that a hard size limit can stop one hour
+    rather than the rest of the day (B356). A whole-day file is what a node
+    wrote before that; on the day it changed, the whole-day file comes first.
+    """
+
+    day = wanted.isoformat()
+    return [
+        root / f"traffic-{day}.jsonl",
+        *(root / f"traffic-{day}T{hour:02d}.jsonl" for hour in range(24)),
+    ]
+
+
+def _read(descriptor: int, position: int, count: int) -> bytes:
+    chunks: list[bytes] = []
+    while count > 0:
+        chunk = os.pread(descriptor, count, position)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        position += len(chunk)
+        count -= len(chunk)
+    return b"".join(chunks)
+
+
 def serve(raw: str, root: Path, output: BinaryIO, *, today: date | None = None) -> int:
     """Write one protocol response; paths are always derived from a validated date."""
 
@@ -82,33 +110,65 @@ def serve(raw: str, root: Path, output: BinaryIO, *, today: date | None = None) 
     except RequestError:
         return 64
 
-    path = root / f"traffic-{wanted.isoformat()}.jsonl"
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
+    opened: list[tuple[int, int]] = []
+    present: list[Path] = []
     try:
-        descriptor = os.open(path, flags)
-    except FileNotFoundError:
-        output.write(_empty(wanted, offset, reset=offset > 0))
-        return 0
-    except OSError:
-        return 65
+        #
+        # The last hour first. rsyslog writes one hour after the other, so an
+        # hour measured after a later one already had bytes is finished: its
+        # size cannot change after it was taken, and the offsets of the day
+        # stay what they were. Measured first-to-last, an hour could grow
+        # after its size was taken while the next one is read, and every
+        # offset after it would move.
+        #
+        for path in reversed(_segments(root, wanted)):
+            try:
+                descriptor = os.open(path, flags)
+            except FileNotFoundError:
+                continue
+            descriptors.append(descriptor)
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                return 65
+            opened.insert(0, (descriptor, metadata.st_size))
+            present.append(path)
 
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            return 65
-        size = metadata.st_size
+        #
+        # The retention removes a finished day whole and its last hour first
+        # (haprion-traffic-log-prune). What this sees of a day that is going is
+        # therefore its beginning, at the offsets it always had - unless an
+        # hour this has open was removed meanwhile, and an earlier one with it.
+        # Then the day is gone: served, the hours left would stand at the
+        # offsets of the ones removed.
+        #
+        if not opened or not all(os.path.lexists(path) for path in present):
+            output.write(_empty(wanted, offset, reset=offset > 0))
+            return 0
+        size = sum(length for _, length in opened)
         if offset > size:
             output.write(_empty(wanted, offset, size=size, reset=True))
             return 0
 
-        os.lseek(descriptor, offset, os.SEEK_SET)
         #
         # No further than the size the header states. rsyslog appends while
         # this reads, and a response reaching past its own size is one the
         # collector refuses - which a node writing 25 000 lines a second made
         # happen (26-10-12). What was appended is the next request's.
         #
-        data = os.read(descriptor, min(MAX_SEND + MAX_RECORD + 1, size - offset))
+        wanted_bytes = min(MAX_SEND + MAX_RECORD + 1, size - offset)
+        parts: list[bytes] = []
+        start = 0
+        for descriptor, length in opened:
+            end = start + length
+            if wanted_bytes > 0 and end > offset:
+                within = max(offset - start, 0)
+                count = min(length - within, wanted_bytes)
+                parts.append(_read(descriptor, within, count))
+                wanted_bytes -= count
+            start = end
+        data = b"".join(parts)
         skipped = 0
         if offset and data and not data.startswith(b"{"):
             boundary = data.find(b"\n")
@@ -145,7 +205,8 @@ def serve(raw: str, root: Path, output: BinaryIO, *, today: date | None = None) 
     except OSError:
         return 65
     finally:
-        os.close(descriptor)
+        for descriptor in descriptors:
+            os.close(descriptor)
 
 
 def _message(value: object) -> str | None:

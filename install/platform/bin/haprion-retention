@@ -5,6 +5,7 @@
 #     haprion-retention prune   [--days <n>] [--dry-run]
 #     haprion-retention report  [--days <n>] [--exact]
 #     haprion-retention horizon
+#     haprion-retention budget  [--dry-run]
 #
 # The job table grows without limit otherwise: it holds one row per management
 # request ever made, and nothing has ever removed one. The audit trail is what
@@ -139,10 +140,11 @@ METRIC_COUNTERS="scur, stot, bin, bout, req_tot, qcur, ereq, econ, eresp, dreq, 
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARNING: $*" >&2; }
 counted() { if [[ "$1" == 1 ]]; then echo "1 $2"; else echo "$1 ${3:-$2s}"; fi; }  # "1 row", "2 rows"
 
 usage() {
-    sed -n '3,7p' "$0" | sed 's/^# \?//'
+    sed -n '3,8p' "$0" | sed 's/^# \?//'
     exit 64
 }
 
@@ -348,6 +350,18 @@ account_history() {
 TRAFFIC_TABLES=(traffic_log waf_match)
 
 #
+# What the traffic and WAF partitions may hold of the volume PostgreSQL writes
+# to, and the free space they must leave: the share the node and the manager's
+# copy keep too (B356). The retention is days, and a flood fills a volume well
+# within them, so the oldest finished days also go - a day's traffic and WAF
+# partitions together, never today's or one ahead. `budget` does only this, from
+# a timer of its own every hour: the nightly run is too far apart for what a
+# flood writes.
+#
+TRAFFIC_SPACE_PERCENT=25
+TRAFFIC_FREE_PERCENT=10
+
+#
 # Every partitioned table. PostgreSQL's autovacuum analyzes each partition but
 # never a partitioned parent, so the statistics a query over the whole table is
 # planned with go stale unless something runs ANALYZE on it (review 2026-10-03,
@@ -445,6 +459,69 @@ traffic_partitions() {
             psql_as -c "drop table if exists \"${partition}\""
         done
         log "  ${table}: dropped $(counted "${#expired[@]}" "expired partition")"
+    done
+}
+
+traffic_tables_in() {
+    local table list=""
+    for table in "${TRAFFIC_TABLES[@]}"; do list+="${list:+, }'${table}'"; done
+    echo "$list"
+}
+
+traffic_held_query() {
+    cat <<SQL
+    select coalesce(sum(pg_total_relation_size(child.oid)), 0)::bigint
+      from pg_inherits
+      join pg_class parent on parent.oid = pg_inherits.inhparent
+      join pg_class child on child.oid = pg_inherits.inhrelid
+     where parent.relname in ($(traffic_tables_in))
+SQL
+}
+
+traffic_days_query() {
+    cat <<SQL
+    select right(child.relname, 8), sum(pg_total_relation_size(child.oid))::bigint
+      from pg_inherits
+      join pg_class parent on parent.oid = pg_inherits.inhparent
+      join pg_class child on child.oid = pg_inherits.inhrelid
+     where parent.relname in ($(traffic_tables_in))
+       and child.relname ~ ('^' || parent.relname || '_[0-9]{8}\$')
+       and to_date(right(child.relname, 8), 'YYYYMMDD') < current_date
+     group by 1
+     order by 1
+SQL
+}
+
+traffic_budget() {
+    local directory blocks size available capacity free held entry day bytes table
+    local -a days
+    #
+    # Asked of the server, which is the one that knows: a data directory moved
+    # off the default is still where the partitions are written.
+    #
+    directory="$(sudo -u postgres psql -qtAX -c 'show data_directory')" \
+        || die "cannot ask PostgreSQL where it writes"
+    read -r blocks size available < <(stat -f -c '%b %S %a' "$directory") \
+        || die "cannot measure ${directory}"
+    capacity=$((blocks * size))
+    free=$((available * size))
+    held="$(psql_as -c "$(traffic_held_query)")"
+    log "  traffic and WAF partitions: ${held} bytes of ${capacity} (at most ${TRAFFIC_SPACE_PERCENT} %), ${free} free"
+    mapfile -t days < <(psql_as -c "$(traffic_days_query)")
+    for entry in "${days[@]}"; do
+        (( held * 100 > capacity * TRAFFIC_SPACE_PERCENT || free * 100 < capacity * TRAFFIC_FREE_PERCENT )) || break
+        IFS='|' read -r day bytes <<< "$entry"
+        [[ "$day" =~ ^[0-9]{8}$ && "$bytes" =~ ^[0-9]+$ ]] || die "unexpected partition day: ${entry}"
+        if [[ "$dry_run" -eq 1 ]]; then
+            log "  dry run: ${day} would go before its time"
+        else
+            for table in "${TRAFFIC_TABLES[@]}"; do
+                psql_as -c "drop table if exists \"${table}_${day}\""
+            done
+            warn "  dropped the traffic and WAF partitions of ${day} before their time: they are over their space budget"
+        fi
+        held=$((held - bytes))
+        free=$((free + bytes))
     done
 }
 
@@ -868,6 +945,9 @@ main() {
     log "  keeping the ${KEEP_MINIMUM} most recent whatever their age"
 
     case "$command" in
+        budget)
+            traffic_budget
+            ;;
         horizon)
             metric_partitions_prepare
             for table in "${TRAFFIC_TABLES[@]}"; do

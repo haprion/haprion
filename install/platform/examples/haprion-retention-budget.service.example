@@ -1,0 +1,16 @@
+[Unit]
+# Keeps the traffic and WAF partitions within their share of the database's
+# volume. Rendered by 11-platform-retention.
+Description=Keep the Haprion traffic partitions within their space budget
+Documentation=file:///opt/haprion-ui/current
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# Root, as the nightly retention: no application role may drop a partition.
+User=root
+ExecStart=/usr/sbin/haprion-retention budget
+
+[Install]
+WantedBy=multi-user.target

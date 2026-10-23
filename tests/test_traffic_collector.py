@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -312,6 +313,63 @@ class TrafficCollectorTests(unittest.TestCase):
         meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
         self.assertEqual((meta["outcome"], meta["last_success"]), ("ok", NOW.isoformat()))
         self.assertEqual(calls[0], (NOW.date(), 0))
+
+    def space(self, *, capacity: int, free: int) -> Any:
+        return patch(
+            "haprion.traffic_collector.os.statvfs",
+            return_value=MagicMock(f_blocks=capacity, f_frsize=1, f_bavail=free),
+        )
+
+    def test_over_its_budget_the_mirror_loses_its_oldest_finished_days_whole(self) -> None:
+        """B356: the node bounds what it holds; the manager holds every node's days."""
+
+        other = NodeTarget("alpha", "node-b", "node-b.example.com")
+        configured = dataclasses.replace(self.config, nodes=(self.target, other))
+        for node in ("node-a", "node-b"):
+            for day in ("2026-09-05", "2026-09-06", NOW.date().isoformat()):
+                (self.staging / f"alpha--{node}--{day}.jsonl").write_bytes(b"x" * 100)
+        (self.staging / ".alpha--node-a--2026-09-05.jsonl.database-offset").write_text("100\n")
+        errors = StringIO()
+
+        # 600 bytes held, a quarter of 1600 is 400: the oldest day goes, of both nodes.
+        with self.space(capacity=1600, free=1000), redirect_stderr(errors):
+            self.assertFalse(traffic_collector._staging_budget(configured, today=NOW.date()))
+
+        left = sorted(path.name for path in self.staging.iterdir())
+        self.assertEqual(
+            left,
+            [
+                "alpha--node-a--2026-09-05.done",
+                "alpha--node-a--2026-09-06.jsonl",
+                "alpha--node-a--2026-09-08.jsonl",
+                "alpha--node-b--2026-09-05.done",
+                "alpha--node-b--2026-09-06.jsonl",
+                "alpha--node-b--2026-09-08.jsonl",
+            ],
+        )
+        self.assertEqual(errors.getvalue().count("removed before its time"), 2)
+
+    def test_a_mirror_over_its_budget_with_only_today_left_fetches_nothing(self) -> None:
+        (self.staging / f"alpha--node-a--{NOW.date().isoformat()}.jsonl").write_bytes(b"x" * 100)
+        calls: list[date] = []
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            calls.append(wanted)
+            return self.response(wanted, offset, b"")
+
+        with self.space(capacity=200, free=100), redirect_stderr(StringIO()):
+            self.assertEqual(collect(self.config, now=NOW, fetch=fetch), 1)
+
+        self.assertEqual(calls, [])
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        self.assertEqual(meta["outcome"], "budget")
+        self.assertTrue((self.staging / f"alpha--node-a--{NOW.date().isoformat()}.jsonl").exists())
+
+    def test_within_its_budget_the_mirror_keeps_everything(self) -> None:
+        (self.staging / "alpha--node-a--2026-09-05.jsonl").write_bytes(b"x" * 100)
+        with self.space(capacity=10_000, free=9_000):
+            self.assertFalse(traffic_collector._staging_budget(self.config, today=NOW.date()))
+        self.assertTrue((self.staging / "alpha--node-a--2026-09-05.jsonl").exists())
 
     def test_rerun_uses_the_committed_part_size_and_does_not_duplicate(self) -> None:
         line = b'{"schema":1}\n'

@@ -1,0 +1,13 @@
+[Unit]
+Description=Hourly space budget for the Haprion traffic partitions
+
+[Timer]
+# Hourly rather than with the nightly retention: the days kept are the
+# retention's, but a flood of traffic fills a volume within a day, and what
+# it writes in an hour is bounded by what the nodes may hold of an hour.
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

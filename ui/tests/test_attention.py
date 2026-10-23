@@ -237,6 +237,7 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
                 self.freshness(node="node-c", last_attempt=old, last_success=old),
                 self.freshness(node="node-d", current_complete=False, behind_runs=5),
                 self.freshness(node="node-e", pending_days=2),
+                self.freshness(node="node-f", outcome="budget", last_success=old),
             ),
             [
                 "log collection failed (unreachable)",
@@ -244,6 +245,7 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
                 "log collection last succeeded 12 min ago",
                 "log collection behind for 5 runs",
                 "log collection behind · 2 older days waiting",
+                "log collection paused: the manager's copy is over its space budget",
             ],
         )
 

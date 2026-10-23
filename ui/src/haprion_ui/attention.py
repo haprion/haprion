@@ -481,7 +481,9 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
     items: list[Item] = []
     for node in nodes:
         stale = node.stale_seconds(now=now)
-        if node.latest_attempt_failed():
+        if node.latest_attempt_failed() and node.outcome == "budget":
+            message = "log collection paused: the manager's copy is over its space budget"
+        elif node.latest_attempt_failed():
             message = f"log collection failed ({node.outcome})"
         elif stale is None:
             message = "log collection has never reached the node"

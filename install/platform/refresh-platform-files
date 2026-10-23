@@ -42,8 +42,13 @@ TLS_CONF="${TLS_CONF:-/etc/haprion/ui-tls.conf}"
 #
 SOCKETS=(resolve cert-export cert-receiver node tls backup-job node-restore)
 OPTIONAL_SOCKETS=(probe oidc)
-TIMERS=(haprion-backup haprion-restore-check haprion-retention haprion-traffic-collector
-        haprion-certbot-renew)
+TIMERS=(haprion-backup haprion-restore-check haprion-retention haprion-retention-budget
+        haprion-traffic-collector haprion-certbot-renew)
+#
+# A timer a later release added to a step: installed wherever that step's
+# first timer is, since the step that would install it ran before it existed.
+#
+declare -A TIMER_STEP=([haprion-retention-budget]=haprion-retention)
 
 usage() { die "usage: $(basename "$0") <release-id> <keep-dir> | --restore <keep-dir>"; }
 
@@ -66,7 +71,7 @@ restore() {
             mv -f -- "${path}.restoring" "$path"
             log "  restored ${path}"
         else
-            if [[ "$kind" == socket && "$path" == *.socket ]]; then
+            if [[ "$kind" == socket && "$path" == *.socket || "$kind" == timer && "$path" == *.timer ]]; then
                 systemctl disable --quiet --now "${path##*/}" || true
             fi
             rm -f -- "$path"
@@ -183,7 +188,7 @@ done
 
 step "Timers"
 for name in "${TIMERS[@]}"; do
-    [[ -e "${SYSTEMD_DIR}/${name}.timer" ]] || continue
+    [[ -e "${SYSTEMD_DIR}/${TIMER_STEP[$name]:-$name}.timer" ]] || continue
     for kind in service timer; do
         put timer "${SYSTEMD_DIR}/${name}.${kind}" 644 \
             "$(render_example "examples/${name}.${kind}.example")"
@@ -232,6 +237,7 @@ if (( ${#sockets[@]} > 0 )); then
     log "  restarted ${sockets[*]}"
 fi
 if (( ${#timers[@]} > 0 )); then
+    systemctl enable --quiet "${timers[@]}"
     systemctl restart "${timers[@]}"
     log "  restarted ${timers[*]}"
 fi

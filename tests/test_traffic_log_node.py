@@ -3,12 +3,16 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import re
 import shutil
+import signal
+import socket
 import subprocess
 import tempfile
+import time
 import unittest
 import unittest.mock
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from types import ModuleType
@@ -132,16 +136,82 @@ class TrafficLogNodeReaderTests(unittest.TestCase):
         code, header, payload = self.call(f"2026-09-08 {len(first)}")
         self.assertEqual(payload, b'{"request":3}\n')
 
+    def test_a_day_is_its_hours_read_as_one(self) -> None:
+        early = b'{"hour":0}\n'
+        later = b'{"hour":5,"n":1}\n{"hour":5,"n":2}\n'
+        last = b'{"hour":13}\n'
+        self.write("2026-09-08T00", early)
+        self.write("2026-09-08T05", later)
+        self.write("2026-09-08T13", last)
+
+        code, header, payload = self.call("2026-09-08 0")
+        self.assertEqual((code, payload), (0, early + later + last))
+        assert header is not None
+        self.assertEqual(header["size"], len(early + later + last))
+
+        middle = len(early) + later.index(b"\n") + 1
+        code, header, payload = self.call(f"2026-09-08 {middle}")
+        self.assertEqual(payload, b'{"hour":5,"n":2}\n' + last)
+
+    def test_a_whole_day_file_from_before_the_hours_comes_first(self) -> None:
+        self.write("2026-09-08T14", b'{"after":1}\n')
+        self.write("2026-09-08", b'{"before":1}\n')
+
+        code, _, payload = self.call("2026-09-08 0")
+        self.assertEqual((code, payload), (0, b'{"before":1}\n{"after":1}\n'))
+
+    def test_an_hour_still_written_while_a_later_one_is_measured_keeps_its_offsets(self) -> None:
+        """The later hour is measured first, so an earlier one is final when its size is taken."""
+
+        self.write("2026-09-08T00", b'{"n":1}\n')
+        self.write("2026-09-08T01", b'{"n":3}\n')
+        earlier = self.root / "traffic-2026-09-08T00.jsonl"
+        measured = HELPER.os.fstat
+
+        def appending(descriptor: int) -> Any:
+            if HELPER.os.readlink(f"/proc/self/fd/{descriptor}").endswith("T01.jsonl"):
+                with earlier.open("ab") as appended:
+                    appended.write(b'{"n":2}\n')
+            return measured(descriptor)
+
+        with unittest.mock.patch.object(HELPER.os, "fstat", side_effect=appending):
+            code, header, payload = self.call("2026-09-08 0")
+
+        self.assertEqual(code, 0)
+        assert header is not None
+        self.assertEqual(payload, b'{"n":1}\n{"n":2}\n{"n":3}\n')
+        self.assertEqual(header["size"], len(payload))
+
+    def test_a_day_that_loses_an_hour_it_has_open_is_answered_as_gone(self) -> None:
+        self.write("2026-09-08T00", b'{"n":1}\n')
+        self.write("2026-09-08T05", b'{"n":2}\n')
+        measured = HELPER.os.fstat
+
+        def removing(descriptor: int) -> Any:
+            if HELPER.os.readlink(f"/proc/self/fd/{descriptor}").endswith("T00.jsonl"):
+                (self.root / "traffic-2026-09-08T05.jsonl").unlink()
+            return measured(descriptor)
+
+        with unittest.mock.patch.object(HELPER.os, "fstat", side_effect=removing):
+            code, header, payload = self.call("2026-09-08 4")
+
+        self.assertEqual((code, payload), (0, b""))
+        assert header is not None
+        self.assertEqual((header["size"], header["reset"]), (0, True))
+
+    def test_a_symlinked_hour_is_refused(self) -> None:
+        target = self.root / "elsewhere"
+        target.write_bytes(b"{}\n")
+        self.write("2026-09-08T00", b"{}\n")
+        (self.root / "traffic-2026-09-08T03.jsonl").symlink_to(target)
+        self.assertEqual(self.call("2026-09-08 0"), (65, None, b""))
+
     def test_incomplete_final_record_is_not_sent(self) -> None:
         self.write("2026-09-08", b"{}\nunfinished")
         code, header, payload = self.call("2026-09-08 0")
         self.assertEqual((code, payload), (0, b"{}\n"))
         assert header is not None
         self.assertFalse(header["eof"])
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 def render_rule() -> str:
@@ -361,8 +431,14 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
         self.assertLess(guard, action)
         self.assertLess(action, stop)
 
-    def test_the_day_file_is_named_from_the_current_utc_date(self) -> None:
-        self.assertIn("/var/log/haprion/traffic-%$now-utc%.jsonl", self.rule)
+    def test_each_hour_is_a_file_named_from_the_current_utc_date_and_hour(self) -> None:
+        self.assertIn("/var/log/haprion/traffic-%$now-utc%T%$hour-utc%.jsonl", self.rule)
+
+    def test_each_hour_stops_at_the_limit_the_retention_measures(self) -> None:
+        """One formula for the limit and the budget it is a twenty-fourth of (B356)."""
+
+        self.assertIn(f'rotation.sizeLimit="{PRUNE.hour_cap(PRUNE.LOG_ROOT)}"', self.rule)
+        self.assertNotIn("sizeLimitCommand", self.rule)
 
     def test_only_the_payload_is_written_and_not_a_syslog_header(self) -> None:
         """Measured, not assumed: `%msg%` keeps RFC3164's separating space.
@@ -415,6 +491,74 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
             self.assertNotIn("error", (result.stderr + result.stdout).lower())
+
+
+@unittest.skipUnless(shutil.which("rsyslogd"), "rsyslog is not installed here")
+class TrafficLogRsyslogStopsAnHourAtItsLimit(unittest.TestCase):
+    """The rule as written, run by the real rsyslogd, flooded past a small limit (B356).
+
+    A copy of the binary outside AppArmor's reach, on a socket in this test's
+    directory, with the rule's log directory and limit pointed here.
+    """
+
+    LIMIT = 4000
+
+    def test_a_flood_fills_one_hour_to_its_limit_and_no_further(self) -> None:
+        source = shutil.which("rsyslogd")
+        assert source is not None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "rsyslogd"
+            shutil.copy2(source, binary)
+            binary.chmod(0o755)
+            (root / "work").mkdir()
+            (root / "log").mkdir()
+            socket_path = root / "socket"
+            rule = render_rule().replace("/var/log/haprion/", f"{root / 'log'}/")
+            rule = re.sub(
+                r'rotation\.sizeLimit="[0-9]+"', f'rotation.sizeLimit="{self.LIMIT}"', rule
+            )
+            (root / "rsyslog.conf").write_text(
+                f'global(workDirectory="{root / "work"}")\n'
+                'module(load="imuxsock" SysSock.Use="off")\n'
+                f'input(type="imuxsock" Socket="{socket_path}")\n' + rule
+            )
+            process = subprocess.Popen(
+                [str(binary), "-n", "-f", str(root / "rsyslog.conf"), "-i", str(root / "pid")],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                deadline = time.monotonic() + 10
+                while not socket_path.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(socket_path.exists(), "rsyslog did not listen")
+                started = datetime.now(UTC)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
+                    for number in range(400):
+                        record = json.dumps({"n": number, "path": "/" + "x" * 80})
+                        sender.sendto(
+                            f"<150>Oct 12 13:30:00 haproxy-traffic[1]: {record}".encode(),
+                            str(socket_path),
+                        )
+                time.sleep(1)
+            finally:
+                process.send_signal(signal.SIGTERM)
+                process.wait(timeout=10)
+
+            files = sorted((root / "log").iterdir())
+            hours = {
+                f"traffic-{moment:%Y-%m-%dT%H}.jsonl" for moment in (started, datetime.now(UTC))
+            }
+            self.assertTrue(files)
+            self.assertLessEqual({path.name for path in files}, hours)
+            written = b"".join(path.read_bytes() for path in files)
+            lines = written.splitlines()
+            # Stopped near the limit: at most one batch past it, far short of the flood.
+            self.assertGreaterEqual(len(written), self.LIMIT * len(files) // 2)
+            self.assertLess(len(written), (self.LIMIT + 16 * 1024) * len(files))
+            self.assertLess(len(lines), 400)
+            self.assertTrue(all(json.loads(line)["path"] for line in lines))
 
 
 def load_prune() -> ModuleType:
@@ -492,6 +636,47 @@ class TrafficLogRetentionTests(unittest.TestCase):
     def test_a_missing_directory_is_not_an_error(self) -> None:
         self.assertEqual(PRUNE.prune(self.root / "absent", today=TODAY), [])
 
+    def test_an_expired_day_goes_with_its_hours_the_last_hour_first(self) -> None:
+        """The reader then sees a day that is going as its beginning, or as gone."""
+
+        for name in (
+            "traffic-2026-08-25.jsonl",
+            "traffic-2026-08-25T00.jsonl",
+            "traffic-2026-08-25T23.jsonl",
+        ):
+            self.write(name)
+        self.write("traffic-2026-08-26T00.jsonl")
+        order: list[str] = []
+        unlink = PRUNE.os.unlink
+
+        def recorded(path: Path) -> None:
+            order.append(Path(path).name)
+            unlink(path)
+
+        with mock.patch.object(PRUNE.os, "unlink", side_effect=recorded):
+            removed = PRUNE.prune(self.root, today=TODAY)
+
+        self.assertEqual(
+            order,
+            [
+                "traffic-2026-08-25T23.jsonl",
+                "traffic-2026-08-25T00.jsonl",
+                "traffic-2026-08-25.jsonl",
+            ],
+        )
+        self.assertEqual(removed, sorted(order))
+        self.assertTrue((self.root / "traffic-2026-08-26T00.jsonl").exists())
+
+    def test_an_hour_outside_the_day_is_not_one_this_chain_wrote(self) -> None:
+        for name in (
+            "traffic-2026-08-25T24.jsonl",
+            "traffic-2026-08-25T7.jsonl",
+            "traffic-2026-08-25T07.jsonl.1",
+        ):
+            self.write(name)
+
+        self.assertEqual(PRUNE.prune(self.root, today=TODAY), [])
+
 
 class TrafficLogSpaceBudgetTests(unittest.TestCase):
     """S05 (security review 26-10-13): the window was days, not bytes (B307)."""
@@ -522,6 +707,66 @@ class TrafficLogSpaceBudgetTests(unittest.TestCase):
         removed = self.run_with(capacity=10_000, free=0)
         self.assertEqual(len(removed), 3)
         self.assertTrue((self.root / f"traffic-{TODAY.isoformat()}.jsonl").exists())
+
+    def test_a_day_goes_whole_with_its_hours(self) -> None:
+        for hour in ("00", "13"):
+            (self.root / f"traffic-2026-09-04T{hour}.jsonl").write_bytes(b"x" * 100)
+            (self.root / f"traffic-{TODAY.isoformat()}T{hour}.jsonl").write_bytes(b"x" * 100)
+        # 800 bytes held, a quarter of 2400 is 600: the oldest day goes, all three files.
+        self.assertEqual(
+            self.run_with(capacity=2400, free=2000),
+            [
+                "traffic-2026-09-04.jsonl",
+                "traffic-2026-09-04T00.jsonl",
+                "traffic-2026-09-04T13.jsonl",
+            ],
+        )
+
+
+class TrafficLogHourLimitTests(unittest.TestCase):
+    """Today is bounded where it is written: an hour stops at a twenty-fourth of the share (B356)."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+    def cap_on(self, capacity: int, root: Path | None = None) -> int:
+        space = mock.Mock(f_blocks=capacity, f_frsize=1, f_bavail=capacity)
+        with mock.patch.object(PRUNE.os, "statvfs", return_value=space) as statvfs:
+            cap: int = PRUNE.hour_cap(root or self.root)
+        self.measured = Path(statvfs.call_args.args[0])
+        return cap
+
+    def test_a_day_of_full_hours_is_the_share_of_the_filesystem(self) -> None:
+        capacity = 48 * 1024**3
+        self.assertEqual(self.cap_on(capacity), int(capacity * PRUNE.SPACE_SHARE) // 24)
+        self.assertLessEqual(self.cap_on(capacity) * 24, capacity * PRUNE.SPACE_SHARE)
+
+    def test_the_limit_is_never_zero_which_rsyslog_reads_as_none(self) -> None:
+        self.assertEqual(self.cap_on(1000), PRUNE.MIN_HOUR_CAP)
+
+    def test_a_directory_not_made_yet_is_measured_where_it_will_be(self) -> None:
+        self.cap_on(10**9, self.root / "haprion")
+        self.assertEqual(self.measured, self.root)
+
+    def test_the_hour_just_ended_is_named_when_it_reached_the_limit(self) -> None:
+        now = datetime(2026, 9, 8, 14, 7, tzinfo=UTC)
+        (self.root / "traffic-2026-09-08T13.jsonl").write_bytes(b"x" * 100)
+        with mock.patch.object(PRUNE, "hour_cap", return_value=100):
+            self.assertEqual(PRUNE.capped(self.root, now=now), "traffic-2026-09-08T13.jsonl")
+        with mock.patch.object(PRUNE, "hour_cap", return_value=101):
+            self.assertIsNone(PRUNE.capped(self.root, now=now))
+        self.assertIsNone(PRUNE.capped(self.root, now=now + timedelta(hours=1)))
+
+    def test_the_command_prints_the_limit_and_takes_nothing_else(self) -> None:
+        script = BASE / "install" / "node" / "haprion-traffic-log-prune"
+        printed = subprocess.run(
+            [str(script), "--hour-cap"], capture_output=True, text=True, check=True
+        ).stdout
+        self.assertEqual(int(printed), PRUNE.hour_cap(PRUNE.LOG_ROOT))
+        refused = subprocess.run([str(script), "--what"], capture_output=True, check=False)
+        self.assertEqual(refused.returncode, 64)
 
 
 class TrafficLogRetentionUnitTests(unittest.TestCase):

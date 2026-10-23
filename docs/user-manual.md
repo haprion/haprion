@@ -2706,7 +2706,17 @@ sudo haprion-retention report              # quick overview; log row counts are 
 sudo haprion-retention report --exact      # count every traffic/WAF log row
 sudo haprion-retention prune --dry-run     # the same, deleting nothing
 sudo haprion-retention prune               # what the daily timer runs
+sudo haprion-retention budget --dry-run    # which traffic days the hourly budget would drop
 ```
+
+**The traffic and WAF tables also have a space budget.** The retention is days, and a flood fills a
+volume well within them. Every hour `haprion-retention budget` (its own timer) drops the oldest
+finished days of both tables while they hold more than a quarter of the volume PostgreSQL writes to,
+or less than a tenth of it is free — never today and never a day ahead — with a warning in the
+timer's journal for each. The collector keeps its copy of the nodes' days within the same share of
+its own filesystem: it removes the oldest finished days first, and while today alone is over, it
+fetches nothing and the attention list says that collection is paused. The nodes keep theirs, within
+their own budget, until it can fetch again.
 
 The quick report sums row estimates and total storage (including indexes) from leaf
 partitions only. It labels the counts as estimates and lists partitions without statistics;
@@ -5236,7 +5246,7 @@ All root-owned under `/usr/sbin`, installed by the `haprion-node` package, not g
 | `haprion-health-probe` | opens one connection per named target and reports the status line |
 | `haprion-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB; `waf <cursor>` returns the WAF engine's journal lines after a journal cursor, same cap |
 | `haprion-traffic-log-enable` | installs or removes this node's rsyslog route and retention timer |
-| `haprion-traffic-log-prune` | deletes traffic day files past the 14-day window, or the oldest over the space budget, whole and never renamed |
+| `haprion-traffic-log-prune` | deletes traffic days past the 14-day window, or the oldest over the space budget, whole and never renamed; prints the hour limit the rsyslog rule writes |
 | `haprion-server-state-trigger` | unprivileged wrapper: validates `server-state <guid> <ready\|drain\|maint>` or `unblock <object> <address>...`, then escalates |
 | `haprion-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts; replaces certificates HAProxy already holds without a reload (`update-certs`); lifts an object's dynamic block on addresses, from its blocked table and its count (`unblock`) |
 
@@ -5332,8 +5342,12 @@ the root filesystem underneath the mount point:
 RequiresMountsFor=/var/log/haprion
 ```
 
-The retention window bounds what the files hold; the separate filesystem bounds what a burst
-within that window can take from everything else.
+The traffic log keeps itself within a quarter of whichever filesystem it is on: rsyslog stops
+each hour's file at a twenty-fourth of that, and the hourly retention removes the oldest finished
+days while the files hold more or less than a tenth of the filesystem is free. A flood therefore
+costs the rest of an hour's records, never the disk; each dropped hour and each day removed early is
+a warning in the node's system log. A filesystem of its own keeps the rest of the node out of
+reach of even that quarter.
 
 `/run/lock` itself belongs to the operating system and is commonly mode `1777`. The node installer
 requires it to exist but never changes its owner or permissions; Haprion owns only its
@@ -5932,9 +5946,11 @@ For manual dumps, restore checks and recovery, see
 
 #### Retention installation
 
-`install/platform/11-platform-retention` installs `haprion-retention` and a
-daily timer. It is optional, and it is separate from the backup step because
-it is the only thing here that removes rows from a live table. **The step itself
+`install/platform/11-platform-retention` installs `haprion-retention`, a
+daily timer and the hourly space budget for the traffic and WAF partitions. It is
+part of every installation - the partitions ahead are its work - and it is separate
+from the backup step because it is the only thing here that removes rows from a
+live table. **The step itself
 deletes nothing** — it reports what the first run would remove and leaves the
 deciding to the timer or to an operator.
 

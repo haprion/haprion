@@ -623,7 +623,7 @@ provider all refuse a name that could not stand there.
 The same tool is the break-glass path when the only administrator is locked
 out, forgotten, or gone. An account it creates is a **break-glass** account
 unless `--no-break-glass` is given: one that signs in with its password even
-while sign-in goes through an OIDC provider (schema `0041`).
+while sign-in goes through an OIDC provider.
 
 | Command | What it does |
 |---|---|
@@ -699,8 +699,7 @@ The tool reads the database name and the role to connect as from a root-owned fi
 database by an environment variable or a working directory.
 
 **Root connects as the migration role**, the one that owns the schema, so the
-tool works when nobody can sign in. The web role may write accounts too (schema
-`0039`): name, hash and role on a new one; role, `disabled` and hash on an
+tool works when nobody can sign in. The web role may write accounts too: name, hash and role on a new one; role, `disabled` and hash on an
 existing one — never `created_at` or `updated_at`, which the database
 sets, and never a delete. **The database refuses to leave no active admin**,
 from either path: demoting or disabling the last one fails, under a lock, so two
@@ -791,7 +790,7 @@ indistinguishable from outside, and the same amount of time is spent on each.
 
 Sign-in through a provider — authentik, Keycloak, Entra ID, ADFS, Authelia,
 Okta, Zitadel, or any other that follows OpenID Connect Core and Discovery —
-arrives in parts (schema `0041`). What is installed first is the path to the
+arrives in parts. What is installed first is the path to the
 provider, and it does not go through the web service.
 
 The web service reaches localhost and nothing else (`IPAddressDeny=any`), and
@@ -830,8 +829,8 @@ then. The provider's own token lifetime is not used for this; to end someone's
 access sooner, **Revoke sessions** on the account does it at once.
 
 An account through the provider is made at its first sign-in, by the role its
-groups give; there is no list of them to keep here, and none is made in advance
-(schema `0072`). Who may sign in is decided in the provider's groups. It is
+groups give; there is no list of them to keep here, and none is made in advance.
+Who may sign in is decided in the provider's groups. It is
 bound to the issuer and the subject it first signed in with, not to its name. Changing the issuer — another provider,
 or the same provider's application under a new name — therefore leaves every
 such account bound to the old one, and sign-in says so. Remove those accounts
@@ -958,8 +957,7 @@ input instead.
 
 ## Features and advanced configuration
 
-Two capabilities can be turned off under **Settings → Features** (schema
-`0040`), by an admin on an installation with `management_writes` on. Off hides
+Two capabilities can be turned off under **Settings → Features**, by an admin on an installation with `management_writes` on. Off hides
 the capability's tab, pages and operations; a kept URL answers 404. Both are
 off on a new installation, which enables no backup timer either; an
 installation opts in.
@@ -981,14 +979,14 @@ installation opts in.
 `haprion-state-backup` and the restore commands on the manager work either way. `haprion-settings
 apply` flips the switches from a file, with the same refusals (*Settings from a file*, above).
 
-A third switch, **Cluster colours** (schema `0042`), is on from the start and
+A third switch, **Cluster colours**, is on from the start and
 hides nothing: it draws the rule down each cluster card's left edge, one of six
 colours handed out in the order `clusters` lists them in `ui.toml` — the order
 the dashboard draws the cards in, so reordering that list reorders both. With
 more than six clusters it is off and cannot be turned on; the name stands
 beside every card either way.
 
-A fourth, **Advanced config** (schema `0049`), is off from the start. On, an
+A fourth, **Advanced config**, is off from the start. On, an
 object's page has an *Advanced config* button between *Edit* and *Remove* that
 opens a dialog for HAProxy configuration pasted as a layer on top of the
 object; the object stores it as `advanced` in its YAML. Off hides the button
@@ -997,7 +995,7 @@ the generator writes it on every publish, because what a cluster runs must not
 depend on an interface setting.
 
 What the layer does, line by line (`haprion-objects -c alpha --advanced <name>`
-prints the same answer as the dialog's *Check*):
+prints the same answer as the dialog's *Validate the object*):
 
 - Lines outside a section, and under the text's own `frontend` or `listen`, are
   the object's: an http object's go to every pool it has, a tcp object's to its
@@ -1030,7 +1028,17 @@ prints the same answer as the dialog's *Check*):
   and the text must carry at least one `server` line. Unticking gives the pool
   back with the text's `server name host:port` lines as its servers.
 
-**Update check** (schema `0081`) is off from the start, on every installation: it is the one
+*Validate the object* and *Save* in the dialog list every line of the text with its *Fate* - placed,
+skipped, ignored or refused - and *Where* it went; that list is the review before a publish. A
+`haproxy -c` error in a generated file is reported as the object and the line of its text, and a publish
+is refused when HAProxy warns about a pasted line: a warning there means the line would be ignored, which
+`-c` alone lets pass. Beyond what is refused here and what `haproxy -c` checks, what the text does is the
+author's responsibility: a valid line can still mean something else than intended. Stick tables in the
+text start their counts again when HAProxy reloads and when the address moves to the other node; a
+cluster's shared counters are the generated tables'
+([Sending the traffic log elsewhere, and metrics](#sending-the-traffic-log-elsewhere-and-metrics)).
+
+**Update check** is off from the start, on every installation: it is the one
 thing the manager fetches from the internet while it runs. On, the poller asks GitHub for the
 project's latest release once a day, and the header says `· v0.9.3 available` beside the version
 when that release is newer than the one running, linking to its release notes. The switch's row
@@ -1042,10 +1050,24 @@ apt upgrade` installs a release ([The packages](install.md#the-packages)).
 
 ## Access rules
 
-An object can refuse visitors by address, by what a request asks for, and by
-the size of what it sends. The keys sit in the object's YAML beside
-`allow_from`; the generator writes them into the shared frontend after
-`allow_from` and before anything is routed.
+An object can refuse visitors by address, by what a request asks for, and by the size of what it sends.
+All three are in the *Access* group of the object's form (*Edit* on the object's page, or *New object*),
+below *Reachable from*, *Rate limit* and *Rate window*
+([An http or https object, field by field](#an-http-or-https-object-field-by-field)):
+
+- *Denied — groups* and *Denied — addresses* name who is refused: groups from the *Network* page, and
+  addresses, ranges or countries, one per line. *Denied — mode* is *log* or *deny*. http, https and tcp.
+- *Max request body* is the largest body a request may declare, such as `10m`. http and https.
+- *Deny rules* (http and https) holds rules tried in order, any one of them enough; *Add rule* adds one and
+  *Remove rule* drops it. A rule has a *Name* and a *Mode* (*log* or *deny*), and the conditions it names:
+  a *Path* with its *Path match* (*prefix* or *exact*), one or more *Methods*, a *Header* with its *Header
+  match* (*equals*, *prefix* or *contains*) and *Header value*, and a *Source*; *Not from these sources*
+  turns the source around.
+
+Closed, the group's line counts what only looks and what refuses - *1 logging*, *2 denying* - so the form
+says whether anything on the object turns visitors away. In the object's YAML the same fields are keys
+beside `allow_from`; the generator writes them into the shared frontend after `allow_from` and before
+anything is routed.
 
 ```yaml
 deny_from:                       # http and tcp
@@ -1062,11 +1084,10 @@ deny_rules:                      # http only; tried in order, any one is enough
 max_request_body: 10m            # http only; k, m and g are 1024-based
 ```
 
-Every condition a rule names must hold; `source_negate` turns the source into
-"from anywhere but these": the rule above refuses a POST or PUT under `/admin`
-whose User-Agent contains `sqlmap`, from anyone outside `office`. A rule that names no condition is refused,
-since it would refuse everything the object serves. Header values are matched
-as text, never as patterns.
+Every condition a rule names must hold; *Not from these sources* (`source_negate`) turns the source into
+"from anywhere but these": the rule above refuses a POST or PUT under `/admin` whose User-Agent contains
+`sqlmap`, from anyone outside `office`. A rule that names no condition is refused, since it would refuse
+everything the object serves. Header values are matched as text, never as patterns.
 
 **A rule's path is read as the least strict backend will read it**: percent-decoded, with runs of
 slashes made one, as nginx matches its locations; in lower case, as IIS ignores case; with
@@ -1080,13 +1101,12 @@ backend still receives the path as it was sent. A rule's own path is therefore w
 without `%`, `//`, `;`, `.` or `..` and with no segment ending in a dot; its case does not matter.
 Behind a backend that does tell `/Admin` from `/admin`, a rule on one refuses both.
 
-**Countries.** Wherever a group or a range may be named - `allow_from`,
-`deny_from` and a rule's `source` - a country may be too, as `country:SE`
-(two letters, as ISO 3166 spells them). Publishing reads the networks of each
-country an object names from the IPFire Location database on the management
-host and writes them to `managed/maps/geo-se.lst`; the nodes receive the file
-with the release, in `maps/`, as they receive every map file. A country the
-database does not know refuses the publish.
+**Countries.** Wherever a group or a range may be named - *Reachable from*, *Denied* and a rule's
+*Source* (`allow_from`, `deny_from` and `source`) - a country may be too, as `country:SE` (two letters, as
+ISO 3166 spells them). Publishing reads the networks of each country an object names from the IPFire
+Location database on the management host and writes them to `managed/maps/geo-se.lst`; the nodes receive
+the file with the release, in `maps/`, as they receive every map file. A country the database does not
+know refuses the publish.
 
 The database comes with the CLI package, which recommends `location` and `python3-location`, so
 apt installs both unless recommended packages are turned off. The package starts with the
@@ -1106,43 +1126,25 @@ published lists were made from. The data is IPFire Location, licensed under
 CC BY-SA 4.0 (https://location.ipfire.org); each generated file names it in
 its first line.
 
-**Look before refusing.** A new rule starts in `log`: the request is served,
-and the rule's name is written on its traffic record as `admin-post:log`. In
-`deny` the visitor gets 403 and the record says `admin-post:deny`. The first
-logged rule a request meets is the one recorded; a refusal always names
-itself. `deny_from` is recorded as `deny-from`. On a tcp object there is no
-traffic record for a logged match to appear on, so `deny_from` there must say
-`deny`.
+**Look before refusing.** A new rule starts in *log*: the request is served, and the rule's name is
+written on its traffic record as `admin-post:log`. In *deny* the visitor gets 403 and the record says
+`admin-post:deny`. The first logged rule a request meets is the one recorded; a refusal always names
+itself. *Denied* (`deny_from`) is recorded as `deny-from`. On a tcp object there is no traffic record for
+a logged match to appear on, so *Denied — mode* there must be *deny*.
 
-**Behind a trusted proxy** (the cluster's `trusted_proxies`), every address
-condition — `allow_from`, `deny_from` and a rule's `source` — reads the
-visitor from the last `X-Forwarded-For` element, as the rate limit counts it.
-Before engine API 10, `allow_from` read the connection, which behind a proxy is
-the proxy itself; an object restricted that way admitted everything that came
-through it, and now admits only the visitors it names. A request from the
-proxy with no header has no visitor address: `allow_from` refuses it and
-`deny_from` lets it pass.
+**Behind a trusted proxy** (the cluster's `trusted_proxies`), every address condition - *Reachable from*,
+*Denied* and a rule's *Source* - reads the visitor from the last `X-Forwarded-For` element, as the rate
+limit counts it. An object restricted with *Reachable from* admits only the visitors it names, not
+everything that comes through the proxy. A request from the proxy with no header has no visitor address:
+*Reachable from* refuses it and *Denied* lets it pass.
 
-**The body limit holds the declared size.** A request that says how long its
-body is gets 413 (`body-limit:deny`) when that is more than the limit. A
-chunked request declares nothing, and HAProxy sees only what fits in its
-buffer (16 kB by default, `tune.bufsize`); such a body is refused if what has
-arrived is already over the limit, and otherwise let through and marked
-`body-unbounded:log`. Browsers send the length with forms and uploads; the
-mark shows whether anything else reaches the object. The hard limit for a
-chunked body is the backend server's own, such as nginx's
+**The body limit holds the declared size.** A request that says how long its body is gets 413
+(`body-limit:deny`) when that is more than *Max request body*. A chunked request declares nothing, and
+HAProxy sees only what fits in its buffer (16 kB by default, `tune.bufsize`); such a body is refused if
+what has arrived is already over the limit, and otherwise let through and marked `body-unbounded:log`.
+Browsers send the length with forms and uploads; the mark shows whether anything else reaches the
+object. The hard limit for a chunked body is the backend server's own, such as nginx's
 `client_max_body_size`.
-
-Stick tables in the text start their counts again when HAProxy reloads and when
-the address moves to the other node; a cluster's shared counters are the
-generated tables'
-([Sending the traffic log elsewhere, and metrics](#sending-the-traffic-log-elsewhere-and-metrics)). A `haproxy -c` error in a
-generated file is reported as the object and the line of its text, and a
-publish is refused when HAProxy warns about a pasted line: a warning there means
-the line would be ignored, which `-c` alone lets pass. Beyond what
-is refused here and what `haproxy -c` checks, what the text does is the author's
-responsibility: a valid line can still mean something else than intended, and
-the dialog's list of where each line went is the review before a publish.
 
 ## Dynamic blocking
 
@@ -1377,9 +1379,22 @@ and [Preparing Microsoft AD CS / NDES for CSR enrollment](#preparing-microsoft-a
 
 ### Publishing certificates
 
-`haprion-cert-publish` is the one path from a certificate's source to every place it is read.
-It runs as root, takes no file, directory or account on its command line, and reads the registry
-for all three: which certificates exist, where each comes from, and where each goes.
+A certificate reaches its targets without a step of its own: issuing it, importing it, a certbot renewal
+and *Publish to…* each end by publishing it and rolling out the clusters it goes to. On *Certificates*,
+the *State* column says what the clusters' nodes report carrying - *On all 4 nodes*, *Not on the nodes*,
+*Nodes hold an older copy* - and a row opened with a click lists under *Published to* every cluster and
+receiver it goes to, with the day a receiver's copy was written and *(older version)* when that copy is
+behind.
+
+When a target lacks the current copy, the open row's *State* has a *Publish now* button: it publishes
+that certificate and rolls out its clusters, as `haprion-cert-publish --certificate <id> --deploy` does
+below. When a cluster's nodes hold an older copy, the button is *Deploy to nodes*, or one *Deploy* button
+per cluster, each with the cluster's name, when there are several; it rolls that cluster out again. Both
+are an admin's, on an installation with `management_writes` on.
+
+**How it works.** `haprion-cert-publish` is the one path from a certificate's source to every place it
+is read. It runs as root, takes no file, directory or account on its command line, and reads the
+registry for all three: which certificates exist, where each comes from, and where each goes.
 
 | Source | Read from |
 |---|---|
@@ -1425,6 +1440,8 @@ the same way. A note that cannot be read counts every cluster as due: each is ro
 current nodes are skipped, and the file is written whole again. A cluster removed from the
 configuration is dropped from it.
 
+**From the command line:**
+
 ```bash
 haprion-cert-publish                 # publish what changed, report per certificate
 haprion-cert-publish --json          # the same, as a result envelope
@@ -1434,10 +1451,52 @@ haprion-cert-publish --certificate example.com   # one registered certificate on
 
 ### Issuing a certificate
 
+*New certificate* on the *Certificates* page opens the form. *Domain* becomes the certificate's name;
+`*.example.com` also covers `example.com`. *Certificate authority and challenge* is one of four:
+
+- *DNS-01* - Let's Encrypt, proved with a DNS record; wildcards included. *Provider profile* is the DNS
+  profile it uses, chosen from the ones in effect ([The life of a profile](#the-life-of-a-profile)).
+- *HTTP-01* - Let's Encrypt, proved through the webroot; single names only. It is greyed, with the reason
+  beside it, while the runtime policy names no `acme.webroot`.
+- *NDES* - the organisation's Microsoft AD CS; wildcards included. *Provider profile* is the NDES profile
+  ([Enrolling and renewing through NDES](#enrolling-and-renewing-through-ndes)). Greyed while no profile is
+  in effect.
+- *CSR* - any CA: the key is made on the manager, and the signing request is downloaded from the row and
+  signed elsewhere. *Key type* takes the profile's place ([Importing a certificate](#importing-a-certificate)
+  says how the signed certificate comes back).
+
+Under *Targets*, *Clusters and receivers* lists every cluster and every registered receiver, each with a
+box, and at least one is ticked; while the **External certificates** switch is off the list is *Clusters*
+and holds clusters only. A receiver also has its format: *PEM pair*, or *PKCS#12 + password*, which
+publishes a `.pfx` and a `.password` file. With the switch on, *Targets* also offers *External*: a
+certificate with no targets, downloaded with its key ([External certificates](#external-certificates)).
+
+*Request the certificate* queues the job, and the page goes back to the registry, where the new row says
+*Requesting* until the CA has answered and carries the CA's own words if the answer is no. The Events page
+keeps the job's record, certbot's output included. The queue runs one certificate job at a time; while
+one runs, the form says so and cannot be sent.
+
+The form chooses among the receivers already registered; a new one is registered on the *Receivers* page
+([Registering a receiver](#registering-a-receiver)). It refuses a wildcard over HTTP-01 before the job is
+queued, and a target that is not offered. The other two things HTTP-01 needs are in
+[ACME configuration and challenge routing](#acme-configuration-and-challenge-routing).
+
+**How it works.** For DNS-01 and HTTP-01 the form queues one `cert_issue` job, which the worker runs
+through `haprion-cert-issue-helper` ([worker helper configuration](#what-the-worker-may-run)).
 `haprion-cert-issue` obtains one ACME certificate and takes it all the way to its targets: certbot,
 then the registry entry, then the publish and the rollout of the clusters named. Root only. The
 whole run is timed and the time is part of its result, because the point of the command is the
 number: a certificate on its targets in minutes, from one line.
+
+The account is the one certbot already has on this host; the command registers none. The
+certificate becomes an ordinary certbot lineage, renewed by certbot's timer and published by the
+hook in [Publishing certificates](#publishing-certificates) like every other.
+
+The registry is rewritten as a whole, with its ownership and mode kept and the result loaded back
+through the engine before it replaces the previous file. Comments in it do not survive the first
+machine write; the file's header says so.
+
+**From the command line:**
 
 ```bash
 sudo haprion-cert-issue --domain www.example.com --method dns-01 --cluster alpha
@@ -1449,22 +1508,6 @@ sudo haprion-cert-issue --domain intranet.example.com --method dns-01 --dns-prof
 
 The ACME policy and challenge routes must already be configured; see
 [ACME configuration and challenge routing](#acme-configuration-and-challenge-routing).
-
-The web interface asks for the same thing from **Certificates → New certificate**: a domain, a
-method, an in-effect DNS profile for DNS-01, and boxes for the clusters and the registered receivers. It queues one `cert_issue` job
-through `haprion-cert-issue-helper` ([worker helper configuration](#what-the-worker-may-run)) and reports on the Events page, certbot's output included.
-The form cannot register a receiver - one is a directory, an account and a key, made on the host as
-in [Registering a receiver](#registering-a-receiver) - and it refuses a wildcard over `http-01` before the job is queued.
-HTTP-01 is greyed, with the reason beside it, while the runtime policy names no `acme.webroot`; the
-other two things it needs are in [ACME configuration and challenge routing](#acme-configuration-and-challenge-routing).
-
-The account is the one certbot already has on this host; the command registers none. The
-certificate becomes an ordinary certbot lineage, renewed by certbot's timer and published by the
-hook in [Publishing certificates](#publishing-certificates) like every other.
-
-The registry is rewritten as a whole, with its ownership and mode kept and the result loaded back
-through the engine before it replaces the previous file. Comments in it do not survive the first
-machine write; the file's header says so.
 
 ### The life of a profile
 
@@ -1831,7 +1874,7 @@ BMC, a NAS, a printer, a camera, a UPS card. For those the manager is where the
 certificate is ordered and taken out; it is installed by hand. Behind the
 **External certificates** switch, with the receivers.
 
-**Making one.** *New certificate* → *External, installed by hand* (the switch under
+**Making one.** *New certificate* → *External* (the switch under
 *Targets*): the same form, for one host name and with no targets. DNS-01, HTTP-01 or NDES; not a CSR,
 because the point is a key that can be handed out. The key is RSA 2048, which every
 device takes - several take no EC key. A wildcard is refused: its key would answer for
@@ -1881,9 +1924,46 @@ to be signed; the manager does not sign an uploaded request - see
 
 ### Registering a receiver
 
-A receiver is a machine outside this installation that fetches certificates from the manager. It
-is four things at once - an account, a directory only that account may read, a lock binding its key
-to that directory, and the registry entry - and `haprion-cert-receiver` makes all four, or none:
+A receiver is a host outside the clusters that fetches certificates from the manager on its own schedule,
+each with its own account, directory and key. Receivers are behind the **External certificates** switch
+([Features and advanced configuration](#features-and-advanced-configuration)); with it on, *Receivers* on
+the *Certificates* page lists them - *Receiver*, *Transport*, *Account* and what each *Holds* - and an
+admin registers, changes and removes them there.
+
+*Register a receiver* opens the form:
+
+- *Receiver* is the fetching host's DNS name or address. The lock is bound to it: a key used from another
+  host is refused.
+- *Transport* is *rsync* (Linux hosts with rsync; the key is locked to one read-only directory), *sftp*
+  (any host with an OpenSSH client, Windows included; chrooted, read-only) or *https* (no key: an address
+  allowlist under the interface's own certificate; it can hold any certificate, wildcards included).
+- *Public key*, for rsync and sftp, is the one line from the `.pub` file the host's own `ssh-keygen`
+  wrote. Above the field are the commands that make the pair on the host and print its public half, for
+  Linux and, with sftp, Windows. The private half never leaves the host.
+- *Allowed addresses*, for https in place of a key, are the addresses or networks, one per line, that may
+  fetch.
+
+*Register the receiver* queues one job, which takes a few seconds; the queue runs one certificate job at a
+time. For an https receiver the next page, headed *Password for* and the receiver's name, shows its
+password once, with the commands that store it on the host. The new receiver's row has *Fetch commands*: what its host runs to
+fetch, with the account, the manager's name and each certificate it holds filled in, for Linux and, where
+the transport allows it, Windows. The fetch is safe to run again and again, from a timer. A certificate is
+then published to the receiver from the registry with *Publish to…*, or chosen for it on *New
+certificate*.
+
+On a receiver's row, *Replace SSH key* (rsync and sftp) takes a new public key for a host installed again,
+and *New secret* (https) makes a new password and shows it once. *Remove* is offered once no certificate
+names the receiver; one that is *in use* is first taken off the certificate with *Remove from…* in the
+registry.
+
+The form takes the name, the transport and the key or the addresses, and nothing else: the account is
+made from the name and the directory goes under `receiver_root`, as below. A receiver whose account name
+would be too long, or that needs an account or a directory of its own, is registered from the command
+line with `--owner` or `--path`.
+
+**From the command line.** A receiver is four things at once - an account, a directory only that account
+may read, a lock binding its key to that directory, and the registry entry - and `haprion-cert-receiver`
+makes all four, or none:
 
 ```bash
 # The receiver makes its own key pair and sends you the public half.
@@ -1973,8 +2053,7 @@ verify, and it is served as a file for that purpose at `https://<server name>/ce
 The receiver saves it once - `curl -k -o manager-ui.pem …` on that first contact, or with
 `openssl s_client` where openssl exists - and passes it as `--cacert` to every fetch after, so it
 trusts exactly that certificate. A receiver whose host already trusts the CA that issued the
-interface's certificate needs neither the file nor `--cacert`. An installation whose site
-predates the `manager-ui.pem` location reruns `05-platform-nginx`, which also publishes the copy.
+interface's certificate needs neither the file nor `--cacert`.
 
 Every change to sshd's drop-in or nginx's site is followed by `sshd -t` or `nginx -t`, and a
 refusal puts the previous file back before reporting: a broken sshd locks out everyone, not only
@@ -2000,24 +2079,15 @@ belong to its fetch account (`0600`). Root inside the worker's unit is only uid 
 there unless the bounding set says otherwise - so the worker unit carries `CAP_DAC_READ_SEARCH`,
 the read-and-traverse capability the poller already has. Without it a target change from the
 interface ends `target_missing` on a directory that `haprion-cert-publish` run as root from a
-terminal publishes to without complaint. An installation whose worker unit predates this line
-reruns `install/platform/07-platform-services`, which rewrites and restarts the unit.
+terminal publishes to without complaint.
 
-**From the interface**, *Certificates → Receivers* lists every registered receiver - transport,
-account, what it holds - and registers or removes one. The form takes the receiver's name, the
-transport, and the public key pasted as text (or, for https, the allowed addresses); the job is
-one `cert_receiver` run by `haprion-cert-receiver-helper` - not through `sudo` but on a socket,
-`/run/haprion/cert-receiver.sock`, from a unit of its own that step 07 installs (see *The
-worker's way to the receiver helper* in the installation guide; migration `0032` lets the queue accept the job). The
-helper takes the key as text and never as a path, so the interface cannot point it at a file. What the page adds over the command is the other half of the contract: under each
-receiver it writes out the exact commands that host runs to fetch - the account, the manager's
-name and each certificate it holds filled in, for Linux and for Windows where the transport
-allows both - together with the `ssh-keygen` line the host runs first. Removal from the page is
-refused while any certificate names the receiver, as at the terminal.
-
-The receivers page reads its rows from `registry.receiver_records` and the manager's name from
-`registry.manager` in the `cert_list` answer (the interface's `SERVER_NAME`); an installation
-whose CLI release predates those fields shows the page without rows until the CLI is updated.
+**The interface's job.** The form queues one `cert_receiver` job, run by `haprion-cert-receiver-helper` -
+not through `sudo` but on a socket, `/run/haprion/cert-receiver.sock`, from a unit of its own that
+platform step 07 installs ([The worker's way to the receiver helper](#the-workers-way-to-the-receiver-helper)).
+The helper takes the key as text and never as a path, so the interface cannot point it at a file. Removal
+from the page is refused while any certificate names the receiver, as at the terminal. The page reads its
+rows from `registry.receiver_records` and the manager's name from `registry.manager` in the `cert_list`
+answer (the interface's `SERVER_NAME`).
 
 ## Nodes and clusters
 
@@ -2650,7 +2720,7 @@ being ungranted would matter.
   them**, so the floor is exactly the set a reader can see. Ordered any other
   way it would select a different twenty rows and quietly stop promising
   anything.
-- **OIDC sign-ins in progress older than a day** (schema `0041`). Each sign-in
+- **OIDC sign-ins in progress older than a day**. Each sign-in
   through the provider leaves one row, usable for ten minutes and once; a day
   is kept so a failed sign-in can still be looked at the next morning.
 - **Sessions that ended more than thirty days ago**, expired or signed out. A
@@ -2679,7 +2749,7 @@ fixed seven-day raw retention.
 
 The rollup keeps one reading per pool and hour for a year. The interface no
 longer reads it: windows longer than a day are read from per-hour sums of the
-samples' stored differences (schema `0055`), which a trigger keeps as samples
+samples' stored differences, which a trigger keeps as samples
 arrive, for frontends and pools alike. Schema `0055` filled the pools' older
 hours from the rollup once. The command deletes those sums when they are older
 than 31 days, one more than the longest window. `report` still prints the rollup
@@ -2968,7 +3038,7 @@ Some things are known and left as they are - a restore given up, a receiver down
 **acknowledges** such a row, and it is left out of the list and of what the monitor is told until it
 has gone: when what it says is put right, or a later run of a job's operation works. The same trouble
 coming back after that, or a job of the operation failing again, is a row again. Each
-acknowledgement is in *Audit* with who made it and what the row said (schema `0073`).
+acknowledgement is in *Audit* with who made it and what the row said.
 
 The same list answers a monitor, without a sign-in:
 

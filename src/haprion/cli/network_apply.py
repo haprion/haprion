@@ -92,12 +92,14 @@ def main(
         head = reading.get("head")
         if not isinstance(ownership, str) or not isinstance(head, str):
             raise Refused(
-                "unavailable", "the network helper returned no head", exit_codes.UNAVAILABLE
+                "dependency_unavailable",
+                "the network helper returned no head",
+                exit_codes.UNAVAILABLE,
             )
         current = reading.get("document")
         if not isinstance(current, str):
             raise Refused(
-                "unavailable",
+                "dependency_unavailable",
                 "the network helper does not report the document; is the CLI release current?",
                 exit_codes.UNAVAILABLE,
             )
@@ -123,9 +125,7 @@ def main(
             versions = [answer_of(run_publish(request), changes_publish.OPERATION)]
     except Refused as refused:
         if args.json:
-            write_document(
-                writer, envelope(OPERATION, cluster, "failed", None, refused), refused.exit_code
-            )
+            write_document(writer, envelope(OPERATION, cluster, None, refused), refused.exit_code)
         else:
             errors.write(refused.report())
         return refused.exit_code
@@ -140,7 +140,7 @@ def main(
         "deployment_required": bool(published),
     }
     if args.json:
-        return write_document(writer, envelope(OPERATION, cluster, "done", summary, None), 0)
+        return write_document(writer, envelope(OPERATION, cluster, summary, None), 0)
     if not changed:
         writer.write(f"{cluster}: the network is as the file says; nothing to change.\n")
         return 0

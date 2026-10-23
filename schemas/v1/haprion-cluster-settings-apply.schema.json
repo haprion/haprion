@@ -7,7 +7,7 @@
     {
       "properties": {
         "operation": { "const": "cluster_settings_apply" },
-        "outcome": { "enum": ["done", "failed"] },
+        "outcome": { "enum": ["done", "failed", "blocked"] },
         "result": { "oneOf": [{ "$ref": "#/$defs/settings_apply_result" }, { "type": "null" }] }
       },
       "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/settings_apply_result" } } } }]

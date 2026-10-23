@@ -6,15 +6,27 @@ The rows and jobs are held against the real schema in
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-from haprion_ui import profile_apply
+from haprion_ui import profile_apply, tool_answer
 from haprion_ui.profile_apply import ApplyError, Change, Plan
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures/haprion-profiles-apply/valid/done.json"
+
+
+def answered(write: Callable[[], int]) -> tuple[int, dict[str, Any]]:
+    """What a tool printed with `--json`, through the engine's envelope (4-9)."""
+
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        code = write()
+    return code, json.loads(out.getvalue())
 
 
 class TheFile(unittest.TestCase):
@@ -74,9 +86,12 @@ class TheAnswer(unittest.TestCase):
     def test_it_has_the_shape_the_contract_holds(self) -> None:
         plan = Plan((Change(profile_apply.DNS, "cf-main", "create", 1),), ("ndes/corp-ca",))
         jobs = [{"kind": "dns", "profile": "cf-main", "job": 41, "state": "done"}]
-        answer = profile_apply.envelope(
-            profile_apply.summary(plan, check=False, applied=jobs), None
+        code, answer = answered(
+            lambda: tool_answer.done(
+                profile_apply.OPERATION, profile_apply.summary(plan, check=False, applied=jobs)
+            )
         )
+        self.assertEqual(code, 0)
         fixture = json.loads(FIXTURE.read_text())
 
         self.assertEqual(set(answer), set(fixture))

@@ -8,10 +8,10 @@
       "properties": {
         "operation": { "const": "profiles_apply" },
         "cluster": { "type": "null" },
-        "outcome": { "enum": ["done", "failed"] },
+        "outcome": { "enum": ["done", "partial", "failed", "blocked"] },
         "result": { "oneOf": [{ "$ref": "#/$defs/profiles_apply_result" }, { "type": "null" }] }
       },
-      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/profiles_apply_result" } } } }]
+      "allOf": [{ "if": { "properties": { "outcome": { "enum": ["done", "partial"] } } }, "then": { "properties": { "result": { "$ref": "#/$defs/profiles_apply_result" } } } }]
     }
   ],
   "additionalProperties": true,

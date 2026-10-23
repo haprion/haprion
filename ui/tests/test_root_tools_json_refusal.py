@@ -10,8 +10,11 @@ import contextlib
 import io
 import json
 import unittest
+from pathlib import Path
 from typing import Any
 from unittest import mock
+
+from haprion import exit_codes
 
 from haprion_ui import admin, profile_apply, settings_tool
 
@@ -34,22 +37,43 @@ class TheRootToolsAnswer(unittest.TestCase):
             ):
                 with self.subTest(operation=operation, argv=argv):
                     code, out = run(main, argv)
-                    self.assertEqual(code, 77)
+                    self.assertEqual(code, exit_codes.NOT_ROOT)
                     answer = json.loads(out)
                     self.assertEqual((answer["operation"], answer["ok"]), (operation, False))
+                    self.assertEqual(answer["error"]["code"], "not_root")
                     self.assertIn("sudo", answer["error"]["message"])
 
     def test_without_the_installation_s_database_file(self) -> None:
         with (
             mock.patch("os.geteuid", return_value=0),
             mock.patch.object(
-                admin, "load_environment", side_effect=admin.AdminError("cannot read")
+                admin,
+                "load_environment",
+                side_effect=admin.AdminError(
+                    "cannot read", code="dependency_unavailable", exit_code=exit_codes.CONFIG
+                ),
             ),
         ):
             code, out = run(admin.main, ["apply", "accounts.yaml", "--json"])
 
-        self.assertEqual(code, 64)
-        self.assertIn("cannot read", out)
+        self.assertEqual(code, exit_codes.CONFIG)
+        answer = json.loads(out)
+        self.assertEqual(answer["error"]["code"], "dependency_unavailable")
+        self.assertIn("cannot read", answer["error"]["message"])
+
+    def test_the_installation_s_database_file_is_the_installation_s_fault(self) -> None:
+        """Review 2026-10-22, 4-9: every failure was `refused`, and this one exited 64."""
+
+        with (
+            mock.patch.object(admin, "ADMIN_CONFIG_DIRECTORY", Path("/nonexistent")),
+            self.assertRaises(admin.AdminError) as raised,
+        ):
+            admin.load_environment()
+
+        self.assertEqual(
+            (raised.exception.code, raised.exception.exit_code),
+            ("dependency_unavailable", exit_codes.CONFIG),
+        )
 
     def test_a_command_without_a_contract_prints_no_document(self) -> None:
         with mock.patch("os.geteuid", return_value=1000):

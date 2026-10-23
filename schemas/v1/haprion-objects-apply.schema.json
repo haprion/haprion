@@ -7,10 +7,10 @@
     {
       "properties": {
         "operation": { "const": "objects_apply" },
-        "outcome": { "enum": ["done", "failed"] },
+        "outcome": { "enum": ["done", "partial", "failed", "blocked"] },
         "result": { "oneOf": [{ "$ref": "#/$defs/objects_apply_result" }, { "type": "null" }] }
       },
-      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/objects_apply_result" } } } }]
+      "allOf": [{ "if": { "properties": { "outcome": { "enum": ["done", "partial"] } } }, "then": { "properties": { "result": { "$ref": "#/$defs/objects_apply_result" } } } }]
     }
   ],
   "additionalProperties": true,

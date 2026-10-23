@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import contextlib
 import stat
-import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -56,7 +55,7 @@ from typing import Any
 import yaml
 from haprion import oidc
 
-from haprion_ui import attention, db, feature_switch, features, oidc_web
+from haprion_ui import attention, db, feature_switch, features, oidc_web, tool_answer
 
 OPERATION = "settings_apply"
 SECTIONS = frozenset({"status_access", "features", "oidc"})
@@ -84,7 +83,7 @@ OIDC_TEXT = (
 OIDC_KEYS = frozenset({*OIDC_FLAGS, *OIDC_TEXT, "client_secret", "enabled", "interface_url"})
 
 
-class ApplyError(Exception):
+class ApplyError(tool_answer.ToolError):
     """What is wrong with the file or the change; said as the page says it."""
 
 
@@ -476,18 +475,4 @@ def summary(outcome: Outcome, *, check: bool) -> dict[str, Any]:
         "status_access": outcome.status_access,
         "features": outcome.features,
         "oidc": outcome.oidc,
-    }
-
-
-def envelope(result: Any, error: str | None) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "ok": error is None,
-        "outcome": "done" if error is None else "failed",
-        "operation": OPERATION,
-        "cluster": None,
-        "request_id": str(uuid.uuid4()),
-        "result": result,
-        "warnings": [],
-        "error": None if error is None else {"code": "refused", "message": error[:2048]},
     }

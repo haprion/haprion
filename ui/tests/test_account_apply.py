@@ -8,12 +8,16 @@ validates against `schemas/v1/haprion-user-apply`.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-from haprion_ui import account_apply, auth
+from haprion_ui import account_apply, auth, tool_answer
 from haprion_ui.account_apply import ApplyError, Stored, Wanted
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures/haprion-user-apply/valid/done.json"
@@ -31,6 +35,14 @@ def stored(name: str, role: str = "admin", **fields: object) -> Stored:
     }
     values.update(fields)
     return Stored(**values)  # type: ignore[arg-type]
+
+
+def answered(write: Callable[[], int]) -> tuple[int, dict[str, Any]]:
+    """What a tool printed with `--json`, through the engine's envelope (4-9)."""
+
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        code = write()
+    return code, json.loads(out.getvalue())
 
 
 class TheFile(unittest.TestCase):
@@ -126,7 +138,12 @@ class TheAnswer(unittest.TestCase):
         plan = account_apply.plan(
             [Wanted("admin", "reader")], [stored("admin"), stored("operator")], prune=False
         )
-        answer = account_apply.envelope(account_apply.summary(plan, check=False), None)
+        code, answer = answered(
+            lambda: tool_answer.done(
+                account_apply.OPERATION, account_apply.summary(plan, check=False)
+            )
+        )
+        self.assertEqual(code, 0)
         fixture = json.loads(FIXTURE.read_text())
 
         self.assertEqual(set(answer), set(fixture))

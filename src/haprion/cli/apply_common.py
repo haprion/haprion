@@ -17,7 +17,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from haprion import exit_codes
-from haprion.envelope import new_request_id
+from haprion.envelope import Message, outcome_for_exit
+from haprion.envelope import envelope as make_envelope
 
 CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 MAX_MESSAGE = 2048
@@ -54,26 +55,50 @@ class Refused(Exception):
         return text + f"\n{diagnostics.rstrip()}\n"
 
 
-def envelope(
-    operation: str, cluster: str, outcome: str, result: Any, error: Refused | None
-) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "ok": error is None,
-        "outcome": outcome,
-        "operation": operation,
-        "cluster": cluster,
-        "request_id": new_request_id(),
-        "result": result,
-        "warnings": [],
-        "error": None
-        if error is None
-        else {
-            "code": error.code if CODE.fullmatch(error.code) else "refused",
-            "message": (str(error) or error.code)[:MAX_MESSAGE],
-            **({"details": error.details} if error.details else {}),
-        },
-    }
+class PartlyDone(Refused):
+    """Refused after some of the change was published, so not a refusal of it all.
+
+    `haprion-objects apply` publishes in versions of at most 64 objects; when a
+    later one is refused, the earlier ones stand. They were named only in the
+    message, with `result` null (review 2026-10-22, 4-2); the result carries
+    them now, under an outcome that says the run is `partial`.
+    """
+
+    def __init__(self, refused: Refused, done: list[dict[str, Any]]) -> None:
+        super().__init__(refused.code, str(refused), exit_codes.PARTIAL, refused.details)
+        self.done = done
+
+
+def envelope(operation: str, cluster: str, result: Any, error: Refused | None) -> dict[str, Any]:
+    """The command's one document: `done` with its result, or the refusal it stopped at.
+
+    Built by `haprion.envelope`, as every helper's is; the outcome of a refusal
+    is its exit code's (a lock or a moved head is `blocked`), and a code that
+    is not one is `internal_error` (review 2026-10-22, 4-9: this built its own
+    dictionary, called every such code `refused`, and every stop `failed`).
+    """
+
+    if error is None:
+        return make_envelope(operation=operation, outcome="done", cluster=cluster, result=result)
+    if isinstance(error, PartlyDone):
+        return make_envelope(
+            operation=operation,
+            outcome="partial",
+            cluster=cluster,
+            result=result,
+            warnings=(Message(code=error.code, message=str(error)[:MAX_MESSAGE]),),
+        )
+    return make_envelope(
+        operation=operation,
+        outcome=outcome_for_exit(error.exit_code),
+        cluster=cluster,
+        result=None,
+        error=Message(
+            code=error.code if CODE.fullmatch(error.code) else "internal_error",
+            message=(str(error) or error.code)[:MAX_MESSAGE],
+            details=error.details,
+        ),
+    )
 
 
 def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Mapping[str, Any]:
@@ -83,13 +108,13 @@ def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Ma
         answer = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise Refused(
-            "unavailable",
+            "dependency_unavailable",
             completed.stderr.strip() or f"the {operation} helper returned no result",
             completed.returncode or exit_codes.UNAVAILABLE,
         ) from exc
     if not isinstance(answer, Mapping) or answer.get("operation") != operation:
         raise Refused(
-            "unavailable",
+            "dependency_unavailable",
             f"the {operation} helper returned an invalid result",
             completed.returncode or exit_codes.UNAVAILABLE,
         )
@@ -105,7 +130,7 @@ def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Ma
     result = answer.get("result")
     if not isinstance(result, Mapping):
         raise Refused(
-            "unavailable",
+            "dependency_unavailable",
             f"the {operation} helper returned no result",
             completed.returncode or exit_codes.UNAVAILABLE,
         )

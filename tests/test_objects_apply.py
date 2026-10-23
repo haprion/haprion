@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from haprion import exit_codes
 from haprion.cli import changes_publish, objects
 from tests.contract_schema import assert_contract
 from tests.test_proxy_model import MINIMAL
@@ -195,6 +196,49 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual(len(fakes.stored), count)
         self.assertEqual(len(json.loads(out)["result"]["versions"]), 2)
 
+    def test_a_later_batch_refused_is_partial_with_the_versions_published(self) -> None:
+        """Review 2026-10-22, 4-2: the published versions were only in the message."""
+
+        fakes = Fakes({})
+        for number in range(changes_publish.MAX_OBJECTS + 6):
+            self.write(f"site{number:03d}", document(f"site{number:03d}"))
+        first = fakes.publish
+
+        def refuse_the_second(request: str) -> subprocess.CompletedProcess[str]:
+            if fakes.published:
+                fakes.refuse = {"code": "changes_invalid", "message": "no VIP named edge"}
+            return first(request)
+
+        fakes.publish = refuse_the_second  # type: ignore[method-assign]
+
+        code, out, err = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
+
+        answer = assert_contract("haprion-objects-apply", out)
+        self.assertEqual((code, answer["outcome"]), (exit_codes.PARTIAL, "partial"))
+        self.assertEqual([v["version"] for v in answer["result"]["versions"]], [11])
+        self.assertEqual(answer["warnings"][0]["code"], "changes_invalid")
+        self.assertIn("1 earlier batch(es) published", err)
+
+    def test_a_head_that_moved_is_blocked(self) -> None:
+        fakes = Fakes({})
+        fakes.head = "f" * 40
+        self.write("shop", document("shop"))
+
+        def read_the_old_head(cluster: str, request_id: str) -> subprocess.CompletedProcess[str]:
+            fakes.head, seen = HEAD, fakes.head
+            try:
+                return Fakes.read(fakes, cluster, request_id)
+            finally:
+                fakes.head = seen
+
+        fakes.read = read_the_old_head  # type: ignore[method-assign]
+
+        code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
+
+        answer = assert_contract("haprion-objects-apply", out)
+        self.assertEqual((code, answer["outcome"]), (exit_codes.BLOCKED, "blocked"))
+        self.assertEqual(answer["error"]["code"], "expected_target_changed")
+
     def test_a_refusal_is_the_helpers_own_words_and_exit(self) -> None:
         fakes = Fakes({})
         fakes.refuse = {"code": "changes_invalid", "message": "no VIP named edge"}
@@ -203,9 +247,10 @@ class ObjectsFromFiles(unittest.TestCase):
         code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
 
         answer = assert_contract("haprion-objects-apply", out)
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.REFUSED)
         self.assertEqual(
-            answer["error"], {"code": "changes_invalid", "message": "no VIP named edge"}
+            (answer["error"]["code"], answer["error"]["message"]),
+            ("changes_invalid", "no VIP named edge"),
         )
 
     def test_haproxy_s_words_on_a_refused_candidate_are_shown(self) -> None:

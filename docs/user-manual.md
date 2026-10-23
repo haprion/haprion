@@ -3108,7 +3108,9 @@ What they share:
   name.
 - **`--check`** says what would change and changes nothing.
 - **`--json`** prints one envelope (`docs/CONTRACT.md`, `schemas/v1/`), with `changed` where the
-  command decides it. The exit code is 0 for done and the envelope's own code otherwise.
+  command decides it, also when the command stops early. The exit code follows the envelope's
+  outcome: 0 for done, 69 for partial, 75 for blocked, and a code from the contract's *Exit codes*
+  for a failure.
 - **Publishing is not deploying.** `haprion-objects apply`, `haprion-network apply` and
   `haprion-cluster-settings apply` publish a new version; `haprion-deploy` rolls it out, as
   *Publish & deploy* does in two steps.

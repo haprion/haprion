@@ -17,7 +17,7 @@ import os
 import stat
 import tempfile
 import unittest
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -32,6 +32,7 @@ from haprion_ui import (
     export_tool,
     profile_apply,
     settings_apply,
+    tool_answer,
 )
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures/haprion-export/valid/done.json"
@@ -46,6 +47,14 @@ SETTINGS: dict[str, Any] = {
     "metrics": {"port": 8405, "sources": ["192.0.2.0/24"]},
     "peers": None,
 }
+
+
+def answered(write: Callable[[], int]) -> tuple[int, dict[str, Any]]:
+    """What a tool printed with `--json`, through the engine's envelope (4-9)."""
+
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        code = write()
+    return code, json.loads(out.getvalue())
 
 
 class Engine:
@@ -314,7 +323,8 @@ class TheAnswer(unittest.TestCase):
     def test_it_has_the_shape_the_contract_holds(self) -> None:
         fixture = json.loads(FIXTURE.read_text())
 
-        answer = export_tool.envelope(fixture["result"], None)
+        code, answer = answered(lambda: tool_answer.done(export_tool.OPERATION, fixture["result"]))
+        self.assertEqual(code, 0)
 
         self.assertEqual(set(answer), set(fixture))
         self.assertEqual(answer["operation"], fixture["operation"])

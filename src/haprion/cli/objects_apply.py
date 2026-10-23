@@ -30,6 +30,7 @@ from typing import Any, TextIO
 from haprion import exit_codes, server_names
 from haprion.cli import changes_publish
 from haprion.cli.apply_common import (
+    PartlyDone,
     Refused,
     RunHelper,
     RunPublish,
@@ -137,7 +138,9 @@ def stored(result: Mapping[str, Any]) -> tuple[str | None, dict[str, str]]:
     entries = result.get("objects")
     if not isinstance(entries, list):
         raise Refused(
-            "unavailable", "the objects helper returned no object list", exit_codes.UNAVAILABLE
+            "dependency_unavailable",
+            "the objects helper returned no object list",
+            exit_codes.UNAVAILABLE,
         )
     commit = result.get("commit")
     return (
@@ -234,11 +237,14 @@ def publish(
         except Refused as refused:
             if not answers:
                 raise
-            raise Refused(
-                refused.code,
-                f"{refused}; {len(answers)} earlier batch(es) published",
-                refused.exit_code,
-                refused.details,
+            raise PartlyDone(
+                Refused(
+                    refused.code,
+                    f"{refused}; {len(answers)} earlier batch(es) published",
+                    refused.exit_code,
+                    refused.details,
+                ),
+                answers,
             ) from refused
         answers.append(dict(result))
         head = str(result.get("hash") or head)
@@ -320,17 +326,24 @@ def main(
                 allow_certificate_mismatch=bool(getattr(args, "allow_certificate_mismatch", False)),
                 run_publish=run_publish,
             )
+    except PartlyDone as stopped:
+        summary = _summary(plan, check=False, versions=stopped.done)
+        errors.write(stopped.report())
+        if args.json:
+            return write_document(
+                writer, envelope(OPERATION, cluster, summary, stopped), stopped.exit_code
+            )
+        _render(cluster, plan, summary, writer)
+        return stopped.exit_code
     except Refused as refused:
         if args.json:
-            write_document(
-                writer, envelope(OPERATION, cluster, "failed", None, refused), refused.exit_code
-            )
+            write_document(writer, envelope(OPERATION, cluster, None, refused), refused.exit_code)
         else:
             errors.write(refused.report())
         return refused.exit_code
     summary = _summary(plan, check=args.check, versions=versions)
     if args.json:
-        write_document(writer, envelope(OPERATION, cluster, "done", summary, None), 0)
+        write_document(writer, envelope(OPERATION, cluster, summary, None), 0)
     else:
         _render(cluster, plan, summary, writer)
     return 0

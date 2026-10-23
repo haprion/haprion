@@ -8,16 +8,28 @@ shape against the fixture the contract suite validates against
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from haprion_ui import db, settings_apply
+from haprion_ui import db, settings_apply, tool_answer
 from haprion_ui.settings_apply import ApplyError, Outcome
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures/haprion-settings-apply/valid/done.json"
+
+
+def answered(write: Callable[[], int]) -> tuple[int, dict[str, Any]]:
+    """What a tool printed with `--json`, through the engine's envelope (4-9)."""
+
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        code = write()
+    return code, json.loads(out.getvalue())
 
 
 class TheFile(unittest.TestCase):
@@ -109,7 +121,12 @@ class TheAnswer(unittest.TestCase):
             features={"waf_engine": True},
             oidc={"fields": ["button_text"], "enabled": None, "sealing": "kept"},
         )
-        answer = settings_apply.envelope(settings_apply.summary(outcome, check=False), None)
+        code, answer = answered(
+            lambda: tool_answer.done(
+                settings_apply.OPERATION, settings_apply.summary(outcome, check=False)
+            )
+        )
+        self.assertEqual(code, 0)
         fixture = json.loads(FIXTURE.read_text())
 
         self.assertEqual(set(answer), set(fixture))

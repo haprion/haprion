@@ -22,6 +22,7 @@ from uuid import uuid4
 
 import psycopg
 import psycopg.sql
+from haprion import exit_codes
 from haprion.config import CLUSTER_ID
 from haprion.traffic_collector import (
     RETENTION_DAYS,
@@ -4824,10 +4825,16 @@ class AccountToolHarness(unittest.TestCase):
             connection.commit()
 
     def run_tool(self, *argv: str) -> tuple[int, str]:
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        #
+        # Both streams, as a terminal shows them: the tests read the sentence
+        # wherever it went. `apply --json` is read from stdout alone.
+        #
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = self.admin.main(list(argv))
-        return code, out.getvalue()
+        if "--json" in argv:
+            return code, out.getvalue()
+        return code, out.getvalue() + err.getvalue()
 
     def account(self, name: str) -> tuple[Any, ...] | None:
         with self.connect() as connection:
@@ -4915,7 +4922,7 @@ class TheAccountToolAgainstARealDatabase(AccountToolHarness):
     def test_delete_refuses_the_last_active_admin(self) -> None:
         self.add("alice")
         code, output = self.run_tool("delete", "alice", "--yes")
-        self.assertEqual(code, 74)
+        self.assertEqual(code, exit_codes.REFUSED)
         self.assertIn("last active admin", output)
         self.assertIsNotNone(self.account("alice"))
 
@@ -7917,7 +7924,7 @@ class TheSettingsFromAFile(unittest.TestCase):
 
     def run_tool(self, *argv: str) -> tuple[int, dict[str, Any]]:
         out = io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = self.tool.main(list(argv))
         return code, json.loads(out.getvalue())
 
@@ -8086,6 +8093,54 @@ class TheSettingsFromAFile(unittest.TestCase):
 
         self.assertEqual(code, 0, out.getvalue())
         self.assertEqual(waited, ["alpha"])
+
+    def test_settings_saved_whose_schedule_job_failed_are_partial(self) -> None:
+        """1B-3: written, then a refusal "before anything was changed"."""
+
+        schedule: dict[str, Any] = {
+            "time": "03:30",
+            "frequency": "daily",
+            "weekdays": [],
+            "day_of_month": None,
+            "retention": 14,
+        }
+        with self.connect() as connection:
+            connection.execute(
+                "update feature_switch set enabled = false, remembered = %s "
+                " where name = 'node_backups'",
+                (Jsonb({"schedules": {"alpha": schedule}}),),
+            )
+            connection.commit()
+
+        def worker(_seconds: float) -> None:
+            with self.connect() as connection:
+                connection.execute(
+                    "update job set state = 'failed', outcome = 'failed', exit_code = 1, "
+                    "       finished_at = now(), stderr_excerpt = 'the timer would not start' "
+                    " where state = 'pending' and operation = 'backup_schedule'"
+                )
+                connection.commit()
+
+        args = self.tool.build_parser().parse_args(
+            ["apply", self.write("features:\n  node_backups: true\n"), "--json"]
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = self.tool.command_apply(args, sleep=worker)
+        answer = json.loads(out.getvalue())
+
+        self.assertEqual((code, answer["outcome"]), (exit_codes.PARTIAL, "partial"))
+        self.assertEqual(answer["result"]["features"], {"node_backups": True})
+        self.assertEqual(answer["warnings"][0]["code"], "job_not_done")
+        with self.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "select enabled from feature_switch where name = 'node_backups'"
+                ).fetchone(),
+                (True,),
+            )
+            connection.execute("delete from job where operation = 'backup_schedule'")
+            connection.commit()
         with self.connect() as connection:
             self.assertEqual(
                 connection.execute(
@@ -8195,7 +8250,7 @@ ndes_profiles:
     def apply(self, path: str, *extra: str) -> tuple[int, dict[str, Any]]:
         args = self.tool.build_parser().parse_args(["apply", path, "--json", *extra])
         out = io.StringIO()
-        with contextlib.redirect_stdout(out):
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = self.tool.command_apply(args, sleep=self.work)
         return code, json.loads(out.getvalue())
 
@@ -8260,8 +8315,14 @@ ndes_profiles:
 
         code, answer = self.apply(self.write(self.FILE))
 
-        self.assertEqual(code, 65)
+        #
+        # The job ran and failed: not "refused before anything was changed"
+        # (review 2026-10-22, 1B-3), and the job it ran is in the answer.
+        #
+        self.assertEqual((code, answer["outcome"]), (exit_codes.FAILED, "failed"))
+        self.assertEqual(answer["error"]["code"], "job_not_done")
         self.assertIn("the helper refused", answer["error"]["message"])
+        self.assertEqual([job["state"] for job in answer["result"]["jobs"]], ["failed"])
         with self.connect() as connection:
             self.assertEqual(
                 connection.execute(
@@ -8269,6 +8330,27 @@ ndes_profiles:
                 ).fetchone(),
                 (1,),
             )
+
+    def test_a_run_that_stops_after_a_profile_applied_is_partial(self) -> None:
+        """1B-3: the first profile was applied, and the answer was a refusal with no result."""
+
+        ended = iter(["done", "failed"])
+        played = self.work
+
+        def work(seconds: float) -> None:
+            self.worker_result = next(ended)
+            played(seconds)
+
+        self.work = work  # type: ignore[method-assign, assignment]
+
+        code, answer = self.apply(self.write(self.FILE))
+
+        self.assertEqual((code, answer["outcome"]), (exit_codes.PARTIAL, "partial"))
+        self.assertEqual(
+            [(job["kind"], job["state"]) for job in answer["result"]["jobs"]],
+            [("dns", "done"), ("ndes", "failed")],
+        )
+        self.assertEqual(answer["warnings"][0]["code"], "job_not_done")
 
     def test_another_provider_and_credentials_others_may_read_are_refused(self) -> None:
         self.apply(self.write(self.FILE))

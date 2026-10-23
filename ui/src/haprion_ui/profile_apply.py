@@ -48,8 +48,8 @@ from haprion import exit_codes, ndes_profiles
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.dns_profiles import ProfileError
 
-from haprion_ui import config, db, dns_profile_form, job_wait, ndes_profile_form
-from haprion_ui.admin import AdminError, actor_name, connect, load_environment, refused
+from haprion_ui import config, db, dns_profile_form, job_wait, ndes_profile_form, tool_answer
+from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 OPERATION = "profiles_apply"
 MAX_FILE_BYTES = 256 * 1024
@@ -57,7 +57,7 @@ MAX_PROFILES = 64
 WAIT_SECONDS = job_wait.WAIT_SECONDS
 
 
-class ApplyError(Exception):
+class ApplyError(tool_answer.ToolError):
     """What is wrong with the file or the change, as the form would say it."""
 
 
@@ -340,11 +340,15 @@ def _queue(connection: Any, change: Change, *, actor: str) -> db.Job:
         )
     except (db.ProfileExists, db.ProfileMissing) as exc:
         raise ApplyError(
-            f"{change.kind.section} {change.profile_id} changed while this ran; run it again"
+            f"{change.kind.section} {change.profile_id} changed while this ran; run it again",
+            code="expected_target_changed",
+            exit_code=exit_codes.BLOCKED,
         ) from exc
     except db.CertificateBusy as exc:
         raise ApplyError(
-            "A certificate job is already running. Wait for it to finish, then run this again."
+            "A certificate job is already running. Wait for it to finish, then run this again.",
+            code="operation_locked",
+            exit_code=exit_codes.BLOCKED,
         ) from exc
     db.record_audit_event(
         connection,
@@ -377,18 +381,34 @@ def summary(the_plan: Plan, *, check: bool, applied: Sequence[dict[str, Any]]) -
     }
 
 
-def envelope(result: Any, error: str | None) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "ok": error is None,
-        "outcome": "done" if error is None else "failed",
-        "operation": OPERATION,
-        "cluster": None,
-        "request_id": str(uuid.uuid4()),
-        "result": result,
-        "warnings": [],
-        "error": None if error is None else {"code": "refused", "message": error[:2048]},
-    }
+def _stopped(
+    args: argparse.Namespace,
+    the_plan: Plan | None,
+    applied: Sequence[dict[str, Any]],
+    code: str,
+    message: str,
+    exit_code: int,
+) -> int:
+    """A run that stopped: refused before anything, or after some profiles were applied.
+
+    Each profile is applied by its job before the next is queued, so a run
+    that stops at the second has applied the first. That was answered as a
+    refusal "before anything was changed", with no result (review
+    2026-10-22, 1B-3); it is `partial` now, with the jobs that ran.
+    """
+
+    if the_plan is None or not applied:
+        return tool_answer.refusal(args, OPERATION, code, message, exit_code)
+    result = summary(the_plan, check=False, applied=applied)
+    took = any(entry["state"] == "done" for entry in applied)
+    print(f"ERROR: {message}", file=sys.stderr)
+    if args.json:
+        if took:
+            return tool_answer.partial(OPERATION, result, code, message)
+        return tool_answer.failed(OPERATION, code, message, exit_code, result)
+    for entry in applied:
+        print(f"{entry['kind']} {entry['profile']}: job {entry['job']} {entry['state']}")
+    return exit_codes.PARTIAL if took else exit_code
 
 
 def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = time.sleep) -> int:
@@ -424,19 +444,18 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
                         }
                     )
                     if problem:
-                        raise ApplyError(f"{change.kind.section} {change.profile_id}: {problem}")
-    except (ApplyError, config.ConfigError) as exc:
-        if args.json:
-            print(json.dumps(envelope(None, str(exc))))
-            return exit_codes.REFUSED
-        for entry in applied:
-            print(f"{entry['kind']} {entry['profile']}: job {entry['job']} {entry['state']}")
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return exit_codes.REFUSED
+                        raise ApplyError(
+                            f"{change.kind.section} {change.profile_id}: {problem}",
+                            code="job_not_done",
+                            exit_code=exit_codes.FAILED,
+                        )
+    except ApplyError as exc:
+        return _stopped(args, the_plan, applied, exc.code, str(exc), exc.exit_code)
+    except config.ConfigError as exc:
+        return _stopped(args, the_plan, applied, "dependency_unavailable", str(exc), exc.exit_code)
     result = summary(the_plan, check=args.check, applied=applied)
     if args.json:
-        print(json.dumps(envelope(result, None)))
-        return 0
+        return tool_answer.done(OPERATION, result)
     if not the_plan.changes:
         print(f"nothing to change ({len(the_plan.unchanged)} profile(s) as listed)")
     lead = "would" if args.check else "did"
@@ -453,19 +472,12 @@ def command_remove(args: argparse.Namespace, *, sleep: Callable[[float], None] =
 
     kind = DNS if args.kind == "dns" else NDES
 
-    def refused(message: str) -> int:
-        if args.json:
-            print(json.dumps(envelope(None, message)))
-        else:
-            print(f"ERROR: {message}", file=sys.stderr)
-        return exit_codes.REFUSED
-
     with connect(load_environment()) as connection:
         row = next((row for row in kind.listed(connection) if row.id == args.profile), None)
         connection.commit()
         if row is None:
             if args.json:
-                print(json.dumps(envelope(summary(Plan((), ()), check=False, applied=[]), None)))
+                return tool_answer.done(OPERATION, summary(Plan((), ()), check=False, applied=[]))
             else:
                 print(f"no {kind.name} profile {args.profile}; nothing to change")
             return 0
@@ -475,14 +487,21 @@ def command_remove(args: argparse.Namespace, *, sleep: Callable[[float], None] =
             connection.commit()
             state, problem = job_wait.finished(connection, job.id, wait=args.wait, sleep=sleep)
         except ApplyError as exc:
-            return refused(str(exc))
+            return tool_answer.refusal(args, OPERATION, exc.code, str(exc), exc.exit_code)
+    applied = [{"kind": kind.name, "profile": row.id, "job": job.id, "state": state}]
+    result = summary(Plan((change,), ()), check=False, applied=applied)
     if problem:
-        return refused(f"{kind.section} {row.id}: {problem}")
+        #
+        # Queued and run, or still waiting for the worker: not refused before
+        # anything was changed, which is what this answered (1B-3).
+        #
+        message = f"{kind.section} {row.id}: {problem}"
+        print(f"ERROR: {message}", file=sys.stderr)
+        if args.json:
+            return tool_answer.failed(OPERATION, "job_not_done", message, exit_codes.FAILED, result)
+        return exit_codes.FAILED
     if args.json:
-        applied = [{"kind": kind.name, "profile": row.id, "job": job.id, "state": state}]
-        print(
-            json.dumps(envelope(summary(Plan((change,), ()), check=False, applied=applied), None))
-        )
+        return tool_answer.done(OPERATION, result)
     else:
         print(f"removed {kind.name} profile {row.id} (job {job.id})")
     return 0
@@ -551,16 +570,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    contract = envelope if args.command in ("apply", "remove") else None
+    contract = OPERATION if args.command in ("apply", "remove") else None
     if os.geteuid() != 0:
-        return refused(args, "run this with sudo", exit_codes.NOT_ROOT, contract)
+        return tool_answer.refusal(
+            args, contract, "not_root", "run this with sudo", exit_codes.NOT_ROOT
+        )
     try:
         commands = {"apply": command_apply, "remove": command_remove, "list": command_list}
         return commands[args.command](args)
     except AdminError as exc:
-        return refused(args, str(exc), exit_codes.USAGE, contract)
+        return tool_answer.refusal(args, contract, exc.code, str(exc), exc.exit_code)
     except psycopg.Error as exc:
-        return refused(args, f"database: {exc}", exit_codes.IO_ERROR, contract)
+        return tool_answer.database_refusal(args, contract, exc)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

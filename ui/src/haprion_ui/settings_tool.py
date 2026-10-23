@@ -24,8 +24,8 @@ from typing import Any
 import psycopg
 from haprion import exit_codes
 
-from haprion_ui import backups, config, db, feature_switch, job_wait, settings_apply
-from haprion_ui.admin import AdminError, actor_name, connect, load_environment, refused
+from haprion_ui import backups, config, db, feature_switch, job_wait, settings_apply, tool_answer
+from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 
 def known_clusters(connection: Any, settings: config.Config) -> tuple[tuple[str, ...], bool]:
@@ -70,6 +70,7 @@ def _read_secret(args: argparse.Namespace) -> str | None:
 def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = time.sleep) -> int:
     outcome = settings_apply.Outcome()
     queued: list[db.Job] = []
+    saved = False
     try:
         wanted = settings_apply.read_file(Path(args.file))
         piped = _read_secret(args)
@@ -110,6 +111,7 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
                 connection.rollback()
             else:
                 connection.commit()
+                saved = True
                 #
                 # Node backups on starts the schedules it stopped as jobs. A
                 # schedule set right after this (`haprion-backup-schedule`)
@@ -122,18 +124,26 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
                     )
                     if problem:
                         raise settings_apply.ApplyError(
-                            f"backup schedule for {job.cluster}: {problem}"
+                            f"backup schedule for {job.cluster}: {problem}", code="job_not_done"
                         )
-    except (settings_apply.ApplyError, config.ConfigError) as exc:
-        if args.json:
-            print(json.dumps(settings_apply.envelope(None, str(exc))))
-        else:
-            print(f"ERROR: {exc}", file=sys.stderr)
-        return exit_codes.REFUSED
+    except settings_apply.ApplyError as exc:
+        if saved:
+            #
+            # The settings are written; a backup schedule job they started did
+            # not finish. That is what happened, not a refusal of the file
+            # (review 2026-10-22, 1B-3).
+            #
+            return _saved_then_stopped(args, outcome, exc)
+        return tool_answer.refusal(
+            args, settings_apply.OPERATION, exc.code, str(exc), exc.exit_code
+        )
+    except config.ConfigError as exc:
+        return tool_answer.refusal(
+            args, settings_apply.OPERATION, "dependency_unavailable", str(exc), exc.exit_code
+        )
     result = settings_apply.summary(outcome, check=args.check)
     if args.json:
-        print(json.dumps(settings_apply.envelope(result, None)))
-        return 0
+        return tool_answer.done(settings_apply.OPERATION, result)
     lead = "would" if args.check else "did"
     if outcome.status_access:
         for network in outcome.status_access["added"]:
@@ -156,6 +166,16 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
     if not outcome.changed:
         print("nothing to change")
     return 0
+
+
+def _saved_then_stopped(
+    args: argparse.Namespace, outcome: settings_apply.Outcome, exc: settings_apply.ApplyError
+) -> int:
+    result = settings_apply.summary(outcome, check=False)
+    if args.json:
+        return tool_answer.partial(settings_apply.OPERATION, result, exc.code, str(exc))
+    print(f"ERROR: the settings were saved, but {exc}", file=sys.stderr)
+    return exit_codes.PARTIAL
 
 
 def command_show(args: argparse.Namespace) -> int:
@@ -218,15 +238,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    contract = settings_apply.envelope if args.command in ("apply",) else None
+    contract = settings_apply.OPERATION if args.command == "apply" else None
     if os.geteuid() != 0:
-        return refused(args, "run this with sudo", exit_codes.NOT_ROOT, contract)
+        return tool_answer.refusal(
+            args, contract, "not_root", "run this with sudo", exit_codes.NOT_ROOT
+        )
     try:
         return command_apply(args) if args.command == "apply" else command_show(args)
     except AdminError as exc:
-        return refused(args, str(exc), exit_codes.USAGE, contract)
+        return tool_answer.refusal(args, contract, exc.code, str(exc), exc.exit_code)
     except psycopg.Error as exc:
-        return refused(args, f"database: {exc}", exit_codes.IO_ERROR, contract)
+        return tool_answer.database_refusal(args, contract, exc)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

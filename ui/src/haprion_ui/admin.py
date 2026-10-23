@@ -38,7 +38,7 @@ from typing import Any
 import psycopg
 from haprion import exit_codes
 
-from haprion_ui import account_apply, auth, db, users
+from haprion_ui import account_apply, auth, db, tool_answer, users
 
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
@@ -48,8 +48,13 @@ ROLES = ("admin", "reader")
 MINIMUM_PASSWORD_LENGTH = auth.MINIMUM_PASSWORD_LENGTH
 
 
-class AdminError(Exception):
+class AdminError(tool_answer.ToolError):
     """Something the operator needs to fix. Printed without a traceback."""
+
+    def __init__(
+        self, message: str, *, code: str = "bad_input", exit_code: int = exit_codes.USAGE
+    ) -> None:
+        super().__init__(message, code=code, exit_code=exit_code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +76,9 @@ def load_environment() -> Environment:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise AdminError(
-            f"cannot read {path}: {exc}\n  It is written by install/platform/02-platform-database."
+            f"cannot read {path}: {exc}\n  It is written by install/platform/02-platform-database.",
+            code="dependency_unavailable",
+            exit_code=exit_codes.CONFIG,
         ) from exc
 
     values: dict[str, str] = {}
@@ -84,7 +91,11 @@ def load_environment() -> Environment:
 
     missing = sorted({"DB_NAME", "DB_ROLE"} - set(values))
     if missing:
-        raise AdminError(f"{path} is missing: {', '.join(missing)}")
+        raise AdminError(
+            f"{path} is missing: {', '.join(missing)}",
+            code="dependency_unavailable",
+            exit_code=exit_codes.CONFIG,
+        )
     return Environment(database=values["DB_NAME"], role=values["DB_ROLE"])
 
 
@@ -447,15 +458,10 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
         # 65 with or without --json: the file was refused, which is not a
         # usage error (64) however the answer is printed.
         #
-        if args.json:
-            print(json.dumps(account_apply.envelope(None, str(exc))))
-        else:
-            print(f"ERROR: {exc}", file=sys.stderr)
-        return exit_codes.REFUSED
+        return tool_answer.refusal(args, account_apply.OPERATION, exc.code, str(exc), exc.exit_code)
     result = account_apply.summary(the_plan, check=args.check)
     if args.json:
-        print(json.dumps(account_apply.envelope(result, None)))
-        return 0
+        return tool_answer.done(account_apply.OPERATION, result)
     if the_plan.empty:
         print(f"nothing to change ({len(the_plan.unchanged)} account(s) as listed)")
         return 0
@@ -593,22 +599,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def refused(args: argparse.Namespace, message: str, exit_code: int, envelope: Any = None) -> int:
-    """Said on stderr, and - for a command answering in a contract - as its one document.
-
-    `--json` promises a document on every path (Fas 23 review): a playbook
-    reading `stdout | from_json` must get the refusal, not an empty string.
-    """
-
-    print(f"ERROR: {message}", file=sys.stderr)
-    if envelope is not None and getattr(args, "json", False):
-        print(json.dumps(envelope(None, message)))
-    return exit_code
-
-
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    contract = account_apply.envelope if args.command == "apply" else None
+    contract = account_apply.OPERATION if args.command == "apply" else None
     if os.geteuid() != 0:
         #
         # Refused here as well as by the database. Peer authentication would
@@ -616,14 +609,16 @@ def main(argv: list[str] | None = None) -> int:
         # role - which reads as a broken installation rather than as the answer
         # to "may I do this".
         #
-        return refused(args, "run this with sudo", exit_codes.NOT_ROOT, contract)
+        return tool_answer.refusal(
+            args, contract, "not_root", "run this with sudo", exit_codes.NOT_ROOT
+        )
     try:
         environment = load_environment()
         return COMMANDS[args.command](environment, args)
     except AdminError as exc:
-        return refused(args, str(exc), exit_codes.USAGE, contract)
+        return tool_answer.refusal(args, contract, exc.code, str(exc), exc.exit_code)
     except psycopg.Error as exc:
-        return refused(args, f"database: {exc}", exit_codes.IO_ERROR, contract)
+        return tool_answer.database_refusal(args, contract, exc)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

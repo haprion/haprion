@@ -28,7 +28,6 @@ account no entry names is left alone unless `--prune` asks for it to go, and
 from __future__ import annotations
 
 import stat
-import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,7 +35,7 @@ from typing import Any
 
 import yaml
 
-from haprion_ui import auth, db, users
+from haprion_ui import auth, db, tool_answer, users
 
 OPERATION = "user_apply"
 KEYS = frozenset({"username", "role", "break_glass", "disabled", "password"})
@@ -44,7 +43,7 @@ MAX_ACCOUNTS = 500
 MAX_FILE_BYTES = 256 * 1024
 
 
-class ApplyError(Exception):
+class ApplyError(tool_answer.ToolError):
     """What is wrong with the file or the change; nothing was written."""
 
 
@@ -329,18 +328,4 @@ def summary(the_plan: Plan, *, check: bool) -> dict[str, Any]:
         ],
         "deleted": [row.username for row in the_plan.deleted],
         "unchanged": list(the_plan.unchanged),
-    }
-
-
-def envelope(result: Any, error: str | None) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "ok": error is None,
-        "outcome": "done" if error is None else "failed",
-        "operation": OPERATION,
-        "cluster": None,
-        "request_id": str(uuid.uuid4()),
-        "result": result,
-        "warnings": [],
-        "error": None if error is None else {"code": "refused", "message": error[:2048]},
     }

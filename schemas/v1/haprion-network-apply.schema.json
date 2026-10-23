@@ -7,7 +7,7 @@
     {
       "properties": {
         "operation": { "const": "network_apply" },
-        "outcome": { "enum": ["done", "failed"] },
+        "outcome": { "enum": ["done", "failed", "blocked"] },
         "result": { "oneOf": [{ "$ref": "#/$defs/network_apply_result" }, { "type": "null" }] }
       },
       "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/network_apply_result" } } } }]

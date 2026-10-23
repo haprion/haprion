@@ -30,7 +30,6 @@ import json
 import os
 import subprocess
 import sys
-import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,8 +41,15 @@ from haprion import backup_retention, backup_schedule, cluster_settings, exit_co
 from haprion.config import ConfigError
 from haprion.digits import is_digits
 
-from haprion_ui import account_apply, config, profile_apply, settings_apply, settings_tool
-from haprion_ui.admin import AdminError, connect, load_environment, refused
+from haprion_ui import (
+    account_apply,
+    config,
+    profile_apply,
+    settings_apply,
+    settings_tool,
+    tool_answer,
+)
+from haprion_ui.admin import AdminError, connect, load_environment
 
 OPERATION = "export"
 BIN = Path("/usr/bin")
@@ -52,10 +58,16 @@ TIMEOUT_SECONDS = 120
 type ReadEngine = Callable[[Sequence[str]], Mapping[str, Any]]
 
 
-class ExportError(Exception):
+class ExportError(tool_answer.ToolError):
+    """A refusal, or an engine command that could not be read (`dependency_unavailable`)."""
+
     def __init__(self, message: str, exit_code: int = exit_codes.REFUSED) -> None:
-        super().__init__(message)
-        self.exit_code = exit_code
+        unavailable = exit_code == exit_codes.UNAVAILABLE
+        super().__init__(
+            message,
+            code="dependency_unavailable" if unavailable else "bad_input",
+            exit_code=exit_code,
+        )
 
 
 def read_engine(argv: Sequence[str]) -> Mapping[str, Any]:
@@ -270,20 +282,6 @@ def write_tree(
             os.close(descriptor)
 
 
-def envelope(result: Any, error: str | None) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "ok": error is None,
-        "outcome": "done" if error is None else "failed",
-        "operation": OPERATION,
-        "cluster": None,
-        "request_id": str(uuid.uuid4()),
-        "result": result,
-        "warnings": [],
-        "error": None if error is None else {"code": "refused", "message": error[:2048]},
-    }
-
-
 def command_export(args: argparse.Namespace, *, read: ReadEngine = read_engine) -> int:
     directory = Path(args.directory).absolute()
     try:
@@ -291,9 +289,12 @@ def command_export(args: argparse.Namespace, *, read: ReadEngine = read_engine) 
         with connect(load_environment()) as connection:
             clusters, written = collect(connection, settings, args.cluster, read)
         write_tree(directory, written.files, _owner(), written.directories)
-    except (ExportError, config.ConfigError) as exc:
-        code = exc.exit_code if isinstance(exc, ExportError) else exit_codes.REFUSED
-        return refused(args, str(exc), code, envelope)
+    except ExportError as exc:
+        return tool_answer.refusal(args, OPERATION, exc.code, str(exc), exc.exit_code)
+    except config.ConfigError as exc:
+        return tool_answer.refusal(
+            args, OPERATION, "dependency_unavailable", str(exc), exc.exit_code
+        )
     result = {
         "directory": str(directory),
         "clusters": list(clusters),
@@ -301,8 +302,7 @@ def command_export(args: argparse.Namespace, *, read: ReadEngine = read_engine) 
         "skipped": written.skipped,
     }
     if args.json:
-        print(json.dumps(envelope(result, None)))
-        return 0
+        return tool_answer.done(OPERATION, result)
     print(f"wrote {len(written.files)} files to {directory}")
     for skipped in written.skipped:
         print(f"skipped {skipped['path']}: {skipped['reason']}")
@@ -329,13 +329,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if os.geteuid() != 0:
-        return refused(args, "run this with sudo", exit_codes.NOT_ROOT, envelope)
+        return tool_answer.refusal(
+            args, OPERATION, "not_root", "run this with sudo", exit_codes.NOT_ROOT
+        )
     try:
         return command_export(args)
     except AdminError as exc:
-        return refused(args, str(exc), exit_codes.USAGE, envelope)
+        return tool_answer.refusal(args, OPERATION, exc.code, str(exc), exc.exit_code)
     except psycopg.Error as exc:
-        return refused(args, f"database: {exc}", exit_codes.IO_ERROR, envelope)
+        return tool_answer.database_refusal(args, OPERATION, exc)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

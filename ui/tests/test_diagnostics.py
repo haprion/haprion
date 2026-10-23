@@ -54,6 +54,59 @@ class RedactionHappensBeforePersistence(unittest.TestCase):
         self.assertTrue(redacted_ending.endswith("\nafter"))
 
 
+class TheDiagnosticsInAResultAreMaskedToo(unittest.TestCase):
+    """Review 2026-10-22, 5-9: `error.details.diagnostics` was stored and shown as it came."""
+
+    BEGIN = "-----BEGIN " + "PRIVATE KEY-----"
+    END = "-----END " + "PRIVATE KEY-----"
+
+    def text(self) -> str:
+        return "\n".join(
+            (
+                "pass" + "word=synthetic-password-value",
+                self.BEGIN,
+                "synthetic-key-material",
+                self.END,
+                "dns_example_api_" + "key = synthetic-api-value",
+                "ssl-crt-key: kept",
+            )
+        )
+
+    def assert_masked(self, text: str) -> None:
+        for private in (
+            "synthetic-password-value",
+            "synthetic-key-material",
+            "synthetic-api-value",
+        ):
+            self.assertNotIn(private, text)
+        self.assertIn("ssl-crt-key: kept", text)
+
+    def test_every_diagnostics_text_in_a_result_is_redacted(self) -> None:
+        result = {
+            "error": {"code": "exit_mismatch", "details": {"diagnostics": self.text()}},
+            "answer": {"error": {"details": {"diagnostics": self.text()}}},
+            "nodes": [{"diagnostics": self.text(), "name": "node-a"}],
+        }
+        redacted = diagnostics.redact_result(result)
+        self.assert_masked(redacted["error"]["details"]["diagnostics"])
+        self.assert_masked(redacted["answer"]["error"]["details"]["diagnostics"])
+        self.assert_masked(redacted["nodes"][0]["diagnostics"])
+        self.assertEqual(redacted["nodes"][0]["name"], "node-a")
+        self.assertIsNone(diagnostics.redact_result(None))
+
+    def test_the_job_page_masks_a_row_stored_before(self) -> None:
+        from types import SimpleNamespace
+
+        from haprion_ui import jobs
+
+        job = SimpleNamespace(
+            result={"error": {"details": {"diagnostics": self.text()}}}, stderr_excerpt=None
+        )
+        shown = jobs.diagnostics_of(job)  # type: ignore[arg-type]
+        self.assertIsNotNone(shown)
+        self.assert_masked(str(shown))
+
+
 class TheDatabaseByteLimitIsKept(unittest.TestCase):
     def test_utf8_is_cut_by_bytes_with_both_edges_and_a_marker(self) -> None:
         value = "first-line\n" + ("å" * 40_000) + "\nlast-line"

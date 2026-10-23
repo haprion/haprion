@@ -19,7 +19,7 @@ from typing import Any, Literal, cast
 
 from haprion.digits import is_digits
 from haprion.generate import backend_name
-from haprion.proxy_model import Proxy, wildcard_expression, wildcard_matches
+from haprion.proxy_model import Proxy, server_name, wildcard_expression, wildcard_matches
 from psycopg import Connection, sql
 from psycopg.rows import class_row
 
@@ -331,9 +331,9 @@ def configured_server_addresses(
     for proxy in proxies:
         for pool, backend in proxy.backends.items():
             runtime_backend = backend_name(proxy, pool)
-            for index, server in enumerate(backend.servers, start=1):
+            for index, server in enumerate(backend.servers):
                 address = f"{server.host}:{server.port}"
-                result[(cluster, runtime_backend, f"s{index}")] = address
+                result[(cluster, runtime_backend, server_name(index))] = address
     return result
 
 

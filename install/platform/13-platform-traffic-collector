@@ -62,7 +62,12 @@ ensure_dir "$STAGING" "${COLLECTOR_USER}:${COLLECTOR_USER}" 700
 
 step "The collector's identity"
 
-ensure_dir "$IDENTITY_DIR" "${COLLECTOR_USER}:root" 500
+#
+# Root's, readable by the collector's group: an account that owned the
+# directory could put a link where this step then changes owner and mode
+# (review 2026-10-22, 5-14). The files in it are still the collector's own.
+#
+ensure_dir "$IDENTITY_DIR" "root:${COLLECTOR_USER}" 550
 
 #
 # Generated here and never anywhere else, and owned by the collector rather than
@@ -77,6 +82,7 @@ else
     ssh-keygen -t ed25519 -N "" -C "haprion traffic collector" -f "$COLLECTOR_KEY" >/dev/null
     log "  created  ${COLLECTOR_KEY}"
 fi
+refuse_link "$COLLECTOR_KEY" "${COLLECTOR_KEY}.pub"
 chown "${COLLECTOR_USER}:root" "$COLLECTOR_KEY" "${COLLECTOR_KEY}.pub"
 chmod 400 "$COLLECTOR_KEY"
 chmod 444 "${COLLECTOR_KEY}.pub"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import signal
@@ -193,6 +194,15 @@ def _reject_non_finite_number(value: str) -> None:
     )
 
 
+def _finite_float(value: str) -> float:
+    """A number written as a float, refused when it overflows to infinity (`1e999`)."""
+
+    number = float(value)
+    if not math.isfinite(number):
+        _reject_non_finite_number(value)
+    return number
+
+
 def _read_document(stream: BinaryIO, *, max_bytes: int) -> dict[str, JsonValue]:
     if max_bytes < 1:
         raise ValueError("max_bytes must be positive")
@@ -233,10 +243,17 @@ def _read_document(stream: BinaryIO, *, max_bytes: int) -> dict[str, JsonValue]:
             text,
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_non_finite_number,
+            parse_float=_finite_float,
         )
     except HelperProtocolError:
         raise
-    except json.JSONDecodeError as exc:
+    #
+    # Python's own limits are refusals too: an integer past its digit limit
+    # raises ValueError and a document nested past the stack RecursionError,
+    # and either escaped as a traceback instead of the protocol's refusal
+    # (review 2026-10-22, 5-15).
+    #
+    except (ValueError, RecursionError) as exc:
         raise HelperProtocolError(
             "helper request is not one valid JSON document", exit_code=exit_codes.REFUSED
         ) from exc
@@ -334,6 +351,26 @@ def _read_common(
         )
 
 
+def read_raw_request(stream: BinaryIO, *, max_bytes: int = MAX_REQUEST_BYTES) -> bytes:
+    """A request read whole before it is parsed, within the time a caller has to send it (S08).
+
+    For a helper that answers several operations on one socket, and has to see
+    which one a request names before it can hold it to that operation's
+    parameters. Read to the end of the input, which those callers close; a
+    caller that never does is refused at the deadline instead of holding one of
+    the helper's few connections for as long as it likes (review 2026-10-22,
+    5-10: the read stood outside the deadline in three helpers).
+    """
+
+    with _request_deadline(REQUEST_DEADLINE_SECONDS):
+        raw = stream.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise HelperProtocolError(
+            "helper request is larger than allowed", exit_code=exit_codes.REFUSED
+        )
+    return raw
+
+
 def _read_request(
     stream: BinaryIO,
     *,
@@ -394,7 +431,7 @@ def _read_request(
         raise HelperProtocolError(
             "request_id must be a UUID", exit_code=exit_codes.REFUSED
         ) from exc
-    if str(parsed_request_id) != request_id.lower():
+    if str(parsed_request_id) != request_id:
         raise HelperProtocolError(
             "request_id must use canonical UUID form", exit_code=exit_codes.REFUSED
         )

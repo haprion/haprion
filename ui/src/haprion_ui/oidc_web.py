@@ -222,7 +222,15 @@ def parse(
         "local_login": local_login,
         "ca_pem": ca_pem,
     }
-    identity_changed = (issuer, client_id) != (current.issuer, current.client_id)
+    #
+    # The CA too: the secret goes wherever a certificate the CA vouches for
+    # says it should, so a new CA is a new place to send it (5-13).
+    #
+    identity_changed = (issuer, client_id, ca_pem) != (
+        current.issuer,
+        current.client_id,
+        current.ca_pem,
+    )
     secret = form.get("client_secret") or ""
     if secret:
         if len(secret) > 1024:
@@ -234,12 +242,12 @@ def parse(
         except KeyFileError:
             return refused("The OIDC helper's public key could not be read; see platform step 17.")
         settings["client_secret_sealed"] = oidc.seal_client_secret(
-            key, issuer=issuer, client_id=client_id, secret=secret
+            key, issuer=issuer, client_id=client_id, ca_pem=ca_pem, secret=secret
         )
         settings["key_id"] = key.key_id
     elif identity_changed or current.client_secret_sealed is None:
         return refused(
-            "Type the client secret: it is kept for the issuer and client it was saved for."
+            "Type the client secret: it is kept for the issuer, client and CA certificate it was saved for."
         )
     return Parsed(settings, "", identity_changed)
 

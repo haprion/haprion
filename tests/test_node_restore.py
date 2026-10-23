@@ -335,7 +335,8 @@ class Preview(RestoreTest):
         self.assertIn("/etc/apt/sources.list.d/haproxy-3.4.sources", files)
         self.assertIn("/etc/apt/keyrings/haproxy-ubuntu-ppa.asc", files)
         self.assertNotIn("/etc/apt/sources.list.d/haproxy.sources", files)
-        self.assertNotIn("/etc/apt/preferences.d/haproxy-3.4.pref", files)
+        # HAProxy from the PPA, and nothing else from it (review 2026-10-22, 5-15).
+        self.assertIn("/etc/apt/preferences.d/haproxy-3.4.pref", files)
 
     def test_an_archive_is_offered_for_its_own_node_only(self) -> None:
         (self.backups / "node-b").mkdir()

@@ -65,5 +65,38 @@ class StatusRuleTests(unittest.TestCase):
         self.assertNotIn("cluster", forced.group(1))
 
 
+class AForcedCommandWithoutArgumentsIsOneSudoAllowsNoneFor(unittest.TestCase):
+    """Review 2026-10-22, 5-15: two rules let sudo pass any arguments to a command that takes none."""
+
+    def rendered(self) -> str:
+        """The sudoers text as the step renders it, its variables given invented values."""
+
+        import subprocess
+
+        text = PREPARE.read_text()
+        block = text[
+            text.index('\nsudoers="') + 1 : text.index("\ntmp=", text.index('\nsudoers="'))
+        ]
+        return subprocess.run(  # fixed interpreter, the step's own assignment
+            ["/bin/bash", "-c", block + '\nprintf "%s\\n" "$sudoers"'],
+            capture_output=True,
+            text=True,
+            check=True,
+            env={"TRIGGER_USER": "t", "STATUS_USER": "s", "BACKUP_USER": "b", "SBIN": "/usr/sbin"},
+        ).stdout
+
+    def test_each_rule_for_a_bare_forced_command_ends_in_an_empty_argument_list(self) -> None:
+        rules = self.rendered().splitlines()
+        bare = re.findall(
+            r'^    "\S+ \S+ \S+ sudo -n (/usr/sbin/[a-z-]+)"$', KEYS.read_text(), re.M
+        )
+        self.assertEqual(len(bare), 2)
+        for command in bare:
+            with self.subTest(command=command):
+                self.assertIn(
+                    f'NOPASSWD: {command} ""', [rule.split(" ALL=(root) ")[-1] for rule in rules]
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ before it leaves the subprocess runner.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 LIMIT_BYTES = 65_536
 TRUNCATION_MARKER = "\n...[diagnostics truncated]...\n"
@@ -22,8 +23,16 @@ _PRIVATE_KEY = re.compile(
 _PRIVATE_KEY_TAIL = re.compile(
     r"\A.*?-----END [^-\r\n]*PRIVATE KEY-----", re.IGNORECASE | re.DOTALL
 )
+#
+# A credential's name, in the forms a credentials file or a tool's error spells
+# it: certbot's DNS plugins name theirs `dns_<provider>_api_key`, `..._token`
+# or `..._secret` (review 2026-10-22, 5-9). Not a bare `key`: HAProxy's
+# refusals name `ssl-crt-key`-like keywords and key types, and masking them
+# would hide the line that says what is wrong.
+#
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?im)(\b[a-z0-9_.-]*(?:token|password|secret)[a-z0-9_.-]*\s*(?:=|:)\s*)[^\r\n]*"
+    r"(?im)(\b[a-z0-9_.-]*(?:token|password|passwd|secret|credential|api[_-]?key|access[_-]?key"
+    r"|private[_-]?key)[a-z0-9_.-]*\s*(?:=|:)\s*)[^\r\n]*"
 )
 _SENSITIVE_PATH = re.compile(
     r"(?i)(?<![^\s\"'<>])(?=[^\s\"'<>]*(?:\.ssh(?:/|$)|/secrets/|/ui-secrets(?:/|$)|"
@@ -73,3 +82,25 @@ def safe_excerpt(value: str, *, limit_bytes: int = LIMIT_BYTES) -> str:
     first_size = edge_budget // 2
     last_size = edge_budget - first_size
     return _prefix(encoded, first_size) + TRUNCATION_MARKER + _suffix(encoded, last_size)
+
+
+def redact_result(value: Any) -> Any:
+    """The result document with every `diagnostics` text in it redacted.
+
+    A helper's refusal carries its evidence under `error.details.diagnostics`
+    and the job row stores the document as it arrived; the manual promises the
+    same masking there as in the stderr excerpt (review 2026-10-22, 5-9). Every
+    such text, at any depth, since a wrapped answer (`exit_mismatch`) carries
+    the helper's envelope inside the worker's own.
+    """
+
+    if isinstance(value, dict):
+        return {
+            key: redact(item)
+            if key == "diagnostics" and isinstance(item, str)
+            else redact_result(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_result(item) for item in value]
+    return value

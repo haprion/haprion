@@ -20,8 +20,6 @@ come to describe the same history differently.
 
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -47,8 +45,6 @@ USAGE = (
     "  haprion-list -c <cluster> --diff <version>   what one version changed\n"
 )
 OPERATION = "list"
-HELPER = "/opt/haprion/current/bin/haprion-list-helper"
-SUDO = "/usr/bin/sudo"
 
 #
 # The shell command's table, `%-9s %-17s %s`, with one column since 2026-09-29
@@ -61,44 +57,6 @@ RULE = ROW.format(version="-------", date="-" * 16, by="-" * 16, comment="-" * 4
 
 type ConfigPath = Callable[[str], Path]
 type Field = Callable[[str, str], str]
-
-
-def run_list_helper(
-    cluster_id: str,
-    request_id: str,
-    *,
-    limit: int | None = None,
-    diffs: tuple[str, ...] = (),
-) -> subprocess.CompletedProcess[str]:
-    """Ask the privileged helper for one cluster's version history.
-
-    Not used by this command, which reads the repository directly because the
-    person running it may. It exists here because the interface's poller may
-    not, and because the request must be built by the code that owns the
-    operation rather than a second time in the web tree.
-
-    `limit` is left out when not given, and the helper lists its ten. `diffs`
-    names versions, by commit hash, whose changes the answer should carry too.
-    """
-
-    parameters: dict[str, object] = {} if limit is None else {"limit": limit}
-    if diffs:
-        parameters["diffs"] = list(diffs)
-
-    request = {
-        "schema_version": 1,
-        "operation": OPERATION,
-        "cluster": cluster_id,
-        "request_id": request_id,
-        "parameters": parameters,
-    }
-    return subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
-        [SUDO, "-n", HELPER],
-        input=json.dumps(request, separators=(",", ":")),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
 
 
 def _parse(argv: list[str]) -> tuple[str, bool, int | None]:

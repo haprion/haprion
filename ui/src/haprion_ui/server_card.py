@@ -26,7 +26,7 @@ from typing import Any
 from haprion.cluster_status import ServerHealth
 from haprion.generate import backend_name
 from haprion.guid import server_guid
-from haprion.proxy_model import Proxy
+from haprion.proxy_model import Proxy, server_name
 
 from haprion_ui.health import answers_for, member_health, vip_owner
 
@@ -174,7 +174,7 @@ def build(
     for pool in pools:
         names = (backend_name(proxy, pool),)
         for index, server in enumerate(proxy.backends[pool].servers):
-            position = f"s{index + 1}"
+            position = server_name(index)
             found = [
                 next(
                     (members[(name, position)] for name in names if (name, position) in members),

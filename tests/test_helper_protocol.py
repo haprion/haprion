@@ -7,6 +7,7 @@ import time
 import unittest
 import unittest.mock
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from haprion import helper_protocol
@@ -80,6 +81,32 @@ class HelperProtocolTests(unittest.TestCase):
         raw = request_bytes().replace(b'"parameters": {}', b'"parameters": {"value": NaN}')
         with self.assertRaisesRegex(HelperProtocolError, "non-finite"):
             self.read(raw, allowed_parameter_keys=frozenset({"value"}))
+
+    def test_what_python_cannot_hold_is_a_refusal_and_not_a_traceback(self) -> None:
+        """Review 2026-10-22, 5-15: PRIVILEGE.md says these are rejected."""
+
+        for value, message in (
+            (b"1e999", "non-finite"),
+            (b"-1e999", "non-finite"),
+            (b"9" * 5000, "not one valid JSON document"),
+            (b"[" * 100_000 + b"]" * 100_000, "not one valid JSON document"),
+        ):
+            raw = request_bytes().replace(
+                b'"parameters": {}', b'"parameters": {"value": ' + value + b"}"
+            )
+            with (
+                self.subTest(value=value[:12]),
+                self.assertRaisesRegex(HelperProtocolError, message),
+            ):
+                self.read(
+                    raw,
+                    allowed_parameter_keys=frozenset({"value"}),
+                    max_bytes=len(raw),
+                )
+
+    def test_a_request_id_in_capitals_is_not_the_canonical_form(self) -> None:
+        with self.assertRaisesRegex(HelperProtocolError, "canonical UUID form"):
+            self.read(request_bytes(request_id="AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"))
 
     def test_wrong_schema_operation_cluster_and_request_id_are_rejected(self) -> None:
         invalid = (
@@ -223,6 +250,79 @@ class TheRequestHasADeadline(unittest.TestCase):
             }
         ).encode()
         self.assertLess(self.read_from_silent_pipe(line + b"\n"), 5)
+
+
+class TheHelpersThatReadTheWholeRequestFirstHaveTheDeadlineToo(unittest.TestCase):
+    """Review 2026-10-22, 5-10: three helpers read to EOF outside the deadline.
+
+    Each is run as it is reached, on a pipe whose write end stays open, and
+    must answer 65 within the deadline rather than block for ever.
+    """
+
+    def answer(self, main: Any, **options: Any) -> tuple[int, float]:
+        import threading
+        from io import StringIO
+
+        read_end, write_end = os.pipe()
+        os.write(write_end, b'{"operation":')
+        #
+        # A helper without the deadline blocks for ever; the guard ends its
+        # input after five seconds, so it fails on the time instead of
+        # holding the gate.
+        #
+        closed = threading.Event()
+
+        def close() -> None:
+            os.close(write_end)
+            closed.set()
+
+        def release() -> None:
+            guard.cancel()
+            guard.join()
+            if not closed.is_set():
+                os.close(write_end)
+
+        guard = threading.Timer(5, close)
+        guard.start()
+        self.addCleanup(release)
+        with (
+            os.fdopen(read_end, "rb") as stream,
+            unittest.mock.patch.object(helper_protocol, "REQUEST_DEADLINE_SECONDS", 0.2),
+        ):
+            started = time.monotonic()
+            code = main(
+                [],
+                input_stream=stream,
+                output_stream=StringIO(),
+                error_stream=StringIO(),
+                require_root=False,
+                **options,
+            )
+            return code, time.monotonic() - started
+
+    def test_the_node_helper(self) -> None:
+        from haprion.cli import node_helper
+
+        code, seconds = self.answer(node_helper.main)
+        self.assertEqual(code, 65)
+        self.assertLess(seconds, 5)
+
+    def test_the_backup_job_helper(self) -> None:
+        from haprion.cli import backup_job_helper
+
+        code, seconds = self.answer(backup_job_helper.main)
+        self.assertEqual(code, 65)
+        self.assertLess(seconds, 5)
+
+    def test_the_node_restore_helper(self) -> None:
+        import tempfile
+
+        from haprion.cli import node_restore_helper
+
+        with tempfile.TemporaryDirectory() as runs:
+            code, seconds = self.answer(node_restore_helper.main, run_root=Path(runs))
+        self.assertEqual(code, 65)
+        self.assertLess(seconds, 5)
 
 
 class TheLifeline(unittest.TestCase):

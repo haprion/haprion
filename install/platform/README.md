@@ -550,7 +550,7 @@ nothing else, and keeps doing so: every request to the provider goes through
 
 The step makes the key pair the web seals the client secret against: the
 private key in `/etc/haprion/oidc/` (the helper's account, 0600, in a
-0500 directory), the public key in `/etc/haprion/oidc-keys/`. A second run keeps the
+directory root owns and the helper's group may read, 0550), the public key in `/etc/haprion/oidc-keys/`. A second run keeps the
 pair; `ROTATE=1` adds one, and the client secret is then saved again. It
 installs the socket (group `_haprion-web`) and the per-request service, and adds
 `[oidc] public_key` to `ui.toml` when the file names none - as step 15 does for the

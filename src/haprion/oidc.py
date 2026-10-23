@@ -23,10 +23,12 @@ size, because what answers may be a provider an administrator typed in.
 The client secret
 -----------------
 The web seals it against this installation's public key and cannot read it
-back (B146's model). The sealed text names the issuer and the client it is for,
-and this module refuses to open it for any other: an administrator session
-that changes the issuer cannot have the secret sent to the new one, it has to
-type the secret again.
+back (B146's model). The sealed text names the issuer, the client and the CA
+the issuer is trusted through, and this module refuses to open it for any
+other: an administrator session that changes the issuer cannot have the secret
+sent to the new one, and one that changes the CA cannot have it sent to
+whatever a certificate of its own then vouches for (review 2026-10-22, 5-13).
+It has to type the secret again.
 """
 
 from __future__ import annotations
@@ -284,25 +286,36 @@ def signing_keys(client: Client, discovery: Discovery) -> jwt.PyJWKSet:
 # - the client secret -------------------------------------------------------
 
 
+def ca_fingerprint(ca_pem: str | None) -> str:
+    """What a sealed secret names of the CA: its SHA-256, or nothing for the system's own."""
+
+    return hashlib.sha256(ca_pem.encode("utf-8")).hexdigest() if ca_pem else ""
+
+
 def seal_client_secret(
-    key: DnsProfilePublicKey, *, issuer: str, client_id: str, secret: str
+    key: DnsProfilePublicKey, *, issuer: str, client_id: str, ca_pem: str | None, secret: str
 ) -> bytes:
-    """What the web stores: the secret, bound to the issuer and the client."""
+    """What the web stores: the secret, bound to the issuer, the client and the CA."""
 
     plaintext = {
         "purpose": SEAL_PURPOSE,
         "key_id": key.key_id,
         "issuer": issuer,
         "client_id": client_id,
+        "ca": ca_fingerprint(ca_pem),
         "secret": secret,
     }
     return seal(key, json.dumps(plaintext, sort_keys=True).encode("utf-8"))
 
 
 def open_client_secret(
-    key: DnsProfilePrivateKey, sealed: bytes, *, issuer: str, client_id: str
+    key: DnsProfilePrivateKey, sealed: bytes, *, issuer: str, client_id: str, ca_pem: str | None
 ) -> str:
-    """The secret, if it was sealed for exactly this issuer and client."""
+    """The secret, if it was sealed for exactly this issuer, client and CA.
+
+    A secret sealed before the CA was named opens only with the system's own
+    trust: with a CA of its own, nothing tells it from one set since.
+    """
 
     try:
         document = json.loads(open_sealed(key, sealed))
@@ -316,6 +329,11 @@ def open_client_secret(
         raise OidcError(
             "secret_for_another_client",
             "the client secret was saved for another issuer or client; type it again",
+        )
+    if document.get("ca", "") != ca_fingerprint(ca_pem):
+        raise OidcError(
+            "secret_for_another_client",
+            "the client secret was saved for another CA certificate; type it again",
         )
     secret = document.get("secret")
     if not isinstance(secret, str) or not secret:

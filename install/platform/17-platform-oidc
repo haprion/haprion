@@ -60,8 +60,9 @@ step "Directories"
 [[ -f "$UI_CONFIG" ]] || die "${UI_CONFIG} is missing; run 01-platform-prepare first"
 ensure_dir "$PUBLIC_DIR" "root:${PLATFORM_GROUP}" 750
 #
-# Root's while the pair is written, the helper's afterwards: the key tool
-# writes as root, and the helper refuses a key that is not its account's alone.
+# Root's, closed while the pair is written and open to the helper's group
+# afterwards. The key tool writes as root, and the helper refuses a key that is
+# not its account's alone, so the keys are handed to it below.
 #
 if [[ ! -d "$KEY_DIR" ]]; then
     install -d -o root -g root -m 700 "$KEY_DIR"
@@ -90,13 +91,19 @@ else
     log "  created  ${key_id}"
 fi
 
+#
+# The directory root's, readable by the helper's group, before anything in it
+# is changed: an account that owned it could put a link where this then
+# changes owner and mode (review 2026-10-22, 5-14). The keys are the helper's.
+#
+chown "root:${OIDC_USER}" "$KEY_DIR"
+chmod 550 "$KEY_DIR"
 for file in "$KEY_DIR"/*.key; do
+    refuse_link "$file"
     chown "${OIDC_USER}:${OIDC_USER}" "$file"
     chmod 600 "$file"
 done
-chown "${OIDC_USER}:${OIDC_USER}" "$KEY_DIR"
-chmod 500 "$KEY_DIR"
-log "  ok       ${KEY_DIR}  (${OIDC_USER}, 0500; keys 0600)"
+log "  ok       ${KEY_DIR}  (root:${OIDC_USER}, 0550; keys ${OIDC_USER}, 0600)"
 
 step "The socket"
 install_file /etc/systemd/system/haprion-oidc-helper@.service root:root 644 \

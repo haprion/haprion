@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from haprion import exit_codes, node_ssh
 from haprion.config import DeployIdentity, Node
 from haprion.guid import server_guid
-from haprion.proxy_model import NAME, Proxy
+from haprion.proxy_model import NAME, NAME_BODY, Proxy
 
 OPERATION = "server_state"
 UNBLOCK_OPERATION = "dynamic_unblock"
@@ -100,9 +100,7 @@ MAX_ANSWER_BYTES = 16 * 1024
 # `pool/host:port`, with the pool optional. The host is what the object model
 # accepts on a server line - a name or an address, IPv6 in brackets or bare.
 #
-SERVER = re.compile(
-    r"^(?:(?P<pool>[a-z][a-z0-9_-]{0,39})/)?(?P<host>[^\s/]{1,253}):(?P<port>\d{1,5})$"
-)
+SERVER = re.compile(rf"^(?:(?P<pool>{NAME_BODY})/)?(?P<host>[^\s/]{{1,253}}):(?P<port>\d{{1,5}})$")
 
 
 class ServerStateError(Exception):

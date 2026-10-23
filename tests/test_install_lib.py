@@ -10,7 +10,8 @@ import time
 import unittest
 from pathlib import Path
 
-LIB = Path(__file__).resolve().parents[1] / "install" / "lib.sh"
+BASE = Path(__file__).resolve().parents[1]
+LIB = BASE / "install" / "lib.sh"
 
 
 def stamp(days_ago: float) -> str:
@@ -104,6 +105,47 @@ class AFileInADirectoryNotThereYet(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             self.assertEqual(target.read_text(), "{}\n")
             self.assertEqual(target.parent.stat().st_mode & 0o777, 0o755)
+
+
+class NoOwnerOrModeIsChangedThroughALink(unittest.TestCase):
+    """Review 2026-10-22, 5-14: chown and chmod follow a link an account put in its own directory."""
+
+    def test_ensure_dir_refuses_a_link_and_leaves_its_target_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            target = Path(raw) / "target"
+            target.mkdir(mode=0o700)
+            link = Path(raw) / "link"
+            link.symlink_to(target)
+            done = run_lib('ensure_dir "$1" root:root 755', str(link))
+            self.assertNotEqual(done.returncode, 0)
+            self.assertIn("is a symbolic link", done.stderr)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o700)
+
+    def test_refuse_link_refuses_any_of_the_paths_it_is_given(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            plain = Path(raw) / "key"
+            plain.write_text("x")
+            link = Path(raw) / "key.pub"
+            link.symlink_to("/etc/passwd")
+            self.assertEqual(run_lib('refuse_link "$1"', str(plain)).returncode, 0)
+            self.assertNotEqual(
+                run_lib('refuse_link "$1" "$2"', str(plain), str(link)).returncode, 0
+            )
+
+    def test_the_identity_directories_are_root_s_and_their_files_checked(self) -> None:
+        collector = (BASE / "install/platform/13-platform-traffic-collector").read_text()
+        self.assertIn('ensure_dir "$IDENTITY_DIR" "root:${COLLECTOR_USER}" 550', collector)
+        self.assertLess(
+            collector.index('refuse_link "$COLLECTOR_KEY"'),
+            collector.index('chown "${COLLECTOR_USER}:root" "$COLLECTOR_KEY"'),
+        )
+        oidc = (BASE / "install/platform/17-platform-oidc").read_text()
+        self.assertIn('chown "root:${OIDC_USER}" "$KEY_DIR"', oidc)
+        self.assertNotIn('chown "${OIDC_USER}:${OIDC_USER}" "$KEY_DIR"', oidc)
+        self.assertLess(
+            oidc.index('refuse_link "$file"'),
+            oidc.index('chown "${OIDC_USER}:${OIDC_USER}" "$file"'),
+        )
 
 
 class ThePackagesOwnConfigurationFile(unittest.TestCase):
@@ -357,7 +399,8 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
 
 ENSURE_DNSDIST = (
     'source "$0"; cd "$(dirname "$0")"; '
-    "install_file() { :; }; install() { :; }; apt_update() { :; }; systemctl() { :; }; "
+    'install_file() { printf "%s\\n%s\\n---\\n" "$1" "$4" >> "$APT_CALLS.files"; }; '
+    "install() { :; }; apt_update() { :; }; systemctl() { :; }; "
     'apt-get() { echo "$*" >> "$APT_CALLS"; }; '
     'apt-cache() { echo "  Candidate: ${CANDIDATE}"; }; '
     'dnsdist() { echo "dnsdist 2.1.3 (Lua 5.4)"; }; '
@@ -371,6 +414,7 @@ class DnsdistFromPowerDns(unittest.TestCase):
         self.addCleanup(shutil.rmtree, work)
         calls = work / "apt-get"
         calls.touch()
+        self.last_calls = str(calls)
         done = subprocess.run(  # fixed interpreter, the repository's library
             ["/bin/bash", "-c", ENSURE_DNSDIST, str(LIB)],
             capture_output=True,
@@ -384,6 +428,20 @@ class DnsdistFromPowerDns(unittest.TestCase):
         code, output, calls = self.run_step("2.1.3-1pdns.ubuntu26.04")
         self.assertEqual(code, 0, output)
         self.assertIn("install -y -q dnsdist", calls)
+
+    def test_the_source_is_https_and_trusted_for_dnsdist_alone(self) -> None:
+        """Review 2026-10-22, 5-15: over http, and pinned for nothing but dnsdist."""
+
+        code, output, _ = self.run_step("2.1.3-1pdns.ubuntu26.04")
+        self.assertEqual(code, 0, output)
+        files = Path(self.last_calls + ".files").read_text()
+        self.assertIn("https://repo.powerdns.com/", files)
+        self.assertNotIn("http://repo.powerdns.com/", files)
+        self.assertIn(
+            "Package: dnsdist*\nPin: origin repo.powerdns.com\nPin-Priority: 600\n\n"
+            "Package: *\nPin: origin repo.powerdns.com\nPin-Priority: 100\n",
+            files,
+        )
 
     def test_a_repository_that_did_not_answer_installs_nothing_older(self) -> None:
         # apt-get update exits 0 when a source does not answer (26-10-21).

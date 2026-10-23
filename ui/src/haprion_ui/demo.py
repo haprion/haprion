@@ -15,6 +15,7 @@ from typing import Any
 
 from haprion.config import Network, Vip
 from haprion.objects import objects_result
+from haprion.proxy_model import server_name
 
 from haprion_ui.db import (
     ClusterBackups,
@@ -39,7 +40,7 @@ def _public_web(sessions: tuple[int, int, int]) -> list[dict[str, Any]]:
     return [
         {
             "backend": "web",
-            "server": f"s{index + 1}",
+            "server": server_name(index),
             "status": status,
             "check_status": "L4OK",
             "admin": admin,

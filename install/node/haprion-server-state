@@ -649,9 +649,18 @@ def block_tables(name: str) -> tuple[str, str]:
 
 def command_unblock(name: str, words: list[str]) -> int:
     try:
-        addresses = list(dict.fromkeys(str(ipaddress.ip_address(word)) for word in words))
+        parsed = [ipaddress.ip_address(word) for word in words]
     except ValueError:
-        addresses = []
+        parsed = []
+    #
+    # A scoped IPv6 address carries its zone verbatim - `fe80::1%x;shutdown`
+    # parses - and the addresses are joined into one admin-socket line. The
+    # trigger refuses `%` already; this does not lean on it (review
+    # 2026-10-22, 5-15).
+    #
+    if any(getattr(address, "scope_id", None) is not None for address in parsed):
+        parsed = []
+    addresses = list(dict.fromkeys(str(address) for address in parsed))
     if not OBJECT.match(name) or not addresses or len(words) > MAX_UNBLOCK:
         return answer(
             {

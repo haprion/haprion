@@ -530,11 +530,12 @@ class TheSealedSecret(unittest.TestCase):
             self.public,
             issuer="https://a.example/",
             client_id="c",
+            ca_pem=None,
             secret="s3cret",  # noqa: S106 - sealed and opened within the test
         )
         self.assertEqual(
             oidc.open_client_secret(
-                self.private, sealed, issuer="https://a.example/", client_id="c"
+                self.private, sealed, issuer="https://a.example/", client_id="c", ca_pem=None
             ),
             "s3cret",
         )
@@ -542,9 +543,63 @@ class TheSealedSecret(unittest.TestCase):
             with self.subTest(issuer=issuer, client_id=client_id):
                 with self.assertRaises(oidc.OidcError) as caught:
                     oidc.open_client_secret(
-                        self.private, sealed, issuer=issuer, client_id=client_id
+                        self.private, sealed, issuer=issuer, client_id=client_id, ca_pem=None
                     )
                 self.assertEqual(caught.exception.code, "secret_for_another_client")
+
+    def test_it_opens_only_through_the_ca_it_was_sealed_with(self) -> None:
+        """Review 2026-10-22, 5-13: a CA of one's own sent the secret wherever it vouched for."""
+
+        ca = "\n".join(
+            ("-----BEGIN " + "CERTIFICATE-----", "synthetic", "-----END " + "CERTIFICATE-----")
+        )
+        sealed = oidc.seal_client_secret(
+            self.public,
+            issuer="https://a.example/",
+            client_id="c",
+            ca_pem=ca,
+            secret="s3cret",  # noqa: S106 - sealed and opened within the test
+        )
+        self.assertEqual(
+            oidc.open_client_secret(
+                self.private, sealed, issuer="https://a.example/", client_id="c", ca_pem=ca
+            ),
+            "s3cret",
+        )
+        for other in (None, ca.replace("synthetic", "another")):
+            with self.subTest(ca=other), self.assertRaises(oidc.OidcError) as caught:
+                oidc.open_client_secret(
+                    self.private, sealed, issuer="https://a.example/", client_id="c", ca_pem=other
+                )
+            self.assertEqual(caught.exception.code, "secret_for_another_client")
+
+    def test_a_secret_sealed_before_the_ca_was_named_opens_only_with_the_system_s_trust(
+        self,
+    ) -> None:
+        from haprion.dns_profile_keys import seal
+
+        legacy = seal(
+            self.public,
+            json.dumps(
+                {
+                    "purpose": oidc.SEAL_PURPOSE,
+                    "key_id": self.public.key_id,
+                    "issuer": "https://a.example/",
+                    "client_id": "c",
+                    "secret": "s3cret",
+                }
+            ).encode(),
+        )
+        self.assertEqual(
+            oidc.open_client_secret(
+                self.private, legacy, issuer="https://a.example/", client_id="c", ca_pem=None
+            ),
+            "s3cret",
+        )
+        with self.assertRaises(oidc.OidcError):
+            oidc.open_client_secret(
+                self.private, legacy, issuer="https://a.example/", client_id="c", ca_pem="x"
+            )
 
 
 class TheHelper(ProviderTestCase):
@@ -559,7 +614,11 @@ class TheHelper(ProviderTestCase):
         self.key_id = public.key_id
         self.sealed = base64.b64encode(
             oidc.seal_client_secret(
-                public, issuer=self.provider.issuer, client_id=CLIENT_ID, secret=SECRET
+                public,
+                issuer=self.provider.issuer,
+                client_id=CLIENT_ID,
+                ca_pem=CA_PEM,
+                secret=SECRET,
             )
         ).decode("ascii")
 

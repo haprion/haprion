@@ -720,21 +720,6 @@ def current_session(request: Request) -> AuthenticatedSession | None:
     return session
 
 
-def require_session(request: Request) -> AuthenticatedSession:
-    """A dependency for anything that must not be reachable while signed out.
-
-    Raised rather than returned, because a dependency cannot redirect: a 303
-    with a Location header is how a browser gets sent to the form, and how an
-    HTMX request gets an answer it can follow rather than a page fragment where
-    content was expected.
-    """
-
-    session = current_session(request)
-    if session is None:
-        raise HTTPException(status_code=303, headers={"Location": "/login"})
-    return session
-
-
 #
 # Why the Servers card's buttons did nothing, by `?servers=` (B263). A queued
 # job needs no sentence: the buttons give way to its spinner.
@@ -1558,15 +1543,6 @@ def _lookup_again(
         )
         connection.commit()
     return RedirectResponse("/proxies", status_code=303)
-
-
-def _moved_servers(
-    request: Request, config: Config, cluster: str, stored: objects.ObjectView
-) -> list[str]:
-    """The status's word that one of this object's dns servers moved (B253)."""
-
-    _, rows = read_source(request, config, STATUS_SOURCE)
-    return moved_dns_servers(rows, cluster=cluster, pools=stored.runtime_backends or ())
 
 
 def moved_dns_servers(rows: Iterable[Any], *, cluster: str, pools: Collection[str]) -> list[str]:

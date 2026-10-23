@@ -68,12 +68,12 @@ from haprion.config import (
 )
 from haprion.envelope import envelope, failure
 from haprion.helper_protocol import (
-    MAX_REQUEST_BYTES,
     HelperProtocolError,
     HelperRequest,
     JsonValue,
     config_error_code,
     read_helper_request,
+    read_raw_request,
     require_no_arguments,
     write_document,
 )
@@ -602,7 +602,7 @@ def main(
         # Read once, then parsed as the operation it names: the two share a
         # socket, and each is held to its own parameters.
         #
-        raw = (input_stream or sys.stdin.buffer).read(MAX_REQUEST_BYTES + 1)
+        raw = read_raw_request(input_stream or sys.stdin.buffer)
         try:
             named = json.loads(raw).get("operation")
         except (ValueError, AttributeError):

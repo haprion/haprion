@@ -45,11 +45,15 @@ class Repository:
     uri: str
     suite: str
     #
-    # haproxy.debian.net marks its suites NotAutomatic, so APT would keep
-    # Debian's own older HAProxy without a pin. The PPA needs none: its
-    # packages are simply newer than the distribution's.
+    # The pin's release selector, `{suite}` and `{branch}` filled in. HAProxy
+    # from this source at 600, and with `pin_others` everything else from it
+    # at 100, so a source trusted for one package cannot upgrade another
+    # (review 2026-10-22, 5-15). haproxy.debian.net marks its suites
+    # NotAutomatic, which already holds the others at 1, and without the pin
+    # APT would keep Debian's own older HAProxy.
     #
-    pin_origin: str | None = None
+    pin_release: str
+    pin_others: bool
 
 
 REPOSITORIES = {
@@ -62,6 +66,9 @@ REPOSITORIES = {
         fingerprint="3D653970FBAB0A890E4E4E9A0F14D8B0CF4EFE96",
         uri="https://ppa.launchpadcontent.net/vbernat/haproxy-{branch}/ubuntu",
         suite="{codename}",
+        # The Origin of the PPA's Release file (26-10-23).
+        pin_release="o=LP-PPA-vbernat-haproxy-{branch}",
+        pin_others=True,
     ),
     #
     # The key haproxy.debian.net serves, which is the same key Debian's own
@@ -72,7 +79,8 @@ REPOSITORIES = {
         fingerprint="AEF2348766F371C689A7360095A42FE8353525F9",
         uri="https://haproxy.debian.net",
         suite="{codename}-backports-{branch}",
-        pin_origin="PPA-haproxy",
+        pin_release="o=PPA-haproxy,n={suite}",
+        pin_others=False,
     ),
 }
 
@@ -158,7 +166,7 @@ def key(distribution: str) -> bytes:
 
 
 def repository_files(os_release: dict[str, str], branch: str) -> tuple[RepositoryFile, ...]:
-    """The key, the deb822 source and, where needed, the pin - for this target."""
+    """The key, the deb822 source and the pin - for this target."""
 
     distribution = os_release.get("ID", "")
     codename = os_release.get("VERSION_CODENAME", "")
@@ -184,12 +192,11 @@ def repository_files(os_release: dict[str, str], branch: str) -> tuple[Repositor
         RepositoryFile(keyring, key(distribution)),
         RepositoryFile(f"{SOURCES}/haproxy-{branch}.sources", source.encode()),
     ]
-    if repository.pin_origin is not None:
-        pin = (
-            "Package: haproxy*\n"
-            f"Pin: release o={repository.pin_origin},n="
-            f"{repository.suite.format(codename=codename, branch=branch)}\n"
-            "Pin-Priority: 600\n"
-        )
-        written.append(RepositoryFile(f"{PREFERENCES}/haproxy-{branch}.pref", pin.encode()))
+    release = repository.pin_release.format(
+        suite=repository.suite.format(codename=codename, branch=branch), branch=branch
+    )
+    pin = f"Package: haproxy*\nPin: release {release}\nPin-Priority: 600\n"
+    if repository.pin_others:
+        pin += f"\nPackage: *\nPin: release {release}\nPin-Priority: 100\n"
+    written.append(RepositoryFile(f"{PREFERENCES}/haproxy-{branch}.pref", pin.encode()))
     return tuple(written)

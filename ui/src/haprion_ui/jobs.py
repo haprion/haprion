@@ -31,7 +31,7 @@ from haprion import exit_codes, node_enrollment, server_names
 from haprion.deploy_run import CERTIFICATES_NOT_DEPLOYED
 from haprion.restore_agent import RUN_ID
 
-from haprion_ui import moments
+from haprion_ui import diagnostics, moments
 from haprion_ui.dashboard import relative_age
 from haprion_ui.db import ClusterStatus, Job
 
@@ -599,7 +599,11 @@ def diagnostics_of(job: Job) -> str | None:
             if isinstance(details, dict):
                 text = details.get("diagnostics")
                 if isinstance(text, str) and text.strip():
-                    return text
+                    #
+                    # Again on the way out: a row stored before the worker
+                    # redacted this field is shown masked all the same.
+                    #
+                    return diagnostics.redact(text)
     return job.stderr_excerpt or None
 
 

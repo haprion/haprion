@@ -68,6 +68,7 @@ from haprion.proxy_model import (
     duration_ms,
     is_range,
     read_document,
+    server_name,
 )
 
 FILE = "dnsdist.conf"
@@ -176,12 +177,6 @@ def with_addresses(name: str, document: str, resolve: Lookup = lookup) -> str:
             if is_dns and isinstance(host, str) and host and not is_address(host):
                 server["address"] = resolve(host)
     return dump_document(data)
-
-
-def server_name(index: int) -> str:
-    """The position, not the address: what `generate` calls a pool member too."""
-
-    return f"s{index + 1}"
 
 
 #

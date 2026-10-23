@@ -244,7 +244,9 @@ installs it on the manager, where it only checks a listener's configuration befo
 published (the service is masked), and `04-node-prepare` installs it on every node. Both
 write the repository's key, which ships beside the scripts in `install/apt-keys/` and is
 never fetched, its source in `/etc/apt/sources.list.d/pdns.list` and a pin in
-`/etc/apt/preferences.d/dnsdist-21`, so the hosts need to reach `repo.powerdns.com`.
+`/etc/apt/preferences.d/dnsdist-21` that takes dnsdist from it and holds everything else it might
+offer below the distribution's, so the hosts need to reach `repo.powerdns.com` over HTTPS. The
+HAProxy repository is pinned the same way: HAProxy from it, nothing else.
 
 Installing the package starts nothing. On a node, a drop-in
 (`/etc/systemd/system/dnsdist.service.d/haprion.conf`) points dnsdist at

@@ -63,6 +63,7 @@ from haprion.proxy_model import (
     WafException,
     is_range,
     is_wildcard,
+    server_name,
     wildcard_expression,
     wildcard_matches,
 )
@@ -3197,19 +3198,6 @@ def _rewrites_per_backend(proxy: Proxy) -> dict[str, list[str]]:
     return rewrites
 
 
-def _server_name(index: int) -> str:
-    """A stable, printable name for one pool member.
-
-    The position, not the address. The name is what appears in logs and in
-    `show stat`, where an address is already a column of its own; identity for
-    the purpose of keeping counters across a reload is the server's GUID, and
-    that one is derived from the address precisely so that reordering the pool
-    does not move it.
-    """
-
-    return f"s{index + 1}"
-
-
 def _balance(backend: Backend) -> str:
     """The `balance` line, in the two spellings HAProxy uses for it.
 
@@ -3387,7 +3375,7 @@ def _backend(
         lines.extend(_health_lines(backend.health))
 
     for index, server in enumerate(backend.servers):
-        name = _server_name(index)
+        name = server_name(index)
         cookie = f" cookie {name}" if backend.cookie is not None else ""
         backup = " backup" if server.backup else ""
         weight = f" weight {server.weight}" if server.weight is not None else ""

@@ -41,12 +41,12 @@ from haprion.backup_archive import ArchiveError
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope, failure
 from haprion.helper_protocol import (
-    MAX_REQUEST_BYTES,
     HelperProtocolError,
     JsonValue,
     ParameterValidator,
     config_error_code,
     read_helper_request,
+    read_raw_request,
     write_document,
 )
 from haprion.node_restore import Request, RestoreError
@@ -210,11 +210,7 @@ def build_request(
 
 
 def _raw(stream: BinaryIO) -> tuple[bytes, str]:
-    raw = stream.read(MAX_REQUEST_BYTES + 1)
-    if len(raw) > MAX_REQUEST_BYTES:
-        raise HelperProtocolError(
-            "helper request is larger than allowed", exit_code=exit_codes.REFUSED
-        )
+    raw = read_raw_request(stream)
     try:
         document = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

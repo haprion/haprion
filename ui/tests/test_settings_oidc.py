@@ -29,6 +29,36 @@ from tests.test_login import LoginTestCase, configuration
 ISSUER = "https://id.example.com/application/o/manager/"
 
 
+def _ca_pem() -> str:
+    """A CA certificate the form accepts: made here, signed by itself."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Example CA")])
+    now = datetime.now(UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(1)
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    return certificate.public_bytes(serialization.Encoding.PEM).decode("ascii")
+
+
+CA_PEM = _ca_pem()
+
+
 def provider(**fields: Any) -> db.OidcProvider:
     values: dict[str, Any] = {
         "enabled": False,
@@ -174,6 +204,7 @@ class SettingsOidc(LoginTestCase):
                 saved["client_secret_sealed"],
                 issuer=ISSUER,
                 client_id="haprion",
+                ca_pem=None,
             ),
             "a secret typed once",
         )
@@ -189,6 +220,19 @@ class SettingsOidc(LoginTestCase):
             client_secret_sealed=b"x",
         )
         response = self.post(self.admin(), action="save", **{**FORM, "client_secret": ""})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Type the client secret", response.text)
+        self.assertEqual(self.saved, [])
+
+    def test_a_changed_ca_needs_the_secret_again(self) -> None:
+        """Review 2026-10-22, 5-13: the secret goes wherever the CA vouches for."""
+
+        self.provider = provider(
+            issuer=ISSUER, client_id="haprion", client_secret_sealed=b"x", ca_pem=None
+        )
+        response = self.post(
+            self.admin(), action="save", **{**FORM, "client_secret": "", "ca_pem": CA_PEM}
+        )
         self.assertEqual(response.status_code, 400)
         self.assertIn("Type the client secret", response.text)
         self.assertEqual(self.saved, [])

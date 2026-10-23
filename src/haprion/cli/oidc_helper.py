@@ -97,7 +97,13 @@ def _secret(
         key = read_private_key(key_directory / f"{key_id}.key", owner=owner)
     except KeyFileError as exc:
         raise oidc.OidcError("no_key", str(exc)) from exc
-    return oidc.open_client_secret(key, sealed, issuer=issuer, client_id=client_id)
+    return oidc.open_client_secret(
+        key,
+        sealed,
+        issuer=issuer,
+        client_id=client_id,
+        ca_pem=_text(parameters, "ca_pem", limit=65536, required=False) or None,
+    )
 
 
 def _discovery_result(discovery: oidc.Discovery) -> dict[str, JsonValue]:

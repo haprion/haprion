@@ -383,6 +383,9 @@ class TheHelperLiftsABlock(RunningHaproxy):
             ("unblock", "shop", "192.0.2.300"),
             ("unblock", "shop", "example.com"),
             ("unblock", "shop", *[f"192.0.2.{index}" for index in range(65)]),
+            # A zone is carried verbatim into the admin-socket line (5-15).
+            ("unblock", "shop", "fe80::1%x;shutdown"),
+            ("unblock", "shop", "192.0.2.7", "fe80::1%eth0"),
         ):
             with self.subTest(argv[:3]):
                 code, _out = self.run_helper(*argv)

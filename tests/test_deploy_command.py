@@ -679,5 +679,23 @@ class RefusalContractTests(HelperFixture):
         self.assertIn("unknown cluster", err)
 
 
+class TheNodesWordsReachATerminalAsText(unittest.TestCase):
+    """Review 2026-10-22, 5-15: a node's escape sequences reached the operator's terminal."""
+
+    def test_control_characters_are_shown_as_escapes_and_lines_kept(self) -> None:
+        answer = subprocess.CompletedProcess(
+            [], 0, stdout="applied\x1b[2K\x1b]0;title\x07\nnext\tline", stderr="\x9b31m"
+        )
+        written = io.StringIO()
+        with mock.patch.object(node_ssh, "run_bounded", return_value=answer):
+            code = deploy_helper.run_trigger(["ssh"], "node-a", written)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            written.getvalue(),
+            "applied\\x1b[2K\\x1b]0;title\\x07\nnext\tline\n\\x9b31m\n",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

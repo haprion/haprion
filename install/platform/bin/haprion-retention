@@ -140,6 +140,36 @@ METRIC_COUNTERS="scur, stot, bin, bout, req_tot, qcur, ereq, econ, eresp, dreq, 
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
+
+#
+# A root-owned KEY=value file a platform step wrote (ui-admin.conf, ui-tls.conf),
+# read as haprion.admin_file reads it: comments, blank lines and plain
+# assignments, anything else refused rather than interpreted, the last of a key
+# winning. Only the keys named are set, as variables of the caller. The same
+# function in install/lib.sh and in each command under install/platform/bin/
+# that reads one, held together by a test (review 2026-10-22, 6-10).
+#
+read_admin_file() {
+    local file="$1" line number=0 key
+    local pattern='^([A-Z][A-Z0-9_]*)=([A-Za-z0-9_./:@+,=-]+)$'
+    shift
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        number=$((number + 1))
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" == "#"* ]] && continue
+        if [[ ! "$line" =~ $pattern ]]; then
+            echo "ERROR: ${file}:${number}: not a plain assignment" >&2
+            return 78
+        fi
+        for key; do
+            if [[ "${BASH_REMATCH[1]}" == "$key" ]]; then
+                printf -v "$key" '%s' "${BASH_REMATCH[2]}"
+            fi
+        done
+    done < "$file"
+    return 0
+}
 warn() { echo "WARNING: $*" >&2; }
 counted() { if [[ "$1" == 1 ]]; then echo "1 $2"; else echo "$1 ${3:-$2s}"; fi; }  # "1 row", "2 rows"
 
@@ -819,8 +849,7 @@ done
 
 config="${CONFIG_DIRECTORY}/ui-admin.conf"
 [[ -r "$config" ]] || { echo "ERROR: cannot read ${config}" >&2; exit 78; }
-# shellcheck disable=SC1090
-source "$config"
+read_admin_file "$config" DB_NAME DB_ROLE UI_CONFIG || exit 78
 for name in DB_NAME DB_ROLE; do
     [[ -n "${!name:-}" ]] || die "${name} is not set in ${config}"
 done

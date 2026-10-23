@@ -253,7 +253,7 @@ def _finish(
         state=state,
         exit_code=exit_code,
         outcome=outcome,
-        result=result,
+        result=diagnostics.redact_result(result),
         stderr_excerpt=stderr_excerpt,
     ):
         logger.error("job %s could not be finished; its lease was gone", job.id)

@@ -23,10 +23,9 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Annotated
 
-from haprion.config import AbuseProtection, Cluster, UnknownHost, Vip
+from haprion.config import AbuseProtection, UnknownHost, Vip
 from haprion.generate import GeneratorError, generate
 from haprion.proxy_model import HTTP_METHODS, ModelError, load_proxy
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
@@ -143,34 +142,6 @@ def choices(cluster: EditorCluster) -> dict[str, object]:
         "query_types": QUERY_TYPES,
         "methods": sorted(HTTP_METHODS, key=METHOD_ORDER.index),
     }
-
-
-def _validation_cluster(cluster: EditorCluster) -> Cluster:
-    """The engine's cluster shape, for the generator to refuse an object with."""
-
-    return Cluster(
-        cluster_id=cluster.cluster,
-        display_name=cluster.cluster,
-        vip=next(iter(cluster.vips.values())).address if cluster.vips else "",
-        address_prefix=None,
-        address_interface=None,
-        vips=dict(cluster.vips),
-        default_vip=cluster.default_vip,
-        sources=dict(cluster.sources),
-        networks=dict(cluster.networks),
-        config_path=Path("/editor"),
-        publish_path=Path("/editor"),
-        node_path="editor",
-        validation_certs=Path("/editor"),
-        default_certificate=cluster.certificate_ids[0] if cluster.certificate_ids else "",
-        certificate_ids=cluster.certificate_ids,
-        authority_ids=cluster.authority_ids,
-        nodes=(),
-        resolvers=VALIDATION_RESOLVERS,
-        unknown_host=VALIDATION_UNKNOWN_HOST,
-        abuse_protection=VALIDATION_ABUSE_PROTECTION,
-        trusted_proxy_cidrs=VALIDATION_TRUSTED_PROXIES,
-    )
 
 
 def check(

@@ -179,8 +179,52 @@ require_vars() {
 # names DB_NAME, which accounts.sh holds read-only, so sourcing it from a step
 # is fatal (26-10-09). The last assignment wins, as it would in a shell.
 #
+#
+# A root-owned KEY=value file a platform step wrote (ui-admin.conf, ui-tls.conf),
+# read as haprion.admin_file reads it: comments, blank lines and plain
+# assignments, anything else refused rather than interpreted, the last of a key
+# winning. Only the keys named are set, as variables of the caller. The same
+# function in install/lib.sh and in each command under install/platform/bin/
+# that reads one, held together by a test (review 2026-10-22, 6-10).
+#
+read_admin_file() {
+    local file="$1" line number=0 key
+    local pattern='^([A-Z][A-Z0-9_]*)=([A-Za-z0-9_./:@+,=-]+)$'
+    shift
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        number=$((number + 1))
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" == "#"* ]] && continue
+        if [[ ! "$line" =~ $pattern ]]; then
+            echo "ERROR: ${file}:${number}: not a plain assignment" >&2
+            return 78
+        fi
+        for key; do
+            if [[ "${BASH_REMATCH[1]}" == "$key" ]]; then
+                printf -v "$key" '%s' "${BASH_REMATCH[2]}"
+            fi
+        done
+    done < "$file"
+    return 0
+}
+
 admin_value() {
-    sed -n "s/^${2}=//p" "$1" | tail -n 1
+    (
+        read_admin_file "$1" "$2" || exit
+        printf '%s\n' "${!2:-}"
+    )
+}
+
+#
+# Refuse a symbolic link where a step is about to chown or chmod a file in a
+# directory an account owns or owned: both follow the link (5-14).
+#
+refuse_link() {
+    local path
+    for path; do
+        [[ ! -L "$path" ]] || die "${path} is a symbolic link; refusing to change what it points at"
+    done
 }
 
 #
@@ -304,6 +348,12 @@ sys.exit(1 if network.prefixlen == 0 else 0)' "$entry" 2>/dev/null; then
 #
 ensure_dir() {
     local path="$1" owner="$2" mode="$3"
+    #
+    # Never through a link: chown and chmod follow one, and a directory an
+    # account could replace would hand it whatever the link names (review
+    # 2026-10-22, 5-14).
+    #
+    [[ ! -L "$path" ]] || die "${path} is a symbolic link; refusing to change what it points at"
     if [[ -d "$path" ]]; then
         local current
         current="$(stat -c '%U:%G %a' "$path")"
@@ -470,9 +520,15 @@ ensure_dnsdist() {
     install -d -o root -g root -m 755 /etc/apt/keyrings
     install_file "$DNSDIST_KEYRING" root:root 644 "$(cat ./apt-keys/powerdns-dnsdist.asc)"
     install_file /etc/apt/sources.list.d/pdns.list root:root 644 \
-        "deb [signed-by=${DNSDIST_KEYRING}] http://repo.powerdns.com/${id} ${codename}-dnsdist-21 main"
+        "deb [signed-by=${DNSDIST_KEYRING}] https://repo.powerdns.com/${id} ${codename}-dnsdist-21 main"
+    #
+    # dnsdist from PowerDNS, and nothing else from it: a source this machine
+    # trusts for one package could otherwise offer a newer version of any
+    # other, and apt would take it (review 2026-10-22, 5-15). Measured with
+    # apt-cache policy against the real source: dnsdist 600 in either order.
+    #
     install_file /etc/apt/preferences.d/dnsdist-21 root:root 644 \
-        "$(printf 'Package: dnsdist*\nPin: origin repo.powerdns.com\nPin-Priority: 600')"
+        "$(printf 'Package: dnsdist*\nPin: origin repo.powerdns.com\nPin-Priority: 600\n\nPackage: *\nPin: origin repo.powerdns.com\nPin-Priority: 100')"
     if [[ "$hold" == mask ]]; then
         systemctl mask --quiet dnsdist.service
         log "  masked   dnsdist.service (the binary validates; nothing here serves dns)"
@@ -552,7 +608,12 @@ ensure_haproxy() {
             key="haproxy-ubuntu-ppa.asc"
             uri="https://ppa.launchpadcontent.net/vbernat/haproxy-${HAPROXY_BRANCH}/ubuntu"
             suite="${codename}"
-            pin="" ;;
+            #
+            # HAProxy from the PPA, and nothing else from it (5-15). The
+            # origin is the PPA's Release file's own (`LP-PPA-vbernat-haproxy-3.4`).
+            #
+            pin="$(printf 'Package: haproxy*\nPin: release o=LP-PPA-vbernat-haproxy-%s\nPin-Priority: 600\n\nPackage: *\nPin: release o=LP-PPA-vbernat-haproxy-%s\nPin-Priority: 100' \
+                "$HAPROXY_BRANCH" "$HAPROXY_BRANCH")" ;;
         debian/trixie)
             key="haproxy-debian-net.asc"
             uri="https://haproxy.debian.net"

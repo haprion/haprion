@@ -44,13 +44,18 @@ class TheFilesForATarget(unittest.TestCase):
     def paths(self, os_release: dict[str, str]) -> dict[str, bytes]:
         return {item.path: item.data for item in repository.repository_files(os_release, "3.4")}
 
-    def test_ubuntu_gets_the_ppa_for_its_codename_and_no_pin(self) -> None:
+    def test_ubuntu_gets_the_ppa_for_its_codename_and_nothing_else_from_it(self) -> None:
         written = self.paths(UBUNTU)
         source = written["/etc/apt/sources.list.d/haproxy-3.4.sources"].decode()
         self.assertIn("URIs: https://ppa.launchpadcontent.net/vbernat/haproxy-3.4/ubuntu\n", source)
         self.assertIn("Suites: resolute\n", source)
         self.assertIn("Signed-By: /etc/apt/keyrings/haproxy-ubuntu-ppa.asc\n", source)
-        self.assertNotIn("/etc/apt/preferences.d/haproxy-3.4.pref", written)
+        # HAProxy from the PPA, everything else from it held below the archive (5-15).
+        self.assertEqual(
+            written["/etc/apt/preferences.d/haproxy-3.4.pref"].decode(),
+            "Package: haproxy*\nPin: release o=LP-PPA-vbernat-haproxy-3.4\nPin-Priority: 600\n"
+            "\nPackage: *\nPin: release o=LP-PPA-vbernat-haproxy-3.4\nPin-Priority: 100\n",
+        )
 
     def test_debian_gets_the_backports_suite_and_a_pin_over_notautomatic(self) -> None:
         written = self.paths(DEBIAN)

@@ -67,7 +67,28 @@ MAX_MODEL_BYTES = 256 * 1024
 # Widening is safe in the one direction that matters: every name that was valid
 # before is valid still, so nothing that exists has to be renamed or migrated.
 #
-NAME = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+#
+# An object's or a pool's name, without its anchors for a pattern that holds one
+# among other things (`server_state.SERVER`).
+#
+NAME_BODY = r"[a-z][a-z0-9_-]{0,39}"
+NAME = re.compile(rf"^{NAME_BODY}$")
+
+
+def server_name(index: int) -> str:
+    """A stable, printable name for one pool member: `s1`, `s2`, ...
+
+    The position, not the address. The name is what appears in logs and in
+    `show stat`, where an address is already a column of its own; identity for
+    the purpose of keeping counters across a reload is the server's GUID, and
+    that one is derived from the address precisely so that reordering the pool
+    does not move it. One function for HAProxy, dnsdist and the pages that read
+    the names back (review 2026-10-22, 4-8).
+    """
+
+    return f"s{index + 1}"
+
+
 #
 # The start of every name the generator gives a section of its own (`generate.
 # PREFIX`, held equal by a test). A pool is named by itself in HAProxy since

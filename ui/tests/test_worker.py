@@ -120,6 +120,32 @@ class WorkerTestCase(unittest.TestCase):
         self.addCleanup(sudo.stop)
 
 
+class TheResultIsRedactedBeforeItIsStored(WorkerTestCase):
+    """Review 2026-10-22, 5-9: a refusal's diagnostics reached the job row as they came."""
+
+    def test_a_password_in_a_refusal_s_diagnostics_is_masked(self) -> None:
+        job = claimed()
+        refused = result_document(job, "failed")
+        refused["error"] = {
+            "code": "candidate_invalid",
+            "message": "refused",
+            "details": {"diagnostics": "pass" + "word=synthetic-password-value\nline 3"},
+        }
+        worker._finish(
+            self.connection,
+            job,
+            state="failed",
+            outcome="failed",
+            exit_code=1,
+            result=refused,
+            stderr_excerpt=None,
+            worker="worker-a",
+        )
+        stored = self.finished[0]["result"]["error"]["details"]["diagnostics"]
+        self.assertNotIn("synthetic-password-value", stored)
+        self.assertIn("line 3", stored)
+
+
 class GoodAnswers(WorkerTestCase):
     def test_done_profile_removal_deletes_the_fenced_row_in_the_finish_transaction(self) -> None:
         job = replace(

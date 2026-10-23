@@ -29,6 +29,7 @@ half looked up is used as the basis for what happens to a node.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -134,6 +135,21 @@ def trigger_node(node: NodeStatus, identity: DeployIdentity, writer: TextIO) -> 
     )
 
 
+#
+# A terminal acts on control characters - an escape sequence can move the
+# cursor, rewrite what is shown or set the window's title - and the node's
+# words are the node's: written to an operator's terminal as they came, a
+# compromised node could make a failed step read as a passed one (review
+# 2026-10-22, 5-15). Line breaks and tabs stay; every other C0 and C1 control
+# is shown as its escape.
+#
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _shown(text: str) -> str:
+    return _CONTROL.sub(lambda found: f"\\x{ord(found.group()):02x}", text)
+
+
 def run_trigger(argv: list[str], node: str, writer: TextIO) -> int:
     """Run one node's forced command within its time; the node's own words go to `writer`.
 
@@ -148,16 +164,16 @@ def run_trigger(argv: list[str], node: str, writer: TextIO) -> int:
         for part in (expired.stdout, expired.stderr):
             if part:
                 text = part.decode(errors="replace") if isinstance(part, bytes) else part
-                writer.write(text.rstrip() + "\n")
+                writer.write(_shown(text.rstrip()) + "\n")
         writer.write(
             f"{node} gave no answer within {TRIGGER_TIMEOUT_SECONDS} seconds; "
             "its status decides what it runs\n"
         )
         return exit_codes.TIMED_OUT
     if completed.stdout:
-        writer.write(completed.stdout.rstrip() + "\n")
+        writer.write(_shown(completed.stdout.rstrip()) + "\n")
     if completed.stderr:
-        writer.write(completed.stderr.rstrip() + "\n")
+        writer.write(_shown(completed.stderr.rstrip()) + "\n")
     return completed.returncode
 
 

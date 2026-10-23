@@ -741,8 +741,9 @@ interface offers, and sees two more things.
   translated, and it is the same string the command line prints beside its
   message and the audit trail records, so what a terminal said and what the page
   says can be compared without guessing.
-- **The operation's diagnostics** — its redacted stderr, folded away under the
-  job until asked for. Private keys, `token`/`password`/`secret` assignments and
+- **The operation's diagnostics** — its redacted stderr and the evidence a refusal
+  carries, folded away under the job until asked for. Private keys, assignments to
+  a token, password, secret, credential, API key, access key or private key, and
   sensitive paths are masked before the text is ever stored, and it is capped at
   64 KiB.
 
@@ -824,10 +825,12 @@ settings. It follows no redirect, uses no proxy from the environment, and
 bounds every answer to ten seconds and one megabyte.
 
 The client secret is sealed by the web against the public key step 17 made,
-and only the helper opens it. The sealed text names the issuer and the client
-it was saved for, and the helper refuses to open it for any other: changing
-the issuer means typing the secret again, so a session that changes where
-sign-in goes cannot also send the old secret there.
+and only the helper opens it. The sealed text names the issuer, the client and
+the CA certificate it was saved for, and the helper refuses to open it for any
+other: changing the issuer or the CA means typing the secret again, so a session
+that changes where sign-in goes, or whom it trusts to say so, cannot also send
+the old secret there. A secret saved by a version that did not name the CA opens
+only without a CA of its own; with one, type it again once.
 
 The helper verifies the id_token as OpenID Connect Core lays out for the authorization code flow (section 3.1.3, step 7) —
 signature (RSA, RSA-PSS or ECDSA against the provider's key set; HMAC with the

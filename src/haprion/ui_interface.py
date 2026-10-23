@@ -33,14 +33,13 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from haprion import helper_socket
+from haprion import admin_file, helper_socket
 from haprion.cert_inventory import describe
 from haprion.cert_publish import Material, PublishError, Report
 from haprion.certificates import CertificateError, leaf_block, leaf_fingerprint
@@ -50,13 +49,6 @@ UI_TLS_CONFIG = Path("/etc/haprion/ui-tls.conf")
 UI_TLS_COMMAND = Path("/usr/sbin/haprion-tls")
 INSTALL_TIMEOUT = 120
 
-#
-# The file is written by 05-platform-nginx and sourced by a shell script, so it
-# is shell syntax - but only the narrow part of it that installer writes. Read
-# with a pattern rather than a shell: a line this does not recognise is refused,
-# not evaluated.
-#
-_ASSIGNMENT = re.compile(r"^([A-Z_]+)=([^\s'\"`$;&|<>()\\]+)$")
 
 type Runner = Callable[..., subprocess.CompletedProcess[str]]
 type Installer = Callable[[Material], bool]
@@ -72,19 +64,16 @@ class InterfaceConfig:
 def read_config(path: Path = UI_TLS_CONFIG) -> InterfaceConfig:
     """`TLS_CERT`, `TLS_KEY` and `SERVER_NAME`, as `haprion-tls` reads them."""
 
+    #
+    # Written by 05-platform-nginx and read by `haprion-tls` too: one grammar,
+    # `admin_file`'s, so a line this refuses is one the shell refuses (6-10).
+    #
     try:
-        text = path.read_text(encoding="utf-8")
+        values = admin_file.read(path)
     except OSError as exc:
         raise PublishError("dependency_unavailable", f"cannot read {path}: {exc}") from exc
-    values: dict[str, str] = {}
-    for number, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        match = _ASSIGNMENT.fullmatch(stripped)
-        if match is None:
-            raise PublishError("dependency_unavailable", f"{path}:{number}: not a plain assignment")
-        values[match.group(1)] = match.group(2)
+    except admin_file.AdminFileError as exc:
+        raise PublishError("dependency_unavailable", str(exc)) from exc
     missing = sorted({"TLS_CERT", "TLS_KEY", "SERVER_NAME"} - values.keys())
     if missing:
         raise PublishError("dependency_unavailable", f"{path} does not set {', '.join(missing)}")

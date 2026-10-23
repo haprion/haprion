@@ -545,20 +545,22 @@ step "Sudo rules"
 # The server state rule is the same shape (Fas 20, B263): the verb `set` is
 # fixed, the GUID and the state behind it are validated by
 # haprion-server-state-trigger and again by the helper. So is `unblock` (B271):
-# an object name and addresses behind a fixed verb.
+# an object name and addresses behind a fixed verb. A command a key forces with
+# no arguments ends in `""`, which lets sudo pass it none (review 2026-10-22,
+# 5-15).
 #
 sudoers="# Installed by install/04-node-prepare. Do not edit by hand.
 #
 # One rule per forced command. Each is an exact absolute path, and none of them
 # grants a shell, an interpreter, an editor or environment preservation.
 
-${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-pull-deploy
+${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-pull-deploy \"\"
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-cert-pull
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-cert-remove
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-server-state set *
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-server-state unblock *
 ${STATUS_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-node-status --json
-${BACKUP_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-state-export"
+${BACKUP_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-state-export \"\""
 
 tmp="$(mktemp)"
 printf '%s\n' "$sudoers" > "$tmp"

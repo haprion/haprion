@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
-from haprion import exit_codes
+from haprion import admin_file, exit_codes
 
 from haprion_ui import account_apply, auth, db, labels, tool_answer, users
 
@@ -73,21 +73,17 @@ def load_environment() -> Environment:
 
     path = ADMIN_CONFIG_DIRECTORY / "ui-admin.conf"
     try:
-        text = path.read_text(encoding="utf-8")
+        values = admin_file.read(path)
     except OSError as exc:
         raise AdminError(
             f"cannot read {path}: {exc}\n  It is written by install/platform/02-platform-database.",
             code="dependency_unavailable",
             exit_code=exit_codes.CONFIG,
         ) from exc
-
-    values: dict[str, str] = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        values[key.strip()] = value.strip().strip('"')
+    except admin_file.AdminFileError as exc:
+        raise AdminError(
+            str(exc), code="dependency_unavailable", exit_code=exit_codes.CONFIG
+        ) from exc
 
     missing = sorted({"DB_NAME", "DB_ROLE"} - set(values))
     if missing:

@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_registry, exit_codes
+from haprion import atomic_file, cert_registry, exit_codes
 from haprion.cert_inventory import (
     IMPORT_STORE,
     LETSENCRYPT_LIVE,
@@ -361,7 +361,7 @@ def _make(
         _write_private(staging / CSR, csr_pem)
         _write_private(staging / RECORD, json.dumps(record))
         _write_private(staging / TARGETS, json.dumps(targets))
-        os.rename(staging, store / certificate_id)
+        atomic_file.move(staging, store / certificate_id)
     except (OSError, RequestError):
         shutil.rmtree(staging, ignore_errors=True)
         raise

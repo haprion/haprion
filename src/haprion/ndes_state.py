@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import shutil
 import stat
 from collections.abc import Mapping
@@ -17,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from haprion import atomic_file
 from haprion.config import CERTIFICATE_ID, CLUSTER_ID, RECEIVER_FORMATS, RECEIVER_ID
 
 MAX_RECORD_BYTES = 64 * 1024
@@ -92,21 +92,14 @@ def write_targets(
     """
 
     directory = request_directory(state_root, certificate_id)
-    path = directory / TARGETS_FILE
-    temporary = directory / (TARGETS_FILE + ".new")
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(
-            {
-                "clusters": list(clusters),
-                "receivers": list(receivers),
-                "formats": dict(formats or {}),
-                **({"interface": True} if interface else {}),
-                **({"exportable": True} if exportable else {}),
-            },
-            handle,
-        )
-    os.replace(temporary, path)
+    targets = {
+        "clusters": list(clusters),
+        "receivers": list(receivers),
+        "formats": dict(formats or {}),
+        **({"interface": True} if interface else {}),
+        **({"exportable": True} if exportable else {}),
+    }
+    atomic_file.write(directory / TARGETS_FILE, json.dumps(targets).encode("utf-8"), mode=0o600)
 
 
 def request_targets(

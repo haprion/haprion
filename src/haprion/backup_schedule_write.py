@@ -6,12 +6,10 @@ import os
 import stat
 import subprocess
 from collections.abc import Callable, Mapping
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
 
-from haprion import backup_retention
+from haprion import atomic_file, backup_retention
 from haprion.backup_schedule import Schedule, ScheduleError, parse_schedule, schedule_result
 from haprion.config import CLUSTER_ID
 
@@ -85,26 +83,11 @@ def _private_directory(path: Path) -> bool:
 
 
 def _write(path: Path, content: bytes) -> None:
-    temporary = path.parent / f".{path.name}.{uuid4().hex}"
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-    try:
-        # The mode `os.open` was given passes through the helper's umask (0077);
-        # readers other than root - systemd's loader, an operator's `cat` - want
-        # the file world-readable, and nothing in it is secret.
-        os.fchmod(descriptor, 0o644)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.replace(path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        with suppress(FileNotFoundError):
-            temporary.unlink()
+    #
+    # World-readable: readers other than root - systemd's loader, an
+    # operator's `cat` - want the file, and nothing in it is secret.
+    #
+    atomic_file.write(path, content, mode=0o644)
 
 
 def _command(run: Run, *arguments: str) -> None:

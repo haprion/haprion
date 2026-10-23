@@ -47,7 +47,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_registry, exit_codes, ui_interface
+from haprion import atomic_file, cert_registry, exit_codes, ui_interface
 from haprion.cert_lock import DEFAULT_LOCK_PATH
 from haprion.cert_publish import PublishError
 from haprion.config import (
@@ -473,14 +473,7 @@ def write_authorized_keys(home: Path, line: str) -> Layer:
     # Written beside it and moved into place (26-10-18): a key replaced over
     # a working one must leave the old lock whole if the write stops half way.
     #
-    staged = ssh_directory / f".authorized_keys.{os.getpid()}"
-    try:
-        staged.write_text(content, encoding="ascii")
-        os.chown(staged, ROOT_UID, ROOT_GID)
-        os.chmod(staged, 0o644)
-        os.replace(staged, keys)
-    finally:
-        staged.unlink(missing_ok=True)
+    atomic_file.write(keys, content.encode("ascii"), mode=0o644, uid=ROOT_UID, gid=ROOT_GID)
     return Layer("lock", "created", str(keys))
 
 
@@ -632,15 +625,9 @@ def write_secret(receiver_id: str, hashed: str, locations: Locations) -> Layer:
     os.chown(directory, ROOT_UID, group)
     os.chmod(directory, 0o750)  # noqa: S103 - nginx's group reads the files in it
     target = secret_file(receiver_id, locations)
-    staged = target.with_name(f".{target.name}.{os.getpid()}")
-    descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
-    try:
-        os.write(descriptor, f"{receiver_id}:{hashed}\n".encode("ascii"))
-        os.fchown(descriptor, ROOT_UID, group)
-        os.fchmod(descriptor, 0o640)
-    finally:
-        os.close(descriptor)
-    os.replace(staged, target)
+    atomic_file.write(
+        target, f"{receiver_id}:{hashed}\n".encode("ascii"), mode=0o640, uid=ROOT_UID, gid=group
+    )
     return Layer("secret", "created", str(target))
 
 
@@ -707,6 +694,17 @@ def check_snippet_included(locations: Locations) -> None:
         )
 
 
+def _write_service_file(path: Path, content: str) -> None:
+    """A drop-in sshd or nginx reads, root's and world-readable, whole or not at all.
+
+    It was truncated and written in place: a write that stopped half way left
+    sshd a drop-in it refuses, which is the lock-out `_write_checked` exists
+    to prevent (review 2026-10-22, 4-7).
+    """
+
+    atomic_file.write(path, content.encode("utf-8"), mode=0o644, uid=ROOT_UID, gid=ROOT_GID)
+
+
 def _write_checked(
     path: Path,
     content: str,
@@ -726,15 +724,13 @@ def _write_checked(
 
     before = path.read_text(encoding="utf-8") if path.exists() else None
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    os.chown(path, ROOT_UID, ROOT_GID)
-    os.chmod(path, 0o644)
+    _write_service_file(path, content)
     code, output = tools.run(check)
     if code != 0:
         if before is None:
             path.unlink(missing_ok=True)
         else:
-            path.write_text(before, encoding="utf-8")
+            _write_service_file(path, before)
         raise ReceiverError(
             "config_refused",
             f"{what} refused the change and it was taken back: {output}",
@@ -1092,7 +1088,7 @@ def _restore(path: Path, before: str | None, reload: Sequence[str], tools: Tools
     if before is None:
         path.unlink(missing_ok=True)
     else:
-        path.write_text(before, encoding="utf-8")
+        _write_service_file(path, before)
     _checked(tools.run(reload))
 
 
@@ -1265,11 +1261,8 @@ def set_key(
 
 
 def _restore_secret(target: Path, before: str) -> None:
-    staged = target.with_name(f".{target.name}.{os.getpid()}")
-    staged.write_text(before, encoding="ascii")
-    os.chown(staged, ROOT_UID, grp.getgrnam(HTTPS_OWNER).gr_gid)
-    os.chmod(staged, 0o640)
-    os.replace(staged, target)
+    group = grp.getgrnam(HTTPS_OWNER).gr_gid
+    atomic_file.write(target, before.encode("ascii"), mode=0o640, uid=ROOT_UID, gid=group)
 
 
 def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:

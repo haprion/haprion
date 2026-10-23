@@ -34,14 +34,13 @@ import json
 import os
 import shutil
 import signal
-import tempfile
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from haprion import exit_codes
+from haprion import atomic_file, exit_codes
 from haprion.config import CLUSTER_ID
 
 JOURNAL = Path("/var/lib/haprion/change-journal.json")
@@ -146,31 +145,10 @@ class Recovered:
 # ------------------------------------------------------------------ the disk
 
 
-def _sync_directory(path: Path) -> None:
-    handle = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(handle)
-    finally:
-        os.close(handle)
-
-
 def write_like(path: Path, content: bytes) -> None:
     """Replace `path` by a rename, keeping its owner and mode."""
 
-    status = path.stat()
-    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, status.st_mode & 0o7777)
-        if os.geteuid() == 0:
-            os.chown(temporary, status.st_uid, status.st_gid)
-        os.replace(temporary, path)
-    except BaseException:
-        Path(temporary).unlink(missing_ok=True)
-        raise
+    atomic_file.write_like(path, content)
 
 
 def _write_record(journal: Path, record: Record) -> None:
@@ -179,23 +157,12 @@ def _write_record(journal: Path, record: Record) -> None:
         raise RecoveryError(
             f"{journal} records a change that did not finish; it is put back before the next one"
         )
-    handle, temporary = tempfile.mkstemp(dir=journal.parent, prefix=f".{journal.name}.")
-    try:
-        with os.fdopen(handle, "w") as stream:
-            json.dump(record.as_json(), stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, journal)
-    except BaseException:
-        Path(temporary).unlink(missing_ok=True)
-        raise
-    _sync_directory(journal.parent)
+    atomic_file.write(journal, json.dumps(record.as_json()).encode("utf-8"), mode=0o600)
 
 
 def _drop_record(journal: Path) -> None:
     journal.unlink()
-    _sync_directory(journal.parent)
+    atomic_file.sync_directory(journal.parent)
 
 
 def read(journal: Path = JOURNAL) -> Record | None:
@@ -265,7 +232,7 @@ def recover(journal: Path = JOURNAL) -> Recovered | None:
             leftover.unlink()
     for source, destination in reversed(record.moves):
         if destination.exists():
-            os.replace(destination, source)
+            atomic_file.move(destination, source)
     for directory in reversed(record.created):
         #
         # Made empty by the change; anything in it now is somebody else's.

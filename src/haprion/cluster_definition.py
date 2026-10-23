@@ -44,6 +44,7 @@ from typing import Any
 import yaml
 
 from haprion import (
+    atomic_file,
     backups,
     cert_registry,
     change_journal,
@@ -1141,7 +1142,7 @@ def remove(
         for directory in created:
             directory.mkdir(mode=0o700)
         for source, destination in moves:
-            os.replace(source, destination)
+            atomic_file.move(source, destination)
         change_journal.apply(changes)
 
     warnings: list[str] = []

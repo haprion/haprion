@@ -21,14 +21,14 @@ application.
 from __future__ import annotations
 
 import hashlib
-import os
 import re
-import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
 from nacl.exceptions import CryptoError
 from nacl.public import PrivateKey, PublicKey, SealedBox
+
+from haprion import atomic_file
 
 PUBLIC_TAG = "haproxy-dns-profile-public-key-v1"
 PRIVATE_TAG = "haproxy-dns-profile-private-key-v1"
@@ -169,32 +169,8 @@ def write_key_pair(
 
 
 def _write_private(path: Path, text: str) -> None:
-    temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
-    except Exception:
-        Path(temporary).unlink(missing_ok=True)
-        raise
+    atomic_file.write(path, text.encode("utf-8"), mode=0o600)
 
 
 def _write_public(path: Path, text: str, group: int | None) -> None:
-    temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        if group is not None:
-            os.chown(temporary, -1, group)
-        os.chmod(temporary, 0o640)
-        os.replace(temporary, path)
-    except Exception:
-        Path(temporary).unlink(missing_ok=True)
-        raise
+    atomic_file.write(path, text.encode("utf-8"), mode=0o640, gid=group)

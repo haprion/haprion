@@ -53,7 +53,6 @@ import secrets
 import stat
 import string
 import subprocess
-import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -61,7 +60,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from haprion import cert_pending
+from haprion import atomic_file, cert_pending
 from haprion.cert_inventory import (
     FULLCHAIN,
     IMPORT_STORE,
@@ -652,24 +651,7 @@ def write_file(
     if compare and _current(path) == content:
         return False
 
-    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        os.fchmod(handle, mode)
-        os.fchown(handle, uid, gid)
-        with os.fdopen(handle, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
-    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+    atomic_file.write(path, content, mode=mode, uid=uid, gid=gid)
     return True
 
 

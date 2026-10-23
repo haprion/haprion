@@ -13,11 +13,11 @@ import json
 import os
 import re
 import stat
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from haprion import atomic_file
 from haprion.config import NdesPolicy
 from haprion.dns_profile_keys import (
     DnsProfilePrivateKey,
@@ -241,18 +241,12 @@ def materialize(policy: NdesPolicy, opened: OpenedProfile, *, require_secure: bo
         "endpoint": opened.endpoint,
         "challenge": opened.challenge,
     }
-    fd, temporary = tempfile.mkstemp(prefix=".ndes-", dir=policy.profiles.directory)
     try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(json.dumps(record, separators=(",", ":")).encode("utf-8"))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        atomic_file.write(
+            Path(path), json.dumps(record, separators=(",", ":")).encode("utf-8"), mode=0o600
+        )
     except OSError:
         raise ProfileError("NDES profile could not be materialized") from None
-    finally:
-        Path(temporary).unlink(missing_ok=True)
 
 
 def pending_requests(

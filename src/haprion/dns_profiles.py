@@ -23,16 +23,16 @@ accepts is one the helper accepts, and neither can be lenient alone.
 from __future__ import annotations
 
 import base64
-import contextlib
 import json
 import os
 import re
 import stat
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from haprion import atomic_file
 from haprion.config import DnsProfilesPolicy
 from haprion.dns_profile_keys import (
     DnsProfilePrivateKey,
@@ -243,19 +243,7 @@ def _secure_directory(path: str, *, require_secure: bool) -> None:
 def _atomic_write(path: str, content: bytes) -> None:
     """Write one root-only regular file beside its destination, then rename."""
 
-    directory = os.path.dirname(path)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", dir=directory)
-    try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
+    atomic_file.write(Path(path), content, mode=0o600)
 
 
 def materialize(

@@ -43,7 +43,7 @@ from typing import Any
 
 import yaml
 
-from haprion import exit_codes, safe_yaml
+from haprion import atomic_file, exit_codes, safe_yaml
 from haprion.cert_lock import DEFAULT_LOCK_PATH, LOCK_WAIT_SECONDS, hold
 from haprion.config import (
     DEFAULT_RECEIVER_FORMAT,
@@ -238,7 +238,11 @@ def write(
                 "The default certificate in clusters.yaml must stay assigned to its cluster; "
                 "change the default first.",
             )
-        os.replace(temporary, path)
+        #
+        # Staged and checked by its own loader before it may replace the
+        # registry; the rename is `atomic_file`'s, with the directory synced.
+        #
+        atomic_file.move(Path(temporary), path)
     except RegistryError:
         with contextlib.suppress(OSError):
             os.unlink(temporary)

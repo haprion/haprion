@@ -20,7 +20,7 @@ from typing import Any
 
 import psycopg
 
-from haprion import exit_codes, node_ssh
+from haprion import atomic_file, exit_codes, node_ssh
 from haprion.config import CLUSTER_ID
 from haprion.proxy_model import NAME as OBJECT_NAME
 from haprion.proxy_model import WAF_DECIDING_RULES, waf_field
@@ -332,29 +332,7 @@ def _safe_size(path: Path) -> int:
 
 
 def _replace(path: Path, content: bytes, mode: int = 0o640) -> None:
-    temporary = path.parent / f".{path.name}.new-{os.getpid()}"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
-    descriptor = os.open(temporary, flags, mode)
-    temporary_exists = True
-    try:
-        try:
-            os.fchmod(descriptor, mode)
-            with os.fdopen(descriptor, "wb", closefd=False) as stream:
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-        finally:
-            os.close(descriptor)
-        os.replace(temporary, path)
-        temporary_exists = False
-        directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        if temporary_exists:
-            temporary.unlink(missing_ok=True)
+    atomic_file.write(path, content, mode=mode)
 
 
 def _append(path: Path, payload: bytes) -> None:
@@ -429,32 +407,17 @@ def _assemble(config: CollectorConfig, target: NodeTarget, days: tuple[date, ...
     # this failed on the first real run: four nodes fetched, four mirrors
     # refused with "Invalid cross-device link". Staging a temporary file in the
     # directory it will be renamed into is the ordinary idiom anyway, and it is
-    # what `_replace` beside this already does.
+    # what `atomic_file` does.
     #
-    temporary = config.mirror / f".{target.cluster}--{target.node}.mirror-{os.getpid()}"
-    try:
-        with temporary.open("xb") as output:
-            os.chmod(temporary, 0o600)
-            for wanted in days:
-                path = _part(config, target, wanted)
-                if not path.exists() and not path.is_symlink():
-                    continue
-                _regular(path)
-                with path.open("rb") as source:
-                    while chunk := source.read(1024 * 1024):
-                        output.write(chunk)
-            output.flush()
-            os.fsync(output.fileno())
-        os.chmod(temporary, 0o640)
-        os.replace(temporary, destination)
-        directory = os.open(config.mirror, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        if temporary.exists() or temporary.is_symlink():
-            temporary.unlink()
+    with atomic_file.replacing(destination, mode=0o640) as output:
+        for wanted in days:
+            path = _part(config, target, wanted)
+            if not path.exists() and not path.is_symlink():
+                continue
+            _regular(path)
+            with path.open("rb") as source:
+                while chunk := source.read(1024 * 1024):
+                    output.write(chunk)
 
 
 def _drop_mirror(config: CollectorConfig, target: NodeTarget) -> None:

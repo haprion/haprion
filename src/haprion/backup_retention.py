@@ -17,12 +17,10 @@ to keep, so I kept fourteen" is exactly the guess a backup tool must not make.
 from __future__ import annotations
 
 import json
-import os
 import stat
-from contextlib import suppress
 from pathlib import Path
-from uuid import uuid4
 
+from haprion import atomic_file
 from haprion.config import CLUSTER_ID
 
 RETENTION_ROOT = Path("/etc/haprion/backup-retention")
@@ -115,19 +113,4 @@ def restore(file: Path, content: bytes | None) -> None:
     if content is None:
         file.unlink(missing_ok=True)
         return
-    temporary = file.parent / f".{file.name}.{uuid4().hex}"
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.replace(file)
-        directory = os.open(file.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        with suppress(FileNotFoundError):
-            temporary.unlink()
+    atomic_file.write(file, content, mode=0o600)

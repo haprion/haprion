@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from haprion import (
+    atomic_file,
     backup_retention,
     cluster_lock,
     haprion_repository,
@@ -226,10 +227,8 @@ def _unexpired(root: Path, run: str, now: float) -> Path:
 
 
 def _write_json(path: Path, document: dict[str, Any]) -> None:
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.chmod(0o600)
-    temporary.replace(path)
+    text = json.dumps(document, indent=2, sort_keys=True) + "\n"
+    atomic_file.write(path, text.encode("utf-8"), mode=0o600)
 
 
 def read_json(path: Path) -> dict[str, Any]:

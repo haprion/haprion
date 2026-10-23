@@ -33,9 +33,10 @@ import json
 import os
 import secrets
 import stat
-import tempfile
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path
+
+from haprion import atomic_file
 
 PENDING_NAME = "certificates.pending-deploy.json"
 SCHEMA_VERSION = 1
@@ -106,24 +107,13 @@ def write(path: Path, clusters: Mapping[str, int], *, like: Path) -> None:
         {"schema_version": SCHEMA_VERSION, "clusters": dict(sorted(clusters.items()))},
         indent=2,
     )
-    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        os.fchown(handle, metadata.st_uid, metadata.st_gid)
-        os.fchmod(handle, metadata.st_mode & 0o640)
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            stream.write(rendered + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
-    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+    atomic_file.write(
+        path,
+        (rendered + "\n").encode("utf-8"),
+        mode=metadata.st_mode & 0o640,
+        uid=metadata.st_uid,
+        gid=metadata.st_gid,
+    )
 
 
 class Ledger:

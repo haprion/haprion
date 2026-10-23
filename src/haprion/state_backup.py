@@ -21,7 +21,7 @@ from time import monotonic, sleep
 from typing import BinaryIO, Literal, Protocol
 from uuid import uuid4
 
-from haprion import exit_codes, node_ssh, restore_runs
+from haprion import atomic_file, exit_codes, node_ssh, restore_runs
 from haprion.backup_archive import MAX_ARCHIVE_BYTES, ArchiveError, ArchiveFacts, validate
 from haprion.backup_retention import DEFAULT_RETENTION
 from haprion.config import Cluster, DeployIdentity, Node
@@ -177,7 +177,7 @@ def fetch_over_ssh(
 def _commit_latest(directory: Path, archive: Path) -> None:
     temporary = directory / f".latest-{uuid4().hex}"
     temporary.symlink_to(archive.name)
-    temporary.replace(directory / "latest")
+    atomic_file.move(temporary, directory / "latest")
 
 
 def _retain(directory: Path, keep: int, held: frozenset[str] = frozenset()) -> None:
@@ -230,7 +230,7 @@ def _one_node(
         facts = validator(incoming)
         if facts.hostname != node.name:
             return NodeResult(node.name, "failed", None, None, "backup_node_mismatch")
-        incoming.replace(final)
+        atomic_file.move(incoming, final)
         _commit_latest(directory, final)
         _retain(directory, retention, held)
         return NodeResult(node.name, "done", version, facts.size_bytes, None)

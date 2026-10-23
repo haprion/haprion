@@ -49,7 +49,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_delete, cert_registry, cert_request_state, exit_codes, ui_interface
+from haprion import (
+    atomic_file,
+    cert_delete,
+    cert_registry,
+    cert_request_state,
+    exit_codes,
+    ui_interface,
+)
 from haprion.cert_inventory import (
     FULLCHAIN,
     IMPORT_STORE,
@@ -558,8 +565,8 @@ def write_store(store: Path, certificate_id: str, material: Material) -> bool:
         if present:
             previous = store / f".{certificate_id}.replaced"
             shutil.rmtree(previous, ignore_errors=True)
-            os.rename(final, previous)
-        os.rename(staging, final)
+            atomic_file.move(final, previous)
+        atomic_file.move(staging, final)
         if previous is not None:
             shutil.rmtree(previous, ignore_errors=True)
         return replaced
@@ -1001,8 +1008,8 @@ def write_authority_store(store: Path, certificate_id: str, blocks: Sequence[str
         if replaced:
             previous = store / f".{certificate_id}.replaced"
             shutil.rmtree(previous, ignore_errors=True)
-            os.rename(final, previous)
-        os.rename(staging, final)
+            atomic_file.move(final, previous)
+        atomic_file.move(staging, final)
         if previous is not None:
             shutil.rmtree(previous, ignore_errors=True)
         return replaced

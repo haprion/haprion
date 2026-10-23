@@ -30,13 +30,13 @@ directly.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from haprion import atomic_file
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE, measure_registered
 from haprion.config import PathPolicy, RuntimeConfig
 from haprion.ndes_state import record_path, records_directory
@@ -165,17 +165,13 @@ def write_record(state_root: Path, outcome: Outcome, *, now: datetime) -> None:
     directory = records_directory(state_root)
     directory.mkdir(mode=0o700, exist_ok=True)
     path = record_path(state_root, outcome.certificate_id)
-    temporary = path.with_suffix(".json.new")
     body = {
         "certificate": outcome.certificate_id,
         "attempted_at": now.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "outcome": outcome.outcome,
         "message": outcome.message,
     }
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(body, handle)
-    os.replace(temporary, path)
+    atomic_file.write(path, json.dumps(body).encode("utf-8"), mode=0o600)
 
 
 def renew(

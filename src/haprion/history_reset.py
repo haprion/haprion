@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from haprion import accounts, exit_codes
+from haprion import accounts, atomic_file, exit_codes
 from haprion.git_command import git
 
 DIRECTORY_MODE = 0o750
@@ -187,8 +187,8 @@ def reset_history(
     #
     name, email = _identity(draft)
 
-    os.rename(history, archived_history)
-    os.rename(draft, archived_draft)
+    atomic_file.move(history, archived_history)
+    atomic_file.move(draft, archived_draft)
 
     try:
         git(
@@ -219,8 +219,8 @@ def reset_history(
         #
         shutil.rmtree(draft, ignore_errors=True)
         shutil.rmtree(history, ignore_errors=True)
-        os.rename(archived_history, history)
-        os.rename(archived_draft, draft)
+        atomic_file.move(archived_history, history)
+        atomic_file.move(archived_draft, draft)
         raise
 
     for path in (history, draft):

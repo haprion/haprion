@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from haprion import accounts, exit_codes
+from haprion import accounts, atomic_file, exit_codes
 from haprion.release_layout import (
     NODE_DIRECTORIES,
     ReleaseMetadata,
@@ -228,7 +228,7 @@ def install_release(
                     change_owner=change_owner,
                 )
 
-            os.rename(stage, release)
+            atomic_file.move(stage, release)
             created = True
         except BaseException:
             shutil.rmtree(stage, ignore_errors=True)
@@ -246,6 +246,6 @@ def install_release(
     staged_link.unlink(missing_ok=True)
     staged_link.symlink_to(Path("releases") / metadata.commit)
     change_owner(staged_link, 0, gid)
-    os.rename(staged_link, current)
+    atomic_file.move(staged_link, current)
 
     return InstallResult(release=release, created=created, already_current=False)

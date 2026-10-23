@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -720,3 +721,74 @@ class ADownloadableSigningRequest(DeleteRouteTestCase):
         client = self.client(configuration())
         response = client.get("/certificates/csr.example.net/csr", follow_redirects=False)
         self.assertEqual(response.status_code, 303)
+
+
+class EveryOverlaySaysAJobThatEndedBadly(unittest.TestCase):
+    """Review 2026-10-22, 1B-5: each overlay asked only for `failed`.
+
+    A refused or unanswered certificate deploy read "Done on alpha; waiting for
+    the nodes to be read again", and a refused or unanswered request vanished
+    from the page as if it had never been asked.
+    """
+
+    ENDINGS = ("failed", "blocked", "unknown")
+
+    def ended(self, operation: str, state: str, payload: dict[str, Any], **fields: Any) -> Any:
+        return queued(
+            operation=operation,
+            cluster=fields.pop("cluster", None),
+            state=state,
+            outcome=state,
+            payload=payload,
+            result=None
+            if state == "unknown"
+            else {"outcome": state, "error": {"code": "refused", "message": "the CA said no"}},
+            finished_at=NOW - timedelta(minutes=5),
+            **fields,
+        )
+
+    def test_every_certificate_job_says_so_on_its_row(self) -> None:
+        named = {"certificates": ["web.example.com"]}
+        asks: dict[str, tuple[str, dict[str, Any]]] = {
+            "enrollment": ("cert_scep", {"id": "web.example.com", "domains": ["web.example.com"]}),
+            "import": ("cert_import", {"id": "web.example.com"}),
+            "request": ("cert_request", {"id": "web.example.com", "domains": ["web.example.com"]}),
+            "issue": ("cert_issue", {"domain": "web.example.com", "method": "dns-01"}),
+            "renewal": ("cert_issue", {"domain": "web.example.com", "renew": True}),
+            "delete": ("cert_delete", named),
+            "publish": ("cert_publish", named),
+            "target change": ("cert_target", {**named, "action": "add", "clusters": ["alpha"]}),
+        }
+        for name, (operation, payload) in asks.items():
+            for state in self.ENDINGS:
+                with self.subTest(name, state=state):
+                    job = self.ended(operation, state, payload)
+
+                    shown = certificate_activity.deletion_states([job], now=NOW)
+
+                    self.assertIn("web.example.com", shown)
+                    self.assertFalse(shown["web.example.com"].active)
+                    self.assertNotEqual(shown["web.example.com"].tone, "info")
+
+    def test_a_deploy_that_did_not_finish_is_not_done(self) -> None:
+        row = SimpleNamespace(identifier="web.example.com", older_copy_clusters=("alpha",))
+        for state in (*self.ENDINGS, "partial"):
+            with self.subTest(state):
+                job = self.ended("cert_deploy", state, {}, cluster="alpha")
+
+                shown = certificate_activity.deploy_states([row], [job], now=NOW)
+
+                self.assertNotIn("Done", shown["web.example.com"].detail)
+                self.assertFalse(shown["web.example.com"].active)
+
+    def test_a_refused_job_names_the_helper_s_reason(self) -> None:
+        job = self.ended("cert_import", "blocked", {"id": "web.example.com"})
+
+        shown = certificate_activity.deletion_states([job], now=NOW)["web.example.com"]
+
+        self.assertEqual((shown.label, shown.detail), ("Import refused", "the CA said no"))
+
+    def test_an_enrollment_waiting_for_the_ca_is_still_not_the_job_s_to_say(self) -> None:
+        job = self.ended("cert_scep", "partial", {"id": "web.example.com"})
+
+        self.assertEqual(certificate_activity.deletion_states([job], now=NOW), {})

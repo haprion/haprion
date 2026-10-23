@@ -27,7 +27,7 @@ from uuid import UUID, uuid4
 import psycopg
 from haprion import node_enrollment
 
-from haprion_ui import db, jobs, operations
+from haprion_ui import attention, db, jobs, operations
 from haprion_ui.db import Job
 from tests.test_queue_route import queued
 
@@ -728,10 +728,15 @@ class AnUnknownOutcomeSaysWhatToCheck(unittest.TestCase):
             jobs.unknown_note(self.job("cert_issue")) or "",
         )
 
-    def test_a_publish_that_also_deploys_points_at_the_dashboard(self) -> None:
-        self.assertIn(
-            "Dashboard", jobs.unknown_note(self.job("changes_publish", deploy=True)) or ""
+    def test_a_publish_that_also_deploys_points_at_the_step_that_did_not_answer(self) -> None:
+        """1B-2: a publish that never answered sent the reader to the nodes."""
+
+        deployed = replace(
+            self.job("changes_publish", deploy=True),
+            result={"publish": {"outcome": "done"}, "step": "deploy"},
         )
+        self.assertIn("Dashboard", jobs.unknown_note(deployed) or "")
+        self.assertIn("Versions", jobs.unknown_note(self.job("changes_publish", deploy=True)) or "")
         self.assertIn("Versions", jobs.unknown_note(self.job("changes_publish")) or "")
 
     def test_only_an_unknown_outcome_gets_one(self) -> None:
@@ -744,3 +749,100 @@ class EveryOperationHasAName(unittest.TestCase):
     def test_every_operation_the_worker_runs_is_named(self) -> None:
         missing = sorted(operations.OPERATIONS - set(jobs.OPERATION_LABELS))
         self.assertEqual(missing, [])
+
+
+class AJobInTwoStepsIsToldOneWay(unittest.TestCase):
+    """Review 2026-10-22, 1B-2: the dashboard, Needs attention and the jobs page
+    named the same Publish & deploy, and the same node added before its deploy
+    failed, three different ways."""
+
+    def job(self, operation: str, state: str, payload: dict[str, Any], result: Any, at: int) -> Job:
+        moment = datetime(2026, 10, 22, 12, at, tzinfo=UTC)
+        return queued(
+            id=at,
+            operation=operation,
+            payload=payload,
+            state=state,
+            outcome=state,
+            result=result,
+            created_at=moment,
+            finished_at=moment,
+        )
+
+    def publish_and_deploy(self, state: str = "failed", at: int = 1) -> Job:
+        return self.job(
+            "changes_publish",
+            state,
+            {"deploy": True},
+            {
+                "outcome": state,
+                "error": {"code": "node_unreachable", "message": "node-b did not answer"},
+                "publish": {"outcome": "done", "result": {"version": 27}},
+                "step": "deploy",
+            },
+            at,
+        )
+
+    def added(self, step: str, at: int = 1) -> Job:
+        return self.job(
+            "cluster_node",
+            "failed",
+            {"action": "add", "deploy": True},
+            {
+                "outcome": "failed",
+                "error": {"code": "node_unreachable", "message": "node-c did not answer"},
+                "node": {"outcome": "done", "result": {"action": "added"}},
+                "step": step,
+            },
+            at,
+        )
+
+    def told(self, job: Job) -> tuple[str, str, str | None]:
+        (row,) = attention.from_jobs([job])
+        view = jobs.build_job_overview([job]).jobs[0]
+        return jobs.last_failure([job])["alpha"].label, row.message, view.note
+
+    def test_a_publish_whose_deploy_failed_is_a_failed_deploy_everywhere(self) -> None:
+        dashboard, listed, note = self.told(self.publish_and_deploy())
+
+        self.assertEqual((dashboard, listed), ("Deploy failed", "Deploy failed"))
+        self.assertEqual(note, "Published as version 27; the deploy failed.")
+
+    def test_a_node_added_before_its_deploy_failed_was_added(self) -> None:
+        for step, label, noun in (
+            ("cert_deploy", "Certificate deploy failed", "certificate deploy"),
+            ("deploy", "Deploy failed", "deploy"),
+        ):
+            with self.subTest(step):
+                dashboard, listed, note = self.told(self.added(step))
+
+                self.assertEqual((dashboard, listed), (label, label))
+                self.assertEqual(note, f"The node was added; the {noun} failed.")
+
+    def test_a_job_finished_before_the_worker_named_the_step_is_read_by_its_answer(self) -> None:
+        older = self.added("cert_deploy")
+        result = dict(older.result or {})
+        del result["step"]
+        result["operation"] = "cert_deploy_cluster"
+
+        self.assertEqual(jobs.ending_step(replace(older, result=result)), "cert_deploy")
+
+    def test_a_later_deploy_that_worked_ends_the_attention_row(self) -> None:
+        fixed = self.job("deploy", "done", {}, {"outcome": "done"}, 2)
+
+        self.assertEqual(attention.from_jobs([self.publish_and_deploy(), fixed]), [])
+
+    def test_a_publish_and_deploy_that_worked_ends_an_older_publish_failure(self) -> None:
+        refused = self.job("changes_publish", "blocked", {}, {"outcome": "blocked"}, 1)
+        worked = self.publish_and_deploy("done", at=2)
+
+        self.assertEqual(attention.from_jobs([refused, worked]), [])
+
+    def test_a_publish_that_failed_is_still_a_failed_publish(self) -> None:
+        refused = self.job(
+            "changes_publish", "blocked", {"deploy": True}, {"outcome": "blocked"}, 1
+        )
+
+        dashboard, listed, note = self.told(refused)
+
+        self.assertEqual((dashboard, listed, note), ("Publish failed", "Publish failed", None))

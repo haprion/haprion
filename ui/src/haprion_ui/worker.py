@@ -801,7 +801,8 @@ def _node_deploy_after(
     An added node has no certificates, and a deploy refuses a node without
     them, so a certificate deploy goes first; one that does not finish ends
     the job there. The job ends as its last run ended, with the node change's
-    own answer beside it under `node`: the change stands either way.
+    own answer beside it under `node` and that run named under `step`: the
+    change stands either way.
     """
 
     if job.payload.get("action") == "add":
@@ -812,7 +813,8 @@ def _node_deploy_after(
             return None
         state, outcome, answer, exit_code, stderr = certificates
         if state != "done":
-            return state, outcome, {**(answer or {}), "node": changed}, exit_code, stderr
+            ended = {**(answer or {}), "node": changed, "step": "cert_deploy"}
+            return state, outcome, ended, exit_code, stderr
     deployed = _run_after(
         job,
         "deploy",
@@ -823,7 +825,7 @@ def _node_deploy_after(
     if deployed is None:
         return None
     state, outcome, answer, exit_code, stderr = deployed
-    return state, outcome, {**(answer or {}), "node": changed}, exit_code, stderr
+    return state, outcome, {**(answer or {}), "node": changed, "step": "deploy"}, exit_code, stderr
 
 
 def _deploy_after(
@@ -841,8 +843,9 @@ def _deploy_after(
     a reconcile. So a job interrupted between them is requeued like any other.
 
     The job ends as the deploy ends, with the deploy's answer as its result and
-    the publish's beside it under `publish`: the version is recorded either way,
-    and what a person needs from a failure is why the nodes did not take it.
+    the publish's beside it under `publish` and the step under `step`: the
+    version is recorded either way, and what a person needs from a failure is
+    why the nodes did not take it.
     None when the lease was lost and nothing may be written.
     """
 
@@ -858,7 +861,13 @@ def _deploy_after(
     if deployed is None:
         return None
     state, outcome, answer, exit_code, stderr = deployed
-    return state, outcome, {**(answer or {}), "publish": published}, exit_code, stderr
+    return (
+        state,
+        outcome,
+        {**(answer or {}), "publish": published, "step": "deploy"},
+        exit_code,
+        stderr,
+    )
 
 
 def _wait_for_work(listener: Any, stopping: StopRequest, seconds: int) -> None:

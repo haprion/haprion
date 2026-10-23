@@ -215,19 +215,25 @@ def _expires(label: str) -> str:
 
 
 def from_jobs(rows: Sequence[Job]) -> list[Item]:
-    """The newest finished job per cluster and operation, when it did not work."""
+    """The newest finished run per cluster and operation, when it did not work.
 
-    newest: dict[tuple[str | None, str], Job] = {}
+    By step, not by job (review 2026-10-22, 1B-2): a Publish & deploy whose
+    deploy failed is a failed deploy, which the next Deploy that works ends,
+    and its publish counts as one that worked.
+    """
+
+    newest: dict[tuple[str | None, str], tuple[Job, str]] = {}
     for job in sorted(rows, key=lambda row: (row.created_at, row.id), reverse=True):
         if job.state in ("pending", "running"):
             continue
-        newest.setdefault((job.cluster, job.operation), job)
+        for operation, state in jobs_module.step_states(job):
+            newest.setdefault((job.cluster, operation), (job, state))
     items = []
-    for (cluster, operation), job in newest.items():
-        if job.state not in UNSETTLED:
+    for (cluster, operation), (job, state) in newest.items():
+        if state not in UNSETTLED:
             continue
         label = (
-            jobs_module.failure_label(job)
+            jobs_module.failure_label(job, operation)
             if jobs_module.action_names(job) or operation in jobs_module.FAILURE_LABELS
             else f"{operation} did not work"
         )

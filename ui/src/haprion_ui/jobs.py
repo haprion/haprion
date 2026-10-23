@@ -230,6 +230,83 @@ def published(job: Job) -> bool:
     return isinstance(embedded, dict) and embedded.get("outcome") == "done"
 
 
+#
+# Where a job that runs a second helper after its own keeps its own answer:
+# a Publish & deploy (B257) under `publish`, a node change deployed in the
+# same job (B321) under `node`.
+#
+_OWN_ANSWER = {"changes_publish": "publish", "cluster_node": "node"}
+_LATER_STEPS = frozenset({"deploy", "cert_deploy"})
+
+
+def ending_step(job: Job) -> str:
+    """The operation whose run the job's state is the outcome of.
+
+    The job's own, unless a second helper ran after it: then the job ended as
+    that run ended, and its own step - the publish, the node change - stands.
+    Every page that names a job's failure or groups it asks this, so the
+    dashboard, Needs attention and the jobs page cannot tell one job three ways
+    (review 2026-10-22, 1B-2). The worker names the later step under `step`;
+    a job finished before it did is read by the helper's operation.
+    """
+
+    result = job.result if isinstance(job.result, dict) else {}
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    key = _OWN_ANSWER.get(job.operation)
+    if key is None or payload.get("deploy") is not True or not isinstance(result.get(key), dict):
+        return job.operation
+    step = result.get("step")
+    if step in _LATER_STEPS:
+        return str(step)
+    return "cert_deploy" if result.get("operation") == "cert_deploy_cluster" else "deploy"
+
+
+def step_states(job: Job) -> tuple[tuple[str, str], ...]:
+    """Each step the job ran and how it ended: its own, then the one after it, if any."""
+
+    step = ending_step(job)
+    if step == job.operation:
+        return ((job.operation, job.state),)
+    return ((job.operation, "done"), (step, job.state))
+
+
+_STEP_NOUNS = {"deploy": "deploy", "cert_deploy": "certificate deploy"}
+_STEP_ENDINGS = {
+    "failed": "failed",
+    "blocked": "was refused",
+    "partial": "reached only some nodes",
+    "unknown": "gave no answer",
+}
+
+
+def step_note(job: Job) -> str | None:
+    """What stands when the step after the job's own ended it badly, or None.
+
+    "Publish saved changes · Failed" said nothing of the version the publish
+    recorded, and a node added before its deploy failed read as a node that
+    was never added (review 2026-10-22, 1B-2). The CLI says the same:
+    "Published as version N; deploying it now".
+    """
+
+    step = ending_step(job)
+    if step == job.operation or job.state not in _STEP_ENDINGS:
+        return None
+    result = job.result if isinstance(job.result, dict) else {}
+    if job.operation == "changes_publish":
+        envelope = result.get("publish")
+        body = envelope.get("result") if isinstance(envelope, dict) else None
+        version = body.get("version") if isinstance(body, dict) else None
+        stands = (
+            f"Published as version {version}"
+            if isinstance(version, int) and not isinstance(version, bool)
+            else "Published"
+        )
+    else:
+        action = job.payload.get("action") if isinstance(job.payload, dict) else None
+        stands = "The node was added" if action == "add" else "The node was removed"
+    return f"{stands}; the {_STEP_NOUNS[step]} {_STEP_ENDINGS[job.state]}."
+
+
 def awaiting_deployment(statuses: list[ClusterStatus]) -> frozenset[str]:
     """Clusters whose newest reading says they are not on their target.
 
@@ -396,7 +473,7 @@ def certificate_block(job: Job) -> CertificateBlock | None:
     written by a privileged helper and stored as it arrived.
     """
 
-    if not deploys(job) or job.state != "blocked" or not job.cluster:
+    if ending_step(job) != "deploy" or job.state != "blocked" or not job.cluster:
         return None
     if error_code(job) != CERTIFICATES_NOT_DEPLOYED:
         return None
@@ -641,10 +718,12 @@ UNKNOWN_NEXT: dict[str, str] = {
 def unknown_note(job: Job) -> str | None:
     if job.state != "unknown":
         return None
-    if job.operation == "changes_publish" and deploys(job):
-        return _DEPLOYED
+    #
+    # Asked of the step that gave no answer: a Publish & deploy whose publish
+    # never answered points at Versions, not at the nodes (1B-2).
+    #
     return UNKNOWN_NEXT.get(
-        job.operation, "It may have taken effect. Check what it changes before trying again."
+        ending_step(job), "It may have taken effect. Check what it changes before trying again."
     )
 
 
@@ -774,10 +853,18 @@ def _view(
         #
         diagnostics=diagnostics_of(job) if diagnostics and ended_badly else None,
         held=held,
-        note=unknown_note(job)
-        or deletion_note(job)
-        or publication_note(job)
-        or unresolved_note(job),
+        note=" ".join(
+            text
+            for text in (
+                step_note(job),
+                unknown_note(job)
+                or deletion_note(job)
+                or publication_note(job)
+                or unresolved_note(job),
+            )
+            if text
+        )
+        or None,
     )
 
 
@@ -968,9 +1055,9 @@ def action_names(job: Job) -> tuple[str, str, str] | None:
 
 
 def failure_label(job: Job, operation: str | None = None) -> str:
-    """What a job that did not work is called; `operation` overrides the job's own."""
+    """What a job that did not work is called: by the step that ended it, or by `operation`."""
 
-    operation = operation or job.operation
+    operation = operation or ending_step(job)
     if operation == job.operation and (named := action_names(job)):
         return named[2]
     return FAILURE_LABELS.get(operation, operation)
@@ -1088,14 +1175,12 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
         #
         # A Publish & deploy whose publish recorded its version and whose
         # deploy did not finish is a deploy that failed (review 26-10-08, F2):
-        # the version is there, and publishing again finds nothing saved.
+        # the version is there, and publishing again finds nothing saved. A
+        # node change deployed in its job likewise (1B-2).
         #
-        operation = (
-            "deploy" if job.operation == "changes_publish" and published(job) else job.operation
-        )
         verdicts[job.cluster] = (
             Failure(
-                label=failure_label(job, operation),
+                label=failure_label(job),
                 code=error_code(job),
             )
             if job.state in ATTENTION

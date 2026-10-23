@@ -913,6 +913,7 @@ class NodeChangeAndDeploy(WorkerTestCase):
         (finished,) = self.finished
         self.assertEqual(finished["state"], "done")
         self.assertEqual(finished["result"]["operation"], "deploy")
+        self.assertEqual(finished["result"]["step"], "deploy")
         self.assertEqual(finished["result"]["node"]["result"]["action"], "removed")
 
     def test_an_addition_deploys_certificates_first(self) -> None:
@@ -934,6 +935,7 @@ class NodeChangeAndDeploy(WorkerTestCase):
         self.assertEqual(len(calls), 2)
         (finished,) = self.finished
         self.assertEqual(finished["state"], "failed")
+        self.assertEqual(finished["result"]["step"], "cert_deploy")
         self.assertEqual(finished["result"]["node"]["result"]["action"], "added")
 
     def test_what_is_left_to_a_person(self) -> None:
@@ -1020,6 +1022,7 @@ class PublishAndDeploy(WorkerTestCase):
         (finished,) = self.finished
         self.assertEqual(finished["state"], "failed")
         self.assertEqual(finished["result"]["error"]["code"], "synthetic_failure")
+        self.assertEqual(finished["result"]["step"], "deploy")
         self.assertEqual(finished["result"]["publish"]["outcome"], "done")
 
     def test_a_refused_publish_deploys_nothing(self) -> None:

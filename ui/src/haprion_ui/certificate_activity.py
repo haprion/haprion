@@ -175,15 +175,13 @@ def _enrollment_state_of(job: Job, now: datetime) -> DeletionState | None:
         )
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
-    if job.state == "failed":
-        return DeletionState(
-            "Enrollment failed",
-            _failure(job, "The enrollment job failed"),
-            "critical",
-            False,
-            placeholder,
-        )
-    return None
+    if job.state == "partial":
+        #
+        # The request waits for the CA's approval: the listing helper reads
+        # that from the manager, and the job has nothing to add.
+        #
+        return None
+    return _verdict(job, "Enrollment", "The enrollment job failed", placeholder)
 
 
 def _import_state_of(job: Job, now: datetime) -> DeletionState | None:
@@ -209,14 +207,6 @@ def _import_state_of(job: Job, now: datetime) -> DeletionState | None:
         )
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
-    if job.state == "failed":
-        return DeletionState(
-            "Import failed",
-            _failure(job, "The import job failed"),
-            "critical",
-            False,
-            placeholder,
-        )
     if job.state == "done":
         return DeletionState(
             "Imported",
@@ -226,7 +216,7 @@ def _import_state_of(job: Job, now: datetime) -> DeletionState | None:
             placeholder,
             placeholder_only=True,
         )
-    return None
+    return _verdict(job, "Import", "The import job failed", placeholder)
 
 
 def _request_state_of(job: Job, now: datetime) -> DeletionState | None:
@@ -256,14 +246,6 @@ def _request_state_of(job: Job, now: datetime) -> DeletionState | None:
         )
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
-    if job.state == "failed":
-        return DeletionState(
-            "Request failed",
-            _failure(job, "The signing request job failed"),
-            "critical",
-            False,
-            placeholder,
-        )
     if job.state == "done":
         return DeletionState(
             "Request made",
@@ -273,7 +255,7 @@ def _request_state_of(job: Job, now: datetime) -> DeletionState | None:
             placeholder,
             placeholder_only=True,
         )
-    return None
+    return _verdict(job, "Request", "The signing request job failed", placeholder)
 
 
 def _renewal_state_of(job: Job, now: datetime) -> DeletionState | None:
@@ -289,11 +271,7 @@ def _renewal_state_of(job: Job, now: datetime) -> DeletionState | None:
         return DeletionState("Renewing", "certbot is asked for the certificate again", "info", True)
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
-    if job.state == "failed":
-        return DeletionState(
-            "Renewal failed", _failure(job, "The renewal job failed"), "critical", False
-        )
-    return None
+    return _verdict(job, "Renewal", "The renewal job failed")
 
 
 def _issue_state_of(job: Job, now: datetime, placeholder: Placeholder) -> DeletionState | None:
@@ -311,14 +289,6 @@ def _issue_state_of(job: Job, now: datetime, placeholder: Placeholder) -> Deleti
         )
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
-    if job.state == "failed":
-        return DeletionState(
-            "Request failed",
-            _failure(job, "The request job failed"),
-            "critical",
-            False,
-            placeholder,
-        )
     if job.state == "done":
         return DeletionState(
             "Issued",
@@ -328,14 +298,54 @@ def _issue_state_of(job: Job, now: datetime, placeholder: Placeholder) -> Deleti
             placeholder,
             placeholder_only=True,
         )
-    return None
+    return _verdict(job, "Request", "The request job failed", placeholder)
 
 
 def _failure(job: Job, fallback: str) -> str:
+    """The helper's own words: the error, or a partial outcome's first warning."""
+
     result = job.result if isinstance(job.result, Mapping) else {}
-    error = result.get("error") if isinstance(result.get("error"), Mapping) else {}
-    message = error.get("message") if isinstance(error, Mapping) else None
+    error = result.get("error")
+    warnings = result.get("warnings")
+    said = error if isinstance(error, Mapping) else None
+    if said is None and isinstance(warnings, list) and warnings:
+        said = warnings[0] if isinstance(warnings[0], Mapping) else None
+    message = said.get("message") if said is not None else None
     return message if isinstance(message, str) and message else fallback
+
+
+UNANSWERED = (
+    "The job gave no answer, so it may have taken effect; the listing shows it at the next poll"
+)
+
+
+def _verdict(
+    job: Job, noun: str, fallback: str, placeholder: Placeholder | None = None
+) -> DeletionState | None:
+    """A job that ended badly, the same way in every overlay; None for one that did not.
+
+    Each overlay asked only for `failed`, so a refused deploy read "Done on
+    alpha; waiting for the nodes…" and a refused or unanswered request
+    vanished from the page (review 2026-10-22, 1B-5). The words are the jobs
+    page's: refused, incomplete, outcome unknown. A job that answered per
+    certificate is read by its rows first; this is what is left to say.
+    """
+
+    if job.state == "failed":
+        return DeletionState(
+            f"{noun} failed", _failure(job, fallback), "critical", False, placeholder
+        )
+    if job.state == "blocked":
+        return DeletionState(
+            f"{noun} refused", _failure(job, fallback), "warning", False, placeholder
+        )
+    if job.state == "partial":
+        return DeletionState(
+            f"{noun} incomplete", _failure(job, fallback), "warning", False, placeholder
+        )
+    if job.state == "unknown":
+        return DeletionState("Outcome unknown", UNANSWERED, "critical", False, placeholder)
+    return None
 
 
 def _names(payload: Mapping[str, Any], key: str) -> tuple[str, ...]:
@@ -383,15 +393,6 @@ def _state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
     result = job.result if isinstance(job.result, Mapping) else {}
-    if job.state == "failed":
-        error = result.get("error") if isinstance(result.get("error"), Mapping) else {}
-        message = error.get("message") if isinstance(error, Mapping) else None
-        return DeletionState(
-            "Delete failed",
-            message if isinstance(message, str) and message else "The deletion job failed",
-            "critical",
-            False,
-        )
     row = _row(result, identifier)
     outcome = row.get("state") if row else None
     if outcome == "removed":
@@ -404,7 +405,7 @@ def _state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
         return DeletionState("Delete refused", _reason(row), "critical", False)
     if outcome == "incomplete":
         return DeletionState("Delete incomplete", _reason(row), "warning", False)
-    return None
+    return _verdict(job, "Delete", "The deletion job failed")
 
 
 #
@@ -428,13 +429,6 @@ def _publish_state_of(job: Job, identifier: str, now: datetime) -> DeletionState
     if age > VERDICT_LIFETIME:
         return None
     result = job.result if isinstance(job.result, Mapping) else {}
-    if job.state == "failed":
-        return DeletionState(
-            "Publish failed",
-            _failure(job, "The publish job failed"),
-            "critical",
-            False,
-        )
     row = _publish_row(result, identifier)
     status = row.get("status") if row else None
     if status in {"published", "unchanged"}:
@@ -472,7 +466,7 @@ def _publish_state_of(job: Job, identifier: str, now: datetime) -> DeletionState
             "critical",
             False,
         )
-    return None
+    return _verdict(job, "Publish", "The publish job failed")
 
 
 def _target_state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
@@ -488,15 +482,6 @@ def _target_state_of(job: Job, identifier: str, now: datetime) -> DeletionState 
     if age > VERDICT_LIFETIME:
         return None
     result = job.result if isinstance(job.result, Mapping) else {}
-    if job.state == "failed":
-        error = result.get("error") if isinstance(result.get("error"), Mapping) else {}
-        message = error.get("message") if isinstance(error, Mapping) else None
-        return DeletionState(
-            "Target change failed",
-            message if isinstance(message, str) and message else "The target change job failed",
-            "critical",
-            False,
-        )
     row = _row(result, identifier)
     outcome = row.get("state") if row else None
     moved = ", ".join(
@@ -520,7 +505,7 @@ def _target_state_of(job: Job, identifier: str, now: datetime) -> DeletionState 
         return DeletionState("Target change refused", _reason(row), "critical", False)
     if outcome == "incomplete":
         return DeletionState("Copy kept", _reason(row), "warning", False)
-    return None
+    return _verdict(job, "Target change", "The target change job failed")
 
 
 def _row(result: Mapping[str, Any], identifier: str) -> Mapping[str, Any] | None:
@@ -607,12 +592,10 @@ def _deploy_state_of(job: Job, cluster: str, now: datetime) -> DeletionState | N
     if job.finished_at is None:
         return None
     age = now - job.finished_at
-    if job.state == "failed" or job.outcome in {"failed", "refused"}:
+    if job.state != "done":
         if age > VERDICT_LIFETIME:
             return None
-        return DeletionState(
-            "Deploy failed", _failure(job, f"The deploy to {cluster} failed"), "critical", False
-        )
+        return _verdict(job, "Deploy", f"The deploy to {cluster} failed")
     if age > FOLLOW_UP:
         return None
     #

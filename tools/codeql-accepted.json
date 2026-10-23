@@ -81,38 +81,6 @@
       "reason": "Every target begins with a literal path of the interface's own, so none can become '//host' or name a scheme, and the value after it has passed an allowlist earlier in the same handler. CodeQL does not carry the allowlist check that far. switch_feature: '/settings?switched=' with a name found in features.BY_NAME and 'on' or 'off', 404 otherwise. cluster_settings_save, twice: '/settings/clusters/<cluster>' after _settings_reading has found the cluster among the listed ones, 404 otherwise. change_user: users.href, '/settings/users/' with the account name quoted whole (safe=''), so a slash, colon, question mark or hash in it is percent-encoded, and '?done=' with a literal. Covered by the views.py entry without being named in it until K1 moved them here."
     },
     {
-      "rule": "py/overly-permissive-file",
-      "path": "src/haprion/traffic_collector.py",
-      "message": "Overly permissive mask in open sets file to group readable.",
-      "count": 1,
-      "decided": "2026-09-10",
-      "reason": "The default applies to completed metadata beside the traffic mirror, not to staging or key material. The mirror directory is setgid collector:web and not writable by web; mode 0o640 is the documented handoff that lets web read freshness without letting it alter collector state. Calls that write staging parts and completion markers pass 0o600 explicitly."
-    },
-    {
-      "rule": "py/overly-permissive-file",
-      "path": "src/haprion/traffic_collector.py",
-      "message": "Overly permissive mask in chmod sets file to group readable.",
-      "count": 1,
-      "decided": "2026-09-10",
-      "reason": "This is the completed traffic mirror's publication step. The temporary remains 0o600 while it is assembled, then becomes 0o640 immediately before atomic rename into a setgid collector:web directory so the read-only web identity can serve /logs. Removing group read breaks that documented consumer; adding group write would break the privilege boundary."
-    },
-    {
-      "rule": "py/overly-permissive-file",
-      "path": "src/haprion/dns_profile_keys.py",
-      "message": "Overly permissive mask in open sets file to group readable.",
-      "count": 1,
-      "decided": "2026-09-13",
-      "reason": "The public half of the DNS profile key pair (B146, B149) exists to be read by the web process, which seals provider credentials against it and holds no private material. It is created root:platform-group 0o640 under config/, the mode every file in that directory has; the private half beside it in secrets/ is written 0o600 by the function above and is what the rule protects. Group read is the contract, not an oversight."
-    },
-    {
-      "rule": "py/overly-permissive-file",
-      "path": "src/haprion/dns_profile_keys.py",
-      "message": "Overly permissive mask in chmod sets file to group readable.",
-      "count": 1,
-      "decided": "2026-09-13",
-      "reason": "Same public key, same group: the chmod restates the mode the open created it with so the two agree after the chown, rather than leaving a file whose mode depends on the umask the installer ran under."
-    },
-    {
       "rule": "py/clear-text-storage-sensitive-data",
       "path": "certbot/verify-integrations.py",
       "message": "This expression stores [sensitive data (secret)](1) as clear text.\nThis expression stores [sensitive data (secret)](2) as clear text.",
@@ -132,25 +100,17 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/cert_receiver.py",
       "message": "Overly permissive mask in chmod sets file to group readable.",
-      "count": 3,
+      "count": 2,
       "decided": "2026-09-17",
-      "reason": "The directory a receiver fetches from, made 0750 root with the fetch account's own group. Group read and execute is how that one account reaches the 0600 files inside; root ownership is what stops it replacing them. The same contract the publisher's per-certificate directory carries, decided in the same C7 pass. Two more chmods carry the same message under B306 (2026-10-14), both in the https receiver's secrets: the directory the user files live in (write_secret), made 0750 root:www-data, and a user file put back after a failed change (_restore_secret), 0640 root:www-data - the mode write_secret creates it with. nginx's worker processes run as www-data and read auth_basic_user_file on every request; the group reads and never writes, and nothing else is in its reach there. Named here 2026-10-22, when the entry was given its count."
+      "reason": "2026-09-17: The directory a receiver fetches from, made 0750 root with the fetch account's own group. Group read and execute is how that one account reaches the 0600 files inside; root ownership is what stops it replacing them - the contract the publisher's per-certificate directory carries, decided in the same C7 pass. The second is B306's (2026-10-14): the directory an https receiver's user files live in, made 0750 root:www-data; nginx's workers run as www-data and read auth_basic_user_file on every request, the group reads and never writes. The files themselves are written through haprion.atomic_file since 2026-10-23 and no longer alerts here."
     },
     {
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/cert_receiver.py",
       "message": "Overly permissive mask in chmod sets file to world readable.",
-      "count": 3,
-      "decided": "2026-09-17",
-      "reason": "Four root-owned things that hold no secret: the fetch account's home and its .ssh directory (0755), the authorized_keys line in it (0644), and the sshd drop-in or nginx site the command writes (0644). The modes are B131's, proven on the node accounts in production - sshd reads the lock as root, and an account that owned or could write any of these could replace its own restrictions. A public key, a chroot path and an address whitelist are not material worth hiding from a machine's own users; what matters is that none of them is writable, which these modes state."
-    },
-    {
-      "rule": "py/overly-permissive-file",
-      "path": "src/haprion/backup_schedule_write.py",
-      "message": "Overly permissive mask in open sets file to world readable.",
       "count": 1,
-      "decided": "2026-09-21",
-      "reason": "The file is a systemd drop-in under /etc/systemd/system/<timer>.d/ holding one OnCalendar line for a cluster's backup timer. Unit files are root-owned 0644 by convention and every unit this project installs is written 644 by install_file; the drop-in keeps that mode so `systemctl cat` shows an operator the effective schedule without root. A daily time is not secret. The directory is verified root-owned and not group/world-writable before the write, the file is created O_EXCL|O_NOFOLLOW and renamed into place, so nothing but root can put content there."
+      "decided": "2026-09-17",
+      "reason": "2026-09-17: The fetch account's .ssh directory, made 0755 root-owned - B131's shape, proven on the node accounts in production: sshd reads the lock as root, and an account that owned or could write it could replace its own restrictions. Its authorized_keys and the sshd drop-in or nginx site the command writes (0644, root-owned, no secret) go through haprion.atomic_file since 2026-10-23 and are no longer alerts here."
     },
     {
       "rule": "py/overly-permissive-file",
@@ -158,15 +118,7 @@
       "message": "Overly permissive mask in chmod sets file to world readable.",
       "count": 1,
       "decided": "2026-09-22",
-      "reason": "The chmod completes the open accepted above: the drop-in directory <timer>.d/ and the file in it are made 0755/0644 explicitly because the socket helper runs under UMask=0077, which filtered the modes given to mkdir and os.open down to 0700/0600 - measured in production 2026-09-22, where systemd logged the drop-in as world-inaccessible on every query. The chmod runs after the directory has been verified root-owned and not group/world-writable, so it never widens something that is not root's. Unit files are root-owned 0644 by convention; a schedule is not secret; and nothing here becomes writable."
-    },
-    {
-      "rule": "py/overly-permissive-file",
-      "path": "src/haprion/cert_receiver.py",
-      "message": "Overly permissive mask in open sets file to group readable.",
-      "count": 1,
-      "decided": "2026-10-14",
-      "reason": "B306: an https receiver's user file holds only the yescrypt hash of its password and is created 0o640 root:www-data, because nginx's worker processes run as www-data and read auth_basic_user_file on every request. The group is the reader the contract names; it is never writable by it, and nothing else is in the group's reach in that directory."
+      "reason": "The drop-in directory <timer>.d/ made 0755 root, as every unit drop-in directory beside it: systemd reads it, nothing here is secret, and the helper's UMask=0077 would otherwise leave it 0700 and systemd logging that on every load. The drop-in file itself is written through haprion.atomic_file since 2026-10-23 and no longer an alert of its own."
     },
     {
       "rule": "py/clear-text-logging-sensitive-data",

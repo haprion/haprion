@@ -223,6 +223,8 @@ class LoginTestCase(unittest.TestCase):
                 },
             ),
             mock.patch("haprion_ui.db.forget_attention_acks"),
+            # Every package current (0088): nothing waits in the repository.
+            mock.patch("haprion_ui.db.package_waiting", return_value=[]),
             mock.patch(
                 "haprion_ui.db.getting_started_hidden_at",
                 side_effect=lambda _c: self.getting_started_hidden_at,

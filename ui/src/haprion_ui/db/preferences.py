@@ -196,6 +196,41 @@ def record_update_failure(connection: Connection[Any], *, error: str, at: dateti
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PackageWaiting:
+    """One of the manager's packages with a newer version in the repository (0088, B357)."""
+
+    name: str
+    installed: str
+    available: str
+    read_at: datetime
+
+
+def package_waiting(connection: Connection[Any]) -> list[PackageWaiting]:
+    """Every package with a newer version waiting, by name; none when all are current."""
+
+    with connection.cursor(row_factory=class_row(PackageWaiting)) as cursor:
+        cursor.execute(
+            "select name, installed, available, read_at from package_waiting order by name"
+        )
+        return cursor.fetchall()
+
+
+def replace_package_waiting(
+    connection: Connection[Any], rows: Sequence[tuple[str, str, str]], *, at: datetime
+) -> None:
+    """The packages behind as the poller found them, `(name, installed, available)` each."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("delete from package_waiting")
+        for name, installed, available in rows:
+            cursor.execute(
+                "insert into package_waiting (name, installed, available, read_at) "
+                "values (%s, %s, %s, %s)",
+                (name, installed, available, at),
+            )
+
+
 def show_getting_started(connection: Connection[Any]) -> bool:
     """Show the list again (0076); False when it was not hidden."""
 

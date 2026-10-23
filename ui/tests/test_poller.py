@@ -956,6 +956,50 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
         self.assertIn("ERROR: no policy", reading["poll_error"])
 
 
+class ThePackagesWaitingAreKeptWhenTheyChange(unittest.TestCase):
+    """0088, B357: what dpkg has installed against what apt's lists offer, on this host."""
+
+    class Pool:
+        def connection(self) -> Any:
+            return contextlib.nullcontext(unittest.mock.Mock())
+
+    class Reader:
+        def __init__(self) -> None:
+            self.answers: list[Any] = []
+
+        def read(self) -> Any:
+            answer = self.answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    def test_written_on_the_first_pass_and_again_only_when_it_changed(self) -> None:
+        from haprion.package_inventory import Behind
+
+        reader = self.Reader()
+        waiting = [Behind("haprion-cli", "0.99.0", "0.99.1")]
+        reader.answers = [[], [], waiting, waiting, OSError("unreadable"), []]
+        watch = poller.PackageWatch(reader)  # type: ignore[arg-type]
+        with unittest.mock.patch("haprion_ui.db.replace_package_waiting") as replaced:
+            for _ in range(6):
+                watch.poll(self.Pool())
+        self.assertEqual(
+            [call.args[1] for call in replaced.call_args_list],
+            [(), (("haprion-cli", "0.99.0", "0.99.1"),), ()],
+        )
+
+    def test_a_database_that_refuses_is_tried_again_next_pass(self) -> None:
+        reader = self.Reader()
+        reader.answers = [[], []]
+        watch = poller.PackageWatch(reader)  # type: ignore[arg-type]
+        with unittest.mock.patch(
+            "haprion_ui.db.replace_package_waiting", side_effect=[RuntimeError("down"), None]
+        ) as replaced:
+            watch.poll(self.Pool())
+            watch.poll(self.Pool())
+        self.assertEqual(replaced.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
 

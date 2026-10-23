@@ -705,6 +705,36 @@ class TheDashboardBox(LoginTestCase):
         self.assertNotIn("Needs attention", empty)
 
 
+class AFixWaitingInTheRepository(unittest.TestCase):
+    """0088, B357: one row per package, the waiting version in the row's own name."""
+
+    def test_each_package_is_a_warning_about_the_manager(self) -> None:
+        from haprion_ui.db import PackageWaiting
+
+        at = datetime(2026, 10, 23, 22, 0, tzinfo=UTC)
+        [item] = attention.from_packages([PackageWaiting("haprion-cli", "0.99.0", "0.99.1", at)])
+        self.assertEqual(
+            (item.kind, item.severity, item.cluster, item.subject, item.since),
+            ("manager", "warning", None, "haprion-cli 0.99.1", at),
+        )
+        self.assertEqual(item.message, "waits in the repository; 0.99.0 is installed")
+        self.assertEqual(attention.from_packages([]), [])
+
+    def test_a_build_s_version_is_its_release_and_its_commit(self) -> None:
+        """The full one did not fit the row (26-10-23): the time and the distribution say nothing."""
+
+        for full, shown in (
+            ("0.99.0+git20261101120000.0123456789ab~ubuntu26.04", "0.99.0 (01234567)"),
+            ("0.9.2+git20261022062952.7163b160d187", "0.9.2 (7163b160)"),
+            ("0.99.0", "0.99.0"),
+            ("0.99.0~debian13", "0.99.0"),
+            ("0.9.1-1", "0.9.1-1"),
+            ("2026.10.17", "2026.10.17"),
+        ):
+            with self.subTest(full):
+                self.assertEqual(attention.short_version(full), shown)
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -36,7 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import exit_codes
+from haprion import exit_codes, package_inventory
 from haprion.cli.cluster_list_helper import run_cluster_list_helper
 from haprion.cli.inventory import run_inventory_helper
 from haprion.cli.list_helper import MAX_DIFFS
@@ -608,6 +608,38 @@ def _local_readings(
 MANAGER_CERTIFICATES = Source("cert_list", None, db.record_cluster_certificates, reading=_nothing)
 
 
+class PackageWatch:
+    """The manager's packages with a newer version waiting (0088, B357), kept when that changes.
+
+    Read from dpkg's status and apt's lists on this host, which the poller's
+    sandbox leaves readable; the reader reads them again only when one has
+    changed, so a pass that finds nothing new costs a stat of each file.
+    """
+
+    def __init__(self, reader: package_inventory.Reader | None = None) -> None:
+        self.reader = reader or package_inventory.Reader()
+        self.kept: tuple[tuple[str, str, str], ...] | None = None
+
+    def poll(self, pool: Any) -> None:
+        """Never raises: a package listing is never worth a failed pass."""
+
+        try:
+            found = tuple((p.name, p.installed, p.available) for p in self.reader.read())
+        except Exception as exc:  # noqa: BLE001 - one failure is one log line
+            logger.warning("the manager's packages were not read: %s", exc)
+            return
+        if found == self.kept:
+            return
+        try:
+            with pool.connection() as connection:
+                db.replace_package_waiting(connection, found, at=datetime.now(UTC))
+                connection.commit()
+        except Exception as exc:  # noqa: BLE001 - kept again on the next pass
+            logger.warning("the manager's packages were not recorded: %s", exc)
+            return
+        self.kept = found
+
+
 def poll_manager(pool: Any, readings: ReadingsHelper = run_readings_helper) -> bool:
     """The manager's own certificate reading; True when it was done. Never raises."""
 
@@ -803,6 +835,7 @@ def main(argv: list[str] | None = None) -> int:
             #
             stopping = StopRequest(what="after this pass")
             asker = update_check.Asker()
+            packages = PackageWatch()
             while not stopping.requested():
                 #
                 # Asked again before every pass. The lock lives as long as its
@@ -826,6 +859,7 @@ def main(argv: list[str] | None = None) -> int:
                         connection.commit()
                 index_cluster_list(pool, known)
                 poll_manager(pool)
+                packages.poll(pool)
                 #
                 # Once a day at most, and only while its switch is on (B342);
                 # it decides that itself, so most passes it reads one row. On

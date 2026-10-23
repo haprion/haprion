@@ -3735,6 +3735,7 @@ def _attention(request: Request, config: Config) -> attention.Attention:
             horizons=db.partition_horizons(connection, attention.MAINTENANCE_AHEAD),
             now=now,
         )
+        items += attention.from_packages(db.package_waiting(connection))
         if config.traffic_logs.enabled:
             items += attention.from_waf(
                 _waf_not_working(request, config, connection, clusters),

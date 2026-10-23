@@ -3066,7 +3066,10 @@ gave when it has one, or - critical - that dropped lines in the last hour; and t
 services, judged by what they leave in the database: the poller not having read the clusters for
 two poll intervals (at least five minutes), a job queued ten minutes with none running while
 writes are on (the worker takes none), and the nightly maintenance (`haprion-retention`) not
-having run - its daily partitions made ahead of time fall more than a day short. Nothing there, no
+having run - its daily partitions made ahead of time fall more than a day short; and, as a
+warning, each of the manager's own `haprion-*` packages with a newer version waiting in the
+repository, as apt's lists already hold it (nothing is fetched to know: the lists are as new as the
+machine's last `apt update`), until `apt upgrade` installs it. Nothing there, no
 box. What somebody chose - a drained server, a
 maintenance page, a block, a publish not yet deployed - is not on it: those are on the cluster's
 card and *Operations* line, and on *Versions*.

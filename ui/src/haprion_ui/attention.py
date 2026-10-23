@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -29,7 +30,7 @@ from haprion import log_forwarding
 
 from haprion_ui import jobs as jobs_module
 from haprion_ui import labels
-from haprion_ui.db import Job
+from haprion_ui.db import Job, PackageWaiting
 
 type Severity = Literal["critical", "warning"]
 SEVERITIES: tuple[Severity, ...] = ("critical", "warning")
@@ -585,6 +586,47 @@ def from_log_forwarding(status_rows: Iterable[Any], *, now: datetime) -> list[It
                     )
                 )
     return items
+
+
+#
+# A build's package version (`build-release-packages`): the release, then
+# `+git<UTC time>.<commit>` for a build between releases, then `~<distribution>`
+# for the interface's and certbot's packages.
+#
+BUILD_VERSION = re.compile(
+    r"^(?P<release>[^+~]+)(?:\+git\d{14}\.(?P<commit>[0-9a-f]{8})[0-9a-f]*)?(?:~.*)?$"
+)
+
+
+def short_version(version: str) -> str:
+    """A package version as a person tells two apart: `0.99.0 (0123abcd)`; any other as it is."""
+
+    found = BUILD_VERSION.fullmatch(version)
+    if found is None:
+        return version
+    commit = found.group("commit")
+    return f"{found.group('release')} ({commit})" if commit else found.group("release")
+
+
+def from_packages(rows: Sequence[PackageWaiting]) -> list[Item]:
+    """The manager's packages with a newer version waiting in the repository (0088, B357).
+
+    A fix that is published and not installed. The version waiting is in the
+    row's subject, so an acknowledged row comes back when a newer one arrives.
+    """
+
+    return [
+        Item(
+            kind="manager",
+            severity="warning",
+            cluster=None,
+            subject=f"{row.name} {short_version(row.available)}",
+            message=f"waits in the repository; {short_version(row.installed)} is installed",
+            since=row.read_at,
+            link="/",
+        )
+        for row in rows
+    ]
 
 
 def from_manager(

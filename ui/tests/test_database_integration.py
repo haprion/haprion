@@ -896,6 +896,39 @@ class ARealDatabase(unittest.TestCase):
                 connection.execute("delete from update_check")
                 connection.commit()
 
+    def test_the_poller_replaces_the_packages_waiting_and_the_web_reads_them(self) -> None:
+        """0088: replaced whole by the poller, read by the web, written by nothing else."""
+
+        at = datetime(2026, 10, 23, 22, 0, tzinfo=UTC)
+        try:
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+                db.replace_package_waiting(
+                    connection,
+                    [("haprion-cli", "0.99.0", "0.99.1"), ("haprion-ui", "0.99.0", "0.99.1")],
+                    at=at,
+                )
+                db.replace_package_waiting(connection, [("haprion-ui", "0.99.0", "0.99.1")], at=at)
+                connection.commit()
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+                self.assertEqual(
+                    db.package_waiting(connection),
+                    [db.PackageWaiting("haprion-ui", "0.99.0", "0.99.1", at)],
+                )
+            with (
+                self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                connection.execute("delete from package_waiting")
+            with (
+                self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                db.replace_package_waiting(connection, [("haproxy", "1", "2")], at=at)
+        finally:
+            with self.connect() as connection:
+                connection.execute("delete from package_waiting")
+                connection.commit()
+
     def test_the_web_can_rename_a_draft_it_wrote(self) -> None:
         """The rename moves the key, so the web needs `update` on `object_id` too.
 

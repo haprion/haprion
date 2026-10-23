@@ -580,19 +580,21 @@ def _remove(
             continue
         layers = _clear_receivers(certificate_id, dropped_receivers, runtime)
         #
-        # The cluster PEM is one shared file for every cluster, so it stays
-        # while any cluster still names the certificate. Off the last one it
-        # is a key pair no entry owns, in a directory the nodes may read - the
-        # deletion removes it, and so does this (review 2026-09-17, finding 5).
+        # Each cluster has its own copy (B358): the one in a cluster it is
+        # taken off is a key pair no entry gives that cluster, in a directory
+        # that cluster's nodes may read - the deletion removes it, and so does
+        # this (review 2026-09-17, finding 5).
         #
-        remaining_clusters = tuple(c for c in before_clusters if c not in change.clusters)
         entry = runtime.registry.certificates.get(certificate_id) if runtime.registry else None
         authority = entry is not None and entry.source.kind == AUTHORITY
-        if dropped_clusters and not remaining_clusters and policy.certificate_root is not None:
+        for dropped in dropped_clusters:
+            directory = policy.certificate_directory(dropped)
+            if directory is None:
+                continue
             copy = (
-                authority_path(policy.certificate_root, certificate_id)
+                authority_path(directory, certificate_id)
                 if authority
-                else certificate_path(policy.certificate_root, certificate_id)
+                else certificate_path(directory, certificate_id)
             )
             layers += (_unlink(copy),)
         clusters = [runtime.clusters[c] for c in dropped_clusters if c in runtime.clusters]

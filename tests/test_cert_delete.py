@@ -77,7 +77,9 @@ class DeleteFixture(Fixture):
         # would have left them, so a deletion has something to remove.
         #
         for certificate_id, raw in (KEEPERS | certificates).items():
-            (self.dist / f"{certificate_id}.pem").write_text("pem\n", encoding="utf-8")
+            for cluster_id in raw.get("clusters") or []:
+                self.copy(certificate_id, cluster_id).parent.mkdir(exist_ok=True)
+                self.copy(certificate_id, cluster_id).write_text("pem\n", encoding="utf-8")
             (self.renewal / f"{certificate_id}.conf").write_text("version = 5.8.0\n")
             if "lb-01" in (raw.get("receivers") or []):
                 held = self.receiver_dir / certificate_id
@@ -95,6 +97,11 @@ class DeleteFixture(Fixture):
         policy["cert_deploy_identity"] = {"key": str(key)}
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         return policy_path
+
+    def copy(self, certificate_id: str, cluster_id: str = "alpha") -> Path:
+        """A cluster's copy, in its own directory under the certificate root (B358)."""
+
+        return self.dist / cluster_id / f"{certificate_id}.pem"
 
     def certbot(self, command: Sequence[str]) -> tuple[int, str]:
         self.certbot_calls.append(tuple(command))
@@ -148,7 +155,7 @@ class WhatIsRefused(DeleteFixture):
         self.assertEqual(outcome.state, "refused")
         self.assertEqual(outcome.code, code)
         self.assertEqual((self.root / "certificates.yaml").read_bytes(), self.before)
-        self.assertTrue((self.dist / f"{certificate_id}.pem").exists())
+        self.assertTrue(any(path.exists() for path in self.dist.glob(f"*/{certificate_id}.pem")))
         self.assertTrue((self.renewal / f"{certificate_id}.conf").exists())
         self.assertEqual(self.certbot_calls, [])
         self.assertEqual(self.node_calls, [])
@@ -251,7 +258,7 @@ class WhatGoes(DeleteFixture):
         (outcome,) = report.outcomes
         self.assertEqual(outcome.state, "removed", outcome)
         self.assertNotIn("example.com", self.registered())
-        self.assertFalse((self.dist / "example.com.pem").exists())
+        self.assertFalse(self.copy("example.com").exists())
         self.assertFalse((self.receiver_dir / FULLCHAIN).exists())
         self.assertFalse((self.receiver_dir / PRIVKEY).exists())
         self.assertEqual(
@@ -278,8 +285,24 @@ class WhatGoes(DeleteFixture):
         #
         # The keepers, and their material, are exactly as they were.
         #
-        self.assertTrue((self.dist / "keeper-alpha.example.pem").exists())
+        self.assertTrue(self.copy("keeper-alpha.example").exists())
         self.assertTrue((self.renewal / "keeper-alpha.example.conf").exists())
+
+    def test_every_cluster_s_copy_goes(self) -> None:
+        policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha", "beta"]}}
+        )
+        report = self.run_delete(policy_path, "example.com")
+
+        self.assertEqual(report.removed, ("example.com",))
+        self.assertFalse(self.copy("example.com", "alpha").exists())
+        self.assertFalse(self.copy("example.com", "beta").exists())
+        removed = {layer.name for layer in report.outcomes[0].layers if layer.state == "removed"}
+        self.assertLessEqual(
+            {str(self.copy("example.com", "alpha")), str(self.copy("example.com", "beta"))},
+            removed,
+        )
+        self.assertTrue(self.copy("keeper-beta.example", "beta").exists())
 
     def test_an_explicit_lineage_name_is_the_one_certbot_is_asked_for(self) -> None:
         policy_path = self.prepared(
@@ -363,7 +386,7 @@ class WhatGoes(DeleteFixture):
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
         (self.renewal / "example.com.conf").unlink()
-        (self.dist / "example.com.pem").unlink()
+        self.copy("example.com").unlink()
         report = self.run_delete(policy_path, "example.com")
         self.assertEqual(report.removed, ("example.com",))
         self.assertEqual({layer.state for layer in report.outcomes[0].layers[:-1]}, {"absent"})
@@ -385,7 +408,7 @@ class WhatGoes(DeleteFixture):
         self.assertEqual(refused.exception.code, "operation_locked")
         self.assertEqual(held.call_args.args, (self.lock,))
         self.assertIn("example.com", self.registered())
-        self.assertTrue((self.dist / "example.com.pem").exists())
+        self.assertTrue(self.copy("example.com").exists())
 
 
 class WhatIsLeftAndSaid(DeleteFixture):
@@ -427,7 +450,7 @@ class WhatIsLeftAndSaid(DeleteFixture):
         lineage = [layer for layer in outcome.layers if layer.name.startswith("lineage")][0]
         self.assertEqual(lineage.state, "failed")
         self.assertIn("No certificate found", lineage.detail)
-        self.assertFalse((self.dist / "example.com.pem").exists())
+        self.assertFalse(self.copy("example.com").exists())
         #
         # The entry stays, so the certificate is still there to delete again;
         # with certbot answering, the second run finishes it.
@@ -465,6 +488,27 @@ class WhatIsLeftAndSaid(DeleteFixture):
                 ("beta", "node-b"): "removed",
             },
         )
+
+    def test_a_copy_left_in_any_cluster_s_directory_is_removed_by_name(self) -> None:
+        """Without the entry the search is by ID, in every cluster's directory (B358)."""
+
+        policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        self.node_answers["node-b.example.com"] = (255, "connection refused")
+        self.assertEqual(self.run_delete(policy_path, "example.com").incomplete, ("example.com",))
+        stray = self.copy("example.com", "beta")
+        stray.write_text("pem\n", encoding="utf-8")
+
+        del self.node_answers["node-b.example.com"]
+        again = self.run_delete(policy_path, "example.com")
+
+        self.assertFalse(stray.exists())
+        self.assertIn(
+            (str(stray), "removed"),
+            [(layer.name, layer.state) for layer in again.outcomes[0].layers],
+        )
+        self.assertTrue(self.copy("keeper-beta.example", "beta").exists())
 
 
 class TheGuardsReadTheCommittedObjects(DeleteFixture):
@@ -574,8 +618,8 @@ class TheHelper(DeleteFixture):
         policy_path = self.prepared(
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
-        self.dist.chmod(0o500)
-        self.addCleanup(self.dist.chmod, 0o700)
+        self.alpha.chmod(0o500)
+        self.addCleanup(self.alpha.chmod, 0o700)
         self.certbot = lambda command: (1, "certbot: locked")  # type: ignore[method-assign]
         self.node_answers["node-a.example.com"] = (1, "unknown request: cert-remove")
         self.node_answers["node-b.example.com"] = (1, "unknown request: cert-remove")

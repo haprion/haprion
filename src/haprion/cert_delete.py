@@ -408,17 +408,24 @@ def remove_material(
     runtime: RuntimeConfig,
     policy: PathPolicy,
 ) -> tuple[Layer, ...]:
-    """The published copies: one cluster PEM, two files per receiver."""
+    """The published copies: one PEM in each cluster's directory, two files per receiver."""
 
     registry = runtime.registry
     assert registry is not None  # noqa: S101
     layers: list[Layer] = []
     entry = registry.certificates.get(certificate_id)
-    if entry_clusters and policy.certificate_root is not None:
-        if entry is not None and entry.source.kind == AUTHORITY:
-            layers.append(_unlink(authority_path(policy.certificate_root, certificate_id)))
-        else:
-            layers.append(_unlink(certificate_path(policy.certificate_root, certificate_id)))
+    authority = entry is not None and entry.source.kind == AUTHORITY
+    for cluster_id in entry_clusters:
+        directory = policy.certificate_directory(cluster_id)
+        if directory is None:
+            continue
+        layers.append(
+            _unlink(
+                authority_path(directory, certificate_id)
+                if authority
+                else certificate_path(directory, certificate_id)
+            )
+        )
     for receiver_id in entry_receivers:
         receiver = registry.receivers.get(receiver_id)
         if receiver is None:
@@ -800,7 +807,7 @@ def _sweep(
     """A certificate the registry no longer names: what is left of it, by name.
 
     The registry entry is the one layer that says where a certificate went,
-    so without it the search is by ID - the PEM under the certificate root, a
+    so without it the search is by ID - the PEM in each cluster's directory, a
     lineage of the same name, the import directory, and the copy on every
     node of every cluster. A receiver's pair is not named by the ID and is
     not looked for; the registry layer runs last for exactly that reason, so
@@ -812,8 +819,12 @@ def _sweep(
     """
 
     layers: list[Layer] = []
-    if policy.certificate_root is not None:
-        layers.append(_unlink(certificate_path(policy.certificate_root, certificate_id)))
+    directories = dict.fromkeys(
+        directory
+        for cluster_id in runtime.clusters
+        if (directory := policy.certificate_directory(cluster_id)) is not None
+    )
+    layers.extend(_unlink(certificate_path(directory, certificate_id)) for directory in directories)
     layers.append(
         remove_source(
             "acme",

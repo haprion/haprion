@@ -274,6 +274,22 @@ class TestMode(Planning):
         # Held back as the key the preview compared, not as the target's own file.
         self.assertFalse(any(path.startswith("/etc/ssh/ssh_host_") for path in plan.left_out))
 
+    def test_the_test_node_does_not_get_the_archived_node_s_own_keys(self) -> None:
+        """Its fetch keys among them: they would let a test machine read the cluster's files."""
+
+        files = {
+            **FILES,
+            "/root/.ssh/id_ed25519_example_pull": ("private\n", 0o600),
+            "/root/.ssh/id_ed25519_example_pull.pub": ("ssh-ed25519 AAAA pull\n", 0o644),
+        }
+        test = restore_plan.build(self.source(files), "test", TARGET, PROFILE)
+        new_vm = restore_plan.build(self.source(files), "new_vm", TARGET)
+
+        self.assertFalse(
+            any(file.path.startswith("/root/.ssh/id_") for file in test.files), test.files
+        )
+        self.assertTrue(self.untouched(new_vm, "/root/.ssh/id_ed25519_example_pull"))
+
     def test_every_rewrite_is_listed(self) -> None:
         fields = {(r.path, r.field) for r in self.plan().rewrites}
         self.assertEqual(

@@ -22,7 +22,7 @@ CLUSTER="${2:-}"
 [[ -n "$CLUSTER" ]] || die "usage: $(basename "$0") <answers-file> <cluster-id>"
 valid_id "$CLUSTER" || die "invalid cluster id: ${CLUSTER}"
 require_vars TRIGGER_USER STATUS_USER BACKUP_USER LOGREAD_USER PULL_USER MANAGER_HOST \
-             NODE_CONFIG_PULL_KEY PUBLISH_ROOT
+             NODE_CONFIG_PULL_KEY
 if id -u "$LOGREAD_USER" >/dev/null 2>&1; then
     IFS=: read -r _ _ logread_uid _ _ logread_home logread_shell \
         < <(getent passwd "$LOGREAD_USER")
@@ -958,29 +958,10 @@ ${ENROLLMENT_BLOCK}
 
    Host key: $(ssh-keygen -lf "$HOST_KEY_FILE" | cut -d' ' -f2)
 
-Where the runtime policy names no pull_account, add these lines by hand instead.
-rrsync is what limits each key to reading one tree - without it the forced
-command is a full rsync, which is a shell in all but name.
+The manager writes this node's two fetch keys into its pull accounts: each
+reads this cluster's files alone, from this node's address alone.
 
 INTRO
-
-pub() { cut -d' ' -f1,2 < "$1"; }
-
-echo "  /home/${PULL_USER}/.ssh/authorized_keys    (owner ${PULL_USER}, mode 600)"
-echo
-echo "restrict,command=\"rrsync -ro ${PUBLISH_ROOT}\" $(pub "${NODE_CONFIG_PULL_KEY}.pub")"
-echo
-if [[ -n "${NODE_CERT_PULL_KEY:-}" && -n "${CERTIFICATE_ROOT:-}" ]]; then
-    echo "  /home/${CERT_PULL_USER}/.ssh/authorized_keys   (owner ${CERT_PULL_USER}, mode 600)"
-    echo
-    echo "restrict,command=\"rrsync -ro ${CERTIFICATE_ROOT}\" $(pub "${NODE_CERT_PULL_KEY}.pub")"
-    echo
-fi
-
-cat <<'OUTRO'
-One line per NODE, not one per cluster: each node has its own key, so a node
-that is rebuilt or compromised is revoked on its own.
-OUTRO
 if [[ -z "${MANAGER_HOST_KEY:-}" ]]; then
     cat <<HOSTKEY
 

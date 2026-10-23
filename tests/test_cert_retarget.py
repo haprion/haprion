@@ -183,23 +183,24 @@ class RemovingFromATarget(RetargetFixture):
             [("node-a.example.com", "example.com"), ("node-b.example.com", "example.com")],
         )
         self.assertEqual([n.state for n in report.outcomes[0].nodes], ["removed", "removed"])
-        # The material for the remaining cluster is not touched.
-        self.assertTrue((self.dist / "example.com.pem").exists())
+        # The cluster it left loses its copy; the remaining cluster's is not touched.
+        self.assertFalse(self.copy("example.com", "beta").exists())
+        self.assertTrue(self.copy("example.com", "alpha").exists())
         self.assertEqual(self.deployed, [])
 
     def test_the_last_cluster_takes_the_distribution_copy_with_it(self) -> None:
-        """Off its last cluster the PEM under the certificate root is a key
-        pair no entry owns, in a directory the nodes may read; the deletion
+        """Off a cluster its copy there is a key pair no entry gives that
+        cluster, in a directory the cluster's nodes may read; the deletion
         removes it and so does this (review 2026-09-17, finding 5)."""
 
-        self.assertTrue((self.dist / "shop.example.pem").exists())
+        self.assertTrue(self.copy("shop.example").exists())
         report = self.retarget(self.policy_path, "remove", "shop.example", clusters=("alpha",))
 
         self.assertEqual(report.changed, ("shop.example",))
         self.assertEqual(self.targets("shop.example")["clusters"], [])
-        self.assertFalse((self.dist / "shop.example.pem").exists())
+        self.assertFalse(self.copy("shop.example").exists())
         self.assertIn(
-            (str(self.dist / "shop.example.pem"), "removed"),
+            (str(self.copy("shop.example")), "removed"),
             [(layer.name, layer.state) for layer in report.outcomes[0].layers],
         )
         # The receiver it still publishes to keeps its pair.

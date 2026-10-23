@@ -302,8 +302,8 @@ def main(
             preflight = CertificatePreflight(
                 target=(
                     None
-                    if policy.certificate_root is None
-                    else target_for(cluster, policy.certificate_root)
+                    if (directory := policy.certificate_directory(cluster.cluster_id)) is None
+                    else target_for(cluster, directory)
                 ),
                 referenced=(*cluster.certificate_ids, *cluster.authority_ids),
                 next_command=f"haprion-cert-deploy -c {request.cluster}",

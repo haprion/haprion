@@ -134,7 +134,14 @@ class TheTree(unittest.TestCase):
             (tree / "usr/share/doc/haprion-cli/copyright").read_bytes().endswith(b"licence text\n")
         )
         self.assertEqual((tree / "DEBIAN/conffiles").read_text(), "/etc/sudoers.d/haprion\n")
-        self.assertIn("install-release.py", (tree / "DEBIAN/postinst").read_text())
+        postinst = (tree / "DEBIAN/postinst").read_text()
+        self.assertIn("install-release.py", postinst)
+        #
+        # The fetch keys bound after the release is in place (B358), and a step
+        # that cannot finish never fails the package: the nodes fetch as before.
+        #
+        self.assertLess(postinst.index("install-release.py"), postinst.index("pull-keys"))
+        self.assertIn("/usr/bin/haprion-node pull-keys || echo", postinst)
         self.assertIn("rm -rf /opt/haprion", (tree / "DEBIAN/postrm").read_text())
 
     def test_a_rule_visudo_refuses_stops_the_build(self) -> None:

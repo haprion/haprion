@@ -3,6 +3,7 @@
     haprion-node add -c <cluster> --host <name> [--deploy | --json] < block
     haprion-node remove -c <cluster> <node> [--deploy | --json]
     haprion-node host -c <cluster> <node> --host <new name> [--json]
+    sudo haprion-node pull-keys
 
 `--json` prints the helper's envelope (`schemas/v1/haprion-cluster-node`) and
 leaves with its exit code. The block is what `04-node-prepare` printed on the node. `--host` is the name
@@ -16,6 +17,13 @@ itself is taken back out.
 pinned for it move to the new name, and the node must answer there with one
 of them, as itself, or nothing is changed. Changing the machine is not this:
 that is a restore, or a removal and an addition.
+
+`pull-keys` writes every node's two fetch keys again, each bound to its
+cluster's files and its host's addresses (B358), and lays the certificates out
+one directory per cluster where a registry is declared (`haprion.pull_keys`).
+The CLI package runs it after an upgrade; run it again after a node's name has
+come to resolve to another address. It runs as root itself rather than through
+the helper: nothing in it is the interface's to ask for.
 
 A new node has no certificates and no release until `haprion-cert-deploy -c <cluster>`
 and then `haprion-deploy -c <cluster>`. `--deploy` runs both after an addition, and the
@@ -31,11 +39,23 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import node_enrollment, node_publish
+from haprion import (
+    cert_registry,
+    change_journal,
+    exit_codes,
+    node_enrollment,
+    node_publish,
+    pull_keys,
+    release_install,
+)
+from haprion.cert_lock import DEFAULT_LOCK_PATH as CERTIFICATE_LOCK
 from haprion.cli import cert_deploy, deploy, node_helper
 from haprion.cli.caller import usage, without_answer
+from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy
+from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
 from haprion.node_enrollment import MAX_BLOCK_BYTES
@@ -46,6 +66,7 @@ USAGE = (
     "  haprion-node add -c <cluster> --host <name> [--deploy | --json] < block\n"
     "  haprion-node remove -c <cluster> <node> [--deploy | --json]\n"
     "  haprion-node host -c <cluster> <node> --host <new name> [--json]\n"
+    "  sudo haprion-node pull-keys\n"
 )
 
 type RunHelper = Callable[[str], subprocess.CompletedProcess[str]]
@@ -186,6 +207,8 @@ def main(
     arguments = sys.argv[1:] if argv is None else argv
     writer = stdout or sys.stdout
     errors = stderr or sys.stderr
+    if arguments == ["pull-keys"]:
+        return pull_keys_main(writer, errors)
     json_mode = "--json" in arguments
     deploying = "--deploy" in arguments
     action, cluster, value, new_host = _parse(
@@ -263,6 +286,58 @@ def main(
         return 0
     writer.flush()
     return then_deploy(cluster, version, action)
+
+
+def pull_keys_main(
+    writer: TextIO,
+    errors: TextIO,
+    *,
+    policy_path: Path = DEFAULT_POLICY_PATH,
+    require_root: bool = True,
+    require_secure: bool = True,
+    locations: node_enrollment.Locations | None = None,
+    lock_root: Path = DEFAULT_LOCK_ROOT,
+    certificate_lock: Path = CERTIFICATE_LOCK,
+    change_owner: release_install.ChangeOwner = release_install.default_change_owner,
+) -> int:
+    """`pull-keys`: every step of `haprion.pull_keys`, said a line each."""
+
+    if require_root and os.geteuid() != 0:
+        errors.write("ERROR: run as root: sudo haprion-node pull-keys\n")
+        return exit_codes.NOT_ROOT
+    try:
+        policy = load_policy(policy_path, require_secure=require_secure)
+        runtime = load_runtime_config(policy, require_secure=require_secure)
+        report = pull_keys.run(
+            policy,
+            runtime,
+            locations=locations,
+            lock_root=lock_root,
+            certificate_lock=certificate_lock,
+            change_owner=change_owner,
+        )
+    except ConfigError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+    except (
+        LockBusy,
+        pull_keys.PullKeysError,
+        change_journal.RecoveryError,
+        cert_registry.RegistryError,
+        release_install.InstallError,
+    ) as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+    except OSError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return exit_codes.IO_ERROR
+    for line in report.done:
+        writer.write(f"{line}\n")
+    for line in report.left:
+        writer.write(f"WARNING: {line}\n")
+    if not report.done and not report.left:
+        writer.write("Every node's fetch keys are bound to its cluster and its address.\n")
+    return exit_codes.OK
 
 
 def _stepped_down(step_down: object, node: str) -> str:

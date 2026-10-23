@@ -63,6 +63,14 @@ def silent(_node: Any) -> NodeResponse:
     return NodeResponse(255, "")
 
 
+def resolving(name: str) -> tuple[str, ...]:
+    """A resolver that answers every name but `unresolved.example.com`, one documentation address each."""
+
+    if name == "unresolved.example.com":
+        return ()
+    return (f"192.0.2.{sum(name.encode()) % 200 + 1}",)
+
+
 class Site:
     """An installation with one cluster, `alpha`, in a directory."""
 
@@ -160,6 +168,7 @@ class Site:
             collector_known_hosts=self.collector_known,
             journal=root / ".journal" / "change-journal.json",
             home=lambda account: root / account,
+            forward=resolving,
         )
         (root / ".journal").mkdir()
         self.sudoers = root / "haprion-config-edit"
@@ -365,10 +374,18 @@ class CreatingACluster(unittest.TestCase):
                 check=True,
             ).stdout.split()
             self.assertEqual(safe, [f"{site.config_root}/gamma.git", f"{site.config_root}/gamma"])
-            self.assertIn(
-                "node-d certificate pull",
-                (site.root / "_haprion-cert-pull/.ssh/authorized_keys").read_text(),
-            )
+            #
+            # Each new node's keys read the new cluster's tree and its own
+            # certificate directory, from the node's address (B358).
+            #
+            for account, root, purpose in (
+                ("_haprion-pull", site.publish_root / "gamma", "config pull"),
+                ("_haprion-cert-pull", site.root / "certdist" / "gamma", "certificate pull"),
+            ):
+                lines = (site.root / account / ".ssh/authorized_keys").read_text().splitlines()
+                line = next(line for line in lines if line.endswith(f" node-d {purpose}"))
+                self.assertTrue(line.startswith('from="'), line)
+                self.assertIn(f'command="/usr/bin/rrsync -ro {root}" ', line)
             self.assertEqual(len(outcome.fingerprints), 2)
 
     def test_the_first_version_carries_the_files_its_nodes_need(self) -> None:

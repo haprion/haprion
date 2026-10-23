@@ -114,7 +114,11 @@ def main(
                 interface_served=ui_interface.served_description(),
             )
         else:
-            result = cert_list_result(policy.certificate_root, cluster, registry=runtime.registry)
+            result = cert_list_result(
+                policy.certificate_directory(cluster.cluster_id) or policy.certificate_root,
+                cluster,
+                registry=runtime.registry,
+            )
     except CertInventoryError as exc:
         return write_failure(
             writer,

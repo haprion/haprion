@@ -341,7 +341,7 @@ def main(
         )
 
     try:
-        authorities = _authorities(policy.certificate_root, targets)
+        authorities = _authorities(policy.certificate_directory(cluster.cluster_id), targets)
     except HelperProtocolError as exc:
         return _refused(writer, errors, request, exc)
 

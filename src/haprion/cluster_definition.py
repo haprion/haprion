@@ -620,12 +620,14 @@ def _node_changes(
             ),
             "root's known_hosts",
         )
+        sources = node_enrollment.pull_sources(node.mgmt_host, locations.forward)
         path = locations.authorized_keys(policy.pull_account)
         line = node_enrollment.pull_line(
-            policy.publish_root,
+            node_enrollment.config_root(policy, cluster),
             enrollment.config_pull_key,
             node.name,
             node_enrollment.CONFIG_PURPOSE,
+            sources,
         )
         put(
             path,
@@ -634,13 +636,15 @@ def _node_changes(
             ),
             f"{policy.pull_account}'s authorized_keys",
         )
-        if policy.certificate_root is not None and enrollment.cert_pull_key:
+        certificates = policy.certificate_directory(cluster)
+        if certificates is not None and enrollment.cert_pull_key:
             path = locations.authorized_keys(policy.cert_pull_account)
             line = node_enrollment.pull_line(
-                policy.certificate_root,
+                certificates,
                 enrollment.cert_pull_key,
                 node.name,
                 node_enrollment.CERT_PURPOSE,
+                sources,
             )
             put(
                 path,
@@ -1115,6 +1119,13 @@ def remove(
             target.publish_path.parent / ARCHIVE / name / target.publish_path.name,
         ),
     ]
+    #
+    # The cluster's own certificate copies (B358), kept beside its other
+    # archived trees: no node reads them once the cluster's keys are gone.
+    #
+    certificates = policy.certificate_directory(cluster)
+    if certificates is not None and certificates != policy.certificate_root:
+        moves.append((certificates, certificates.parent / ARCHIVE / name / certificates.name))
     if policy.backup_root is not None:
         for node in target.nodes:
             moves.append(

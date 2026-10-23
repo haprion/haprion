@@ -94,7 +94,8 @@ class HelperFixture(unittest.TestCase):
         preflight has to let through with a warning rather than refuse.
 
         `authorities` moves the cluster's certificates into a registry and adds
-        those CA files to it (B276), published under the root's `ca/`.
+        those CA files to it (B276); with a registry the cluster's files are in
+        its own directory under the root (B358), the CAs in its `ca/`.
         """
 
         config_root = self.root / "config"
@@ -105,11 +106,12 @@ class HelperFixture(unittest.TestCase):
             directory.mkdir(parents=True, exist_ok=True)
         (cert_root / "validation.pem").write_text("dummy PEM\n", encoding="utf-8")
         (config_root / "alpha").mkdir(exist_ok=True)
+        directory = dist_root / "alpha" if authorities else dist_root
+        (directory / "ca").mkdir(parents=True, exist_ok=True)
         for identifier in distributed or ():
-            (dist_root / f"{identifier}.pem").write_text(pem(identifier), encoding="ascii")
-        (dist_root / "ca").mkdir(exist_ok=True)
+            (directory / f"{identifier}.pem").write_text(pem(identifier), encoding="ascii")
         for identifier in authorities:
-            (dist_root / "ca" / f"{identifier}.pem").write_text(pem(identifier), encoding="ascii")
+            (directory / "ca" / f"{identifier}.pem").write_text(pem(identifier), encoding="ascii")
 
         clusters = yaml.safe_load((BASE / "examples/clusters.yaml").read_text())
         entry = clusters["clusters"]["alpha"]

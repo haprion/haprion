@@ -55,6 +55,7 @@ from haprion.config import (
     Receiver,
     RegisteredCertificate,
     Registry,
+    cluster_certificates,
 )
 from haprion.ndes_state import pending_requests, renewal_record, request_is_pending
 
@@ -457,7 +458,7 @@ def measure_registered(
     if not entry.clusters:
         return "no material at its source yet"
     try:
-        fingerprint, facts = _measure(_distributed(certificate_root, entry))
+        fingerprint, facts = _measure(_distributed(certificate_root, entry, entry.clusters[0]))
         return fingerprint, facts, "distribution"
     except FileNotFoundError:
         return "no material at its source yet"
@@ -465,12 +466,37 @@ def measure_registered(
         return str(exc)
 
 
-def _distributed(certificate_root: Path, entry: RegisteredCertificate) -> Path:
-    """The cluster copy of a registered entry: an authority's in its own directory (B276)."""
+def _distributed(certificate_root: Path, entry: RegisteredCertificate, cluster_id: str) -> Path:
+    """One cluster's copy of a registered entry (B358): an authority's in its own directory (B276)."""
 
+    directory = cluster_certificates(certificate_root, cluster_id)
     if entry.source.kind == AUTHORITY:
-        return authority_path(certificate_root, entry.certificate_id)
-    return certificate_path(certificate_root, entry.certificate_id)
+        return authority_path(directory, entry.certificate_id)
+    return certificate_path(directory, entry.certificate_id)
+
+
+def _distribution(
+    certificate_root: Path, entry: RegisteredCertificate, fingerprint: str | None
+) -> dict[str, Any]:
+    """The clusters' copies as one fact: published when every cluster has one, current when all are.
+
+    Since when is the oldest copy's time. A cluster without a copy, or with
+    an older one, is what the row has to say; which cluster is the node
+    status's to tell.
+    """
+
+    copies = [
+        _published(_distributed(certificate_root, entry, cluster_id), fingerprint)
+        for cluster_id in entry.clusters
+    ]
+    missing = next((copy for copy in copies if copy["published_at"] is None), None)
+    if missing is not None:
+        return missing
+    currents = {copy["current"] for copy in copies}
+    return {
+        "published_at": min(str(copy["published_at"]) for copy in copies),
+        "current": False if False in currents else None if None in currents else True,
+    }
 
 
 def registry_result(
@@ -604,15 +630,13 @@ def registry_result(
             ],
         }
         #
-        # One fact, not one per cluster: every cluster reads the same file out
-        # of the same shared distribution directory. Which nodes are actually
-        # carrying it is a different measurement, and it is already in the node
-        # status - it does not belong to this helper.
+        # One fact, not one per cluster: the copies in the clusters'
+        # directories together. Which nodes are actually carrying it is a
+        # different measurement, and it is already in the node status - it
+        # does not belong to this helper.
         #
         row["distribution"] = (
-            _published(_distributed(certificate_root, entry), fingerprint)
-            if entry.clusters
-            else None
+            _distribution(certificate_root, entry, fingerprint) if entry.clusters else None
         )
         entries.append(row)
 
@@ -778,11 +802,15 @@ def cert_list_result(
     now: datetime | None = None,
     registry: Registry | None = None,
 ) -> dict[str, Any]:
-    """The cluster's referenced certificates, then the rest of the directory.
+    """The cluster's referenced certificates, then the rest of its directory.
 
-    Both, because the two answer different questions. The referenced ones are
-    what a rollout would send; the others are what could be chosen next, and a
-    picker that could only see what is already configured would be no picker.
+    `root` is the directory the cluster's nodes fetch from
+    (`PathPolicy.certificate_directory`). Both, because the two answer
+    different questions. The referenced ones are what a rollout would send;
+    without a registry the others are what could be chosen next, and a picker
+    that could only see what is already configured would be no picker. With
+    one, the directory is the cluster's own, and anything else in it is a copy
+    the registry no longer gives the cluster.
 
     With a registry, each entry also says where the certificate comes from and
     which clusters and receivers it goes to. A certificate published to a
@@ -791,14 +819,23 @@ def cert_list_result(
     registry is `manager_result`'s.
     """
 
-    if not root.is_dir():
+    #
+    # A cluster's own directory (B358) is made by its first publish: before
+    # that it holds nothing, which is an answer, not an error. The root it
+    # would be made in is what must exist.
+    #
+    if not root.is_dir() and not (registry is not None and root.parent.is_dir()):
         raise CertInventoryError(f"the certificate root {root} is not a directory")
     clock = now or datetime.now(UTC)
     renewed = renewed_fingerprints(letsencrypt_root)
 
     referenced = tuple(cluster.certificate_ids)
     try:
-        present = sorted(path.name.removesuffix(".pem") for path in root.glob("*.pem"))
+        present = (
+            sorted(path.name.removesuffix(".pem") for path in root.glob("*.pem"))
+            if root.is_dir()
+            else []
+        )
     except OSError as exc:
         raise CertInventoryError(f"the certificate root {root} could not be read: {exc}") from exc
 

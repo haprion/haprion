@@ -29,7 +29,8 @@ line in `clusters.yaml` and the host keys already pinned under the old name to
 the new one, in root's `known_hosts` and the collector's, and asks the node at
 the new name. The answer must come with a key already pinned and name the node
 and its cluster; a machine with another key is another machine, and the change
-is put back. The fetch keys name the node, not the host, and stay.
+is put back. The fetch keys are the node's and stay, written again with the new
+host's addresses in `from=` (B358).
 
 Pure functions compute the new contents, so the rules are tested without root;
 `add`, `remove` and `change_host` are the only places that touch a file.
@@ -41,6 +42,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import pwd
@@ -55,6 +57,7 @@ from typing import Any
 import yaml
 
 from haprion import backups, change_journal, exit_codes, safe_yaml
+from haprion.cert_receiver import resolve_forward
 from haprion.change_journal import FileChange as Change
 from haprion.change_journal import Record
 from haprion.config import (
@@ -408,8 +411,70 @@ def known_hosts_with(text: bytes, host: str, key: str) -> bytes:
 # ------------------------------------------------------------ authorized_keys
 
 
-def pull_line(root: Path, key: str, node: str, purpose: str) -> str:
-    return f'restrict,command="{RRSYNC} -ro {root}" {key} {node} {purpose}'
+def config_root(policy: PathPolicy, cluster: str) -> Path:
+    """What a node's configuration fetch key reads: its own cluster's published tree (B358)."""
+
+    return policy.publish_root / cluster
+
+
+def pull_sources(host: str, forward: Callable[[str], tuple[str, ...]]) -> tuple[str, ...]:
+    """What a node's `from=` holds: its host, and the addresses that host resolves to (B358).
+
+    As a receiver's lock (B162): sshd's `UseDNS` is off by default, and then
+    `from=` matches the peer's address only, so a name alone would lock out
+    the node it was written for. The name is kept for the reader and for
+    `UseDNS yes`. A node whose address changes is a host change, which writes
+    the lines again, or `haprion-node pull-keys` after the DNS change.
+    """
+
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return (host,)
+    addresses = forward(host)
+    if not addresses:
+        raise EnrollmentError(
+            "host_unresolvable",
+            f"{host} does not resolve, so its fetch keys cannot be bound to its address",
+        )
+    return (host, *addresses)
+
+
+def pull_line(root: Path, key: str, node: str, purpose: str, sources: Iterable[str]) -> str:
+    """One node's fetch key: read-only, its cluster's tree alone, from its addresses alone.
+
+    `sources` empty leaves `from=` out: only `pull-keys` writes such a line,
+    for a node whose host does not resolve at the time, and says so.
+    """
+
+    allowed = ",".join(sources)
+    lock = f'from="{allowed}",' if allowed else ""
+    return f'{lock}restrict,command="{RRSYNC} -ro {root}" {key} {node} {purpose}'
+
+
+KEY_LINE = re.compile(
+    r'^(?P<options>(?:[^\s"]|"[^"]*")+)\s+(?P<key>[a-z0-9@.-]+\s+[A-Za-z0-9+/=]+)\s+(?P<comment>.+)$'
+)
+
+
+def node_keys(text: bytes, purpose: str) -> dict[str, str]:
+    """Each node's fetch key in an account's file, by node name: `type base64`.
+
+    Found by the comment every line carries (`<node> <purpose>`), as a removal
+    finds it. A line of another shape is not a node's and is not returned.
+    """
+
+    found: dict[str, str] = {}
+    for line in text.decode().splitlines():
+        match = KEY_LINE.fullmatch(line.strip())
+        if match is None or not match.group("comment").endswith(f" {purpose}"):
+            continue
+        node = match.group("comment").removesuffix(f" {purpose}")
+        if NAME.fullmatch(node):
+            found[node] = match.group("key")
+    return found
 
 
 def _is_node_line(line: str, node: str, purpose: str) -> bool:
@@ -494,6 +559,8 @@ class Locations:
     manager_host_key: Path = MANAGER_HOST_KEY
     # The traffic-log collector's key, which a joining node is given when there is one.
     collector_key: Path = COLLECTOR_KEY
+    # The addresses a node's host resolves to, which its fetch keys are bound to (B358).
+    forward: Callable[[str], tuple[str, ...]] = resolve_forward
 
     def authorized_keys(self, account: str) -> Path:
         return self.home(account) / ".ssh" / "authorized_keys"
@@ -563,7 +630,7 @@ def plan_add(
                 )
     if len(runtime.clusters[cluster].nodes) >= MAX_NODES:
         raise EnrollmentError("cluster_full", f"a cluster has at most {MAX_NODES} nodes")
-    cert_account, cert_root = policy.cert_pull_account, policy.certificate_root
+    cert_account, cert_root = policy.cert_pull_account, policy.certificate_directory(cluster)
     cert_key = enrollment.cert_pull_key
     wants_cert = cert_root is not None
     if wants_cert and cert_key is None:
@@ -574,6 +641,7 @@ def plan_add(
         )
 
     node = Node(name=enrollment.name, mgmt_host=host)
+    sources = pull_sources(host, locations.forward)
     clusters_before = _read(policy.cluster_file)
     clusters_after = clusters_with(clusters_before, cluster, node)
     _candidate_runtime(policy, clusters_after, require_secure=require_secure)
@@ -597,7 +665,11 @@ def plan_add(
             keys_with(
                 keys,
                 pull_line(
-                    policy.publish_root, enrollment.config_pull_key, node.name, CONFIG_PURPOSE
+                    config_root(policy, cluster),
+                    enrollment.config_pull_key,
+                    node.name,
+                    CONFIG_PURPOSE,
+                    sources,
                 ),
                 node.name,
                 CONFIG_PURPOSE,
@@ -614,7 +686,7 @@ def plan_add(
                 cert_keys,
                 keys_with(
                     cert_keys,
-                    pull_line(cert_root, cert_key, node.name, CERT_PURPOSE),
+                    pull_line(cert_root, cert_key, node.name, CERT_PURPOSE, sources),
                     node.name,
                     CERT_PURPOSE,
                 ),
@@ -744,6 +816,7 @@ def plan_change_host(
             f"the machine at {host} is {name}; remove the node and add it again instead",
         )
     moved = Node(name=name, mgmt_host=host)
+    sources = pull_sources(host, locations.forward)
     clusters_before = _read(policy.cluster_file)
     clusters_after = clusters_with_host(clusters_before, cluster, name, host)
     _candidate_runtime(policy, clusters_after, require_secure=require_secure)
@@ -756,6 +829,27 @@ def plan_change_host(
             "root's known_hosts",
         ),
     ]
+    #
+    # The fetch keys are the node's and stay; their `from=` is the host's
+    # (B358), so they are written again with the new host's addresses.
+    #
+    for account, purpose, root in (
+        (policy.pull_account, CONFIG_PURPOSE, config_root(policy, cluster)),
+        (policy.cert_pull_account, CERT_PURPOSE, policy.certificate_directory(cluster)),
+    ):
+        path = locations.authorized_keys(account)
+        current = _read(path)
+        key = node_keys(current, purpose).get(name)
+        if root is None or key is None:
+            continue
+        changes.append(
+            Change(
+                path,
+                current,
+                keys_with(current, pull_line(root, key, name, purpose, sources), name, purpose),
+                f"{account}'s authorized_keys",
+            )
+        )
     if locations.collector_config.exists():
         collector = _read(locations.collector_config)
         changes.append(

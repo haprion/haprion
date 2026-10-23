@@ -203,8 +203,9 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
         # rule the three single-document helpers this replaced applied.
         #
         certificate_sans = (
-            coverage(policy.certificate_root, cluster)
-            if policy.certificate_root is not None and (objects or network is not None)
+            coverage(directory, cluster)
+            if (directory := policy.certificate_directory(cluster.cluster_id)) is not None
+            and (objects or network is not None)
             else None
         )
 

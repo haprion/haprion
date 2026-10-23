@@ -55,7 +55,7 @@ import string
 import subprocess
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -95,6 +95,7 @@ from haprion.config import (
     Receiver,
     RegisteredCertificate,
     RuntimeConfig,
+    cluster_certificates,
 )
 
 #
@@ -403,10 +404,35 @@ def _account(name: str, what: str) -> tuple[int, int]:
     return record.pw_uid, record.pw_gid
 
 
-def cluster_target(certificate_root: Path, cluster_id: str) -> Target:
-    """The distribution directory, owned by root and readable by the pull group.
+def _made_under(parent: Path, directory: Path) -> None:
+    """`directory`, made if it is not there, owned and moded like `parent`; a link refused.
 
-    The group is the directory's own: whoever may list the directory may read
+    Owned and moded like the certificate root, so the pull account that may
+    read one may read the others, and nobody else may do either.
+    """
+
+    if not directory.exists():
+        try:
+            metadata = parent.lstat()
+            directory.mkdir(mode=0o700)
+            os.chmod(directory, stat.S_IMODE(metadata.st_mode) & 0o750)
+            os.chown(directory, metadata.st_uid, metadata.st_gid)
+        except OSError as exc:
+            raise PublishError("write_failed", f"{directory} could not be created: {exc}") from exc
+    found = directory.lstat()
+    if not stat.S_ISDIR(found.st_mode) or stat.S_ISLNK(found.st_mode):
+        raise PublishError("target_missing", f"{directory} is not a directory")
+
+
+def cluster_target(certificate_root: Path, cluster_id: str) -> Target:
+    """The cluster's directory under the certificate root, owned by root and readable by the pull group.
+
+    One directory per cluster (B358): a node's fetch key reads its own
+    cluster's and nothing else, so a node of one cluster never holds the key
+    of a certificate only another serves. A certificate two clusters name is
+    written to both.
+
+    The group is the root's own: whoever may list the directory may read
     the files in it, and that group was chosen when the directory was created
     by the person who created the pull account. Reading it back here keeps one
     decision in one place rather than repeating the group name in the policy.
@@ -422,10 +448,12 @@ def cluster_target(certificate_root: Path, cluster_id: str) -> Target:
         raise PublishError(
             "target_missing", f"certificate root {certificate_root} is not a directory"
         )
+    directory = cluster_certificates(certificate_root, cluster_id)
+    _made_under(certificate_root, directory)
     return Target(
         kind="cluster",
         name=cluster_id,
-        directory=certificate_root,
+        directory=directory,
         uid=ROOT_UID,
         gid=metadata.st_gid,
         mode=CLUSTER_MODE,
@@ -433,34 +461,11 @@ def cluster_target(certificate_root: Path, cluster_id: str) -> Target:
 
 
 def authority_target(certificate_root: Path, cluster_id: str) -> Target:
-    """A cluster's authorities directory, made beside the certificates if it is not there.
-
-    Owned and moded like the certificate root it sits in, so the pull account
-    that may read one may read the other, and nobody else may do either.
-    """
+    """A cluster's authorities directory, made beside its certificates if it is not there."""
 
     base = cluster_target(certificate_root, cluster_id)
-    directory = certificate_root / AUTHORITY_DIRECTORY
-    if not directory.exists():
-        try:
-            parent = certificate_root.lstat()
-            directory.mkdir(mode=0o700)
-            os.chmod(directory, stat.S_IMODE(parent.st_mode) & 0o750)
-            os.chown(directory, parent.st_uid, parent.st_gid)
-        except OSError as exc:
-            raise PublishError("write_failed", f"{directory} could not be created: {exc}") from exc
-    metadata = directory.lstat()
-    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
-        raise PublishError("target_missing", f"{directory} is not a directory")
-    return Target(
-        kind="cluster",
-        name=cluster_id,
-        directory=certificate_root,
-        uid=ROOT_UID,
-        gid=base.gid,
-        mode=CLUSTER_MODE,
-        authority=True,
-    )
+    _made_under(certificate_root, base.directory / AUTHORITY_DIRECTORY)
+    return replace(base, authority=True)
 
 
 def _checked_directory(path: Path, receiver: Receiver, uid: int) -> os.stat_result:
@@ -833,10 +838,11 @@ def receiver_bundle_paths(target: Target, certificate_id: str) -> tuple[Path, Pa
 def publish_to(targets: Sequence[Target], material: Material) -> tuple[TargetResult, ...]:
     """Write every file the targets read, each path once, and say which targets changed.
 
-    Clusters share one distribution directory, so two clusters naming the
-    same certificate read the same file. It is written once, and the change
-    belongs to every target that reads it - otherwise the second cluster
-    would see "unchanged" and never be rolled out.
+    Each cluster has its own directory (B358), so two clusters naming the
+    same certificate read two files. A path two targets did read - a policy
+    without a registry has one directory for all - is written once, and the
+    change belongs to every target that reads it, otherwise the second would
+    see "unchanged" and never be rolled out.
     """
 
     written: dict[Path, bool] = {}
@@ -947,8 +953,8 @@ def roll_out(
 
     Outside the publisher's lock - a rollout takes minutes and a renewal must
     not wait for it - and settled under it, one cluster at a time. Shared with
-    retargeting, which publishes to a cluster without the publisher seeing a
-    change (the cluster PEM is one shared file) and so marks it itself.
+    retargeting, which publishes to a cluster outside the publisher's run and
+    so marks it itself.
     """
 
     deployments: list[DeployResult] = []

@@ -92,6 +92,34 @@ def _own(path: Path, gid: int, *, mode: int, change_owner: ChangeOwner) -> None:
 
 
 #
+# A node asks for `<cluster>/current/<node path>/` (install/lib.sh), a path
+# under the publish root. Its fetch key reads its own cluster's directory alone
+# (B358), and this link makes the same path name the same files under that
+# narrower root: `<cluster>` inside the cluster's directory is the directory
+# itself. rrsync refuses a path whose real location is outside its root, and
+# this one never is - the old path, the new one, another cluster's, `..` and an
+# absolute path were measured against rrsync 3.4.1 on 26-10-23. No node had to
+# change, and none fetches between a manager and a node upgrade.
+#
+def ensure_pull_link(
+    publish_path: Path, gid: int | None = None, *, change_owner: ChangeOwner = default_change_owner
+) -> bool:
+    """The cluster's link to itself, made if it is not there; True when it was made."""
+
+    link = publish_path / publish_path.name
+    if link.is_symlink() and os.readlink(link) == ".":
+        return False
+    if link.is_symlink() or link.exists():
+        raise InstallError(f"{link} exists and is not the cluster's link to itself.")
+    staged = publish_path / f"{publish_path.name}.new"
+    staged.unlink(missing_ok=True)
+    staged.symlink_to(".")
+    change_owner(staged, 0, _group_id() if gid is None else gid)
+    atomic_file.move(staged, link)
+    return True
+
+
+#
 # What a release IS. The timestamp is not part of it: it records when a release
 # was written, and two writes of the same commit are the same release written
 # twice - which is exactly the case a repair after a crash has to be able to
@@ -169,6 +197,7 @@ def install_release(
     #
     for directory in (publish_path, releases):
         _own(directory, gid, mode=DIRECTORY_MODE, change_owner=change_owner)
+    ensure_pull_link(publish_path, gid, change_owner=change_owner)
 
     release = releases / metadata.commit
     created = False

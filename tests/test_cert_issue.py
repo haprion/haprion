@@ -530,7 +530,7 @@ class WhenCertbotSucceeds(IssueFixture):
         self.assertTrue(self.registry_path.read_text().startswith("# The certificate registry"))
 
         # Published to exactly the named targets; the pre-existing certificate untouched.
-        self.assertEqual([p.name for p in self.dist.iterdir()], ["example.com.pem"])
+        self.assertEqual(self.held(), {"alpha": ["example.com.pem"]})
         held = self.receiver_dir / "example.com"
         self.assertEqual([p.name for p in self.receiver_dir.iterdir()], ["example.com"])
         self.assertEqual(sorted(p.name for p in held.iterdir()), ["fullchain.pem", "privkey.pem"])

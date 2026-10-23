@@ -199,7 +199,8 @@ def main(
             exc.exit_code,
         )
 
-    if policy.certificate_root is None:
+    directory = policy.certificate_directory(cluster.cluster_id)
+    if directory is None:
         return refuse(
             "dependency_unavailable",
             "no certificate root is configured. Add certificate_root to the runtime policy.",
@@ -222,7 +223,7 @@ def main(
     # have run something useful.
     #
     try:
-        target = target_for(cluster, policy.certificate_root)
+        target = target_for(cluster, directory)
     except CertificateError as exc:
         return refuse("certificate_missing", str(exc), exit_codes.BLOCKED)
 

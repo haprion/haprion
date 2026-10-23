@@ -287,6 +287,30 @@ class CurrentLinkTests(InstallFixture):
             self.install(publish, Recorder(), metadata=metadata(version=8, commit="b" * 40))
             self.assertTrue((publish / "releases" / COMMIT).is_dir())
 
+    def test_the_tree_links_to_itself_so_a_node_s_path_holds_under_its_narrow_root(self) -> None:
+        """A node asks for `<cluster>/current/`; its key reads this tree alone (B358)."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            publish = Path(raw) / "alpha"
+            recorder = Recorder()
+            self.install(publish, recorder)
+            link = publish / "alpha"
+            self.assertEqual(os.readlink(link), ".")
+            self.assertEqual((link / "current").resolve(), (publish / "current").resolve())
+            self.assertIn((str(publish / "alpha.new"), 0, os.getgid()), recorder.calls)
+            self.assertFalse((publish / "alpha.new").exists())
+
+            again = Recorder()
+            self.install(publish, again, metadata=metadata(version=8, commit="b" * 40))
+            self.assertNotIn(str(publish / "alpha.new"), [call[0] for call in again.calls])
+
+    def test_something_else_where_the_link_goes_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            publish = Path(raw) / "alpha"
+            (publish / "alpha").mkdir(parents=True)
+            with self.assertRaisesRegex(InstallError, "not the cluster's link to itself"):
+                self.install(publish, Recorder())
+
     def test_no_staging_link_survives(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             publish = Path(raw) / "alpha"

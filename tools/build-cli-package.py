@@ -51,6 +51,7 @@ from haprion.debian_package import package, write
 PACKAGE = "haprion-cli"
 LIB = "usr/lib/haprion/cli"
 TARGET = "/opt/haprion"
+POLICY = "/etc/haprion/runtime-policy.yaml"
 SUDOERS = "etc/sudoers.d/haprion"
 #
 # What the engine imports and runs, named directly (tests/test_package_commands.py
@@ -96,6 +97,15 @@ if [ "$1" = configure ]; then
         --keyring-package "/{LIB}/$KEYRING_PACKAGE" \\
         --keyring-package-sha256 "$KEYRING_PACKAGE_SHA256" \\
         --target {TARGET}
+    #
+    # The nodes' fetch keys bound to their clusters and addresses (B358), on
+    # an installation that has clusters. A step that cannot finish says so
+    # and leaves the package installed: every node still fetches as before.
+    #
+    if [ -f {POLICY} ]; then
+        /usr/bin/haprion-node pull-keys || echo "haprion-cli: WARNING: not every node's fetch \
+keys were bound to its cluster; run  sudo haprion-node pull-keys" >&2
+    fi
 fi
 """
 #

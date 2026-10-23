@@ -60,6 +60,14 @@ def block(**overrides: object) -> Enrollment:
     return Enrollment(**values)  # type: ignore[arg-type]
 
 
+def resolving(name: str) -> tuple[str, ...]:
+    """A resolver that answers every name but `unresolved.example.com`, one documentation address each."""
+
+    if name == "unresolved.example.com":
+        return ()
+    return (f"192.0.2.{sum(name.encode()) % 200 + 1}",)
+
+
 def answering(node: str = "node-c", cluster: str = "alpha", *, owner: bool = False) -> AskNode:
     def ask(_node: Node) -> NodeResponse:
         return NodeResponse(
@@ -113,6 +121,7 @@ class Installation:
             collector_known_hosts=self.collector_known,
             journal=root / ".journal" / "change-journal.json",
             home=lambda account: root / account,
+            forward=resolving,
         )
         (root / ".journal").mkdir()
 
@@ -219,13 +228,19 @@ class AddingANode(unittest.TestCase):
             self.assertEqual(nodes[-1], Node(name="node-c", mgmt_host="node-c.example.com"))
             pull = (site.root / "_haprion-pull/.ssh/authorized_keys").read_text()
             self.assertIn(EXISTING_LINE, pull)
+            #
+            # Its own cluster's tree, from its own address (B358); without a
+            # certificate registry the certificate directory is the one shared root.
+            #
+            source = f'from="node-c.example.com,{resolving("node-c.example.com")[0]}"'
             self.assertIn(
-                'restrict,command="/usr/bin/rrsync -ro /srv/haprion/published" '
+                f'{source},restrict,command="/usr/bin/rrsync -ro /srv/haprion/published/alpha" '
                 f"{CONFIG_KEY} node-c config pull\n",
                 pull,
             )
             self.assertIn(
-                f'-ro /srv/certdist" {CERT_KEY} node-c certificate pull',
+                f'{source},restrict,command="/usr/bin/rrsync -ro /srv/certdist" '
+                f"{CERT_KEY} node-c certificate pull",
                 (site.root / "_haprion-cert-pull/.ssh/authorized_keys").read_text(),
             )
             self.assertEqual(
@@ -618,7 +633,30 @@ class ChangingAHost(unittest.TestCase):
                 (outcome.previous_host, outcome.fingerprint),
                 ("node-c.example.com", enrollment.fingerprint(HOST_KEY)),
             )
-            self.assertEqual(len(outcome.files), 4)
+            #
+            # And its fetch keys, the same keys, now from the new host's address.
+            #
+            self.assertEqual(len(outcome.files), 6)
+            moved = f'from="lb-03.example.com,{resolving("lb-03.example.com")[0]}",restrict,'
+            for account, fetch_key, purpose in (
+                ("_haprion-pull", CONFIG_KEY, "config pull"),
+                ("_haprion-cert-pull", CERT_KEY, "certificate pull"),
+            ):
+                lines = (site.root / account / ".ssh/authorized_keys").read_text().splitlines()
+                line = next(line for line in lines if line.endswith(f" node-c {purpose}"))
+                self.assertTrue(line.startswith(moved), line)
+                self.assertIn(f" {fetch_key} node-c {purpose}", line)
+
+    def test_a_host_that_does_not_resolve_is_refused_before_anything_is_written(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Installation(Path(raw))
+            before = site.snapshot()
+
+            with self.assertRaises(EnrollmentError) as caught:
+                site.add(host="unresolved.example.com")
+
+            self.assertEqual(caught.exception.code, "host_unresolvable")
+            self.assertEqual(site.snapshot(), before)
 
     def test_a_node_that_does_not_answer_there_keeps_its_old_host(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

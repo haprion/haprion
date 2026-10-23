@@ -76,8 +76,9 @@ class PathPolicy:
     validation_certs_root: Path
     deploy_identity: DeployIdentity | None = None
     #
-    # The shared directory published certificates are distributed from, and the
-    # identity that triggers a certificate pull. Both optional for the same
+    # The directory published certificates are distributed from (one directory
+    # per cluster under it, `certificate_directory`), and the identity that
+    # triggers a certificate pull. Both optional for the same
     # reason deploy_identity is: every other command works without them, and a
     # policy file that every command rejected until certificate deployment was
     # configured would be worse than one that says what is missing when it is
@@ -178,6 +179,30 @@ class PathPolicy:
     #
     pull_account: str = accounts.PULL
     cert_pull_account: str = accounts.CERT_PULL
+
+    def certificate_directory(self, cluster_id: str) -> Path | None:
+        """Where a cluster's certificates are published and its nodes fetch them (B358).
+
+        With a registry the manager writes them, one directory per cluster,
+        and each node's fetch key reads its own cluster's alone - a node of
+        one cluster never holds another's key material. Without one the
+        directory is filled by something else, flat, and every cluster's
+        nodes read the same one.
+        """
+
+        if self.certificate_root is None:
+            return None
+        if self.certificate_registry is None:
+            return self.certificate_root
+        return cluster_certificates(self.certificate_root, cluster_id)
+
+
+def cluster_certificates(root: Path, cluster_id: str) -> Path:
+    """A cluster's directory under the certificate root, held to the cluster ID."""
+
+    if not CLUSTER_ID.fullmatch(cluster_id):
+        raise ConfigError(f"invalid cluster ID: {cluster_id!r}")
+    return root / cluster_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -995,6 +1020,24 @@ def _under_root(raw: str, root: Path, location: str) -> Path:
     return path
 
 
+def _publish_path(raw: str, root: Path, cluster_id: str, location: str) -> Path:
+    """The cluster's published tree, `<publish root>/<cluster ID>` and nowhere else.
+
+    A node asks for `<cluster>/current/<node path>/` under the publish root,
+    and its fetch key reads this directory alone (B358): a tree anywhere else
+    is one its nodes would never find.
+    """
+
+    path = _under_root(raw, root, location)
+    expected = root.resolve(strict=False) / cluster_id
+    if path != expected:
+        raise ConfigError(
+            f"{location} must be {expected}: the nodes fetch {cluster_id}/current/ "
+            "under the publish root"
+        )
+    return path
+
+
 def _host(value: str, location: str) -> str:
     if len(value) > 253 or any(character.isspace() for character in value):
         raise ConfigError(f"{location} is not a valid management host")
@@ -1640,9 +1683,10 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 policy.config_root,
                 f"{location}.config_path",
             ),
-            publish_path=_under_root(
+            publish_path=_publish_path(
                 _required_string(raw, "publish_path", location),
                 policy.publish_root,
+                cluster_id,
                 f"{location}.publish_path",
             ),
             node_path=node_path,

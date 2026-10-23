@@ -75,7 +75,7 @@ def _pem(common_name: str, *, sans: tuple[str, ...] = (), days: int = 30) -> str
 
 
 def _cluster(ids: tuple[str, ...]) -> Any:
-    return type("Cluster", (), {"certificate_ids": ids})
+    return type("Cluster", (), {"cluster_id": "alpha", "certificate_ids": ids})
 
 
 class LeafOnlyTests(unittest.TestCase):
@@ -593,8 +593,8 @@ class RegistryListingTests(unittest.TestCase):
         #
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "certdist").mkdir()
-            (root / "certdist" / "internal.pem").write_text(
+            (root / "certdist" / "beta").mkdir(parents=True)
+            (root / "certdist" / "beta" / "internal.pem").write_text(
                 _pem("internal.example.net", sans=("*.internal.example.net",)), encoding="ascii"
             )
             registry = self._registry(
@@ -648,33 +648,48 @@ class RegistryListingTests(unittest.TestCase):
         self.assertFalse(entry["readable"])
         self.assertIsNone(entry["measured_at"])
 
-    def test_the_shared_distribution_copy_is_one_fact_not_one_per_cluster(self) -> None:
+    def test_the_clusters_copies_are_one_fact_not_one_per_cluster(self) -> None:
         #
-        # Every cluster reads the same file out of the same directory, so a
-        # per-cluster answer here would be the same answer twice. Which nodes
-        # are carrying it is a different measurement and lives in node status.
+        # Each cluster reads its own copy (B358). The row says whether they are
+        # all there and all current; which nodes are carrying it is a
+        # different measurement and lives in node status.
         #
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / "live" / "lineage"
-            source.mkdir(parents=True)
-            material = _pem("shared.example.net")
-            (source / "fullchain.pem").write_text(material, encoding="ascii")
-            (root / "certdist").mkdir()
-            (root / "certdist" / "shared.pem").write_text(material, encoding="ascii")
+        def distribution(copies: dict[str, str]) -> dict[str, Any]:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "live" / "lineage"
+                source.mkdir(parents=True)
+                (source / "fullchain.pem").write_text(material, encoding="ascii")
+                for cluster_id, pem in copies.items():
+                    (root / "certdist" / cluster_id).mkdir(parents=True)
+                    (root / "certdist" / cluster_id / "shared.pem").write_text(
+                        pem, encoding="ascii"
+                    )
+                registry = self._registry(
+                    root,
+                    certificates={
+                        "shared": self._entry(
+                            "shared", lineage="lineage", clusters=("alpha", "beta")
+                        )
+                    },
+                )
+                entry = self._run(root, registry)["certificates"][0]
+            self.assertEqual(entry["targets"]["clusters"], ["alpha", "beta"])
+            return entry["distribution"]  # type: ignore[no-any-return]
 
-            registry = self._registry(
-                root,
-                certificates={
-                    "shared": self._entry("shared", lineage="lineage", clusters=("alpha", "beta"))
-                },
-            )
-            result = self._run(root, registry)
+        material = _pem("shared.example.net")
+        older = _pem("shared.example.net")
 
-        entry = result["certificates"][0]
-        self.assertEqual(entry["targets"]["clusters"], ["alpha", "beta"])
-        self.assertTrue(entry["distribution"]["current"])
-        self.assertIsNotNone(entry["distribution"]["published_at"])
+        both = distribution({"alpha": material, "beta": material})
+        self.assertTrue(both["current"])
+        self.assertIsNotNone(both["published_at"])
+
+        one_missing = distribution({"alpha": material})
+        self.assertIsNone(one_missing["published_at"])
+
+        one_behind = distribution({"alpha": material, "beta": older})
+        self.assertFalse(one_behind["current"])
+        self.assertIsNotNone(one_behind["published_at"])
 
     def test_the_private_key_never_reaches_the_listing(self) -> None:
         #
@@ -978,6 +993,10 @@ class HelperTests(unittest.TestCase):
 
             class Policy:
                 certificate_root = root if with_root else None
+
+                def certificate_directory(self, cluster_id: str) -> Path | None:
+                    # No registry: one flat directory every cluster reads.
+                    return self.certificate_root
 
             class Config:
                 @staticmethod

@@ -351,7 +351,7 @@ class WhatAnImportIs(ImportFixture):
             self.registered()["shop.example"],
             {"source": {"kind": "import"}, "clusters": ["alpha"]},
         )
-        self.assertTrue((self.dist / "shop.example.pem").exists())
+        self.assertTrue((self.dist / "alpha" / "shop.example.pem").exists())
         self.assertEqual(self.deployed, ["alpha"])
         self.assertFalse(result.replaced)
         self.assertEqual(result.facts.sans, ("shop.example",))
@@ -396,7 +396,7 @@ class WhatAnImportIs(ImportFixture):
         self.run_import("pve.example", self.material(), receivers=["lb-01"])
         self.assertTrue((self.receiver_dir / "pve.example" / FULLCHAIN).exists())
         self.assertTrue((self.receiver_dir / "pve.example" / PRIVKEY).exists())
-        self.assertFalse((self.dist / "pve.example.pem").exists())
+        self.assertEqual(list(self.dist.rglob("pve.example.pem")), [])
         self.assertEqual(self.deployed, [])
 
 
@@ -522,7 +522,7 @@ class AnAuthorityIsImportedWithoutAKey(ImportFixture):
         self.assertEqual(
             self.registered()["corp-root"], {"source": {"kind": "authority"}, "clusters": ["alpha"]}
         )
-        published = (self.dist / "ca" / "corp-root.pem").read_text()
+        published = (self.dist / "alpha" / "ca" / "corp-root.pem").read_text()
         self.assertEqual(published.count("BEGIN CERTIFICATE"), 2)
         self.assertNotIn("PRIVATE KEY", published)
         self.assertEqual(self.deployed, ["alpha"])
@@ -571,8 +571,9 @@ class AnAuthorityIsImportedWithoutAKey(ImportFixture):
 
         self.assertTrue(result.replaced)
         self.assertEqual(self.registered()["corp-root"]["clusters"], ["alpha", "beta"])
-        published = (self.dist / "ca" / "corp-root.pem").read_text()
-        self.assertEqual(published.count("BEGIN CERTIFICATE"), 2)
+        for cluster_id in ("alpha", "beta"):
+            published = (self.dist / cluster_id / "ca" / "corp-root.pem").read_text()
+            self.assertEqual(published.count("BEGIN CERTIFICATE"), 2, cluster_id)
 
     def test_the_command_takes_a_file_and_says_what_it_imported(self) -> None:
         output, errors = io.StringIO(), io.StringIO()

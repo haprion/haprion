@@ -48,6 +48,8 @@ KEEPALIVED_CONF = "/etc/keepalived/keepalived.conf"
 KEEPALIVED_ADDRESSES = "/etc/keepalived/addresses.conf"
 KEEPALIVED_IPVS = "/etc/keepalived/ipvs.conf"
 HOST_KEY_PREFIX = "/etc/ssh/ssh_host_"
+# root's own key pairs, `ssh-keygen`'s default names: the node's fetch keys are made there.
+ROOT_KEY_PREFIX = "/root/.ssh/id_"
 
 #
 # What a node needs from the distribution, independent of what the image it was
@@ -482,6 +484,11 @@ def build(
             # The test node keeps the host keys it was installed with - the ones
             # the operator compared in the preview - so it is never mistaken
             # for the archived node by anything that trusts that node's key.
+            continue
+        if profile is not None and entry.path.startswith(ROOT_KEY_PREFIX):
+            # Nor the archived node's own keys - its fetch keys among them
+            # (review 2026-10-22, 5-4): a test machine at an address someone
+            # chose would otherwise hold the node's way into the manager.
             continue
         data: bytes | None = None
         if profile is not None and entry.kind == "file":

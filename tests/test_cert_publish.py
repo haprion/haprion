@@ -88,6 +88,9 @@ class Fixture(unittest.TestCase):
         self.live = self.root / "live"
         self.store = self.root / "store"
         self.dist = self.root / "certdist"
+        # Each cluster's own directory under the root (B358), made by its first publish.
+        self.alpha = self.dist / "alpha"
+        self.beta = self.dist / "beta"
         self.receiver_dir = self.root / "receivers" / "lb-01"
         self.lock = self.root / "cert-publish.lock"
         for directory in (self.live, self.store, self.dist, self.receiver_dir):
@@ -108,6 +111,14 @@ class Fixture(unittest.TestCase):
 
         issue(self.live / "keeper.example", "keeper.example")
         return {"keeper.example": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+
+    def held(self) -> dict[str, list[str]]:
+        """What each cluster's directory under the certificate root holds, by name."""
+
+        return {
+            directory.name: sorted(path.name for path in directory.iterdir())
+            for directory in sorted(self.dist.iterdir())
+        }
 
     def status(self, report: cert_publish.Report, certificate_id: str) -> str:
         return next(
@@ -247,7 +258,7 @@ class ExactTargets(Fixture):
             [(t.kind, t.name, t.changed) for t in entry.targets],
             [("cluster", "alpha", True), ("receiver", "lb-01", True)],
         )
-        combined = self.dist / "example.com.pem"
+        combined = self.alpha / "example.com.pem"
         key = (self.live / "example.com-wildcard" / "privkey.pem").read_bytes()
         chain = (self.live / "example.com-wildcard" / "fullchain.pem").read_bytes()
         self.assertEqual(combined.read_bytes(), key + chain)
@@ -279,7 +290,8 @@ class ExactTargets(Fixture):
 
         self.assertEqual({e.status for e in report.certificates}, {"published"})
         self.assertEqual(
-            sorted(p.name for p in self.dist.iterdir()), ["example.com.pem", "example.net.pem"]
+            self.held(),
+            {"alpha": ["example.com.pem", "example.net.pem"], "beta": ["example.net.pem"]},
         )
         held = self.receiver_dir / "lb-01.example.org"
         self.assertEqual([p.name for p in self.receiver_dir.iterdir()], ["lb-01.example.org"])
@@ -300,7 +312,7 @@ class ExactTargets(Fixture):
         report = self.run_publish(policy, only=["example.net"])
 
         self.assertEqual([e.certificate_id for e in report.certificates], ["example.net"])
-        self.assertEqual([p.name for p in self.dist.iterdir()], ["example.net.pem"])
+        self.assertEqual(self.held(), {"beta": ["example.net.pem"]})
         with self.assertRaises(PublishError) as caught:
             self.run_publish(policy, only=["example.org"])
         self.assertEqual(caught.exception.code, "bad_input")
@@ -322,7 +334,7 @@ class Idempotence(Fixture):
         before = {
             path: path.stat().st_ino
             for path in (
-                self.dist / "example.com.pem",
+                self.alpha / "example.com.pem",
                 self.receiver_dir / "example.com" / "fullchain.pem",
                 self.receiver_dir / "example.com" / "privkey.pem",
             )
@@ -343,14 +355,14 @@ class Idempotence(Fixture):
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
         self.run_publish(policy)
-        old = (self.dist / "example.com.pem").read_bytes()
+        old = (self.alpha / "example.com.pem").read_bytes()
         issue(self.live / "example.com", "example.com")
 
         report = self.run_publish(policy)
 
         self.assertEqual(report.certificates[0].status, "published")
-        self.assertNotEqual((self.dist / "example.com.pem").read_bytes(), old)
-        self.assertEqual(hidden_files(self.dist), [])
+        self.assertNotEqual((self.alpha / "example.com.pem").read_bytes(), old)
+        self.assertEqual(hidden_files(self.alpha), [])
 
 
 class NothingHalfWritten(Fixture):
@@ -384,14 +396,14 @@ class NothingHalfWritten(Fixture):
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
         self.run_publish(policy)
-        good = (self.dist / "example.com.pem").read_bytes()
+        good = (self.alpha / "example.com.pem").read_bytes()
         issue(self.live / "example.com", "example.com", days=3)
 
         report = self.run_publish(policy)
 
         self.assertEqual(report.certificates[0].status, "failed")
         self.assertEqual(report.certificates[0].error[0], "certificate_expiring")  # type: ignore[index]
-        self.assertEqual((self.dist / "example.com.pem").read_bytes(), good)
+        self.assertEqual((self.alpha / "example.com.pem").read_bytes(), good)
 
     def test_a_missing_receiver_directory_stops_the_whole_certificate(self) -> None:
         #
@@ -415,7 +427,7 @@ class NothingHalfWritten(Fixture):
 
         self.assertEqual(report.certificates[0].status, "failed")
         self.assertEqual(report.certificates[0].error[0], "target_missing")  # type: ignore[index]
-        self.assertEqual(list(self.dist.iterdir()), [])
+        self.assertEqual(self.held(), {"alpha": []})
 
     def test_a_receiver_directory_anyone_can_write_to_is_refused(self) -> None:
         #
@@ -493,7 +505,7 @@ class NothingHalfWritten(Fixture):
         statuses = {e.certificate_id: e.status for e in report.certificates}
         self.assertEqual(statuses, {"example.com": "failed", "example.net": "published"})
         self.assertEqual(report.certificates[0].error[0], "source_missing")  # type: ignore[index]
-        self.assertEqual([p.name for p in self.dist.iterdir()], ["example.net.pem"])
+        self.assertEqual(self.held(), {"alpha": ["example.net.pem"]})
 
 
 class ImportedCertificates(Fixture):
@@ -502,7 +514,8 @@ class ImportedCertificates(Fixture):
         # A certificate published by hand before the import store existed.
         # Its published copy is left byte for byte, and the run still succeeds.
         #
-        (self.dist / "lb.example.org.pem").write_bytes(b"published by hand\n")
+        self.alpha.mkdir()
+        (self.alpha / "lb.example.org.pem").write_bytes(b"published by hand\n")
         policy = self.write_config(
             {"lb.example.org": {"source": {"kind": "import"}, "clusters": ["alpha"]}}
         )
@@ -512,7 +525,7 @@ class ImportedCertificates(Fixture):
         [entry] = report.certificates
         self.assertEqual(entry.status, "skipped")
         self.assertEqual(entry.error[0] if entry.error else None, "source_missing")
-        self.assertEqual((self.dist / "lb.example.org.pem").read_bytes(), b"published by hand\n")
+        self.assertEqual((self.alpha / "lb.example.org.pem").read_bytes(), b"published by hand\n")
         self.assertEqual(report.failed, ())
 
     def test_from_the_store_it_is_published_like_any_other(self) -> None:
@@ -524,7 +537,7 @@ class ImportedCertificates(Fixture):
         report = self.run_publish(policy)
 
         self.assertEqual(report.certificates[0].status, "published")
-        self.assertTrue((self.dist / "lb.example.org.pem").exists())
+        self.assertEqual(self.held(), {"beta": ["lb.example.org.pem"]})
         self.assertEqual(report.changed_clusters, ("beta",))
 
 
@@ -566,7 +579,8 @@ class Locking(Fixture):
 class TheCommand(Fixture):
     def test_the_json_envelope_and_the_summary(self) -> None:
         issue(self.live / "example.com", "example.com")
-        (self.dist / "lb.example.org.pem").write_bytes(b"by hand\n")
+        self.alpha.mkdir()
+        (self.alpha / "lb.example.org.pem").write_bytes(b"by hand\n")
         policy = self.write_config(
             {
                 "example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]},
@@ -607,10 +621,10 @@ class TheCommand(Fixture):
                 "example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]},
             }
         )
-        seen: list[tuple[str, list[str]]] = []
+        seen: list[tuple[str, dict[str, list[str]]]] = []
 
         def deployer(cluster_id: str) -> int:
-            seen.append((cluster_id, sorted(p.name for p in self.dist.iterdir())))
+            seen.append((cluster_id, self.held()))
             return 0
 
         code, out, _ = self.run_command(policy, "--deploy", "--json", deployer=deployer)
@@ -620,11 +634,12 @@ class TheCommand(Fixture):
         # Both clusters once each, and every file already in place when the
         # first rollout starts - a cluster is deployed with the whole set.
         #
+        everything = {"alpha": ["example.com.pem", "example.net.pem"], "beta": ["example.com.pem"]}
         self.assertEqual(
             seen,
             [
-                ("alpha", ["example.com.pem", "example.net.pem"]),
-                ("beta", ["example.com.pem", "example.net.pem"]),
+                ("alpha", everything),
+                ("beta", everything),
             ],
         )
         document = json.loads(out)
@@ -650,7 +665,7 @@ class TheCommand(Fixture):
         document = json.loads(out)
         self.assertEqual(document["outcome"], "failed")
         self.assertIn("not deployed: alpha", document["error"]["message"])
-        self.assertTrue((self.dist / "example.com.pem").exists(), "publishing still happened")
+        self.assertTrue((self.alpha / "example.com.pem").exists(), "publishing still happened")
 
     def test_a_retake_finishes_the_rollout_a_failed_run_left(self) -> None:
         #
@@ -664,7 +679,7 @@ class TheCommand(Fixture):
         )
         code, _, _ = self.run_command(policy, "--deploy", deployer=lambda _: 69)
         self.assertEqual(code, 1)
-        published = (self.dist / "example.com.pem").stat().st_mtime_ns
+        published = (self.alpha / "example.com.pem").stat().st_mtime_ns
 
         seen: list[str] = []
 
@@ -677,7 +692,7 @@ class TheCommand(Fixture):
         self.assertEqual(code, 0)
         self.assertEqual(seen, ["alpha"])
         self.assertIn("example.com: unchanged", out, "nothing was issued or rewritten")
-        self.assertEqual((self.dist / "example.com.pem").stat().st_mtime_ns, published)
+        self.assertEqual((self.alpha / "example.com.pem").stat().st_mtime_ns, published)
 
         seen.clear()
         self.run_command(policy, "--deploy", deployer=deployer)

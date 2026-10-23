@@ -402,6 +402,69 @@ class Run:
         if "Published as version 2;" not in output:
             raise Failed(f"adding {role} published no new version:\n{output}")
 
+    def a_node_reads_its_own_cluster_alone(self) -> None:
+        """B358: each fetch key reads its own cluster's files, from its own address.
+
+        Another cluster's tree and certificate directory are made beside this
+        one's, as a second cluster would have them, and each node fetches
+        through real sshd and rrsync with its own keys.
+        """
+
+        _, policy = self.on("mgr", "cat /etc/haprion/runtime-policy.yaml")
+        roots = dict(re.findall(r"^(publish_root|certificate_root): (\S+)$", policy, re.M))
+        publish, certificates = roots["publish_root"], roots["certificate_root"]
+        for account, purpose, root in (
+            ("_haprion-pull", "config pull", publish),
+            ("_haprion-cert-pull", "certificate pull", certificates),
+        ):
+            _, keys = self.on("mgr", f"cat /home/{account}/.ssh/authorized_keys")
+            for role in NODES:
+                line = next(
+                    (line for line in keys.splitlines() if line.endswith(f" {role} {purpose}")),
+                    "",
+                )
+                if not line.startswith('from="') or f'-ro {root}/{CLUSTER}"' not in line:
+                    raise Failed(f"{role}'s {purpose} line is not its cluster's alone:\n{keys}")
+        self.on(
+            "mgr",
+            "set -e; "
+            f"group=$(stat -c %G {certificates}); "
+            f"install -d -o root -g _haprion-pull -m 750 {publish}/other; "
+            f"install -o root -g _haprion-pull -m 640 /dev/stdin {publish}/other/other.cfg <<< x; "
+            f'install -d -o root -g "$group" -m 750 {certificates}/other {certificates}/{CLUSTER}; '
+            f'install -o root -g "$group" -m 640 /dev/stdin {certificates}/other/other.pem <<< x; '
+            f'install -o root -g "$group" -m 640 /dev/stdin {certificates}/{CLUSTER}/own.pem <<< x',
+        )
+        script = (
+            "set -u; . /etc/haprion/node.conf; rm -rf /tmp/fetched; mkdir /tmp/fetched; "
+            'fetch() { rsync -r --timeout=30 -e "ssh -i $1 -o BatchMode=yes '
+            '-o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10" '
+            '"$2@${MANAGER}:$3" /tmp/fetched/ >/dev/null 2>&1; }; '
+            'fetch "$CONFIG_PULL_KEY" "$CONFIG_PULL_USER" "$CONFIG_REMOTE_PATH" '
+            "|| echo 'MISSING own tree'; "
+            'fetch "$CERT_PULL_KEY" "$CERT_PULL_USER" own.pem || echo "MISSING own.pem"; '
+            "for path in other/ ../other/ /etc/; do "
+            'fetch "$CONFIG_PULL_KEY" "$CONFIG_PULL_USER" "$path" && echo "LEAK config $path"; '
+            "done; "
+            "for path in other/other.pem ../other/other.pem /etc/hostname; do "
+            'fetch "$CERT_PULL_KEY" "$CERT_PULL_USER" "$path" && echo "LEAK certificate $path"; '
+            "done; "
+            "find /tmp/fetched -name 'other.*' -printf 'LEAK %p\\n'; true"
+        )
+        try:
+            for role in NODES:
+                _, output = self.on(role, script)
+                wrong = [
+                    line for line in output.splitlines() if line.startswith(("LEAK", "MISSING"))
+                ]
+                if wrong:
+                    raise Failed(f"{role}'s fetch keys:\n" + "\n".join(wrong))
+        finally:
+            self.on(
+                "mgr",
+                f"rm -rf {publish}/other {certificates}/other {certificates}/{CLUSTER}/own.pem",
+            )
+
     def publish(self) -> None:
         self.on(
             "mgr",
@@ -636,6 +699,10 @@ def run_one(
             lambda: run.add_node(NODES[1], blocks[1]),
         )
         step("the joins warned of nothing", run.joined_quietly)
+        step(
+            "each node's keys read its own cluster alone, from its own address",
+            run.a_node_reads_its_own_cluster_alone,
+        )
         step("every function has what it needs", run.every_function_has_what_it_needs)
         step("an object published", run.publish)
 

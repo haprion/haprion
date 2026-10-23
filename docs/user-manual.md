@@ -1427,7 +1427,7 @@ registry for all three: which certificates exist, where each comes from, and whe
 
 | Target | Written as | Owner and mode |
 |---|---|---|
-| a cluster | `<certificate_root>/<id>.pem`, the private key followed by the full chain - HAProxy's own format | `root`, the group that owns `certificate_root`, `640` |
+| a cluster | `<certificate_root>/<cluster>/<id>.pem`, the private key followed by the full chain - HAProxy's own format; one copy in each cluster the entry names | `root`, the group that owns `certificate_root`, `640` |
 | a receiver | `<path>/<id>/fullchain.pem` and `<path>/<id>/privkey.pem` | the receiver's `owner`, `600`; the per-certificate directory is `root` with the account's group, `750`, made by the publisher |
 | a receiver, `format: pkcs12` | `<path>/<id>/<id>.pfx` and `<path>/<id>/<id>.password` | the receiver's `owner`, `600` |
 
@@ -1446,8 +1446,7 @@ kept across renewals - the receiver imported the bundle into a certificate store
 it fetched, and a new one at every renewal would make every renewal a manual re-import.
 
 An `import` entry whose directory does not exist yet is reported as skipped, not failed, and its
-published copy is left as it is, as for a certificate placed in the distribution directory by
-hand.
+published copy is left as it is, as for a certificate placed in a cluster's directory by hand.
 
 With `--deploy`, every cluster that received a new version is rolled out afterwards with
 `haprion-cert-deploy`, once each, after every file is written. Two clusters that carry the same
@@ -1617,7 +1616,7 @@ not become seventy jobs.
 
 | Layer | What goes | Why this order |
 |---|---|---|
-| the material | `<certificate_root>/<id>.pem` and the two files in every receiver directory the entry named | |
+| the material | `<certificate_root>/<cluster>/<id>.pem` in every cluster and the two files in every receiver directory the entry named | |
 | the source | `certbot delete --cert-name <lineage>` for `acme`; `/etc/haprion/certificates/<id>/` for `import` | a dead certificate would otherwise renew forever |
 | the registry entry | the certificate stops being published | only once the two above are gone: an entry that outlives its material is a certificate the next run can finish, an entry gone before its material is one nothing can find again |
 | the node copies | each node of every cluster the entry named is asked `cert-remove <id>` over the trigger identity | last, and the one layer that may lawfully be left behind; a node is asked by name, so it needs no entry |
@@ -1788,7 +1787,7 @@ NDES profiles' certificates are signed by, the file the runtime policy names as 
 read by root on the manager. Every certificate in it must be a CA (`basicConstraints CA:TRUE`); a
 server certificate is refused (`not_authority`), and so is a file in which every certificate has
 expired. The registry holds it as `source.kind: authority`, the import store as `fullchain.pem`
-alone, and the clusters get it as `ca/<id>.pem` under the distribution directory. The nodes fetch
+alone, and each cluster gets it as `ca/<id>.pem` in its directory under the distribution root. The nodes fetch
 it into `/etc/haproxy/certs/ca/` (the trigger's `ca-pull`), beside the certificates and not among
 them, and reload only when an installed pool names it. Its row reads *CA*, *Used by* lists its
 clusters, and the state says which nodes carry it. Imported again under the same name it replaces
@@ -2122,7 +2121,8 @@ host key in root's `known_hosts`, its two fetch keys in the pull accounts' `auth
 where the traffic-log collector is installed - its entry in the collector's node list and its host
 key in the collector's own `known_hosts`. The cluster's *Add node* under *Settings → Nodes &
 clusters*, and `haprion-node` on the command line, change all six as one, through the same root
-helper.
+helper. The fetch keys are written to read the node's own cluster alone, from the addresses its host
+resolves to ([Ssh identities](#ssh-identities)), so a host the manager cannot resolve is refused.
 
 On the new node, install the node package (`sudo apt install haprion-node`).
 It prints the node's **enrollment block**, one line starting with `haprion-node-v2:` (an older node package prints `haproxy-node-v2:`, which is read the same), and its host
@@ -2167,8 +2167,9 @@ and is moved rather than rebuilt: *Change host* on its row under *Settings → N
 `haprion-node host`. The host keys pinned for the node move to the new name in root's
 `known_hosts` and the collector's, its line in `clusters.yaml` follows, and the manager asks the
 node at the new name. The answer must come with a key already pinned and name the node and its
-cluster; anything else puts every file back, and the node keeps its old host. Its fetch keys name
-the node, not the host, and do not change. A machine with another host key is another machine: that
+cluster; anything else puts every file back, and the node keeps its old host. Its fetch keys stay
+the node's, written again with the new host's addresses in `from=`. A machine whose name stays
+and whose address changes in DNS needs `sudo haprion-node pull-keys` instead. A machine with another host key is another machine: that
 is a restore, or a removal and an addition. With counter sharing on (`peers`), the next publish and
 deploy carry the new address to the nodes.
 
@@ -4106,6 +4107,10 @@ An identity names only its key. The account it reaches on a node is fixed: the d
 certificate and server state keys reach `_haprion-trigger`, the status and probe keys
 `_haprion-status`, the backup key `_haprion-backup`.
 
+`certificate_root` holds one directory per cluster, and a cluster's nodes read their own
+alone ([Ssh identities](#ssh-identities)). A policy without a `certificate_registry` keeps the older
+form: the directory is filled by something else, flat, and every cluster's nodes read all of it.
+
 `certificate_root` is also what a publish reads to check that each site's certificate answers for
 its hostnames. HAProxy loads a certificate; it does not check it against the objects using it, so a
 name the certificate cannot answer for reaches visitors as a browser error while every layer here
@@ -4161,12 +4166,6 @@ as *Published by*, beside the worker account that actually ran it. Anyone else w
 helpers - an operator at the terminal - is recorded as the account sudo proves, whatever the request
 says, so the column can be trusted. Leave it out and every version names the account that ran the
 helper, the worker's own name for everything done in the browser.
-
-`pull_account` and `cert_pull_account` name the accounts the nodes fetch as - the `rrsync -ro`
-accounts whose `authorized_keys` carry one line per node ([Ssh identities](#ssh-identities)). They are what
-lets a node be added or removed with `haprion-node` or the interface's Nodes card
-([Adding and removing a node](#adding-and-removing-a-node)): the names exist nowhere else a command reads. Leave
-them out and nodes are added by hand, as before.
 
 `status_identity` is the account `haprion-status` becomes to read a node, and `haprion-deploy`
 uses it too: a rollout reads the pair before and after every step, and it reads with the identity
@@ -4226,7 +4225,8 @@ clusters:
 ```
 
 `node_path` is the subdirectory a node fetches from on the management host. It is the only
-per-cluster value the node side needs.
+per-cluster value the node side needs. `publish_path` is `<publish_root>/<cluster>` and nothing
+else: a node asks for `<cluster>/current/<node path>/`, and its fetch key reads that tree alone.
 
 A cluster has **between one and eight nodes**. keepalived sets no limit - one VRRP instance shares
 its addresses between any number of nodes by priority, so a third node adds a standby, not capacity -
@@ -4587,7 +4587,7 @@ file that wins is valid, it just lacks what the other one wrote. A command that 
 for longer than two minutes refuses with `operation_locked` rather than waiting on.
 
 `haprion-cert-list` reports `source` and `targets` for every certificate the registry names, and
-`null` for both on a file in the distribution directory that no entry names: a certificate placed
+`null` for both on a file in a cluster's directory that no entry names: a certificate placed
 there by hand, listed so it can be registered rather than hidden. `haprion-cert-list -c <cluster>`
 answers for one cluster; `haprion-cert-list --registry` asks the manager for the whole registry and
 what the interface is served with, and answers before the first cluster exists. The poller reads it
@@ -4952,19 +4952,35 @@ status. Private keys are root-owned; no application identity can read any of the
 
 **The node's keys are generated on the node, by step 4, and never leave it.** A private key a node
 authenticates with has no reason to exist on the management host; copying one there would make the
-management host able to impersonate a node. Step 4 prints the public halves and the exact
-`authorized_keys` lines for the management host, which is the mirror image of step 3.
+management host able to impersonate a node. The node's enrollment block carries the public halves,
+and adding the node writes them into the management host's pull accounts, `_haprion-pull` and
+`_haprion-cert-pull` ([Adding and removing a node](#adding-and-removing-a-node)).
 
 One line per node, not one per cluster. Each node has its own key, so a node that is rebuilt or
-compromised is revoked on its own.
+compromised is revoked on its own. Each line reads one cluster's files, from one node's address:
 
-The pull direction is the mirror image: an account on the management host, restricted to an
-`rrsync`-style read-only export of the published tree, which the node authenticates to with its own
-key.
+```text
+from="<host>,<addresses>",restrict,command="/usr/bin/rrsync -ro <publish_root>/<cluster>" <key> <node> config pull
+from="<host>,<addresses>",restrict,command="/usr/bin/rrsync -ro <certificate_root>/<cluster>" <key> <node> certificate pull
+```
 
 `rrsync` is what makes that restriction real: the forced command is
 `rrsync -ro <tree>`, which allows a read-only rsync of exactly one directory and nothing else.
-Without it a forced `rsync` command is a shell in all but name.
+Without it a forced `rsync` command is a shell in all but name. A node of one cluster cannot read
+another cluster's configuration or certificate keys, and a copied key does not work from another
+address. `from=` holds the node's host and the addresses it resolves to when the line is written:
+sshd matches the peer's address unless `UseDNS yes` is set. A node whose name comes to resolve to
+another address fetches nothing until `sudo haprion-node pull-keys` writes its lines again; a
+node given another host with `haprion-node host` gets them written as part of that. The CLI
+package runs `haprion-node pull-keys` after every upgrade. It writes each node's lines in this form,
+removes a line for a node no cluster has, leaves a line of any other shape as it is and says so,
+and gives a host that does not resolve its narrowed line without `from=`, with a warning. A node
+name that two clusters in `clusters.yaml` share keeps its line as written, with a warning, until
+one of them is removed. With a certificate registry it also gives each cluster its own certificate
+directory, copied from a shared one, and removes the shared copies once no line reads them.
+
+A node asks for `<cluster>/current/<node path>/`. Each cluster's published tree holds a link
+`<cluster> -> .` to itself, so that path names the cluster's files under the cluster's own root.
 
 **The published tree belongs to the pull account, not to the config group.** Giving it to the
 config group looks reasonable and locks the nodes out of the only tree they are supposed to read —

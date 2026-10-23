@@ -104,6 +104,21 @@ class ConfigTests(unittest.TestCase):
         ):
             pass
 
+    def test_the_published_tree_is_the_cluster_s_own_name_under_the_root(self) -> None:
+        """The nodes ask for `<cluster>/current/`, and their key reads that tree alone (B358)."""
+
+        for elsewhere in ("/srv/haprion/published/beta", "/srv/haprion/published/alpha/deeper"):
+
+            def mutate(data: dict[str, Any], path: str = elsewhere) -> None:
+                data["clusters"]["alpha"]["publish_path"] = path
+
+            with (
+                self.subTest(elsewhere),
+                self.assertRaisesRegex(ConfigError, "fetch alpha/current/"),
+                self.temporary_runtime(mutate),
+            ):
+                pass
+
     def test_duplicate_nodes_are_rejected(self) -> None:
         def mutate(data: dict[str, Any]) -> None:
             data["clusters"]["alpha"]["nodes"][1] = data["clusters"]["alpha"]["nodes"][0]

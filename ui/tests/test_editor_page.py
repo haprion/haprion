@@ -429,6 +429,16 @@ class SavingADraft(EditorTestCase):
         self.assertIn('<select name="health_type" data-proposed="http">', page)
         self.assertIn('name="health_expect_status" value="200-499"', page)
 
+    def test_the_certificate_is_asked_for_rather_than_offered_as_none(self) -> None:
+        """7-15: an https object must have one, and the list started at *None*."""
+
+        page = self.editor().get("/proxies/alpha/new").text
+
+        self.assertIn(
+            '<select name="certificate">\n          <option value="">Choose a certificate</option>',
+            page,
+        )
+
     def test_a_drafted_object_posts_to_its_own_address(self) -> None:
         """The form action was chosen by the stored document, not the address.
 

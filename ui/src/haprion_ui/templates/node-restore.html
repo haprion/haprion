@@ -85,7 +85,7 @@
   <dl class="restore-plan">
     <div><dt>Becomes</dt><dd>{{ plan.hostname }} on {{ plan.address }}{% if plan.hostname != plan.source_hostname %} · from the archive of {{ plan.source_hostname }}{% endif %}</dd></div>
     {% if facts %}<div><dt>Interface</dt><dd>{{ facts.interface.name }} · {{ facts.interface.mac }} · host key {{ facts.fingerprint }}</dd></div>{% endif %}
-    <div><dt>keepalived</dt><dd>{{ 'Started as BACKUP' if plan.keepalived == 'start' else 'Masked — never started' }}</dd></div>
+    <div><dt>keepalived</dt><dd>{{ 'Started as standby' if plan.keepalived == 'start' else 'Masked — never started' }}</dd></div>
     <div><dt>Packages</dt><dd>{{ plan.packages | join(', ') if plan.packages else 'None missing' }}</dd></div>
     {% if plan.mode == 'overwrite' %}
     <div><dt>Changes</dt><dd>{{ plan.changed | length }} of {{ plan.changed | length + plan.unchanged }} files{% if plan.changed %}: {% for path in plan.changed %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %}{% endif %}{% if '/root/.ssh/authorized_keys' in plan.changed %} · root's keys lose the one-time key{% endif %}</dd></div>
@@ -118,7 +118,7 @@
       <span class="status-orb status-critical" aria-hidden="true"></span>
       <div>
         <p><strong>{{ restore.confirm_name }} is in service.</strong> {{ plan.changed | length }} of {{ plan.changed | length + plan.unchanged }} files differ from the archive. A copy of everything written is kept on the node and put back if it does not come up.</p>
-        <p><strong>VIP:</strong> {% if standing.vip_owner %}{{ restore.confirm_name }} holds it; keepalived stops first and it moves to {{ standing.neighbour }}{% if standing.neighbour_healthy %}, which is healthy{% else %}, which is <strong>not healthy</strong>{% if standing.detail %} ({{ standing.detail }}){% endif %}{% endif %}.{% elif standing.vip_owner is none %}whether {{ restore.confirm_name }} holds it could not be read; {{ standing.neighbour }} is {% if standing.neighbour_healthy %}healthy{% else %}<strong>not healthy</strong>{% endif %}.{% else %}{{ standing.neighbour }} holds it{% if standing.neighbour_healthy %} and is healthy{% else %} and is <strong>not healthy</strong>{% if standing.detail %} ({{ standing.detail }}){% endif %}{% endif %}. keepalived on {{ restore.confirm_name }} stops during the restore and starts again as BACKUP.{% endif %}</p>
+        <p><strong>VIP:</strong> {% if standing.vip_owner %}{{ restore.confirm_name }} holds it; keepalived stops first and it moves to {{ standing.neighbour }}{% if standing.neighbour_healthy %}, which is healthy{% else %}, which is <strong>not healthy</strong>{% if standing.detail %} ({{ standing.detail }}){% endif %}{% endif %}.{% elif standing.vip_owner is none %}whether {{ restore.confirm_name }} holds it could not be read; {{ standing.neighbour }} is {% if standing.neighbour_healthy %}healthy{% else %}<strong>not healthy</strong>{% endif %}.{% else %}{{ standing.neighbour }} holds it{% if standing.neighbour_healthy %} and is healthy{% else %} and is <strong>not healthy</strong>{% if standing.detail %} ({{ standing.detail }}){% endif %}{% endif %}. keepalived on {{ restore.confirm_name }} stops during the restore and starts again as standby.{% endif %}</p>
         <p><strong>Backup:</strong> {% if restore.backup_failed %}none could be taken — {{ standing.backup_error }}{% else %}{{ restore.cluster }} was backed up at the preview.{% endif %}</p>
       </div>
     </div>

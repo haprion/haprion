@@ -342,11 +342,18 @@ def name_problem(form: Mapping[str, str], *, listed: Iterable[str]) -> str | Non
         return f"There is already a cluster {cluster}."
     try:
         cluster_definition.check_name(
-            cluster, display_name=form.get("display_name", ""), vip=form.get("vip", "").strip()
+            cluster, display_name=display_name(form), vip=form.get("vip", "").strip()
         )
     except node_enrollment.EnrollmentError as refused:
         return _sentence(str(refused))
     return None
+
+
+def display_name(form: Mapping[str, str]) -> str:
+    """The name given, or the cluster's ID: no page shows it, so asking for one was a field to fill for
+    nothing (review 2026-10-22, 7-16). `haprion-cluster add` takes the same default."""
+
+    return form.get("display_name", "").strip() or form.get("cluster", "").strip()
 
 
 def read_creation(
@@ -379,7 +386,7 @@ def read_creation(
         ]
         spec = cluster_definition.definition(
             cluster,
-            display_name=form.get("display_name", ""),
+            display_name=display_name(form),
             vip=form.get("vip", "").strip(),
             node_path=form.get("node_path", "").strip() or cluster,
             default_certificate=certificate,

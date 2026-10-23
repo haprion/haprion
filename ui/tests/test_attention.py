@@ -243,7 +243,7 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
                 "log collection has never reached the node",
                 "log collection last succeeded 12 min ago",
                 "log collection behind for 5 runs",
-                "log collection behind · 2 older day(s) waiting",
+                "log collection behind · 2 older days waiting",
             ],
         )
 
@@ -611,7 +611,7 @@ class TheManagersOwnServices(unittest.TestCase):
         waiting = replace(job(state="pending"), created_at=NOW - timedelta(minutes=11))
         (item,) = self.items(rows=[waiting])
         self.assertEqual((item.subject, item.link), ("worker", "/jobs"))
-        self.assertIn("1 job(s) waiting", item.message)
+        self.assertIn("1 job waiting", item.message)
         #
         # Not while one runs (it holds the cluster), not for a job just queued,
         # and not with writes off - then the worker claims nothing on purpose.
@@ -635,7 +635,7 @@ class TheManagersOwnServices(unittest.TestCase):
         self.assertEqual(
             (item.subject, item.severity, item.link), ("held jobs", "warning", "/jobs")
         )
-        self.assertIn("1 job(s) queued before the manager started", item.message)
+        self.assertIn("1 job queued before the manager started waits", item.message)
         #
         # Answered, it is the worker's again.
         #

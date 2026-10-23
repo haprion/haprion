@@ -976,7 +976,7 @@ def _sealed_join_key(value: Any, block: str) -> dict[str, str] | None:
     """
 
     compact = "".join(block.split()) if isinstance(block, str) else ""
-    if compact.startswith(node_enrollment.BLOCK_V2_PREFIX):
+    if compact.startswith(node_enrollment.V2_PREFIXES):
         try:
             if node_enrollment.parse(compact).join_key is not None:
                 raise BadPayload("a node's one-time key is queued sealed, never in its block")

@@ -148,7 +148,7 @@ class TheCard(unittest.TestCase):
         self.assertTrue(all(cell.label == "—" for row in card.rows for cell in row.cells))
         self.assertTrue(all(row.sessions is None for row in card.rows))
 
-    def test_a_sourced_object_reads_backup_where_the_vip_is_not(self) -> None:
+    def test_a_sourced_object_reads_standby_where_the_vip_is_not(self) -> None:
         """26-10-09 in production: the other node's check cannot bind the address.
 
         It said DOWN, which read as a node in trouble; it is a node whose check
@@ -166,7 +166,7 @@ class TheCard(unittest.TestCase):
             self.fail("an https object with servers has a card")
         found = {row.shown: [cell.label for cell in row.cells] for row in rows.rows}
 
-        self.assertEqual(found["192.0.2.12:8080"], ["UP", "BACKUP"])
+        self.assertEqual(found["192.0.2.12:8080"], ["UP", "STANDBY"])
         # Its drain is set on every node, and said on every node.
         self.assertEqual(found["192.0.2.10:8080"], ["UP", "DRAIN"])
 

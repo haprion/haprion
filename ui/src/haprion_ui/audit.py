@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from haprion_ui import moments
+from haprion_ui import labels, moments
 from haprion_ui.db import AuditEvent
 
 UNKNOWN_USER = "unknown user"
@@ -155,7 +155,7 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "break_glass_changed": _break_glass,
     "sessions_revoked": lambda detail: f"Signed {_account(detail)} out everywhere",
     "all_sessions_revoked": lambda detail: (
-        f"Signed every account out ({detail.get('sessions', 0)} session(s))"
+        f"Signed every account out ({labels.counted(detail.get('sessions', 0), 'session')})"
     ),
     "throttle_cleared": lambda detail: f"Cleared the sign-in throttle for {_account(detail)}",
     "oidc_configured": lambda _detail: "Changed the identity provider settings",
@@ -187,7 +187,7 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "job_requeued": lambda detail: f"Job {detail.get('job', '?')} was queued again",
     "job_abandoned": lambda detail: f"Job {detail.get('job', '?')} was given up",
     "jobs_held": lambda detail: (
-        f"Held {len(detail.get('jobs') or [])} job(s) for an admin: {detail.get('reason', '')}"
+        f"Held {labels.counted(len(detail.get('jobs') or []), 'job')} for an admin: {detail.get('reason', '')}"
     ),
     "held_job_decided": lambda detail: (
         f"Let held job {detail.get('job', '?')} run"

@@ -30,6 +30,8 @@ from haprion import accounts, exit_codes
 #
 from haprion.config import CLUSTER_ID
 
+from haprion_ui import labels
+
 DEFAULT_CONFIG_PATH = Path(accounts.UI_CONFIG)
 DEFAULT_LOG_DIRECTORY = f"{accounts.UI_DATA}/logs/mirror"
 MAX_CONFIG_BYTES = 1024 * 1024
@@ -231,7 +233,9 @@ def _section(data: Any, key: str, allowed: frozenset[str]) -> dict[str, Any]:
         # them: a key that is silently dropped is a setting somebody believes is
         # in effect. A typo must be an error at startup, not a surprise later.
         #
-        raise ConfigError(f"[{key}] has unknown key(s): {', '.join(unknown)}")
+        raise ConfigError(
+            f"[{key}] has unknown {labels.noun(len(unknown), 'key')}: {', '.join(unknown)}"
+        )
     return value
 
 
@@ -293,7 +297,9 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
 
     unknown = sorted(set(data) - ALLOWED_KEYS)
     if unknown:
-        raise ConfigError(f"unknown top-level key(s): {', '.join(unknown)}")
+        raise ConfigError(
+            f"unknown top-level {labels.noun(len(unknown), 'key')}: {', '.join(unknown)}"
+        )
 
     database = _section(data, "database", ALLOWED_DATABASE_KEYS)
     listen = _section(data, "listen", ALLOWED_LISTEN_KEYS)

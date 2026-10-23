@@ -28,7 +28,7 @@
             {%- else %} {{ (stale / 3600) | round(1) }} h ago
             {%- endif -%}
             {% if node.current_complete == false %} — today's log is incomplete{% if node.remaining_bytes is not none %} ({{ node.remaining_bytes }} bytes remaining at last read){% endif %}{% endif %}
-            {% if node.pending_days %} — {{ node.pending_days }} older day(s) pending{% endif %}
+            {% if node.pending_days %} — {{ node.pending_days }} older day{{ 's' if node.pending_days != 1 }} pending{% endif %}
           {%- elif stale < 5400 -%}
             last mirrored {{ (stale / 60) | round | int }} min ago
           {%- else -%}

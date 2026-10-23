@@ -159,7 +159,7 @@ sudo apt install haprion-node
 ```
 
 The WAF engine comes with it. The package makes the node's accounts and the keys it fetches with, and prints its enrollment
-block - one line starting with `haproxy-node-v2:` - and its host key's fingerprint. A new
+block - one line starting with `haprion-node-v2:` - and its host key's fingerprint. A new
 installation's dashboard walks through the first cluster with these blocks; later nodes are added
 under *Settings* → *Nodes & clusters*, and on the command line it is `haprion-cluster add` or
 `haprion-node add` with the block on stdin. `sudo haprion-node-key` prints a block again. What the

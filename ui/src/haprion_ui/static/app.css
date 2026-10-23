@@ -1942,6 +1942,11 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
    - it is the one somebody has come to this page on purpose to press. */
 .danger-button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--stop); border-radius: var(--radius-sm); background: var(--stop); color: var(--stop-text); font-size: 12px; font-weight: 650; cursor: pointer; }
 .danger-button:hover { filter: brightness(1.08); }
+/* A deploy the nodes are waiting for, told apart from one that would change nothing (7-19). */
+.secondary-button.deploy-due { border-color: var(--go-hover); background: var(--go); color: var(--go-text); }
+.secondary-button.deploy-due:hover { border-color: var(--go-hover); background: var(--go-hover); color: var(--go-text); }
+/* The node package above a form that asks for a node's block, inside the card's gutter as the fields are. */
+.package-link { margin: 0; padding: 18px 20px 0; }
 .removal-consequences { margin: 12px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
 .refusal-card .editor-actions { justify-content: flex-start; padding: 16px 0 0; }
 /*

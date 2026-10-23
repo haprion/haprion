@@ -83,7 +83,7 @@ sudo apt install haprion-node
 ```
 
 The node package prepares the machine and prints an **enrollment block**: a line starting with
-`haproxy-node-v2:`. Keep it at hand; the manager joins the node with it. The node package can also
+`haprion-node-v2:`. Keep it at hand; the manager joins the node with it. The node package can also
 be downloaded from the manager, on the page the next step opens.
 
 ## 3. Set up the first cluster
@@ -94,7 +94,7 @@ interface's certificate until you replace it.
 A new installation's **Dashboard** opens with *Getting started*. Its first line, *Nodes and a cluster*,
 has **Set up**: it opens *Set up your first cluster*, in five steps:
 
-1. **Name and address**: a cluster ID (for example `edge`), a display name and the VIP. Press
+1. **Name and address**: a cluster ID (for example `edge`) and the VIP; the display name is optional. Press
    **Continue**.
 2. **First node**: paste the first node's block and press **Add node**. Compare the host key the
    page shows with the one the node printed, then press the button with the node's name, for

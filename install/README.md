@@ -111,7 +111,7 @@ sudo apt install ./haprion-node_<version>_all.deb
 ```
 
 The package makes the node's accounts and the keys it fetches with, and prints
-its enrollment block - one line starting with `haproxy-node-v2:` - and its host
+its enrollment block - one line starting with `haprion-node-v2:` - and its host
 key's fingerprint. Paste the block into the Dashboard's *Set up your first
 cluster* (or *Settings* → *Create cluster*) for the first node of a cluster, or the cluster's *Add node* for the next; on the
 command line it is `haprion-cluster add` or `haprion-node add` with the block on

@@ -541,6 +541,7 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         clusters, history_rows = read_source(request, config, HISTORY_SOURCE)
+        _listed, status_rows = read_source(request, config, STATUS_SOURCE)
         overview = history.build_history_overview(
             clusters,
             history_rows,
@@ -566,6 +567,7 @@ def build_router(config: Config) -> APIRouter:
             "history.html",
             {
                 "pending": pending,
+                "behind": {row.cluster for row in status_rows if dashboard.behind(row)},
                 "published": request.query_params.get("published", "")[:40],
                 "username": session.username,
                 "role": session.role,

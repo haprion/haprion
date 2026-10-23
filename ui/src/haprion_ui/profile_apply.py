@@ -48,7 +48,15 @@ from haprion import exit_codes, ndes_profiles
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.dns_profiles import ProfileError
 
-from haprion_ui import config, db, dns_profile_form, job_wait, ndes_profile_form, tool_answer
+from haprion_ui import (
+    config,
+    db,
+    dns_profile_form,
+    job_wait,
+    labels,
+    ndes_profile_form,
+    tool_answer,
+)
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 OPERATION = "profiles_apply"
@@ -155,7 +163,9 @@ def read_file(path: Path) -> dict[str, list[Wanted]]:
         raise ApplyError(f"{path}: the file holds dns_profiles, ndes_profiles or both")
     unknown = sorted(str(key) for key in document if key not in sections)
     if unknown:
-        raise ApplyError(f"{path}: unknown section(s): {', '.join(unknown)}")
+        raise ApplyError(
+            f"{path}: unknown {labels.noun(len(unknown), 'section')}: {', '.join(unknown)}"
+        )
     found: dict[str, list[Wanted]] = {}
     for section, entries in document.items():
         kind = sections[section]
@@ -174,7 +184,9 @@ def read_file(path: Path) -> dict[str, list[Wanted]]:
             )
             extra = sorted(str(key) for key in entry if key not in allowed)
             if extra:
-                raise ApplyError(f"{where} has unknown field(s): {', '.join(extra)}")
+                raise ApplyError(
+                    f"{where} has unknown {labels.noun(len(extra), 'field')}: {', '.join(extra)}"
+                )
             profile_id = _text(entry.get("id"), f"{where} id").strip().lower()
             if profile_id in seen:
                 raise ApplyError(f"{where}: {profile_id} is listed twice")
@@ -457,7 +469,7 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
     if args.json:
         return tool_answer.done(OPERATION, result)
     if not the_plan.changes:
-        print(f"nothing to change ({len(the_plan.unchanged)} profile(s) as listed)")
+        print(f"nothing to change ({labels.counted(len(the_plan.unchanged), 'profile')} as listed)")
     lead = "would" if args.check else "did"
     for change in the_plan.changes:
         print(f"{lead} {change.action} {change.kind.name} profile {change.profile_id}")

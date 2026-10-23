@@ -55,7 +55,7 @@ from typing import Any
 import yaml
 from haprion import oidc
 
-from haprion_ui import attention, db, feature_switch, features, oidc_web, tool_answer
+from haprion_ui import attention, db, feature_switch, features, labels, oidc_web, tool_answer
 
 OPERATION = "settings_apply"
 SECTIONS = frozenset({"status_access", "features", "oidc"})
@@ -127,7 +127,9 @@ def read_file(path: Path) -> Wanted:
         raise ApplyError(f"{path}: the file holds status_access, features, oidc or several")
     unknown = sorted(str(key) for key in document if key not in SECTIONS)
     if unknown:
-        raise ApplyError(f"{path}: unknown section(s): {', '.join(unknown)}")
+        raise ApplyError(
+            f"{path}: unknown {labels.noun(len(unknown), 'section')}: {', '.join(unknown)}"
+        )
 
     access: tuple[str, ...] | None = None
     if "status_access" in document:
@@ -167,7 +169,9 @@ def read_file(path: Path) -> Wanted:
             )
         unknown = sorted(str(key) for key in given if key not in OIDC_KEYS)
         if unknown:
-            raise ApplyError(f"{path}: oidc has unknown field(s): {', '.join(unknown)}")
+            raise ApplyError(
+                f"{path}: oidc has unknown {labels.noun(len(unknown), 'field')}: {', '.join(unknown)}"
+            )
         for key in (*OIDC_FLAGS, "enabled"):
             if key in given and not isinstance(given[key], bool):
                 raise ApplyError(f"{path}: oidc.{key} must be true or false")

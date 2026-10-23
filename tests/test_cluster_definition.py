@@ -787,6 +787,36 @@ class TheCommand(unittest.TestCase):
         self.assertIn("Created gamma with node-c, node-d.", out.getvalue())
         self.assertIn("no certificates yet: haprion-cert-deploy -c gamma", out.getvalue())
         self.assertIn("Published as version 1; haprion-deploy -c gamma", out.getvalue())
+        self.assertEqual(parameters["display_name"], "Gamma")
+
+    def test_without_a_display_name_the_cluster_is_named_by_its_id(self) -> None:
+        """Review 2026-10-22, 7-16: a required name no page shows; the form takes the same default."""
+
+        sent: list[str] = []
+
+        def run(request: str) -> subprocess.CompletedProcess[str]:
+            sent.append(request)
+            return subprocess.CompletedProcess([], 1, "", "refused")
+
+        cluster_command.main(
+            [
+                "add",
+                "-c",
+                "gamma",
+                "--vip",
+                "198.51.100.30",
+                "--node-path",
+                "gamma",
+                "--host",
+                "node-c.example.com",
+            ],
+            stdin=io.StringIO(block("node-c", 10) + "\n"),
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            run=run,
+        )
+
+        self.assertEqual(json.loads(sent[0])["parameters"]["display_name"], "gamma")
 
     def test_remove_names_the_archive_and_says_the_nodes_keep_serving(self) -> None:
         def run(request: str) -> subprocess.CompletedProcess[str]:

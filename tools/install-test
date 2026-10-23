@@ -355,7 +355,7 @@ class Run:
             "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
             f"&& apt-get install -y -q {' '.join(shlex.quote(name) for name in names)}",
         )
-        block = re.search(r"^(haproxy-node-v2:\S+)$", output, re.M)
+        block = re.search(r"^((?:haprion|haproxy)-node-v2:\S+)$", output, re.M)
         if not block:
             raise Failed(f"the node package printed no enrollment block:\n{output[-3000:]}")
         if url is not None:
@@ -692,7 +692,7 @@ def run_one(
 
             _, since = run.on(leaving, "date +%s")
             _, printed = run.on(leaving, "haprion-node-key --again")
-            block = re.search(r"^(haproxy-node-v2:\S+)$", printed, re.M)
+            block = re.search(r"^((?:haprion|haproxy)-node-v2:\S+)$", printed, re.M)
             if not block:
                 raise Failed(f"haprion-node-key --again printed no block:\n{printed}")
             _, output = run.on(

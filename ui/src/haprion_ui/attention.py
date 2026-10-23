@@ -28,6 +28,7 @@ from typing import Any, Literal
 from haprion import log_forwarding
 
 from haprion_ui import jobs as jobs_module
+from haprion_ui import labels
 from haprion_ui.db import Job
 
 type Severity = Literal["critical", "warning"]
@@ -488,7 +489,7 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
             message = f"log collection last succeeded {int(stale // 60)} min ago"
         elif node.lasting_backlog():
             message = "log collection behind" + (
-                f" · {node.pending_days} older day(s) waiting"
+                f" · {labels.counted(node.pending_days, 'older day')} waiting"
                 if node.pending_days
                 else f" for {node.behind_runs} runs"
             )
@@ -633,7 +634,7 @@ def from_manager(
                 severity="warning",
                 cluster=None,
                 subject="held jobs",
-                message=f"{len(held)} job(s) queued before the manager started wait for Run or Discard",
+                message=f"{labels.counted(len(held), 'job')} queued before the manager started {'waits' if len(held) == 1 else 'wait'} for Run or Discard",
                 since=min(job.held_since for job in held if job.held_since is not None),
                 link="/jobs",
             )
@@ -653,7 +654,7 @@ def from_manager(
                     severity="critical",
                     cluster=None,
                     subject="worker",
-                    message=f"{len(waiting)} job(s) waiting and the worker takes none",
+                    message=f"{labels.counted(len(waiting), 'job')} waiting and the worker takes none",
                     since=oldest,
                     link="/jobs",
                 )

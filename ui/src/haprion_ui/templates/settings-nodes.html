@@ -112,7 +112,7 @@
       <label><span class="field-title">Type {{ addition.name }} to add it</span><input name="confirm" maxlength="64" spellcheck="false" autocomplete="off" required></label>
     </div>
     <div class="editor-actions editor-submit">
-      <div class="form-buttons"><a class="secondary-button" href="/settings/nodes/{{ cluster }}">Cancel</a><button type="submit" class="secondary-button deploy-button">Add node</button></div>
+      <div class="form-buttons"><a class="secondary-button" href="/settings/nodes/{{ cluster }}">Cancel</a><button type="submit" class="secondary-button deploy-button">Add {{ addition.name }}</button></div>
     </div>
   </section>
 </form>
@@ -121,8 +121,9 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <section class="cluster-card {{ accent | accent_class }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Add a node</h3></div></div></header>
+    <p class="package-link"><a class="text-link" href="/first-cluster/{{ node_package }}" download>Download {{ node_package }}</a></p>
     <div class="form-grid">
-      <label><span class="field-title">Enrollment block</span><textarea name="block" rows="4" spellcheck="false" placeholder="haproxy-node-v2:…" required>{{ block }}</textarea></label>
+      <label><span class="field-title">Enrollment block</span><textarea name="block" rows="4" spellcheck="false" placeholder="haprion-node-v2:…" required>{{ block }}</textarea></label>
       <label><span class="field-title">DNS name or IP <span class="optional">(optional)</span></span><input name="host" value="{{ host }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
     </div>
     <div class="editor-actions editor-submit">

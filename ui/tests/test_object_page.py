@@ -229,7 +229,7 @@ class TheOverviewOrdering(LoginTestCase):
 
         text = client.get("/proxies").text
         row = text.split('href="/proxies/edge-demo/shop"', 1)[1].split("</tr>", 1)[0]
-        protocol = row.split('data-label="Protocol"', 1)[1].split("</td>", 1)[0]
+        protocol = row.split('data-label="Protocol / state"', 1)[1].split("</td>", 1)[0]
         hosts = row.split('data-label="Hosts / ports"', 1)[1].split("</td>", 1)[0]
 
         self.assertIn("Inactive · deploy to add", protocol)
@@ -470,7 +470,7 @@ class ADraftInTheListing(DraftReading):
         def badge(row: ProxyDraft) -> str:
             body = self.listing([row])
             cell = body.split(f'data-href="/proxies/edge-demo/{row.object_id}"', 1)[1]
-            return cell.split('<td data-label="Protocol">', 1)[1].split("</td>", 1)[0]
+            return cell.split('<td data-label="Protocol / state">', 1)[1].split("</td>", 1)[0]
 
         for row, expected in (
             (self.drafted("public-web", stage="saved"), "Changed · not published"),

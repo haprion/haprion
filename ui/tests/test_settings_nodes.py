@@ -13,8 +13,10 @@ from __future__ import annotations
 import base64
 import copy
 import re
+import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -22,7 +24,7 @@ from uuid import uuid4
 from haprion import node_enrollment
 from haprion.node_enrollment import Enrollment
 
-from haprion_ui import auth, cluster_nodes, db, demo
+from haprion_ui import auth, cluster_nodes, db, demo, first_cluster
 from haprion_ui.db import ManagerCertificates
 from tests.test_login import configuration
 from tests.test_queue_route import KEY, QueueRouteTestCase
@@ -205,7 +207,22 @@ class AddingANode(NodesPage):
         self.assertIn(node_enrollment.fingerprint(key(1)), response.text)
         self.assertIn('value="edge-c.example.com"', response.text)
         self.assertIn("Type edge-c to add it", response.text)
+        self.assertIn(">Add edge-c</button>", response.text)
         self.assertEqual(self.queued, [])
+
+    def test_the_form_reads_the_block_and_offers_the_node_package(self) -> None:
+        """Review 2026-10-22, 7-10: the same words as the guide, and its download."""
+
+        for page in ("/settings/nodes/edge-demo", "/settings/new-cluster"):
+            with (
+                self.subTest(page),
+                tempfile.TemporaryDirectory() as release,
+                mock.patch.object(first_cluster, "RELEASE", Path(release)),
+            ):
+                text = self.client_for().get(page).text
+                self.assertIn('href="/first-cluster/haprion-node_all.deb" download', text)
+                self.assertRegex(text, r">Read blocks?</button>")
+                self.assertNotIn(">Add node</button>", text)
 
     def test_the_name_typed_back_queues_the_block_and_the_host(self) -> None:
         response = self.post_to(
@@ -477,6 +494,18 @@ class CreatingACluster(ClusterPage):
                 "requested_by": "operator",
             },
         )
+
+    def test_without_a_display_name_the_cluster_is_named_by_its_id(self) -> None:
+        """Review 2026-10-22, 7-16: no page shows the name, so it is not asked for."""
+
+        self.post_to(
+            self.client_for(),
+            "/settings/new-cluster",
+            **(self.creation(confirm="gamma") | {"display_name": ""}),
+        )
+
+        (queued,) = self.queued
+        self.assertEqual(queued["payload"]["display_name"], "gamma")
 
     def test_one_node_and_no_certificate_queue_the_request_without_them(self) -> None:
         """B302: the first node now, the second from the Nodes card; a certificate later."""

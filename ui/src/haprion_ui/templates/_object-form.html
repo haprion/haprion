@@ -100,7 +100,7 @@
       </label>
       <label{{ when('protocol', 'https') }}>Certificate
         <select name="certificate">
-          <option value="">None</option>
+          <option value="">Choose a certificate</option>
           {% for certificate in choices.certificates %}<option value="{{ certificate }}"{% if form.certificate == certificate %} selected{% endif %}>{{ certificate }}</option>{% endfor %}
         </select>
       </label>

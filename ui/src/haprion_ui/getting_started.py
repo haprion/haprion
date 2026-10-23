@@ -14,6 +14,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from haprion_ui import labels
+
 #
 # How long the dashboard offers a hidden list back (26-10-16). Hide asks
 # nothing, so a press by mistake has a way back; after a week the list is
@@ -89,10 +91,6 @@ class Checklist:
         return sum(item.done for item in self.items)
 
 
-def _plural(count: int, word: str, plural: str = "") -> str:
-    return f"{count} {word if count == 1 else plural or word + 's'}"
-
-
 def _every(clusters: Iterable[ClusterFacts], test: str) -> bool:
     chosen = list(clusters)
     return bool(chosen) and all(getattr(cluster, test) for cluster in chosen)
@@ -120,7 +118,7 @@ def _cluster_item(clusters: tuple[ClusterFacts, ...], guide: tuple[int, str] | N
         if address:
             state += f" · {address} on {first.owner}"
         if len(clusters) > 1:
-            state += f" · {_plural(len(clusters), 'cluster')}"
+            state += f" · {labels.counted(len(clusters), 'cluster')}"
         return Item("Nodes and a cluster", True, state, "", "")
     if clusters:
         first = clusters[0]
@@ -159,7 +157,7 @@ def _tls_item(clusters: tuple[ClusterFacts, ...]) -> Item:
         tls = "TLS not chosen"
     sources = sum(bool(vip.source) for vip in vips)
     source = (
-        _plural(sources, "source address", "source addresses")
+        labels.counted(sources, "source address", "source addresses")
         if sources
         else "the nodes' own addresses"
     )
@@ -190,7 +188,7 @@ def checklist(facts: Facts) -> Checklist:
             bool(facts.sso) or facts.accounts > 1,
             "Sign-in through SSO"
             if facts.sso
-            else _plural(facts.accounts, "account")
+            else labels.counted(facts.accounts, "account")
             if facts.accounts > 1
             else "Only admin",
             "Users",
@@ -199,7 +197,7 @@ def checklist(facts: Facts) -> Checklist:
         Item(
             "Certificates for your sites",
             facts.site_certificates > 0,
-            _plural(facts.site_certificates, "certificate") + " from ACME or NDES"
+            labels.counted(facts.site_certificates, "certificate") + " from ACME or NDES"
             if facts.site_certificates
             else "None from ACME or NDES yet",
             "Certificates",
@@ -218,7 +216,7 @@ def checklist(facts: Facts) -> Checklist:
             facts.node_backups_on and _every(clusters, "backups_scheduled"),
             "Off under Features"
             if not facts.node_backups_on
-            else f"Scheduled on {scheduled} of {_plural(len(clusters), 'cluster')}"
+            else f"Scheduled on {scheduled} of {labels.counted(len(clusters), 'cluster')}"
             if scheduled
             else "No schedule",
             "Features" if not facts.node_backups_on else "Schedule",
@@ -228,7 +226,7 @@ def checklist(facts: Facts) -> Checklist:
         Item(
             "Traffic log off the nodes",
             _every(clusters, "logs_forwarded"),
-            f"Forwarded from {logs} of {_plural(len(clusters), 'cluster')}"
+            f"Forwarded from {logs} of {labels.counted(len(clusters), 'cluster')}"
             if logs
             else "Kept on the nodes only",
             "Logs",

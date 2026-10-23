@@ -1,6 +1,6 @@
 """``haprion-cluster`` - create a cluster with its first node or two, or remove one (B211, B302).
 
-    haprion-cluster add -c <id> --display-name <name> --vip <address>
+    haprion-cluster add -c <id> [--display-name <name>] --vip <address>
                         --node-path <path> [--certificate <id>]
                         --host <first node> [--host <second node>]
                         [--prefix <length>] [--interface <name>] [--json] < blocks
@@ -34,7 +34,7 @@ from haprion import node_publish
 from haprion.cli import node_helper
 from haprion.cli.node import RunHelper, _answer, json_answer, run_helper
 from haprion.envelope import new_request_id
-from haprion.node_enrollment import BLOCK_PREFIX, BLOCK_V2_PREFIX, MAX_BLOCK_BYTES
+from haprion.node_enrollment import BLOCK_PREFIX, MAX_BLOCK_BYTES, V2_PREFIXES
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -42,7 +42,7 @@ def _parser() -> argparse.ArgumentParser:
     actions = parser.add_subparsers(dest="action", required=True)
     create = actions.add_parser("add")
     create.add_argument("-c", "--cluster", required=True)
-    create.add_argument("--display-name", required=True)
+    create.add_argument("--display-name")
     create.add_argument("--vip", required=True)
     create.add_argument("--node-path", required=True)
     create.add_argument("--certificate")
@@ -64,9 +64,9 @@ def split_blocks(text: str) -> list[str]:
     # Split before each prefix, v1 or v2 (B317): base64 has no colon, so a
     # prefix is never inside a block.
     #
-    marked = compact.replace(BLOCK_PREFIX, "\n" + BLOCK_PREFIX).replace(
-        BLOCK_V2_PREFIX, "\n" + BLOCK_V2_PREFIX
-    )
+    marked = compact
+    for prefix in (BLOCK_PREFIX, *V2_PREFIXES):
+        marked = marked.replace(prefix, "\n" + prefix)
     return [part for part in marked.split("\n") if part]
 
 
@@ -87,7 +87,8 @@ def main(
             args.cluster,
             new_request_id(),
             action="add",
-            display_name=args.display_name,
+            # The ID unless given, as the form does (review 2026-10-22, 7-16).
+            display_name=args.display_name or args.cluster,
             vip=args.vip,
             node_path=args.node_path,
             default_certificate=args.certificate,

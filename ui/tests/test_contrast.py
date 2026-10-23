@@ -56,6 +56,7 @@ class ButtonsAreReadable(unittest.TestCase):
         for rule, background, text in (
             (".primary-button {", "var(--go)", "var(--go-text)"),
             (".danger-button {", "var(--stop)", "var(--stop-text)"),
+            (".secondary-button.deploy-due {", "var(--go)", "var(--go-text)"),
         ):
             with self.subTest(rule):
                 bodies = [

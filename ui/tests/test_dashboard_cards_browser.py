@@ -132,7 +132,7 @@ HEADERS = f"""<!doctype html><html><head><meta charset="utf-8">
 {
     header(
         "external",
-        "1 node(s) are not running the published release",
+        "1 node is not running the published release",
         "Not on the latest version",
         ("79", "0 bit/s", "0 bit/s", "4 ms"),
     )

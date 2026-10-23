@@ -71,21 +71,31 @@ def v2(**overrides: Any) -> Enrollment:
 class TheV2Block(unittest.TestCase):
     def test_it_reads_back_with_its_key_and_without_a_cluster(self) -> None:
         text = node_enrollment.render(v2())
-        self.assertTrue(text.startswith("haproxy-node-v2:"))
+        self.assertTrue(text.startswith("haprion-node-v2:"))
         folded = "\n".join(text[i : i + 60] for i in range(0, len(text), 60))
         self.assertEqual(node_enrollment.parse(folded), v2())
 
     def test_stored_it_keeps_everything_but_the_key(self) -> None:
         stored = node_enrollment.render(node_enrollment.without_join_key(v2()))
-        self.assertTrue(stored.startswith("haproxy-node-v2:"))
+        self.assertTrue(stored.startswith("haprion-node-v2:"))
         self.assertEqual(node_enrollment.parse(stored), v2(join_key=None))
         self.assertNotIn("join_key", v2().as_dict())
         self.assertNotIn("PRIVATE", repr(v2()))
 
+    def test_a_block_a_node_printed_before_0_99_0_reads_the_same(self) -> None:
+        """7-17: the old product name stays readable; it is never written."""
+
+        text = node_enrollment.render(v2())
+        legacy = node_enrollment.LEGACY_V2_PREFIX + text.removeprefix(
+            node_enrollment.BLOCK_V2_PREFIX
+        )
+
+        self.assertEqual(node_enrollment.parse(legacy), v2())
+
     def test_a_cluster_in_a_v2_block_or_a_bad_key_is_refused(self) -> None:
         def encoded(document: dict[str, Any]) -> str:
             raw = json.dumps(document).encode()
-            return "haproxy-node-v2:" + base64.urlsafe_b64encode(raw).decode()
+            return "haprion-node-v2:" + base64.urlsafe_b64encode(raw).decode()
 
         good = json.loads(base64.urlsafe_b64decode(node_enrollment.render(v2())[16:]))
         for bad in (

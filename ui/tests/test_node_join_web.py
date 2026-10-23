@@ -59,7 +59,7 @@ class TheSeal(unittest.TestCase):
         self.assertNotIn("PRIVATE", json.dumps([stored, sealed]))
 
     def test_a_v1_block_goes_as_it_is_and_no_key_is_said(self) -> None:
-        v1 = v2_block(join_key=None).replace("haproxy-node-v2:", "x")  # not a block
+        v1 = v2_block(join_key=None).replace("haprion-node-v2:", "x")  # not a block
         with self.assertRaises(cluster_nodes.FormProblem):
             cluster_nodes.sealed_block(v1, cluster="gamma", public_key=None)
         with self.assertRaisesRegex(cluster_nodes.FormProblem, "no key to seal"):

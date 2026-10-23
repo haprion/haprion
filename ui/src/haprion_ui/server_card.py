@@ -78,10 +78,13 @@ NOT_SAID = Cell("—", "unknown", "The node did not report this server")
 # An object that leaves from a source address is checked only where that
 # address is: on the node holding the VIP. The other node's check binds an
 # address it does not have and fails - HAProxy telling the truth about the
-# binding and a lie about the server (`health.answers_for`). Its drain or maintenance is still its own, and still shown. BACKUP
-# is keepalived's word for that node, the one the dashboard's Failover column shows.
+# binding and a lie about the server (`health.answers_for`). Its drain or maintenance is still its own, and still shown.
+# Standby is the dashboard's word for that node; keepalived's BACKUP would read as the server's `backup` option
+# (review 2026-10-22, 7-8).
 #
-BACKUP = Cell("BACKUP", "unknown", "The object leaves from an address only the VIP holder carries")
+STANDBY = Cell(
+    "STANDBY", "unknown", "The object leaves from an address only the VIP holder carries"
+)
 
 
 def lost(state: str) -> Cell:
@@ -111,7 +114,7 @@ def cell(member: ServerHealth | None, *, standby: bool = False) -> Cell:
             return Cell("MAINT", "unknown", title)
         return Cell("DRAIN", "warning", title)
     if standby:
-        return BACKUP
+        return STANDBY
     upper = check.upper()
     if upper.startswith("UP"):
         return Cell("UP", "healthy", check if check != "UP" else "")

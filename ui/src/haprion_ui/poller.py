@@ -45,7 +45,7 @@ from haprion.cli.status import run_status_helper
 from haprion.envelope import new_request_id
 from haprion.version_history import MAX_LIST_LIMIT
 
-from haprion_ui import answers, db, search_index, service, update_check
+from haprion_ui import answers, db, labels, search_index, service, update_check
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
@@ -338,7 +338,7 @@ def _sample(pool: Any, source: Source, *, cluster: str, result: Mapping[str, Any
     except Exception as exc:  # noqa: BLE001 - a sample is never worth a failed pass
         logger.warning("cluster %s samples not written: %s", cluster, exc)
         return
-    logger.debug("cluster %s: %d sample row(s)", cluster, written)
+    logger.debug("cluster %s: %s", cluster, labels.counted(written, "sample row"))
 
 
 def _events(
@@ -368,7 +368,7 @@ def _events(
         logger.warning("cluster %s node events not written: %s", cluster, exc)
         return frozenset()
     if written.events:
-        logger.info("cluster %s: %d node event(s)", cluster, written.events)
+        logger.info("cluster %s: %s", cluster, labels.counted(written.events, "node event"))
     return written.joining
 
 
@@ -788,8 +788,8 @@ def main(argv: list[str] | None = None) -> int:
                 logger.error("another poller holds the lock on %s; exiting", database)
                 return exit_codes.BLOCKED
             logger.info(
-                "polling %d cluster(s) every %ds as %s on %s",
-                len(known),
+                "polling %s every %ds as %s on %s",
+                labels.counted(len(known), "cluster"),
                 config.poller.interval_seconds,
                 identity,
                 database,
@@ -834,7 +834,9 @@ def main(argv: list[str] | None = None) -> int:
                 asker.start(pool, installed=installed, now=datetime.now(UTC))
                 healthy = poll_once(pool, config, clusters=known)
                 if known:
-                    logger.info("%d/%d cluster(s) fully current", healthy, len(known))
+                    logger.info(
+                        "%d/%s fully current", healthy, labels.counted(len(known), "cluster")
+                    )
                 else:
                     logger.info("no cluster yet; Settings - Create cluster makes the first")
                 #

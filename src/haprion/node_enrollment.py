@@ -77,7 +77,14 @@ BLOCK_PREFIX = "haproxy-node-v1:"
 # and the private half of the node's one-time key, which the manager joins the
 # node with once. Never written back out: not in a result, not in an audit row.
 #
-BLOCK_V2_PREFIX = "haproxy-node-v2:"
+BLOCK_V2_PREFIX = "haprion-node-v2:"
+#
+# What a node's package printed before 0.99.0, under the product's old name
+# (review 2026-10-22, 7-17). Read as the same block, so a node on an older
+# package can still be added; never written.
+#
+LEGACY_V2_PREFIX = "haproxy-node-v2:"
+V2_PREFIXES = (BLOCK_V2_PREFIX, LEGACY_V2_PREFIX)
 JOIN_USER = "_haprion-join"
 MANAGER_HOST_KEY = Path("/etc/ssh/ssh_host_ed25519_key.pub")
 PRIVATE_KEY = re.compile(
@@ -237,13 +244,15 @@ def parse(text: object) -> Enrollment:
     if not isinstance(text, str) or len(text.encode()) > MAX_BLOCK_BYTES:
         raise EnrollmentError("enrollment_invalid", "the enrollment block is missing or too long")
     compact = "".join(text.split())
-    version2 = compact.startswith(BLOCK_V2_PREFIX)
-    if not version2 and not compact.startswith(BLOCK_PREFIX):
+    prefix = next(
+        (known for known in (*V2_PREFIXES, BLOCK_PREFIX) if compact.startswith(known)), None
+    )
+    if prefix is None:
         raise EnrollmentError(
             "enrollment_invalid",
             f"this is not an enrollment block; it starts with {BLOCK_V2_PREFIX}",
         )
-    prefix = BLOCK_V2_PREFIX if version2 else BLOCK_PREFIX
+    version2 = prefix in V2_PREFIXES
     try:
         raw = base64.urlsafe_b64decode(compact[len(prefix) :].encode())
         document = json.loads(raw)

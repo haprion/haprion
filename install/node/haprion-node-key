@@ -8,7 +8,7 @@
 #
 # Makes what does not depend on any manager - the accounts, the keys this node
 # fetches with, and a one-time key pair - and prints one line,
-# haproxy-node-v2:..., to paste into Create cluster or Add node. Nothing is
+# haprion-node-v2:..., to paste into Create cluster or Add node. Nothing is
 # asked, nothing is installed and nothing reaches the network: the package
 # runs this from its postinst, where dpkg holds the lock.
 #
@@ -140,7 +140,7 @@ document = {
     "join_key": base64.b64encode(Path(join_key).read_bytes()).decode(),
 }
 encoded = base64.urlsafe_b64encode(json.dumps(document, separators=(",", ":")).encode())
-print("haproxy-node-v2:" + encoded.decode())
+print("haprion-node-v2:" + encoded.decode())
 PY
 )"
 

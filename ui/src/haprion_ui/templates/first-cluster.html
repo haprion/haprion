@@ -12,7 +12,7 @@
 <h3>Run this on the {{ which }} node</h3>
 <pre class="receiver-command"><code>sudo apt install haprion-node</code></pre>
 <p><a class="text-link" href="/first-cluster/{{ node_package }}" download>Download {{ node_package }}</a></p>
-<label><span class="field-title">Paste what it printed</span><textarea name="block" rows="3" spellcheck="false" placeholder="haproxy-node-v2:…" required>{{ block }}</textarea></label>
+<label><span class="field-title">Paste what it printed</span><textarea name="block" rows="3" spellcheck="false" placeholder="haprion-node-v2:…" required>{{ block }}</textarea></label>
 {% if preview %}<p class="preview-notice settings-notice"><strong>{{ preview.name }}</strong> — {{ preview.host }} · host key <code>{{ preview.fingerprint }}</code></p>{% endif %}
 {% endmacro %}
 {% macro joined_rows() %}{% for node in guide.joined %}<div class="guide-joined"><span class="status-badge status-badge-healthy">Joined</span><strong>{{ node.name }}</strong><code>{{ node.host }}</code></div>{% endfor %}{% endmacro %}
@@ -30,7 +30,7 @@
       {% if problem %}<p class="preview-notice"><strong>{{ problem }}</strong></p>{% endif %}
       <div class="form-grid">
         <label><span class="field-title">Cluster ID</span><input name="cluster" value="{{ form.cluster }}" placeholder="edge" required maxlength="63"></label>
-        <label><span class="field-title">Display name</span><input name="display_name" value="{{ form.display_name }}" placeholder="Edge" required maxlength="64"></label>
+        <label><span class="field-title">Display name <span class="optional">(optional)</span></span><input name="display_name" value="{{ form.display_name }}" placeholder="Same as the ID" maxlength="64"></label>
         <label><span class="field-title">VIP</span><input name="vip" value="{{ form.vip }}" placeholder="203.0.113.10" required maxlength="45"></label>
       </div>
     </div>
@@ -45,7 +45,7 @@
       {% if problem or guide.problem %}<p class="preview-notice"><strong>{{ problem or guide.problem }}</strong></p>{% endif %}
       {{ node_step("first") }}
     </div>
-    <div class="editor-actions editor-submit"><div class="form-buttons"><button class="secondary-button" type="submit" name="action" value="back" formnovalidate>Back</button>{% if preview %}<button class="secondary-button" type="submit" name="confirm" value="{{ preview.name }}">Add {{ preview.name }}</button>{% else %}<button class="secondary-button" type="submit" name="action" value="read">Add node</button>{% endif %}</div></div>
+    <div class="editor-actions editor-submit"><div class="form-buttons"><button class="secondary-button" type="submit" name="action" value="back" formnovalidate>Back</button>{% if preview %}<button class="secondary-button" type="submit" name="confirm" value="{{ preview.name }}">Add {{ preview.name }}</button>{% else %}<button class="secondary-button" type="submit" name="action" value="read">Read block</button>{% endif %}</div></div>
   </form>
   {% elif guide.step == 3 %}
   <form method="post" action="/first-cluster/second-node">
@@ -57,7 +57,7 @@
       {{ joined_rows() }}
       {{ node_step("second") }}
     </div>
-    <div class="editor-actions editor-submit"><div class="form-buttons"><a class="secondary-button" href="/first-cluster?first-cluster=skip">Skip</a>{% if preview %}<button class="secondary-button" type="submit" name="confirm" value="{{ preview.name }}">Add {{ preview.name }}</button>{% else %}<button class="secondary-button" type="submit" name="action" value="read">Add node</button>{% endif %}</div></div>
+    <div class="editor-actions editor-submit"><div class="form-buttons"><a class="secondary-button" href="/first-cluster?first-cluster=skip">Skip</a>{% if preview %}<button class="secondary-button" type="submit" name="confirm" value="{{ preview.name }}">Add {{ preview.name }}</button>{% else %}<button class="secondary-button" type="submit" name="action" value="read">Read block</button>{% endif %}</div></div>
   </form>
   {% elif guide.step == 4 %}
   <form method="post" action="/operations">

@@ -36,7 +36,7 @@ from uuid import UUID, uuid5
 
 import psycopg
 
-from haprion_ui import answers, db, diagnostics, execution, operations, recovery, service
+from haprion_ui import answers, db, diagnostics, execution, labels, operations, recovery, service
 from haprion_ui.config import DEFAULT_CONFIG_PATH
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
@@ -924,8 +924,8 @@ def hold_from_before_boot(connection: Any, *, worker: str, boot: datetime | None
             detail={"jobs": held, "reason": "queued before the manager started"},
         )
         logger.warning(
-            "%d job(s) queued before the manager started are held for an admin: %s",
-            len(held),
+            "%s queued before the manager started are held for an admin: %s",
+            labels.counted(len(held), "job"),
             ", ".join(str(job) for job in held),
         )
     connection.commit()

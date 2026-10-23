@@ -185,8 +185,8 @@ resolved from the manager*; a *Save* then stays in the editor so the warning is 
   whose engines have none. Nought is refused too: it is a drain, something done to a server for
   a while, not a setting that outlives the reason for it. Changing a
   weight keeps the server's counters; changing its address or port starts it as a new server.
-- **`backup`** makes it a standby: no traffic while any other server is up, all of it when none
-  is. A pool cannot be all standbys.
+- **`backup`** makes it a backup server: no traffic while any other server is up, all of it when
+  none is. A pool cannot be all backup servers.
 
 The stored object spells both out (`weight: 50`, `backup: true`) under the server.
 
@@ -268,7 +268,7 @@ finishes it. A node that does not run the server yet - published but not deploye
 
 The card shows a node's own answer: `DRAIN` and `MAINT` for a server somebody took out, otherwise
 `UP` or `DOWN` from the health check. An object that leaves from a source address is checked only
-by the node holding the VIP, since only that node has the address; the other node reads `BACKUP`, as keepalived calls it. While the nodes are not yet on the object's newest version
+by the node holding the VIP, since only that node has the address; the other node reads `STANDBY`, as the dashboard calls it. While the nodes are not yet on the object's newest version
 the states are not shown, since a pool edited since the deploy may have its servers in another
 order. A node that keeps a drain or maintenance it could not put back after a reload or a start - its
 HAProxy did not answer in time, or the admin socket is missing - reports it, and the card reads
@@ -422,7 +422,7 @@ can be told to ask on it, which few can.
   answer, so a receiver behind a firewall that drops it reads as up. Use a *tcp* check
   where the receiver also listens on TCP, or send a test message and look for it.
 - **The receivers are addresses**, in the VIP's address family, with a port. There is
-  no standby receiver; *firstAvailable* is how a pool says active/passive.
+  no backup receiver; *firstAvailable* is how a pool says active/passive.
 
 An object whose protocol is *Syslog (UDP)* is forwarded by the kernel's IPVS,
 configured by keepalived on the same nodes and VIPs, on port 514 unless another is
@@ -1894,7 +1894,7 @@ clusters*, and `haprion-node` on the command line, change all six as one, throug
 helper.
 
 On the new node, install the node package (`sudo apt install haprion-node`).
-It prints the node's **enrollment block**, one line starting with `haproxy-node-v2:`, and its host
+It prints the node's **enrollment block**, one line starting with `haprion-node-v2:` (an older node package prints `haproxy-node-v2:`, which is read the same), and its host
 key's fingerprint; `sudo haprion-node-key` prints a block again. Paste the block into *Add node*.
 The page reads it and shows the node's name, the host the manager will reach it at and the
 fingerprint before anything is changed; typing the node's name queues the addition.
@@ -2003,7 +2003,7 @@ nodes from it rather than from the answers file. The runtime policy is kept the 
 
 A manager may have no clusters, and a cluster may start with one node and no certificate. A
 cluster is made by *Create cluster* under *Settings → Nodes & clusters*, or `haprion-cluster`,
-through the same root helper as a node: its ID, display name and VIP, and the block its first node
+through the same root helper as a node: its ID, VIP and display name (the ID unless given), and the block its first node
 printed when its package was installed - the node is joined as any node is
 ([Adding and removing a node](#adding-and-removing-a-node)). Its next node is added to it.
 
@@ -2012,13 +2012,13 @@ first line, for an admin, in five steps:
 *Name and address* (ID, display name, VIP), *First node* (the command to run on it, with the node
 package offered for download from the manager, and its block pasted back), *Second node* (the
 same, or *Skip*), *Deploy*, and *Done*, which says which node carries the VIP. Each step is the
-operation above or *Add node* and the deploy, so a guide left half-way is continued from the
+operation above or adding a node and the deploy, so a guide left half-way is continued from the
 dashboard, or finished under *Settings → Nodes & clusters*. Once the cluster is deployed, the
 dashboard is the dashboard.
 
 ```bash
 # On the management host, the block on stdin (two blocks and two --host options make both nodes at once):
-sudo haprion-cluster add -c beta --display-name Beta --vip 203.0.113.10 \
+sudo haprion-cluster add -c beta --vip 203.0.113.10 [--display-name Beta] \
     --node-path beta --host node-c.example.com [--certificate example.com] \
     [--prefix 24] [--interface eth0] < block
 

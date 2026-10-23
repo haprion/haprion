@@ -30,6 +30,7 @@ from haprion_ui import (
     db,
     feature_switch,
     features,
+    first_cluster,
     jobs,
     location_data,
     moments,
@@ -698,6 +699,7 @@ def build_router(config: Config) -> APIRouter:
                 "running": jobs.in_flight(recent).get(cluster),
                 "addition": addition,
                 "removal": removal,
+                "node_package": first_cluster.node_package_name(),
                 "moving": moving,
                 "cluster_removal": cluster_removal,
                 "cluster_removable": cluster_nodes.cluster_removable(listed, cluster) is None,
@@ -985,6 +987,7 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 "creation": creation,
                 "problem": problem,
+                "node_package": first_cluster.node_package_name(),
             },
             status_code=status_code,
         )

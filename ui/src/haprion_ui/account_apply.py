@@ -35,7 +35,7 @@ from typing import Any
 
 import yaml
 
-from haprion_ui import auth, db, tool_answer, users
+from haprion_ui import auth, db, labels, tool_answer, users
 
 OPERATION = "user_apply"
 KEYS = frozenset({"username", "role", "break_glass", "disabled", "password"})
@@ -116,7 +116,9 @@ def read_file(path: Path) -> list[Wanted]:
             raise ApplyError(f"{where} must be a mapping")
         unknown = sorted(str(key) for key in entry if key not in KEYS)
         if unknown:
-            raise ApplyError(f"{where} has unknown field(s): {', '.join(unknown)}")
+            raise ApplyError(
+                f"{where} has unknown {labels.noun(len(unknown), 'field')}: {', '.join(unknown)}"
+            )
         username = entry.get("username")
         if not isinstance(username, str):
             raise ApplyError(f"{where} needs a username")

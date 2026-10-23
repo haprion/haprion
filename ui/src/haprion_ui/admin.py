@@ -38,7 +38,7 @@ from typing import Any
 import psycopg
 from haprion import exit_codes
 
-from haprion_ui import account_apply, auth, db, tool_answer, users
+from haprion_ui import account_apply, auth, db, labels, tool_answer, users
 
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
@@ -343,7 +343,7 @@ def command_reset(environment: Environment, args: argparse.Namespace) -> int:
         ended = _revoke_sessions(connection, user_id)
         _audit(connection, "password_reset", args.username, sessions_revoked=ended)
         connection.commit()
-    print(f"password reset for {args.username}; {ended} session(s) revoked")
+    print(f"password reset for {args.username}; {labels.counted(ended, 'session')} revoked")
     return 0
 
 
@@ -359,7 +359,7 @@ def command_disable(environment: Environment, args: argparse.Namespace) -> int:
         ended = _revoke_sessions(connection, user_id)
         _audit(connection, "account_disabled", args.username, sessions_revoked=ended)
         connection.commit()
-    print(f"disabled {args.username}; {ended} session(s) revoked")
+    print(f"disabled {args.username}; {labels.counted(ended, 'session')} revoked")
     return 0
 
 
@@ -406,7 +406,7 @@ def command_revoke(environment: Environment, args: argparse.Namespace) -> int:
         ended = _revoke_sessions(connection, user_id)
         _audit(connection, "sessions_revoked", args.username, sessions_revoked=ended)
         connection.commit()
-    print(f"revoked {ended} session(s) for {args.username}")
+    print(f"revoked {labels.counted(ended, 'session')} for {args.username}")
     return 0
 
 
@@ -463,7 +463,7 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
     if args.json:
         return tool_answer.done(account_apply.OPERATION, result)
     if the_plan.empty:
-        print(f"nothing to change ({len(the_plan.unchanged)} account(s) as listed)")
+        print(f"nothing to change ({labels.counted(len(the_plan.unchanged), 'account')} as listed)")
         return 0
     lead = "would" if args.check else "did"
     for name in result["created"]:

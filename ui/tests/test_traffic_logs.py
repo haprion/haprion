@@ -497,7 +497,7 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("collection succeeded; catching up", page)
         self.assertIn("last success 0 s ago", page)
         self.assertIn("1234 bytes remaining", page)
-        self.assertIn("2 older day(s) pending", page)
+        self.assertIn("2 older days pending", page)
 
     def test_the_warning_is_drawn_alone_for_the_page_to_ask_again(self) -> None:
         #
@@ -565,7 +565,7 @@ class TheTrafficLogPage(LoginTestCase):
                     )
                     page = self.page(now=NOW)
                     self.assertIn(f"last success {shown}", page)
-                    self.assertIn("2 older day(s) pending", page)
+                    self.assertIn("2 older days pending", page)
                     if not complete:
                         self.assertIn("1234 bytes remaining", page)
 

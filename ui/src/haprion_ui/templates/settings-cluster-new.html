@@ -66,17 +66,18 @@
   <section class="cluster-card">
     <div class="form-grid">
       <label><span class="field-title">Cluster ID</span><input name="cluster" value="{{ form.cluster }}" maxlength="63" spellcheck="false" placeholder="edge" required></label>
-      <label><span class="field-title">Display name</span><input name="display_name" value="{{ form.display_name }}" maxlength="64" placeholder="Edge" required></label>
+      <label><span class="field-title">Display name <span class="optional">(optional)</span></span><input name="display_name" value="{{ form.display_name }}" maxlength="64" placeholder="Same as the ID"></label>
       <label><span class="field-title">VIP</span><input name="vip" value="{{ form.vip }}" maxlength="64" spellcheck="false" placeholder="203.0.113.10" required></label>
       <label><span class="field-title">VIP prefix <span class="optional">(optional)</span></span><input name="address_prefix" value="{{ form.address_prefix }}" maxlength="3" inputmode="numeric" spellcheck="false" placeholder="24"></label>
       <label><span class="field-title">VIP interface <span class="optional">(optional)</span></span><input name="address_interface" value="{{ form.address_interface }}" maxlength="63" spellcheck="false" placeholder="eth0"></label>
       <label><span class="field-title">Node path on the manager <span class="optional">(optional)</span></span><input name="node_path" value="{{ form.node_path }}" maxlength="63" spellcheck="false" placeholder="Same as the ID"></label>
       <label><span class="field-title">Default certificate <span class="optional">(optional)</span></span><select name="default_certificate"><option value=""></option>{% for identifier in certificates %}<option value="{{ identifier }}"{% if identifier == form.default_certificate %} selected{% endif %}>{{ identifier }}</option>{% endfor %}</select></label>
     </div>
+    <p class="package-link"><a class="text-link" href="/first-cluster/{{ node_package }}" download>Download {{ node_package }}</a></p>
     <div class="form-grid">
-      <label><span class="field-title">First node's block</span><textarea name="block_1" rows="4" spellcheck="false" placeholder="haproxy-node-v2:…" required>{{ form.block_1 }}</textarea></label>
+      <label><span class="field-title">First node's block</span><textarea name="block_1" rows="4" spellcheck="false" placeholder="haprion-node-v2:…" required>{{ form.block_1 }}</textarea></label>
       <label><span class="field-title">First node's DNS name or IP <span class="optional">(optional)</span></span><input name="host_1" value="{{ form.host_1 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
-      <label><span class="field-title">Second node's block <span class="optional">(optional)</span></span><textarea name="block_2" rows="4" spellcheck="false" placeholder="haproxy-node-v2:…">{{ form.block_2 }}</textarea></label>
+      <label><span class="field-title">Second node's block <span class="optional">(optional)</span></span><textarea name="block_2" rows="4" spellcheck="false" placeholder="haprion-node-v2:…">{{ form.block_2 }}</textarea></label>
       <label><span class="field-title">Second node's DNS name or IP <span class="optional">(optional)</span></span><input name="host_2" value="{{ form.host_2 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
     </div>
     <div class="editor-actions editor-submit">

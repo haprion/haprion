@@ -16,6 +16,7 @@ from typing import Any, Literal
 from haprion import haproxy_versions, node_resources
 from haprion.cluster_status import BEHIND_RELEASE, behind_part, keepalived_state
 
+from haprion_ui import labels
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.db import ClusterStatus
 
@@ -454,6 +455,18 @@ def next_reading(
     return due if due > 0 else READING_RETRY
 
 
+def behind(reading: Any | None) -> bool:
+    """The nodes answered and are not on the published release: a deploy is due.
+
+    The deploy button says so where it is drawn (review 2026-10-22, 7-19); it
+    looked the same on a converged cluster. An unread or half-read cluster is
+    not called behind - nothing measured that.
+    """
+
+    result = _mapping(reading.result if reading is not None else None)
+    return _mapping(result.get("summary")).get("release_state") == "behind"
+
+
 def not_deployed(reading: Any | None) -> bool:
     """The cluster's card would say *Not deployed*: nodes, none with a release yet."""
 
@@ -701,7 +714,11 @@ def _cluster_view(
         label, tone, detail = VIP_FAULT, "critical", f"VIP state: {vip_state.replace('_', ' ')}"
     elif any(node.tone == "critical" for node in nodes):
         affected = sum(node.tone == "critical" for node in nodes)
-        label, tone, detail = "Needs attention", "critical", f"{affected} node(s) require attention"
+        label, tone, detail = (
+            "Needs attention",
+            "critical",
+            f"{labels.counted(affected, 'node')} {'requires' if affected == 1 else 'require'} attention",
+        )
     elif stale:
         label, tone, detail = "Stale data", "warning", "The latest reading is older than two polls"
     elif any(node.tone == "warning" for node in nodes):
@@ -717,13 +734,13 @@ def _cluster_view(
             label, tone, detail = (
                 BEHIND,
                 "warning",
-                f"{len(warned)} node(s) are not running the published release",
+                f"{labels.counted(len(warned), 'node')} {'is' if len(warned) == 1 else 'are'} not running the published release",
             )
         else:
             label, tone, detail = (
                 "Degraded",
                 "warning",
-                f"{len(warned)} node(s) report a warning",
+                f"{labels.counted(len(warned), 'node')} {'reports' if len(warned) == 1 else 'report'} a warning",
             )
     elif release_state != "converged":
         label, tone, detail = BEHIND, "warning", "Nodes are not on one target release"

@@ -34,6 +34,8 @@ from haprion.digits import is_digits
 from haprion.traffic_collector import CollectorError
 from haprion.traffic_collector import load_config as load_collector_config
 
+from haprion_ui import labels
+
 PSQL = "/usr/bin/psql"
 SYSTEMCTL = "/usr/bin/systemctl"
 
@@ -330,9 +332,11 @@ def check_sudoers(
     expected = expected_sudo_rules(user, helpers, cli_root)
     secure = status.st_uid == 0 and stat.S_IMODE(status.st_mode) == 0o440
     if sorted(actual) == sorted(expected) and len(actual) == len(expected) and secure:
-        report.pass_(label, f"{len(expected)} exact helper rule(s)")
+        report.pass_(label, labels.counted(len(expected), "exact helper rule"))
     else:
-        detail = f"expected {len(expected)} exact helper rule(s), found {len(actual)}"
+        detail = (
+            f"expected {labels.counted(len(expected), 'exact helper rule')}, found {len(actual)}"
+        )
         if not secure:
             detail += f"; owner/mode is {status.st_uid}:{stat.S_IMODE(status.st_mode):o}"
         report.fail(label, detail)
@@ -551,7 +555,7 @@ def check_cluster_nodes(
             if behind:
                 report.warn(
                     subject,
-                    f"{len(behind)} script(s) not this release's node package: "
+                    f"{labels.counted(len(behind), 'script')} not this release's node package: "
                     f"{', '.join(behind)} - install it on the node",
                 )
 
@@ -606,7 +610,9 @@ def check_traffic_collector(report: Report, *, policy: Path, collector_config: P
     actual = ((node.cluster, node.node, node.host) for node in collector.nodes)
     missing, extra, changed = _inventory_differences(expected, actual)
     if not (missing or extra or changed):
-        report.pass_("traffic collector inventory", f"{len(collector.nodes)} node(s) current")
+        report.pass_(
+            "traffic collector inventory", f"{labels.counted(len(collector.nodes), 'node')} current"
+        )
         return
     details = []
     if missing:
@@ -847,7 +853,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     if report.failures:
-        print(f"INCOMPATIBLE: {report.failures} check(s) failed")
+        print(f"INCOMPATIBLE: {labels.counted(report.failures, 'check')} failed")
         return 1
     print("COMPATIBLE: every installed component satisfies the running UI release")
     return 0

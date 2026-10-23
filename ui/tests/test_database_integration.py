@@ -2780,7 +2780,7 @@ class ARealDatabase(unittest.TestCase):
                     expression = traffic_logs._Parser(traffic_logs._tokens(search)).parse()
                     self.assertEqual(
                         sorted(entry.path for entry in reading.entries),
-                        sorted(path for path in paths if traffic_logs._matches(expression, path)),
+                        sorted(path for path in paths if _contains(expression, path)),
                     )
 
     def test_a_reload_late_in_a_bucket_keeps_what_came_before_it(self) -> None:
@@ -3192,6 +3192,18 @@ class TheMetricTablesUnderTheirNewNames(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
+
+
+def _contains(expression: Any, text: str) -> bool:
+    """What a search means, said plainly, for the database's answer to be held to."""
+
+    if isinstance(expression, traffic_logs._Term):
+        return expression.value in text
+    if isinstance(expression, traffic_logs._Not):
+        return not _contains(expression.value, text)
+    if isinstance(expression, traffic_logs._And):
+        return _contains(expression.left, text) and _contains(expression.right, text)
+    return _contains(expression.left, text) or _contains(expression.right, text)
 
 
 class _Executes:
@@ -8627,3 +8639,148 @@ class GettingStartedHidden(unittest.TestCase):
             connection.commit()
             by = connection.execute("select hidden_by from getting_started").fetchall()
         self.assertEqual(by, [("other",)])
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
+    """The traffic log's filters, held to the server that evaluates them (review 2026-10-22, 1B-8).
+
+    They were proven against a file reader that matched in Python, across eleven
+    fields, while the page asks PostgreSQL and its index three. Each case here
+    is a row set of its own cluster in the shared database, asked as the web
+    role asks it.
+    """
+
+    def setUp(self) -> None:
+        self.cluster = f"search-{uuid4().hex[:8]}"
+        # Noon of today: a minute either side is still today's partition.
+        self.now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
+        self.directory = Path(tempfile.mkdtemp(prefix="traffic-"))
+        self.addCleanup(shutil.rmtree, self.directory, True)
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}") as c:
+            c.execute("select traffic_log_partition(%s::date)", (self.now.date(),))
+        self.request = 0
+
+    def store(self, **fields: Any) -> None:
+        self.request += 1
+        row = {
+            "occurred_at": self.now,
+            "request_number": self.request,
+            "client": "192.0.2.10",
+            "method": "GET",
+            "host": "app.example.com",
+            "path": "/index.html",
+            "frontend": "fe-https",
+            "backend": "be-app",
+            "server": "srv1",
+            "status": 200,
+            "rule": "",
+        } | fields
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_COLLECTOR_ROLE']}") as c:
+            c.execute(
+                "insert into traffic_log (event_id, cluster, node, occurred_at, request_number,"
+                " client, method, host, path, frontend, backend, server, status, request_time,"
+                " queue_time, connect_time, response_time, total_time, bytes, rule)"
+                " values (%s, %s, 'node-a', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                " 0, 0, 0, 0, 0, 0, %s)",
+                (
+                    uuid4().bytes * 2,
+                    self.cluster,
+                    row["occurred_at"],
+                    row["request_number"],
+                    row["client"],
+                    row["method"],
+                    row["host"],
+                    row["path"],
+                    row["frontend"],
+                    row["backend"],
+                    row["server"],
+                    row["status"],
+                    row["rule"],
+                ),
+            )
+
+    def read(self, **filters: Any) -> traffic_logs.Reading:
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_WEB_ROLE']}") as c:
+            return traffic_logs.read_database(c, self.directory, (self.cluster,), **filters)
+
+    def paths(self, **filters: Any) -> list[str]:
+        return [entry.path for entry in self.read(**filters).entries]
+
+    def test_newest_first_and_a_busy_second_by_the_request_counter(self) -> None:
+        self.store(path="/old", occurred_at=self.now - timedelta(seconds=5))
+        self.store(path="/seventh", request_number=7)
+        self.store(path="/ninth", request_number=9)
+        self.store(path="/eighth", request_number=8)
+
+        self.assertEqual(self.paths(), ["/ninth", "/eighth", "/seventh", "/old"])
+
+    def test_status_narrows_by_code_or_class_and_nothing_else_is_a_status(self) -> None:
+        self.store(path="/ok")
+        self.store(path="/down", status=503)
+
+        self.assertEqual(self.paths(status="5xx"), ["/down"])
+        self.assertEqual(self.paths(status="503"), ["/down"])
+        self.assertEqual(self.paths(status="99"), [])
+
+    def test_search_is_the_host_the_path_and_the_backend_whatever_their_case(self) -> None:
+        self.store(path="/ok", host="Shop.Example.com", backend="be-other")
+        self.store(path="/elsewhere")
+
+        self.assertEqual(self.paths(substring="be-other"), ["/ok"])
+        self.assertEqual(self.paths(substring="/OK"), ["/ok"])
+        self.assertEqual(self.paths(substring="shop.example"), ["/ok"])
+        # Not a client, a method or a status: the three the index holds.
+        self.assertEqual(self.paths(substring="192.0.2.10"), [])
+
+    def test_terms_combine_with_case_insensitive_boolean_operators(self) -> None:
+        self.store(path="/api/orders", backend="be-orders")
+        self.store(path="/api/health", backend="be-orders")
+        self.store(path="/login", backend="be-login")
+
+        self.assertEqual(
+            self.paths(substring="be-orders aNd (/orders OR /missing) AND not /health"),
+            ["/api/orders"],
+        )
+
+    def test_adjacent_terms_are_an_implicit_and_and_quotes_keep_a_phrase(self) -> None:
+        self.store(host="first.example.com", path="/rock and roll")
+        self.store(host="second.example.com", path="/rock")
+
+        self.assertEqual(self.paths(substring="first rock"), ["/rock and roll"])
+        self.assertEqual(self.paths(substring='"rock and roll"'), ["/rock and roll"])
+
+    def test_time_bounds_are_inclusive(self) -> None:
+        self.store(path="/before", occurred_at=self.now - timedelta(seconds=60))
+        self.store(path="/inside")
+        self.store(path="/after", occurred_at=self.now + timedelta(seconds=60))
+
+        self.assertEqual(self.paths(from_at=self.now, to_at=self.now), ["/inside"])
+
+    def test_the_limit_keeps_the_newest(self) -> None:
+        for number in range(12):
+            self.store(path=f"/{number}", request_number=number)
+
+        self.assertEqual(self.paths(limit=5), ["/11", "/10", "/9", "/8", "/7"])
+
+    def test_a_cluster_not_among_those_listed_reads_nothing(self) -> None:
+        self.store()
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_WEB_ROLE']}") as c:
+            elsewhere = traffic_logs.read_database(
+                c, self.directory, ("alpha",), cluster=self.cluster
+            )
+            unlisted = traffic_logs.read_database(c, self.directory, ("alpha",))
+        self.assertEqual(elsewhere.entries, ())
+        self.assertNotIn(self.cluster, {entry.cluster for entry in unlisted.entries})
+
+    def test_a_subdomain_is_one_label_under_it_less_the_names_it_yields(self) -> None:
+        for host in (
+            "Shop.Apps.Example.com:80",
+            "grafana.apps.example.com",
+            "a.b.apps.example.com",
+            "apps.example.com",
+        ):
+            self.store(host=host, backend="fe-https", path="/" + host)
+
+        owned = ((), ("*.apps.example.com", "!grafana.apps.example.com"))
+        self.assertEqual(self.paths(owned=owned), ["/Shop.Apps.Example.com:80"])

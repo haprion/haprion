@@ -664,10 +664,10 @@ def build_router(config: Config) -> APIRouter:
                     traffic_logs.configured_server_addresses(object_row.cluster, parsed)
                 )
         #
-        # Reading files, never asking a node. The collector already fetched
-        # these, so a node that is slow, unreachable or hostile cannot make this
-        # request hang - it can only make its own mirror old, which is exactly
-        # what the compact warning reports.
+        # Reading what the collector stored, never asking a node. A node that
+        # is slow, unreachable or hostile cannot make this request hang - it
+        # can only make its own records old, which is exactly what the compact
+        # warning reports.
         #
         if config.traffic_logs.enabled:
             with request.app.state.pool.connection() as connection:

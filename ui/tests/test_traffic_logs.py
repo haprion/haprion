@@ -23,7 +23,8 @@ from haprion_ui.traffic_logs import (
     Reading,
     configured_server_addresses,
     parse,
-    read,
+    read_database,
+    read_freshness,
     resolve_server_addresses,
 )
 from haprion_ui.views import ZONE_COOKIE
@@ -121,14 +122,58 @@ def record(**overrides: object) -> bytes:
     return json.dumps(value).encode("utf-8") + b"\n"
 
 
+class StoredRows:
+    """A connection whose `traffic_log_read` holds every record of the mirror files.
+
+    The page and its filters are the real code: `read_database` builds its
+    statement as it does against PostgreSQL. What this does not do is evaluate
+    the statement's conditions - search, status, time, rule, object. Those are
+    PostgreSQL's, and `test_database_integration` proves them against a real
+    server; here every row of the clusters asked for comes back, newest first
+    as the statement orders them, within its limit. The file reader that stood
+    in for the table filtered as it did itself, not as the database does
+    (review 2026-10-22, 1B-8).
+    """
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self.parameters: list[Any] = []
+
+    def cursor(self, **_options: Any) -> StoredRows:
+        return self
+
+    def __enter__(self) -> StoredRows:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def execute(self, _statement: object, parameters: list[Any]) -> None:
+        self.parameters = parameters
+
+    def fetchall(self) -> list[traffic_logs.Entry]:
+        clusters, limit = self.parameters[0], self.parameters[-1]
+        rows = []
+        for path in sorted(self.directory.glob("*--*.jsonl")):
+            cluster, node = path.name[: -len(".jsonl")].split("--", 1)
+            if cluster not in clusters:
+                continue
+            for line in path.read_bytes().splitlines():
+                try:
+                    rows.append(parse(line, cluster, node))
+                except ValueError:
+                    continue
+        rows.sort(key=lambda entry: (entry.at, entry.request), reverse=True)
+        return rows[:limit]
+
+
 class TrafficLogReadingTests(unittest.TestCase):
+    """What the page reads beside the rows: the collector's files, and the records it parses."""
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-
-    def mirror(self, cluster: str, node: str, *records: bytes) -> None:
-        (self.root / f"{cluster}--{node}.jsonl").write_bytes(b"".join(records))
 
     def meta(self, cluster: str, node: str, **overrides: object) -> None:
         value: dict[str, object] = {
@@ -141,19 +186,6 @@ class TrafficLogReadingTests(unittest.TestCase):
         }
         value.update(overrides)
         (self.root / f"{cluster}--{node}.meta.json").write_text(json.dumps(value))
-
-    def test_records_are_read_and_newest_comes_first(self) -> None:
-        self.mirror(
-            "alpha",
-            "node-a",
-            record(at=int(NOW.timestamp()) - 5, path="/old"),
-            record(path="/new"),
-        )
-
-        reading = read(self.root, ("alpha",))
-
-        self.assertEqual([entry.path for entry in reading.entries], ["/new", "/old"])
-        self.assertEqual(reading.malformed, 0)
 
     def test_generated_server_positions_resolve_to_configured_destinations(self) -> None:
         parsed = load_proxy("sample-proxy", PROXY.encode())
@@ -187,33 +219,16 @@ class TrafficLogReadingTests(unittest.TestCase):
 
         self.assertEqual(resolved.entries[0].server, "")
 
-    def test_one_busy_second_is_ordered_by_the_request_counter(self) -> None:
-        """The accept time is whole seconds, so it cannot order a busy second."""
-
-        self.mirror(
-            "alpha",
-            "node-a",
-            record(request=7, path="/seventh"),
-            record(request=9, path="/ninth"),
-            record(request=8, path="/eighth"),
-        )
-
-        reading = read(self.root, ("alpha",))
-
-        self.assertEqual(
-            [entry.path for entry in reading.entries], ["/ninth", "/eighth", "/seventh"]
-        )
-
     def test_a_node_that_has_never_answered_is_still_listed(self) -> None:
         """The whole point of the strip: silence must not look like calm.
 
-        A node with metadata and no mirror produced no records. Listing only
-        the mirrors would drop exactly the node an operator needs to see.
+        A node with metadata and no rows produced no records. Listing only the
+        nodes with rows would drop exactly the node an operator needs to see.
         """
 
         self.meta("alpha", "node-b", last_success=None, outcome="unreachable")
 
-        reading = read(self.root, ("alpha",))
+        reading = read_freshness(self.root, ("alpha",))
 
         self.assertEqual(reading.entries, ())
         self.assertEqual([node.node for node in reading.nodes], ["node-b"])
@@ -222,50 +237,39 @@ class TrafficLogReadingTests(unittest.TestCase):
         self.assertIsNone(reading.nodes[0].stale_seconds(now=NOW))
 
     def test_a_stale_mirror_reports_its_age_rather_than_looking_current(self) -> None:
-        self.mirror("alpha", "node-a", record())
         self.meta("alpha", "node-a", last_success=(NOW - timedelta(minutes=42)).isoformat())
 
-        reading = read(self.root, ("alpha",))
+        reading = read_freshness(self.root, ("alpha",))
         self.assertEqual(reading.nodes[0].stale_seconds(now=NOW), 2520.0)
 
     def test_successful_contact_still_reports_backlog_and_invalid_counts_are_unknown(self) -> None:
         self.meta("alpha", "node-a", current_complete=False, remaining_bytes=1234, pending_days=2)
-        node = read(self.root, ("alpha",)).nodes[0]
+        node = read_freshness(self.root, ("alpha",)).nodes[0]
         self.assertTrue(node.catching_up())
         self.assertFalse(node.latest_attempt_failed())
         self.assertEqual((node.remaining_bytes, node.pending_days), (1234, 2))
         self.meta(
             "alpha", "node-a", current_complete="false", remaining_bytes=True, pending_days=-1
         )
-        node = read(self.root, ("alpha",)).nodes[0]
+        node = read_freshness(self.root, ("alpha",)).nodes[0]
         self.assertEqual(
             (node.current_complete, node.remaining_bytes, node.pending_days), (None,) * 3
         )
 
     def test_a_mirror_without_metadata_is_reported_as_unknown(self) -> None:
-        self.mirror("alpha", "node-a", record())
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
 
-        reading = read(self.root, ("alpha",))
+        reading = read_freshness(self.root, ("alpha",))
 
         self.assertEqual(reading.nodes[0].outcome, "unknown")
         self.assertIsNone(reading.nodes[0].last_attempt)
 
     def test_unreadable_metadata_never_stops_the_page(self) -> None:
-        self.mirror("alpha", "node-a", record())
         (self.root / "alpha--node-a.meta.json").write_bytes(b"{ not json")
 
-        reading = read(self.root, ("alpha",))
+        reading = read_freshness(self.root, ("alpha",))
 
-        self.assertEqual(len(reading.entries), 1)
         self.assertEqual(reading.nodes[0].outcome, "unknown")
-
-    def test_a_malformed_record_is_counted_and_the_rest_still_render(self) -> None:
-        self.mirror("alpha", "node-a", b"not json at all\n", record(), b'{"schema":2}\n')
-
-        reading = read(self.root, ("alpha",))
-
-        self.assertEqual(len(reading.entries), 1)
-        self.assertEqual(reading.malformed, 2)
 
     def test_an_oversized_record_is_refused_rather_than_rendered(self) -> None:
         with self.assertRaises(ValueError):
@@ -294,172 +298,34 @@ class TrafficLogReadingTests(unittest.TestCase):
         self.assertEqual(entry.request, 0)
 
     def test_a_cluster_the_deployment_does_not_name_reads_nothing(self) -> None:
-        """The mirror is on disk; whether it may be read is the config's call."""
+        """The rows are in the table; whether they may be read is the config's call."""
 
-        self.mirror("beta", "node-c", record())
+        self.meta("beta", "node-c")
+        (self.root / "beta--node-c.jsonl").write_bytes(record())
+        table = StoredRows(self.root)
 
-        self.assertEqual(read(self.root, ("alpha",)), Reading((), (), 0, False))
-        self.assertEqual(read(self.root, ("alpha",), cluster="beta"), Reading((), (), 0, False))
+        self.assertEqual(read_freshness(self.root, ("alpha",)), Reading((), (), 0, False))
+        self.assertEqual(
+            read_database(table, self.root, ("alpha",), cluster="beta"),  # type: ignore[arg-type]
+            Reading((), (), 0, False),
+        )
+        self.assertEqual(read_database(table, self.root, ("alpha",)).entries, ())  # type: ignore[arg-type]
 
     def test_a_file_name_that_is_not_a_node_is_ignored(self) -> None:
-        for name in ("alpha--.jsonl", "alpha--../escape.jsonl", "alpha--a b.jsonl"):
+        for name in ("alpha--.meta.json", "alpha--../escape.meta.json", "alpha--a b.meta.json"):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(record())
+            path.write_text("{}")
 
-        reading = read(self.root, ("alpha",))
-
-        self.assertEqual(reading.entries, ())
-        self.assertEqual(reading.nodes, ())
-
-    def test_a_symlinked_mirror_is_not_followed(self) -> None:
-        target = self.root / "elsewhere.jsonl"
-        target.write_bytes(record(path="/secret"))
-        (self.root / "alpha--node-a.jsonl").symlink_to(target)
-
-        reading = read(self.root, ("alpha",))
-
-        self.assertEqual(reading.entries, ())
-        self.assertTrue(reading.unavailable)
-
-    def test_filters_narrow_without_reaching_past_the_configured_clusters(self) -> None:
-        self.mirror(
-            "alpha",
-            "node-a",
-            record(status=200, path="/ok"),
-            record(status=503, path="/down", backend="be-other"),
-        )
-
-        self.assertEqual(len(read(self.root, ("alpha",), status="5xx").entries), 1)
-        self.assertEqual(len(read(self.root, ("alpha",), status="503").entries), 1)
-        self.assertEqual(len(read(self.root, ("alpha",), status="99").entries), 0)
-        self.assertEqual(len(read(self.root, ("alpha",), substring="be-other").entries), 1)
-        self.assertEqual(len(read(self.root, ("alpha",), substring="/OK").entries), 1)
-
-    def test_search_combines_terms_with_case_insensitive_boolean_operators(self) -> None:
-        self.mirror(
-            "alpha",
-            "node-a",
-            record(path="/api/orders", backend="be-orders"),
-            record(path="/api/health", backend="be-orders"),
-            record(path="/login", backend="be-login"),
-        )
-
-        reading = read(
-            self.root,
-            ("alpha",),
-            substring="be-orders aNd (/orders OR /missing) AND not /health",
-        )
-
-        self.assertEqual([entry.path for entry in reading.entries], ["/api/orders"])
-
-    def test_adjacent_search_terms_are_an_implicit_and_and_quotes_keep_a_phrase(self) -> None:
-        self.mirror(
-            "alpha",
-            "node-a",
-            record(host="first.example.com", path="/rock and roll"),
-            record(host="second.example.com", path="/rock"),
-        )
-
-        implicit = read(self.root, ("alpha",), substring="first rock")
-        phrase = read(self.root, ("alpha",), substring='"rock and roll"')
-
-        self.assertEqual([entry.host for entry in implicit.entries], ["first.example.com"])
-        self.assertEqual([entry.host for entry in phrase.entries], ["first.example.com"])
+        self.assertEqual(read_freshness(self.root, ("alpha",)).nodes, ())
 
     def test_an_invalid_search_is_explained_and_never_silently_shows_everything(self) -> None:
-        self.mirror("alpha", "node-a", record())
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
 
-        reading = read(self.root, ("alpha",), substring="api AND")
+        reading = read_database(StoredRows(self.root), self.root, ("alpha",), substring="api AND")  # type: ignore[arg-type]
 
         self.assertEqual(reading.entries, ())
         self.assertEqual(reading.filter_error, "The search expression ends with an operator.")
-
-    def test_search_uses_the_resolved_destination_and_the_hidden_backend(self) -> None:
-        backend = "primary-backend"
-        self.mirror("alpha", "node-a", record(backend=backend, server="s3"))
-        addresses = {("alpha", backend, "s3"): "app-three.example.net:8080"}
-
-        by_destination = read(
-            self.root,
-            ("alpha",),
-            substring="app-three.example.net:8080",
-            server_addresses=addresses,
-        )
-        by_backend = read(
-            self.root,
-            ("alpha",),
-            substring="primary-backend",
-            server_addresses=addresses,
-        )
-
-        self.assertEqual(by_destination.entries[0].server, "app-three.example.net:8080")
-        self.assertEqual(len(by_backend.entries), 1)
-
-    def test_time_bounds_are_inclusive(self) -> None:
-        self.mirror(
-            "alpha",
-            "node-a",
-            record(at=int(NOW.timestamp()) - 60, path="/before"),
-            record(path="/inside"),
-            record(at=int(NOW.timestamp()) + 60, path="/after"),
-        )
-
-        reading = read(self.root, ("alpha",), from_at=NOW, to_at=NOW)
-
-        self.assertEqual([entry.path for entry in reading.entries], ["/inside"])
-
-    def test_the_limit_is_the_deployment_s_and_not_the_file_s(self) -> None:
-        self.mirror("alpha", "node-a", *(record(request=n) for n in range(50)))
-
-        self.assertEqual(len(read(self.root, ("alpha",), limit=10).entries), 10)
-
-    def test_the_unfiltered_view_reads_a_bounded_tail(self) -> None:
-        self.mirror("alpha", "node-a", record(path="/old"), record(path="/new"))
-
-        with patch("haprion_ui.traffic_logs.MAX_TAIL_BYTES", len(record()) + 1):
-            reading = read(self.root, ("alpha",))
-
-        self.assertEqual([entry.path for entry in reading.entries], ["/new"])
-
-    def test_a_filter_searches_the_whole_mirror_and_not_only_the_tail(self) -> None:
-        """The question that found this: "ftp, some day last week".
-
-        The unfiltered page shows the newest records and reads the newest
-        bytes. A filter is a question about everything the collector kept,
-        and a match older than the tail must be found.
-        """
-
-        self.mirror(
-            "alpha", "node-a", record(path="/ftp-old"), *(record(path="/new") for _ in range(20))
-        )
-
-        with patch("haprion_ui.traffic_logs.MAX_TAIL_BYTES", len(record()) * 3):
-            unfiltered = read(self.root, ("alpha",))
-            searched = read(self.root, ("alpha",), substring="ftp")
-            by_status = read(self.root, ("alpha",), status="200")
-
-        self.assertNotIn("/ftp-old", [entry.path for entry in unfiltered.entries])
-        self.assertEqual([entry.path for entry in searched.entries], ["/ftp-old"])
-        self.assertEqual(len(by_status.entries), 21)
-
-    def test_a_search_stops_at_the_collector_s_size_limit_and_drops_the_cut_line(self) -> None:
-        self.mirror(
-            "alpha", "node-a", record(path="/one"), record(path="/two"), record(path="/three")
-        )
-
-        with patch("haprion_ui.traffic_logs.MAX_SEARCH_BYTES", len(record()) * 2 + 5):
-            reading = read(self.root, ("alpha",), substring="/")
-
-        self.assertEqual(sorted(entry.path for entry in reading.entries), ["/one", "/two"])
-        self.assertEqual(reading.malformed, 0)
-
-    def test_a_search_keeps_only_the_newest_matches_within_the_limit(self) -> None:
-        self.mirror("alpha", "node-a", *(record(request=n) for n in range(30)))
-
-        reading = read(self.root, ("alpha",), substring="/", limit=5)
-
-        self.assertEqual([entry.request for entry in reading.entries], [29, 28, 27, 26, 25])
 
 
 class TheTrafficLogPage(LoginTestCase):
@@ -478,6 +344,8 @@ class TheTrafficLogPage(LoginTestCase):
         self.root = Path(self.temporary.name)
         # What zone.js would have written; None is a browser that has not yet.
         self.browser_zone: str | None = None
+        # What each page asked `read_database` for, in order.
+        self.asked: list[dict[str, Any]] = []
 
     def test_successful_contact_with_backlog_shows_a_log_warning(self) -> None:
         (self.root / "alpha--node-a.meta.json").write_text(
@@ -618,10 +486,15 @@ class TheTrafficLogPage(LoginTestCase):
             client.cookies.set(ZONE_COOKIE, self.browser_zone)
         self.sign_in(client)
 
-        def file_read(
-            _connection: object, directory: Path, named: tuple[str, ...], **kwargs: object
+        def stored(
+            _connection: object, directory: Path, named: tuple[str, ...], **kwargs: Any
         ) -> Reading:
-            return read(directory, named, **kwargs)  # type: ignore[arg-type]
+            #
+            # What the page asked for, and the real reader over every stored
+            # row: the conditions are PostgreSQL's (`StoredRows`).
+            #
+            self.asked.append(kwargs)
+            return read_database(StoredRows(directory), directory, named, **kwargs)  # type: ignore[arg-type]
 
         frozen = now
 
@@ -632,7 +505,7 @@ class TheTrafficLogPage(LoginTestCase):
 
         with (
             patch("haprion_ui.db.cluster_objects", return_value=list(objects)),
-            patch("haprion_ui.traffic_logs.read_database", side_effect=file_read),
+            patch("haprion_ui.traffic_logs.read_database", side_effect=stored),
             patch("haprion_ui.views.datetime", Clock),
             patch("haprion_ui.pages.traffic.datetime", Clock),
         ):
@@ -661,7 +534,6 @@ class TheTrafficLogPage(LoginTestCase):
 
         self.healthy_meta()
         with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
-            mirror.write(record(request=1, path="/plain"))
             mirror.write(record(request=2, path="/admin", status=403, rule="admin-post:deny"))
             mirror.write(record(request=3, path="/scan", rule="scanner:log"))
 
@@ -678,7 +550,9 @@ class TheTrafficLogPage(LoginTestCase):
         # The same three figures as on the other two tabs (mock round 7).
         self.assertIn("Findings <b>0</b>", waf)
         self.assertIn("Requests <b>2</b>", waf)
-        self.assertNotIn(">/plain<", waf)
+        # Only the requests a rule met: asked of the database, which the
+        # integration suite holds to it (`rule <> ''`).
+        self.assertEqual(self.asked[-1]["waf"], "hits")
         self.assertIn(">/admin<", waf)
         self.assertIn(">admin-post</span>", waf)
         self.assertIn('status-badge-critical">admin-post', waf)
@@ -695,13 +569,11 @@ class TheTrafficLogPage(LoginTestCase):
             mirror.write(record(request=2, path="/admin", rule="admin-post:deny"))
 
         hits = self.page(query="?waf=hits")
-        none = self.page(query="?waf=none")
+        self.page(query="?waf=none")
         everything = self.page(query="?waf=nonsense")
 
-        self.assertIn(">/admin<", hits)
-        self.assertNotIn(">/plain<", hits)
-        self.assertIn(">/plain<", none)
-        self.assertNotIn(">/admin<", none)
+        # What the database is asked; `rule <> ''` and `rule = ''` are its own.
+        self.assertEqual([asked["waf"] for asked in self.asked], ["hits", "none", ""])
         self.assertIn(">/plain<", everything)
         self.assertIn(">/admin<", everything)
         #
@@ -716,27 +588,22 @@ class TheTrafficLogPage(LoginTestCase):
         reading = object_reading()
         entry = dict(reading.result["objects"][0], runtime_backends=["sample"])
         objects = (replace(reading, result=dict(reading.result, objects=[entry])),)
-        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
-            mirror.write(record(request=1, path="/served", backend="sample"))
-            mirror.write(
-                record(
-                    request=2, path="/refused", host="Service.Example.com:443", backend="fe-https"
-                )
-            )
-            mirror.write(record(request=3, path="/other", backend="be-app"))
+        (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/served", backend="sample"))
 
         page = self.page(objects=objects, query="?cluster=alpha&object=sample-proxy")
-        unknown = self.page(objects=objects, query="?cluster=alpha&object=gone")
-        unscoped = self.page(objects=objects, query="?object=sample-proxy")
+        self.page(objects=objects, query="?cluster=alpha&object=gone")
+        self.page(objects=objects, query="?object=sample-proxy")
 
-        self.assertIn(">/served<", page)
-        self.assertIn(">/refused<", page)
-        self.assertNotIn(">/other<", page)
+        # Its backends and its names, what the database is asked to match
+        # (the integration suite holds the match); an object the cluster
+        # lacks matches nothing; a name without its cluster is no object.
+        self.assertEqual(
+            [asked["owned"] for asked in self.asked],
+            [(("sample",), ("service.example.com",)), ((), ()), None],
+        )
         self.assertIn('<input type="hidden" name="object" value="sample-proxy">', page)
         self.assertIn('Only <strong>sample-proxy</strong> · <a href="/logs?cluster=alpha">', page)
         self.assertIn('href="/logs?cluster=alpha&amp;object=sample-proxy&amp;sort=', page)
-        self.assertNotIn(">/served<", unknown, "an object the cluster lacks matches nothing")
-        self.assertIn(">/other<", unscoped, "a name without its cluster is no object")
 
     def test_a_heading_reorders_the_rows_and_keeps_the_filter(self) -> None:
         self.healthy_meta()
@@ -915,6 +782,7 @@ class TheTrafficLogPage(LoginTestCase):
         )
 
         # 12:00 UTC is 08:00 in New York in September, and 14:00 on the host.
+        self.assertEqual(self.asked[-1]["from_at"], NOW - timedelta(minutes=1))
         self.assertIn("26-09-08 08:00:00", page)
         self.assertNotIn("26-09-08 14:00:00", page)
         self.assertIn("app.example.com", page)
@@ -964,6 +832,9 @@ class TheTrafficLogPage(LoginTestCase):
             query="?from=26-09-08%2013:59&to=26-09-08%2014:00", now=NOW + timedelta(hours=1)
         )
 
+        # The host's 13:59-14:00 asked of the table in UTC, the whole last minute in.
+        self.assertEqual(self.asked[-1]["from_at"], NOW - timedelta(minutes=1))
+        self.assertEqual(self.asked[-1]["to_at"], NOW + timedelta(minutes=1, microseconds=-1))
         self.assertIn("app.example.com", page)
         self.assertIn('value="26-09-08 13:59"', page)
 
@@ -974,6 +845,7 @@ class TheTrafficLogPage(LoginTestCase):
 
         page = self.page(query="?to=26-09-08%2014:00", now=NOW + timedelta(hours=1))
 
+        self.assertGreater(self.asked[-1]["to_at"], stamp)
         self.assertIn("app.example.com", page)
 
     def test_a_reversed_time_range_is_explained_instead_of_showing_all_records(self) -> None:
@@ -1041,40 +913,10 @@ class TheTrafficLogPage(LoginTestCase):
 
 
 class ASubdomainOwnsItsLabelsButNotTheNamesItYields(unittest.TestCase):
-    """B278: the file-backed filter matches as the database filter does."""
+    """B278: what a subdomain object asks for; the database's match is held in the integration suite."""
 
     def test_one_label_under_it_less_the_yielded_names(self) -> None:
-        owned = (
-            (),
-            traffic_logs.owned_hosts(
-                ("*.apps.example.com",), ("grafana.apps.example.com", "shop.example.com")
-            ),
+        owned = traffic_logs.owned_hosts(
+            ("*.apps.example.com",), ("grafana.apps.example.com", "shop.example.com")
         )
-        self.assertEqual(owned[1], ("*.apps.example.com", "!grafana.apps.example.com"))
-
-        def entry(host: str) -> traffic_logs.Entry:
-            return traffic_logs.Entry(
-                cluster="alpha",
-                node="node-a",
-                at=datetime(2026, 10, 11, tzinfo=UTC),
-                request=1,
-                client="192.0.2.10",
-                method="GET",
-                host=host,
-                path="/",
-                frontend="f",
-                backend="f",
-                server="",
-                status=403,
-                request_time=0,
-                queue_time=0,
-                connect_time=0,
-                response_time=0,
-                total_time=0,
-                bytes=0,
-            )
-
-        self.assertTrue(traffic_logs.owned_by(entry("Shop.Apps.Example.com:80"), owned))
-        self.assertFalse(traffic_logs.owned_by(entry("grafana.apps.example.com"), owned))
-        self.assertFalse(traffic_logs.owned_by(entry("a.b.apps.example.com"), owned))
-        self.assertFalse(traffic_logs.owned_by(entry("apps.example.com"), owned))
+        self.assertEqual(owned, ("*.apps.example.com", "!grafana.apps.example.com"))

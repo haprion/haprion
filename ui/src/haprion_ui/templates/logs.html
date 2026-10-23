@@ -21,7 +21,7 @@
   <label>Cluster<select name="cluster"><option value="">All clusters</option>{% for cluster in clusters %}<option value="{{ cluster }}"{% if cluster == selected_cluster %} selected{% endif %}>{{ cluster }}</option>{% endfor %}</select></label>
   <label>Status<select name="status"><option value="">All</option>{% for code in ['2xx', '3xx', '4xx', '5xx'] %}<option value="{{ code }}"{% if code == selected_status %} selected{% endif %}>{{ code }}</option>{% endfor %}</select></label>
   {% if not waf_page %}<label>WAF<select name="waf">{% for value, label in [('', 'All'), ('hits', 'Rule hits'), ('none', 'No rule hits')] %}<option value="{{ value }}"{% if value == selected_waf %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>{% endif %}
-  <label>Search<input name="q" value="{{ selected_query }}" maxlength="200" placeholder="host AND NOT /health" title="Use AND, OR, NOT, parentheses and quoted phrases. Operators are case-insensitive."></label>
+  <label>Search<input name="q" value="{{ selected_query }}" maxlength="200" placeholder="host AND NOT /health" title="Finds text in the host, the path and the backend. Use AND, OR, NOT, parentheses and quoted phrases. Operators are case-insensitive."></label>
   {{ date_time_picker('from', 'From', selected_from, time_min, time_min, time_max) }}
   {{ date_time_picker('to', 'To', selected_to, time_max, time_min, time_max) }}
   <button class="secondary-button" type="submit">Filter</button><a class="text-link" href="{{ '/waf?view=requests' if waf_page else '/logs' }}" data-log-clear-filters>Clear</a>
@@ -42,7 +42,7 @@
       <td><span class="status-badge status-badge-{{ 'healthy' if entry.status < 400 else 'warning' if entry.status < 500 else 'critical' }}">{{ entry.status }}</span></td>
       <td><code title="{{ entry.server or 'Destination unavailable' }}">{{ entry.server or 'Destination unavailable' }}</code></td>
       {% if waf_page %}{% set rule, _, mode = entry.rule.partition(':') %}<td title="{{ rule }} — {{ 'denied' if mode == 'deny' else 'logged' }}"><span class="status-badge status-badge-{{ 'critical' if mode == 'deny' else 'warning' }}">{{ rule }}</span></td>{% else %}<td title="{{ entry.bytes }}">{{ entry.bytes }}</td>{% endif %}
-    </tr>{% else %}<tr><td colspan="8"><div class="empty-state"><div><strong>No matching requests</strong><span>A filter searches the whole mirror; the view shows at most the {{ max_lines }} newest matches.</span></div></div></td></tr>{% endfor %}</tbody>
+    </tr>{% else %}<tr><td colspan="8"><div class="empty-state"><div><strong>No matching requests</strong><span>A filter searches every stored request; the view shows at most the {{ max_lines }} newest matches.</span></div></div></td></tr>{% endfor %}</tbody>
   </table>
 </div>
 {% if reading.entries %}<nav class="log-pagination" aria-label="Traffic log pages">

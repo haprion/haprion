@@ -7,11 +7,10 @@ much this process reads, how long a field is, or what a template renders.
 
 from __future__ import annotations
 
-import heapq
 import json
 import os
 import re
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,17 +24,6 @@ from psycopg.rows import class_row
 
 NODE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 MAX_RECORD_BYTES = 16 * 1024
-# The unfiltered page shows the newest records, so it reads the newest bytes:
-# a bounded tail per node, and a page-wide budget so a directory full of
-# nodes cannot make the page expensive by counting.
-MAX_TAIL_BYTES = 16 * 1024 * 1024
-MAX_TOTAL_TAIL_BYTES = 64 * 1024 * 1024
-# A filter is a question about the whole mirror - "ftp, some day last week" -
-# and an answer drawn from the newest sixteen mebibytes is a wrong answer
-# that looks like an empty one. So a filtered read streams every record the
-# collector kept, one line at a time, keeping only what matches; the bound is
-# the collector's own mirror size, which is what a node cannot grow past.
-MAX_SEARCH_BYTES = 256 * 1024 * 1024
 MAX_NODES = 64
 MAX_META_BYTES = 4096
 MAX_SEARCH_TOKENS = 64
@@ -272,16 +260,6 @@ class _Parser:
         raise SearchSyntaxError("The search expression ends with an operator.")
 
 
-def _matches(expression: _Expression, text: str) -> bool:
-    if isinstance(expression, _Term):
-        return expression.value in text
-    if isinstance(expression, _Not):
-        return not _matches(expression.value, text)
-    if isinstance(expression, _And):
-        return _matches(expression.left, text) and _matches(expression.right, text)
-    return _matches(expression.left, text) or _matches(expression.right, text)
-
-
 def like_pattern(query: str) -> str:
     """A substring pattern that matches the text and nothing it could mean to LIKE."""
 
@@ -298,9 +276,8 @@ def _search_sql(expression: _Expression, parameters: list[Any]) -> sql.Composabl
         if not expression.value:
             return sql.SQL("true")
         #
-        # A term is text to find, as `_matches` finds it in the files: `_` and
-        # `%` are characters in a backend's name or an encoded path, not LIKE's
-        # wildcards (review 2026-10-20, D1).
+        # A term is text to find: `_` and `%` are characters in a backend's
+        # name or an encoded path, not LIKE's wildcards (review 2026-10-20, D1).
         #
         parameters.append(like_pattern(expression.value))
         return sql.SQL("{} ilike %s").format(searchable)
@@ -463,69 +440,6 @@ def _read_bounded(path: Path, *, maximum: int) -> bytes:
         os.close(descriptor)
 
 
-def _tail(path: Path, *, budget: int) -> tuple[bytes, bool]:
-    """Read a bounded tail without following a symlink.
-
-    The collector replaces a mirror by rename, so this either opens the previous
-    complete snapshot or the new one. There is no state in which it reads half a
-    fetch, and a file that disappears between listing and opening is reported as
-    unavailable rather than as empty.
-    """
-
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    descriptor = os.open(path, flags)
-    try:
-        size = os.fstat(descriptor).st_size
-        window = min(budget, MAX_TAIL_BYTES)
-        start = max(0, size - window)
-        os.lseek(descriptor, start, os.SEEK_SET)
-        remaining = min(size, window)
-        chunks: list[bytes] = []
-        while remaining:
-            chunk = os.read(descriptor, min(remaining, 1024 * 1024))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        data = b"".join(chunks)
-    finally:
-        os.close(descriptor)
-    return data, start > 0
-
-
-def _lines(path: Path) -> Iterator[bytes]:
-    """Every line of a mirror, streamed, without following a symlink.
-
-    The whole file and nothing held: a chunk at a time, split on newlines, the
-    unfinished last line carried into the next chunk. A file past the
-    collector's own limit stops being read where that limit is; the last line
-    of such a read is a record cut in half and is dropped, not counted as
-    malformed. Opened here, not on first use, so a missing or unreadable file
-    is reported where the caller is looking for it.
-    """
-
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    return _stream(os.open(path, flags))
-
-
-def _stream(descriptor: int) -> Iterator[bytes]:
-    try:
-        remaining = MAX_SEARCH_BYTES
-        carry = b""
-        while remaining:
-            chunk = os.read(descriptor, min(remaining, 1024 * 1024))
-            if not chunk:
-                break
-            remaining -= len(chunk)
-            lines = (carry + chunk).split(b"\n")
-            carry = lines.pop()
-            yield from lines
-        if carry and remaining:
-            yield carry
-    finally:
-        os.close(descriptor)
-
-
 def _targets(directory: Path, clusters: tuple[str, ...]) -> tuple[list[tuple[str, str]], bool]:
     """Every cluster/node the mirror knows about, from both kinds of file.
 
@@ -549,26 +463,6 @@ def _targets(directory: Path, clusters: tuple[str, ...]) -> tuple[list[tuple[str
     return sorted(found)[:MAX_NODES], unavailable
 
 
-def owned_by(entry: Entry, owned: tuple[Sequence[str], Sequence[str]]) -> bool:
-    """Whether a record is one object's: one of its backends, or one of its names before any.
-
-    A subdomain (B278) is one of its names for every single label under it,
-    less the names listed after it with a leading `!` - the exact names other
-    objects claim, which are theirs (`owned_hosts`).
-    """
-
-    backends, hosts = owned
-    host = entry.host.split(":", 1)[0].lower()
-    if entry.backend in backends:
-        return True
-    names = {name.lower() for name in hosts if not name.startswith(("!", "*."))}
-    excluded = {name[1:].lower() for name in hosts if name.startswith("!")}
-    patterns = [name.lower() for name in hosts if name.startswith("*.")]
-    return host in names or (
-        host not in excluded and any(wildcard_matches(pattern, host) for pattern in patterns)
-    )
-
-
 def owned_hosts(hostnames: Sequence[str], others: Iterable[str]) -> tuple[str, ...]:
     """One object's names for the log filter: its own, and `!name` for each name it yields (B278)."""
 
@@ -581,121 +475,6 @@ def owned_hosts(hostnames: Sequence[str], others: Iterable[str]) -> tuple[str, .
         }
     )
     return (*hostnames, *(f"!{name}" for name in yielded))
-
-
-def read(
-    directory: Path,
-    clusters: tuple[str, ...],
-    *,
-    limit: int = 500,
-    cluster: str = "",
-    status: str = "",
-    substring: str = "",
-    from_at: datetime | None = None,
-    to_at: datetime | None = None,
-    server_addresses: Mapping[tuple[str, str, str], str] | None = None,
-    waf: str = "",
-    owned: tuple[Sequence[str], Sequence[str]] | None = None,
-) -> Reading:
-    """The mirror files' records, filtered as `read_database` filters the table."""
-
-    wanted = (cluster,) if cluster else clusters
-    if cluster and cluster not in clusters:
-        return Reading((), (), 0, False)
-    status_code = int(status) if is_digits(status) and len(status) == 3 else None
-    status_class = (
-        int(status[0]) if len(status) == 3 and status[1:] == "xx" and is_digits(status[0]) else None
-    )
-    if status and status_code is None and status_class is None:
-        return Reading((), (), 0, False)
-    filter_error: str | None
-    try:
-        expression = _Parser(_tokens(substring[:200])).parse()
-    except SearchSyntaxError as exc:
-        expression = None
-        filter_error = str(exc)
-    else:
-        filter_error = None
-    addresses = server_addresses or {}
-
-    #
-    # The cluster choice is a scope, not a question about the records, and
-    # the newest records are in the newest bytes. Every other filter is a
-    # question the whole mirror has to answer.
-    #
-    searching = bool(
-        status or substring or waf or owned is not None or from_at is not None or to_at is not None
-    )
-    targets, unavailable = _targets(directory, tuple(wanted))
-    entries: list[Entry] = []
-    nodes: list[Freshness] = []
-    malformed = 0
-    budget = MAX_TOTAL_TAIL_BYTES
-
-    for cluster_id, node in targets:
-        nodes.append(_freshness(directory / f"{cluster_id}--{node}{META_SUFFIX}", cluster_id, node))
-        path = directory / f"{cluster_id}--{node}{MIRROR_SUFFIX}"
-        lines: Iterable[bytes]
-        try:
-            if searching:
-                lines = _lines(path)
-            else:
-                data, truncated = _tail(path, budget=budget)
-                budget -= len(data)
-                lines = data.splitlines()
-                #
-                # The first line of a truncated window is a record cut in
-                # half. Dropping it is not defensive tidying: parsing it would
-                # count as malformed and report the size limit as corrupt data.
-                #
-                if truncated and lines:
-                    lines = lines[1:]
-            #
-            # A read that fails half way through a stream leaves the node's
-            # matches so far in place and says the mirror was unavailable; a
-            # partial answer marked as partial beats an empty page.
-            #
-            for line in lines:
-                try:
-                    entry = parse(line, cluster_id, node)
-                except (OSError, UnicodeError, ValueError, OverflowError):
-                    malformed += 1
-                    continue
-                entry = _resolved_server(entry, addresses)
-                if from_at is not None and entry.at < from_at:
-                    continue
-                if to_at is not None and entry.at > to_at:
-                    continue
-                if status_code is not None and entry.status != status_code:
-                    continue
-                if status_class is not None and entry.status // 100 != status_class:
-                    continue
-                if (waf == "hits" and not entry.rule) or (waf == "none" and entry.rule):
-                    continue
-                if owned is not None and not owned_by(entry, owned):
-                    continue
-                searchable = (
-                    f"{entry.cluster} {entry.node} {entry.client} {entry.method} {entry.host} "
-                    f"{entry.path} {entry.frontend} {entry.backend} {entry.server} "
-                    f"{entry.status} {entry.bytes}"
-                ).casefold()
-                if expression is None or not _matches(expression, searchable):
-                    continue
-                entries.append(entry)
-        except FileNotFoundError:
-            continue
-        except OSError:
-            unavailable = True
-            continue
-
-    #
-    # The accept time is whole seconds, so a busy second holds many records and
-    # sorting on it alone leaves their order to chance. The per-process request
-    # counter breaks the tie within one node, which is the only place it means
-    # anything - it restarts with the process, and two nodes never share one.
-    #
-    newest = heapq.nlargest(limit, entries, key=lambda item: (item.at, item.node, item.request))
-    return Reading(tuple(newest), tuple(nodes), malformed, unavailable, filter_error)
 
 
 def read_database(

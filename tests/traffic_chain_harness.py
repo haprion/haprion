@@ -14,7 +14,7 @@ request from `SSH_ORIGINAL_COMMAND` the way sshd's forced command hands it over,
 writing the real wire bytes to a pipe. The manager side is the real
 `_bounded_ssh` reading that pipe, the real `_parse_response` deciding whether the
 answer is coherent, and the real `collect`/`collect_node` keeping cursors, parts,
-the mirror and the metadata. The UI side is the shipped `traffic_logs.read`,
+the mirror and the metadata. The UI side is the shipped `traffic_logs` parser and freshness reader,
 loaded by path because it lives in the interface environment and this suite runs
 in the engine's - it imports nothing but the standard library, so the file that
 runs here is the file that runs in production.
@@ -34,6 +34,7 @@ them, and `main()` is three lines this harness deliberately does not run.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shutil
@@ -315,8 +316,38 @@ class Chain:
             return 0
         return (max(seen) - min(seen) + 1) - len(seen)
 
-    def ui(self, **filters: object) -> Any:
-        return UI.read(self.mirror, (self.target.cluster,), **filters)
+    def ui(self, *, limit: int = 500) -> Any:
+        """What the mirror hands on, record by record, through the interface's own parser.
+
+        The page reads PostgreSQL (`read_database`); the mirror is what the
+        collector keeps and replays from. Its records are parsed here as the
+        interface parses each row, newest first within the page's limit, and
+        its nodes' freshness read as the page reads it.
+        """
+
+        cluster = self.target.cluster
+        reading = UI.read_freshness(self.mirror, (cluster,))
+        entries: list[Any] = []
+        malformed = 0
+        unavailable = reading.unavailable
+        for path in sorted(self.mirror.glob(f"{cluster}--*.jsonl")):
+            node = path.name[len(f"{cluster}--") : -len(".jsonl")]
+            try:
+                lines = path.read_bytes().splitlines()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                unavailable = True
+                continue
+            for line in lines:
+                try:
+                    entries.append(UI.parse(line, cluster, node))
+                except (UnicodeError, ValueError, OverflowError):
+                    malformed += 1
+        entries.sort(key=lambda entry: (entry.at, entry.node, entry.request), reverse=True)
+        return dataclasses.replace(
+            reading, entries=tuple(entries[:limit]), malformed=malformed, unavailable=unavailable
+        )
 
 
 class ChainTestCase(unittest.TestCase):

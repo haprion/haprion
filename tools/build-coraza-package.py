@@ -43,7 +43,7 @@ from haprion.debian_package import package, write  # the path above comes first
 # Each package counts its own revision: it moves when our part of the package
 # changes (the unit, the build), not when the other package does.
 #
-CORAZA_REVISION = "9"
+CORAZA_REVISION = "1"
 CRS_REVISION = "1"
 GO_VERSION = "go1.27.3"
 GOVULNCHECK_VERSION = "v1.9.0"
@@ -128,20 +128,15 @@ class Source:
 
 
 #
-# 0.9.0 as released, with the one change after it that matters: Coraza 3.8.1,
-# which fixes GHSA-6r3q-mjv7-xr8m, GHSA-w253-m66g-rx24 and GHSA-6gcq-wc29-5xf2
-# in the 3.7.0 the tag was built with (security review 26-10-13, S04). No SPOA
-# release carries it yet; the commit is the tag plus the dependency bump
-# (go.mod, go.sum), a typo in the contrib unit and CI - compared 26-10-14. Back
-# to a tag when the next release is out. The version stays 0.9.0, because the
-# engine's code is that release's; the package revision says it is built anew.
+# Release v0.9.1 at the commit its tag names, by commit so a
+# moved tag changes nothing. Proposed by tools/upstream-watch (B337).
 #
 CORAZA = Source(
-    file="coraza-spoa-ded94c21b1f38747f8f2675db3ef29794944efd1.tar.gz",
-    sha256="691644cc6fe1fcc3e0ae2c9e7a7442186a5530b0e7e87c2746f8f0cd0de1a093",
-    top="coraza-spoa-ded94c21b1f38747f8f2675db3ef29794944efd1",
-    version="0.9.0",
-    url="https://github.com/corazawaf/coraza-spoa/archive/ded94c21b1f38747f8f2675db3ef29794944efd1.tar.gz",
+    file="coraza-spoa-c9b34f409e04cfb60219602bd1ad711afd15eaa3.tar.gz",
+    sha256="c577361c8d46d784b7836796ac043f153ff4ba660097884f79e6658b86fe1722",
+    top="coraza-spoa-c9b34f409e04cfb60219602bd1ad711afd15eaa3",
+    version="0.9.1",
+    url="https://github.com/corazawaf/coraza-spoa/archive/c9b34f409e04cfb60219602bd1ad711afd15eaa3.tar.gz",
 )
 #
 # The LTS line (B227). The minimal archive is signed by the CRS release key,

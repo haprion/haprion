@@ -27,7 +27,7 @@ from typing import Annotated
 
 from haprion.config import AbuseProtection, UnknownHost, Vip
 from haprion.generate import GeneratorError, generate
-from haprion.proxy_model import HTTP_METHODS, ModelError, load_proxy
+from haprion.proxy_model import HTTP_METHODS, WAF_ENGINE_ERROR_DEFAULT, ModelError, load_proxy
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from haprion_ui.advanced_dialog import MAX_TEXT
@@ -541,7 +541,7 @@ class ObjectForm(BaseModel):
     # carried here as JSON; the engine reads them again on every save.
     #
     waf_mode: Annotated[str, StringConstraints(max_length=8)] = "off"
-    waf_engine_error: Annotated[str, StringConstraints(max_length=8)] = "allow"
+    waf_engine_error: Annotated[str, StringConstraints(max_length=8)] = WAF_ENGINE_ERROR_DEFAULT
     waf_paranoia: Annotated[str, StringConstraints(max_length=1)] = "1"
     waf_exceptions: Annotated[str, StringConstraints(max_length=MAX_TEXT)] = ""
     waf_large_bodies: Annotated[str, StringConstraints(max_length=MAX_TEXT)] = ""

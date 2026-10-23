@@ -37,6 +37,7 @@ from haprion.proxy_model import (
     OWN_PORT,
     STATUS_RANGE,
     SYSLOG_BALANCE,
+    WAF_ENGINE_ERROR_DEFAULT,
     ModelError,
     Proxy,
     dump_document,
@@ -238,7 +239,7 @@ DEFAULTS = {
     # here unchanged, as JSON, so a save from this form keeps them.
     #
     "waf_mode": "off",
-    "waf_engine_error": "allow",
+    "waf_engine_error": WAF_ENGINE_ERROR_DEFAULT,
     "waf_paranoia": "1",
     "waf_exceptions": "",
     "waf_large_bodies": "",
@@ -973,7 +974,7 @@ def build_document(form: dict[str, object]) -> str:
     #
     waf = waf_block(
         text("waf_mode") or "off",
-        text("waf_engine_error") or "allow",
+        text("waf_engine_error") or WAF_ENGINE_ERROR_DEFAULT,
         text("waf_paranoia") or "1",
         str(form.get("waf_exceptions", "") or ""),
         str(form.get("waf_large_bodies", "") or ""),
@@ -1030,7 +1031,7 @@ def canonical_waf(value: Any) -> Any:
     mode = value.get("mode", "log")
     out: dict[str, Any] = {
         "mode": "off" if mode is False else mode,
-        "on_engine_error": value.get("on_engine_error", "allow"),
+        "on_engine_error": value.get("on_engine_error", WAF_ENGINE_ERROR_DEFAULT),
         "paranoia": value.get("paranoia", 1),
     }
     listed = value.get("exceptions", [])
@@ -1049,7 +1050,7 @@ def canonical_waf(value: Any) -> Any:
             if key not in (*out, "exceptions", "large_bodies", "mode")
         }
     )
-    if out == {"mode": "off", "on_engine_error": "allow", "paranoia": 1}:
+    if out == {"mode": "off", "on_engine_error": WAF_ENGINE_ERROR_DEFAULT, "paranoia": 1}:
         return None
     return out
 
@@ -1086,7 +1087,7 @@ def waf_fields(data: Mapping[str, Any]) -> dict[str, str]:
     if not isinstance(block, Mapping):
         return {
             "waf_mode": "off",
-            "waf_engine_error": "allow",
+            "waf_engine_error": WAF_ENGINE_ERROR_DEFAULT,
             "waf_paranoia": "1",
             "waf_exceptions": "",
             "waf_large_bodies": "",
@@ -1095,7 +1096,7 @@ def waf_fields(data: Mapping[str, Any]) -> dict[str, str]:
     large = block.get("large_bodies", [])
     return {
         "waf_mode": str(block.get("mode", "log")),
-        "waf_engine_error": str(block.get("on_engine_error", "allow")),
+        "waf_engine_error": str(block.get("on_engine_error", WAF_ENGINE_ERROR_DEFAULT)),
         "waf_paranoia": str(block.get("paranoia", 1)),
         "waf_exceptions": json.dumps(listed, separators=(",", ":")) if listed else "",
         "waf_large_bodies": "\n".join(str(path) for path in large)

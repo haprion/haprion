@@ -2811,6 +2811,7 @@ ATTACK = "1'%20OR%201=1--"
 # field on one path, a field on every path, the whole request on one path.
 #
 BLOCKS_WITH_EXCEPTIONS = """  mode: block
+  on_engine_error: allow
   exceptions:
     - rule: 920350
     - rule: 942100
@@ -2876,9 +2877,11 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
         objects = {
-            "looks": "  mode: log",
+            "looks": "  mode: log\n  on_engine_error: allow",
             "blocks": BLOCKS_WITH_EXCEPTIONS,
             "closed": "  mode: block\n  on_engine_error: deny",
+            # B357: an object that does not say is closed.
+            "unsaid": "  mode: log",
         }
         installed = crs.installed(WAF_RULES)
         assert installed is not None
@@ -3282,6 +3285,11 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
     def test_open_lets_through_and_says_so_closed_refuses(self) -> None:
         self.assertEqual(self.ask(SQLI, name="blocks"), (200, "waf-engine:log", ""))
         self.assertEqual(self.ask(SQLI, name="closed"), (503, "waf-engine:deny", ""))
+
+    def test_an_object_that_does_not_say_is_closed(self) -> None:
+        """B357: even one that only looks - a WAF that lets everything through is no control."""
+
+        self.assertEqual(self.ask("/?q=hello", name="unsaid"), (503, "waf-engine:deny", ""))
 
     def test_the_answer_comes_at_once_not_after_the_processing_timeout(self) -> None:
         # Review 2026-10-04 F4: retried connections waited out the 500 ms timeout.

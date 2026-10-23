@@ -11,6 +11,12 @@ ExecStart=/opt/haprion/current/bin/haprion-node-restore-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal
+# Memory (B357): at most 84 MB in eight runs (measured 26-10-23); an archive
+# is read a file at a time. Six times that, because a step stopped midway
+# skips its own clean-up. Stopped, not swapped, past it.
+MemoryMax=512M
+MemorySwapMax=0
+
 # With Type=exec this bounds the start only; systemd does not end a run that
 # has begun. What bounds a run is each of its three SSH sessions,
 # 600 s, and the agent on the target, 900 s. No RuntimeMaxSec on

@@ -16,6 +16,11 @@ User=COLLECTOR_USER
 Group=COLLECTOR_USER
 
 ExecStart=/opt/haprion/current/bin/haprion-traffic-collector --config /etc/haprion/traffic-collector.json
+# Memory (B357): at most 212 MB, before the chain was bounded by bytes, and
+# 134 MB since (measured 26-10-23); a record is at most 16 KiB. Stopped, not
+# swapped, past twice the larger.
+MemoryMax=512M
+MemorySwapMax=0
 
 # A timer, not a daemon. A run that cannot reach a node exits non-zero and the
 # next run tries again; a long-lived process would have to reimplement that

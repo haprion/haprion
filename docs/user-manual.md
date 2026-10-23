@@ -1267,7 +1267,7 @@ HAProxy's buffer holds it.
 ```yaml
 waf:
   mode: log                # log (the default), block, or off
-  on_engine_error: allow   # allow (the default) or deny
+  on_engine_error: deny    # deny (the default) or allow
   paranoia: 1              # CRS paranoia level, 1 to 4
   exceptions:              # false alarms let through, each as narrow as it can be
     - rule: 942100         # a CRS rule ID
@@ -1358,8 +1358,10 @@ refused as unparseable, since its end never reached the engine; a whole body
 that does not parse still is.
 
 **When the engine does not answer** - stopped, restarting, or overloaded -
-`allow` serves the request uninspected and records `waf-engine:log`, and `deny`
-answers 503 and records `waf-engine:deny`; either answers at once. A node whose
+`deny` answers 503 and records `waf-engine:deny`, and `allow` serves the request
+uninspected and records `waf-engine:log`; either answers at once. `deny` is the
+default: a WAF that lets requests through uninspected is no control, so `allow`
+is a choice made for an object where staying up matters more. A node whose
 engine is not running while the published release has rules is marked *WAF
 engine stopped* on the dashboard, and `haprion-status` shows the engine on each
 node with a warning for that node. Each rule the engine matched is
@@ -6140,6 +6142,15 @@ rights.
 | web | authenticate, audit, queue a strictly validated job | no sudo rule, no management group, no key, cannot claim a job |
 | worker | call the engine's exact helpers, claim and complete jobs | read key files, run DDL |
 | poller | run exact read-only metadata helpers, write the status, inventory and history caches | read private trees directly, write a job, call any write operation |
+
+**Memory.** Each service that reads what a node or a visitor sends has a limit,
+set from what it was measured to use with room above: web and worker 768 MB,
+poller and traffic collector 512 MB, the node restore helper 512 MB and every
+other helper 256 MB. The worker's limit covers the root helpers sudo starts in
+it. A service that passes its limit is stopped rather than swapped, and web,
+worker and poller start again. A candidate's checks run in units of their own:
+HAProxy's and dnsdist's in 256 MB, the WAF engine's in 128 MB and 6 MB for each
+object with `waf` - never less than 256 MB, at most half the manager's memory.
 
 ##### The poller
 

@@ -11,6 +11,11 @@ Group=_haprion-poller
 
 Environment=HAPRION_UI_CONFIG=/etc/haprion/ui.toml
 ExecStart=/opt/haprion-ui/current/venv/bin/haprion-poller
+# Memory (B357): at most 138 MB in 69 runs since 26-10-09 (measured 26-10-23);
+# a node's answer is read up to 8 MiB, which takes about 45 MB more, one node
+# at a time. Stopped and started again, not swapped, past twice the sum.
+MemoryMax=512M
+MemorySwapMax=0
 
 # A second poller exits on the advisory lock rather than running alongside the
 # first, so a restart loop cannot double the load on every node.

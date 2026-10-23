@@ -201,6 +201,51 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
         self.assertIn("TemporaryFileSystem=/:ro", " ".join(command))
         self.assertNotIn("/usr/sbin/haproxy", command)
 
+    def test_its_memory_follows_the_objects_it_compiles(self) -> None:
+        """B357: a flat 256M refused every cluster past about fifty WAF objects."""
+
+        def listing(applications: int) -> str:
+            return "applications:\n" + "".join(
+                f"  - name: site{index}\n    directives: |\n" for index in range(applications)
+            )
+
+        plenty = 64 * 1024**3
+        #
+        # Measured 26-10-23 (CRS 4.25.2, two Go threads): objects -> MB at peak.
+        # Each limit leaves at least half as much again.
+        #
+        for applications, measured in ((1, 57), (10, 86), (100, 412), (200, 737)):
+            with self.subTest(applications):
+                limit = int(
+                    candidate_validation.waf_memory_max(listing(applications), plenty).rstrip("M")
+                )
+                self.assertGreaterEqual(limit, measured * 3 // 2)
+        self.assertEqual(candidate_validation.waf_memory_max(listing(1), plenty), "256M")
+        self.assertEqual(candidate_validation.waf_memory_max(listing(1000), 2 * 1024**3), "1024M")
+        self.assertEqual(candidate_validation.waf_memory_max(listing(1000), 256 * 1024**2), "256M")
+
+    def test_the_engine_check_is_given_that_memory(self) -> None:
+        calls: list[list[str]] = []
+
+        def ran(command: list[str]) -> tuple[int, str]:
+            calls.append(command)
+            return 0, ""
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "waf").mkdir()
+            (root / "waf" / "coraza.yaml").write_text("applications:\n" + "  - name: site\n" * 100)
+            engine = root / "coraza-spoa"
+            engine.write_text("")
+            with (
+                mock.patch.object(candidate_validation, "_run_unit", ran),
+                mock.patch.object(candidate_validation, "WAF_ENGINE", str(engine)),
+                mock.patch("haprion.candidate_validation.os.sysconf", lambda _name: 64 * 1024),
+            ):
+                candidate_validation._waf_engine(root, "1111")
+        [command] = calls
+        self.assertIn("MemoryMax=728M", command)
+
     def test_rules_without_the_engine_on_the_manager_are_refused(self) -> None:
         calls: list[list[str]] = []
 

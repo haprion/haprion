@@ -678,11 +678,11 @@ class TheWafEngineOnAnObject(unittest.TestCase):
             with self.subTest(paths), self.assertRaises(ModelError):
                 self.load(f"waf:\n  large_bodies: {paths}")
 
-    def test_a_new_engine_only_looks_lets_through_on_error_and_starts_at_level_one(self) -> None:
+    def test_a_new_engine_only_looks_refuses_on_error_and_starts_at_level_one(self) -> None:
         waf = self.load("waf: {}").waf
         self.assertEqual(
             (waf.mode, waf.on_engine_error, waf.paranoia, waf.exceptions),
-            ("log", "allow", 1, ()),
+            ("log", "deny", 1, ()),
         )
 
     def test_every_field_reads_and_each_exception_keeps_its_scope(self) -> None:

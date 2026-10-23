@@ -101,6 +101,17 @@ DEFAULT_RUN_ROOT = Path("/run/haprion-validation")
 CLIENT_SECONDS = 30
 RUNTIME_SECONDS = 25
 MEMORY_MAX = "256M"
+#
+# The WAF engine compiles the rule set once for each object that has `waf`
+# (measured 26-10-23, CRS 4.25.2, two Go threads): 57 MB for one, 86 MB for
+# ten, 412 MB for a hundred, 737 MB for two hundred - about 55 MB and 3.4 MB an
+# object. The flat MEMORY_MAX refused every cluster past about fifty (B357).
+# Its unit gets 128 MB and 6 MB an object instead, never less than MEMORY_MAX
+# and never more than half the manager's memory: a candidate that named more
+# objects than it can hold is not a reason to let a parser take the machine.
+#
+WAF_MEMORY_BASE_MB = 128
+WAF_MEMORY_PER_APPLICATION_MB = 6
 TASKS_MAX = 32
 WAF_GOMAXPROCS = 2
 DIAGNOSTICS_BYTES = 16384
@@ -361,8 +372,24 @@ def peer_arguments(configuration: Path) -> list[str]:
     return []
 
 
+def waf_memory_max(coraza: str, physical_bytes: int | None = None) -> str:
+    """The WAF check's memory, from the applications its configuration lists."""
+
+    applications = coraza.count("\n  - name: ")
+    wanted = WAF_MEMORY_BASE_MB + WAF_MEMORY_PER_APPLICATION_MB * applications
+    floor = int(MEMORY_MAX.removesuffix("M"))
+    if physical_bytes is None:
+        physical_bytes = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    ceiling = max(floor, physical_bytes // (2 * 1024 * 1024))
+    return f"{min(max(wanted, floor), ceiling)}M"
+
+
 def sandbox_command(
-    candidate_root: Path, request_id: str, program: Sequence[str] | None = None
+    candidate_root: Path,
+    request_id: str,
+    program: Sequence[str] | None = None,
+    *,
+    memory_max: str = MEMORY_MAX,
 ) -> list[str]:
     """The sandboxed run of a parser over the candidate: `haproxy -c` unless told.
 
@@ -480,7 +507,7 @@ def sandbox_command(
         # than slowed until the time limit.
         #
         f"RuntimeMaxSec={RUNTIME_SECONDS}",
-        f"MemoryMax={MEMORY_MAX}",
+        f"MemoryMax={memory_max}",
         "MemorySwapMax=0",
         f"TasksMax={TASKS_MAX}",
         #
@@ -601,11 +628,13 @@ def _waf_engine(candidate_root: Path, request_id: str) -> ValidationResult:
             diagnostics="the candidate carries WAF rules, and the WAF engine is not installed "
             "on the manager: install the haprion-coraza-spoa package",
         )
+    coraza = (candidate_root / WAF_TARGET / "coraza.yaml").read_text(encoding="utf-8")
     return _sandboxed(
         sandbox_command(
             candidate_root,
             request_id,
             (WAF_ENGINE, "-validate", "-config", f"/candidate/{WAF_TARGET}/coraza.yaml"),
+            memory_max=waf_memory_max(coraza),
         )
     )
 

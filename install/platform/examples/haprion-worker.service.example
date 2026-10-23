@@ -11,6 +11,12 @@ Group=_haprion-worker
 
 Environment=HAPRION_UI_CONFIG=/etc/haprion/ui.toml
 ExecStart=/opt/haprion-ui/current/venv/bin/haprion-worker
+# Memory (B357), with the root helpers sudo starts in this unit: at most 95 MB
+# in 57 runs since 26-10-09 (measured 26-10-23); generating 500 objects takes
+# 45 MB, and a candidate's parsers run in units of their own. Stopped and
+# started again, not swapped, past several times that.
+MemoryMax=768M
+MemorySwapMax=0
 
 Restart=on-failure
 RestartSec=5

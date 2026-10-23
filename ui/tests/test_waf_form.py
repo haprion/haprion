@@ -58,12 +58,24 @@ class TheFormSaysWhatTheObjectSays(unittest.TestCase):
             written,
             {
                 "mode": "off",
-                "on_engine_error": "allow",
+                "on_engine_error": "deny",
                 "paranoia": 1,
                 "exceptions": [{"rule": 920350}],
             },
         )
         self.assertEqual(form_from_document(stored("waf: {}\n"))["waf_mode"], "log")
+
+    def test_an_object_that_chose_to_let_through_keeps_it_through_the_form(self) -> None:
+        """B357 moved the default to deny; what the form once wrote out stays as it was."""
+
+        for mode in ("block", "off"):
+            with self.subTest(mode):
+                form = form_from_document(
+                    stored(f"waf:\n  mode: {mode}\n  on_engine_error: allow\n  paranoia: 1\n")
+                )
+                self.assertEqual(form["waf_engine_error"], "allow")
+                written = yaml.safe_load(build_document(form))["waf"]
+                self.assertEqual(written["on_engine_error"], "allow")
 
     def test_off_with_nothing_to_keep_is_an_object_without_the_engine(self) -> None:
         self.assertNotIn(

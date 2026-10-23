@@ -1074,6 +1074,14 @@ class DenyFrom:
     sources: tuple[str, ...]
 
 
+#
+# Refused when the engine does not answer (B357): a WAF that lets requests
+# through uninspected while it restarts is no control. `allow` stays an
+# object's choice where availability matters more.
+#
+WAF_ENGINE_ERROR_DEFAULT = "deny"
+
+
 @dataclass(frozen=True, slots=True)
 class Waf:
     """The WAF engine on this object (Fas 21 del B, B232).
@@ -1083,7 +1091,7 @@ class Waf:
     its traffic record `crs:log`, `block` answers 403 and marks it `crs:deny`.
     A new object starts in `log`, so false alarms show before anything is
     refused. `on_engine_error` is what happens when the engine does not answer:
-    `allow` lets the request through, `deny` answers 503. `paranoia` is the CRS
+    `deny` (the default, B357) answers 503, `allow` lets the request through. `paranoia` is the CRS
     blocking paranoia level; `exceptions` are how a false alarm is taken away
     (B234), each as narrow as the finding allows.
 
@@ -1097,7 +1105,7 @@ class Waf:
     """
 
     mode: str = "log"
-    on_engine_error: str = "allow"
+    on_engine_error: str = WAF_ENGINE_ERROR_DEFAULT
     paranoia: int = 1
     exceptions: tuple[WafException, ...] = ()
     large_bodies: tuple[str, ...] = ()
@@ -3031,7 +3039,7 @@ def _waf(value: Any, location: str) -> Waf | None:
         mode = "off"
     if mode not in WAF_MODES:
         raise ModelError(f"{location}.mode must be one of: {', '.join(WAF_MODES)}")
-    on_error = data.get("on_engine_error", "allow")
+    on_error = data.get("on_engine_error", WAF_ENGINE_ERROR_DEFAULT)
     if on_error not in WAF_ENGINE_ERRORS:
         raise ModelError(
             f"{location}.on_engine_error must be one of: {', '.join(WAF_ENGINE_ERRORS)}"

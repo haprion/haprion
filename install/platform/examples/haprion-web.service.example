@@ -16,6 +16,11 @@ Group=_haprion-web
 # reads the release's package, so this file is the same for every release
 # (haprion-web).
 ExecStart=/usr/sbin/haprion-web
+# Memory (B357): at most 177 MB in 68 runs since 26-10-09 (measured
+# 26-10-23); a request body is at most 1 MiB (nginx) and every page's query is
+# bounded. Stopped and started again, not swapped, past four times that.
+MemoryMax=768M
+MemorySwapMax=0
 
 Restart=on-failure
 RestartSec=2

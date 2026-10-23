@@ -30,6 +30,12 @@ ExecStart=/opt/haprion/current/bin/haprion-probe-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal
+# Memory (B357): a helper starts in 19-35 MB, and the largest step measured, a
+# node restore, peaked at 84 MB in eight runs (26-10-23); a publish's
+# generator takes 45 MB for 500 objects, and the parsers run in units of their
+# own. Stopped, not swapped, past three times the largest.
+MemoryMax=256M
+MemorySwapMax=0
 
 # With Type=exec this bounds the start only; systemd does not end a run that
 # has begun. What bounds a run is the SSH call to each node, 30 s,

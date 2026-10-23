@@ -1,0 +1,239 @@
+name: upstream merge
+
+# The proposals the upstream watch and Dependabot open, merged within the hour
+# their checks pass (B354). The watch proposes at night (upstream-watch.yml) and
+# a proposal is green some fourteen minutes later; a merge that waited for the
+# next night took a day longer than its checks.
+#
+#   merge            the WAF proposal goes in once every check on it passed, its
+#                    upstream releases are two days old and nobody put `hold` on
+#                    it; the merge on main then builds and publishes the engine
+#                    and the rules (apt-repo.yml)
+#   merge-locks      the locks' proposal (B353) once every check passed, no wait
+#   merge-dependabot a Dependabot update once every check passed, when its
+#                    commits are Dependabot's and signed and every update is a
+#                    patch or minor one
+#
+# Everything is done as the upstream watch's GitHub App: a merge the workflow's
+# own token makes starts no workflow, and that token may never write a workflow
+# file - an update of the actions is nothing else.
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-merge
+  cancel-in-progress: false
+
+env:
+  BRANCH: upstream-watch
+  LOCKS_BRANCH: dependency-watch
+  VULNERABLE_TITLE: "The pinned WAF engine reaches a known vulnerability"
+
+jobs:
+  merge:
+    name: Merge the proposal when it is due
+    if: github.repository == 'haprion/haprion'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment: upstream-watch
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the merge writes main
+          permission-pull-requests: write # and closes the pull request
+          permission-checks: read # whether every check passed
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Every check must have run and passed on the head being merged. The
+      # named ones must be among them: a check that never started is not one
+      # that passed.
+      - name: Merge when every check passed and the wait is over
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REQUIRED: |
+            Source, quality, and security gates
+            Rule set regression tests
+            Installation test
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --head "${BRANCH}" --state open --json number,headRefOid,labels --jq '.[0] // empty')
+          # The night's scan keeps this issue open while the pinned engine is
+          # vulnerable; an hourly run has no scan of its own and reads it.
+          vulnerable=$(gh issue list --state open --search "in:title \"${VULNERABLE_TITLE}\"" \
+            --json title --jq 'any(.[]; .title == env.VULNERABLE_TITLE)')
+          if [[ -z "${pr}" ]]; then
+            echo "no proposal is open"
+            exit 0
+          fi
+          number=$(jq -r .number <<<"${pr}")
+          head=$(jq -r .headRefOid <<<"${pr}")
+          labels=$(jq -r '[.labels[].name] | join(" ")' <<<"${pr}")
+          if [[ " ${labels} " == *" hold "* ]]; then
+            echo "#${number} is on hold"
+            exit 0
+          fi
+          checks=$(gh pr checks "${number}" --json name,bucket || true)
+          if jq -e 'any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
+            echo "#${number}: not every check has passed"
+            jq -r '.[] | "  \(.bucket)  \(.name)"' <<<"${checks}"
+            exit 0
+          fi
+          while IFS= read -r name; do
+            [[ -z "${name}" ]] && continue
+            if ! jq -e --arg name "${name}" 'any(.[]; .name == $name and .bucket == "pass")' <<<"${checks}" >/dev/null; then
+              echo "#${number}: '${name}' has not passed"
+              exit 0
+            fi
+          done <<<"${REQUIRED}"
+          git fetch --quiet origin "${head}"
+          git worktree add --quiet --detach "${RUNNER_TEMP}/head" "${head}"
+          options=()
+          [[ "${vulnerable}" == true ]] && options+=(--vulnerable)
+          [[ " ${labels} " == *" no-cooldown "* ]] && options+=(--no-cooldown)
+          if ! python3 tools/upstream-watch due --base . --head "${RUNNER_TEMP}/head" "${options[@]}"; then
+            exit 0
+          fi
+          gh pr merge "${number}" --merge --match-head-commit "${head}" --delete-branch
+
+  merge-locks:
+    name: Merge the locks' proposal when every check passed
+    if: github.repository == 'haprion/haprion'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment: upstream-watch
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the merge writes main
+          permission-pull-requests: write # and closes the pull request
+          permission-checks: read # whether every check passed
+
+      # As the WAF proposal: every check run and passed on the head being
+      # merged, the named ones among them. A security fix has no wait.
+      - name: Merge when every check passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          REQUIRED: |
+            Source, quality, and security gates
+            Installation test
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --repo "${REPOSITORY}" --head "${LOCKS_BRANCH}" --state open \
+            --json number,headRefOid,labels --jq '.[0] // empty')
+          if [[ -z "${pr}" ]]; then
+            echo "no proposal is open"
+            exit 0
+          fi
+          number=$(jq -r .number <<<"${pr}")
+          head=$(jq -r .headRefOid <<<"${pr}")
+          labels=$(jq -r '[.labels[].name] | join(" ")' <<<"${pr}")
+          if [[ " ${labels} " == *" hold "* ]]; then
+            echo "#${number} is on hold"
+            exit 0
+          fi
+          checks=$(gh pr checks "${number}" --repo "${REPOSITORY}" --json name,bucket || true)
+          if jq -e 'any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
+            echo "#${number}: not every check has passed"
+            jq -r '.[] | "  \(.bucket)  \(.name)"' <<<"${checks}"
+            exit 0
+          fi
+          while IFS= read -r name; do
+            [[ -z "${name}" ]] && continue
+            if ! jq -e --arg name "${name}" 'any(.[]; .name == $name and .bucket == "pass")' <<<"${checks}" >/dev/null; then
+              echo "#${number}: '${name}' has not passed"
+              exit 0
+            fi
+          done <<<"${REQUIRED}"
+          gh pr merge "${number}" --repo "${REPOSITORY}" --merge --match-head-commit "${head}" --delete-branch
+
+  # The CI workflow merged these with its own token until 26-10-23 (B354). That
+  # token may never write a workflow file, and an update of the actions is
+  # nothing but workflow files: a pull request behind main was refused (PR #5).
+  # The app holds the workflows permission for this one job.
+  merge-dependabot:
+    name: Merge the Dependabot updates whose checks passed
+    if: github.repository == 'haprion/haprion'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment: upstream-watch
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the merge writes main
+          permission-pull-requests: write # and closes the pull request
+          permission-checks: read # whether every check passed
+          permission-workflows: write # an update of the actions changes workflow files
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Merge each update whose checks passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          REQUIRED: |
+            Source, quality, and security gates
+        run: |
+          set -euo pipefail
+          prs=$(gh pr list --repo "${REPOSITORY}" --author "app/dependabot" --state open \
+            --json number,headRefOid,labels --jq '.[] | @base64')
+          for encoded in ${prs}; do
+            pr=$(base64 -d <<<"${encoded}")
+            number=$(jq -r .number <<<"${pr}")
+            head=$(jq -r .headRefOid <<<"${pr}")
+            if jq -e 'any(.labels[]; .name == "hold")' <<<"${pr}" >/dev/null; then
+              echo "#${number} is on hold"
+              continue
+            fi
+            checks=$(gh pr checks "${number}" --repo "${REPOSITORY}" --json name,bucket || true)
+            if jq -e 'length == 0 or any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
+              echo "#${number}: not every check has passed"
+              continue
+            fi
+            missing=""
+            while IFS= read -r name; do
+              [[ -z "${name}" ]] && continue
+              jq -e --arg name "${name}" 'any(.[]; .name == $name and .bucket == "pass")' <<<"${checks}" >/dev/null \
+                || missing="${name}"
+            done <<<"${REQUIRED}"
+            if [[ -n "${missing}" ]]; then
+              echo "#${number}: '${missing}' has not passed"
+              continue
+            fi
+            gh api "repos/${REPOSITORY}/pulls/${number}/commits?per_page=100" > "${RUNNER_TEMP}/commits.json"
+            if ! python3 tools/upstream-watch dependabot --commits "${RUNNER_TEMP}/commits.json"; then
+              continue
+            fi
+            gh pr merge "${number}" --repo "${REPOSITORY}" --merge --match-head-commit "${head}"
+          done

@@ -5,8 +5,9 @@
                                [--report <file>]
     tools/upstream-watch due --base <tree> --head <tree> [--vulnerable]
     tools/upstream-watch vuln --source <tree> --cache <dir>
-    tools/upstream-watch ran --repository <owner/name>
+    tools/upstream-watch ran --repository <owner/name> [--workflow <file> --hours <n>]
     tools/upstream-watch locks --source <tree> [--apply] [--report <file>]
+    tools/upstream-watch dependabot --commits <file>
 
 Four pins, all in the tree: the Coraza SPOA engine (a commit), the OWASP Core
 Rule Set (an LTS release), the Go that compiles the engine, and the
@@ -16,14 +17,19 @@ Go archive's digest as go.dev publishes it, the engine's archive by the commit
 its release tag names - and with `--apply` writes the new pins into the tree.
 
 Each change has a class. A patch or minor change is merged by itself once the
-upstream release is seven days old; a major one never is - it is reported for
-a person and left out of the tree. `due` reads the change between two trees
+upstream release is two days old (seven until 26-10-23, B354); a major one never
+is - it is reported for a person and left out of the tree. `due` reads the change between two trees
 fresh from upstream and answers whether the newer one may be merged now; with
 `--vulnerable` (the pinned engine reaches a known vulnerability today) the wait
 is two days. `vuln` runs govulncheck on the pinned engine as the build does,
 and exits 3 when it finds something. `ran` asks whether the nightly run still
 happens: GitHub's schedule is best effort and drops a run without a trace, so a
 watch that has stopped would otherwise say nothing at all.
+
+`dependabot` reads a Dependabot pull request's commits (`gh api
+repos/<r>/pulls/<n>/commits`) and answers whether the watch may merge it: every
+commit Dependabot's and signed, every update a patch or minor one, as the
+metadata block Dependabot writes into each commit message says (B354).
 
 `locks` is the same watch over the Python locks (B353): `uv audit` on each of
 `uv.lock`, `ui/uv.lock` and `certbot/uv.lock`, and with `--apply` a
@@ -74,7 +80,7 @@ GPG = "/usr/bin/gpg"
 GPGV = "/usr/bin/gpgv"
 FETCH_TIMEOUT = 120
 MAX_FETCH_BYTES = 256 * 1024 * 1024
-WAIT = {"patch": timedelta(days=7), "minor": timedelta(days=7)}
+WAIT = {"patch": timedelta(days=2), "minor": timedelta(days=2)}
 SECURITY_WAIT = timedelta(days=2)
 WORKFLOW = "upstream-watch.yml"
 # One night GitHub drops is allowed; two in a row is a watch that has stopped.
@@ -602,7 +608,12 @@ def due(
     return True, f"due since {when.isoformat()}"
 
 
-def ran(workflow: dict[str, Any], newest: dict[str, Any] | None, now: datetime) -> tuple[bool, str]:
+def ran(
+    workflow: dict[str, Any],
+    newest: dict[str, Any] | None,
+    now: datetime,
+    window: timedelta = SCHEDULE_WINDOW,
+) -> tuple[bool, str]:
     """Whether the schedule ran the watch inside the window, and why or why not.
 
     Only a run the schedule started counts: one started by hand says nothing
@@ -616,9 +627,9 @@ def ran(workflow: dict[str, Any], newest: dict[str, Any] | None, now: datetime) 
         since, what = workflow["created_at"], "no scheduled run since the workflow was registered"
     else:
         since, what = newest["created_at"], f"the last scheduled run started {newest['created_at']}"
-    when = datetime.fromisoformat(str(since).replace("Z", "+00:00")) + SCHEDULE_WINDOW
+    when = datetime.fromisoformat(str(since).replace("Z", "+00:00")) + window
     if now > when:
-        return False, f"{what}, more than {SCHEDULE_WINDOW // timedelta(hours=1)} hours ago"
+        return False, f"{what}, more than {window // timedelta(hours=1)} hours ago"
     return True, what
 
 
@@ -716,6 +727,36 @@ def locks(tree: Path, *, apply: bool, run: Run = subprocess.run) -> dict[str, An
     return {"updated": updated, "held": held}
 
 
+DEPENDABOT = "dependabot[bot]"
+UPDATE_TYPE = re.compile(r"^\s*update-type:\s*version-update:semver-(\w+)\s*$", re.MULTILINE)
+
+
+def dependabot_ready(commits: list[dict[str, Any]]) -> tuple[bool, str]:
+    """Whether a Dependabot pull request's commits may be merged by the watch.
+
+    Every commit must be Dependabot's and verified - a commit somebody else
+    pushed onto its branch is not an update Dependabot proposed - and every
+    update it names a patch or minor one. A major update waits for a person.
+    """
+
+    if not commits:
+        return False, "the pull request has no commits"
+    kinds: list[str] = []
+    for commit in commits:
+        sha = str(commit.get("sha", ""))[:8]
+        if (commit.get("author") or {}).get("login") != DEPENDABOT:
+            return False, f"{sha} is not Dependabot's"
+        if not commit["commit"]["verification"]["verified"]:
+            return False, f"{sha} is not signed"
+        kinds += UPDATE_TYPE.findall(commit["commit"]["message"])
+    if not kinds:
+        return False, "no commit says what kind of update it is"
+    beyond = sorted(set(kinds) - {"patch", "minor"})
+    if beyond:
+        return False, f"a {', '.join(beyond)} update waits for a person"
+    return True, f"{len(kinds)} patch or minor {'update' if len(kinds) == 1 else 'updates'}"
+
+
 def remove(tree: Path) -> None:
     """The whole tree, Go's module cache in it included.
 
@@ -802,6 +843,12 @@ def main() -> int:
     vulning.add_argument("--cache", type=Path, required=True)
     running = commands.add_parser("ran", help="whether the schedule still runs the watch")
     running.add_argument("--repository", required=True, help="owner/name")
+    running.add_argument("--workflow", default=WORKFLOW, help="the workflow file (the watch's)")
+    running.add_argument(
+        "--hours", type=int, help="how long without a scheduled run is too long (the watch: 48)"
+    )
+    depending = commands.add_parser("dependabot", help="whether a Dependabot update may be merged")
+    depending.add_argument("--commits", type=Path, required=True, help="the pull request's commits")
     locking = commands.add_parser("locks", help="the Python locks against today's advisories")
     locking.add_argument("--source", type=Path, required=True)
     locking.add_argument("--apply", action="store_true", help="upgrade what a fix exists for")
@@ -827,6 +874,10 @@ def main() -> int:
             )
             print(reason)
             return 0 if ready else 1
+        if args.command == "dependabot":
+            ready, reason = dependabot_ready(json.loads(args.commits.read_text(encoding="utf-8")))
+            print(reason)
+            return 0 if ready else 1
         if args.command == "locks":
             result = locks(args.source, apply=args.apply)
             text = json.dumps(result, indent=2)
@@ -835,9 +886,12 @@ def main() -> int:
                 args.report.write_text(text + "\n", encoding="utf-8")
             return 0
         if args.command == "ran":
-            path = f"repos/{args.repository}/actions/workflows/{WORKFLOW}"
+            path = f"repos/{args.repository}/actions/workflows/{args.workflow}"
             runs = upstream.github(f"{path}/runs?event=schedule&per_page=1")["workflow_runs"]
-            ok, reason = ran(upstream.github(path), runs[0] if runs else None, datetime.now(UTC))
+            window = timedelta(hours=args.hours) if args.hours else SCHEDULE_WINDOW
+            ok, reason = ran(
+                upstream.github(path), runs[0] if runs else None, datetime.now(UTC), window
+            )
             print(reason)
             return 0 if ok else 1
         return vuln(args.source, args.cache)

@@ -9,16 +9,14 @@ name: upstream watch
 #                    `upstream-watch` and keeps one pull request open for it;
 #                    a major update is an issue that needs a decision, never a change;
 #                    an unchanged proposal's failed checks run again
-#   merge            the proposal goes in once every check on it passed, its
-#                    upstream releases are old enough and nobody put `hold` on
-#                    it; the merge on main then builds and publishes the engine
-#                    and the rules (apt-repo.yml)
 #   locks            the Python locks against today's advisories (B353): every
 #                    package an advisory names a fix for is upgraded on the
 #                    branch `dependency-watch`, in a pull request of its own that
 #                    goes in once every check passed, with no wait - an advisory
 #                    otherwise failed every pull request until somebody moved the
 #                    lock; one that no upgrade clears is an issue for a person
+#
+# The merges are upstream-merge.yml's, every hour (B354).
 #
 # Everything that writes is done as the GitHub App, not with the workflow's own
 # token: a pull request that token opens runs no checks, and a merge it makes
@@ -216,7 +214,7 @@ jobs:
           fi
           body="${RUNNER_TEMP}/pr.md"
           { echo "Proposed by the upstream watch (B323). Merged by itself once every check passed"
-            echo "and each upstream release is seven days old - two for a security proposal."
+            echo "and each upstream release is two days old, within the hour (upstream-merge.yml)."
             echo "Label \`hold\` to stop it, \`no-cooldown\` to merge it once green."
             echo; echo "| Component | Pinned | Proposed | Class | Released |"; echo "|---|---|---|---|---|"
             jq -r '.proposed[] | "| \(.component) | \(.current) | \(.proposed) | \(.kind) | \(.released_at) |"' "${proposal}"
@@ -247,79 +245,6 @@ jobs:
             echo "running the failed jobs of ${run} again"
             gh api --method POST "repos/${REPOSITORY}/actions/runs/${run}/rerun-failed-jobs"
           done
-
-  merge:
-    name: Merge the proposal when it is due
-    needs: [vulnerabilities, propose]
-    runs-on: ubuntu-26.04
-    timeout-minutes: 15
-    environment: upstream-watch
-
-    steps:
-      - name: Act as the app
-        id: app
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
-          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
-          permission-contents: write # the merge writes main
-          permission-pull-requests: write # and closes the pull request
-          permission-checks: read # whether every check passed
-
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      # Every check must have run and passed on the head being merged. The
-      # named ones must be among them: a check that never started is not one
-      # that passed.
-      - name: Merge when every check passed and the wait is over
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-          VULNERABLE: ${{ needs.vulnerabilities.outputs.vulnerable }}
-          REQUIRED: |
-            Source, quality, and security gates
-            Rule set regression tests
-            Installation test
-        run: |
-          set -euo pipefail
-          pr=$(gh pr list --head "${BRANCH}" --state open --json number,headRefOid,labels --jq '.[0] // empty')
-          if [[ -z "${pr}" ]]; then
-            echo "no proposal is open"
-            exit 0
-          fi
-          number=$(jq -r .number <<<"${pr}")
-          head=$(jq -r .headRefOid <<<"${pr}")
-          labels=$(jq -r '[.labels[].name] | join(" ")' <<<"${pr}")
-          if [[ " ${labels} " == *" hold "* ]]; then
-            echo "#${number} is on hold"
-            exit 0
-          fi
-          checks=$(gh pr checks "${number}" --json name,bucket || true)
-          if jq -e 'any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
-            echo "#${number}: not every check has passed"
-            jq -r '.[] | "  \(.bucket)  \(.name)"' <<<"${checks}"
-            exit 0
-          fi
-          while IFS= read -r name; do
-            [[ -z "${name}" ]] && continue
-            if ! jq -e --arg name "${name}" 'any(.[]; .name == $name and .bucket == "pass")' <<<"${checks}" >/dev/null; then
-              echo "#${number}: '${name}' has not passed"
-              exit 0
-            fi
-          done <<<"${REQUIRED}"
-          git fetch --quiet origin "${head}"
-          git worktree add --quiet --detach "${RUNNER_TEMP}/head" "${head}"
-          options=()
-          [[ "${VULNERABLE}" == true ]] && options+=(--vulnerable)
-          [[ " ${labels} " == *" no-cooldown "* ]] && options+=(--no-cooldown)
-          if ! python3 tools/upstream-watch due --base . --head "${RUNNER_TEMP}/head" "${options[@]}"; then
-            exit 0
-          fi
-          gh pr merge "${number}" --merge --match-head-commit "${head}" --delete-branch
 
   locks:
     name: Propose the locked dependencies' security fixes
@@ -448,62 +373,3 @@ jobs:
             echo "running the failed jobs of ${run} again"
             gh api --method POST "repos/${REPOSITORY}/actions/runs/${run}/rerun-failed-jobs"
           done
-
-  merge-locks:
-    name: Merge the locks' proposal when every check passed
-    needs: [locks]
-    runs-on: ubuntu-26.04
-    timeout-minutes: 15
-    environment: upstream-watch
-
-    steps:
-      - name: Act as the app
-        id: app
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
-          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
-          permission-contents: write # the merge writes main
-          permission-pull-requests: write # and closes the pull request
-          permission-checks: read # whether every check passed
-
-      # As the WAF proposal: every check run and passed on the head being
-      # merged, the named ones among them. A security fix has no wait.
-      - name: Merge when every check passed
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-          REPOSITORY: ${{ github.repository }}
-          REQUIRED: |
-            Source, quality, and security gates
-            Installation test
-        run: |
-          set -euo pipefail
-          pr=$(gh pr list --repo "${REPOSITORY}" --head "${LOCKS_BRANCH}" --state open \
-            --json number,headRefOid,labels --jq '.[0] // empty')
-          if [[ -z "${pr}" ]]; then
-            echo "no proposal is open"
-            exit 0
-          fi
-          number=$(jq -r .number <<<"${pr}")
-          head=$(jq -r .headRefOid <<<"${pr}")
-          labels=$(jq -r '[.labels[].name] | join(" ")' <<<"${pr}")
-          if [[ " ${labels} " == *" hold "* ]]; then
-            echo "#${number} is on hold"
-            exit 0
-          fi
-          checks=$(gh pr checks "${number}" --repo "${REPOSITORY}" --json name,bucket || true)
-          if jq -e 'any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
-            echo "#${number}: not every check has passed"
-            jq -r '.[] | "  \(.bucket)  \(.name)"' <<<"${checks}"
-            exit 0
-          fi
-          while IFS= read -r name; do
-            [[ -z "${name}" ]] && continue
-            if ! jq -e --arg name "${name}" 'any(.[]; .name == $name and .bucket == "pass")' <<<"${checks}" >/dev/null; then
-              echo "#${number}: '${name}' has not passed"
-              exit 0
-            fi
-          done <<<"${REQUIRED}"
-          gh pr merge "${number}" --repo "${REPOSITORY}" --merge --match-head-commit "${head}" --delete-branch
-

@@ -307,6 +307,14 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: python3 tools/upstream-watch ran --repository "${REPOSITORY}"
 
+      # The hourly merges (B354): GitHub drops a scheduled run now and then, so
+      # twelve hours, not one, before it is called stopped.
+      - name: A scheduled merge run inside the last 12 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: python3 tools/upstream-watch ran --repository "${REPOSITORY}" --workflow upstream-merge.yml --hours 12
+
   # The branch rule requires this name. A matrix job reports one check per
   # Python, so this one stands for both and passes only when both did.
   gates:
@@ -320,42 +328,3 @@ jobs:
         env:
           RESULT: ${{ needs.checks.result }}
         run: test "${RESULT}" = success
-
-  # A Dependabot update merges itself once the gates above pass (B323): patch
-  # and minor only, never a major one, and never one labelled `hold`. The
-  # waiting period is Dependabot's own `cooldown` (.github/dependabot.yml): it
-  # opens the pull request only once the release is two days old, so a
-  # hijacked release has those days to be found before it gets here.
-  #
-  # After `gates`, not beside it: main's ruleset requires that job's check,
-  # and a merge started with `checks` asked a second before it was reported
-  # and was refused (PR #5, 26-10-23).
-  dependabot-merge:
-    name: Merge a Dependabot update
-    needs: gates
-    if: >-
-      github.event_name == 'pull_request'
-      && github.event.pull_request.user.login == 'dependabot[bot]'
-      && github.repository == 'haprion/haprion'
-      && !contains(github.event.pull_request.labels.*.name, 'hold')
-    runs-on: ubuntu-26.04
-    timeout-minutes: 5
-    permissions:
-      contents: write # the merge writes the update to main
-      pull-requests: write # and closes its pull request
-
-    steps:
-      - name: Read what the update is
-        id: metadata
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-
-      # A grouped update reports its largest change, so one major version in
-      # the group keeps the whole group for a person.
-      - name: Merge a patch or minor update
-        if: >-
-          steps.metadata.outputs.update-type == 'version-update:semver-patch'
-          || steps.metadata.outputs.update-type == 'version-update:semver-minor'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --merge "${PR_URL}"

@@ -221,14 +221,13 @@ release), the Go that compiles the engine and the govulncheck that reads it. Eve
    against `keys/upstream/coreruleset.asc`, the Go archive against go.dev's digest, the engine by the
    commit its release tag names - and rewrites the pins on the branch `upstream-watch`, with one pull
    request open for it. A major update is never written: it opens an issue that needs a decision
-3. merges that pull request once every check on it passed - among them the rule set's own regression
+3. has that pull request merged once every check on it passed - among them the rule set's own regression
    tests (`tools/crs-regression`: go-ftw through the built engine and rules behind the HAProxy branch
    the nodes run, in the rig the engine's source carries, with its list of tests known to fail
    through HAProxy and ours in `tests/crs-regression.yml`), and the installation test on the latest
    release's packages with the proposal's engine and rules in place of the release's, which is what
-   the repository serves once it is merged - each upstream release is seven days old
-   (two when the pinned engine reaches a vulnerability and the proposal is the engine side only), and
-   it is not labelled `hold`. The label `no-cooldown` lifts the wait; nothing lifts the major rule.
+   the repository serves once it is merged - each upstream release is two days old, and it is not
+   labelled `hold`. The label `no-cooldown` lifts the wait; nothing lifts the major rule.
    The merge on `main` builds and publishes the engine and the rules (`apt-repo.yml`)
 4. audits the three Python locks the gate audits - `uv.lock`, `ui/uv.lock` and `certbot/uv.lock` -
    with `uv audit` against OSV (`tools/upstream-watch locks`), and upgrades in its lock every package
@@ -241,10 +240,19 @@ release), the Go that compiles the engine and the govulncheck that reads it. Eve
 What counts as major: for the engine a `0.y` step, for the rule set a new LTS line, for Go a new
 line, for govulncheck a new major version.
 
+The merges are `.github/workflows/upstream-merge.yml`'s, every hour, so a proposal goes in within the
+hour its checks pass rather than the next night. The same workflow merges Dependabot's updates of the
+pinned actions (`.github/dependabot.yml`, monthly, opened once a release is two days old): when every
+check on the pull request passed, its commits are Dependabot's and signed, and every update the
+metadata in their messages names is a patch or minor one (`tools/upstream-watch dependabot`). A
+major update waits for a person, and so does anything labelled `hold`. The workflow's own token
+cannot do this: it may never write a workflow file, and an update of the actions is nothing else.
+
 GitHub's schedule is best effort: a run it drops leaves no trace, and a watch that stopped would
 say nothing. The CI job *The upstream watch still runs* (`tools/upstream-watch ran`) runs on every
 push to `main` and every run by hand, and fails when the workflow is not active or the schedule has not started
-it in 48 hours - one dropped night is allowed, two are not. A run started by hand does not count.
+it in 48 hours - one dropped night is allowed, two are not - and when the hourly merges have not run
+in 12. A run started by hand does not count.
 A failed scheduled run is not this job's business: GitHub mails it to whoever last changed the
 `cron` line.
 
@@ -252,7 +260,8 @@ The watch writes as a GitHub App, not with the workflow's own token: a pull requ
 opens runs no checks, and a merge it makes starts no workflow. To set it up:
 
 - create a GitHub App owned by the organization, with no webhook, and repository permissions
-  Contents, Pull requests and Issues read and write, Checks read; install it on this repository only
+  Contents, Pull requests, Issues and Workflows read and write, Checks read; install it on this
+  repository only
 - create the environment `upstream-watch`, deployable from `main` only, holding the variable
   `UPSTREAM_WATCH_CLIENT_ID` (the app's client ID), the secret `UPSTREAM_WATCH_PRIVATE_KEY` (a
   private key generated for the app) and, optionally, the variable `UPSTREAM_WATCH_NOTIFY` (the

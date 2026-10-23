@@ -16,6 +16,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest import mock
 
 import yaml
 
@@ -333,9 +334,11 @@ class WhenItIsDue(unittest.TestCase):
     def change(self, component: str, kind: str = "patch") -> Any:
         return WATCH.Change(component, "1", "2", kind, self.RELEASED.isoformat())
 
-    def test_seven_days_after_the_upstream_release(self) -> None:
+    def test_two_days_after_the_upstream_release(self) -> None:
+        """Seven until 26-10-23 (B354): 99 of 100 updates are taken as they come."""
+
         changes = [self.change("crs")]
-        at = self.RELEASED + timedelta(days=7)
+        at = self.RELEASED + timedelta(days=2)
         self.assertFalse(WATCH.due(changes, vulnerable=False, now=at - timedelta(minutes=1))[0])
         self.assertTrue(WATCH.due(changes, vulnerable=False, now=at)[0])
 
@@ -347,8 +350,10 @@ class WhenItIsDue(unittest.TestCase):
 
     def test_the_rules_never_ride_on_a_security_wait(self) -> None:
         changes = [self.change("go"), self.change("crs")]
-        at = self.RELEASED + timedelta(days=2)
-        self.assertFalse(WATCH.due(changes, vulnerable=True, now=at)[0])
+        at = self.RELEASED + timedelta(days=1)
+        with mock.patch.object(WATCH, "SECURITY_WAIT", timedelta(days=1)):
+            self.assertFalse(WATCH.due(changes, vulnerable=True, now=at)[0])
+            self.assertTrue(WATCH.due(changes[:1], vulnerable=True, now=at)[0])
 
     def test_a_major_change_is_never_due(self) -> None:
         changes = [self.change("go", "major")]
@@ -413,12 +418,20 @@ class WhetherTheWatchStillRuns(unittest.TestCase):
         workflows = BASE / ".github" / "workflows"
         self.assertTrue((workflows / WATCH.WORKFLOW).is_file())
         ci = yaml.safe_load((workflows / "ci.yml").read_text())
-        (step,) = [
+        steps = [
             s
             for s in ci["jobs"]["upstream-watch-ran"]["steps"]
             if "upstream-watch ran" in s.get("run", "")
         ]
-        self.assertIn("--repository", step["run"])
+        self.assertEqual(len(steps), 2)
+        for step in steps:
+            self.assertIn("--repository", step["run"])
+            named = (
+                step["run"].split("--workflow ")[1].split()[0]
+                if "--workflow" in step["run"]
+                else WATCH.WORKFLOW
+            )
+            self.assertTrue((workflows / named).is_file(), named)
 
 
 class ThePinsInTheTree(unittest.TestCase):
@@ -504,7 +517,7 @@ class TheWorkflow(unittest.TestCase):
         # A renamed job would leave the merge waiting for a check that never
         # comes - every proposal held, and nothing saying why.
         workflows = BASE / ".github" / "workflows"
-        watch = yaml.safe_load((workflows / "upstream-watch.yml").read_text())
+        watch = yaml.safe_load((workflows / "upstream-merge.yml").read_text())
         (step,) = [s for s in watch["jobs"]["merge"]["steps"] if "REQUIRED" in s.get("env", {})]
         required = [line for line in step["env"]["REQUIRED"].splitlines() if line.strip()]
         self.assertIn("Source, quality, and security gates", required)
@@ -609,17 +622,54 @@ class TheWorkflow(unittest.TestCase):
             ],
         )
 
-    def test_a_merge_waits_for_the_check_main_requires(self) -> None:
-        """PR #5 (26-10-23): the Dependabot merge ran beside the required job and was refused."""
+    def test_the_merges_run_every_hour_and_the_proposals_at_night(self) -> None:
+        """B354: a green proposal waited for the next night; the merges now run hourly."""
+
+        workflows = BASE / ".github" / "workflows"
+        watch = yaml.safe_load((workflows / "upstream-watch.yml").read_text())
+        merge = yaml.safe_load((workflows / "upstream-merge.yml").read_text())
+        self.assertEqual([entry["cron"] for entry in watch[True]["schedule"]], ["17 3 * * *"])
+        self.assertEqual([entry["cron"] for entry in merge[True]["schedule"]], ["41 * * * *"])
+        self.assertEqual(set(merge["jobs"]), {"merge", "merge-locks", "merge-dependabot"})
+        self.assertFalse({"merge", "merge-locks", "merge-dependabot"} & set(watch["jobs"]))
+        for key in ("BRANCH", "LOCKS_BRANCH", "VULNERABLE_TITLE"):
+            with self.subTest(key=key):
+                self.assertEqual(merge["env"][key], watch["env"][key])
+
+    def test_ci_watches_both_schedules(self) -> None:
+        ci = yaml.safe_load((BASE / ".github/workflows/ci.yml").read_text())
+        runs = [step.get("run", "") for step in ci["jobs"]["upstream-watch-ran"]["steps"]]
+        self.assertIn('python3 tools/upstream-watch ran --repository "${REPOSITORY}"', runs)
+        self.assertTrue(any("--workflow upstream-merge.yml --hours 12" in run for run in runs))
+        workflow = {"state": "active", "created_at": "2026-10-23T00:00:00Z"}
+        newest = {"created_at": "2026-10-23T10:41:00Z"}
+        at = datetime(2026, 10, 23, 22, 42, tzinfo=UTC)
+        self.assertFalse(WATCH.ran(workflow, newest, at, timedelta(hours=12))[0])
+        self.assertTrue(WATCH.ran(workflow, newest, at)[0])
+
+    def test_only_the_watch_merges_and_only_it_may_write_workflows(self) -> None:
+        """PR #5 (26-10-23): CI's own token may never write a workflow file."""
 
         ci = yaml.safe_load((BASE / ".github/workflows/ci.yml").read_text())
-        (required,) = [
-            key
-            for key, job in ci["jobs"].items()
-            if job.get("name") == "Source, quality, and security gates"
+        merging = [
+            name
+            for name, job in ci["jobs"].items()
+            for step in job.get("steps", [])
+            if "gh pr merge" in step.get("run", "")
         ]
-        needs = ci["jobs"]["dependabot-merge"]["needs"]
-        self.assertIn(required, [needs] if isinstance(needs, str) else needs)
+        self.assertEqual(merging, [])
+        watch = yaml.safe_load((BASE / ".github/workflows/upstream-merge.yml").read_text())
+        writes = {
+            name
+            for name, job in watch["jobs"].items()
+            for step in job.get("steps", [])
+            if step.get("with", {}).get("permission-workflows") == "write"
+        }
+        self.assertEqual(writes, {"merge-dependabot"})
+        (step,) = [
+            s for s in watch["jobs"]["merge-dependabot"]["steps"] if "REQUIRED" in s.get("env", {})
+        ]
+        self.assertIn("Source, quality, and security gates", step["env"]["REQUIRED"])
 
     def test_no_step_reads_a_status_the_shell_never_reaches(self) -> None:
         """A status read on its own line runs only after success under GitHub's `bash -e`."""
@@ -766,7 +816,7 @@ class TheLocks(unittest.TestCase):
 
     def test_the_locks_proposal_waits_for_jobs_that_run_on_its_branch(self) -> None:
         workflows = BASE / ".github" / "workflows"
-        watch = yaml.safe_load((workflows / "upstream-watch.yml").read_text())
+        watch = yaml.safe_load((workflows / "upstream-merge.yml").read_text())
         branch = watch["env"]["LOCKS_BRANCH"]
         (step,) = [
             s for s in watch["jobs"]["merge-locks"]["steps"] if "REQUIRED" in s.get("env", {})
@@ -782,12 +832,120 @@ class TheLocks(unittest.TestCase):
             self.assertIn(name, names)
         uv = [
             step["with"]["version"]
-            for path in (workflows / "ci.yml", workflows / "upstream-watch.yml")
+            for path in sorted(workflows.glob("*.yml"))
             for job in yaml.safe_load(path.read_text())["jobs"].values()
             for step in job.get("steps", [])
             if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
         ]
         self.assertEqual(len(set(uv)), 1, uv)
+
+
+def dependabot_commit(
+    *kinds: str, author: str = "dependabot[bot]", verified: bool = True
+) -> dict[str, Any]:
+    """A commit as `gh api repos/<r>/pulls/<n>/commits` returns it, its message as Dependabot writes it (PR #5)."""
+
+    entries = "".join(
+        f"- dependency-name: actions/example-{index}\n"
+        f"  dependency-version: 1.{index}.0\n"
+        "  dependency-type: direct:production\n"
+        f"  update-type: version-update:semver-{kind}\n"
+        "  dependency-group: actions\n"
+        for index, kind in enumerate(kinds)
+    )
+    message = (
+        "Bump the actions group across 1 directory with 2 updates\n\n"
+        f"---\nupdated-dependencies:\n{entries}...\n\nSigned-off-by: dependabot[bot] <support@github.com>"
+    )
+    return {
+        "sha": "0123456789abcdef",
+        "author": {"login": author},
+        "commit": {"message": message, "verification": {"verified": verified, "reason": "valid"}},
+    }
+
+
+class DependabotUpdates(unittest.TestCase):
+    """B354: the watch merges a patch or minor update Dependabot signed, and nothing else."""
+
+    def test_a_signed_patch_and_minor_update_may_go_in(self) -> None:
+        ready, reason = WATCH.dependabot_ready([dependabot_commit("patch", "minor")])
+        self.assertTrue(ready, reason)
+        self.assertEqual(reason, "2 patch or minor updates")
+
+    def test_what_is_not_merged(self) -> None:
+        for commits, why in (
+            ([dependabot_commit("minor", "major")], "a major update waits for a person"),
+            (
+                [dependabot_commit("patch"), dependabot_commit("patch", author="somebody")],
+                "is not Dependabot's",
+            ),
+            ([dependabot_commit("patch", verified=False)], "is not signed"),
+            ([], "has no commits"),
+        ):
+            with self.subTest(why=why):
+                ready, reason = WATCH.dependabot_ready(commits)
+                self.assertFalse(ready)
+                self.assertIn(why, reason)
+
+    def test_the_hourly_step_merges_only_what_is_ready(self) -> None:
+        watch = yaml.safe_load((BASE / ".github/workflows/upstream-merge.yml").read_text())
+        (step,) = [
+            s for s in watch["jobs"]["merge-dependabot"]["steps"] if "REQUIRED" in s.get("env", {})
+        ]
+        prs = [
+            {"number": 7, "headRefOid": "a" * 40, "labels": []},
+            {"number": 8, "headRefOid": "b" * 40, "labels": [{"name": "hold"}]},
+            {"number": 9, "headRefOid": "c" * 40, "labels": []},
+            {"number": 10, "headRefOid": "d" * 40, "labels": []},
+        ]
+        green = [{"name": "Source, quality, and security gates", "bucket": "pass"}]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "bin").mkdir()
+            (root / "prs.json").write_text(json.dumps(prs))
+            (root / "green.json").write_text(json.dumps(green))
+            (root / "pending.json").write_text(json.dumps([{**green[0], "bucket": "pending"}]))
+            (root / "minor.json").write_text(json.dumps([dependabot_commit("minor")]))
+            (root / "major.json").write_text(json.dumps([dependabot_commit("major")]))
+            stub = root / "bin" / "gh"
+            stub.write_text(
+                "#!/bin/sh\n"
+                f'echo "$*" >> {root / "calls"}\n'
+                'case "$*" in\n'
+                f"  'pr list'*) jq -r '.[] | @base64' {root / 'prs.json'} ;;\n"
+                f"  'pr checks 9 '*) cat {root / 'pending.json'} ;;\n"
+                f"  'pr checks '*) cat {root / 'green.json'} ;;\n"
+                f"  *pulls/7/commits*) cat {root / 'minor.json'} ;;\n"
+                f"  *pulls/10/commits*) cat {root / 'major.json'} ;;\n"
+                "esac\n"
+            )
+            stub.chmod(0o755)
+            (root / "step.sh").write_text(step["run"])
+            result = subprocess.run(
+                ["/bin/bash", "--noprofile", "--norc", "-eo", "pipefail", str(root / "step.sh")],
+                cwd=BASE,
+                env={
+                    "PATH": f"{root / 'bin'}:/usr/bin:/bin",
+                    "REPOSITORY": "example/repo",
+                    "RUNNER_TEMP": str(root),
+                    "REQUIRED": step["env"]["REQUIRED"],
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            merges = [
+                line
+                for line in (root / "calls").read_text().splitlines()
+                if line.startswith("pr merge")
+            ]
+        self.assertEqual(
+            merges, [f"pr merge 7 --repo example/repo --merge --match-head-commit {'a' * 40}"]
+        )
+        self.assertIn("#8 is on hold", result.stdout)
+        self.assertIn("#9: not every check has passed", result.stdout)
+        self.assertIn("a major update waits for a person", result.stdout)
 
 
 if __name__ == "__main__":

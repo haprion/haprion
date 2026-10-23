@@ -63,7 +63,7 @@ text is out of date.
 |---|---|---|
 | web | jobs (insert only, through the queue's allowlist, and an admin's answer to a held job); audit events (insert only); sessions; accounts (and deleting one); sign-in attempts and unlocks; drafts and cluster changes; DNS and NDES provider profiles (ciphertext only); feature switches; the sign-in provider and its pending sign-ins; the status endpoint's address list; acknowledgements on *Needs attention*; the getting-started list | everything it shows: the caches, metrics, traffic logs, WAF findings (not the raw matches), jobs, audit |
 | worker | a claimed job's state, lease and result; audit events; a renamed backend's alias once its publish is done; deleting a removed provider profile; holding the jobs queued before a boot (one function) | jobs, the claim pause, the version listing, the provider profiles it applies |
-| poller | the caches it reads from helpers, each cluster's pass and node list, metric samples, node events and their state, version diffs, the update check, the manager's certificates, the search index (and deleting from it) | the same |
+| poller | the caches it reads from helpers, each cluster's pass and node list, metric samples, node events and their state, version diffs, the update check, the manager's certificates, its packages waiting in the repository (replaced whole), the search index (and deleting from it) | the same |
 | traffic collector | traffic-log and WAF-match rows (insert only) | nothing |
 
 Two boundaries are easy to confuse here. An administrator signed in to the interface is held by the

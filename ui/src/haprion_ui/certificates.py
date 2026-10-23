@@ -27,7 +27,7 @@ from typing import Any, Literal
 
 from haprion.certificates import CERTIFICATE_OPENING
 
-from haprion_ui import certificate_receivers, metrics, sorting
+from haprion_ui import certificate_receivers, moments, sorting
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
 from haprion_ui.db import ClusterCertificates, ManagerCertificates, TakenOut
@@ -327,7 +327,7 @@ def _date(value: Any) -> str:
     """A measured timestamp as a date, or the dash the other unknown cells use."""
 
     moment = _expiry(value)
-    return "—" if moment is None else metrics.shown(moment).date().isoformat()
+    return "—" if moment is None else moments.day(moment)
 
 
 def _expiry(value: Any) -> datetime | None:
@@ -365,7 +365,7 @@ def _expiry_state(
 
     if expires_at is None:
         return "—", "No expiry date", "unknown"
-    date = metrics.shown(expires_at).strftime("%Y-%m-%d")
+    date = moments.day(expires_at)
     left = expires_at - now
     if left <= timedelta(0):
         return date, "Expired", "critical"
@@ -827,7 +827,7 @@ def _published_label(published_at: datetime | None) -> str:
 
     if published_at is None:
         return "Not published"
-    return f"Published {metrics.shown(published_at).strftime('%Y-%m-%d')}"
+    return f"Published {moments.day(published_at)}"
 
 
 def _target_views(entry: Mapping[str, Any]) -> tuple[TargetView, ...]:
@@ -916,11 +916,7 @@ def _registry_state(
     renewal = _mapping(entry.get("renewal"))
     if renewal.get("outcome") == "failed":
         attempted = _expiry(renewal.get("attempted_at"))
-        when = (
-            f" (tried {metrics.shown(attempted).strftime(metrics.TIMESTAMP)})"
-            if attempted is not None
-            else ""
-        )
+        when = f" (tried {moments.moment(attempted)})" if attempted is not None else ""
         return (
             "Renewal failed",
             _text(renewal.get("message"), "The scheduled renewal failed") + when,
@@ -951,7 +947,7 @@ def _registry_state(
         last = taken_out.get(identifier)
         if last is None:
             return "External", "No download recorded; installed by hand", "info"
-        when = metrics.shown(last.at).strftime(metrics.TIMESTAMP)
+        when = moments.moment(last.at)
         if fingerprint and last.fingerprint != fingerprint:
             return (
                 "New version not downloaded",

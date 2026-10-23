@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from haprion_ui import metrics
+from haprion_ui import moments
 from haprion_ui.db import AuditEvent
 
 UNKNOWN_USER = "unknown user"
@@ -277,7 +277,7 @@ def rows(events: Iterable[AuditEvent], accounts: frozenset[str]) -> tuple[AuditR
             AuditRow(
                 id=event.id,
                 at=event.at,
-                shown_at=metrics.shown(event.at).strftime("%y-%m-%d %H:%M:%S"),
+                shown_at=moments.moment(event.at),
                 who=shown,
                 what=what(event),
                 where=event.cluster or "—",
@@ -306,7 +306,5 @@ def set_by(events: Sequence[AuditEvent]) -> dict[tuple[str, str], SetBy]:
         for server in _list(detail, "servers"):
             key = (server, state)
             if key not in found and event.actor:
-                found[key] = SetBy(
-                    event.actor, event.at, metrics.shown(event.at).strftime("%y-%m-%d %H:%M")
-                )
+                found[key] = SetBy(event.actor, event.at, moments.moment(event.at))
     return found

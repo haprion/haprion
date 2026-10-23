@@ -275,7 +275,7 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
             'status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>Requesting<',
             page,
         )
-        self.assertIn("<strong>brand.example</strong>", page)
+        self.assertIn('<strong class="certificate-name">brand.example</strong>', page)
         self.assertIn("*.brand.example, brand.example", page)
         # No box to tick and no expiry badge: there is nothing yet.
         self.assertNotIn('value="brand.example" data-delete-pick', page)
@@ -283,7 +283,8 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
         self.assertIn('<td data-label="Expires">—</td>', page)
         # First in the table: the newest thing on the page.
         self.assertLess(
-            page.index("<strong>brand.example</strong>"), page.index("<strong>example.com</strong>")
+            page.index('<strong class="certificate-name">brand.example</strong>'),
+            page.index('<strong class="certificate-name">example.com</strong>'),
         )
 
     def test_a_listed_certificate_keeps_its_own_state_once_the_request_is_done(self) -> None:
@@ -294,7 +295,7 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
         ):
             page = self.writing_client().get("/certificates").text
         self.assertNotIn('">Issued<', page)
-        self.assertEqual(page.count("<strong>new.example.com</strong>"), 1)
+        self.assertEqual(page.count('<strong class="certificate-name">new.example.com</strong>'), 1)
 
     def test_a_deleting_row_shows_the_badge_and_the_page_refreshes(self) -> None:
         with mock.patch(

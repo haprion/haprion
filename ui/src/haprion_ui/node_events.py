@@ -24,7 +24,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from haprion_ui import health, metrics
+from haprion_ui import health, moments
 
 type Event = Literal["server_down", "server_up", "vip_moved", "node_silent", "node_back"]
 EVENTS: tuple[Event, ...] = ("server_down", "server_up", "vip_moved", "node_silent", "node_back")
@@ -264,7 +264,7 @@ def rows(events: Iterable[Any], owners: Mapping[str, Mapping[str, str]]) -> tupl
             Row(
                 id=event.id,
                 at=event.at,
-                shown_at=metrics.shown(event.at).strftime("%y-%m-%d %H:%M:%S"),
+                shown_at=moments.moment(event.at),
                 node=event.node,
                 what=described(event.event, event.subject, detail, event.node),
                 cluster=event.cluster,

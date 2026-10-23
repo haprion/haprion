@@ -31,7 +31,7 @@ from haprion import exit_codes, node_enrollment, server_names
 from haprion.deploy_run import CERTIFICATES_NOT_DEPLOYED
 from haprion.restore_agent import RUN_ID
 
-from haprion_ui import metrics
+from haprion_ui import moments
 from haprion_ui.dashboard import relative_age
 from haprion_ui.db import ClusterStatus, Job
 
@@ -51,7 +51,6 @@ class JobView:
     requested_at: str
     started: str
     finished: str
-    outcome: str
     exit_code: str
     exit_meaning: str
     #
@@ -836,10 +835,9 @@ def _view(
         tone=tone,
         requested=_stamp(job.created_at, now),
         requested_iso=job.created_at.astimezone(UTC).isoformat(),
-        requested_at=metrics.shown(job.created_at).strftime(metrics.TIMESTAMP),
+        requested_at=moments.moment(job.created_at),
         started=_stamp(job.started_at, now),
         finished=_stamp(job.finished_at, now),
-        outcome=job.outcome.replace("_", " ") if job.outcome else "—",
         exit_code="—" if job.exit_code is None else str(job.exit_code),
         exit_meaning=_exit_meaning(job.exit_code),
         follow_up=follow_up,

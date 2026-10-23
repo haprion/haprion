@@ -63,6 +63,15 @@ class TheFigures(unittest.TestCase):
         self.assertEqual(traffic_summary.milliseconds(180_000), "3.0 min")
         self.assertEqual(traffic_summary.milliseconds(7_200_000), "2.0 h")
 
+    def test_a_value_at_a_unit_boundary_takes_the_next_unit(self) -> None:
+        """1B-9: printed after rounding, 999 999 was "1000k" and 59 970 ms "60 s"."""
+
+        self.assertEqual(traffic_summary.count(999_999), "1.0M")
+        self.assertEqual(traffic_summary.count(9_960), "10k")
+        self.assertEqual(traffic_summary.size(999_700), "1.0 MB")
+        self.assertEqual(traffic_summary.milliseconds(59_970), "1.0 min")
+        self.assertEqual(traffic_summary.milliseconds(9_960), "10 s")
+
     def test_the_row_reads_the_day_and_the_last_minutes_apart(self) -> None:
         row = traffic_summary.row(
             measured(timedelta(hours=24), (1_234_567, 3_400_000_000, 41_200_000_000)),

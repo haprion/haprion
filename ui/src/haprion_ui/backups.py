@@ -26,7 +26,7 @@ from typing import Any, Literal
 
 from haprion import backup_schedule
 
-from haprion_ui import metrics
+from haprion_ui import metrics, moments
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label, relative_age
 from haprion_ui.db import ClusterBackups
@@ -239,7 +239,7 @@ def _taken(moment: datetime | None, fallback: str) -> str:
 
     if moment is None:
         return fallback
-    return metrics.shown(moment).strftime("%Y-%m-%d %H:%M")
+    return moments.moment(moment)
 
 
 def _archive_views(node: str, value: Any, *, now: datetime) -> tuple[ArchiveView, ...]:
@@ -380,7 +380,7 @@ def _stamp(value: Any) -> str:
     """A scheduled moment, in the reader's clock like every other time on the page."""
 
     moment = _moment(value)
-    return "—" if moment is None else metrics.shown(moment).strftime("%Y-%m-%d %H:%M")
+    return "—" if moment is None else moments.moment(moment)
 
 
 def _elapsed(value: Any, now: datetime) -> str:

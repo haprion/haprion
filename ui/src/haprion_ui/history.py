@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from haprion.cli.changes_publish import MESSAGE as CHANGES_MESSAGE
 
-from haprion_ui import metrics
+from haprion_ui import moments
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
 from haprion_ui.db import ClusterHistory
@@ -117,9 +117,7 @@ def _saved_at(value: Any) -> str:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return text[:32]
-    if parsed.tzinfo is None:
-        return parsed.strftime("%Y-%m-%d %H:%M")
-    return metrics.shown(parsed).strftime("%Y-%m-%d %H:%M")
+    return moments.moment(parsed)
 
 
 def _version_view(value: Any, published_hash: str | None, rank: int) -> VersionView | None:

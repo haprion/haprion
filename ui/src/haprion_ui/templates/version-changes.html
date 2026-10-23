@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}{{ cluster.cluster }} {{ version.version }} — Haprion{% endblock %}
 {% block content %}
 {#
@@ -6,7 +7,7 @@
   Changes button is a plain link; the Versions page lifts the section below into
   a dialog and leaves the rest of this page behind.
 #}
-<p class="page-back"><a href="/history">← Versions</a></p>
+<div class="heading-title">{{ back_button('/history', 'Versions') }}</div>
 
 <section class="version-changes" data-version-changes-body aria-label="Changes in {{ cluster.cluster }} {{ version.version }}">
   <header class="version-changes-head">

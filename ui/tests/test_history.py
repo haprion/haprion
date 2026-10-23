@@ -183,13 +183,13 @@ class RenderingTests(unittest.TestCase):
         self.assertEqual(version.version, "v12")
         self.assertEqual(version.expected_commit, "a" * 40)
         self.assertEqual(version.comment, "Add a maintenance backend")
-        self.assertEqual(version.date, "2026-08-28 14:02")
+        self.assertEqual(version.date, "26-08-28 14:02:11")
         self.assertTrue(version.current)
 
     def test_a_version_is_dated_in_the_readers_clock(self) -> None:
         version = read_in("Europe/Stockholm", lambda: overview(reading()).clusters[0].versions[0])
 
-        self.assertEqual(version.date, "2026-08-28 16:02")
+        self.assertEqual(version.date, "26-08-28 16:02:11")
 
     def test_a_version_without_a_number_is_dropped_rather_than_guessed(self) -> None:
         cluster = overview(

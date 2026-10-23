@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from haprion.version_history import UnfitName, trailer_name
 
-from haprion_ui import metrics, sorting
+from haprion_ui import moments, sorting
 from haprion_ui.db import AccountRow
 
 type Tone = Literal["healthy", "warning", "critical"]
@@ -112,9 +112,7 @@ def user_view(row: AccountRow, *, signed_in_as: str) -> UserView:
         disabled=row.disabled,
         locked=row.locked,
         sessions=row.sessions,
-        last_sign_in="Never"
-        if row.last_sign_in is None
-        else metrics.shown(row.last_sign_in).strftime(metrics.TIMESTAMP),
+        last_sign_in="Never" if row.last_sign_in is None else moments.moment(row.last_sign_in),
         own=row.username.lower() == signed_in_as.lower(),
         provider=row.source == "oidc",
         break_glass=row.break_glass,

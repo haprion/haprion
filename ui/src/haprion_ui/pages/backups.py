@@ -24,6 +24,7 @@ from haprion_ui import (
     db,
     jobs,
     metrics,
+    moments,
     node_restores,
     operations,
 )
@@ -184,9 +185,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "restore": restore,
                 "steps": node_restores.step_states(restore),
-                "expires": metrics.shown(restore.expires_at).strftime("%H:%M")
-                if restore.expires_at
-                else "",
+                "expires": moments.time_of_day(restore.expires_at) if restore.expires_at else "",
                 "problem": problem,
                 "editable": config.management_writes and session.role == "admin",
                 "section": "backups",

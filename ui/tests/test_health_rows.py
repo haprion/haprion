@@ -111,3 +111,12 @@ class ATestWritesIntoTheSameRows(unittest.TestCase):
         rows = health_rows(None, tested(("198.51.100.10:8080", True)))
 
         self.assertEqual([(row.node, row.state) for row in rows], [("node-a", "UP")])
+
+
+class ADrainIsAChoice(unittest.TestCase):
+    """7-9: red in the editor's rows, yellow on the server card, for one server."""
+
+    def test_the_editor_colours_a_drain_as_the_card_does(self) -> None:
+        (row,) = health_rows(reported(("s1", "DRAIN")), None)
+
+        self.assertEqual((row.state, row.tone), ("DRAIN", "warning"))

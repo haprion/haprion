@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from haprion_ui import server_card
 from haprion_ui.health import BackendHealth, check_phrase
 from haprion_ui.probe import ProbeReport
 
@@ -58,7 +59,12 @@ def health_rows(backend: BackendHealth | None, probe: ProbeReport | None) -> lis
                     node=node.node,
                     server=server,
                     up=member.up,
-                    tone="unknown" if unchecked else ("healthy" if member.up else "critical"),
+                    #
+                    # The server card's colour for the same server: a drain is
+                    # a choice, yellow there and red here until 26-10-23
+                    # (review 2026-10-22, 7-9).
+                    #
+                    tone="unknown" if unchecked else server_card.cell(member).tone,
                     state=member.status or "unknown",
                     last=(check_phrase(member.check_status or "", member.check_code or "") or "—")
                     + _duration(member.check_duration_ms),

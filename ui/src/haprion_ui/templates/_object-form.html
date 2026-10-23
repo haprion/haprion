@@ -420,7 +420,7 @@
     {% if backend_health is defined or probe %}
     {% set rows = health_rows(backend_health if backend_health is defined else none, probe) %}
     <div class="node-health">
-      <h4><span class="subsection-title">What the nodes report{% if backend_health is defined %} <span class="optional">{{ backend_health.backend }}{% if backend_health.held_by %}, held by {{ backend_health.held_by|join(' and ') }}{% endif %}</span>{% endif %}</span></h4>
+      <h4><span class="subsection-title">What the nodes report{% if backend_health is defined %} <span class="optional">{{ backend_health.backend }}{% if backend_health.held_by %}{% if backend_health.backend %}, {% endif %}held by {{ backend_health.held_by|join(' and ') }}{% endif %}</span>{% endif %}</span></h4>
       {% if rows %}
       <table class="node-health-table">
         <colgroup><col><col><col><col></colgroup>
@@ -449,8 +449,8 @@
       <p class="node-health-note">The nodes know nothing about this backend. It is checked once it has been deployed.</p>
       {% endif %}
       {% if probe and not probe.ran %}<p class="node-health-note">The test did not run: {{ probe.problem }}</p>{% endif %}
-      {% if probe and probe.ran %}<p class="node-health-note">Rows marked <em>tested</em> were tried{% if probe.tested_at %} at {{ (probe.tested_at | shown).strftime('%H:%M:%S') }}{% endif %}{% if probe.source %} from {{ probe.source }}{% endif %}, with the check as it stands on screen.</p>{% for caveat in probe.caveats %}<p class="node-health-note">{{ caveat }}</p>{% endfor %}{% endif %}
-      {% if backend_health is defined and backend_health.observed_at %}<p class="node-health-note">Read {{ (backend_health.observed_at | shown).strftime('%H:%M:%S') }}.</p>{% endif %}
+      {% if probe and probe.ran %}<p class="node-health-note">Rows marked <em>tested</em> were tried{% if probe.tested_at %} at {{ probe.tested_at | shown_time }}{% endif %}{% if probe.source %} from {{ probe.source }}{% endif %}, with the check as it stands on screen.</p>{% for caveat in probe.caveats %}<p class="node-health-note">{{ caveat }}</p>{% endfor %}{% endif %}
+      {% if backend_health is defined and backend_health.observed_at %}<p class="node-health-note">Read {{ backend_health.observed_at | shown_time }}.</p>{% endif %}
     </div>
     {% endif %}
   </section>

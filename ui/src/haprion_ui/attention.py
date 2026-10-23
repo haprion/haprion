@@ -274,7 +274,12 @@ def from_dashboard(
                     severity="warning",
                     cluster=cluster.cluster,
                     subject=cluster.cluster,
-                    message=f"status last read {cluster.age_label}",
+                    #
+                    # The time is the row's own, written after the message;
+                    # the card's "Observed 12m ago" beside it read "status
+                    # last read Observed 12m ago" (review 2026-10-22, 2-6).
+                    #
+                    message="status last read",
                     since=cluster.observed_at,
                     link="/",
                 )
@@ -605,8 +610,9 @@ def from_manager(
                 severity="critical",
                 cluster=None,
                 subject="poller",
-                message="the poller has not read the clusters"
-                + (f" since {cluster_list_at:%Y-%m-%d %H:%M}" if cluster_list_at else ""),
+                message="the poller has not read the clusters since"
+                if cluster_list_at
+                else "the poller has never read the clusters",
                 since=cluster_list_at,
                 link="/",
             )

@@ -35,17 +35,27 @@ def recent_window(poll_seconds: int) -> timedelta:
     return max(RECENT, timedelta(seconds=poll_seconds * 3))
 
 
+def _rounded(value: float) -> float:
+    """The value as `_figure` will print it: one decimal below 10, none above."""
+
+    return round(value, 1) if round(value, 1) < 10 else round(value)
+
+
 def _figure(value: float) -> str:
     """Three significant figures at most: 3.2, 38, 247."""
 
     if value == 0:
         return "0"
-    return f"{value:.1f}" if value < 10 else f"{value:.0f}"
+    return f"{value:.1f}" if round(value, 1) < 10 else f"{value:.0f}"
 
 
 def _scaled(value: float, units: tuple[str, ...], step: float) -> str:
+    #
+    # The unit is chosen by the value as printed, not as measured: 999 999
+    # was "1000k" and 9.96 "10.0" (review 2026-10-22, 1B-9).
+    #
     for unit in units[:-1]:
-        if value < step:
+        if _rounded(value) < step:
             return f"{_figure(value)} {unit}"
         value /= step
     return f"{_figure(value)} {units[-1]}"
@@ -92,7 +102,7 @@ def milliseconds(value: int) -> str:
         return f"{value} ms"
     for unit, size_ in (("s", 1000), ("min", 60_000), ("h", 3_600_000)):
         scaled = value / size_
-        if unit == "h" or scaled < {"s": 60, "min": 60}[unit]:
+        if unit == "h" or _rounded(scaled) < 60:
             return f"{_figure(scaled)} {unit}"
     raise AssertionError("unreachable")
 

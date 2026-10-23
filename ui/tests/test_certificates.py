@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from haprion_ui import moments
 from haprion_ui.certificates import (
     CertificateOverview,
     RegistryView,
@@ -214,7 +215,7 @@ class ExpiryTests(unittest.TestCase):
 
         self.assertEqual(entry.tone, "healthy")
         self.assertEqual(entry.expiry_label, "in 60 days")
-        self.assertEqual(entry.expires, (NOW + timedelta(days=60)).strftime("%Y-%m-%d"))
+        self.assertEqual(entry.expires, (NOW + timedelta(days=60)).strftime(moments.DAY))
 
 
 class UnreadableCertificateTests(unittest.TestCase):
@@ -569,7 +570,7 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
         view = overview(with_registry(reading(), entry, receivers=("lb-01",)))
 
         certificate_view = registry_of(view).certificates[0]
-        self.assertEqual(certificate_view.state_label, "Published 2026-08-29")
+        self.assertEqual(certificate_view.state_label, "Published 26-08-29")
         self.assertEqual(certificate_view.state_tone, "healthy")
         #
         # The words the mockup used, which the manager cannot know for a
@@ -785,8 +786,8 @@ class TheTwoViewsShareTheirColumns(unittest.TestCase):
         view = overview(with_registry(reading(), registered()))
 
         self.assertNotEqual(view.clusters[0].certificates[0].valid_from, "—")
-        self.assertRegex(view.clusters[0].certificates[0].valid_from, r"^\d{4}-\d{2}-\d{2}$")
-        self.assertRegex(registry_of(view).certificates[0].valid_from, r"^\d{4}-\d{2}-\d{2}$")
+        self.assertRegex(view.clusters[0].certificates[0].valid_from, r"^\d{2}-\d{2}-\d{2}$")
+        self.assertRegex(registry_of(view).certificates[0].valid_from, r"^\d{2}-\d{2}-\d{2}$")
 
     def test_an_unreadable_row_has_no_start_date(self) -> None:
         entry = registered(readable=False, validation_error="no material at its source yet")

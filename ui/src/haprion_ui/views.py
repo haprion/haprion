@@ -100,6 +100,7 @@ from haprion_ui import (
     history,
     jobs,
     metrics,
+    moments,
     network,
     objects,
     oidc_web,
@@ -139,7 +140,21 @@ class _TimedTemplates(Jinja2Templates):
 #
 COMMIT_ID = re.compile(r"[0-9a-f]{40}")
 
-TEMPLATES = _TimedTemplates(directory=str(Path(__file__).parent / "templates"))
+
+def _layout_context(request: Request) -> dict[str, Any]:
+    """What the layout reads on every page, from the application rather than the page.
+
+    Each page passed `management_writes` itself, and one that forgot drew a
+    menu without Settings (review 2026-10-22, 2-9).
+    """
+
+    config = getattr(request.app.state, "config", None)
+    return {} if config is None else {"management_writes": config.management_writes}
+
+
+TEMPLATES = _TimedTemplates(
+    directory=str(Path(__file__).parent / "templates"), context_processors=[_layout_context]
+)
 logger = logging.getLogger("haprion_ui")
 
 #
@@ -262,10 +277,12 @@ def shown_at(moment: datetime) -> str:
     same format rather than a second one.
     """
 
-    return metrics.shown(moment).strftime(metrics.TIMESTAMP)
+    return moments.moment(moment)
 
 
 TEMPLATES.env.filters["shown_at"] = shown_at
+TEMPLATES.env.filters["shown_day"] = moments.day
+TEMPLATES.env.filters["shown_time"] = moments.time_of_day
 TEMPLATES.env.filters["groupby_object"] = waf.by_object
 TEMPLATES.env.filters["shown"] = metrics.shown
 TEMPLATES.env.filters["certificate_order"] = lambda rows, sort: certificates.TABLE.ordered(
@@ -309,7 +326,7 @@ def _log_time_filter(
     if len(value) != 14:
         raise ValueError(outside)
     try:
-        local = datetime.strptime(value, "%y-%m-%d %H:%M")
+        local = datetime.strptime(value, moments.PICKED)
     except ValueError as exc:
         raise ValueError("Choose a valid date and time.") from exc
     if local.tzinfo is not None:

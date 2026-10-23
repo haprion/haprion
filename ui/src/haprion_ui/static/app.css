@@ -782,8 +782,6 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .diff-lines > .diff-add { background: var(--healthy-soft); }
 .diff-lines > .diff-del { background: var(--critical-soft); }
 .diff-lines > .diff-hunk { color: var(--muted); }
-.page-back { margin: 0 0 12px; font-size: 12px; }
-.page-back a { color: var(--muted); }
 /* The row's button no taller than the Published badge, so every row keeps the published row's height. */
 .version-table .secondary-button { min-height: 21px; padding: 0 10px; }
 /* "Does not deploy" used to sit under every button, which stacked the action
@@ -796,11 +794,16 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    cluster card per row: their order is the operational fact.  The operation
    description may be long, so it gets the flexible column. */
 .job-table { table-layout: fixed; }
-/* Shares of the row, not pixels: fixed widths added up to 1145 px and pushed Exit off a 1050 px window. */
-.job-table th:nth-child(1), .job-table td:nth-child(1) { width: 19%; }
+/* Shares of the row, not pixels: fixed widths added up to 1145 px and pushed Exit off a 1050 px window.
+   Eight columns that add up to 100%: the shares added up to 111%, and the
+   widest state badge was drawn over Requested at 1280 px. The Outcome column
+   repeated the state in the database's own word and is gone (review
+   2026-10-22, 2-3). */
+.job-table th:nth-child(1), .job-table td:nth-child(1) { width: 21%; }
 .job-table th:nth-child(2), .job-table td:nth-child(2) { width: 11%; }
-.job-table th:nth-child(3), .job-table td:nth-child(3) { width: 15%; }
-.job-table th:nth-child(n+4), .job-table td:nth-child(n+4) { width: 11%; }
+.job-table th:nth-child(3), .job-table td:nth-child(3) { width: 11%; }
+.job-table th:nth-child(4), .job-table td:nth-child(4) { width: 17%; }
+.job-table th:nth-child(n+5), .job-table td:nth-child(n+5) { width: 10%; }
 .job-table td { padding-top: 7px; padding-bottom: 7px; }
 .job-table td:nth-child(1) { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .job-table time { font-variant-numeric: tabular-nums; }
@@ -1007,6 +1010,11 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    its own edge rather than drawn over the next column. */
 .certificate-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
 .certificate-table td:first-child strong { display: block; color: var(--text-strong); }
+/* The name is cut with an ellipsis like the names beside it, and the link
+   carries it whole; it was clipped mid-letter and shown nowhere in full
+   (review 2026-10-22, 2-4). Its own class: with the select column the name is
+   not the first cell. */
+.certificate-table .certificate-name { display: block; overflow: hidden; color: var(--text-strong); text-overflow: ellipsis; white-space: nowrap; }
 .certificate-issuer, .certificate-date { color: var(--muted); font-size: 11px; }
 .certificate-date { margin-right: 8px; font-variant-numeric: tabular-nums; }
 .certificate-issuer { margin-left: 8px; }

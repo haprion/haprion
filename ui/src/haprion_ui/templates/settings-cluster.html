@@ -27,7 +27,7 @@
         <td data-label="Receiver">{{ row.receiver or '—' }}</td>
         <td data-label="Node">{{ row.node }}</td>
         <td data-label="Queued">{{ row.queued or '—' }}</td>
-        <td data-label="State"><span class="status-dot status-{{ row.tone }}" aria-hidden="true"></span>{{ row.state }}{% if row.since %} since {{ (row.since | shown).strftime('%y-%m-%d %H:%M:%S') }}{% endif %}{% if row.reason %} · {{ row.reason }}{% endif %}</td>
+        <td data-label="State"><span class="status-dot status-{{ row.tone }}" aria-hidden="true"></span>{{ row.state }}{% if row.since %} since {{ row.since | shown_at }}{% endif %}{% if row.reason %} · {{ row.reason }}{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

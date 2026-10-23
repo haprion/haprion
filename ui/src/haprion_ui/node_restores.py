@@ -34,6 +34,8 @@ from haprion import node_restore, restore_agent
 from haprion.cli import node_restore_helper
 from haprion.cli.node_restore_helper import DISCARD, PREPARE, PREVIEW, RUN, STATUS
 
+from haprion_ui import moments
+
 from .db import Job
 from .jobs import RUNNING_LABELS
 
@@ -592,7 +594,7 @@ def recent_runs(
                 mode={"test": "test", "overwrite": "over the node"}.get(
                     restore.mode, "as the node"
                 ),
-                started=shown(created).strftime("%Y-%m-%d %H:%M"),
+                started=moments.moment(created),
                 started_iso=created.astimezone(UTC).isoformat(),
                 label=label,
                 tone=tone,

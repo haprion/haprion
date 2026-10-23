@@ -32,7 +32,7 @@ from haprion_ui import (
     features,
     jobs,
     location_data,
-    metrics,
+    moments,
     network,
     oidc_web,
     update_check,
@@ -248,7 +248,7 @@ def build_router(config: Config) -> APIRouter:
                         on=switches[features.UPDATE_CHECK].enabled
                         if features.UPDATE_CHECK in switches
                         else False,
-                        shown=lambda at: metrics.shown(at).strftime("%y-%m-%d %H:%M"),
+                        shown=moments.moment,
                     ),
                 },
                 "features": [

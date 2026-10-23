@@ -117,7 +117,7 @@
 
 <div class="table-scroll job-table-wrap">
   <table class="node-table job-table">
-    <thead><tr><th>Operation</th><th>Cluster</th><th>By</th><th>State</th><th>Requested</th><th>Started</th><th>Finished</th><th>Outcome</th><th>Exit</th></tr></thead>
+    <thead><tr><th>Operation</th><th>Cluster</th><th>By</th><th>State</th><th>Requested</th><th>Started</th><th>Finished</th><th>Exit</th></tr></thead>
     <tbody>
     {% for job in jobs.jobs %}
       <tr id="job-{{ job.id }}">
@@ -128,7 +128,6 @@
         <td data-label="Requested"><time datetime="{{ job.requested_iso }}" title="{{ job.requested_at }}">{{ job.requested }}</time></td>
         <td data-label="Started">{{ job.started }}</td>
         <td data-label="Finished">{{ job.finished }}</td>
-        <td data-label="Outcome">{{ job.outcome }}</td>
         <td data-label="Exit"><abbr title="{{ job.exit_meaning }}">{{ job.exit_code }}</abbr></td>
       </tr>
       {% if job.held %}
@@ -138,7 +137,7 @@
         admin says so.
       #}
       <tr class="job-follow-up">
-        <td colspan="9">
+        <td colspan="8">
           <div class="follow-up-line">
             <span><span class="status-dot status-warning" aria-hidden="true"></span>Queued before the manager last started. It may have run before a restore.</span>
             {% if management_writes and role == 'admin' %}<form method="post" action="/jobs/{{ job.id }}/held" class="held-decision"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary-button" type="submit" name="decision" value="run">Run</button><button class="secondary-button" type="submit" name="decision" value="discard">Discard</button></form>{% endif %}
@@ -154,7 +153,7 @@
           where the cluster's state is. A reader who may press nothing anywhere
           is still told the command.
         #}
-        <td colspan="9">
+        <td colspan="8">
           <div class="follow-up-line">
             <span><span class="status-dot status-warning" aria-hidden="true"></span>{{ job.follow_up }}</span>
             {% if not (management_writes and role == 'admin') and job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
@@ -164,7 +163,7 @@
       {% endif %}
       {% if job.note %}
       <tr class="job-follow-up job-note">
-        <td colspan="9"><div class="follow-up-line"><span><span class="status-dot status-info" aria-hidden="true"></span>{{ job.note }}</span></div></td>
+        <td colspan="8"><div class="follow-up-line"><span><span class="status-dot status-info" aria-hidden="true"></span>{{ job.note }}</span></div></td>
       </tr>
       {% endif %}
       {#
@@ -174,7 +173,7 @@
       #}
       {% if job.error_code or job.diagnostics or job.state in ('failed', 'blocked', 'unknown', 'partial') %}
       <tr class="job-follow-up job-failure">
-        <td colspan="9">
+        <td colspan="8">
           {% if not job.error_code %}<span class="status-dot status-{{ job.tone }}" aria-hidden="true"></span><span>Job {{ job.id }}</span>{% endif %}
           {% if job.error_code %}<span class="status-dot status-critical" aria-hidden="true"></span><span>Job {{ job.id }} · Reason:</span> <code>{{ job.error_code }}</code>{% if job.error_message %} <span class="job-error-message">— {{ job.error_message }}</span>{% endif %}{% endif %}
           {% if job.diagnostics %}<details class="job-diagnostics" data-keep="job-{{ job.id }}"><summary>Diagnostics</summary><pre>{{ job.diagnostics }}</pre></details>{% endif %}
@@ -182,7 +181,7 @@
       </tr>
       {% endif %}
     {% else %}
-      <tr><td colspan="9"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>No jobs yet</strong><span>New management requests will appear here.</span></div></td></tr>
+      <tr><td colspan="8"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>No jobs yet</strong><span>New management requests will appear here.</span></div></td></tr>
     {% endfor %}
     </tbody>
   </table>

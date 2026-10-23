@@ -21,7 +21,7 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Allowed addresses</h3><p><code>/status/attention.json</code> and <code>/status/metrics</code></p></div></div></header>
     {% if entries %}<div class="table-scroll"><table class="node-table settings-cluster-table">
       <thead><tr><th>Address</th><th>Added by</th><th>Added</th></tr></thead>
-      <tbody>{% for entry in entries %}<tr><td data-label="Address"><code>{{ entry.network }}</code></td><td data-label="Added by">{{ entry.added_by }}</td><td data-label="Added">{{ (entry.added_at | shown).strftime('%y-%m-%d %H:%M') }}</td></tr>{% endfor %}</tbody>
+      <tbody>{% for entry in entries %}<tr><td data-label="Address"><code>{{ entry.network }}</code></td><td data-label="Added by">{{ entry.added_by }}</td><td data-label="Added">{{ entry.added_at | shown_at }}</td></tr>{% endfor %}</tbody>
     </table></div>{% endif %}
     <div class="form-grid">
       <label><span class="field-title">Addresses <span class="optional">(optional)</span></span><textarea name="networks" rows="{{ [entries | length + 1, 3] | max }}" placeholder="192.0.2.10">{{ networks }}</textarea><small>One address or network per line. Empty switches it off.</small></label>

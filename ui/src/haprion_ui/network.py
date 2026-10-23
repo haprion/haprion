@@ -26,7 +26,7 @@ from haprion.digits import is_digits
 from haprion.managed_network import load_document
 from haprion.managed_network import location as network_location
 
-from haprion_ui import metrics
+from haprion_ui import moments
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
 from haprion_ui.db import ClusterNetwork, Job
@@ -487,7 +487,7 @@ def _unavailable(reading: ClusterNetwork, *, stale: bool, age_label: str) -> Net
         label="Could not be read",
         tone="critical",
         detail=_text(message or reading.poll_error, "The helper did not answer"),
-        observed_at=metrics.shown(reading.observed_at).strftime("%Y-%m-%d %H:%M"),
+        observed_at=moments.moment(reading.observed_at),
         observed_iso=reading.observed_at.isoformat(),
         age_label=age_label,
         stale=stale,
@@ -527,7 +527,7 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
         label="Managed here" if editable else "Not managed here",
         tone="healthy" if editable else "warning",
         detail=detail,
-        observed_at=metrics.shown(reading.observed_at).strftime("%Y-%m-%d %H:%M"),
+        observed_at=moments.moment(reading.observed_at),
         observed_iso=reading.observed_at.isoformat(),
         age_label=age_label,
         stale=stale,

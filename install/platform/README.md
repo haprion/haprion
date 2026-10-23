@@ -366,9 +366,10 @@ not require a build.
 
 ## Step 5 — HTTPS
 
-`./05-platform-nginx` puts nginx in front of the web service, which keeps
-listening only on `127.0.0.1:8080` in plain HTTP. That leg stays plain on
-purpose; it never leaves the host.
+`./05-platform-nginx` puts nginx in front of the web service, which listens only
+on `/run/haprion-web.sock` (`haprion-web.socket`, step 4) in plain HTTP; only root
+and nginx's workers (`www-data`, which the step checks) may open it. That leg
+stays plain on purpose; it never leaves the host.
 
 This is the **direct address**, and it deliberately does not go through the
 HAProxy pair. The UI is what you use to repair that pair, so routing the UI

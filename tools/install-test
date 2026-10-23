@@ -336,7 +336,11 @@ class Run:
         )
         if url is not None:
             self.key_belongs_to_the_package("mgr")
-        _, output = self.on("mgr", "haprion-setup")
+        #
+        # The probe's socket on, which the defaults leave off: the probe helper's
+        # unit is asked through it below, on a real manager (5-15).
+        #
+        _, output = self.on("mgr", "PROBE_SOCKET=yes haprion-setup")
         if "The manager is installed" not in output:
             raise Failed(f"haprion-setup ended without saying the manager is installed:\n{output}")
 
@@ -468,6 +472,39 @@ class Run:
         )
         if int(count.strip() or 0) < 1:
             raise Failed("the collector imported no record from the nodes")
+
+    def a_probe_answers_through_the_helper_socket(self) -> None:
+        """The probe helper's unit as the interface reaches it, holding no capability (5-15).
+
+        Root, but with an empty capability set: it reads root's own files and
+        opens ssh connections, neither of which needs one. Asked over its
+        socket, as the web asks it, so the unit's sandbox is what is proved.
+        """
+
+        target = {
+            "host": self.address("mgr"),
+            "port": 9080,
+            "type": "tcp",
+            "tls": False,
+            "verify": False,
+            "min_version": "",
+            "path": "/",
+            "host_header": "",
+        }
+        script = (
+            "import sys, uuid; sys.path.insert(0, '/opt/haprion/current/lib'); "
+            "from haprion.probe_socket import ask, build_request; "
+            f"print(ask(build_request({CLUSTER!r}, str(uuid.uuid4()), [{target!r}])))"
+        )
+        _, answer = self.on("mgr", f"/usr/bin/python3 -I -c {shlex.quote(script)}")
+        document = json.loads(answer)
+        results = [
+            result
+            for node in (document.get("result") or {}).get("nodes", [])
+            for result in node.get("results", [])
+        ]
+        if document.get("outcome") != "done" or not results or not all(r["ok"] for r in results):
+            raise Failed(f"the probe through its socket did not reach the backend:\n{answer}")
 
     #
     # What each function the product offers needs on each machine, and the
@@ -630,6 +667,10 @@ def run_one(
         step("both nodes report HAProxy's statistics", run.statistics_reported)
         holder = step("the virtual address on exactly one node", run.wait_for_one_holder)
         step("the object answers on the virtual address", run.answers_on_the_vip)
+        step(
+            "a probe answers through the helper's socket",
+            run.a_probe_answers_through_the_helper_socket,
+        )
         step(
             "the traffic log reaches the manager",
             lambda: run.traffic_log_reaches_the_manager(holder),

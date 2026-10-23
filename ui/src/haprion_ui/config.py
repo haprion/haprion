@@ -90,12 +90,6 @@ class Database:
 
 
 @dataclass(frozen=True, slots=True)
-class Listen:
-    host: str
-    port: int
-
-
-@dataclass(frozen=True, slots=True)
 class Session:
     """How long a login lasts, and on what terms.
 
@@ -175,7 +169,6 @@ class TrafficLogs:
 @dataclass(frozen=True, slots=True)
 class Config:
     database: Database
-    listen: Listen
     #
     # Phase 4 installs the platform without management writes. The flag is here
     # rather than in a release so it can be turned off without deploying: the
@@ -302,7 +295,13 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
         )
 
     database = _section(data, "database", ALLOWED_DATABASE_KEYS)
-    listen = _section(data, "listen", ALLOWED_LISTEN_KEYS)
+    #
+    # Where the web listened, until it took its connections on a socket only
+    # nginx may open (review 2026-10-22, 5-8). An installation's file still
+    # carries it, and a release before that one needs it to roll back to, so
+    # it is read as it always was and used for nothing.
+    #
+    listen = _optional_section(data, "listen", ALLOWED_LISTEN_KEYS)
     #
     # Optional sections, unlike the two above. Both carry defaults that are the
     # documented policy, so an installation that says nothing about sessions
@@ -324,9 +323,11 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
     if len(set(clusters)) != len(clusters):
         raise ConfigError("clusters contains a duplicate")
 
-    port = listen.get("port")
-    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
-        raise ConfigError("listen.port must be an integer between 1 and 65535")
+    if listen:
+        _string(listen, "host", "listen")
+        port = listen.get("port")
+        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+            raise ConfigError("listen.port must be an integer between 1 and 65535")
 
     writes = data.get("management_writes", False)
     if not isinstance(writes, bool):
@@ -376,7 +377,6 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
             name=_string(database, "name", "database"),
             socket_directory=_string(database, "socket_directory", "database"),
         ),
-        listen=Listen(host=_string(listen, "host", "listen"), port=port),
         management_writes=writes,
         demo_fixture=demo_fixture,
         session=Session(

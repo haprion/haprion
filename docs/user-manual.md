@@ -796,9 +796,11 @@ to `login_unlock`, and the throttle counts failures since the latest success or
 unlock for that name. The failed attempts stay in the record.
 
 The client address is taken from `X-Forwarded-For`, which the nginx site
-*overwrites* rather than appends to, so a request cannot contribute its own. An
-address that will not parse falls back to loopback rather than becoming an
-unthrottled bucket of its own.
+*overwrites* rather than appends to, so a request cannot contribute its own. The
+web service accepts connections only on `/run/haprion-web.sock`, which only root
+and nginx's workers (`www-data`) may open, so no other process on the manager can
+reach it past nginx with a header of its own. An address that will not parse
+falls back to loopback rather than becoming an unthrottled bucket of its own.
 
 Every sign-in, failure, sign-out and account change is written to the audit
 trail, in the same transaction as the thing it describes. What the login page
@@ -5805,9 +5807,11 @@ a UI at the floor or after it, and `rollback_safe_from` is raised to the floor.
 #### HTTPS and the certificate
 
 `install/platform/05-platform-nginx` puts nginx in front of the web service and
-terminates HTTPS there. The web service itself listens only on
-`127.0.0.1:8080`, in plain HTTP, and that leg stays plain deliberately: it never
-leaves the host. The rendered site also includes
+terminates HTTPS there. The web service itself listens only on the Unix socket
+`/run/haprion-web.sock`, which systemd holds (`haprion-web.socket`) and only root
+and nginx's workers may open, in plain HTTP; that leg stays plain deliberately:
+it never leaves the host. A request that arrives while the web restarts waits in
+the socket for the new process. The rendered site also includes
 `/etc/nginx/snippets/haprion-receivers.conf`, created empty by this
 step and written afterwards only by `haprion-cert-receiver` ([Registering a receiver](#registering-a-receiver)); a rerun of
 the step leaves an existing snippet alone.
@@ -5879,7 +5883,7 @@ Emptying the key and running step 5 again stops believing the proxy.
 - **Use the manager's `SERVER_NAME`** as the name users reach it by, and send that name upstream as
   `Host`. The management host picks its site by that name, and the SSO provider sends the browser
   back to it; a different public name is not supported.
-- **Forward to `https://<manager>:443`**, not to the application port, which listens on loopback only.
+- **Forward to `https://<manager>:443`**; the application itself listens on a local socket only.
 - **Append to `X-Forwarded-For`** rather than replace it. Other forwarded headers are optional - the
   manager's nginx sets its own.
 - Leave receivers fetching directly where they can; through the proxy they work too, once it is

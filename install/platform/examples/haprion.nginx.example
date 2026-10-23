@@ -113,7 +113,8 @@ server {
     location / {
         limit_req zone=haprion_sign_in burst=10 nodelay;
         limit_req_status 429;
-        proxy_pass http://127.0.0.1:8080;
+        # Only nginx's group may open it (haprion-web.socket).
+        proxy_pass http://unix:/run/haprion-web.sock;
         proxy_http_version 1.1;
 
         #

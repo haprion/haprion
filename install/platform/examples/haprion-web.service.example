@@ -1,8 +1,10 @@
 [Unit]
 Description=Haprion web interface
 Documentation=file:///opt/haprion-ui/current
-After=network-online.target postgresql.service
+After=network-online.target postgresql.service haprion-web.socket
 Wants=network-online.target
+# Its listener (haprion-web.socket): systemd hands it over as descriptor 3.
+Requires=haprion-web.socket
 
 [Service]
 Type=exec
@@ -11,8 +13,8 @@ Group=_haprion-web
 
 # The release, not a checkout. Switching `current` and restarting is the whole
 # deployment; rolling back is switching it and restarting again. The command
-# reads the release's package and ui.toml's port, so this file is the same for
-# every release (haprion-web).
+# reads the release's package, so this file is the same for every release
+# (haprion-web).
 ExecStart=/usr/sbin/haprion-web
 
 Restart=on-failure

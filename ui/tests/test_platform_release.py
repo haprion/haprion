@@ -412,6 +412,75 @@ class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
         self.assertNotIn("haprion_ui", unit)
         self.assertNotIn("--port", unit)
 
+    def launch(self, environment: dict[str, str]) -> list[str]:
+        """`haprion-web` run against a release whose Python and uvicorn say what they were asked."""
+
+        import os
+        import tempfile
+
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        bin_dir = root / "release" / "venv" / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "python").write_text(
+            '#!/bin/bash\ncase "$*" in *entry_points*) echo haprion_ui ;; *) echo 8443 ;; esac\n'
+        )
+        (bin_dir / "uvicorn").write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+        for name in ("python", "uvicorn"):
+            (bin_dir / name).chmod(0o755)
+        script = root / "haprion-web"
+        script.write_text(
+            (ROOT / "install/platform/bin/haprion-web")
+            .read_text()
+            .replace("release=/opt/haprion-ui/current", f"release={root / 'release'}")
+        )
+        done = subprocess.run(  # noqa: S603 - fixed shell, the copied script
+            ["/bin/bash", str(script)],
+            capture_output=True,
+            text=True,
+            check=True,
+            env={"PATH": os.environ["PATH"], **environment},
+        )
+        return done.stdout.splitlines()
+
+    def test_the_web_takes_the_socket_systemd_hands_it(self) -> None:
+        """5-8: no port any local process could reach past nginx."""
+
+        argv = self.launch({"LISTEN_FDS": "1"})
+        self.assertIn("--fd", argv)
+        self.assertEqual(argv[argv.index("--fd") + 1], "3")
+        self.assertNotIn("--port", argv)
+        self.assertIn("--forwarded-allow-ips=*", argv)
+
+    def test_a_unit_put_back_without_its_socket_still_starts_on_its_port(self) -> None:
+        """An update that did not finish puts back the unit and site that listened on loopback."""
+
+        argv = self.launch({})
+        self.assertEqual(argv[argv.index("--port") + 1], "8443")
+        self.assertEqual(argv[argv.index("--host") + 1], "127.0.0.1")
+        self.assertIn("--forwarded-allow-ips=127.0.0.1", argv)
+
+    def test_one_socket_path_for_the_unit_nginx_the_steps_and_the_rollback(self) -> None:
+        socket = (ROOT / "install/platform/examples/haprion-web.socket.example").read_text()
+        self.assertIn("ListenStream=/run/haprion-web.sock\n", socket)
+        self.assertIn("SocketGroup=www-data\n", socket)
+        self.assertIn("SocketMode=0660\n", socket)
+        site = (ROOT / "install/platform/examples/haprion.nginx.example").read_text()
+        self.assertIn("proxy_pass http://unix:/run/haprion-web.sock;", site)
+        self.assertNotIn("127.0.0.1:8080", site)
+        for path in ("install/lib.sh", "install/platform/bin/haprion-rollback"):
+            with self.subTest(path=path):
+                self.assertIn("WEB_SOCKET=/run/haprion-web.sock\n", (ROOT / path).read_text())
+        unit = (ROOT / "install/platform/examples/haprion-web.service.example").read_text()
+        self.assertIn("Requires=haprion-web.socket\n", unit)
+
+    def test_nginx_takes_the_site_after_the_activation_and_before_the_proof(self) -> None:
+        text = (ROOT / "install/platform/update-platform-release").read_text()
+        activated = text.index('./install-ui-release "$release_id"')
+        reloaded = text.index("systemctl reload nginx")
+        self.assertLess(activated, reloaded)
+        self.assertLess(reloaded, text.index('step "Proving the running installation"'))
+
     def test_the_update_installs_the_platform_files_before_it_checks(self) -> None:
         """Review 2026-10-22, 6-5: the check holds the files to the candidate, so they come first."""
 

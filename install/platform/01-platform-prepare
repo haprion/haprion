@@ -80,13 +80,8 @@ if [[ -f "$config" ]]; then
     chmod 640 "$config"
     log "  ok       ${config}"
 else
-    #
-    # The port is rendered rather than left at the example's value, so a second
-    # environment on the same machine does not start life with a configuration
-    # that says it listens where the first one already does.
-    #
     install -o root -g "$PLATFORM_GROUP" -m 640 /dev/null "$config"
-    sed -e "s|^port = 8080$|port = ${WEB_PORT:-8080}|" examples/ui.toml.example > "$config"
+    cat examples/ui.toml.example > "$config"
     log "  created  ${config}  (from the example - review it)"
 fi
 

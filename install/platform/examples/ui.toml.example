@@ -5,9 +5,9 @@
 # running service can rewrite.
 #
 # management_writes comes FIRST. A bare key written after a table belongs to
-# that table in TOML, so the same line below [listen] would silently become
-# listen.management_writes and read as absent - which looks exactly like writes
-# being disabled.
+# that table in TOML, so the same line below [database] would silently become
+# database.management_writes and be refused as a key the section does not
+# have.
 
 # On: the interface builds, publishes and deploys, which is what it is for. Off
 # is the documented rollback for the job path: no build, no deploy, back to a
@@ -52,12 +52,6 @@ interval_seconds = 20
 # its database role, so the kernel establishes who is connecting.
 name = "haprion"
 socket_directory = "/var/run/postgresql"
-
-[listen]
-# Bound to loopback. Nginx terminates TLS and is the only thing that reaches
-# this port; the interface is never exposed directly.
-host = "127.0.0.1"
-port = 8080
 
 # [traffic_logs]
 # Off unless a deployment turns it on, and read-only in every sense: this

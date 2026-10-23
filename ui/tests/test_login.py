@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 
 from haprion_ui import attention, auth, db, metrics
 from haprion_ui.app import create_app
-from haprion_ui.config import Config, Database, Listen, Poller, Throttle
+from haprion_ui.config import Config, Database, Poller, Throttle
 from haprion_ui.config import Session as SessionPolicy
 from haprion_ui.db import Account, AuthenticatedSession
 from tests.registry_fixture import manager_of
@@ -57,7 +57,6 @@ NO_TRAFFIC = metrics.BackendMeasurement(
 def configuration(*, cookie_secure: bool = True, max_failures: int = 3) -> Config:
     return Config(
         database=Database(name="haprion_ui_test", socket_directory="/var/run/postgresql"),
-        listen=Listen(host="127.0.0.1", port=8080),
         management_writes=False,
         demo_fixture=False,
         session=SessionPolicy(

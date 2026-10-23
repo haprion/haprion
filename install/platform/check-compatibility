@@ -63,6 +63,7 @@ fi
 CLI_ROOT="${CLI_ROOT:-/opt/haprion}"
 module="$(release_module "${python_root}/venv/bin/python")" \
     || die "cannot tell which package the checked UI release is"
+# shellcheck disable=SC2153 # UI_CONFIG is accounts.sh's, read through lib.sh
 ui_lines="$("${python_root}/venv/bin/python" - \
     "$module" "$UI_CONFIG" <<'PY'
 import importlib

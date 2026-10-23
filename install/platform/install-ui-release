@@ -181,13 +181,16 @@ if systemctl cat "$unit" >/dev/null 2>&1; then
     # release, so every activation must restart the web unit before its health
     # response is accepted as evidence for the new release.
     #
-    systemctl restart "$unit"
-    log "  restarted ${unit}"
+    # With its socket: a socket unit an update changed takes effect only when
+    # restarted, and the web holds the descriptor it was handed until it is.
+    socket="${unit%.service}.socket"
+    systemctl enable --quiet "$socket"
+    systemctl restart "$socket" "$unit"
+    log "  restarted ${socket} ${unit}"
 
     step "Proving it answers"
-    WEB_PORT="$(ui_port)" || die "cannot read the listening port from ${UI_CONFIG}"
     for _ in $(seq 10); do
-        if answer="$(curl -fsS --max-time 3 "http://127.0.0.1:${WEB_PORT}/healthz" 2>/dev/null)"; then
+        if answer="$(curl -fsS --max-time 3 --unix-socket "$WEB_SOCKET" http://localhost/healthz 2>/dev/null)"; then
             log "  ok       ${answer}"
             break
         fi
@@ -195,7 +198,7 @@ if systemctl cat "$unit" >/dev/null 2>&1; then
     done
     [[ -n "${answer:-}" ]] || {
         systemctl status --no-pager --lines=20 "$unit" || true
-        die "${unit} did not answer /healthz on port ${WEB_PORT} after the release switch"
+        die "${unit} did not answer /healthz on ${WEB_SOCKET} after the release switch"
     }
 else
     log "  pending  ${unit} is installed and started by platform step 4"

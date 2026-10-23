@@ -66,3 +66,8 @@ SystemCallFilter=~@obsolete
 # AF_UNIX is the connection it was handed; AF_INET and AF_INET6 are ssh reaching
 # the nodes. Nothing else.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Root without a capability: the files it reads are root's own, and ssh to a
+# node needs none (review 2026-10-22, 5-15). The installation test asks a probe
+# through this socket on a real manager.
+CapabilityBoundingSet=

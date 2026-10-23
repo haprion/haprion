@@ -122,6 +122,14 @@ if ! ./install-ui-release "$release_id"; then
     restore_previous
     die "activation failed; UI release ${previous_id} was restored"
 fi
+#
+# The site refresh-platform-files proved, now that the web listens where it
+# says (haprion-web.socket).
+#
+if [[ -e /etc/nginx/sites-available/haprion ]]; then
+    systemctl reload nginx
+    log "  reloaded nginx"
+fi
 
 step "Proving the running installation"
 if ! ./check-compatibility; then

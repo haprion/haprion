@@ -278,13 +278,13 @@ render_site() {
         "$example"
 }
 
-ui_port() {
-    local python="${UI_ROOT}/current/venv/bin/python" module
-    module="$(release_module "$python")" || return 1
-    "$python" -I -c 'import importlib, sys; from pathlib import Path
-load = importlib.import_module(sys.argv[1] + ".config").load
-print(load(Path(sys.argv[2])).listen.port)' "$module" "$UI_CONFIG"
-}
+#
+# The web's only listener (haprion-web.socket): the socket nginx proxies to and
+# the platform steps ask /healthz over, which only root and nginx's group may
+# open (review 2026-10-22, 5-8).
+#
+# shellcheck disable=SC2034 # read by the platform steps that source lib.sh
+WEB_SOCKET=/run/haprion-web.sock
 
 cluster_value() {
     local prefix="$1" cluster="$2" var

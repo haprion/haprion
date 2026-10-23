@@ -5,9 +5,12 @@
 #     haprion-web
 #
 # What haprion-web.service runs. The unit names this command rather than the
-# release's package and port, so it stays the same file for every release: the
-# package is asked of the release, and the port of ui.toml through the
-# release's own parser - the file the service itself reads.
+# release's package, so it stays the same file for every release: the package
+# is asked of the release. It listens on the socket systemd holds for it
+# (haprion-web.socket), descriptor 3, which only root and nginx's group may
+# open - so the forwarded headers are believed from whoever connects, since
+# that can only be nginx, which overwrites them (review 2026-10-22, 5-8).
+# Every local process could reach the loopback port it listened on before.
 #
 set -Eeuo pipefail
 
@@ -28,6 +31,18 @@ print(entry_points(group="console_scripts")["haprion-worker"].module.partition("
 }
 
 module="$(release_module "$python")"
+
+if [[ "${LISTEN_FDS:-}" == 1 ]]; then
+    exec "${release}/venv/bin/uvicorn" \
+        --factory "${module}.app:create_app" \
+        --fd 3 \
+        --no-server-header --proxy-headers --forwarded-allow-ips='*'
+fi
+#
+# A unit without its socket: the one an update that did not finish put back,
+# with the nginx site that proxies to the loopback port. That release reads
+# the port from ui.toml, as it did.
+#
 port="$("$python" -I -c 'import importlib, sys; from pathlib import Path
 load = importlib.import_module(sys.argv[1] + ".config").load
 print(load(Path(sys.argv[2])).listen.port)' "$module" "$CONFIG")"

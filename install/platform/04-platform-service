@@ -20,23 +20,25 @@ unit_name="${WEB_UNIT%.service}"
 unit="/etc/systemd/system/${unit_name}.service"
 [[ -L "${UI_ROOT}/current" ]] \
     || die "${UI_ROOT}/current does not exist. Install a release first."
-WEB_PORT="$(ui_port)" || die "cannot read the listening port from ${UI_CONFIG}"
 
 step "Unit"
 #
-# The example as it is: haprion-web reads the port from ui.toml itself, so the
-# unit holds nothing per installation, and a release update installs the same
-# file (update-platform-release).
+# The examples as they are: the unit holds nothing per installation, and a
+# release update installs the same files (refresh-platform-files). The socket
+# is the web's only listener, and only root and nginx's group may open it.
 #
+getent group www-data >/dev/null || die "there is no www-data group for nginx's workers; install nginx (step 01)"
+install_file "/etc/systemd/system/${unit_name}.socket" root:root 644 \
+    "$(cat examples/haprion-web.socket.example)"
 install_file "$unit" root:root 644 "$(cat examples/haprion-web.service.example)"
 
 systemctl daemon-reload
 log "  reloaded systemd"
 
 step "Starting"
-systemctl enable --quiet "${unit_name}.service"
-restart_units "${unit_name}.service"
-log "  started  ${unit_name}.service"
+systemctl enable --quiet "${unit_name}.socket" "${unit_name}.service"
+restart_units "${unit_name}.socket" "${unit_name}.service"
+log "  started  ${unit_name}.socket ${unit_name}.service"
 
 #
 # Asked of the running service rather than assumed from a zero exit. systemd
@@ -46,7 +48,7 @@ log "  started  ${unit_name}.service"
 #
 step "Proving it answers"
 for _ in $(seq 10); do
-    if answer="$(curl -fsS --max-time 3 http://127.0.0.1:"${WEB_PORT}"/healthz 2>/dev/null)"; then
+    if answer="$(curl -fsS --max-time 3 --unix-socket "$WEB_SOCKET" http://localhost/healthz 2>/dev/null)"; then
         log "  ok       ${answer}"
         echo
         log "platform step 4 done"
@@ -56,4 +58,4 @@ for _ in $(seq 10); do
 done
 
 systemctl status --no-pager --lines=20 "${unit_name}.service" || true
-die "the service did not answer /healthz on port ${WEB_PORT} within 10 seconds"
+die "the service did not answer /healthz on ${WEB_SOCKET} within 10 seconds"

@@ -40,6 +40,15 @@ real_ip="$(render_real_ip "$TRUSTED_PROXIES")" || die "TRUSTED_PROXIES is not a 
 systemctl is-active --quiet "$WEB_UNIT" \
     || die "${WEB_UNIT} is not running; run 04-platform-service first"
 
+#
+# The web's socket admits root and the group www-data (haprion-web.socket):
+# nginx's workers must be that user, as Ubuntu's and Debian's nginx.conf have
+# them, or nginx cannot reach the interface at all.
+#
+nginx_user="$(sed -n 's/^[[:space:]]*user[[:space:]]\{1,\}\([^[:space:];]\{1,\}\).*/\1/p' /etc/nginx/nginx.conf | head -n 1)"
+[[ "$nginx_user" == www-data ]] \
+    || die "nginx's workers run as ${nginx_user:-the default user}, and the web's socket admits www-data; set 'user www-data;' in /etc/nginx/nginx.conf"
+
 step "Where the pair lives"
 ensure_dir /etc/haprion root:root 755
 ensure_dir "$(dirname "$TLS_CERT")" root:root 700

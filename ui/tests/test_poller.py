@@ -228,12 +228,11 @@ class Passes(unittest.TestCase):
                 return completed(inventory_envelope("failed", operation="list", cluster=cluster))
             return completed(inventory_envelope(operation="list", cluster=cluster))
 
-        from haprion_ui.config import Config, Database, Listen, Poller, Throttle
+        from haprion_ui.config import Config, Database, Poller, Throttle
         from haprion_ui.config import Session as SessionPolicy
 
         config = Config(
             database=Database(name="x", socket_directory="/tmp"),  # noqa: S108
-            listen=Listen(host="127.0.0.1", port=8080),
             management_writes=False,
             demo_fixture=False,
             session=SessionPolicy(inactivity_minutes=600, absolute_hours=168, cookie_secure=True),
@@ -297,12 +296,11 @@ class Passes(unittest.TestCase):
         def helper(cluster: str, _request: str) -> Any:
             return completed(envelope(cluster=cluster))
 
-        from haprion_ui.config import Config, Database, Listen, Poller, Throttle
+        from haprion_ui.config import Config, Database, Poller, Throttle
         from haprion_ui.config import Session as SessionPolicy
 
         config = Config(
             database=Database(name="x", socket_directory="/tmp"),  # noqa: S108
-            listen=Listen(host="127.0.0.1", port=8080),
             management_writes=False,
             demo_fixture=False,
             session=SessionPolicy(inactivity_minutes=600, absolute_hours=168, cookie_secure=True),
@@ -655,12 +653,11 @@ class TheClusterList(unittest.TestCase):
             asked.append(cluster)
             return completed(envelope())
 
-        from haprion_ui.config import Config, Database, Listen, Poller, Throttle
+        from haprion_ui.config import Config, Database, Poller, Throttle
         from haprion_ui.config import Session as SessionPolicy
 
         configured = Config(
             database=Database(name="x", socket_directory="/tmp"),  # noqa: S108
-            listen=Listen(host="127.0.0.1", port=8080),
             management_writes=False,
             demo_fixture=False,
             session=SessionPolicy(inactivity_minutes=600, absolute_hours=168, cookie_secure=True),

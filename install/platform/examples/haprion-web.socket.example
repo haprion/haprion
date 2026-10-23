@@ -1,0 +1,26 @@
+# The web interface's only listener: a socket nginx opens and nothing else may.
+#
+# The web listened on 127.0.0.1, where every local process could reach it past
+# nginx - past its rate limits on sign-in and with an X-Forwarded-For of its
+# own choosing, which the web takes as the client's address (review
+# 2026-10-22, 5-8). A Unix socket is reached by whoever may open its file:
+# root, and the group nginx's workers run as (`user www-data;` in
+# /etc/nginx/nginx.conf on Ubuntu and Debian alike, which step 05 checks).
+#
+# systemd holds it, so a connection that arrives while the web restarts waits
+# here for the new process instead of being refused.
+#
+# Installed as /etc/systemd/system/haprion-web.socket.
+
+[Unit]
+Description=Haprion web interface socket
+Documentation=file:///opt/haprion-ui/current
+
+[Socket]
+ListenStream=/run/haprion-web.sock
+SocketUser=root
+SocketGroup=www-data
+SocketMode=0660
+
+[Install]
+WantedBy=sockets.target

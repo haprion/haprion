@@ -164,15 +164,18 @@ except Exception as exc:
 fi
 log "  ok       the target accepts the configuration"
 #
-# The port the proof below asks, read the way the target will read it.
+# Where the proof below asks: the web's socket where its unit has one
+# (haprion-web.socket), else the port the target reads from ui.toml - the unit
+# an update that did not finish put back.
 #
+WEB_SOCKET=/run/haprion-web.sock
 port="$("$target_python" -I -c '
 import importlib
 import sys
 from pathlib import Path
 load = importlib.import_module(sys.argv[1] + ".config").load
 print(load(Path(sys.argv[2])).listen.port)
-' "$module" "$CONFIG")"
+' "$module" "$CONFIG" 2>/dev/null || true)"
 
 step "Does the target contain what the installed units start?"
 missing=""
@@ -248,7 +251,12 @@ systemctl restart "${SERVICES[@]}" || true
 step "Proving the interface answers"
 answered=""
 for _ in $(seq 15); do
-    if answered="$(curl -fsS --max-time 3 "http://127.0.0.1:${port}/healthz" 2>/dev/null)"; then
+    if [[ -S "$WEB_SOCKET" ]]; then
+        answered="$(curl -fsS --max-time 3 --unix-socket "$WEB_SOCKET" http://localhost/healthz 2>/dev/null)" || answered=""
+    elif [[ -n "$port" ]]; then
+        answered="$(curl -fsS --max-time 3 "http://127.0.0.1:${port}/healthz" 2>/dev/null)" || answered=""
+    fi
+    if [[ -n "$answered" ]]; then
         break
     fi
     answered=""

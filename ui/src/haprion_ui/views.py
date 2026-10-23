@@ -620,8 +620,10 @@ def read_certificate_takeouts(request: Request, config: Config) -> dict[str, db.
 def client_address(request: Request) -> str:
     """The address to hold responsible for this request.
 
-    Taken from the forwarded header because the only thing that connects to this
-    process is nginx on loopback; the peer address would otherwise be
+    Taken from the forwarded header because the only thing that can connect to
+    this process is nginx: it listens on a socket only root and nginx's workers
+    may open (haprion-web.socket, review 2026-10-22, 5-8), and nginx overwrites
+    the header. A socket has no peer address, and the one before it was
     `127.0.0.1` for every caller, which would put the entire internet in one
     throttle bucket.
 

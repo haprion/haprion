@@ -191,6 +191,23 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         enabled = [line for line in self.recorded() if line.startswith("systemctl enable")]
         self.assertTrue(any("haprion-retention-budget.timer" in line for line in enabled))
 
+    def test_the_web_s_socket_is_installed_and_left_to_the_activation(self) -> None:
+        """5-8: the running web holds the listener it started with until it is restarted."""
+
+        done = self.refresh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+        self.assertEqual(
+            (self.systemd / "haprion-web.socket").read_text(),
+            (PLATFORM / "examples/haprion-web.socket.example").read_text(),
+        )
+        started = [
+            line
+            for line in self.recorded()
+            if line.startswith(("systemctl enable", "systemctl restart", "systemctl start"))
+        ]
+        self.assertFalse(any("haprion-web" in line for line in started), started)
+
     def test_what_its_step_did_not_install_stays_out(self) -> None:
         done = self.refresh()
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -218,7 +235,10 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
                 for line in recorded
             )
         )
-        self.assertLess(recorded.index("nginx -t"), recorded.index("systemctl reload nginx"))
+        # Proved here, taken by nginx when the release is activated (5-8): the
+        # running web still listens where the old site says.
+        self.assertIn("nginx -t", recorded)
+        self.assertNotIn("systemctl reload nginx", recorded)
 
     def test_a_second_run_changes_nothing(self) -> None:
         self.assertEqual(self.refresh().returncode, 0)
@@ -244,6 +264,8 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
             "systemctl disable --quiet --now haprion-node-restore-helper.socket", recorded
         )
         self.assertFalse((self.systemd / "haprion-retention-budget.timer").exists())
+        self.assertFalse((self.systemd / "haprion-web.socket").exists())
+        self.assertIn("systemctl disable --quiet --now haprion-web.socket", recorded)
         self.assertIn("systemctl disable --quiet --now haprion-retention-budget.timer", recorded)
         self.assertIn("systemctl daemon-reload", recorded)
         self.assertIn("systemctl reload nginx", recorded)
@@ -297,9 +319,11 @@ class TheListsAreTheSteps(unittest.TestCase):
         self.assertEqual(set(self.array("SOCKETS")), always)
 
     def test_every_socket_and_timer_example_is_one_of_them(self) -> None:
+        # The web's own socket is installed with the web's unit (5-8), not as a helper's.
         sockets = {
             name.removeprefix("haprion-").removesuffix("-helper")
             for name in self.examples(".socket.example")
+            if name != "haprion-web"
         }
         self.assertEqual(set(self.array("SOCKETS")) | set(self.array("OPTIONAL_SOCKETS")), sockets)
         self.assertEqual(set(self.array("TIMERS")), self.examples(".timer.example"))

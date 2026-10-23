@@ -609,6 +609,18 @@ class TheWorkflow(unittest.TestCase):
             ],
         )
 
+    def test_a_merge_waits_for_the_check_main_requires(self) -> None:
+        """PR #5 (26-10-23): the Dependabot merge ran beside the required job and was refused."""
+
+        ci = yaml.safe_load((BASE / ".github/workflows/ci.yml").read_text())
+        (required,) = [
+            key
+            for key, job in ci["jobs"].items()
+            if job.get("name") == "Source, quality, and security gates"
+        ]
+        needs = ci["jobs"]["dependabot-merge"]["needs"]
+        self.assertIn(required, [needs] if isinstance(needs, str) else needs)
+
     def test_no_step_reads_a_status_the_shell_never_reaches(self) -> None:
         """A status read on its own line runs only after success under GitHub's `bash -e`."""
 

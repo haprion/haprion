@@ -326,9 +326,13 @@ jobs:
   # waiting period is Dependabot's own `cooldown` (.github/dependabot.yml): it
   # opens the pull request only once the release is two days old, so a
   # hijacked release has those days to be found before it gets here.
+  #
+  # After `gates`, not beside it: main's ruleset requires that job's check,
+  # and a merge started with `checks` asked a second before it was reported
+  # and was refused (PR #5, 26-10-23).
   dependabot-merge:
     name: Merge a Dependabot update
-    needs: checks
+    needs: gates
     if: >-
       github.event_name == 'pull_request'
       && github.event.pull_request.user.login == 'dependabot[bot]'

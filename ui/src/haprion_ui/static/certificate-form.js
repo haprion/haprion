@@ -43,7 +43,10 @@
         keyType.hidden = method !== "csr";
       }
       if (title) {
-        title.textContent = method === "csr" ? title.dataset.keyTitle : title.dataset.profileTitle;
+        title.textContent =
+          method === "csr" ? title.dataset.keyTitle
+            : method === "ndes" ? title.dataset.ndesTitle
+            : title.dataset.profileTitle;
       }
       hints.forEach((hint) => { hint.hidden = hint.dataset.profileHint !== method; });
     };

@@ -12,6 +12,7 @@ only works with the names used below, that is a bug in the software, not in this
 ## Contents
 
 - [Configuration and deployment](#configuration-and-deployment)
+  - [Words used here](#words-used-here)
   - [An http or https object, field by field](#an-http-or-https-object-field-by-field)
   - [A whole subdomain](#a-whole-subdomain)
   - [A pool's servers](#a-pools-servers)
@@ -37,7 +38,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [Deleting a certificate](#deleting-a-certificate)
   - [Importing a certificate](#importing-a-certificate)
   - [Enrolling and renewing through NDES](#enrolling-and-renewing-through-ndes)
-  - [External certificates](#external-certificates)
+  - [Certificates installed by hand](#certificates-installed-by-hand)
   - [Registering a receiver](#registering-a-receiver)
 - [Nodes and clusters](#nodes-and-clusters)
   - [Adding and removing a node](#adding-and-removing-a-node)
@@ -150,8 +151,26 @@ its file.
 
 **Say what an object is for.** *Description* in the form's *Frontend* part is one line of at most
 200 characters - what the service is and who to ask. The object's page shows it in the *Stored
-object* card as *Description:*, and the search finds it. In YAML it is `description:` beside `name:`; nothing generated reads it,
+proxy* card as *Description:*, and the search finds it. In YAML it is `description:` beside `name:`; nothing generated reads it,
 so a publish that changes only the description deploys the same HAProxy configuration.
+
+### Words used here
+
+One word per thing, the same on every page:
+
+| Word | Means | Where |
+|---|---|---|
+| proxy | one site or service: what listens, and where the traffic goes; the command line and YAML call it an *object* (`haprion-objects`) | *Proxies* |
+| draft | unfinished work, never published | the editor |
+| saved | a change stored here and not yet published | *Versions*, the proxy list (*· not published*) |
+| version | a numbered, unchangeable configuration made by a publish | *Versions*, the dashboard's *Published version* |
+| Behind | a cluster or node that does not run the published version; *Deploy configuration* is green there | the dashboard, *Network* |
+| Older package | a node whose packages are older than another node's | the dashboard's *Runtime* cell |
+| Reconfigured · deploy to activate | a published change to a proxy the nodes do not serve yet | *Proxies*, *Network* |
+| Waiting for deploy | how far a proxy's newest version has come | the proxy's page |
+| DNS profile, NDES profile | the credentials a certificate is requested with; *provider* is the company | *Certificates* |
+| receiver | a host outside the clusters that fetches its certificates from here | *Certificates → Receivers* |
+| Installed by hand | a certificate exported with its key, for a device no receiver reaches | *New certificate*, *Certificates* |
 
 ### An http or https object, field by field
 
@@ -962,10 +981,10 @@ the capability's tab, pages and operations; a kept URL answers 404. Both are
 off on a new installation, which enables no backup timer either; an
 installation opts in.
 
-- **External certificates**
+- **Certificates for other hosts**
   off hides the receivers page, the receiver choices in the certificate forms
   and in *Publish to…*/*Remove from…*, the certificates page's second view,
-  and *External certificate* with its downloads and key export.
+  and *Installed by hand* with its downloads and key export.
   Receivers already registered go on getting renewed certificates, and a
   certificate's *Used by* still names them; external certificates stay in the
   registry and are renewed as before.
@@ -995,7 +1014,7 @@ the generator writes it on every publish, because what a cluster runs must not
 depend on an interface setting.
 
 What the layer does, line by line (`haprion-objects -c alpha --advanced <name>`
-prints the same answer as the dialog's *Validate the object*):
+prints the same answer as the dialog's *Validate the proxy*):
 
 - Lines outside a section, and under the text's own `frontend` or `listen`, are
   the object's: an http object's go to every pool it has, a tcp object's to its
@@ -1028,7 +1047,7 @@ prints the same answer as the dialog's *Validate the object*):
   and the text must carry at least one `server` line. Unticking gives the pool
   back with the text's `server name host:port` lines as its servers.
 
-*Validate the object* and *Save* in the dialog list every line of the text with its *Fate* - placed,
+*Validate the proxy* and *Save* in the dialog list every line of the text with its *Fate* - placed,
 skipped, ignored or refused - and *Where* it went; that list is the review before a publish. A
 `haproxy -c` error in a generated file is reported as the object and the line of its text, and a publish
 is refused when HAProxy warns about a pasted line: a warning there means the line would be ignored, which
@@ -1051,7 +1070,7 @@ apt upgrade` installs a release ([The packages](install.md#the-packages)).
 ## Access rules
 
 An object can refuse visitors by address, by what a request asks for, and by the size of what it sends.
-All three are in the *Access* group of the object's form (*Edit* on the object's page, or *New object*),
+All three are in the *Access* group of the object's form (*Edit* on the proxy's page, or *New proxy*),
 below *Reachable from*, *Rate limit* and *Rate window*
 ([An http or https object, field by field](#an-http-or-https-object-field-by-field)):
 
@@ -1454,11 +1473,11 @@ haprion-cert-publish --certificate example.com   # one registered certificate on
 *New certificate* on the *Certificates* page opens the form. *Domain* becomes the certificate's name;
 `*.example.com` also covers `example.com`. *Certificate authority and challenge* is one of four:
 
-- *DNS-01* - Let's Encrypt, proved with a DNS record; wildcards included. *Provider profile* is the DNS
+- *DNS-01* - Let's Encrypt, proved with a DNS record; wildcards included. *DNS profile* is the DNS
   profile it uses, chosen from the ones in effect ([The life of a profile](#the-life-of-a-profile)).
 - *HTTP-01* - Let's Encrypt, proved through the webroot; single names only. It is greyed, with the reason
   beside it, while the runtime policy names no `acme.webroot`.
-- *NDES* - the organisation's Microsoft AD CS; wildcards included. *Provider profile* is the NDES profile
+- *NDES* - the organisation's Microsoft AD CS; wildcards included. *NDES profile* is the NDES profile
   ([Enrolling and renewing through NDES](#enrolling-and-renewing-through-ndes)). Greyed while no profile is
   in effect.
 - *CSR* - any CA: the key is made on the manager, and the signing request is downloaded from the row and
@@ -1466,10 +1485,10 @@ haprion-cert-publish --certificate example.com   # one registered certificate on
   says how the signed certificate comes back).
 
 Under *Targets*, *Clusters and receivers* lists every cluster and every registered receiver, each with a
-box, and at least one is ticked; while the **External certificates** switch is off the list is *Clusters*
+box, and at least one is ticked; while the **Certificates for other hosts** switch is off the list is *Clusters*
 and holds clusters only. A receiver also has its format: *PEM pair*, or *PKCS#12 + password*, which
-publishes a `.pfx` and a `.password` file. With the switch on, *Targets* also offers *External*: a
-certificate with no targets, downloaded with its key ([External certificates](#external-certificates)).
+publishes a `.pfx` and a `.password` file. With the switch on, *Targets* also offers *Installed by hand*: a
+certificate with no targets, downloaded with its key ([Certificates installed by hand](#certificates-installed-by-hand)).
 
 *Request the certificate* queues the job, and the page goes back to the registry, where the new row says
 *Requesting* until the CA has answered and carries the CA's own words if the answer is no. The Events page
@@ -1511,7 +1530,7 @@ The ACME policy and challenge routes must already be configured; see
 
 ### The life of a profile
 
-Profiles are made and retired at **Certificates → DNS providers** (`/dns-profiles`), by an
+Profiles are made and retired at **Certificates → DNS profiles** (`/dns-profiles`), by an
 administrator, or with `haprion-profiles` on the manager (below). A profile is one provider's credentials under a short ID the
 operator chooses (`cloudflare-main`: lowercase letters, digits and hyphens, at most 32). The ID is
 the profile's name everywhere - the certificate form's choice list, the credentials file, and
@@ -1740,7 +1759,7 @@ and a new import before that date is the maintainer's job.
 **From the interface.** *Certificates → Import certificate* takes the same material as a file:
 PEM (certificate, key and chain in any order), PKCS#12 with its password, a DER certificate or a
 PKCS#7 bundle, at most 32 kB, plus the name and the targets. The web process seals the file
-against the installation's public key - the pair step 15 creates for DNS provider profiles -
+against the installation's public key - the pair step 15 creates for DNS profiles -
 inside the request that carries it, and queues a `cert_import` job whose payload is the
 ciphertext. `haprion-cert-import-helper`, run by the worker through its sudoers rule, opens the
 box with the private key and imports the material exactly as the command does. So the key is in
@@ -1867,14 +1886,14 @@ NDES providers → Remove) runs one job that deletes the root-only record and th
 it is refused while the registry still names the profile or an enrollment request under
 `state_root` is still bound to it. A refused removal leaves the profile in effect.
 
-### External certificates
+### Certificates installed by hand
 
 Some places that want a certificate will never be connected to this manager: a server's
 BMC, a NAS, a printer, a camera, a UPS card. For those the manager is where the
 certificate is ordered and taken out; it is installed by hand. Behind the
-**External certificates** switch, with the receivers.
+**Certificates for other hosts** switch, with the receivers.
 
-**Making one.** *New certificate* → *External* (the switch under
+**Making one.** *New certificate* → *Installed by hand* (the switch under
 *Targets*): the same form, for one host name and with no targets. DNS-01, HTTP-01 or NDES; not a CSR,
 because the point is a key that can be handed out. The key is RSA 2048, which every
 device takes - several take no EC key. A wildcard is refused: its key would answer for
@@ -1902,7 +1921,7 @@ external row and no other). The page offers two zips, one click each:
   certificate part is 40-bit RC2.
 
 **After a renewal.** The row says which version was last taken out, by whom and when:
-*External* while that is the version the manager holds, *New version not downloaded*
+*Installed by hand* while that is the version the manager holds, *New version not downloaded*
 once it has been renewed since - also under *Needs attention*. Taken out is all it can
 say: nothing here sees the device, so installing it is still yours to check. A
 certificate taken out before downloads were recorded reads *No download recorded*, and
@@ -1925,7 +1944,7 @@ to be signed; the manager does not sign an uploaded request - see
 ### Registering a receiver
 
 A receiver is a host outside the clusters that fetches certificates from the manager on its own schedule,
-each with its own account, directory and key. Receivers are behind the **External certificates** switch
+each with its own account, directory and key. Receivers are behind the **Certificates for other hosts** switch
 ([Features and advanced configuration](#features-and-advanced-configuration)); with it on, *Receivers* on
 the *Certificates* page lists them - *Receiver*, *Transport*, *Account* and what each *Holds* - and an
 admin registers, changes and removes them there.
@@ -3302,7 +3321,7 @@ refusals, and their writes are audited and versioned the same way.
 | *Certificates*: issue, import, request, NDES, publish | `haprion-cert-issue`, `-import`, `-request`, `-scep`, `-publish`, `-deploy` |
 | *Certificates*: renew | certbot's: `haprion-cert-issue --domain <id> --renew`; NDES: `haprion-cert-scep --id <id> …` |
 | *Certificates*: publish to, remove from, delete | `haprion-cert-target`, `haprion-cert-delete` |
-| *Certificates*: DNS providers and NDES profiles | `haprion-profiles` |
+| *Certificates*: DNS profiles and NDES profiles | `haprion-profiles` |
 | External certificate receivers | `haprion-cert-receiver` |
 | *Node backups*: schedule, run, restore | `haprion-backup-schedule`, `haprion-state-backup -c <cluster> --json`, `haprion-node-restore` |
 | *Settings → Users* | `haprion-user` |
@@ -3581,9 +3600,9 @@ two - to try a release before the second node gets it, with the old one still th
 works: nothing here refuses a deploy over it. The dashboard says it on the node that is behind, in
 its Runtime cell, until both match; `haprion-status` says the same on that node's version line:
 
-- `Behind 3.4.7` - its HAProxy process is an older release than another node's. The running
+- `Older than 3.4.7` - its HAProxy process is an older release than another node's. The running
   process, not the package: a node patched and not restarted still says it.
-- `Behind: keepalived, OpenSSL` - an older package than another node's, for HAProxy's own package,
+- `Older package: keepalived, OpenSSL` - an older package than another node's, for HAProxy's own package,
   keepalived, dnsdist, the WAF engine and the OpenSSL library HAProxy links. Pointing at the line
   gives the versions. Compared as dpkg compares them, the whole version: a security update that
   changes only the revision (`3.5.5-1ubuntu3.7` to `-1ubuntu3.10`) or a PPA rebuild of the same
@@ -3738,7 +3757,7 @@ better done elsewhere. The details are in the section linked.
   key and takes only a certificate for its own CSR - HPE iLO, for one - gets it from the
   CA directly: for an internal name, the Microsoft CA's own web enrollment signs an
   uploaded CSR. Every other device takes an
-  [external certificate](#external-certificates) with its key.
+  [external certificate](#certificates-installed-by-hand) with its key.
 - **A publish does not show its changes before it is made.** Publishing does not touch the
   nodes: what the new version changed is read under *Versions* before it is deployed
   ([Configuration and deployment](#configuration-and-deployment)). *Publish & deploy* on the

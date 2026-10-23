@@ -111,7 +111,7 @@ class TheLineUnderTheRow(unittest.TestCase):
         )
 
         self.assertIn('<a href="/proxies/alpha/admin">admin</a>', one)
-        self.assertIn('href="/proxies?cluster=alpha&amp;source=192.0.2.30">2 objects</a>', many)
+        self.assertIn('href="/proxies?cluster=alpha&amp;source=192.0.2.30">2 proxies</a>', many)
 
     def test_a_removal_in_use_says_the_publish_is_refused(self) -> None:
         text = self.line(NetworkChange("vip", "mail", "removed", ("smtp",), "mail", True))

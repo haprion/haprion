@@ -56,8 +56,8 @@ class TheNarrowedListing(LoginTestCase):
 
         self.assertIn('data-href="/proxies/service-demo/api"', whole)
         self.assertIn('ownership-unmanaged">Manual<', whole)
-        self.assertIn("Only objects using VIP <strong>public</strong>", page)
-        self.assertIn('<a href="/proxies">All objects</a>', page)
+        self.assertIn("Only proxies using VIP <strong>public</strong>", page)
+        self.assertIn('<a href="/proxies">All proxies</a>', page)
         self.assertIn('data-href="/proxies/edge-demo/public-web"', page)
         self.assertIn('data-href="/proxies/edge-demo/shop"', page)
         self.assertNotIn("service-demo", page, "the other cluster is not drawn")
@@ -66,7 +66,7 @@ class TheNarrowedListing(LoginTestCase):
     def test_a_value_nothing_uses_lists_nothing(self) -> None:
         page = self.demo_client().get("/proxies?cluster=edge-demo&group=nobody").text
 
-        self.assertIn("Only objects using group <strong>nobody</strong>", page)
+        self.assertIn("Only proxies using group <strong>nobody</strong>", page)
         self.assertNotIn('data-href="/proxies/edge-demo/', page)
 
     def test_the_headings_sort_within_the_filter(self) -> None:

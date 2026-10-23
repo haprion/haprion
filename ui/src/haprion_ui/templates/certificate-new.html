@@ -35,7 +35,7 @@
 #}
 {% macro kind_switch() %}{% if feature_on('cert_receivers') %}<div class="method-choices certificate-kind" role="radiogroup" aria-label="Kind of certificate">
   <label class="check"><input type="radio" name="certificate_kind" value="published" data-kind-href="/certificates/new"{% if not form.exportable %} checked{% endif %}> <span><span class="method-name">Clusters and receivers</span> <span class="optional">— published and renewed from here</span></span></label>
-  <label class="check"><input type="radio" name="certificate_kind" value="external" data-kind-href="/certificates/new?for=external"{% if form.exportable %} checked{% endif %}> <span><span class="method-name">External</span> <span class="optional">— exported with its key, installed by hand</span></span></label>
+  <label class="check"><input type="radio" name="certificate_kind" value="external" data-kind-href="/certificates/new?for=external"{% if form.exportable %} checked{% endif %}> <span><span class="method-name">Installed by hand</span> <span class="optional">— exported with its key</span></span></label>
 </div>{% endif %}{% endmacro %}
 
 <form method="post" action="/certificates/new" class="preview-form certificate-form">
@@ -86,7 +86,7 @@
         fields; the reader sees one.
       #}
       <div class="field profile-field" data-profile-field>
-        <span class="field-title" id="profile-field-title" data-profile-title="Provider profile" data-key-title="Key type">{% if form.method == 'csr' %}Key type{% else %}Provider profile{% endif %}</span>
+        <span class="field-title" id="profile-field-title" data-profile-title="DNS profile" data-ndes-title="NDES profile" data-key-title="Key type">{% if form.method == 'csr' %}Key type{% elif form.method == 'ndes' %}NDES profile{% else %}DNS profile{% endif %}</span>
         <select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title"{% if form.method in ('http-01', 'ndes', 'csr') %} disabled{% endif %}{% if form.method in ('ndes', 'csr') %} hidden{% endif %}>
           {% if not choices.dns_profiles %}<option value="">No profile in effect</option>{% endif %}
           {% for profile in choices.dns_profiles %}<option value="{{ profile }}"{% if form.dns_profile == profile or (not form.dns_profile and loop.first) %} selected{% endif %}>{{ profile }}</option>{% endfor %}

@@ -397,7 +397,7 @@ def run(
             ran=False,
             source="",
             nodes=(),
-            problem=f"This object cannot be read as written, so its check cannot be run: {refusal}",
+            problem=f"This proxy cannot be read as written, so its check cannot be run: {refusal}",
         )
 
     checks = effective_checks(proxy)
@@ -412,7 +412,7 @@ def run(
             ran=False,
             source="",
             nodes=(),
-            problem="This object has no health check. Choose a type above, then test it.",
+            problem="This proxy has no health check. Choose a type above, then test it.",
         )
 
     targets = targets_from(checks)

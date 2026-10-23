@@ -563,7 +563,7 @@ def build_router(config: Config) -> APIRouter:
             return _refusal_page(
                 request,
                 config,
-                "This cluster has no object of that name to remove.",
+                "This cluster has no proxy of that name to remove.",
                 back="/proxies",
             )
         token = request.cookies.get(auth.SESSION_COOKIE, "")

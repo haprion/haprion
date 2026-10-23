@@ -70,7 +70,7 @@ class HaproxyVersions(unittest.TestCase):
 
     def test_the_older_node_is_named(self) -> None:
         notes, _ = self.view(("3.4.6-1", "3.4.4-1"), "3.4.4-1")
-        self.assertEqual(notes, [None, "Behind 3.4.6"])
+        self.assertEqual(notes, [None, "Older than 3.4.6"])
 
     def test_a_newer_validator_is_named_on_every_node(self) -> None:
         notes, _ = self.view(("3.4.4-1", "3.4.4-1"), "3.4.6-1")
@@ -87,8 +87,8 @@ class HaproxyVersions(unittest.TestCase):
                 {"keepalived": "2.3.3-1", "openssl": "3.5.5-1ubuntu3.10"},
             ),
         )
-        self.assertEqual(notes, [None, "Behind: keepalived"])
-        self.assertEqual(cluster.nodes[1].runtime_title, "keepalived behind 2.3.4-1")
+        self.assertEqual(notes, [None, "Older package: keepalived"])
+        self.assertEqual(cluster.nodes[1].runtime_title, "keepalived older than 2.3.4-1")
         self.assertEqual(cluster.label, "Healthy")
 
 
@@ -221,7 +221,7 @@ class HealthDerivation(unittest.TestCase):
                 ("", "", "", "—", "", ""),
             )
         self.assertEqual(view.online_nodes, len(nodes))
-        self.assertEqual(attention.from_dashboard(view.clusters, drift_label="Version drift"), [])
+        self.assertEqual(attention.from_dashboard(view.clusters, drift_label="Behind"), [])
 
     def test_a_new_node_in_a_deployed_cluster_is_not_deployed_not_a_fault(self) -> None:
         status = reading("done-single-owner.json")
@@ -401,8 +401,8 @@ class HealthDerivation(unittest.TestCase):
         """
 
         cluster = self.dashboard(reading("done-node-behind.json")).clusters[0]
-        self.assertEqual(cluster.label, "Not on the latest version")
-        self.assertEqual(cluster.nodes[1].label, "Version drift")
+        self.assertEqual(cluster.label, "Behind")
+        self.assertEqual(cluster.nodes[1].label, "Behind")
         self.assertEqual(cluster.version, "v7")
 
     def test_a_node_on_the_target_with_a_file_behind_says_which(self) -> None:
@@ -433,12 +433,12 @@ class HealthDerivation(unittest.TestCase):
         }
 
         on_target = dashboard._node_view(node, target)
-        self.assertEqual(on_target.label, "Version drift")
-        self.assertEqual(on_target.detail, "The log forwarding is behind the release")
+        self.assertEqual(on_target.label, "Behind")
+        self.assertEqual(on_target.detail, "The log forwarding is older than the published version")
         self.assertFalse(on_target.release_behind)
 
         behind = dashboard._node_view(node, "d4" * 20)
-        self.assertEqual(behind.detail, "Node is not on the target release")
+        self.assertEqual(behind.detail, "Node is not on the published version")
         self.assertTrue(behind.release_behind)
 
     def test_old_data_cannot_remain_green(self) -> None:

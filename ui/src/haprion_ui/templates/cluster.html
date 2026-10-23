@@ -52,7 +52,7 @@
     <p class="traffic-note">No traffic measured in {{ traffic_window }}.</p>
     {% else %}
     <h4 class="traffic-section">Frontends</h4>
-    <p class="traffic-note-lede">What arrived at each frontend, one per VIP and protocol. An <code>http</code> line exists where a site redirects plain http to https: that redirect is served by a real frontend on port 80, and this is the traffic it turned away.</p>
+    <p class="traffic-note-lede">What arrived at each frontend, one per VIP and protocol. An <code>http</code> line exists where a proxy redirects plain http to https: that redirect is served by a real frontend on port 80, and this is the traffic it turned away.</p>
     {% if view.frontends %}
     {% for named, owned, backend, redirect_counters in view.frontends %}
     {#

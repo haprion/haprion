@@ -26,7 +26,7 @@ from haprion.digits import is_digits
 from haprion.managed_network import load_document
 from haprion.managed_network import location as network_location
 
-from haprion_ui import moments
+from haprion_ui import labels, moments
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
 from haprion_ui.db import ClusterNetwork, Job
@@ -237,7 +237,7 @@ def deployment(
         # Not "deploy to activate": nothing here was published, and a node that
         # cannot be reached reads as behind for a reason no button mends.
         #
-        return Deployment("Nodes are not on the release", "warning", False, None)
+        return Deployment(labels.BEHIND, "warning", False, None)
     return Deployment(f"{version} deployed" if version else "Deployed", "healthy", False, None)
 
 

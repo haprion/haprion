@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from haprion.cli.changes_publish import MESSAGE as CHANGES_MESSAGE
 
-from haprion_ui import moments
+from haprion_ui import labels, moments
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
 from haprion_ui.db import ClusterHistory
@@ -196,8 +196,8 @@ def _empty(cluster: str, *, configured: bool) -> HistoryClusterView:
     )
 
 
-def _saved_count(total: int) -> str:
-    return "1 saved version" if total == 1 else f"{total} saved versions"
+def _version_count(total: int) -> str:
+    return labels.counted(total, "version")
 
 
 def _state(
@@ -226,7 +226,7 @@ def _state(
     if not versions:
         return "No versions yet", "unknown", "Nothing has been saved for this cluster"
     if published_version is None:
-        return "Nothing published", "unknown", f"{_saved_count(total)}, none published"
+        return "Nothing published", "unknown", f"{_version_count(total)}, none published"
     if unpublished is None:
         #
         # The published release is older than the versions listed. Saying
@@ -238,11 +238,11 @@ def _state(
             f"v{published_version} is not in this listing",
         )
     if unpublished == 0:
-        return "Published", "healthy", _saved_count(total)
+        return "Published", "healthy", _version_count(total)
     return (
         f"{unpublished} unpublished",
         "warning",
-        f"Published is v{published_version} · {_saved_count(total)}",
+        f"Published is v{published_version} · {_version_count(total)}",
     )
 
 

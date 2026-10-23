@@ -130,7 +130,7 @@ class TheHealthColumn(LoginTestCase):
         # alone would pass whatever the column did.
         #
         self.assertNotIn('status-dot status-healthy" aria-hidden', page.text)
-        self.assertIn("This object defines no health check", page.text)
+        self.assertIn("This proxy defines no health check", page.text)
 
     def test_a_checked_object_nobody_has_reported_on_is_grey(self) -> None:
         page = self.page(CHECKED, None)

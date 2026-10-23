@@ -80,7 +80,7 @@ class OpeningAnObject(DraftReading):
         the publication line says the version."""
 
         page = self.demo_client().get("/proxies/edge-demo/public-web")  # type: ignore[attr-defined]
-        card = page.text.split("<h3>Stored object</h3>", 1)[1].split("</header>", 1)[0]
+        card = page.text.split("<h3>Stored proxy</h3>", 1)[1].split("</header>", 1)[0]
 
         self.assertNotIn("managed/proxies/", card)
         self.assertNotRegex(card, r"\b[0-9a-f]{12}\b")

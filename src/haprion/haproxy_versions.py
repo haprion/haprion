@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
+from haprion import labels
 from haprion.digits import is_digits
 
 UPSTREAM = re.compile(r"\d+(?:\.\d+)*")
@@ -138,7 +139,7 @@ def package_notes(packages: Mapping[str, object]) -> dict[str, list[str]]:
     """Per node, a sentence for each package it runs an older version of than another node."""
 
     return {
-        node: [f"{label} behind {newest}" for label, newest in found]
+        node: [f"{label} older than {newest}" for label, newest in found]
         for node, found in packages_behind(packages).items()
     }
 
@@ -173,7 +174,7 @@ def notes(
     said: dict[str, str] = {}
     for name, version in known.items():
         if _key(version) < _key(newest):
-            said[name] = f"Behind {newest}"
+            said[name] = f"Older than {newest}"
         elif checked is not None and _key(checked) > _key(version):
             said[name] = f"Manager validates with {checked}"
     #
@@ -190,9 +191,9 @@ def notes(
         if not older:
             continue
         lines = (
-            [f"Behind: {', '.join(label for label, _newest in older)}"]
+            [f"{labels.OLDER_PACKAGE}: {', '.join(label for label, _newest in older)}"]
             if short
-            else [f"{label} behind {newest}" for label, newest in older]
+            else [f"{label} older than {newest}" for label, newest in older]
         )
         said[name] = " · ".join([said[name], *lines] if name in said else lines)
     return said

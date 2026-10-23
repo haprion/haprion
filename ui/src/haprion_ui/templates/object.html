@@ -24,7 +24,7 @@
 {% if saved and not (draft and draft.stage == 'saved') %}
 <p class="preview-notice"><strong>Saved.</strong></p>
 {% elif discarded %}
-<p class="preview-notice"><strong>Discarded.</strong> The stored object is as it was.</p>
+<p class="preview-notice"><strong>Discarded.</strong> The stored proxy is as it was.</p>
 {% endif %}
 
 <div class="cluster-list">
@@ -39,12 +39,12 @@
     <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>{% if draft.stage == 'saved' %}Saved, not published{% else %}A draft{% endif %}</h3><p>{{ draft.updated_by }} · revision {{ draft.revision }}</p></div></div>
     <div class="cluster-state">{% if management_writes %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Open in the editor</a>{% endif %}{% if advanced_offered and not object.stored %}<button type="button" class="secondary-button" data-advanced-open>Advanced config</button>{% endif %}{% if draft.updated_at %}<time datetime="{{ draft.updated_at.isoformat() }}" title="{{ draft.updated_at | shown_at }}">{{ draft.updated_at | shown_time }}</time>{% endif %}</div>
   </header>
-  {% if draft.deleted %}<p class="preview-notice">The object is <strong>removed</strong> with the next publish.</p>{% elif draft.stage != 'saved' %}<p class="preview-notice">Not published until it is saved.</p>{% endif %}
+  {% if draft.deleted %}<p class="preview-notice">The proxy is <strong>removed</strong> with the next publish.</p>{% elif draft.stage != 'saved' %}<p class="preview-notice">Not published until it is saved.</p>{% endif %}
 </article>
 {% endif %}
 <article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><div><h3>Stored object</h3>{% if not object.stored %}<p>Read from the cluster repository</p>{% elif stored_advanced %}<p>With advanced config</p>{% endif %}{% if object.stored and object.stored.description %}<p class="object-description">Description: {{ object.stored.description }}</p>{% endif %}{% if http3_vip %}<p class="object-description">HTTP/3 on VIP {{ http3_vip }}</p>{% endif %}{% if answered_elsewhere %}<p class="object-description">Answered elsewhere: {% for hostname, owner in answered_elsewhere %}{{ hostname }} (<a href="/proxies/{{ object.cluster }}/{{ owner }}">{{ owner }}</a>){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}</div></div>
+    <div class="cluster-identity"><div><h3>Stored proxy</h3>{% if not object.stored %}<p>Read from the cluster repository</p>{% elif stored_advanced %}<p>With advanced config</p>{% endif %}{% if object.stored and object.stored.description %}<p class="object-description">Description: {{ object.stored.description }}</p>{% endif %}{% if http3_vip %}<p class="object-description">HTTP/3 on VIP {{ http3_vip }}</p>{% endif %}{% if answered_elsewhere %}<p class="object-description">Answered elsewhere: {% for hostname, owner in answered_elsewhere %}{{ hostname }} (<a href="/proxies/{{ object.cluster }}/{{ owner }}">{{ owner }}</a>){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}</div></div>
     {#
       The link is drawn only where the editor exists. In read-only mode the
       route answers 404 rather than 403, so a button that led there would
@@ -175,7 +175,7 @@
 {% endif %}
 <article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><div><h3>Frontend</h3><p>{% if object.vip %}Served on the {% if object.vip_is_default %}default {% endif %}VIP <code>{{ object.vip }}</code>{% if object.vip_address %} · {{ object.vip_address }}{% endif %}, {% if object.stored and object.stored.protocol == 'dns' %}by dnsdist{% elif object.stored and object.stored.protocol == 'syslog' %}by the kernel's IPVS, with each sender's own address{% else %}through a frontend shared by every object on that address{% endif %}{% else %}The published frontend that carries this address, shared by every object on it{% endif %}</p></div></div>
+    <div class="cluster-identity"><div><h3>Frontend</h3><p>{% if object.vip %}Served on the {% if object.vip_is_default %}default {% endif %}VIP <code>{{ object.vip }}</code>{% if object.vip_address %} · {{ object.vip_address }}{% endif %}, {% if object.stored and object.stored.protocol == 'dns' %}by dnsdist{% elif object.stored and object.stored.protocol == 'syslog' %}by the kernel's IPVS, with each sender's own address{% else %}through a frontend shared by every proxy on that address{% endif %}{% else %}The published frontend that carries this address, shared by every proxy on it{% endif %}</p></div></div>
   </header>
   {% if object.published %}
   <div class="table-scroll"><table class="node-table">
@@ -217,7 +217,7 @@
     {% if advanced.one_pool %}<label class="check"><input type="checkbox" name="handwritten_pool"{% if advanced.handwritten %} checked{% endif %}> The text writes the pool</label>{% endif %}
     <div class="form-actions">
       <button type="button" class="secondary-button" data-advanced-close>Close</button>
-      <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
+      <button type="submit" name="action" value="check" class="secondary-button">Validate the proxy</button>
       <button type="submit" name="action" value="save" class="primary-button">Save</button>
     </div>
     <div data-advanced-answer></div>

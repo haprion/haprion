@@ -119,9 +119,9 @@ whether anything is waiting to go out. Come back here after every change.
 
 ## 4. Describe the network
 
-*Network* holds each cluster's virtual addresses: the VIPs your sites listen on, and any source
-addresses the nodes use towards the servers. Add what you need and press **Save**. Like an
-object, the network is saved first and goes out with the next publish.
+*Network* holds each cluster's virtual addresses: the VIPs your proxies listen on, and any source
+addresses the nodes use towards the servers. Add what you need and press **Save**. Like a
+proxy, the network is saved first and goes out with the next publish.
 
 ## 5. Get a certificate
 
@@ -141,10 +141,10 @@ the runtime policy names a webroot and port 80 reaches it
 The certificate is published to the clusters you ticked. Renewal is automatic for Let's Encrypt
 and NDES certificates.
 
-## 6. Create a proxy object
+## 6. Create a proxy
 
-An object is one site or service: what listens, and where the traffic goes. *Proxies →
-New object*.
+A proxy is one site or service: what listens, and where the traffic goes. *Proxies →
+New proxy*.
 
 **Frontend**
 
@@ -167,7 +167,7 @@ New object*.
 | Health check | how the nodes decide a server is up |
 
 **Test health check** asks a node to try the check right now, before anything is published.
-**Validate the object** checks the whole object. **Save** stores it; the object list shows it as
+**Validate the proxy** checks the whole proxy. **Save** stores it; the proxy list shows it as
 *New · not published*. **Save as draft** keeps unfinished work that will not be published.
 
 ## 7. Publish and deploy
@@ -181,10 +181,10 @@ Your site now answers on the VIP.
 
 ## 8. Day-to-day
 
-**Change something.** Edit the object in *Proxies*, **Save**, then **Publish & deploy** on the
+**Change something.** Edit the proxy in *Proxies*, **Save**, then **Publish & deploy** on the
 Dashboard. Several saved changes go out together as one version.
 
-**Take a server out for maintenance.** Open the object in *Proxies*, select the server and press
+**Take a server out for maintenance.** Open the proxy in *Proxies*, select the server and press
 **Drain** (no new connections) or **Maintenance** (out of service). This takes effect at once,
 without a deploy, and lasts until you press **Ready**.
 

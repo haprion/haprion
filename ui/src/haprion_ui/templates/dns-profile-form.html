@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% from "_back.html" import back_button %}
-{% block title %}{% if existing %}Replace profile{% else %}New DNS provider profile{% endif %} — Haprion{% endblock %}
+{% block title %}{% if existing %}Replace profile{% else %}New DNS profile{% endif %} — Haprion{% endblock %}
 {% block content %}
 {#
   Two steps on one page: pick a provider, then fill in exactly the fields the
@@ -13,7 +13,7 @@
   always drawn empty - a token echoed into a response is a token in a cache.
 #}
 <section class="page-heading">
-  <div class="heading-title">{{ back_button('/dns-profiles', 'DNS providers') }}<h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New DNS provider profile{% endif %}</h1><p class="page-lede">{% if existing %}The new values are sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous values stay in effect until it finishes.{% else %}The values are sealed against the installation's key before they are stored, and only the certificate helper can open them.{% endif %}</p></div>
+  <div class="heading-title">{{ back_button('/dns-profiles', 'DNS profiles') }}<h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New DNS profile{% endif %}</h1><p class="page-lede">{% if existing %}The new values are sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous values stay in effect until it finishes.{% else %}The values are sealed against the installation's key before they are stored, and only the certificate helper can open them.{% endif %}</p></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 

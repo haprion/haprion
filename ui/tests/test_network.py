@@ -275,7 +275,7 @@ class WhereTheConfigurationHasGotTo(unittest.TestCase):
 
         state = deployment(release_state="Deploy Pending", version="v53")
 
-        self.assertEqual(state.label, "Nodes are not on the release")
+        self.assertEqual(state.label, "Behind")
         self.assertEqual(state.tone, "warning")
 
     def test_a_converged_cluster_names_the_version_it_is_on(self) -> None:
@@ -543,13 +543,13 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         vips = page.split("Add a virtual address", 1)[0]
         self.assertIn(
-            '<a href="/proxies?cluster=edge-demo&amp;vip=public">2 objects</a>',
+            '<a href="/proxies?cluster=edge-demo&amp;vip=public">2 proxies</a>',
             vips,
             "two or more are a count leading to the listing narrowed to them",
         )
         self.assertNotIn('<a href="/proxies/edge-demo/shop">', vips)
         self.assertIn(
-            '<a href="/proxies?cluster=edge-demo&amp;source=192.0.2.25">2 objects</a>', page
+            '<a href="/proxies?cluster=edge-demo&amp;source=192.0.2.25">2 proxies</a>', page
         )
         self.assertIn('<a href="/proxies/service-demo/api">api</a>', page, "one by name")
         self.assertIn('<span class="table-empty">not used</span>', page)
@@ -560,7 +560,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         self.assertIn('<td data-label="Used by">api</td>', page)
         self.assertNotIn('<a href="/proxies/service-demo/api">', page)
-        self.assertIn('<a href="/proxies?cluster=edge-demo&amp;vip=public">2 objects</a>', page)
+        self.assertIn('<a href="/proxies?cluster=edge-demo&amp;vip=public">2 proxies</a>', page)
 
     def test_objects_that_could_not_be_read_say_nothing(self) -> None:
         page = self.editable_page(objects=[]).text
@@ -573,7 +573,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         self.assertIn('name="operation" value="network_publish"', page.text)
         self.assertIn('name="expected_head" value="' + "a" * 40 + '"', page.text)
-        self.assertIn("3 managed objects follow it", page.text)
+        self.assertIn("3 proxies follow it", page.text)
         self.assertIn("keepalived", page.text)
 
     def owed_page(self) -> Any:

@@ -216,20 +216,20 @@ class TheVersionTakenOut(unittest.TestCase):
     def test_unread_it_says_what_it_always_said(self) -> None:
         row = self.row(None)
 
-        self.assertEqual((row.state_label, row.state_tone), ("External", "healthy"))
+        self.assertEqual((row.state_label, row.state_tone), ("Installed by hand", "healthy"))
 
     def test_nothing_recorded_is_said_and_not_raised(self) -> None:
         row = self.row({})
 
         self.assertEqual(
             (row.state_label, row.state_detail, row.state_tone),
-            ("External", "No download recorded; installed by hand", "info"),
+            ("Installed by hand", "No download recorded", "info"),
         )
 
     def test_the_version_downloaded_is_the_one_held(self) -> None:
         row = self.row(self.taken(self.row(None).fingerprint))
 
-        self.assertEqual((row.state_label, row.state_tone), ("External", "healthy"))
+        self.assertEqual((row.state_label, row.state_tone), ("Installed by hand", "healthy"))
         self.assertIn("Downloaded by admin", row.state_detail)
         self.assertNotIn("installed by admin", row.state_detail)
 

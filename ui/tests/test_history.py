@@ -111,7 +111,7 @@ class PublishedStateTests(unittest.TestCase):
         self.assertEqual(cluster.label, "1 unpublished")
         self.assertEqual(cluster.tone, "warning")
         self.assertEqual(cluster.published, "v11")
-        self.assertEqual(cluster.detail, "Published is v11 · 12 saved versions")
+        self.assertEqual(cluster.detail, "Published is v11 · 12 versions")
 
     def test_a_published_release_outside_the_listing_is_not_called_current(self) -> None:
         #
@@ -229,7 +229,7 @@ class RenderingTests(unittest.TestCase):
         cluster = overview(reading()).clusters[0]
 
         self.assertEqual(cluster.label, "Published")
-        self.assertEqual(cluster.detail, "12 saved versions")
+        self.assertEqual(cluster.detail, "12 versions")
         self.assertEqual(cluster.total, 12)
 
     def test_a_single_saved_version_is_not_pluralised(self) -> None:
@@ -237,7 +237,7 @@ class RenderingTests(unittest.TestCase):
         row.result["total_versions"] = 1
         cluster = overview(row).clusters[0]
 
-        self.assertEqual(cluster.detail, "1 saved version, none published")
+        self.assertEqual(cluster.detail, "1 version, none published")
 
     def test_a_truncated_listing_says_so(self) -> None:
         self.assertTrue(overview(reading(truncated=True)).clusters[0].truncated)

@@ -729,13 +729,13 @@ def _lamp(
     # not checked at all.
     #
     if checked is False:
-        return ObjectHealth("unknown", "", f"This object defines no health check{aside}", 0, 0)
+        return ObjectHealth("unknown", "", f"This proxy defines no health check{aside}", 0, 0)
 
     if total == 0:
         return ObjectHealth(
             tone="unknown",
             label="",
-            detail="No node reported servers for this object",
+            detail="No node reported servers for this proxy",
             up=0,
             total=0,
         )

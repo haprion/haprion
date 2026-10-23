@@ -324,7 +324,7 @@ def publication(
     if match is None:
         return Publication(
             "Not released",
-            "This object is committed but no release names its version",
+            "This proxy is committed but no published version names it",
             "warning",
             None,
         )
@@ -335,7 +335,7 @@ def publication(
         # work in progress, not a version that lost a race.
         #
         release = next((view for view in versions if view.published), None)
-        behind = f", and {release.version} is the release" if release else ""
+        behind = f", and {release.version} is the published version" if release else ""
         return Publication(
             "Awaiting publish",
             f"{match.version} is committed{behind}",
@@ -376,27 +376,27 @@ def publication(
         if object_state == CURRENT:
             return Publication(
                 "Serving",
-                f"The nodes are on {node_version or 'an earlier release'}, "
-                "which serves this object as written",
+                f"The nodes are on {node_version or 'an earlier version'}, "
+                "which serves this proxy as written",
                 "healthy",
                 match.version,
             )
         if object_state == UNKNOWN:
             return Publication(
                 "Unknown",
-                f"{match.version} is the release, and whether the nodes serve "
-                "this object as it is written could not be read",
+                f"{match.version} is the published version, and whether the nodes serve "
+                "this proxy as it is written could not be read",
                 "unknown",
                 match.version,
             )
         return Publication(
             "Waiting for deploy",
-            f"{match.version} is the release, and the nodes are on {node_version or 'an older one'}",
+            f"{match.version} is the published version, and the nodes are on {node_version or 'an older one'}",
             "warning",
             match.version,
         )
     return Publication(
-        "Serving", f"{match.version} is released and the nodes are on it", "healthy", match.version
+        "Serving", f"{match.version} is published and the nodes are on it", "healthy", match.version
     )
 
 
@@ -434,17 +434,17 @@ def build_object_detail(
     stale = reading is not None and now - reading.observed_at > stale_after
 
     if reading is None:
-        detail = "The objects for this cluster have not been read yet"
+        detail = "The proxies for this cluster have not been read yet"
     elif not available:
-        detail = "The stored objects could not be read"
+        detail = "The stored proxies could not be read"
     elif stored is None and running is not None:
         detail = "Served from configuration that was not written here"
     elif stored is None:
-        detail = "No object of that name is stored"
+        detail = "No proxy of that name is stored"
     elif not stored.readable:
         detail = "This version cannot read the stored document"
     elif stale:
-        detail = "The stored objects need a fresh read"
+        detail = "The stored proxies need a fresh read"
     else:
         detail = "Stored in the cluster repository"
 

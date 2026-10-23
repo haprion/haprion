@@ -17,10 +17,10 @@
 </section>
 
 <div class="refusal-card">
-  <p class="refusal-message"><span class="status-orb status-critical" aria-hidden="true"></span>This saves a removal. It goes out with the next publish from Versions: the object and the configuration generated from it leave the cluster's repository in that version.</p>
+  <p class="refusal-message"><span class="status-orb status-critical" aria-hidden="true"></span>This saves a removal. It goes out with the next publish from Versions: the proxy and the configuration generated from it leave the cluster's repository in that version.</p>
   <ul class="removal-consequences">
     <li>The hostnames it answered for stop being served once the nodes are deployed.</li>
-    <li><strong>Deploy is a separate step.</strong> Until it runs, the nodes keep serving the release they have.</li>
+    <li><strong>Deploy is a separate step.</strong> Until it runs, the nodes keep serving the version they have.</li>
     <li>It can be brought back: a published version is a version, and <code>haprion-revert</code> returns to the one before this.</li>
   </ul>
   {% if hostnames %}<p class="refusal-hint">It answers for {{ hostnames | join(', ') }}.</p>{% endif %}

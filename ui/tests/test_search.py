@@ -362,7 +362,7 @@ class TheLampUsesTheHelpersAnswer(LoginTestCase):
         ):
             page = client.get("/proxies")
 
-        self.assertIn("This object defines no health check", page.text)
+        self.assertIn("This proxy defines no health check", page.text)
 
 
 if __name__ == "__main__":

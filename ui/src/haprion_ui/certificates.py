@@ -943,10 +943,10 @@ def _registry_state(
         # logged is not one nobody took - and is not raised.
         #
         if taken_out is None:
-            return "External", "Downloaded and installed by hand", "healthy"
+            return "Installed by hand", "Downloaded", "healthy"
         last = taken_out.get(identifier)
         if last is None:
-            return "External", "No download recorded; installed by hand", "info"
+            return "Installed by hand", "No download recorded", "info"
         when = moments.moment(last.at)
         if fingerprint and last.fingerprint != fingerprint:
             return (
@@ -954,7 +954,7 @@ def _registry_state(
                 f"Renewed since {last.actor} downloaded it ({when}); install the new one by hand",
                 "warning",
             )
-        return "External", f"Downloaded by {last.actor} ({when}); installed by hand", "healthy"
+        return "Installed by hand", f"Downloaded by {last.actor} ({when})", "healthy"
     if not clusters and not receivers:
         return "No targets", "Registered, but published nowhere", "warning"
 

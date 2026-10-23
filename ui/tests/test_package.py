@@ -167,7 +167,7 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
 
         text = self.page(self.editor())
 
-        self.assertIn("applies to every object on the cluster", text)
+        self.assertIn("applies to every proxy on the cluster", text)
 
     def test_nothing_saved_draws_no_list(self) -> None:
         self.assertNotIn("Pending changes", self.page(self.editor()))
@@ -296,7 +296,7 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         answer = self.publish(self.editor())
 
         self.assertEqual(answer.status_code, 400)
-        self.assertIn("65 objects; at most 64", answer.text)
+        self.assertIn("65 proxies; at most 64", answer.text)
 
     def test_a_comment_is_needed(self) -> None:
         self.rows = [row()]

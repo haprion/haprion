@@ -274,7 +274,7 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
         if form.ndes_profile not in choices.ndes_profiles:
             raise FormProblem("Choose an NDES provider profile that is in effect.")
         if form.dns_profile:
-            raise FormProblem("A DNS provider profile belongs to DNS-01 only.")
+            raise FormProblem("A DNS profile belongs to DNS-01 only.")
     elif form.method == CSR_METHOD:
         if form.dns_profile or form.ndes_profile:
             raise FormProblem("A provider profile belongs to a CA the manager talks to.")
@@ -305,11 +305,11 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
         pass
     elif form.method == "dns-01":
         if choices.profiles_required and not form.dns_profile:
-            raise FormProblem("Choose a DNS provider profile that is in effect.")
+            raise FormProblem("Choose a DNS profile that is in effect.")
         if choices.profiles_required and form.dns_profile not in choices.dns_profiles:
-            raise FormProblem("The chosen DNS provider profile is not in effect.")
+            raise FormProblem("The chosen DNS profile is not in effect.")
     elif form.dns_profile:
-        raise FormProblem("A DNS provider profile belongs to DNS-01 only.")
+        raise FormProblem("A DNS profile belongs to DNS-01 only.")
     if form.exportable:
         #
         # B255: one host, no targets, and a CA the manager talks to - the key
@@ -443,7 +443,7 @@ def _interface_payload(form: IssueForm, choices: IssueChoices, name: str) -> dic
         and choices.profiles_required
         and form.dns_profile not in choices.dns_profiles
     ):
-        raise FormProblem("Choose a DNS provider profile that is in effect.")
+        raise FormProblem("Choose a DNS profile that is in effect.")
     payload: dict[str, Any] = {
         "domain": form.domain,
         "method": form.method,

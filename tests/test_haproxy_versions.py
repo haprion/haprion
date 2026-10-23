@@ -26,7 +26,7 @@ class TheNotes(unittest.TestCase):
     def test_a_node_behind_the_cluster_s_newest_is_named(self) -> None:
         self.assertEqual(
             notes({"a": "3.4.6-1", "b": "3.4.4-1", "c": "3.4.10-1"}),
-            {"a": "Behind 3.4.10", "b": "Behind 3.4.10"},
+            {"a": "Older than 3.4.10", "b": "Older than 3.4.10"},
         )
 
     def test_a_validator_newer_than_the_nodes_is_named_on_each(self) -> None:
@@ -110,7 +110,7 @@ class ThePackageNotes(unittest.TestCase):
 
         self.assertEqual(
             found,
-            {"b": ["keepalived behind 2.3.4-1", "OpenSSL behind 3.5.5-1ubuntu3.10"]},
+            {"b": ["keepalived older than 2.3.4-1", "OpenSSL older than 3.5.5-1ubuntu3.10"]},
         )
 
     def test_a_node_from_before_the_field_is_not_judged(self) -> None:
@@ -126,7 +126,7 @@ class ThePackageNotes(unittest.TestCase):
             },
         )
 
-        self.assertEqual(said, {"b": "Behind 3.4.7 · keepalived behind 2.3.4-1"})
+        self.assertEqual(said, {"b": "Older than 3.4.7 · keepalived older than 2.3.4-1"})
 
     def test_a_rebuild_of_the_same_release_shows_in_the_package_only(self) -> None:
         said = notes(
@@ -135,7 +135,7 @@ class ThePackageNotes(unittest.TestCase):
             {"a": {"haproxy": "3.4.6-1ppa2~resolute"}, "b": {"haproxy": "3.4.6-1ppa1~resolute"}},
         )
 
-        self.assertEqual(said, {"b": "HAProxy package behind 3.4.6-1ppa2~resolute"})
+        self.assertEqual(said, {"b": "HAProxy package older than 3.4.6-1ppa2~resolute"})
 
 
 if __name__ == "__main__":

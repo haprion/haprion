@@ -124,7 +124,7 @@ HEADERS = f"""<!doctype html><html><head><meta charset="utf-8">
 {
     header(
         "internal",
-        "All nodes are serving on the target release",
+        "All nodes serve the published version",
         "Healthy",
         ("99.9k", "999 kbit/s", "999 kbit/s", "999 ms"),
     )
@@ -133,7 +133,7 @@ HEADERS = f"""<!doctype html><html><head><meta charset="utf-8">
     header(
         "external",
         "1 node is not running the published release",
-        "Not on the latest version",
+        "Behind",
         ("79", "0 bit/s", "0 bit/s", "4 ms"),
     )
 }

@@ -195,7 +195,7 @@ def checklist(facts: Facts) -> Checklist:
             "/settings#users",
         ),
         Item(
-            "Certificates for your sites",
+            "Certificates for your proxies",
             facts.site_certificates > 0,
             labels.counted(facts.site_certificates, "certificate") + " from ACME or NDES"
             if facts.site_certificates

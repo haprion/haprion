@@ -161,7 +161,7 @@ class TheDialogInABrowser(DraftReading):
         labels = page.eval_on_selector_all(
             "[data-advanced-form] .form-actions button", "buttons => buttons.map(b => b.innerText)"
         )
-        self.assertEqual(labels, ["Close", "Validate the object", "Save"])
+        self.assertEqual(labels, ["Close", "Validate the proxy", "Save"])
         page.click("[data-advanced-close]")
         self.assertFalse(page.is_visible("[data-advanced-dialog]"))
 

@@ -922,9 +922,9 @@ class WhereASaveLands(EditorTestCase):
             answer = self.submit(self.editor(), "/proxies/alpha/shop/edit", action="check")
 
         self.assertIn(
-            "<strong>Valid.</strong> Checked with the other objects in alpha", answer.text
+            "<strong>Valid.</strong> Checked with the other proxies in alpha", answer.text
         )
-        self.assertNotIn("This object was refused", answer.text)
+        self.assertNotIn("This proxy was refused", answer.text)
 
     def test_the_document_is_folded_under_the_verdict(self) -> None:
         # 26-10-03: the verdict is the answer; the YAML is there to open, as on the object page.
@@ -945,7 +945,7 @@ class WhereASaveLands(EditorTestCase):
     def test_a_refused_check_says_nothing_of_passing(self) -> None:
         answer = self.submit(self.editor(), "/proxies/alpha/shop/edit", action="check", servers="")
 
-        self.assertIn("This object was refused", answer.text)
+        self.assertIn("This proxy was refused", answer.text)
         self.assertNotIn("<strong>Valid", answer.text)
 
 
@@ -1547,7 +1547,7 @@ class RemovingAnObject(EditorTestCase):
         page = self.editor().get("/proxies/alpha/nothing-here/remove")
 
         self.assertNotIn("Save the removal", page.text)
-        self.assertIn("no object of that name", page.text)
+        self.assertIn("no proxy of that name", page.text)
 
     def test_confirming_saves_the_removal_and_queues_nothing(self) -> None:
         """B257: the removal goes out with the next publish; back to the list."""

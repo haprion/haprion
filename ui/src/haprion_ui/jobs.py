@@ -171,7 +171,7 @@ OPERATION_LABELS = {
     "revert": "Publish reverted version",
     "network_publish": "Publish network description",
     "cluster_settings_publish": "Publish cluster settings",
-    "objects_publish": "Publish proxy objects",
+    "objects_publish": "Publish proxies",
     "changes_publish": "Publish saved changes",
     "cert_issue": "Issue certificate",
     "cert_scep": "Enroll certificate",
@@ -181,7 +181,7 @@ OPERATION_LABELS = {
     "cert_target": "Change certificate targets",
     "cert_delete": "Delete certificates",
     "cert_receiver": "Change certificate receiver",
-    "dns_profile_apply": "Apply DNS provider profile",
+    "dns_profile_apply": "Apply DNS profile",
     "ndes_profile_apply": "Apply NDES profile",
     "cluster_node": "Change cluster nodes",
     "cluster_define": "Create or remove cluster",
@@ -427,7 +427,7 @@ class CertificateBlock:
         """
 
         if not self.gaps:
-            return "Deploy blocked: a node does not carry every certificate the release references"
+            return "Deploy blocked: a node does not carry every certificate the version references"
         return "Deploy blocked: " + "; ".join(gap.describe() for gap in self.gaps)
 
     @property

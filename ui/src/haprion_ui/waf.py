@@ -775,7 +775,7 @@ def without_exception(
     listed = list(block.get("exceptions", []))
     kept = [item for item in listed if _scope(item) != wanted]
     if len(kept) == len(listed):
-        raise ValueError("that exception is no longer on the object")
+        raise ValueError("that exception is no longer on the proxy")
     if kept:
         block["exceptions"] = kept
     else:

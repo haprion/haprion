@@ -110,7 +110,7 @@
     <div class="form-groups">
     {% call group(groups.tls, when('protocol', 'https')) %}
     <div class="form-grid">
-      <label class="https-only">Specific TLS for this site only
+      <label class="https-only">Specific TLS for this proxy only
         <select name="listen_tls_policy"{% if form.protocol != 'https' %} disabled{% endif %}>
           <option value=""{% if not form.listen_tls_policy %} selected{% endif %}>Use VIP settings</option>
           <option value="tls12only"{% if form.listen_tls_policy == 'tls12only' %} selected{% endif %}>TLS 1.2 only</option>
@@ -253,7 +253,7 @@
     </div>
     <div class="field-rows">
       <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}"><span>What visitors are told instead</span></label>
-      <label class="check-value"><input name="unavailable_message" value="{{ form.unavailable_message }}"><span>What visitors are told when no server answers. <code>%URL%</code> becomes the site's first hostname.</span></label>
+      <label class="check-value"><input name="unavailable_message" value="{{ form.unavailable_message }}"><span>What visitors are told when no server answers. <code>%URL%</code> becomes the proxy's first hostname.</span></label>
     </div>
     {% endcall %}
     </div>
@@ -262,7 +262,7 @@
   <section class="cluster-card object-card {{ accent | accent_class }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Backend</h3></div></div></header>
     <div class="form-grid">
-      <label>Backend name<input name="backend" value="{{ form.backend }}" placeholder="{{ form.name or 'shop-web' }}"><small>Unique per cluster. Default: the object's name.<br>This name is used by metrics.</small></label>
+      <label>Backend name<input name="backend" value="{{ form.backend }}" placeholder="{{ form.name or 'shop-web' }}"><small>Unique per cluster. Default: the proxy's name.<br>This name is used by metrics.</small></label>
       {% if form.handwritten_pool %}
       <div class="field"><span class="field-title">Servers</span><small>Written in the advanced config, with balancing and checks.</small></div>
       {% else %}

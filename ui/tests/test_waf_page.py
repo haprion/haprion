@@ -437,13 +437,13 @@ class ThePage(EditorTestCase):
         opened = listing.split('<section class="cluster-card finding-card', 1)[1]
         card = opened.split("</section>", 1)[0]
         self.assertIn("<h3>shop</h3><p>alpha</p>", card)
-        self.assertIn('href="/proxies/alpha/shop/edit">Edit object</a>', card)
+        self.assertIn('href="/proxies/alpha/shop/edit">Edit proxy</a>', card)
         self.assertIn("<thead><tr><th>Finding</th><th>Where</th>", card)
         self.assertNotIn("<th>Object</th>", listing)
 
     def test_no_exception_anywhere_says_so_once(self) -> None:
         listing = self.editor().get("/waf?view=exceptions").text
-        self.assertEqual(listing.count("No object has an exception."), 1)
+        self.assertEqual(listing.count("No proxy has an exception."), 1)
         self.assertNotIn("finding-card", listing)
 
     def test_a_choice_without_its_paths_is_answered_on_the_dialog(self) -> None:
@@ -502,7 +502,7 @@ class ThePage(EditorTestCase):
         )
         self.assertEqual(answer.status_code, 409)
         self.assertIn("text/html", answer.headers["content-type"])
-        self.assertIn("that exception is no longer on the object", answer.text)
+        self.assertIn("that exception is no longer on the proxy", answer.text)
         self.assertIn('role="alert"', answer.text)
         self.assertIn("<h1>WAF logs</h1>", answer.text)
         self.assertEqual(self.saved, [])

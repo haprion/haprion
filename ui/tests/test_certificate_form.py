@@ -339,7 +339,7 @@ class TheFormPage(CertificateFormRouteTestCase):
         self.assertIn(
             '<small data-profile-hint="http-01" hidden>Not used with HTTP-01.</small>', page
         )
-        self.assertEqual(page.count("Provider profile</span>"), 1)
+        self.assertEqual(page.count("DNS profile</span>"), 1)
 
         #
         # A refused HTTP-01 form is redrawn with the choice kept, so the
@@ -750,7 +750,7 @@ class SendingTheFormAsACsr(CertificateFormRouteTestCase):
         )
         self.assertIn('<option value="rsa-4096" selected>', page)
         self.assertIn(
-            'id="profile-field-title" data-profile-title="Provider profile" data-key-title="Key type">Key type<',
+            'id="profile-field-title" data-profile-title="DNS profile" data-ndes-title="NDES profile" data-key-title="Key type">Key type<',
             page,
         )
         self.assertEqual(self.queued, [])

@@ -72,7 +72,7 @@ class ServerCard:
     current: bool
 
 
-NOT_CURRENT = Cell("—", "unknown", "The nodes do not run this version of the object yet")
+NOT_CURRENT = Cell("—", "unknown", "The nodes do not run this version of the proxy yet")
 NOT_SAID = Cell("—", "unknown", "The node did not report this server")
 #
 # An object that leaves from a source address is checked only where that
@@ -82,9 +82,7 @@ NOT_SAID = Cell("—", "unknown", "The node did not report this server")
 # Standby is the dashboard's word for that node; keepalived's BACKUP would read as the server's `backup` option
 # (review 2026-10-22, 7-8).
 #
-STANDBY = Cell(
-    "STANDBY", "unknown", "The object leaves from an address only the VIP holder carries"
-)
+STANDBY = Cell("STANDBY", "unknown", "The proxy leaves from an address only the VIP holder carries")
 
 
 def lost(state: str) -> Cell:

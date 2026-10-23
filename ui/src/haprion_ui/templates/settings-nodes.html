@@ -48,7 +48,7 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Remove {{ cluster }}</h3></div></div></header>
     <ul class="removal-consequences">
       <li>It is taken out of the cluster file, every certificate's targets and the editing policy; its nodes can no longer fetch configuration or certificates, and its backup timer is stopped.</li>
-      <li>Its repository, releases and backups are moved to .removed/ and kept.</li>
+      <li>Its repository, versions and backups are moved to .removed/ and kept.</li>
       <li>The nodes are not touched and keep serving the VIP until they are shut down.</li>
     </ul>
     <div class="form-grid">

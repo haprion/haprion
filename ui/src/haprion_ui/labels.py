@@ -6,6 +6,6 @@ count differently.
 
 from __future__ import annotations
 
-from haprion.labels import counted, noun
+from haprion.labels import BEHIND, OLDER_PACKAGE, RETIRED, counted, noun
 
-__all__ = ["counted", "noun"]
+__all__ = ["BEHIND", "OLDER_PACKAGE", "RETIRED", "counted", "noun"]

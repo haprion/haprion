@@ -92,12 +92,12 @@ def apply(name: str, document: str, text: str, *, handwritten: bool) -> str:
 
     backends = data.get("backends")
     if not isinstance(backends, Mapping):
-        raise ValueError("this object has no pool the dialog can read")
+        raise ValueError("this proxy has no pool the dialog can read")
     pools = dict(backends)
     now = any(pool_written_by_hand(pool) for pool in pools.values())
     if handwritten and not now:
         if len(pools) != 1:
-            raise ValueError("only an object with one pool can have it written here")
+            raise ValueError("only a proxy with one pool can have it written here")
         data["backends"] = {next(iter(pools)): {"servers": []}}
     elif now and not handwritten:
         data["backends"] = {pool_name: _returned_pool(name, data, written) for pool_name in pools}

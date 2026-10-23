@@ -685,7 +685,7 @@ def build_document(form: dict[str, object]) -> str:
     if protocol == "tcp":
         port = text("tcp_port")
         if not is_digits(port):
-            raise ValueError("a tcp object must name the port it is served on")
+            raise ValueError("a tcp proxy must name the port it is served on")
         listen["port"] = int(port)
     if protocol in OWN_PORTS:
         #
@@ -1879,10 +1879,10 @@ def _first_difference(stored: Any, rebuilt: Any, path: str = "") -> str:
         written = stored if isinstance(stored, list) else []
         produced = rebuilt if isinstance(rebuilt, list) else []
         if len(written) != len(produced):
-            return path or "the object"
+            return path or "the proxy"
         for index, (one, other) in enumerate(zip(written, produced, strict=True)):
             found = _first_difference(one, other, f"{path}[{index}]")
             if found:
                 return found
         return ""
-    return "" if stored == rebuilt else (path or "the object")
+    return "" if stored == rebuilt else (path or "the proxy")

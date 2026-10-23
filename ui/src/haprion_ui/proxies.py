@@ -175,9 +175,9 @@ def _cluster_view(
     elif stale:
         label, tone, detail = "Stale data", "warning", "Inventory needs a fresh poll"
     elif version is None:
-        label, tone, detail = "Nothing published", "unknown", "No configuration release exists yet"
+        label, tone, detail = "Nothing published", "unknown", "No configuration version exists yet"
     elif not proxies:
-        label, tone, detail = "No proxies", "unknown", "The published release defines no frontends"
+        label, tone, detail = "No proxies", "unknown", "The published version defines no frontends"
     else:
         #
         # No badge: what is healthy here is the reading, and the time beside it

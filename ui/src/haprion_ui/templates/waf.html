@@ -30,7 +30,7 @@
     <div class="cluster-state">
       {% if card.judged %}<span class="finding-verdict">{{ 'Would have blocked' if card.mode != 'block' else 'Blocked' }} <strong>{{ card.judged }} request{{ 's' if card.judged != 1 }}</strong> from <strong>{{ card.clients }} client{{ 's' if card.clients != 1 }}</strong></span>{% endif %}
       {% if card.mode == 'block' %}<span class="status-badge status-badge-critical">Blocking</span>{% elif card.mode == 'log' %}<span class="status-badge status-badge-warning">Logging</span>{% else %}<span class="status-badge">Off</span>{% endif %}
-      {% if can_write %}<a class="secondary-button" href="{{ card.edit_href }}">Edit object</a>{% endif %}
+      {% if can_write %}<a class="secondary-button" href="{{ card.edit_href }}">Edit proxy</a>{% endif %}
     </div>
   </header>
   <div class="table-scroll"><table class="node-table finding-table">
@@ -65,7 +65,7 @@
 <section class="cluster-card finding-card {{ cluster | cluster_accent }}">
   <header class="cluster-header">
     <div class="cluster-identity"><div><h3>{{ name }}</h3><p>{{ cluster }}</p></div></div>
-    {% if can_write %}<div class="cluster-state"><a class="secondary-button" href="/proxies/{{ cluster | urlencode }}/{{ name | urlencode }}/edit">Edit object</a></div>{% endif %}
+    {% if can_write %}<div class="cluster-state"><a class="secondary-button" href="/proxies/{{ cluster | urlencode }}/{{ name | urlencode }}/edit">Edit proxy</a></div>{% endif %}
   </header>
   <div class="table-scroll"><table class="node-table exception-table">
     <thead><tr><th>Finding</th><th>Where</th><th>Reason</th><th>Let through</th><th>Clients</th><th>Last seen</th><th>Added</th><th><span class="visually-hidden">Action</span></th></tr></thead>
@@ -94,7 +94,7 @@
   </table></div>
 </section>
 {% else %}
-<section class="cluster-card"><p class="empty-state">No object has an exception.</p></section>
+<section class="cluster-card"><p class="empty-state">No proxy has an exception.</p></section>
 {% endfor %}
 {% endif %}
 {% endblock %}

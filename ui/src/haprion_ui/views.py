@@ -753,13 +753,13 @@ BLOCKED_NOTICES = {
 # What Settings says after a switch has been flipped, by `?switched=`.
 #
 SWITCHED = {
-    "cert_receivers-off": "External certificates turned off. Registered receivers still get new certificates.",
-    "cert_receivers-on": "External certificates turned on.",
+    "cert_receivers-off": "Certificates for other hosts turned off. Registered receivers still get new certificates.",
+    "cert_receivers-on": "Certificates for other hosts turned on.",
     "node_backups-off": "Node backups turned off. The clusters' schedules are being stopped; see Jobs.",
     "node_backups-on": "Node backups turned on. The schedules that were stopped are being started again.",
     "cluster_colours-off": "Cluster colours turned off.",
     "cluster_colours-on": "Cluster colours turned on.",
-    "advanced_config-off": "Advanced config turned off. Objects keep their text and it is still published.",
+    "advanced_config-off": "Advanced config turned off. Proxies keep their text and it is still published.",
     "advanced_config-on": "Advanced config turned on.",
     "update_check-off": "Update check turned off. GitHub is not asked again.",
     "update_check-on": "Update check turned on. The poller asks GitHub within a minute.",
@@ -1504,7 +1504,7 @@ def _lookup_again(
     stored = next((view for view in state.stored if view.name == name), None)
     if stored is None:
         return _refusal_page(
-            request, config, "This cluster has no object of that name.", back="/proxies"
+            request, config, "This cluster has no proxy of that name.", back="/proxies"
         )
     with request.app.state.pool.connection() as connection:
         draft = _settled_draft(connection, cluster, name, _state_reading(state))
@@ -1747,7 +1747,7 @@ def _editor_submit(
     object_id = name or typed
     if not object_id:
         return _refusal_page(
-            request, config, "An object needs a name before it can be saved.", back="/proxies"
+            request, config, "A proxy needs a name before it can be saved.", back="/proxies"
         )
     #
     # Checked where the person typed it, and not only where it is used. The rule
@@ -1760,7 +1760,7 @@ def _editor_submit(
         return _refusal_page(
             request,
             config,
-            f"{object_id} is not a usable object name - {proxy_model.name_refusal(object_id)}; "
+            f"{object_id} is not a usable proxy name - {proxy_model.name_refusal(object_id)}; "
             f"use {proxy_model.NAME_RULE}.",
             back="/proxies",
         )
@@ -1788,7 +1788,7 @@ def _editor_submit(
         return _refusal_page(
             request,
             config,
-            f"{typed} is not a usable object name - {proxy_model.name_refusal(typed)}; "
+            f"{typed} is not a usable proxy name - {proxy_model.name_refusal(typed)}; "
             f"use {proxy_model.NAME_RULE}.",
             back=_proxy_path(cluster, name, "edit"),
         )
@@ -1882,14 +1882,14 @@ def _editor_submit(
         return _refusal_page(
             request,
             config,
-            "The stored objects have not been read yet, so there is no base to edit against.",
+            "The stored proxies have not been read yet, so there is no base to edit against.",
             back=_proxy_path(cluster, object_id, "edit"),
         )
     if not name and any(view.name == object_id for view in state.stored):
         return _refusal_page(
             request,
             config,
-            "An object of that name already exists in this cluster.",
+            "A proxy of that name already exists in this cluster.",
             back=_proxy_path(cluster, "new"),
         )
     #
@@ -1913,7 +1913,7 @@ def _editor_submit(
             notice=(
                 f"{name} was changed by a publish after this page was opened, so nothing "
                 "was saved. Saving this form now replaces that change; to keep it, open the "
-                "object again."
+                "proxy again."
             ),
             answered=False,
             object_fingerprint=current,
@@ -1961,7 +1961,7 @@ def _editor_submit(
             return _refusal_page(
                 request,
                 config,
-                f"{typed} is already taken in this cluster, as an object or as a draft.",
+                f"{typed} is already taken in this cluster, as a proxy or as a draft.",
                 back=_proxy_path(cluster, name, "edit"),
             )
         if published and replaces is None:
@@ -2341,7 +2341,7 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
                     # since the row names no object (B277).
                     #
                     what=(
-                        "Changed · applies to every object on the cluster"
+                        "Changed · applies to every proxy on the cluster"
                         if kind == "settings"
                         else "Changed"
                     ),
@@ -2384,7 +2384,7 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
     stale = [row.name for row in rows if row.stale and not row.moved]
     changed = [row.name for row in rows if row.moved]
     problem = (
-        "The stored objects have not been read yet."
+        "The stored proxies have not been read yet."
         if head is None
         else f"{', '.join(changed)} {'was' if len(changed) == 1 else 'were'} changed by a "
         f"publish after the changes were saved. Open {'it' if len(changed) == 1 else 'each'} "
@@ -2396,7 +2396,7 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
         else f"{' and '.join(lagging)} {'is' if len(lagging) == 1 else 'are'} still being read "
         "at the newest version. Publish again in a minute."
         if lagging
-        else f"{len(objects)} objects; at most {changes_publish.MAX_OBJECTS} go in one publish."
+        else f"{len(objects)} proxies; at most {changes_publish.MAX_OBJECTS} go in one publish."
         if len(objects) > changes_publish.MAX_OBJECTS
         else ""
     )
@@ -2512,13 +2512,13 @@ def _removal_submit(
         return _refusal_page(
             request,
             config,
-            "The stored objects have not been read yet, so there is no base to remove from.",
+            "The stored proxies have not been read yet, so there is no base to remove from.",
             back="/proxies",
         )
     stored = next((view for view in state.stored if view.name == name), None)
     if stored is None:
         return _refusal_page(
-            request, config, "This cluster has no object of that name to remove.", back="/proxies"
+            request, config, "This cluster has no proxy of that name to remove.", back="/proxies"
         )
 
     with request.app.state.pool.connection() as connection:
@@ -3555,10 +3555,10 @@ def _advanced_submit(
         )
     draft = work.saved
     if draft is not None and draft.deleted:
-        return answer(advanced_dialog.Answer(problem="The saved changes remove this object."))
+        return answer(advanced_dialog.Answer(problem="The saved changes remove this proxy."))
     base = draft.yaml if draft is not None else (stored.document if stored is not None else "")
     if not base or state.commit is None:
-        return answer(advanced_dialog.Answer(problem="The stored objects have not been read yet."))
+        return answer(advanced_dialog.Answer(problem="The stored proxies have not been read yet."))
     try:
         document = advanced_dialog.apply(name, base, text, handwritten=handwritten)
     except (ValueError, ModelError) as exc:
@@ -3920,7 +3920,7 @@ def _waf_save(
         return f"The saved changes remove {name}."
     base = draft.yaml if draft is not None else (stored.document if stored is not None else "")
     if not base or state.commit is None:
-        return "The stored objects have not been read yet."
+        return "The stored proxies have not been read yet."
     try:
         document = change(base)
         load_proxy(name, document.encode())

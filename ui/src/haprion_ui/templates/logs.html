@@ -28,7 +28,7 @@
 </form>
 
 {#- One object, from its own page (26-10-10): said, with the way back to all of them. -#}
-{% if selected_object %}<p class="log-object-filter">Only <strong>{{ selected_object }}</strong> · <a href="{{ all_objects }}">All objects</a></p>{% endif %}
+{% if selected_object %}<p class="log-object-filter">Only <strong>{{ selected_object }}</strong> · <a href="{{ all_objects }}">All proxies</a></p>{% endif %}
 {% if reading.filter_error %}<p class="preview-notice form-problem" role="alert"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ reading.filter_error }}</strong></p>{% endif %}
 <div class="table-scroll log-table-wrap">
   <table class="node-table log-table{% if waf_page %} waf-table{% endif %}">

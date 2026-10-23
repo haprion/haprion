@@ -169,18 +169,18 @@ class DashboardView:
 
 
 #
-# The one label for "the nodes are not running the published release". Named
+# The one label for "the nodes are not running the published version". Named
 # rather than written twice, because the counters below decide what to exclude
 # by comparing against it.
 #
-BEHIND = "Not on the latest version"
+BEHIND = labels.BEHIND
 
 #
 # A node on an older version than the one published: a publish waiting for
 # its deploy, which is somebody's choice. Needs attention leaves it out; the
 # cluster card and Versions say it and offer the deploy (26-10-11).
 #
-VERSION_DRIFT = "Version drift"
+VERSION_DRIFT = labels.BEHIND
 #
 # A node, or a whole cluster, that has never had a release: nothing has failed,
 # there is nothing yet (Fas 18 finding 52). Before the first deploy a new
@@ -350,7 +350,7 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
     if haproxy.get("active") is not True:
         label, tone, detail = "HAProxy stopped", "critical", "The proxy service is not active"
     elif release.get("version") is None and release.get("hash") is None:
-        label, tone, detail = NOT_DEPLOYED, "unknown", "No release deployed yet"
+        label, tone, detail = NOT_DEPLOYED, "unknown", "No version deployed yet"
     elif keepalived.get("configured") == "missing":
         #
         # Nothing has failed: there is no configuration yet. For a cluster
@@ -378,9 +378,9 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
         part = behind_part(status, target_hash)
         label, tone = VERSION_DRIFT, "warning"
         detail = (
-            "Node is not on the target release"
+            "Node is not on the published version"
             if part in (None, BEHIND_RELEASE)
-            else f"The {part} is behind the release"
+            else f"The {part} is older than the published version"
         )
     else:
         label, tone, detail = "Online", "healthy", "Serving and reporting normally"
@@ -709,7 +709,7 @@ def _cluster_view(
     elif not nodes:
         label, tone, detail = STATUS_UNAVAILABLE, "critical", "No node returned usable status"
     elif all(node.label == NOT_DEPLOYED for node in nodes):
-        label, tone, detail = NOT_DEPLOYED, "unknown", "No release deployed yet"
+        label, tone, detail = NOT_DEPLOYED, "unknown", "No version deployed yet"
     elif vip_state in {"split_brain", "no_owner"}:
         label, tone, detail = VIP_FAULT, "critical", f"VIP state: {vip_state.replace('_', ' ')}"
     elif any(node.tone == "critical" for node in nodes):
@@ -734,7 +734,7 @@ def _cluster_view(
             label, tone, detail = (
                 BEHIND,
                 "warning",
-                f"{labels.counted(len(warned), 'node')} {'is' if len(warned) == 1 else 'are'} not running the published release",
+                f"{labels.counted(len(warned), 'node')} {'is' if len(warned) == 1 else 'are'} not running the published version",
             )
         else:
             label, tone, detail = (
@@ -743,9 +743,9 @@ def _cluster_view(
                 f"{labels.counted(len(warned), 'node')} {'reports' if len(warned) == 1 else 'report'} a warning",
             )
     elif release_state != "converged":
-        label, tone, detail = BEHIND, "warning", "Nodes are not on one target release"
+        label, tone, detail = BEHIND, "warning", "Nodes are not on the published version"
     else:
-        label, tone, detail = "Healthy", "healthy", "All nodes are serving on the target release"
+        label, tone, detail = "Healthy", "healthy", "All nodes serve the published version"
 
     if not configured:
         label, tone, detail = (

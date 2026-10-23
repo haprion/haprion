@@ -12,7 +12,7 @@
 {% if role == 'admin' %}<a href="/proxies/{{ cluster }}/{{ name }}">{{ name }}</a>{% else %}{{ name }}{% endif %}
 {%- endmacro %}
 {% macro used_by(known, names, cluster, kind, value) -%}
-{% if known is none %}<span class="table-empty">—</span>{% elif not names %}<span class="table-empty">not used</span>{% elif names | length == 1 %}{{ object_name(names[0], cluster) }}{% else %}<a href="/proxies?{{ {'cluster': cluster, kind: value} | urlencode }}">{{ names | length }} objects</a>{% endif %}
+{% if known is none %}<span class="table-empty">—</span>{% elif not names %}<span class="table-empty">not used</span>{% elif names | length == 1 %}{{ object_name(names[0], cluster) }}{% else %}<a href="/proxies?{{ {'cluster': cluster, kind: value} | urlencode }}">{{ names | length }} prox{{ 'y' if names | length == 1 else 'ies' }}</a>{% endif %}
 {%- endmacro %}
 {#
   The same watcher the dashboard and the listing use. Without it the spinner
@@ -74,7 +74,7 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">Sites name a VIP, never an IP address. Nodes carry it through keepalived.</p>
+    <p class="table-note">Proxies name a VIP, never an IP address. Nodes carry it through keepalived.</p>
 
     <h4 class="network-subhead">Source addresses</h4>
     <div class="table-scroll"><table class="node-table network-table">
@@ -87,7 +87,7 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">An extra address a site can leave from instead of its VIP's default source.</p>
+    <p class="table-note">An extra address a proxy can leave from instead of its VIP's default source.</p>
 
     <h4 class="network-subhead">Reachable-from groups</h4>
     <div class="table-scroll"><table class="node-table network-table network-table-groups">
@@ -96,11 +96,11 @@
         {% for group in cluster.groups %}
         <tr><td data-label="Name"><code>{{ group.name }}</code></td><td data-label="Members">{% for member in group.members %}<code>{{ member }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td><td data-label="Used by">{{ used_by(used, used.groups.get(group.name, ()) if used else (), cluster.cluster, 'group', group.name) }}</td></tr>
         {% else %}
-        <tr><td colspan="3" class="table-empty">None. Every site here is reachable from anywhere that can route to its VIP.</td></tr>
+        <tr><td colspan="3" class="table-empty">None. Every proxy here is reachable from anywhere that can route to its VIP.</td></tr>
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">Named client addresses a site can be restricted to.</p>
+    <p class="table-note">Named client addresses a proxy can be restricted to.</p>
 
     {% if not cluster.editable %}<p class="table-note">These tables cannot be changed from here — this cluster still keeps them in the engine's own configuration.</p>{% endif %}
 
@@ -218,7 +218,7 @@
           </tbody>
         </table></div>
       </details>
-      <p class="table-note">Sites name a VIP, never an IP address. Nodes carry it through keepalived. A default source is the address that VIP's backends connect out from.</p>
+      <p class="table-note">Proxies name a VIP, never an IP address. Nodes carry it through keepalived. A default source is the address that VIP's backends connect out from.</p>
 
       <h4 class="network-subhead">Source addresses</h4>
       <div class="table-scroll"><table class="node-table network-table editor-table">
@@ -275,7 +275,7 @@
           </tbody>
         </table></div>
       </details>
-      <p class="table-note">An extra address a site can leave from instead of its VIP's default source.</p>
+      <p class="table-note">An extra address a proxy can leave from instead of its VIP's default source.</p>
 
       <h4 class="network-subhead">Reachable-from groups</h4>
       <div class="table-scroll"><table class="node-table network-table network-table-groups editor-table">
@@ -291,7 +291,7 @@
             <td class="editor-choice editor-remove"><input type="checkbox" name="group_remove" value="{{ loop.index0 }}" aria-label="Remove group {{ group.name }}"></td>
           </tr>
           {% else %}
-          <tr><td colspan="8" class="table-empty">None. Every site here is reachable from anywhere.</td></tr>
+          <tr><td colspan="8" class="table-empty">None. Every proxy here is reachable from anywhere.</td></tr>
           {% endfor %}
         </tbody>
       </table></div>
@@ -327,7 +327,7 @@
       #}
       <hr class="editor-break">
       <div class="form-checks">
-        <label class="check"><input type="checkbox" name="default_vip_confirmation" value="on" required> I have checked the default VIP impact: {{ cluster.default_vip_object_count }} managed object{% if cluster.default_vip_object_count != 1 %}s{% endif %} follow{% if cluster.default_vip_object_count == 1 %}s{% endif %} it unless they name a VIP.</label>
+        <label class="check"><input type="checkbox" name="default_vip_confirmation" value="on" required> I have checked the default VIP impact: {{ cluster.default_vip_object_count }} prox{% if cluster.default_vip_object_count != 1 %}ies{% else %}y{% endif %} follow{% if cluster.default_vip_object_count == 1 %}s{% endif %} it unless they name a VIP.</label>
       </div>
       {#
         The note and the button on one line. They are the same thought - what a
@@ -352,7 +352,7 @@
       {% set deploying = management_writes and role == 'admin' and state and state.tone == 'warning' %}
       <div class="editor-actions editor-submit">
         {% if deploying %}
-        <p class="table-note">{% if cluster.cluster in awaiting_deploy %}These addresses are published and the nodes are not serving them yet.{% else %}The nodes are not on the current release.{% endif %} Deploy before writing another change.</p>
+        <p class="table-note">{% if cluster.cluster in awaiting_deploy %}These addresses are published and the nodes are not serving them yet.{% else %}The nodes are not on the published version.{% endif %} Deploy before writing another change.</p>
         <button class="secondary-button deploy-button" type="submit" form="deploy-{{ loop.index0 }}">Deploy configuration</button>
         {% else %}
         <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this save writes.</p>

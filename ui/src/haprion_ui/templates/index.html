@@ -39,7 +39,7 @@
     <span class="metric-icon metric-icon-{{ dashboard.release_tone }}" aria-hidden="true">
       <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"></path><path d="m17 17 2 2 3-4"></path></svg>
     </span>
-    <div><strong>{{ dashboard.converged_clusters }}<small>/{{ dashboard.configured_clusters }}</small></strong><span>Converged</span><small>Target release</small></div>
+    <div><strong>{{ dashboard.converged_clusters }}<small>/{{ dashboard.configured_clusters }}</small></strong><span>Converged</span><small>Published version</small></div>
   </article>
 </section>
 
@@ -123,14 +123,14 @@
       <div{% if figure %} title="{{ figure.title }}"{% endif %}><dt>{{ heading }}</dt><dd>{% if figure and figure.high %}<span class="status-dot status-warning"></span>{% endif %}{{ figure.shown if figure else '–' }}</dd></div>
       {% endfor %}
       {% endif %}
-      <div><dt>Target</dt><dd>{{ cluster.version }}</dd></div>
-      <div><dt>Release state</dt><dd>{{ cluster.release_state }}</dd></div>
+      <div><dt>Published version</dt><dd>{{ cluster.version }}</dd></div>
+      <div><dt>Version state</dt><dd>{{ cluster.release_state }}</dd></div>
     </dl>
 
     {% if cluster.nodes %}
     <div class="table-scroll">
       <table class="node-table">
-        <thead><tr><th>Node</th><th>Service</th><th>Failover</th><th>VIP</th><th>Release</th><th>Runtime</th></tr></thead>
+        <thead><tr><th>Node</th><th>Service</th><th>Failover</th><th>VIP</th><th>Version</th><th>Runtime</th></tr></thead>
         <tbody>
           {% for node in cluster.nodes %}
           <tr>
@@ -138,7 +138,7 @@
             <td data-label="Service"><span class="inline-status"><span class="status-dot status-{{ node.tone }}"></span>{{ node.label }}</span>{% if node.detail %}<small>{{ node.detail }}</small>{% endif %}</td>
             <td data-label="Failover">{{ node.keepalived }}</td>
             <td data-label="VIP">{{ node.vip }}</td>
-            <td data-label="Release"><span class="release-value">{{ node.version }}</span>{% if node.release_behind %}<small class="warning-text">Behind target</small>{% endif %}</td>
+            <td data-label="Version"><span class="release-value">{{ node.version }}</span>{% if node.release_behind %}<small class="warning-text">Behind</small>{% endif %}</td>
             <td data-label="Runtime">{{ node.runtime }}{% if node.runtime_note %}<small class="warning-text"{% if node.runtime_title %} title="{{ node.runtime_title }}"{% endif %}>{{ node.runtime_note }}</small>{% endif %}{% if node.stats %}<small>Stats {{ node.stats | lower }}</small>{% endif %}</td>
           </tr>
           {% endfor %}

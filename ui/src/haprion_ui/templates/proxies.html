@@ -24,14 +24,14 @@
 </section>
 
 {#- From the network page's *Used by* (26-10-11): said, with the way back to all of them. -#}
-{% if used %}<p class="log-object-filter">Only objects using {{ used.label }} <strong>{{ used.value }}</strong> · <a href="/proxies">All objects</a></p>{% endif %}
+{% if used %}<p class="log-object-filter">Only proxies using {{ used.label }} <strong>{{ used.value }}</strong> · <a href="/proxies">All proxies</a></p>{% endif %}
 
 <div class="cluster-list proxy-cluster-list">
 {% for cluster in proxies.clusters %}
   <article class="cluster-card proxy-cluster-card {{ cluster.accent | accent_class }}">
     <header class="cluster-header">
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
-      <div class="cluster-state">{% if management_writes and role == 'admin' %}<a class="secondary-button" href="/proxies/{{ cluster.cluster }}/new">New object</a>{% endif %}{% if cluster.label %}<span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% endif %}{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at | shown_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+      <div class="cluster-state">{% if management_writes and role == 'admin' %}<a class="secondary-button" href="/proxies/{{ cluster.cluster }}/new">New proxy</a>{% endif %}{% if cluster.label %}<span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% endif %}{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at | shown_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
     {% set unpublished = (drafts.get(cluster.cluster, ()) if drafts else ()) if role == 'admin' else () %}
     {% set queued = (publishing.get(cluster.cluster, ()) if publishing else ()) %}

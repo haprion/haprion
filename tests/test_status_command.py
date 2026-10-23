@@ -792,7 +792,7 @@ class CallerTests(HelperFixture):
         )
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
         self.assertIn("HAProxy ver:  3.4.6-1\n", out)
-        self.assertIn("HAProxy ver:  3.4.4-1  (Behind 3.4.6)", out)
+        self.assertIn("HAProxy ver:  3.4.4-1  (Older than 3.4.6)", out)
         self.assertIn("Validator:      3.4.4-1 (this host)", out)
 
     def test_the_waf_engine_is_read_against_whether_the_release_has_rules(self) -> None:

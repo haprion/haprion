@@ -70,7 +70,7 @@ class EachKindComesAndGoes(unittest.TestCase):
                 cluster("alpha", nodes=(node("node-a", "critical"), node("node-b", "healthy"))),
                 cluster("beta", stale=True, age_label="9 min ago"),
             ],
-            drift_label="Version drift",
+            drift_label="Behind",
         )
 
         self.assertEqual(
@@ -84,12 +84,12 @@ class EachKindComesAndGoes(unittest.TestCase):
                 cluster(
                     behind=True,
                     nodes=(
-                        node("node-a", "warning", "Version drift"),
-                        node("node-b", "warning", "Version drift"),
+                        node("node-a", "warning", "Behind"),
+                        node("node-b", "warning", "Behind"),
                     ),
                 )
             ],
-            drift_label="Version drift",
+            drift_label="Behind",
         )
 
         self.assertEqual(items, [])
@@ -430,7 +430,7 @@ class AServiceThatIsNotServed(unittest.TestCase):
                     "held": self.lamp(
                         "warning", health.HELD_LABEL, "Every server is drained or in maintenance"
                     ),
-                    "unchecked": self.lamp("unknown", "", "This object defines no health check"),
+                    "unchecked": self.lamp("unknown", "", "This proxy defines no health check"),
                 }
             },
             held_label=health.HELD_LABEL,

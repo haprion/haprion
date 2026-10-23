@@ -62,7 +62,7 @@
       {% else %}
       <li>Each node of a removed cluster is asked to drop its copy. No reload: a file nothing names is not loaded. A node that cannot be reached keeps it and says so; running the removal again asks it again.</li>
       {% if feature_on('cert_receivers') %}<li>A removed receiver stops receiving new versions and its pair on the manager is removed; what the receiver host already fetched stays there. A receiver another certificate also publishes to keeps its pair.</li>{% endif %}
-      <li>The job refuses a certificate a published object in that cluster still names, that is the cluster's default, or that is the last one the cluster has — and says why on its row. The others go through.</li>
+      <li>The job refuses a certificate a published proxy in that cluster still names, that is the cluster's default, or that is the last one the cluster has — and says why on its row. The others go through.</li>
       {% endif %}
     </ul>
     {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish first.</p>{% endif %}

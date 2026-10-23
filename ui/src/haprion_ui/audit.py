@@ -43,7 +43,7 @@ OPERATION_NAMES: Mapping[str, str] = {
     "revert": "a revert",
     "network_publish": "an address publish",
     "cluster_settings_publish": "a settings publish",
-    "objects_publish": "an object publish",
+    "objects_publish": "a proxy publish",
     "changes_publish": "Publish & deploy",
     "cert_issue": "a certificate issue",
     "cert_import": "a certificate import",
@@ -97,7 +97,7 @@ def _saved(detail: Mapping[str, Any], verb: str) -> str:
         return f"{verb} the network description"
     if kind == "settings":
         return f"{verb} the logs & metrics settings"
-    name = _text(detail, "object", "an object")
+    name = _text(detail, "object", "a proxy")
     if detail.get("removed") is True:
         return f"{verb} the removal of {name}"
     return f"{verb} {name}"
@@ -138,10 +138,8 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "queue_job": _queued,
     "save_change": lambda detail: _saved(detail, "Saved"),
     "discard_change": lambda detail: _saved(detail, "Discarded the saved"),
-    "save_draft": lambda detail: f"Saved a draft of {_text(detail, 'object', 'an object')}",
-    "discard_draft": lambda detail: (
-        f"Discarded the draft of {_text(detail, 'object', 'an object')}"
-    ),
+    "save_draft": lambda detail: f"Saved a draft of {_text(detail, 'object', 'a proxy')}",
+    "discard_draft": lambda detail: f"Discarded the draft of {_text(detail, 'object', 'a proxy')}",
     "account_created": lambda detail: f"Created the account {_account(detail)}",
     "account_deleted": lambda detail: f"Deleted the account {_account(detail)}",
     "account_disabled": lambda detail: f"Disabled the account {_account(detail)}",

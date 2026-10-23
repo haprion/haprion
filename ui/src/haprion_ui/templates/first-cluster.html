@@ -73,7 +73,7 @@
   </form>
   {% else %}
   <div class="guide-body"><div class="guide-joined"><span class="status-badge status-badge-healthy">Serving</span><strong>{{ guide.vip or 'the VIP' }}</strong><span>on {{ guide.owner }}{% for node in guide.standby %} · {{ node }} standing by{% endfor %}</span></div></div>
-  <div class="editor-actions editor-submit"><div class="form-buttons"><a class="secondary-button" href="/">Go to dashboard</a><a class="secondary-button" href="/proxies/{{ guide.cluster }}/new">Create your first site</a></div></div>
+  <div class="editor-actions editor-submit"><div class="form-buttons"><a class="secondary-button" href="/">Go to dashboard</a><a class="secondary-button" href="/proxies/{{ guide.cluster }}/new">Create your first proxy</a></div></div>
   {% endif %}
 </section>
 </div>

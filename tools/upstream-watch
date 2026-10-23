@@ -6,6 +6,7 @@
     tools/upstream-watch due --base <tree> --head <tree> [--vulnerable]
     tools/upstream-watch vuln --source <tree> --cache <dir>
     tools/upstream-watch ran --repository <owner/name>
+    tools/upstream-watch locks --source <tree> [--apply] [--report <file>]
 
 Four pins, all in the tree: the Coraza SPOA engine (a commit), the OWASP Core
 Rule Set (an LTS release), the Go that compiles the engine, and the
@@ -23,6 +24,13 @@ is two days. `vuln` runs govulncheck on the pinned engine as the build does,
 and exits 3 when it finds something. `ran` asks whether the nightly run still
 happens: GitHub's schedule is best effort and drops a run without a trace, so a
 watch that has stopped would otherwise say nothing at all.
+
+`locks` is the same watch over the Python locks (B353): `uv audit` on each of
+`uv.lock`, `ui/uv.lock` and `certbot/uv.lock`, and with `--apply` a
+`uv lock --upgrade-package` for every package an advisory names a fixed version
+for. A package the upgrade does not clear - no fix yet, or one the project's
+own constraints keep out - is reported as held, for a person. An advisory
+failed every pull request until somebody moved the lock (PR #4, 26-10-23).
 
 What counts as major, by component:
     coraza       0.x: a 0.y step (an 0.x minor may break); then semver
@@ -44,6 +52,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import urllib.request
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass
@@ -613,6 +622,100 @@ def ran(workflow: dict[str, Any], newest: dict[str, Any] | None, now: datetime) 
     return True, what
 
 
+#
+# The projects whose locks the gate audits (run-tests), in the order it does.
+#
+LOCKED_PROJECTS = (".", "ui", "certbot")
+UV_AUDIT = (
+    "uv",
+    "audit",
+    "--locked",
+    "--preview-features",
+    "audit-command,json-output",
+    "--output-format",
+    "json",
+)
+Run = Callable[..., subprocess.CompletedProcess[str]]
+
+
+@dataclass(frozen=True)
+class Advisory:
+    project: str
+    package: str
+    version: str
+    advisory: str
+    fixed: tuple[str, ...]
+
+
+def audit(tree: Path, project: str, run: Run = subprocess.run) -> list[Advisory]:
+    """What `uv audit` reports for one project's lock: 0 is clean, 1 is findings, else it failed."""
+
+    done = run(  # fixed tool and arguments
+        list(UV_AUDIT), cwd=tree / project, capture_output=True, text=True, check=False
+    )
+    if done.returncode not in (0, 1):
+        raise WatchError(f"uv audit in {project} exited {done.returncode}: {done.stderr.strip()}")
+    try:
+        found = json.loads(done.stdout)["vulnerabilities"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise WatchError(
+            f"uv audit in {project} answered something that is not its report"
+        ) from exc
+    return [
+        Advisory(
+            project=project,
+            package=entry["dependency"]["name"],
+            version=entry["dependency"]["version"],
+            advisory=entry["id"],
+            fixed=tuple(entry.get("fix_versions") or ()),
+        )
+        for entry in found
+    ]
+
+
+def locked_versions(lock: Path, package: str) -> list[str]:
+    entries = tomllib.loads(lock.read_text(encoding="utf-8")).get("package", [])
+    return sorted({entry["version"] for entry in entries if entry.get("name") == package})
+
+
+def locks(tree: Path, *, apply: bool, run: Run = subprocess.run) -> dict[str, Any]:
+    """Each lock's advisories, and with `apply` the upgrades that clear them.
+
+    `updated` lists what an upgrade cleared, with the version it now locks;
+    `held` what is still found after it - no fixed version, or one the
+    project's constraints exclude - and is a person's to decide.
+    """
+
+    updated: list[dict[str, Any]] = []
+    held: list[dict[str, Any]] = []
+    for project in LOCKED_PROJECTS:
+        found = audit(tree, project, run)
+        fixable = sorted({entry.package for entry in found if entry.fixed})
+        if apply and fixable:
+            upgrades = [option for package in fixable for option in ("--upgrade-package", package)]
+            run(  # fixed tool, package names from uv's own report
+                ["uv", "lock", *upgrades],
+                cwd=tree / project,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        remaining = (
+            {(entry.package, entry.advisory) for entry in audit(tree, project, run)}
+            if apply
+            else None
+        )
+        for entry in found:
+            row = {**asdict(entry), "fixed": list(entry.fixed)}
+            if remaining is not None and (entry.package, entry.advisory) not in remaining:
+                updated.append(
+                    {**row, "locked": locked_versions(tree / project / "uv.lock", entry.package)}
+                )
+            else:
+                held.append(row)
+    return {"updated": updated, "held": held}
+
+
 def remove(tree: Path) -> None:
     """The whole tree, Go's module cache in it included.
 
@@ -699,6 +802,10 @@ def main() -> int:
     vulning.add_argument("--cache", type=Path, required=True)
     running = commands.add_parser("ran", help="whether the schedule still runs the watch")
     running.add_argument("--repository", required=True, help="owner/name")
+    locking = commands.add_parser("locks", help="the Python locks against today's advisories")
+    locking.add_argument("--source", type=Path, required=True)
+    locking.add_argument("--apply", action="store_true", help="upgrade what a fix exists for")
+    locking.add_argument("--report", type=Path, help="write the result as JSON here too")
     args = parser.parse_args()
     upstream = Upstream(os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
     try:
@@ -720,6 +827,13 @@ def main() -> int:
             )
             print(reason)
             return 0 if ready else 1
+        if args.command == "locks":
+            result = locks(args.source, apply=args.apply)
+            text = json.dumps(result, indent=2)
+            print(text)
+            if args.report:
+                args.report.write_text(text + "\n", encoding="utf-8")
+            return 0
         if args.command == "ran":
             path = f"repos/{args.repository}/actions/workflows/{WORKFLOW}"
             runs = upstream.github(f"{path}/runs?event=schedule&per_page=1")["workflow_runs"]

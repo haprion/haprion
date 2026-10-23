@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import io
+import json
 import re
 import shutil
 import subprocess
@@ -619,6 +620,162 @@ class TheWorkflow(unittest.TestCase):
                     with self.subTest(workflow=path.name, job=name, step=step.get("name")):
                         if "set +e" not in script:
                             self.assertIsNone(alone.search(script))
+
+
+def audit_answer(*found: tuple[str, str, str, list[str]]) -> str:
+    """`uv audit --output-format json` as uv 0.12.5 writes it (measured 26-10-23)."""
+
+    return json.dumps(
+        {
+            "schema": {"version": "preview"},
+            "summary": {
+                "audited_packages": 10,
+                "vulnerabilities": len(found),
+                "adverse_statuses": 0,
+            },
+            "vulnerabilities": [
+                {
+                    "dependency": {"name": name, "version": version},
+                    "id": advisory,
+                    "fix_versions": fixed,
+                }
+                for name, version, advisory, fixed in found
+            ],
+            "adverse_statuses": [],
+        }
+    )
+
+
+class FakeUv:
+    """Audits answer from a script per project; `uv lock` writes the upgraded version."""
+
+    def __init__(self, tree: Path, audits: dict[str, list[str]], upgrade: dict[str, str]) -> None:
+        self.tree = tree
+        self.audits = {project: list(answers) for project, answers in audits.items()}
+        self.upgrade = upgrade
+        self.locked: list[tuple[str, list[str]]] = []
+
+    def __call__(self, argv: list[str], *, cwd: Path, **_: Any) -> subprocess.CompletedProcess[str]:
+        project = str(Path(cwd).relative_to(self.tree)) or "."
+        if argv[:2] == ["uv", "audit"]:
+            answer = self.audits[project].pop(0)
+            return subprocess.CompletedProcess(argv, 1 if '"id"' in answer else 0, answer, "")
+        self.locked.append((project, argv[2:]))
+        lock = Path(cwd) / "uv.lock"
+        for package, version in self.upgrade.items():
+            lock.write_text(
+                lock.read_text().replace(
+                    f'name = "{package}"\nversion = "1.0"',
+                    f'name = "{package}"\nversion = "{version}"',
+                )
+            )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+class TheLocks(unittest.TestCase):
+    """B353: an advisory in a Python lock is fixed by the watch, not by whoever notices."""
+
+    def tree(self) -> Path:
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        for project in WATCH.LOCKED_PROJECTS:
+            (root / project).mkdir(exist_ok=True)
+            (root / project / "uv.lock").write_text(
+                'version = 1\n\n[[package]]\nname = "otel-api"\nversion = "1.0"\n'
+            )
+        return root
+
+    def test_a_fixed_advisory_is_upgraded_and_said(self) -> None:
+        root = self.tree()
+        clean = audit_answer()
+        found = audit_answer(("otel-api", "1.0", "GHSA-xxxx", ["1.1"]))
+        uv = FakeUv(
+            root,
+            {".": [clean, clean], "ui": [clean, clean], "certbot": [found, clean]},
+            {"otel-api": "1.1"},
+        )
+
+        result = WATCH.locks(root, apply=True, run=uv)
+
+        self.assertEqual(uv.locked, [("certbot", ["--upgrade-package", "otel-api"])])
+        self.assertEqual(result["held"], [])
+        (updated,) = result["updated"]
+        self.assertEqual(
+            (updated["project"], updated["package"], updated["version"], updated["locked"]),
+            ("certbot", "otel-api", "1.0", ["1.1"]),
+        )
+
+    def test_one_with_no_fix_or_one_the_upgrade_does_not_clear_is_held(self) -> None:
+        root = self.tree()
+        clean = audit_answer()
+        unfixed = audit_answer(("otel-api", "1.0", "GHSA-none", []))
+        kept = audit_answer(("otel-api", "1.0", "GHSA-kept", ["2.0"]))
+        uv = FakeUv(
+            root, {".": [unfixed, unfixed], "ui": [kept, kept], "certbot": [clean, clean]}, {}
+        )
+
+        result = WATCH.locks(root, apply=True, run=uv)
+
+        self.assertEqual(uv.locked, [("ui", ["--upgrade-package", "otel-api"])])
+        self.assertEqual(result["updated"], [])
+        self.assertEqual(
+            [entry["advisory"] for entry in result["held"]], ["GHSA-none", "GHSA-kept"]
+        )
+
+    def test_without_apply_nothing_is_written(self) -> None:
+        root = self.tree()
+        found = audit_answer(("otel-api", "1.0", "GHSA-xxxx", ["1.1"]))
+        uv = FakeUv(root, {".": [found], "ui": [audit_answer()], "certbot": [audit_answer()]}, {})
+
+        result = WATCH.locks(root, apply=False, run=uv)
+
+        self.assertEqual(uv.locked, [])
+        self.assertEqual([entry["advisory"] for entry in result["held"]], ["GHSA-xxxx"])
+
+    def test_an_audit_that_failed_is_not_a_clean_lock(self) -> None:
+        root = self.tree()
+        for code, answer in ((2, "error: no network"), (1, "not json")):
+            with self.subTest(code=code):
+
+                def run(
+                    argv: list[str], *, code: int = code, answer: str = answer, **_: Any
+                ) -> subprocess.CompletedProcess[str]:
+                    return subprocess.CompletedProcess(argv, code, answer, "boom")
+
+                with self.assertRaises(WATCH.WatchError):
+                    WATCH.locks(root, apply=True, run=run)
+
+    def test_the_watch_audits_every_lock_the_gate_audits(self) -> None:
+        gate = (BASE / "run-tests").read_text()
+        audited = {"."} | set(re.findall(r'cd "\$base/(\w+)" && uv audit --locked', gate))
+        self.assertEqual(audited, set(WATCH.LOCKED_PROJECTS))
+        for project in WATCH.LOCKED_PROJECTS:
+            self.assertTrue((BASE / project / "uv.lock").is_file(), project)
+
+    def test_the_locks_proposal_waits_for_jobs_that_run_on_its_branch(self) -> None:
+        workflows = BASE / ".github" / "workflows"
+        watch = yaml.safe_load((workflows / "upstream-watch.yml").read_text())
+        branch = watch["env"]["LOCKS_BRANCH"]
+        (step,) = [
+            s for s in watch["jobs"]["merge-locks"]["steps"] if "REQUIRED" in s.get("env", {})
+        ]
+        required = [line for line in step["env"]["REQUIRED"].splitlines() if line.strip()]
+        ci = yaml.safe_load((workflows / "ci.yml").read_text())
+        for job in ci["jobs"].values():
+            if job.get("name") in required and "head_ref" in str(job.get("if", "")):
+                with self.subTest(job=job["name"]):
+                    self.assertIn(f"'{branch}'", job["if"])
+        names = {job.get("name") for job in ci["jobs"].values()}
+        for name in required:
+            self.assertIn(name, names)
+        uv = [
+            step["with"]["version"]
+            for path in (workflows / "ci.yml", workflows / "upstream-watch.yml")
+            for job in yaml.safe_load(path.read_text())["jobs"].values()
+            for step in job.get("steps", [])
+            if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+        ]
+        self.assertEqual(len(set(uv)), 1, uv)
 
 
 if __name__ == "__main__":

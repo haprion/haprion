@@ -230,6 +230,13 @@ release), the Go that compiles the engine and the govulncheck that reads it. Eve
    (two when the pinned engine reaches a vulnerability and the proposal is the engine side only), and
    it is not labelled `hold`. The label `no-cooldown` lifts the wait; nothing lifts the major rule.
    The merge on `main` builds and publishes the engine and the rules (`apt-repo.yml`)
+4. audits the three Python locks the gate audits - `uv.lock`, `ui/uv.lock` and `certbot/uv.lock` -
+   with `uv audit` against OSV (`tools/upstream-watch locks`), and upgrades in its lock every package
+   an advisory names a fixed version for (`uv lock --upgrade-package`), on the branch
+   `dependency-watch` with one pull request open for it. That pull request is merged once the gates
+   and the installation test passed on it, with no wait, unless it is labelled `hold`. An advisory
+   no upgrade clears - no fixed version yet, or one the project's own constraints keep out - opens
+   an issue; until the lock moves, the gate fails on it on every pull request
 
 What counts as major: for the engine a `0.y` step, for the rule set a new LTS line, for Go a new
 line, for govulncheck a new major version.

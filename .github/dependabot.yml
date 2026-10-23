@@ -1,7 +1,8 @@
 version: 2
 updates:
   # The workflow pins its actions by commit SHA; this keeps those pins current.
-  # Python dependencies are left to Dependabot alerts and pip-audit in the gate.
+  # Python dependencies are the upstream watch's (B353): it audits the three locks
+  # as the gate does, against OSV, and proposes the upgrades an advisory names.
   - package-ecosystem: github-actions
     directory: /
     schedule:

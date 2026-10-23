@@ -13,6 +13,12 @@ name: upstream watch
 #                    upstream releases are old enough and nobody put `hold` on
 #                    it; the merge on main then builds and publishes the engine
 #                    and the rules (apt-repo.yml)
+#   locks            the Python locks against today's advisories (B353): every
+#                    package an advisory names a fix for is upgraded on the
+#                    branch `dependency-watch`, in a pull request of its own that
+#                    goes in once every check passed, with no wait - an advisory
+#                    otherwise failed every pull request until somebody moved the
+#                    lock; one that no upgrade clears is an issue for a person
 #
 # Everything that writes is done as the GitHub App, not with the workflow's own
 # token: a pull request that token opens runs no checks, and a merge it makes
@@ -33,6 +39,8 @@ env:
   BRANCH: upstream-watch
   VULNERABLE_TITLE: "The pinned WAF engine reaches a known vulnerability"
   MAJOR_TITLE: "Major upstream updates of the WAF packages need a decision"
+  LOCKS_BRANCH: dependency-watch
+  HELD_TITLE: "A locked dependency has a known vulnerability no upgrade clears"
 
 jobs:
   vulnerabilities:
@@ -312,3 +320,190 @@ jobs:
             exit 0
           fi
           gh pr merge "${number}" --merge --match-head-commit "${head}" --delete-branch
+
+  locks:
+    name: Propose the locked dependencies' security fixes
+    if: github.repository == 'haprion/haprion'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    environment: upstream-watch
+    permissions:
+      contents: read
+      actions: write # run a proposal's failed checks again
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the proposal's branch
+          permission-pull-requests: write # its pull request
+          permission-issues: write # an advisory no upgrade clears
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The uv the gate audits with; no cache in a job that writes.
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          enable-cache: false
+
+      - name: Upgrade what an advisory names a fix for
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/upstream-watch locks --source . --apply --report "${RUNNER_TEMP}/locks.json"
+
+      - name: Report an advisory no upgrade clears, or close the report
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/locks.json"
+          open=$(gh issue list --state open --search "in:title \"${HELD_TITLE}\"" \
+            --json number,title --jq "map(select(.title == env.HELD_TITLE))[0].number // empty")
+          if [[ "$(jq '.held | length' "${report}")" -gt 0 ]]; then
+            body="${RUNNER_TEMP}/held.md"
+            { echo "The lock keeps these after an upgrade: no fixed version yet, or one the project's"
+              echo "own constraints keep out. The gate fails on them until the lock moves."
+              echo; echo "| Lock | Package | Locked | Advisory | Fixed in |"; echo "|---|---|---|---|---|"
+              jq -r '.held[] | "| \(.project)/uv.lock | \(.package) | \(.version) | \(.advisory) | \(.fixed | join(", ")) |"' "${report}"
+            } > "${body}"
+            if [[ -n "${open}" ]]; then
+              gh issue edit "${open}" --body-file "${body}"
+            else
+              gh issue create --title "${HELD_TITLE}" --body-file "${body}" \
+                ${NOTIFY:+--assignee "${NOTIFY}"}
+            fi
+          elif [[ -n "${open}" ]]; then
+            gh issue close "${open}" --comment "Every advisory in the locks is cleared."
+          fi
+
+      - name: Keep the proposal's pull request
+        id: proposal
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/locks.json"
+          open=$(gh pr list --head "${LOCKS_BRANCH}" --state open --json number --jq '.[0].number // empty')
+          if git diff --quiet; then
+            if [[ -n "${open}" ]]; then
+              gh pr close "${open}" --delete-branch --comment "No lock on main has an advisory an upgrade clears."
+            fi
+            exit 0
+          fi
+          user_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git -c user.name="${APP_SLUG}[bot]" \
+              -c user.email="${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" \
+              commit --quiet --all --message "Update the locked dependencies with known vulnerabilities"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          remote="https://github.com/${REPOSITORY}.git"
+          if git -c http.extraheader="${auth}" fetch --quiet "${remote}" "${LOCKS_BRANCH}" 2>/dev/null \
+              && [[ "$(git rev-parse 'FETCH_HEAD^{tree}')" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
+            echo "the branch already holds this proposal"
+            echo "unchanged=true" >> "${GITHUB_OUTPUT}"
+          else
+            git -c http.extraheader="${auth}" push --quiet --force "${remote}" "HEAD:refs/heads/${LOCKS_BRANCH}"
+          fi
+          body="${RUNNER_TEMP}/pr.md"
+          { echo "Proposed by the upstream watch (B353): each package a known advisory names a fix"
+            echo "for, upgraded in its lock. Merged by itself once every check passed, with no wait."
+            echo "Label \`hold\` to stop it."
+            echo; echo "| Lock | Package | Was | Now | Advisory |"; echo "|---|---|---|---|---|"
+            jq -r '.updated[] | "| \(.project)/uv.lock | \(.package) | \(.version) | \(.locked | join(", ")) | \(.advisory) |"' "${report}"
+          } > "${body}"
+          if [[ -n "${open}" ]]; then
+            gh pr edit "${open}" --body-file "${body}"
+          else
+            gh pr create --head "${LOCKS_BRANCH}" --base main \
+              --title "Update the locked dependencies with known vulnerabilities" --body-file "${body}" \
+              ${NOTIFY:+--assignee "${NOTIFY}"}
+          fi
+
+      - name: Run the proposal's failed checks again
+        if: steps.proposal.outputs.unchanged == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/${REPOSITORY}/branches/${LOCKS_BRANCH}" --jq .commit.sha)
+          for run in $(gh api "repos/${REPOSITORY}/actions/runs?head_sha=${head}&status=failure" \
+              --jq '.workflow_runs[].id'); do
+            echo "running the failed jobs of ${run} again"
+            gh api --method POST "repos/${REPOSITORY}/actions/runs/${run}/rerun-failed-jobs"
+          done
+
+  merge-locks:
+    name: Merge the locks' proposal when every check passed
+    needs: [locks]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment: upstream-watch
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the merge writes main
+          permission-pull-requests: write # and closes the pull request
+          permission-checks: read # whether every check passed
+
+      # As the WAF proposal: every check run and passed on the head being
+      # merged, the named ones among them. A security fix has no wait.
+      - name: Merge when every check passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          REQUIRED: |
+            Source, quality, and security gates
+            Installation test
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --repo "${REPOSITORY}" --head "${LOCKS_BRANCH}" --state open \
+            --json number,headRefOid,labels --jq '.[0] // empty')
+          if [[ -z "${pr}" ]]; then
+            echo "no proposal is open"
+            exit 0
+          fi
+          number=$(jq -r .number <<<"${pr}")
+          head=$(jq -r .headRefOid <<<"${pr}")
+          labels=$(jq -r '[.labels[].name] | join(" ")' <<<"${pr}")
+          if [[ " ${labels} " == *" hold "* ]]; then
+            echo "#${number} is on hold"
+            exit 0
+          fi
+          checks=$(gh pr checks "${number}" --repo "${REPOSITORY}" --json name,bucket || true)
+          if jq -e 'any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
+            echo "#${number}: not every check has passed"
+            jq -r '.[] | "  \(.bucket)  \(.name)"' <<<"${checks}"
+            exit 0
+          fi
+          while IFS= read -r name; do
+            [[ -z "${name}" ]] && continue
+            if ! jq -e --arg name "${name}" 'any(.[]; .name == $name and .bucket == "pass")' <<<"${checks}" >/dev/null; then
+              echo "#${number}: '${name}' has not passed"
+              exit 0
+            fi
+          done <<<"${REQUIRED}"
+          gh pr merge "${number}" --repo "${REPOSITORY}" --merge --match-head-commit "${head}" --delete-branch
+

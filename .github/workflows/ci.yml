@@ -210,7 +210,8 @@ jobs:
     name: Installation test
     if: >-
       github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && github.head_ref == 'upstream-watch')
+      || (github.event_name == 'pull_request'
+          && (github.head_ref == 'upstream-watch' || github.head_ref == 'dependency-watch'))
     runs-on: ubuntu-26.04
     timeout-minutes: 60
 

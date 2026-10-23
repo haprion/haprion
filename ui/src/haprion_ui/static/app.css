@@ -1520,6 +1520,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .form-grid > .form-checks .check { flex-direction: row; }
 .form-grid > .form-checks .check input { flex: none; padding: 0; }
 .preview-form .form-grid > .form-checks .warning-text { margin: 0; }
+.preview-form .form-grid .field > .warning-text { margin: 0; }
+.warning-mark { width: 13px; height: 13px; margin-right: 5px; vertical-align: -2px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
 /* A checkbox that needs a sentence under it rather than beside it. The row
    stacks instead of running along, so the note belongs to the box above it and
    not to whatever the flex row wrapped next. */

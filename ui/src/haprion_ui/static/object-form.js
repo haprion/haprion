@@ -95,6 +95,27 @@
   };
 
   //
+  // A dns listener nobody narrowed answers anyone who reaches it (B357): said
+  // under the field, while it is so, and nothing is refused.
+  //
+  const wireOpenDns = () => {
+    const protocol = document.querySelector("select[name='protocol']");
+    const groups = document.querySelector("select[name='allow_from']");
+    const ranges = document.querySelector("textarea[name='allow_ranges']");
+    const note = document.querySelector("[data-open-dns-note]");
+    if (!protocol || !groups || !ranges || !note) return;
+    const apply = () => {
+      const narrowed =
+        Array.from(groups.selectedOptions).some((option) => option.value) ||
+        ranges.value.trim() !== "";
+      note.hidden = protocol.value !== "dns" || narrowed;
+    };
+    for (const field of [protocol, groups]) field.addEventListener("change", apply);
+    ranges.addEventListener("input", apply);
+    apply();
+  };
+
+  //
   // The balancing key has nothing to name unless the algorithm hashes
   // something: `hdr` takes a header, `url_param` a query parameter, and the
   // engine refuses a key beside any other algorithm rather than ignoring it.
@@ -545,6 +566,7 @@
     wireBalanceKey();
     wireBackendTlsPolicy();
     wireProxyProtocol();
+    wireOpenDns();
     wireListenTlsPolicy();
     wireRedirectStatus();
     keepPosition();

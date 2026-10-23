@@ -141,6 +141,8 @@
           </select>
         </label>
         <small>Defined on the <a href="/network">Network</a> page.</small>
+        {# B357: said, not stopped - a dns listener open to everyone may be the intent. #}
+        <small class="warning-text" data-open-dns-note hidden><svg class="warning-mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 15 14.2H1z"></path><path d="M8 6.2v3.9M8 12v.1"></path></svg>Answers DNS queries from anywhere.</small>
       </div>
       <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>
       <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address; new connections for TCP.</small></label>

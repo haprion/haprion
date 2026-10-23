@@ -83,7 +83,11 @@ jobs:
     needs: vulnerabilities
     runs-on: ubuntu-26.04
     timeout-minutes: 30
-    environment: upstream-watch
+    # The app's key is this environment's secret. Not a deployment: every run
+    # would otherwise be one, on the repository's front page.
+    environment:
+      name: upstream-watch
+      deployment: false
     permissions:
       contents: read
       actions: write # run a proposal's failed checks again
@@ -251,7 +255,11 @@ jobs:
     if: github.repository == 'haprion/haprion'
     runs-on: ubuntu-26.04
     timeout-minutes: 20
-    environment: upstream-watch
+    # The app's key is this environment's secret. Not a deployment: every run
+    # would otherwise be one, on the repository's front page.
+    environment:
+      name: upstream-watch
+      deployment: false
     permissions:
       contents: read
       actions: write # run a proposal's failed checks again

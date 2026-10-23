@@ -307,6 +307,17 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertIn("A comment is needed", answer.text)
         self.assertEqual(self.queued, [])
 
+    def test_a_comment_with_a_line_separator_is_refused_before_a_job(self) -> None:
+        """1A-4: the helper refuses it; the form says so before anything is queued."""
+
+        self.rows = [row()]
+
+        answer = self.publish(self.editor(), comment="Move the shop\u2028and its pool")
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertIn("line separators", answer.text)
+        self.assertEqual(self.queued, [])
+
     def test_a_page_drawn_at_an_older_version_is_read_again(self) -> None:
         self.rows = [row()]
 

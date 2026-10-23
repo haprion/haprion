@@ -44,7 +44,7 @@ def installed(root: Path = ROOT) -> RuleSet | None:
     if not root.exists():
         return None
     version = _read(root / "VERSION").decode("ascii", "replace").strip()
-    if not VERSION.match(version):
+    if not VERSION.fullmatch(version):
         raise RuleSetError(f"{root}/VERSION does not name a version")
     files = {
         "VERSION": f"{version}\n".encode(),
@@ -65,7 +65,7 @@ def installed(root: Path = ROOT) -> RuleSet | None:
         #
         if name.endswith(".example"):
             continue
-        if not RULE_FILE.match(name):
+        if not RULE_FILE.fullmatch(name):
             raise RuleSetError(f"{rules}/{name} is not a rule file")
         files[f"rules/{name}"] = _read(rules / name)
     if not any(name.endswith(".conf") for name in names):
@@ -386,7 +386,7 @@ def manager_versions(root: Path = ROOT, dpkg_query: str = DPKG_QUERY) -> dict[st
     rules = None
     try:
         found = _read(root / "VERSION").decode("ascii", "replace").strip()
-        rules = found if VERSION.match(found) else None
+        rules = found if VERSION.fullmatch(found) else None
     except RuleSetError:
         rules = None
     return {"engine": engine, "crs": rules}

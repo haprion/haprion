@@ -171,9 +171,11 @@ def wildcard_expression(pattern: str) -> str:
 #
 # A path prefix as a route matches on. Absolute, no query, no wildcards: the
 # matching rules are about segments, and a pattern language here would make the
-# frozen semantics ambiguous before the first golden file exists.
+# frozen semantics ambiguous before the first golden file exists. No `'`: the
+# configuration's parser reads it as a quote, so `/a'b'c` matched `/abc`
+# (review 2026-10-22, 1A-7, measured on HAProxy 3.4.7).
 #
-ROUTE_PATH = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
+ROUTE_PATH = re.compile(r"^/[A-Za-z0-9._~!$&()*+,;=:@%/-]*$")
 
 #
 # `dns` is served by dnsdist rather than HAProxy (Fas 19, B249): community
@@ -1248,7 +1250,7 @@ def _optional_prefix(value: Mapping[str, Any], key: str, location: str) -> str |
     raw = value.get(key)
     if raw is None:
         return None
-    if not isinstance(raw, str) or not ROUTE_PATH.match(raw) or raw == "/":
+    if not isinstance(raw, str) or not ROUTE_PATH.fullmatch(raw) or raw == "/":
         raise ModelError(f"{location}.{key} must be an absolute path below /")
     return raw.rstrip("/") or None
 
@@ -1274,7 +1276,7 @@ def _server(value: Any, location: str) -> Server:
     # names, and the node refused it at the deploy (Fas 18, finding 82). A
     # name in any case: DNS does not tell them apart.
     #
-    if not _is_address(host) and not HOSTNAME.match(host.lower()):
+    if not _is_address(host) and not HOSTNAME.fullmatch(host.lower()):
         raise ModelError(f"{location}.host must be an IP address or a host name, not {host!r}")
     port = data.get("port")
     #
@@ -1350,7 +1352,7 @@ def _health(value: Any, location: str) -> Health:
             raise ModelError(f"{location}.{key} means nothing for a {kind} health check")
 
     interval = data.get("interval", DEFAULT_INTERVAL)
-    if not isinstance(interval, str) or not DURATION.match(interval):
+    if not isinstance(interval, str) or not DURATION.fullmatch(interval):
         raise ModelError(f"{location}.interval must be a duration such as 5s or 500ms")
     fast_interval = _duration(data, "fast_interval", location)
     down_interval = _duration(data, "down_interval", location)
@@ -1379,13 +1381,13 @@ def _health(value: Any, location: str) -> Health:
 
     if kind == "http":
         path = data.get("path")
-        if not isinstance(path, str) or not ROUTE_PATH.match(path):
+        if not isinstance(path, str) or not ROUTE_PATH.fullmatch(path):
             raise ModelError(f"{location}.path must be an absolute path for an http health check")
         host = data.get("host")
-        if host is not None and (not isinstance(host, str) or not HOSTNAME.match(host)):
+        if host is not None and (not isinstance(host, str) or not HOSTNAME.fullmatch(host)):
             raise ModelError(f"{location}.host must be a hostname")
         status = data.get("expect_status", DEFAULT_EXPECT_STATUS)
-        if not isinstance(status, str) or not STATUS_RANGE.match(status):
+        if not isinstance(status, str) or not STATUS_RANGE.fullmatch(status):
             raise ModelError(f"{location}.expect_status must be a status or range, such as 200-299")
         return Health(
             type=kind,
@@ -1440,7 +1442,7 @@ def _dns_health(data: Mapping[str, Any], location: str) -> Health:
     interval = data.get("interval", DEFAULT_DNS_INTERVAL)
     if (
         not isinstance(interval, str)
-        or not DURATION.match(interval)
+        or not DURATION.fullmatch(interval)
         or duration_ms(interval) % 1000
         or duration_ms(interval) > 60_000
     ):
@@ -1448,7 +1450,7 @@ def _dns_health(data: Mapping[str, Any], location: str) -> Health:
             f"{location}.interval must be whole seconds from 1s to 1m; dnsdist counts no finer"
         )
     query_name = data.get("query_name", DEFAULT_QUERY_NAME)
-    if not isinstance(query_name, str) or not DNS_NAME.match(query_name):
+    if not isinstance(query_name, str) or not DNS_NAME.fullmatch(query_name):
         raise ModelError(f"{location}.query_name must be a DNS name, such as example.com.")
     return Health(
         type="dns",
@@ -1482,7 +1484,7 @@ def _udp_health(data: Mapping[str, Any], location: str) -> Health:
                 f"receiver back after one passing check"
             )
     interval = data.get("interval", DEFAULT_INTERVAL)
-    if not isinstance(interval, str) or not DURATION.match(interval):
+    if not isinstance(interval, str) or not DURATION.fullmatch(interval):
         raise ModelError(f"{location}.interval must be a duration such as 5s or 500ms")
     return Health(
         type="udp",
@@ -1493,7 +1495,7 @@ def _udp_health(data: Mapping[str, Any], location: str) -> Health:
 
 def _duration(data: Mapping[str, Any], key: str, location: str) -> str | None:
     value = data.get(key)
-    if value is not None and (not isinstance(value, str) or not DURATION.match(value)):
+    if value is not None and (not isinstance(value, str) or not DURATION.fullmatch(value)):
         raise ModelError(f"{location}.{key} must be a duration such as 2s or 500ms")
     return value
 
@@ -1509,7 +1511,7 @@ def _probe(data: Mapping[str, Any], key: str, location: str) -> str | None:
     value = data.get(key)
     if value is None:
         return None
-    if not isinstance(value, str) or not PROBE.match(value):
+    if not isinstance(value, str) or not PROBE.fullmatch(value):
         raise ModelError(
             f"{location}.{key} must be a short value without spaces, quotes or backslashes"
         )
@@ -1673,7 +1675,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     #
 
     cookie = data.get("cookie")
-    if cookie is not None and (not isinstance(cookie, str) or not COOKIE.match(cookie)):
+    if cookie is not None and (not isinstance(cookie, str) or not COOKIE.fullmatch(cookie)):
         raise ModelError(f"{location}.cookie must be a usable cookie name")
 
     max_connections = data.get("max_connections")
@@ -1690,7 +1692,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     server_timeout = data.get("server_timeout")
     if server_timeout is not None and (
         not isinstance(server_timeout, str)
-        or not DURATION.match(server_timeout)
+        or not DURATION.fullmatch(server_timeout)
         or duration_ms(server_timeout) > duration_ms(MAX_SERVER_TIMEOUT)
     ):
         raise ModelError(
@@ -1699,7 +1701,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
 
     slow_start = data.get("slow_start")
     if slow_start is not None:
-        if not isinstance(slow_start, str) or not DURATION.match(slow_start):
+        if not isinstance(slow_start, str) or not DURATION.fullmatch(slow_start):
             raise ModelError(f"{location}.slow_start must be a duration such as 30s")
         #
         # Read from HAProxy 3.4.4's own documentation on this machine: the ramp
@@ -1747,7 +1749,7 @@ def _route(value: Any, location: str, backends: set[str]) -> Route:
     )
 
     path = _required_string(data, "path", location)
-    if not ROUTE_PATH.match(path):
+    if not ROUTE_PATH.fullmatch(path):
         raise ModelError(f"{location}.path must be an absolute path")
     path = path.rstrip("/") or "/"
 
@@ -1900,7 +1902,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         raise ModelError(f"{name}.schema must be 1")
     if _required_string(data, "name", name) != name:
         raise ModelError(f"{name}.name must match the file it is written in")
-    if not NAME.match(name):
+    if not NAME.fullmatch(name):
         raise ModelError(
             f"{name} is not a usable object name - {name_refusal(name)}; use {NAME_RULE}"
         )
@@ -1915,7 +1917,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         key: _backend(key, value, f"{name}.backends.{key}") for key, value in backends_raw.items()
     }
     for key in backends:
-        if not NAME.match(key):
+        if not NAME.fullmatch(key):
             raise ModelError(f"{name}.backends.{key} is not a usable backend name")
         if key.startswith(GENERATED_PREFIX):
             raise ModelError(
@@ -2151,7 +2153,7 @@ def _maintenance(value: Any, location: str) -> Maintenance | None:
 
 def _message(data: Mapping[str, Any], location: str) -> str:
     message = data.get("message")
-    if not isinstance(message, str) or not MESSAGE.match(message):
+    if not isinstance(message, str) or not MESSAGE.fullmatch(message):
         raise ModelError(
             f"{location}.message must be a line of readable text, "
             f"up to 200 characters, without double quotes or backslashes"
@@ -2354,7 +2356,7 @@ def _hostnames(value: Any, name: str) -> tuple[str, ...]:
         raise ModelError(f"{name}.hostnames must list at least one hostname")
     for hostname in value:
         if not isinstance(hostname, str) or not (
-            HOSTNAME.match(hostname) or WILDCARD_HOSTNAME.match(hostname)
+            HOSTNAME.fullmatch(hostname) or WILDCARD_HOSTNAME.fullmatch(hostname)
         ):
             raise ModelError(f"{name}.hostnames contains something that is not a hostname")
     if len(set(value)) != len(value):
@@ -2467,7 +2469,7 @@ def _header_names(value: Any, location: str) -> tuple[str, ...]:
 
 
 def _header_name(name: Any, location: str) -> None:
-    if not isinstance(name, str) or not HEADER_NAME.match(name):
+    if not isinstance(name, str) or not HEADER_NAME.fullmatch(name):
         raise ModelError(f"{location} contains something that is not a header name: {name!r}")
     if name.lower() in RESERVED_HEADERS:
         raise ModelError(
@@ -2629,7 +2631,7 @@ def _sources(value: Any, location: str, verb: str) -> tuple[str, ...]:
             # `country:se` and `country:SE` are one entry and one file.
             #
             country = geo.code(entry.lower()).upper()
-            if not geo.COUNTRY.match(country):
+            if not geo.COUNTRY.fullmatch(country):
                 raise ModelError(
                     f"{location} contains {entry!r}; a country is two letters, such as country:SE"
                 )
@@ -2647,7 +2649,7 @@ def _sources(value: Any, location: str, verb: str) -> tuple[str, ...]:
                 raise ModelError(f"{location} may not {verb} an entire address family")
             entries.append(str(network))
             continue
-        if not NAME.match(entry):
+        if not NAME.fullmatch(entry):
             raise ModelError(
                 f"{location} contains {entry!r}, which is neither a group name nor an "
                 f"address or range"
@@ -2744,7 +2746,7 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
         location,
     )
     name = _required_string(data, "name", location)
-    if not NAME.match(name):
+    if not NAME.fullmatch(name):
         raise ModelError(
             f"{location}.name must start with a letter and hold lowercase letters, digits, "
             f"- and _, at most 40"
@@ -2756,7 +2758,7 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
     path = data.get("path")
     match = data.get("match", "prefix")
     if path is not None:
-        if not isinstance(path, str) or not ROUTE_PATH.match(path):
+        if not isinstance(path, str) or not ROUTE_PATH.fullmatch(path):
             raise ModelError(f"{location}.path must be an absolute path")
         #
         # The rule reads the request's path decoded and with its slashes merged
@@ -2825,7 +2827,7 @@ def _header_condition(value: Any, location: str) -> HeaderCondition | None:
     data = _mapping(value, location)
     _only_keys(data, {"name", *HEADER_MATCHES}, location)
     name = data.get("name")
-    if not isinstance(name, str) or not HEADER_NAME.match(name):
+    if not isinstance(name, str) or not HEADER_NAME.fullmatch(name):
         raise ModelError(f"{location}.name must be a header name")
     given = [match for match in HEADER_MATCHES if match in data]
     if len(given) != 1:
@@ -3048,14 +3050,14 @@ def _listen(value: Any, location: str) -> Listen:
     )
     protocol = _string(data, "protocol", location, PROTOCOLS)
     vip = data.get("vip")
-    if vip is not None and (not isinstance(vip, str) or not NAME.match(vip)):
+    if vip is not None and (not isinstance(vip, str) or not NAME.fullmatch(vip)):
         raise ModelError(f"{location}.vip must name one of the cluster's VIPs")
     #
     # The address this object leaves from, when it should not be the one the
     # VIP pairs with. Named rather than written, like every other address.
     #
     source = data.get("source")
-    if source is not None and (not isinstance(source, str) or not NAME.match(source)):
+    if source is not None and (not isinstance(source, str) or not NAME.fullmatch(source)):
         raise ModelError(f"{location}.source must name one of the cluster's source addresses")
     certificate = data.get("certificate")
     redirect = _boolean(data, "redirect_http", location, default=False)

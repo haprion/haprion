@@ -167,7 +167,7 @@ def resolve(proxy: Proxy, written: Sequence[str]) -> tuple[Target, ...]:
 
     found: list[Target] = []
     for entry in written:
-        match = SERVER.match(entry) if isinstance(entry, str) else None
+        match = SERVER.fullmatch(entry) if isinstance(entry, str) else None
         if match is None:
             raise ServerStateError(
                 "bad_input", f"{entry!r} is not a server; write host:port or pool/host:port"

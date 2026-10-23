@@ -18,6 +18,7 @@ from haprion.version_history import (
     MAX_NAME_LENGTH,
     UnfitName,
     caller_account,
+    comment_problem,
     recent_versions,
     request_names,
     requester,
@@ -109,6 +110,32 @@ class NamesTests(unittest.TestCase):
         self.assertEqual((newest.requested_by, newest.request_id), ("Ada Admin", "req-1"))
         self.assertEqual((oldest.requested_by, oldest.request_id), (None, "req-2"))
         self.assertEqual(newest.comment, "Publish the shop")
+
+
+class ACommentThatSplitsALine(unittest.TestCase):
+    """Review 2026-10-22, 1A-4: U+2028, U+2029 and U+0085 broke the listing and revert."""
+
+    SEPARATORS = ("\u2028", "\u2029", "\x85")
+
+    def test_a_committed_one_is_still_one_version(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            repo = Path(raw)
+            git(repo, "init", "-q", "-b", "main")
+            git(repo, "config", "user.name", "operator")
+            git(repo, "config", "user.email", "operator@example.com")
+            for separator in self.SEPARATORS:
+                git(repo, "commit", "-q", "--allow-empty", "-m", f"before{separator}after")
+
+            listed = recent_versions(repo)
+
+        self.assertEqual([version.version for version in listed], [3, 2, 1])
+        self.assertEqual(listed[0].comment, "before\x85after")
+
+    def test_a_new_one_is_refused_and_a_tab_or_a_newline_is_not(self) -> None:
+        for separator in (*self.SEPARATORS, "\r", "\x00", "\x1b"):
+            with self.subTest(separator=repr(separator)):
+                self.assertIsNotNone(comment_problem(f"before{separator}after"))
+        self.assertIsNone(comment_problem("Move the shop\n\nand its pool\tto beta"))
 
 
 if __name__ == "__main__":

@@ -48,7 +48,11 @@ def _names(parameters: Any) -> list[str]:
             f"at most {MAX_NAMES} names at once", exit_code=exit_codes.REFUSED
         )
     for name in names:
-        if not isinstance(name, str) or dnsdist_config.is_address(name) or not HOSTNAME.match(name):
+        if (
+            not isinstance(name, str)
+            or dnsdist_config.is_address(name)
+            or not HOSTNAME.fullmatch(name)
+        ):
             raise HelperProtocolError(
                 "every name must be a host name", exit_code=exit_codes.REFUSED
             )

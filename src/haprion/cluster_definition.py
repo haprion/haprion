@@ -434,7 +434,7 @@ def sudoers_with(text: str, add: Sequence[str] = (), drop: Sequence[str] = ()) -
     """
 
     lines = text.splitlines()
-    paths = [match.group(1) for line in lines if (match := SUDOEDIT.match(line))]
+    paths = [match.group(1) for line in lines if (match := SUDOEDIT.fullmatch(line))]
     paths = [path for path in paths if path not in drop] + [
         path for path in add if path not in paths
     ]
@@ -448,7 +448,7 @@ def sudoers_with(text: str, add: Sequence[str] = (), drop: Sequence[str] = ()) -
         line
         for line in lines
         if not line.startswith("Cmnd_Alias HAPROXY_EDIT")
-        and not SUDOEDIT.match(line)
+        and not SUDOEDIT.fullmatch(line)
         and line.strip() != RULE
     ]
     while kept and not kept[-1].strip():

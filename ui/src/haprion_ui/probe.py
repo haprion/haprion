@@ -233,7 +233,7 @@ def accepted_status(checks: Sequence[EffectiveCheck]) -> tuple[int, int]:
     asked = next(
         (check.expect_status for check in checks if check.expect_status), DEFAULT_EXPECT_STATUS
     )
-    if not STATUS_RANGE.match(asked):
+    if not STATUS_RANGE.fullmatch(asked):
         asked = DEFAULT_EXPECT_STATUS
     low, _, high = asked.partition("-")
     return int(low), int(high or low)

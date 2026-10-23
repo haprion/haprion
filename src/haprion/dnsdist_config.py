@@ -244,7 +244,7 @@ def _servers(proxy: Proxy, pool: Backend, source: str | None) -> list[str]:
     lines = []
     for index, server in enumerate(pool.servers):
         named = not is_address(server.host)
-        if named and not HOSTNAME.match(server.host):
+        if named and not HOSTNAME.fullmatch(server.host):
             raise ValueError(f"refusing to write {server.host!r} into dnsdist configuration")
         address = server.address if named else server.host
         if address is None:

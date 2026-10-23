@@ -315,7 +315,7 @@ def _hostnames(value: Any, location: str) -> list[str]:
         # and a reservation written in mixed case would otherwise reserve
         # nothing while looking like it reserved something.
         #
-        if not isinstance(entry, str) or not HOSTNAME.match(entry.lower()):
+        if not isinstance(entry, str) or not HOSTNAME.fullmatch(entry.lower()):
             raise ReservationError(f"{location} contains something that is not a hostname")
         names.append(entry.lower())
     return names

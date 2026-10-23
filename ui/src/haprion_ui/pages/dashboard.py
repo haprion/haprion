@@ -16,6 +16,7 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from haprion.digits import is_digits
+from haprion.version_history import comment_problem
 
 from haprion_ui import (
     audit,
@@ -646,6 +647,13 @@ def build_router(config: Config) -> APIRouter:
             return _refusal_page(
                 request, config, "A comment is needed: it is the version's.", back=back
             )
+        #
+        # The helper's own rule, said here before a job is queued to be
+        # refused (1A-4): a line separator pasted into the comment.
+        #
+        problem = comment_problem(comment.strip())
+        if problem:
+            return _refusal_page(request, config, f"The comment {problem}.", back=back)
         payload = {
             **package.payload,
             "comment": comment.strip(),

@@ -730,7 +730,7 @@ def _counter_operator(operator: str) -> str:
     written in `coraza.yaml`, which has no rule file to be relative to.
     """
 
-    found = _FROM_FILE.match(operator)
+    found = _FROM_FILE.fullmatch(operator)
     if found is None:
         return operator
     files = [
@@ -817,17 +817,26 @@ def _waf_counter_directives(
     return lines
 
 
+def _regex_literal(path: str) -> str:
+    """A route path as a regular expression that matches it and nothing else.
+
+    Each character of the path's alphabet (`proxy_model.ROUTE_PATH`) that a
+    pattern reads as an operator stands in a class of its own rather than
+    behind a backslash, which a directive's quoting would have to carry too.
+    """
+
+    return "".join(f"[{c}]" if c in ".$()*+" else c for c in path)
+
+
 def _waf_path_pattern(path: str) -> str:
     """One exception path as a regular expression of the engine's normalised path.
 
-    Each character a pattern would read as an operator stands in a class of
-    its own rather than behind a backslash, which the directive's quoting
-    would have to carry too. The root is `//?`, as `_waf_path_operator` says.
+    The root is `//?`, as `_waf_path_operator` says.
     """
 
     if path == "/":
         return "//?"
-    return "".join(f"[{c}]" if c in ".$()*+" else c for c in path)
+    return _regex_literal(path)
 
 
 def _waf_path_operator(path: str) -> str:
@@ -2692,12 +2701,17 @@ def _rewrite_rule(route: Route) -> list[str]:
     """
 
     strip = route.strip_prefix
-    add = route.add_prefix or ""
+    #
+    # The match is a regular expression and the replacement a log-format
+    # string: `/c++` matched `/c` and one or more `c`s, and an `add_prefix`
+    # holding `%20` was refused by HAProxy as a format alias (1A-7).
+    #
+    add = (route.add_prefix or "").replace("%", "%%")
     if strip is None and not add:
         return []
     if strip is None:
         return [f"    http-request replace-path (.*) {add}\\1"]
-    return [f"    http-request replace-path ^{strip}/?(.*) {add}/\\1"]
+    return [f"    http-request replace-path ^{_regex_literal(strip)}/?(.*) {add}/\\1"]
 
 
 def _fallback_name(vip: Vip, protocol: str) -> str:

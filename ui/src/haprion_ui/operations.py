@@ -921,7 +921,7 @@ def _objects(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(objects, Mapping) or not objects:
         raise BadPayload("objects must be a non-empty mapping")
     for name, document in objects.items():
-        if not isinstance(name, str) or not NAME.match(name):
+        if not isinstance(name, str) or not NAME.fullmatch(name):
             raise BadPayload(f"{name!r} is not a usable object name")
         if document is not None and (not isinstance(document, str) or not document):
             raise BadPayload(f"the document for {name} must be a non-empty string or null")

@@ -83,7 +83,7 @@ def _dns_question(
 
     name = entry.get("query_name") or DEFAULT_QUERY_NAME
     kind = entry.get("query_type") or DEFAULT_QUERY_TYPE
-    if not isinstance(name, str) or not DNS_NAME.match(name):
+    if not isinstance(name, str) or not DNS_NAME.fullmatch(name):
         raise HelperProtocolError(
             "a target's query_name is not a DNS name", exit_code=exit_codes.REFUSED
         )
@@ -147,7 +147,7 @@ def _targets(
         # syslog pool on an IPv6 VIP has IPv6 receivers, which the name rule
         # does not take.
         #
-        elif not isinstance(host, str) or not (HOSTNAME.match(host) or _is_address(host)):
+        elif not isinstance(host, str) or not (HOSTNAME.fullmatch(host) or _is_address(host)):
             raise HelperProtocolError("a target's host is not usable", exit_code=exit_codes.REFUSED)
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
             raise HelperProtocolError("a target's port is not a port", exit_code=exit_codes.REFUSED)
@@ -159,7 +159,7 @@ def _targets(
         header = entry.get("host_header", "") or ""
         if not isinstance(path, str) or not path.startswith("/") or len(path) > 1024:
             raise HelperProtocolError("a target's path is not a path", exit_code=exit_codes.REFUSED)
-        if not isinstance(header, str) or (header and not HOSTNAME.match(header)):
+        if not isinstance(header, str) or (header and not HOSTNAME.fullmatch(header)):
             raise HelperProtocolError(
                 "a target's host header is not a name", exit_code=exit_codes.REFUSED
             )
@@ -175,7 +175,9 @@ def _targets(
                 exit_code=exit_codes.REFUSED,
             )
         authority = entry.get("ca", "") or ""
-        if not isinstance(authority, str) or (authority and not CERTIFICATE_ID.match(authority)):
+        if not isinstance(authority, str) or (
+            authority and not CERTIFICATE_ID.fullmatch(authority)
+        ):
             raise HelperProtocolError(
                 "a target's ca does not name a certificate", exit_code=exit_codes.REFUSED
             )

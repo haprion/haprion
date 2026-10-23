@@ -8,6 +8,7 @@ import stat
 import subprocess
 import tempfile
 import time
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -120,11 +121,18 @@ class ValidationResult:
 
 def _allowed_path(raw: str) -> str:
     path = PurePosixPath(raw)
+    #
+    # A control character in a name - `conf.d/1001-shop\n.cfg`, which a
+    # `.match` on the object's name once let through - is refused here too,
+    # where the candidate crosses into the privileged side (review 2026-10-22,
+    # 5-12).
+    #
     if (
         not raw
         or path.is_absolute()
         or str(path) != raw
         or any(part in (".", "..") for part in path.parts)
+        or any(unicodedata.category(character) == "Cc" for character in raw)
     ):
         raise HelperProtocolError(
             "candidate contains an invalid relative path", exit_code=exit_codes.REFUSED
@@ -166,12 +174,12 @@ def _allowed_path(raw: str) -> str:
     # The WAF engine's directory: its shapes, the release layout's own rule -
     # not a free tree, for the same reason as the two above.
     #
-    if path.parts[0] == WAF_TARGET and WAF_NAME.match(raw.removeprefix(f"{WAF_TARGET}/")):
+    if path.parts[0] == WAF_TARGET and WAF_NAME.fullmatch(raw.removeprefix(f"{WAF_TARGET}/")):
         return raw
     #
     # dnsdist's one file (B249), and nothing else in its directory.
     #
-    if len(path.parts) == 2 and path.parts[0] == DNS_TARGET and DNS_NAME.match(path.parts[1]):
+    if len(path.parts) == 2 and path.parts[0] == DNS_TARGET and DNS_NAME.fullmatch(path.parts[1]):
         return raw
     #
     # rsyslog's forwarding (B286), one file. Checked with `rsyslogd -N1` on the
@@ -181,7 +189,7 @@ def _allowed_path(raw: str) -> str:
     if (
         len(path.parts) == 2
         and path.parts[0] == RSYSLOG_TARGET
-        and RSYSLOG_NAME.match(path.parts[1])
+        and RSYSLOG_NAME.fullmatch(path.parts[1])
     ):
         return raw
     raise HelperProtocolError(

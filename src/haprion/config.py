@@ -648,13 +648,21 @@ def _absolute_path(raw: str, location: str) -> Path:
 
 
 def _address(value: Any, location: str) -> str:
+    """An IP address in its one spelling.
+
+    `2001:db8::10` and `2001:DB8:0::10` are one address. Kept as written, the
+    duplicate check compared strings and let both stand - two `bind` lines on
+    one address and port, which HAProxy accepts and then shares the traffic
+    between (review 2026-10-22, 1A-5) - and `reservations.yaml` missed a VIP
+    spelled differently.
+    """
+
     if not isinstance(value, str):
         raise ConfigError(f"{location} must be an IP address")
     try:
-        ipaddress.ip_address(value)
+        return str(ipaddress.ip_address(value))
     except ValueError as exc:
         raise ConfigError(f"{location} must be an IP address") from exc
-    return value
 
 
 #

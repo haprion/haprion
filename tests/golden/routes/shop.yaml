@@ -18,6 +18,10 @@ routes:
   - path: /health
     match: exact
     backend: web
+  - path: /c++
+    backend: legacy
+    strip_prefix: /c++
+    add_prefix: /a%20b
   - path: /shop
     redirect:
       location: https://example.net/store
@@ -41,6 +45,13 @@ backends:
     servers:
       - host: 198.51.100.20
         port: 9000
+  legacy:
+    balance: roundrobin
+    health:
+      type: tcp
+    servers:
+      - host: 198.51.100.40
+        port: 8080
   orders:
     balance: roundrobin
     health:

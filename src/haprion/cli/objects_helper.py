@@ -79,7 +79,7 @@ def main(
             allowed_parameter_keys=PARAMETERS,
         )
         known = request.parameters.get("unchanged_since")
-        if known is not None and (not isinstance(known, str) or not FINGERPRINT.match(known)):
+        if known is not None and (not isinstance(known, str) or not FINGERPRINT.fullmatch(known)):
             raise HelperProtocolError(
                 "parameters.unchanged_since must be a listing fingerprint",
                 exit_code=exit_codes.REFUSED,

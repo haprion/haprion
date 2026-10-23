@@ -66,6 +66,7 @@ from haprion.repo_snapshot import (
 )
 from haprion.status_collect import read_target
 from haprion.version_history import (
+    comment_problem,
     count_versions,
     recorded_on,
     request_names,
@@ -74,7 +75,6 @@ from haprion.version_history import (
 )
 
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
-CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MAX_COMMENT_BYTES = 4096
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 SUDO = "/usr/bin/sudo"
@@ -197,10 +197,9 @@ def fence(parameters: Mapping[str, JsonValue]) -> tuple[str, str]:
             "parameters.expected_head must be a full commit ID", exit_code=exit_codes.REFUSED
         )
     comment = text(parameters, "comment", limit=MAX_COMMENT_BYTES)
-    if CONTROL.search(comment):
-        raise HelperProtocolError(
-            "parameters.comment may not contain control characters", exit_code=exit_codes.REFUSED
-        )
+    problem = comment_problem(comment)
+    if problem:
+        raise HelperProtocolError(f"parameters.comment {problem}", exit_code=exit_codes.REFUSED)
     return expected_head, comment
 
 

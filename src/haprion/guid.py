@@ -215,7 +215,7 @@ def server_guid(proxy: str, backend: str, server: Server) -> str:
 def guid_is_usable(value: str) -> bool:
     """Whether HAProxy would accept this as a GUID at all."""
 
-    return bool(GUID.match(value))
+    return bool(GUID.fullmatch(value))
 
 
 def guid_prefix_is_usable(value: str) -> bool:

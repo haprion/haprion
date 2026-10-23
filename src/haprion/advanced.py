@@ -307,7 +307,7 @@ def parse_matrix(rows: Iterable[str]) -> dict[tuple[str, ...], Keyword]:
 
     keywords: dict[tuple[str, ...], Keyword] = {}
     for row in rows:
-        match = _MATRIX_ROW.match(row)
+        match = _MATRIX_ROW.fullmatch(row)
         if match is None:
             continue
         words = tuple(match["keyword"].split())
@@ -650,7 +650,7 @@ def _counter_problem(
         return ""
     action = tokens[index]
     rest = list(tokens[index + 1 :])
-    track = TRACK.match(action)
+    track = TRACK.fullmatch(action)
     if track:
         slot = int(track[1])
         table = rest[rest.index("table") + 1] if "table" in rest[:-1] else None
@@ -668,7 +668,7 @@ def _counter_problem(
         if table is not None and not table.startswith(f"{name}-"):
             return f"the table must be one this text adds, named {name}-…"
         return ""
-    counter = COUNTER_ACTION.match(action)
+    counter = COUNTER_ACTION.fullmatch(action)
     if counter:
         last = counter[1].split(",")[-1].strip()
         slot_written = int(last) if is_digits(last) else None
@@ -856,7 +856,7 @@ def place(
                 continue
             section_name = tokens[1] if len(tokens) > 1 else ""
             problem = ""
-            if len(tokens) != 2 or not SECTION_NAME.match(section_name):
+            if len(tokens) != 2 or not SECTION_NAME.fullmatch(section_name):
                 problem = f"a {first} section needs one name"
             elif not section_name.startswith(f"{name}-"):
                 problem = (
@@ -1030,7 +1030,7 @@ def text_lines(content: str) -> dict[int, tuple[str, int]]:
     file_lines = content.split("\n")
     index = 0
     while index < len(file_lines):
-        match = _BLOCK.match(file_lines[index])
+        match = _BLOCK.fullmatch(file_lines[index])
         if match is None:
             index += 1
             continue

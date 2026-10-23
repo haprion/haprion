@@ -103,6 +103,25 @@ def trailer_name(value: object) -> str:
     return value
 
 
+def comment_problem(comment: str) -> str | None:
+    """Why a version's comment cannot be committed, or None.
+
+    A tab and a newline are a commit message's own; any other control
+    character, and the line and paragraph separators, are refused. `splitlines`
+    splits on U+2028, U+2029 and U+0085 too, so a comment holding one broke
+    the version listing, the poller's reading of it and revert, until the
+    commit left the window (review 2026-10-22, 1A-4). One rule, for every
+    helper that takes a comment.
+    """
+
+    for character in comment:
+        if character in "\t\n":
+            continue
+        if unicodedata.category(character) in ("Cc", "Zl", "Zp"):
+            return "may not contain control characters or line separators"
+    return None
+
+
 def caller_account(environ: Mapping[str, str] | None = None) -> str:
     """The account the helper runs for: the one sudo names, else its own.
 
@@ -246,7 +265,13 @@ def recent_versions(repo: Path, limit: int = LIST_LIMIT) -> tuple[VersionSummary
     ).decode()
 
     summaries: list[VersionSummary] = []
-    for offset, line in enumerate(shown.splitlines()):
+    #
+    # On `\n` alone: git ends each record with one, and a subject committed
+    # before `comment_problem` existed may hold a character `splitlines`
+    # would also split on.
+    #
+    records = [line for line in shown.split("\n") if line]
+    for offset, line in enumerate(records):
         commit, date, created_at, comment, request_id, requested_by = line.split("\0")
         summaries.append(
             VersionSummary(

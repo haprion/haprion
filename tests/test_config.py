@@ -438,6 +438,31 @@ class TheClusterAddressTable(unittest.TestCase):
 
         self.assertIn("two names", str(raised.exception))
 
+    def test_one_address_spelled_two_ways_is_still_one_address(self) -> None:
+        """Review 2026-10-22, 1A-5: compared as strings, both spellings stood.
+
+        HAProxy then binds both and shares the traffic between them.
+        """
+
+        with self.assertRaises(ConfigError) as raised:
+            _cluster(
+                vips={
+                    "internal": {"address": "2001:db8::10"},
+                    "same": {"address": "2001:DB8:0::10"},
+                },
+                default_vip="internal",
+            )
+
+        self.assertIn("two names", str(raised.exception))
+        cluster = _cluster(
+            vips={"internal": {"address": "2001:DB8:0::10", "source": "2001:db8:0:0::25"}},
+            default_vip="internal",
+        )
+        self.assertEqual(
+            (cluster.vips["internal"].address, cluster.vips["internal"].source),
+            ("2001:db8::10", "2001:db8::25"),
+        )
+
     def test_a_default_naming_no_vip_is_refused(self) -> None:
         with self.assertRaises(ConfigError) as raised:
             _cluster(vips={"internal": {"address": "192.0.2.20"}}, default_vip="dmz")

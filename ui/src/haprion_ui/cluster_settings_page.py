@@ -297,7 +297,7 @@ def _sentence(message: str) -> str:
     text = message.removeprefix(f"{cluster_settings.LOCATION} ")
     for field, words in _FIELDS:
         text = field.sub(words, text, count=1)
-    wrong = _NOT_AN_ADDRESS.match(text)
+    wrong = _NOT_AN_ADDRESS.fullmatch(text)
     if wrong:
         text = f"{wrong.group(1)}: {wrong.group(2)} is not an address or a network"
     return text[:1].upper() + text[1:] + ("" if text.endswith(".") else ".")

@@ -771,7 +771,7 @@ def build_document(form: dict[str, object]) -> str:
             # probe read it as a range the form could not produce, which is how
             # the difference was found.
             #
-            if not STATUS_RANGE.match(status):
+            if not STATUS_RANGE.fullmatch(status):
                 raise ValueError(
                     "the expected status must be a status or a range, such as 200 or 200-299"
                 )

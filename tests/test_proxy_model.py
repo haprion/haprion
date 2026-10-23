@@ -179,6 +179,16 @@ class RoutesAndPaths(unittest.TestCase):
 
         self.assertIn("orphan", str(caught.exception))
 
+    def test_a_quote_in_a_path_is_refused(self) -> None:
+        """1A-7: HAProxy's parser reads `'` as a quote, so `/a'b'c` matched `/abc`."""
+
+        for line in (
+            "  - path: \"/a'b'c\"",
+            '  - path: /x\n    strip_prefix: /x\n    add_prefix: "/v\'2"',
+        ):
+            with self.subTest(line=line), self.assertRaises(ModelError):
+                load_proxy("shop", with_lines(("  - path: /", line)))
+
     def test_a_server_host_that_is_neither_address_nor_name_is_refused(self) -> None:
         """`name::8080` in the form is the host `name:`; it passed until a node refused it
         at the deploy (Fas 18, finding 82)."""

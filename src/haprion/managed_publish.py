@@ -97,7 +97,7 @@ def _apply_objects(result: dict[str, bytes], objects: Mapping[str, bytes | None]
     """
 
     for name, document in sorted(objects.items()):
-        if not NAME.match(name):
+        if not NAME.fullmatch(name):
             raise ConfigError(
                 f"{name} is not a usable object name - {name_refusal(name)}; use {NAME_RULE}"
             )

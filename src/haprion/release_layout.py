@@ -321,7 +321,7 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
     for relative, content in _children(files, WAF_LAYER):
         if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
             continue
-        if not WAF_NAME.match(relative):
+        if not WAF_NAME.fullmatch(relative):
             raise LayoutError(f"file not allowed in {WAF_LAYER}: {relative}")
         artifact[f"{WAF_TARGET}/{relative}"] = content
         origin[f"{WAF_TARGET}/{relative}"] = GENERATED_LAYER
@@ -329,7 +329,7 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
     for relative, content in _children(files, DNS_LAYER):
         if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
             continue
-        if not DNS_NAME.match(relative):
+        if not DNS_NAME.fullmatch(relative):
             raise LayoutError(f"file not allowed in {DNS_LAYER}: {relative}")
         artifact[f"{DNS_TARGET}/{relative}"] = content
         origin[f"{DNS_TARGET}/{relative}"] = GENERATED_LAYER
@@ -337,7 +337,7 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
     for relative, content in _children(files, RSYSLOG_LAYER):
         if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
             continue
-        if not RSYSLOG_NAME.match(relative):
+        if not RSYSLOG_NAME.fullmatch(relative):
             raise LayoutError(f"file not allowed in {RSYSLOG_LAYER}: {relative}")
         artifact[f"{RSYSLOG_TARGET}/{relative}"] = content
         origin[f"{RSYSLOG_TARGET}/{relative}"] = GENERATED_LAYER
@@ -346,7 +346,7 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
         for relative, content in _children(files, prefix):
             if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
                 continue
-            if prefix == MANAGED_MAPS and not MANAGED_MAP_NAME.match(relative):
+            if prefix == MANAGED_MAPS and not MANAGED_MAP_NAME.fullmatch(relative):
                 raise LayoutError(f"file not allowed in {MANAGED_MAPS}: {relative}")
             target = f"maps/{relative}"
             if target in artifact:

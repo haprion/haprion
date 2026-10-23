@@ -71,14 +71,14 @@ def _latest_version(directory: Path) -> str | None:
         target = link.readlink()
     except (OSError, ValueError):
         return None
-    matched = ARCHIVE.match(target.name)
+    matched = ARCHIVE.fullmatch(target.name)
     return matched.group("version") if matched else None
 
 
 def _archives(directory: Path) -> list[tuple[str, int, datetime]]:
     found: list[tuple[str, int, datetime]] = []
     for entry in directory.iterdir():
-        matched = ARCHIVE.match(entry.name)
+        matched = ARCHIVE.fullmatch(entry.name)
         if matched is None or not entry.is_file() or entry.is_symlink():
             continue
         stat = entry.stat()

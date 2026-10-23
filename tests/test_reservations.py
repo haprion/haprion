@@ -107,6 +107,13 @@ class APortIsClaimedOnAnAddressOrOnAllOfThem(unittest.TestCase):
 
         self.assertEqual(reservations.tcp_listeners, frozenset({("2001:db8::1", 443)}))
 
+    def test_an_ipv6_address_is_kept_in_its_one_spelling(self) -> None:
+        """1A-5: a VIP spelled `2001:db8::1` was not the reservation `2001:DB8:0::1`."""
+
+        reservations = load_reservations(b"tcp_ports: ['[2001:DB8:0::1]:443']\n")
+
+        self.assertTrue(reservations.claims("2001:db8::1", 443))
+
     def test_an_unbracketed_ipv6_address_is_refused_rather_than_guessed_at(self) -> None:
         """Without brackets the last colon is not distinguishable from the address."""
 

@@ -99,7 +99,12 @@ from haprion.reservations import (
     review_fragments,
 )
 from haprion.status_collect import read_target
-from haprion.version_history import count_versions, request_names, version_message
+from haprion.version_history import (
+    comment_problem,
+    count_versions,
+    request_names,
+    version_message,
+)
 
 #
 # Two names, deliberately. `OPERATION` is what the request must say to reach this
@@ -111,7 +116,6 @@ OPERATION = "publish_version"
 PUBLISH_OPERATION = "publish"
 PARAMETERS = frozenset({"files", "expected_head", "comment", "requested_by"})
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
-CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 #
 # The published contract caps a comment at 4096 characters. The same cap is
@@ -207,10 +211,9 @@ def parse_comment(raw_comment: JsonValue) -> str:
         )
     if len(raw_comment.encode("utf-8")) > MAX_COMMENT_BYTES:
         raise HelperProtocolError("parameters.comment is too long", exit_code=exit_codes.REFUSED)
-    if CONTROL.search(raw_comment):
-        raise HelperProtocolError(
-            "parameters.comment may not contain control characters", exit_code=exit_codes.REFUSED
-        )
+    problem = comment_problem(raw_comment)
+    if problem:
+        raise HelperProtocolError(f"parameters.comment {problem}", exit_code=exit_codes.REFUSED)
     return raw_comment
 
 

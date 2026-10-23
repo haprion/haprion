@@ -109,13 +109,15 @@ class SwitchingToSyslog(unittest.TestCase):
         page.select_option("select[name=protocol]", "tcp")
         self.assertFalse(self.state(page)["send"])
 
-    def test_a_check_tcp_does_not_have_moves_to_one_it_does(self) -> None:
+    def test_an_offered_check_tcp_does_not_have_becomes_the_one_tcp_is_offered(self) -> None:
+        """7-3: udp was offered, not chosen, so tcp's offer replaces it."""
+
         page = self.page()
         page.select_option("select[name=protocol]", "syslog")
 
         page.select_option("select[name=protocol]", "tcp")
 
-        self.assertEqual(self.state(page)["check"], "disabled")
+        self.assertEqual(self.state(page)["check"], "tcp")
         self.assertEqual(self.state(page)["port"], "5432")
 
     def test_a_tls_check_becomes_none_and_then_udp(self) -> None:

@@ -21,11 +21,10 @@ management_writes = true
 # It may only be enabled with management_writes=false and clusters=[].
 # demo_fixture = true
 
-# Which clusters the poller asks about. Named here rather than discovered,
-# because the application accounts cannot read the engine's configuration - that
-# tree is private, and a poller reaching into it directly is what the privilege
-# split exists to prevent. The privileged helper still decides whether each name
-# is a real cluster; this only says which ones to ask about.
+# Which clusters the poller asks about while the cluster list helper cannot be
+# read. The cluster file decides which clusters exist and the poller reads it
+# through that helper; this list is the fallback, and the only list on an
+# installation from before the helper existed.
 #
 # Empty means the poller has nothing to do and says so rather than starting.
 clusters = []

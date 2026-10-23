@@ -103,7 +103,7 @@ part on its own.
 Read it before running this command. In short: a commit that changes both the
 management engine and the UI releases the CLI package first — the platform check
 compares the independently installed CLI before it activates the UI candidate,
-so reversing the order stops the update after it has already migrated. A change
+so reversing the order stops the update at that check, before it migrates. A change
 confined to the UI needs only the UI package; the update installs the platform's
 service files itself.
 
@@ -408,11 +408,9 @@ It verifies that certificate and key belong together by comparing public halves,
 refuses an expired certificate, installs root-owned `0600`, tests the config, and
 restores the previous pair if nginx refuses the new one.
 
-Doing this from the UI is planned for the phase that turns on management writes,
-and it will never be a file upload: the web identity must not read private key
-material. The shape is a drop directory the poller lists, an admin choosing a
-candidate, and a job carrying that candidate's id — the web process chooses
-*which*, never *what*.
+From the interface, **Settings → Interface certificate** issues or imports a
+certificate marked `interface: true` in the registry, and the TLS helper installs
+it over its socket; the web identity names the entry, never the key.
 
 ## Step 7 — the worker and the poller
 

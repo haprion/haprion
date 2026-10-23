@@ -421,6 +421,14 @@ class SavingADraft(EditorTestCase):
 
         self.assertNotIn("disabled", page.split('name="redirect_match"')[1].split(">")[0])
 
+    def test_a_new_object_s_pool_is_offered_a_check(self) -> None:
+        """7-3: a new pool started with no check, so a server that went away kept its share."""
+
+        page = self.editor().get("/proxies/alpha/new").text
+
+        self.assertIn('<select name="health_type" data-proposed="http">', page)
+        self.assertIn('name="health_expect_status" value="200-499"', page)
+
     def test_a_drafted_object_posts_to_its_own_address(self) -> None:
         """The form action was chosen by the stored document, not the address.
 

@@ -24,11 +24,18 @@ from __future__ import annotations
 import types
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from haprion.cert_issue import METHODS, IssueError, parse_domain
 from haprion.cert_request_state import DEFAULT_KEY_TYPE, KEY_TYPES
-from haprion.config import DEFAULT_RECEIVER_FORMAT, RECEIVER_FORMATS
+from haprion.config import (
+    DEFAULT_POLICY_PATH,
+    DEFAULT_RECEIVER_FORMAT,
+    RECEIVER_FORMATS,
+    ConfigError,
+    load_policy,
+)
 from haprion.ui_interface import covers
 
 
@@ -118,6 +125,12 @@ class IssueChoices:
     # at least one; the page names the reason otherwise.
     #
     ndes_profiles: tuple[str, ...] = ()
+    #
+    # Whether the runtime policy names a webroot, without which HTTP-01 is
+    # refused by the engine (B36: the app does not own the HTTP path). Greyed
+    # with the reason, as NDES is without a profile (review 2026-10-22, 7-4).
+    #
+    http01: bool = True
     #
     # Each receiver's transport, for the row it gets in the list (B142). A
     # receiver without one is drawn without a badge.
@@ -269,6 +282,11 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             raise FormProblem("Choose a key type from the list.")
     elif form.method not in METHODS:
         raise FormProblem("Choose a challenge method.")
+    elif form.method == "http-01" and not choices.http01:
+        raise FormProblem(
+            "HTTP-01 needs a webroot in the runtime policy (acme.webroot), and this manager "
+            "has none; use DNS-01."
+        )
     elif form.ndes_profile:
         raise FormProblem("An NDES provider profile belongs to NDES enrollment only.")
     if form.key_type and form.method != CSR_METHOD:
@@ -441,3 +459,17 @@ def _interface_payload(form: IssueForm, choices: IssueChoices, name: str) -> dic
 def _unknown(chosen: Iterable[str], offered: Iterable[str]) -> tuple[str, ...]:
     known = set(offered)
     return tuple(name for name in chosen if name not in known)
+
+
+def http01_offered(policy_path: Path = DEFAULT_POLICY_PATH) -> bool:
+    """Whether the runtime policy names the webroot HTTP-01 is answered from.
+
+    Read as the page is drawn, the way the engine will read it when the job
+    runs; a policy that cannot be read offers nothing the job would refuse.
+    """
+
+    try:
+        acme = load_policy(policy_path).acme
+    except (ConfigError, OSError):
+        return False
+    return acme is not None and acme.webroot is not None

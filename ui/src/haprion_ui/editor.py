@@ -473,7 +473,11 @@ class ObjectForm(BaseModel):
     # was refused outright - honestly, but with nothing to do about it except
     # edit the file by hand.
     #
-    health_expect_status: Annotated[str, StringConstraints(max_length=3)] = ""
+    #
+    # A status or a range, `200-499` (7-3): three characters held a status
+    # only, and a range read back from a document could not be sent again.
+    #
+    health_expect_status: Annotated[str, StringConstraints(max_length=7)] = ""
     health_expect_body: Annotated[str, StringConstraints(max_length=255)] = ""
     health_send: Annotated[str, StringConstraints(max_length=255)] = ""
     health_expect: Annotated[str, StringConstraints(max_length=255)] = ""

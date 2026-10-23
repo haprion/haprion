@@ -995,6 +995,7 @@ def build_router(config: Config) -> APIRouter:
             dns_profiles=usable_profiles,
             profiles_required=profiles_required,
             ndes_profiles=usable_ndes,
+            http01=certificate_form.http01_offered(),
             receiver_transports={
                 row.identifier: row.transport_label for row in overview.registry.receiver_rows
             }

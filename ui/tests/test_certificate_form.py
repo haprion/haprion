@@ -9,6 +9,7 @@ the button is a courtesy, and what stops a reader or a stale form is here.
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -437,6 +438,34 @@ class TheFormPage(CertificateFormRouteTestCase):
             page = client.get("/certificates/new").text
         self.assertNotIn('value="ndes" disabled', page)
         self.assertIn('<option value="certserver1"', page)
+
+
+class HttpWithoutAWebroot(CertificateFormRouteTestCase):
+    """7-4: HTTP-01 looked like DNS-01's equal and the job refused it later."""
+
+    def test_the_choice_is_greyed_with_the_reason(self) -> None:
+        with mock.patch("haprion_ui.certificate_form.http01_offered", return_value=False):
+            page = self.writing_client().get("/certificates/new").text
+
+        self.assertIn('value="http-01" disabled', page)
+        self.assertIn("no webroot in the runtime policy", page)
+
+    def test_a_submission_is_refused_before_a_job(self) -> None:
+        with mock.patch("haprion_ui.certificate_form.http01_offered", return_value=False):
+            answer = self.post(self.writing_client(), method="http-01")
+
+        self.assertEqual(answer.status_code, 200)
+        self.assertIn("acme.webroot", answer.text)
+        self.assertEqual(self.queued, [])
+
+
+class TheWebrootComesFromThePolicy(unittest.TestCase):
+    def test_a_policy_without_one_and_none_at_all_offer_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = Path(raw) / "policy.yaml"
+            policy.write_text("schema_version: 1\n")
+            self.assertFalse(certificate_form.http01_offered(policy))
+        self.assertFalse(certificate_form.http01_offered(Path("/nonexistent/policy.yaml")))
 
 
 class SendingTheFormOverNdes(CertificateFormRouteTestCase):

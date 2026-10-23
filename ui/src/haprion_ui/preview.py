@@ -112,6 +112,17 @@ PREVIEW_CERTIFICATE_SANS = {
 # one backend, one server - the shape most objects have, so the first thing
 # somebody sees is the common case rather than an empty page.
 #
+#
+# What a new object's first pool is offered (B349, review 2026-10-22, 7-3):
+# without a check a server that is gone is sent its share until somebody
+# notices. An http check of `/` that takes 200-499 proves the web server
+# answers without a 401 or 404 there marking the pool down. Only on the page
+# for a new object - a posted form missing the field is not a new pool, and a
+# dns object refuses an http check - and the form's script carries the offer
+# to another protocol and to TLS servers, leaving a check somebody chose alone.
+#
+NEW_POOL_CHECK = {"health_type": "http", "health_path": "/", "health_expect_status": "200-499"}
+
 DEFAULTS = {
     "name": "app",
     #
@@ -143,10 +154,8 @@ DEFAULTS = {
     #
     "servers": "",
     #
-    # No check until somebody asks for one. The field is optional and the model
-    # agrees - `disabled` is its own default - and a form that arrived with a
-    # check already chosen was deciding on the reader's behalf, in the one place
-    # where a wrong choice is invisible until a server is wrongly marked down.
+    # No check until somebody asks for one, for a form that arrives without
+    # the field. A new object's page is offered one (`NEW_POOL_CHECK`).
     #
     "health_type": "disabled",
     "health_path": "/",

@@ -167,6 +167,11 @@ class LoginTestCase(unittest.TestCase):
                 "haprion_ui.db.manager_certificates",
                 side_effect=lambda connection: manager_of(db.cluster_certificates(connection)),
             ),
+            #
+            # The runtime policy is the machine's; a test says whether it
+            # names a webroot (7-4) rather than reading this host's.
+            #
+            mock.patch("haprion_ui.certificate_form.http01_offered", return_value=True),
             mock.patch("haprion_ui.db.cluster_backups", return_value=[]),
             mock.patch("haprion_ui.db.cluster_networks", return_value=[]),
             mock.patch("haprion_ui.db.cluster_settings", return_value=[]),

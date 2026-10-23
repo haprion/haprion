@@ -54,7 +54,7 @@
         rules the wildcard out, and a reader should see them at once to see
         why. DNS-01 first and preset because it is the one the manager's
         policy is set up for; HTTP-01 needs a webroot the policy names, and
-        the job says so if it does not.
+        without one it stays, disabled, with the reason beside it.
 
         The third radio is the other CA (C6): the organisation's own
         Microsoft CA over NDES/SCEP. Offered only where a profile is in
@@ -65,7 +65,7 @@
         <span class="field-title">Certificate authority and challenge</span>
         <div class="method-choices">
           <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method not in ('http-01', 'ndes') %} checked{% endif %}> <span><span class="method-name">DNS-01</span> <span class="optional">— Let's Encrypt; DNS record, wildcards</span></span></label>
-          <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> <span><span class="method-name">HTTP-01</span> <span class="optional">— Let's Encrypt; webroot, single names</span></span></label>
+          <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}{% if not choices.http01 %} disabled{% endif %}> <span><span class="method-name">HTTP-01</span> <span class="optional">— {% if choices.http01 %}Let's Encrypt; webroot, single names{% else %}Let's Encrypt; no webroot in the runtime policy{% endif %}</span></span></label>
           <label class="check"><input type="radio" name="method" value="ndes"{% if form.method == 'ndes' %} checked{% endif %}{% if not choices.ndes_profiles %} disabled{% endif %}> <span><span class="method-name">NDES</span> <span class="optional">— {% if choices.ndes_profiles %}Microsoft AD CS; wildcards{% else %}Microsoft AD CS; no profile in effect{% endif %}</span></span></label>
           {#
             The fourth radio (C9b): no CA the manager talks to. The key is

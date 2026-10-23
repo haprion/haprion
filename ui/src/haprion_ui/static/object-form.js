@@ -308,22 +308,57 @@
   };
 
   //
-  // A syslog object is offered a check as it becomes one (Fas 19b B4). Without
-  // one keepalived never takes a receiver out, and nothing answers a datagram
-  // to say it went nowhere: a receiver that is gone is sent its share of the
-  // messages until somebody notices the gap in its logs. Only on the change,
-  // so an object opened as it was written keeps what it says, and only from
-  // `disabled`, so a check somebody chose stays chosen.
+  // A check offered as an object takes its protocol (B349, review 2026-10-22,
+  // 7-3), as a syslog object was offered udp (Fas 19b B4): without one a
+  // server that is gone is still sent its share - nothing answers a datagram,
+  // and a pool with no check is never taken out of service. http and https
+  // get an http check of `/` that takes 200-499: it proves the web server
+  // answers, without a 401 or 404 on `/` marking the pool down and the
+  // service 503 at its first deploy; somebody with a health page writes its
+  // path and narrows the range. Over TLS when the pool's servers speak it.
   //
-  const wireSyslogCheck = () => {
+  // Only from `disabled`, or from a check this offered and nobody changed
+  // since - a check somebody chose stays chosen - and only on the change, so
+  // an object opened as it was written keeps what it says. A new object's
+  // first pool arrives with the offer (`data-proposed`, the value offered).
+  //
+  const wireCheckProposal = () => {
     const protocol = document.querySelector("select[name='protocol']");
     const check = document.querySelector("select[name='health_type']");
-    if (!protocol || !check || !check.querySelector("option[value='udp']")) return;
+    if (!protocol || !check) return;
+    const tls = document.querySelector("select[name='backend_tls']");
+    const path = document.querySelector("input[name='health_path']");
+    const status = document.querySelector("input[name='health_expect_status']");
+    const offers = (value) => Boolean(check.querySelector(`option[value='${value}']`));
+    const offer = (value) => {
+      if (!offers(value)) return;
+      check.value = value;
+      check.dataset.proposed = value;
+      check.dispatchEvent(new Event("change"));
+    };
+    const offerHttp = () => {
+      offer(tls && tls.value ? "https" : "http");
+      if (path && !path.value) path.value = "/";
+      if (status && !status.value) status.value = "200-499";
+    };
 
     protocol.addEventListener("change", () => {
-      if (protocol.value !== "syslog" || check.value !== "disabled") return;
-      check.value = "udp";
-      check.dispatchEvent(new Event("change"));
+      if (check.value !== "disabled" && !check.dataset.proposed) return;
+      if (protocol.value === "syslog") offer("udp");
+      else if (protocol.value === "tcp") offer("tcp");
+      else if (protocol.value === "http" || protocol.value === "https") offerHttp();
+    });
+    if (tls) {
+      tls.addEventListener("change", () => {
+        if (!check.dataset.proposed || !["http", "https"].includes(check.value)) return;
+        offer(tls.value ? "https" : "http");
+      });
+    }
+    //
+    // The offer is the value it set; any other value in the box is a choice.
+    //
+    check.addEventListener("change", () => {
+      if (check.value !== check.dataset.proposed) delete check.dataset.proposed;
     });
   };
 
@@ -504,7 +539,7 @@
     wireRules();
     wireRecheck();
     wireShownWhen();
-    wireSyslogCheck();
+    wireCheckProposal();
     wireGroupSummaries();
     wire();
     wireBalanceKey();

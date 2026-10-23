@@ -10,7 +10,7 @@
 <script defer src="{{ url_for('static', path='/traffic.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div class="heading-title">
-    <h1>Traffic</h1>
+    <h1>Metrics</h1>
     <p class="page-lede">What arrived at each address, and what the backends behind them carried, over {{ traffic_window }}.</p>
   </div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>

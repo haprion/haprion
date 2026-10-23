@@ -56,6 +56,14 @@
    * the panel and on each state's own soft background.
    */
   --healthy-text: #217e30;
+  /* A button's colour and its text's, held to WCAG AA's 4.5:1 for normal
+     text: white on the brand green was 2.74:1 (review 2026-10-22, 2-7).
+     Measured: #217e30 on white 5.13, #d63939 with white 4.66. */
+  --go: #217e30;
+  --go-hover: #1d6f2a;
+  --go-text: #ffffff;
+  --stop: #d63939;
+  --stop-text: #ffffff;
   --warning-text: #996300;
   --critical-text: #c92a2a;
   --info-text: #1d70b5;
@@ -109,6 +117,13 @@
   --unknown: #9aa8ba;
   --unknown-soft: #2a394b;
   --healthy-text: #49c462;
+  /* Dark text on the light greens and reds: white was 2.24:1 on the green.
+     Measured: #0b1a10 on #49c462 8.0, #170808 on #f15050 5.59. */
+  --go: #49c462;
+  --go-hover: #67d47d;
+  --go-text: #0b1a10;
+  --stop: #f15050;
+  --stop-text: #170808;
   --warning-text: #ffb020;
   --critical-text: #f47878;
   --info-text: #50abf5;
@@ -1165,14 +1180,14 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .login-form input[type="text"], .login-form input[type="password"] { width: 100%; height: 42px; margin: 0 0 16px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text-strong); outline: none; }
 .login-form input:hover { border-color: var(--muted); }
 .login-form input:focus { border-color: var(--brand); box-shadow: var(--focus); }
-.primary-button { width: 100%; height: 42px; margin-top: 3px; border: 1px solid var(--brand-strong); border-radius: var(--radius-sm); background: var(--brand); color: white; font-weight: 680; cursor: pointer; }
+.primary-button { width: 100%; height: 42px; margin-top: 3px; border: 1px solid var(--go-hover); border-radius: var(--radius-sm); background: var(--go); color: var(--go-text); font-weight: 680; cursor: pointer; }
 /* Sign-in through the provider, first while it is on; the local form below it
    is the break-glass way in (B195), so it keeps its size but not the colour. */
 a.login-sso, a.login-action { display: flex; align-items: center; justify-content: center; text-decoration: none; }
 .login-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0; color: var(--muted); font-size: 12px; }
 .login-divider::before, .login-divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .login-form .secondary-button { width: 100%; height: 42px; margin-top: 3px; }
-.primary-button:hover { background: var(--brand-strong); }
+.primary-button:hover { background: var(--go-hover); }
 .form-error { margin: -8px 0 18px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--critical) 30%, transparent); border-radius: var(--radius-sm); background: var(--critical-soft); color: var(--critical-text); font-size: 12px; }
 .login-footnote { margin: 22px 0 0; color: var(--muted); font-size: 10px; text-align: center; }
 
@@ -1925,7 +1940,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 /* The one button that takes a site off the internet. It carries the critical
    colour rather than the brand one, because it is not the action a page is for
    - it is the one somebody has come to this page on purpose to press. */
-.danger-button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--critical); border-radius: var(--radius-sm); background: var(--critical); color: white; font-size: 12px; font-weight: 650; cursor: pointer; }
+.danger-button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--stop); border-radius: var(--radius-sm); background: var(--stop); color: var(--stop-text); font-size: 12px; font-weight: 650; cursor: pointer; }
 .danger-button:hover { filter: brightness(1.08); }
 .removal-consequences { margin: 12px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
 .refusal-card .editor-actions { justify-content: flex-start; padding: 16px 0 0; }

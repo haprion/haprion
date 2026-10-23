@@ -353,7 +353,7 @@
       <div class="editor-actions editor-submit">
         {% if deploying %}
         <p class="table-note">{% if cluster.cluster in awaiting_deploy %}These addresses are published and the nodes are not serving them yet.{% else %}The nodes are not on the current release.{% endif %} Deploy before writing another change.</p>
-        <button class="secondary-button deploy-button" type="submit" form="deploy-{{ loop.index0 }}">Deploy {{ cluster.cluster }}</button>
+        <button class="secondary-button deploy-button" type="submit" form="deploy-{{ loop.index0 }}">Deploy configuration</button>
         {% else %}
         <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this save writes.</p>
         <div class="form-buttons">{% if saved %}<button class="secondary-button" type="submit" name="network_action" value="discard" formnovalidate>Discard the changes</button>{% endif %}<button class="secondary-button" type="submit" name="network_action" value="save">Save</button></div>
@@ -382,7 +382,7 @@
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
       <div><strong>Operations</strong></div>
       <div class="action-buttons">
-        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if targets and targets.get(cluster.cluster) %}<input type="hidden" name="expected_version" value="{{ targets.get(cluster.cluster) }}">{% endif %}<input type="hidden" name="return_to" value="network"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy {{ cluster.cluster }}</button></form>
+        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if targets and targets.get(cluster.cluster) %}<input type="hidden" name="expected_version" value="{{ targets.get(cluster.cluster) }}">{% endif %}<input type="hidden" name="return_to" value="network"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy configuration</button></form>
       </div>
     </footer>
     {% endif %}

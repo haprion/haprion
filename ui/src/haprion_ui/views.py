@@ -1295,7 +1295,7 @@ def _editor_page(
         source = draft.yaml if draft is not None and not draft.deleted else None
         source = source or (stored.document if stored is not None else "")
         if not source:
-            fields = dict(preview_module.DEFAULTS, name=name)
+            fields = dict(preview_module.DEFAULTS, **preview_module.NEW_POOL_CHECK, name=name)
         else:
             try:
                 fields = preview_module.form_from_document(source, networks=state.choices.networks)

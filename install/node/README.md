@@ -8,6 +8,10 @@
 | `haprion-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates (`cert-pull`, `cert-remove`, and `ca-pull`, `ca-remove` for CA files) |
 | `haprion-cert-pull` | fetches the requested certificates, validates them, installs, reloads; with `--authority`, CA files into `/etc/haproxy/certs/ca/`, reloaded only when the configuration names one |
 | `haprion-cert-remove` | removes certificates nothing installed names; with `--authority`, CA files |
+| `haprion-node-key` | prints this node's enrollment block for a manager to join it with; a new one-time key when the last is used or old |
+| `haprion-node-join` | joins the node to the manager that connected with the block's key: runs step 4 from the manager's answers and installs its keys |
+| `haprion-server-state-trigger` | unprivileged forced command for the server state key: validates the request, then escalates |
+| `haprion-server-state` | sets a server to ready, drain or maintenance and keeps it through reloads, which it performs itself, and unblocks addresses |
 | `haprion-node-status` | reports version, health, carried certificates, pool members and keepalived state |
 | `haprion-health-probe` | tries a health check against named servers, from this node, and reports whether they answered |
 | `haprion-keepalived-state` | records the keepalived transition to a state file |

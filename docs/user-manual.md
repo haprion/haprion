@@ -1315,9 +1315,11 @@ The ACME policy and challenge routes must already be configured; see
 
 The web interface asks for the same thing from **Certificates → New certificate**: a domain, a
 method, an in-effect DNS profile for DNS-01, and boxes for the clusters and the registered receivers. It queues one `cert_issue` job
-through `haprion-cert-issue-helper` ([worker helper configuration](#what-the-worker-may-run)) and reports on the Jobs page, certbot's output included.
+through `haprion-cert-issue-helper` ([worker helper configuration](#what-the-worker-may-run)) and reports on the Events page, certbot's output included.
 The form cannot register a receiver - one is a directory, an account and a key, made on the host as
 in [Registering a receiver](#registering-a-receiver) - and it refuses a wildcard over `http-01` before the job is queued.
+HTTP-01 is greyed, with the reason beside it, while the runtime policy names no `acme.webroot`; the
+other two things it needs are in [ACME configuration and challenge routing](#acme-configuration-and-challenge-routing).
 
 The account is the one certbot already has on this host; the command registers none. The
 certificate becomes an ordinary certbot lineage, renewed by certbot's timer and published by the
@@ -1348,7 +1350,7 @@ completed apply job is offered during certificate issuance. The status column re
 |---|---|
 | In effect | the file certbot reads is the box the row holds; the certificate form offers it |
 | Applying / Removing | its job is queued or running |
-| Apply failed | the helper refused it - the Jobs page carries its account, without the values |
+| Apply failed | the helper refused it - the Events page carries its account, without the values |
 | Replaced; not applied | a newer revision was saved and its job has not finished |
 | Not applied | no apply job for the row was found at all |
 
@@ -2042,7 +2044,7 @@ no objects yet, checked like any other. The first deploy rolls it out - it write
 `keepalived.conf` and starts keepalived, so the VIP is held before there is anything to serve
 ([keepalived on the nodes](#keepalived-on-the-nodes)). A deploy with nothing published is refused
 before any node is asked (`nothing_published`). There is no backup schedule until one is set on
-the Backups page; its retention is the default until then.
+the Node backups page; its retention is the default until then.
 
 A removal takes the cluster out of `clusters.yaml`, out of every
 certificate's targets, out of the editing policy and `safe.directory`, and takes its nodes out of the
@@ -2238,7 +2240,7 @@ journal again from its oldest entry, a page per minute. What a node's journal no
 
 ## Node backups
 
-On the Backups page, an administrator can set each cluster's schedule on the manager's
+On the Node backups page, an administrator can set each cluster's schedule on the manager's
 clock, enable or disable it, choose how many archives to retain (1–365), and run a backup
 immediately. Schedules may run every day, on chosen weekdays, or on one day of the month
 (1–28). The terminal path is:
@@ -2505,7 +2507,7 @@ being ungranted would matter.
   state carries a `finished_at` by the table's own constraint, so the age test
   cannot match a row that has no timestamp.
 - **Never the twenty most recent rows**, whatever their age. Without that floor
-  a quiet fortnight empties the jobs page completely, which reads as the
+  a quiet fortnight empties the Events page completely, which reads as the
   interface having lost its history rather than as nothing having happened.
   Twenty is the number the page itself lists, **ordered the way the page orders
   them**, so the floor is exactly the set a reader can see. Ordered any other
@@ -3905,7 +3907,7 @@ interchangeable between the pair.
 Listings read each cluster's `haprion-state-backup@<cluster>.timer`. An admin can
 set its schedule on the manager's clock — every day, chosen weekdays, or one day of the month
 (1–28, so no month is skipped) at a given time — enable or disable it, set the retention, and run
-an immediate cluster backup on the Backups page. The browser supplies no unit name or systemd
+an immediate cluster backup on the Node backups page. The browser supplies no unit name or systemd
 expression: the root socket helper derives both from the configured cluster and the bounded
 request (`Mon,Wed,Fri *-*-* 05:00:00`, `*-*-07 05:00:00`), writes them as a drop-in on the
 timer instance, and reads the effective state back before reporting success. A calendar edited
@@ -5987,7 +5989,7 @@ exactly the case a lock file gets wrong.
 
 ##### What the worker may run
 
-Thirteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
+Fourteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
 <worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-deploy-helper ""

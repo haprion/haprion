@@ -367,7 +367,7 @@
     </header>
     <div class="form-grid">
       <label>Type
-        <select name="health_type">
+        <select name="health_type"{% if form.health_type in ('http', 'https') and form.health_path == '/' and form.health_expect_status == '200-499' %} data-proposed="{{ form.health_type }}"{% endif %}>
           {% for value, label in choices.health_types %}<option value="{{ value }}"{{ when('protocol', check_protocols.get(value, 'http https tcp')) }}{% if form.health_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
       </label>
@@ -420,7 +420,7 @@
     {% if backend_health is defined or probe %}
     {% set rows = health_rows(backend_health if backend_health is defined else none, probe) %}
     <div class="node-health">
-      <h4><span class="subsection-title">What the nodes report{% if backend_health is defined %} <span class="optional">{{ backend_health.backend }}{% if backend_health.held_by %}{% if backend_health.backend %}, {% endif %}held by {{ backend_health.held_by|join(' and ') }}{% endif %}</span>{% endif %}</span></h4>
+      <h4><span class="subsection-title">What the nodes report{% if backend_health is defined %} <span class="optional">{{ backend_health.backend }}{% if backend_health.backend and backend_health.held_by %} · {% endif %}{% if backend_health.held_by %}VIP on {{ backend_health.held_by|join(' and ') }}{% endif %}</span>{% endif %}</span></h4>
       {% if rows %}
       <table class="node-health-table">
         <colgroup><col><col><col><col></colgroup>

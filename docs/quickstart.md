@@ -130,7 +130,9 @@ An HTTPS site needs a certificate. Open *Certificates*.
 **From Let's Encrypt:** first add a **DNS provider** (your DNS host's API credentials, sealed so
 that only the manager's root helper can read them). Then **New certificate**: enter the domain
 (for example `www.example.com`, or `*.example.com` for a wildcard), choose the provider, tick
-the cluster under **Targets**, and press **Request the certificate**.
+the cluster under **Targets**, and press **Request the certificate**. HTTP-01 is offered only when
+the runtime policy names a webroot and port 80 reaches it
+([ACME configuration](user-manual.md#acme-configuration-and-challenge-routing)); otherwise it is greyed.
 
 **From your own CA:** **Import certificate** takes a PEM or PKCS#12 file, with or without its key.
 **New certificate** can also make the key on the manager and give you a signing request

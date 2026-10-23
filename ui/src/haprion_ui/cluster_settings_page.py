@@ -92,7 +92,7 @@ class SettingsForm:
 
 
 def href(cluster: str) -> str:
-    return f"/settings/clusters/{quote(cluster, safe='')}"
+    return "/settings/clusters/" + quote(cluster, safe="")
 
 
 def _endpoint(target: Mapping[str, Any]) -> str:

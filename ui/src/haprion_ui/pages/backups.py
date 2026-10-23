@@ -255,7 +255,7 @@ def build_router(config: Config) -> APIRouter:
         if to_backups:
             return RedirectResponse("/backups", status_code=303)
         if isinstance(stored, str) and node_restores.usable_run(stored):
-            return RedirectResponse(f"/backups/restore/{stored}", status_code=303)
+            return RedirectResponse("/backups/restore/" + stored, status_code=303)
         return RedirectResponse("/jobs", status_code=303)
 
     @router.get("/backups/restore/new", response_class=HTMLResponse)

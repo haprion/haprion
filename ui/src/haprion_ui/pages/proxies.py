@@ -651,7 +651,7 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        back = f"/proxies/{listed}/{name}"
+        back = "/proxies/" + listed + "/" + name
         posted = _posted(request)
         #
         # One past the bound, so the helper's own limit refuses a request
@@ -661,7 +661,7 @@ def build_router(config: Config) -> APIRouter:
             : server_state.MAX_SERVERS + 1
         ]
         if not chosen:
-            return RedirectResponse(f"{back}?servers=none", status_code=303)
+            return RedirectResponse(back + "?servers=none", status_code=303)
         payload = {"object": name, "servers": chosen, "state": state}
         try:
             operations.prepare(
@@ -683,7 +683,7 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.ClusterBusy:
                 connection.rollback()
-                return RedirectResponse(f"{back}?servers=busy", status_code=303)
+                return RedirectResponse(back + "?servers=busy", status_code=303)
             except db.RequestConflict:
                 connection.rollback()
                 return PlainTextResponse("That request key asked for something else", 409)
@@ -731,7 +731,7 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        back = f"/proxies/{listed}/{name}"
+        back = "/proxies/" + listed + "/" + name
         posted = _posted(request)
         #
         # One past the bound, so the helper's own limit refuses a request over
@@ -741,7 +741,7 @@ def build_router(config: Config) -> APIRouter:
             : server_state.MAX_ADDRESSES + 1
         ]
         if not chosen:
-            return RedirectResponse(f"{back}?blocked=none", status_code=303)
+            return RedirectResponse(back + "?blocked=none", status_code=303)
         payload = {"object": name, "addresses": chosen}
         try:
             operations.prepare(
@@ -763,7 +763,7 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.ClusterBusy:
                 connection.rollback()
-                return RedirectResponse(f"{back}?blocked=busy", status_code=303)
+                return RedirectResponse(back + "?blocked=busy", status_code=303)
             except db.RequestConflict:
                 connection.rollback()
                 return PlainTextResponse("That request key asked for something else", 409)

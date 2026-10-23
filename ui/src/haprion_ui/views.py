@@ -965,7 +965,7 @@ def _queue_node_job(
     # it, and the address is then never built from what the browser sent.
     #
     listed = next(name for name in listed_clusters(request, config) if name == cluster)
-    return RedirectResponse(f"/settings/nodes/{listed}", status_code=303)
+    return RedirectResponse("/settings/nodes/" + listed, status_code=303)
 
 
 def _first_cluster(
@@ -1868,7 +1868,7 @@ def _editor_submit(
             return RedirectResponse(
                 _proxy_path(cluster, object_id) + "?discarded=1", status_code=303
             )
-        return RedirectResponse(f"/proxies?discarded={object_id}", status_code=303)
+        return RedirectResponse("/proxies?discarded=" + object_id, status_code=303)
 
     #
     # No publish here (B257): saved changes are published together, from
@@ -3052,7 +3052,7 @@ def _return_path(name: str, *, open: str = "") -> str:
 
     path = RETURN_PATHS.get(name, "/jobs")
     if name == "certificates" and open and CERTIFICATE_ID.fullmatch(open):
-        return f"{path}&open={open}"
+        return path + "&open=" + open
     return path
 
 

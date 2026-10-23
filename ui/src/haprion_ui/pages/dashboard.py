@@ -719,7 +719,7 @@ def build_router(config: Config) -> APIRouter:
             connection.commit()
         if deploy:
             return RedirectResponse("/", status_code=303)
-        return RedirectResponse(f"/history?published={cluster}", status_code=303)
+        return RedirectResponse("/history?published=" + cluster, status_code=303)
 
     def _status_allowed(request: Request) -> bool:
         """Whether the asking address is on Settings' list for `/status/` (B274)."""

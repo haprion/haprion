@@ -233,7 +233,7 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         _await_dns_profile_job(request, job.id)
-        return RedirectResponse(f"/dns-profiles?removed={existing.id}", status_code=303)
+        return RedirectResponse("/dns-profiles?removed=" + existing.id, status_code=303)
 
     def _dns_profile_submit(
         request: Request, session: AuthenticatedSession, *, existing: db.DnsProfile | None
@@ -744,6 +744,6 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         _await_dns_profile_job(request, job.id)
-        return RedirectResponse(f"/ndes-profiles?removed={existing.id}", status_code=303)
+        return RedirectResponse("/ndes-profiles?removed=" + existing.id, status_code=303)
 
     return router

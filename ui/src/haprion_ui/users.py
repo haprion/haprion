@@ -90,7 +90,7 @@ class UserView:
 def href(username: str) -> str:
     """The account's page. Quoted whole: a name is any text the CLI accepted."""
 
-    return f"/settings/users/{quote(username, safe='')}"
+    return "/settings/users/" + quote(username, safe="")
 
 
 def _state(row: AccountRow) -> tuple[str, Tone]:

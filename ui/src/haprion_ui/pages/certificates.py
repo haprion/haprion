@@ -767,7 +767,7 @@ def build_router(config: Config) -> APIRouter:
         if after:
             return RedirectResponse(after, status_code=303)
         if open_row:
-            return RedirectResponse(f"/certificates?view=registry&open={open_row}", status_code=303)
+            return RedirectResponse("/certificates?view=registry&open=" + open_row, status_code=303)
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
     def _certificate_import_page(
@@ -875,7 +875,7 @@ def build_router(config: Config) -> APIRouter:
         # A fixed address, with the row still open: the listing's State cell
         # follows the job from there, on the row the button was pressed on.
         return RedirectResponse(
-            f"/certificates?view=registry&open={certificate_id}", status_code=303
+            "/certificates?view=registry&open=" + certificate_id, status_code=303
         )
 
     @router.post("/certificates/{certificate_id}/publish")
@@ -945,7 +945,7 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         return RedirectResponse(
-            f"/certificates?view=registry&open={certificate_id}", status_code=303
+            "/certificates?view=registry&open=" + certificate_id, status_code=303
         )
 
     def _certificate_choices(request: Request, config: Config) -> certificate_form.IssueChoices:

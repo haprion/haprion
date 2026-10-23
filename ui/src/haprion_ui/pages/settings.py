@@ -344,7 +344,7 @@ def build_router(config: Config) -> APIRouter:
                 connection.rollback()
                 return _settings_page(request, gate, problem=str(problem), status_code=409)
             connection.commit()
-        return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
+        return RedirectResponse("/settings?switched=" + name + "-" + enabled, status_code=303)
 
     # - Settings -> Users (§16.4 U4, B189) ----------------------------------
     #
@@ -532,7 +532,7 @@ def build_router(config: Config) -> APIRouter:
         if _settings_reading(request, cluster) is None:
             return PlainTextResponse("Not found", status_code=404)
         revision = int(saved_revision) if is_digits(saved_revision) else None
-        page = f"/settings/clusters/{cluster}"
+        page = "/settings/clusters/" + cluster
         if settings_action == "discard":
             if revision is None:
                 return PlainTextResponse("There is nothing to discard", status_code=400)
@@ -1007,7 +1007,9 @@ def build_router(config: Config) -> APIRouter:
         creating = request.query_params.get("creating", "")
         if CLUSTER_ID.fullmatch(creating):
             if creating in listed_clusters(request, config):
-                return RedirectResponse(f"/settings/nodes/{creating}?joined=1", status_code=303)
+                return RedirectResponse(
+                    "/settings/nodes/" + creating + "?joined=1", status_code=303
+                )
             with request.app.state.pool.connection() as connection:
                 recent = db.recent_jobs(connection)
             shown = next(
@@ -1293,7 +1295,7 @@ def build_router(config: Config) -> APIRouter:
                 done = "role" if new_role else "password" if new_secret else "break_glass"
         else:
             done = action
-        return RedirectResponse(f"{users.href(row.username)}?done={done}", status_code=303)
+        return RedirectResponse(users.href(row.username) + "?done=" + done, status_code=303)
 
     @router.get("/settings/oidc", response_class=HTMLResponse)
     def oidc_settings_page(request: Request) -> Response:
@@ -1467,7 +1469,7 @@ def build_router(config: Config) -> APIRouter:
                     detail={"issuer": provider.issuer, "via": "web"},
                 )
                 connection.commit()
-            return RedirectResponse(f"/settings/oidc?done={action}", status_code=303)
+            return RedirectResponse("/settings/oidc?done=" + action, status_code=303)
 
         return PlainTextResponse("Unknown action", status_code=400)
 

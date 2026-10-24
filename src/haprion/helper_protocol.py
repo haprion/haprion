@@ -17,6 +17,15 @@ from haprion.config import CLUSTER_ID
 from haprion.envelope import failure
 
 MAX_REQUEST_BYTES = 64 * 1024
+#
+# How deeply a request may nest arrays and objects. A real one goes nine deep;
+# the limit is the protocol's own, counted before the document is parsed,
+# rather than whatever depth Python's parser happens to survive - which
+# differs between patch releases and machines (CI's Python 3.14 parsed 100 000
+# levels that 3.13 refused, 26-10-24).
+#
+MAX_NESTING = 64
+_NESTING_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[\[\]{}]')
 OPERATION = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 REQUIRED_REQUEST_FIELDS = frozenset(
     {"schema_version", "operation", "cluster", "request_id", "parameters"}
@@ -203,6 +212,23 @@ def _finite_float(value: str) -> float:
     return number
 
 
+def _refuse_deep_nesting(text: str) -> None:
+    """Refuse a document nested deeper than `MAX_NESTING`, counting outside strings."""
+
+    depth = 0
+    for match in _NESTING_TOKEN.finditer(text):
+        bracket = match.group()
+        if bracket in "[{":
+            depth += 1
+            if depth > MAX_NESTING:
+                raise HelperProtocolError(
+                    "helper request is not one valid JSON document",
+                    exit_code=exit_codes.REFUSED,
+                )
+        elif bracket in "]}":
+            depth -= 1
+
+
 def _read_document(stream: BinaryIO, *, max_bytes: int) -> dict[str, JsonValue]:
     if max_bytes < 1:
         raise ValueError("max_bytes must be positive")
@@ -238,6 +264,7 @@ def _read_document(stream: BinaryIO, *, max_bytes: int) -> dict[str, JsonValue]:
             "helper request is not valid UTF-8", exit_code=exit_codes.REFUSED
         ) from exc
 
+    _refuse_deep_nesting(text)
     try:
         value = json.loads(
             text,

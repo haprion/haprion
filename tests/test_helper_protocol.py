@@ -12,6 +12,7 @@ from typing import Any
 
 from haprion import helper_protocol
 from haprion.helper_protocol import (
+    MAX_NESTING,
     HelperProtocolError,
     HelperRequest,
     JsonValue,
@@ -103,6 +104,31 @@ class HelperProtocolTests(unittest.TestCase):
                     allowed_parameter_keys=frozenset({"value"}),
                     max_bytes=len(raw),
                 )
+
+    def test_nesting_is_held_to_the_protocol_s_own_limit(self) -> None:
+        # Not to whatever depth this Python survives: CI's 3.14 parsed 100 000
+        # levels that 3.13 refused (26-10-24). Brackets inside strings do not count.
+        def nested(levels: int) -> bytes:
+            # The request object and `parameters` are two levels already.
+            inner = levels - 2
+            return request_bytes().replace(
+                b'"parameters": {}',
+                b'"parameters": {"value": '
+                + b"[" * inner
+                + b"1"
+                + b"]" * inner
+                + b', "text": "[[[[{{{{"}',
+            )
+
+        allowed = frozenset({"value", "text"})
+        for levels, refused in ((MAX_NESTING, False), (MAX_NESTING + 1, True)):
+            raw = nested(levels)
+            with self.subTest(levels=levels):
+                if refused:
+                    with self.assertRaisesRegex(HelperProtocolError, "not one valid JSON document"):
+                        self.read(raw, allowed_parameter_keys=allowed, max_bytes=len(raw))
+                else:
+                    self.read(raw, allowed_parameter_keys=allowed, max_bytes=len(raw))
 
     def test_a_request_id_in_capitals_is_not_the_canonical_form(self) -> None:
         with self.assertRaisesRegex(HelperProtocolError, "canonical UUID form"):

@@ -6325,7 +6325,8 @@ socket). It reloads instead when HAProxy does not hold one of them yet, or refus
 stops between installing and reloading leaves `/run/haprion-cert-pull.pending`, and the node's
 status leaves those certificates out until the next run reloads.
 
-**What the node attests.** Step 4 also writes `/etc/haprion/node-installation.json`. It records the
+**What the node attests.** Step 4 also writes `/etc/haprion/node-installation.json`, and the node
+package writes it again on a joined node when `apt upgrade` replaces the scripts. It records the
 node compatibility API and a SHA-256 digest of each script above except `haprion-node-key` and
 `haprion-node-join` - thirteen scripts. Those two only join a new node once, so they are not part
 of what a node attests or what its state backup carries. `haprion-node-status` recomputes the
@@ -6494,8 +6495,8 @@ haprion-status -c alpha                                  # on the manager: which
 sudo apt update && sudo apt upgrade                      # on that cluster's other node, then the holder
 ```
 
-On a node that is already joined, the package replaces the node scripts and changes nothing else.
-It does not run `04-node-prepare`. The installation from the manager, below, does run it, with a
+On a node that is already joined, the package replaces the node scripts and records their digests
+again; it changes nothing else. It does not run `04-node-prepare`. The installation from the manager, below, does run it, with a
 state backup on each side. Use that way when a release changes something that step sets up.
 
 ##### Build and verify the package

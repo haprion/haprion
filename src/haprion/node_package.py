@@ -94,6 +94,7 @@ CONTENTS: dict[str, tuple[str, int]] = {
     },
     f"{INSTALL_DIR[1:]}/04-node-prepare": ("install/04-node-prepare", 0o755),
     f"{INSTALL_DIR[1:]}/lib.sh": ("install/lib.sh", 0o644),
+    f"{INSTALL_DIR[1:]}/node-installation.sh": ("install/node-installation.sh", 0o644),
     f"{INSTALL_DIR[1:]}/accounts.sh": ("install/accounts.sh", 0o644),
     f"{INSTALL_DIR[1:]}/defaults.sh": ("install/defaults.sh", 0o644),
     f"{INSTALL_DIR[1:]}/sysusers/haprion-node.conf": (
@@ -143,15 +144,21 @@ DEPENDS = (
 #
 # Nothing to start and nothing to stop: the scripts run when the manager asks.
 # On a node no manager has joined yet, the package makes the accounts and keys
-# and prints the block to paste into the interface (B317); on a joined node it
-# says nothing, and an upgrade is complete when dpkg has replaced the files.
-# A block that could not be made does not leave the package half installed:
-# the same command says why when it is run again.
+# and prints the block to paste into the interface (B317). On a joined node an
+# upgrade is complete when dpkg has replaced the files and the node's record of
+# them is written again: the scripts it attests are the ones dpkg has just put
+# there (review 26-10-24, 03-01). A block or a record that could not be made
+# does not leave the package half installed: the message says what to run.
 #
 POSTINST = f"""\
 #!/bin/sh
 set -e
 if [ "$1" = configure ]; then
+    if [ -f /etc/haprion/node.conf ]; then
+        bash -c '. {INSTALL_DIR}/lib.sh && . {INSTALL_DIR}/node-installation.sh \\
+            && record_node_installation {SBIN}' \\
+            || echo "{PACKAGE}: the record of its scripts was not written; run  sudo dpkg-reconfigure {PACKAGE}" >&2
+    fi
     {SBIN}/haprion-node-key --package \\
         || echo "{PACKAGE}: the block was not made; run  sudo {SBIN}/haprion-node-key" >&2
 fi

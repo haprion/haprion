@@ -148,7 +148,7 @@ class CompatibilityMetadataTests(unittest.TestCase):
         self.assertEqual(requirements.database_head, next(iter(heads)))
         self.assertTrue(heads <= set(requirements.database_revisions))
 
-        installer = (ROOT / "install/04-node-prepare").read_text()
+        installer = (ROOT / "install/node-installation.sh").read_text()
         node_api = re.search(r"^NODE_API=([0-9]+)$", installer, re.MULTILINE)
         if node_api is None:
             self.fail("the node installer has no API level")

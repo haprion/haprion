@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -288,3 +289,47 @@ class NodePackageTransportContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnUpgradeRecordsTheScriptsItInstalled(unittest.TestCase):
+    """Review 26-10-24, 03-01: after apt upgrade the record named the old scripts."""
+
+    BASE = Path(__file__).resolve().parents[1]
+
+    def test_the_record_is_written_from_the_scripts_on_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            sbin = Path(raw) / "sbin"
+            sbin.mkdir()
+            for name in node_package.NODE_SCRIPTS:
+                (sbin / name).write_text(f"# {name}, upgraded\n")
+            record = Path(raw) / "node-installation.json"
+            install = self.BASE / "install"
+            subprocess.run(  # fixed interpreter, the package's own files
+                [
+                    "/bin/bash",
+                    "-c",
+                    f'. "{install}/lib.sh" && . "{install}/node-installation.sh" '
+                    '&& chown() { :; } && record_node_installation "$1"',
+                    "record",
+                    str(sbin),
+                ],
+                env={**os.environ, "NODE_INSTALLATION": str(record)},
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            written = json.loads(record.read_text())
+        self.assertEqual(
+            written["scripts"],
+            {
+                name: hashlib.sha256(f"# {name}, upgraded\n".encode()).hexdigest()
+                for name in node_package.NODE_SCRIPTS
+            },
+        )
+
+    def test_the_postinst_writes_it_on_a_joined_node_only(self) -> None:
+        script = node_package.POSTINST
+        guard = script.index("if [ -f /etc/haprion/node.conf ]; then")
+        self.assertLess(guard, script.index("record_node_installation /usr/sbin"))
+        self.assertIn(f"{node_package.INSTALL_DIR}/node-installation.sh", script)
+        self.assertIn("usr/share/haprion-node/install/node-installation.sh", node_package.CONTENTS)

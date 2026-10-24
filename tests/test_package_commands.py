@@ -185,7 +185,7 @@ def names(field: str) -> set[str]:
 
 def library_functions() -> set[str]:
     found: set[str] = set()
-    for name in ("lib.sh", "accounts.sh", "defaults.sh", "setup.sh"):
+    for name in ("lib.sh", "accounts.sh", "defaults.sh", "setup.sh", "node-installation.sh"):
         found |= COMMANDS.shell_functions((INSTALL / name).read_text())
     return found
 

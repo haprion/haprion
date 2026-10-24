@@ -21,12 +21,12 @@ def shell_array(text: str, name: str) -> tuple[str, ...]:
 
 class StateExportContractTests(unittest.TestCase):
     def test_export_and_installer_name_the_same_node_package(self) -> None:
-        installer = (BASE / "install/04-node-prepare").read_text(encoding="utf-8")
+        installer = (BASE / "install/node-installation.sh").read_text(encoding="utf-8")
         exporter = (BASE / "install/node/haprion-state-export").read_text(encoding="utf-8")
         self.assertEqual(shell_array(exporter, "DR_SCRIPTS"), shell_array(installer, "SCRIPTS"))
 
     def test_every_node_package_script_is_required_by_the_archive_validator(self) -> None:
-        installer = (BASE / "install/04-node-prepare").read_text(encoding="utf-8")
+        installer = (BASE / "install/node-installation.sh").read_text(encoding="utf-8")
         expected = {f"rootfs/usr/sbin/{name}" for name in shell_array(installer, "SCRIPTS")}
         self.assertLessEqual(expected, REQUIRED_PATHS)
 

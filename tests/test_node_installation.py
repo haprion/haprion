@@ -79,7 +79,9 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.assertIs(result["scripts_current"], True)
 
     def test_installer_and_status_attest_the_same_node_package(self) -> None:
-        match = re.search(r"^SCRIPTS=\(\n(.*?)^\)", INSTALLER.read_text(), re.MULTILINE | re.DOTALL)
+        # Since 26-10-24 (03-01) the list is in the file step 4 and the postinst share.
+        listed = (INSTALLER.parent / "node-installation.sh").read_text()
+        match = re.search(r"^SCRIPTS=\(\n(.*?)^\)", listed, re.MULTILINE | re.DOTALL)
         assert match is not None
         installed = tuple(re.findall(r"^\s+(haprion-[a-z0-9-]+)$", match.group(1), re.MULTILINE))
         self.assertEqual(installed, NODE_SCRIPTS)

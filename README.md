@@ -1,8 +1,7 @@
 # Haprion
 
-A web interface and command-line engine for running small HAProxy clusters: load balancing, a
-virtual address that moves between the nodes, a WAF and certificates, from one place - without
-having to work with HAProxy every day.
+Run small HAProxy clusters from one place - load balancing, failover, a WAF and certificates -
+without having to master HAProxy.
 
 ## Project status
 

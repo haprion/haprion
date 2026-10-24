@@ -142,6 +142,25 @@ class TheSteps(NodesPage):
         self.assertEqual(job["payload"]["vip"], "198.51.100.30")
         self.assertEqual(job["payload"]["blocks"], [pasted])
 
+    def test_the_node_s_address_can_be_given_where_its_name_is_not_found(self) -> None:
+        """Review 26-10-24, 12-03: the block's hostname -f was the only address there was."""
+
+        client = self.client_for()
+        pasted = block("gamma", "gamma-a")
+        shown = self.post_to(
+            client, "/first-cluster/first-node", **self.first(block=pasted), host="192.0.2.51"
+        )
+        self.assertIn('name="host" value="192.0.2.51"', shown.text)
+        self.assertIn("192.0.2.51", shown.text.split("host key")[0])
+        self.post_to(
+            client,
+            "/first-cluster/first-node",
+            **self.first(block=pasted, confirm="gamma-a"),
+            host="192.0.2.51",
+        )
+        (job,) = self.queued
+        self.assertEqual(job["payload"]["hosts"], ["192.0.2.51"])
+
     def test_after_a_failed_creation_the_next_try_has_the_name_and_address(self) -> None:
         #
         # Review 2026-10-18, U1: the step came back with empty hidden fields, so

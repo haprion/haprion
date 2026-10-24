@@ -96,7 +96,9 @@ has **Set up**: it opens *Set up your first cluster*, in five steps:
    **Continue**.
 2. **First node**: paste the first node's block and press **Read block**. Compare the host key the
    page shows with the one the node printed, then press the button with the node's name, for
-   example **Add node-a**. The cluster is created with it.
+   example **Add node-a**. The cluster is created with it. The manager reaches the node by the name
+   in its block; if that name does not resolve from the manager, give its DNS name or IP in the field
+   below the block.
 3. **Second node**: the same with the second node's block, or **Skip** for a cluster of one.
 4. **Deploy**: starts keepalived on the nodes, and the VIP lands on one of them.
 5. **Done** says which node holds the VIP and which stands by.

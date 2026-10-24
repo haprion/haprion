@@ -49,6 +49,7 @@ def build_router(config: Config) -> APIRouter:
         *,
         form: Mapping[str, str] | None = None,
         block: str = "",
+        host: str = "",
         preview: Any = None,
         problem: str = "",
         status_code: int = 200,
@@ -62,6 +63,7 @@ def build_router(config: Config) -> APIRouter:
                 "guide": guide,
                 "form": form or guide.form,
                 "block": block,
+                "host": host,
                 "preview": preview,
                 "problem": problem,
                 "node_package": first_cluster.node_package_name(),
@@ -115,6 +117,7 @@ def build_router(config: Config) -> APIRouter:
         display_name: str = Form(default="", max_length=64),
         vip: str = Form(default="", max_length=64),
         block: str = Form(default="", max_length=8192),
+        host: str = Form(default="", max_length=253),
         action: str = Form(default="", max_length=16),
         confirm: str = Form(default="", max_length=64),
         idempotency_key: str = Form(default="", max_length=64),
@@ -132,7 +135,7 @@ def build_router(config: Config) -> APIRouter:
         registry = _registry_overview(config, request)
         try:
             creation = cluster_nodes.read_creation(
-                {**form, "block_1": block},
+                {**form, "block_1": block, "host_1": host},
                 listed=listed_clusters(request, config),
                 certificates=(
                     entry.identifier for entry in (registry.certificates if registry else ())
@@ -140,11 +143,19 @@ def build_router(config: Config) -> APIRouter:
             )
         except cluster_nodes.FormProblem as problem:
             return _first_cluster_page(
-                request, step, form=form, block=block, problem=str(problem), status_code=400
+                request,
+                step,
+                form=form,
+                block=block,
+                host=host,
+                problem=str(problem),
+                status_code=400,
             )
         node = creation.nodes[0]
         if confirm.strip() != node.name:
-            return _first_cluster_page(request, step, form=form, block=block, preview=node)
+            return _first_cluster_page(
+                request, step, form=form, block=block, host=host, preview=node
+            )
         try:
             key = UUID(idempotency_key)
             payload = creation.payload(_dns_public_key(config))
@@ -152,7 +163,13 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
         except cluster_nodes.FormProblem as problem:
             return _first_cluster_page(
-                request, step, form=form, block=block, problem=str(problem), status_code=400
+                request,
+                step,
+                form=form,
+                block=block,
+                host=host,
+                problem=str(problem),
+                status_code=400,
             )
         return _queue_node_job(
             config,
@@ -163,7 +180,7 @@ def build_router(config: Config) -> APIRouter:
             key,
             None,
             lambda problem: _first_cluster_page(
-                request, step, form=form, block=block, problem=problem, status_code=409
+                request, step, form=form, block=block, host=host, problem=problem, status_code=409
             ),
             operation="cluster_define",
             back="/first-cluster",
@@ -174,6 +191,7 @@ def build_router(config: Config) -> APIRouter:
         request: Request,
         cluster: str = Form(default="", max_length=64),
         block: str = Form(default="", max_length=8192),
+        host: str = Form(default="", max_length=253),
         confirm: str = Form(default="", max_length=64),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
@@ -189,14 +207,17 @@ def build_router(config: Config) -> APIRouter:
         step = first_cluster.Guide(step=3, cluster=cluster, joined=first_cluster.joined(reading))
         try:
             addition = cluster_nodes.read_addition(
-                block, cluster=cluster, host="", count=len(cluster_nodes.node_rows(reading))
+                block,
+                cluster=cluster,
+                host=host.strip(),
+                count=len(cluster_nodes.node_rows(reading)),
             )
         except cluster_nodes.FormProblem as problem:
             return _first_cluster_page(
-                request, step, block=block, problem=str(problem), status_code=400
+                request, step, block=block, host=host, problem=str(problem), status_code=400
             )
         if confirm.strip() != addition.name:
-            return _first_cluster_page(request, step, block=block, preview=addition)
+            return _first_cluster_page(request, step, block=block, host=host, preview=addition)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -207,7 +228,7 @@ def build_router(config: Config) -> APIRouter:
             )
         except cluster_nodes.FormProblem as problem:
             return _first_cluster_page(
-                request, step, block=block, problem=str(problem), status_code=400
+                request, step, block=block, host=host, problem=str(problem), status_code=400
             )
         payload: dict[str, Any] = {
             "action": "add",
@@ -226,7 +247,7 @@ def build_router(config: Config) -> APIRouter:
             key,
             addition.name,
             lambda problem: _first_cluster_page(
-                request, step, block=block, problem=problem, status_code=409
+                request, step, block=block, host=host, problem=problem, status_code=409
             ),
             back="/first-cluster",
         )

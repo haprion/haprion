@@ -13,6 +13,7 @@
 <pre class="receiver-command"><code>sudo apt install haprion-node</code></pre>
 <p><a class="text-link" href="/first-cluster/{{ node_package }}" download>Download {{ node_package }}</a></p>
 <label><span class="field-title">Paste what it printed</span><textarea name="block" rows="3" spellcheck="false" placeholder="haprion-node-v2:…" required>{{ block }}</textarea></label>
+<div class="form-grid"><label><span class="field-title">DNS name or IP <span class="optional">(optional)</span></span><input name="host" value="{{ host }}" maxlength="253" spellcheck="false" placeholder="From the block"></label></div>
 {% if preview %}<p class="preview-notice settings-notice"><strong>{{ preview.name }}</strong> — {{ preview.host }} · host key <code>{{ preview.fingerprint }}</code></p>{% endif %}
 {% endmacro %}
 {% macro joined_rows() %}{% for node in guide.joined %}<div class="guide-joined"><span class="status-badge status-badge-healthy">Joined</span><strong>{{ node.name }}</strong><code>{{ node.host }}</code></div>{% endfor %}{% endmacro %}

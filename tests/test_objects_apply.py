@@ -158,6 +158,27 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(pruned.published[0]["parameters"]["objects"], {"old": None})
 
+    def test_an_export_s_empty_directory_changes_nothing(self) -> None:
+        """Review 26-10-24, 15-04: the manual's playbook stopped on a cluster without objects."""
+
+        fakes = Fakes({"shop": document("shop")})
+        (self.root / ".gitkeep").write_text("")
+
+        code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
+
+        self.assertEqual((code, fakes.published), (0, []))
+        self.assertFalse(assert_contract("haprion-objects-apply", out)["result"]["changed"])
+
+    def test_an_empty_directory_with_prune_is_refused(self) -> None:
+        fakes = Fakes({"shop": document("shop")})
+
+        code, out, _ = self.run_cli(
+            fakes, "apply", "-c", "alpha", str(self.root), "--prune", "--json"
+        )
+
+        self.assertEqual((code, fakes.published), (exit_codes.REFUSED, []))
+        self.assertIn("--prune", assert_contract("haprion-objects-apply", out)["error"]["message"])
+
     def test_removing_what_is_not_stored_is_already_done(self) -> None:
         fakes = Fakes({"shop": document("shop")})
 

@@ -89,6 +89,10 @@ def read_files(targets: Sequence[str]) -> dict[str, str]:
     subdirectories: what is applied is what somebody can see listed. Each
     document is read by the model the helper reads it with, so a mistake is
     named by its file before anything is asked of the manager.
+
+    A directory named on purpose and holding none is a cluster without objects
+    - what `haprion-export` writes for one - and gives nothing to apply (review
+    26-10-24, 15-04). Files named that hold no object are still refused.
     """
 
     files: list[Path] = []
@@ -127,7 +131,7 @@ def read_files(targets: Sequence[str]) -> dict[str, str]:
             raise Refused("object_invalid", f"{path}: {exc}") from exc
         documents[name] = text
         origin[name] = path
-    if not documents:
+    if not documents and not any(Path(target).is_dir() for target in targets):
         raise Refused("nothing", "no object files found")
     return documents
 
@@ -310,6 +314,11 @@ def main(
     cluster = str(args.cluster)
     try:
         wanted = read_files(args.targets) if command == "apply" else {}
+        if command == "apply" and not wanted and args.prune:
+            raise Refused(
+                "nothing",
+                "no object files found, and --prune would remove every object; nothing was changed",
+            )
         head, current = stored(answer_of(run_helper(cluster, new_request_id()), "objects"))
         plan = (
             plan_apply(wanted, current, prune=args.prune)

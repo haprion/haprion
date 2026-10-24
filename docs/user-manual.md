@@ -171,6 +171,8 @@ the object `shop`.
 - `apply` publishes whatever differs from what is stored, as one version, and says what it did. It works
   against the version it read. Applying the same files again changes nothing.
 - An object that no file names is left alone, unless `--prune` is given.
+- A directory with no object files changes nothing. With `--prune` it is refused, since it would remove
+  every object.
 - `--check` shows the difference and publishes nothing.
 - `--json` answers with `changed`.
 - Deploying stays a step of its own.

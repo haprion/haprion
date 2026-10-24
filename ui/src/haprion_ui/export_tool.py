@@ -229,6 +229,10 @@ def write_tree(
     Every step is relative to an open directory and refuses a symbolic link,
     so a name swapped for a link while this runs is an error, not a write
     somewhere else as root.
+
+    A directory given with nothing in it holds an empty `.gitkeep`: Git keeps
+    no empty directory, and an export is often kept in a repository (review
+    26-10-24, 15-04).
     """
 
     try:
@@ -259,7 +263,12 @@ def write_tree(
 
         for path in sorted(directories):
             below(path.split("/"))
-        for path, text in sorted(files.items()):
+        kept = {
+            f"{path}/.gitkeep": ""
+            for path in directories
+            if not any(name.startswith(f"{path}/") for name in files)
+        }
+        for path, text in sorted({**files, **kept}.items()):
             *parts, name = path.split("/")
             parent = below(parts)
             descriptor = os.open(

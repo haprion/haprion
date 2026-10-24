@@ -195,7 +195,8 @@ class TheLayout(Harness):
 
         self.export("-c", "beta")
 
-        self.assertEqual(list((self.target / "clusters/beta/objects").iterdir()), [])
+        kept = [path.name for path in (self.target / "clusters/beta/objects").iterdir()]
+        self.assertEqual(kept, [".gitkeep"])
 
 
 class TheRefusals(Harness):

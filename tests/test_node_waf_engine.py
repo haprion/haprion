@@ -326,7 +326,7 @@ class TheOrderInTheDeploy(unittest.TestCase):
     def test_the_rules_are_compiled_before_the_release_is_written(self) -> None:
         self.assertLess(
             self.position('validate_waf_candidate "$VALIDATE" || exit 1'),
-            self.position('RELEASE="${RELEASE_DIR}/'),
+            self.position('if ! RELEASE="$(new_release)"; then'),
         )
 
     def test_the_engine_takes_the_rules_before_haproxy_reloads(self) -> None:

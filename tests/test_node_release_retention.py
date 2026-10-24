@@ -90,6 +90,44 @@ class TheNodeKeepsItsNewestReleases(unittest.TestCase):
             self.assertLess(completion, call)
 
 
+class EachDeployMakesItsOwnRelease(unittest.TestCase):
+    """Review 26-10-24, 03-06: a name already there was merged into, not refused."""
+
+    def run_it(self, releases: Path, date: str) -> subprocess.CompletedProcess[str]:
+        text = SCRIPT.read_text()
+        found = re.search(r"^new_release\(\) \{.*?^\}$", text, re.S | re.M)
+        assert found, "the function is no longer where the test extracts it from"
+        stubs = releases.parent / "bin"
+        stubs.mkdir(exist_ok=True)
+        for name, body in (("date", f"echo {date}"), ("sleep", "exit 0")):
+            (stubs / name).write_text(f"#!/bin/sh\n{body}\n")
+            (stubs / name).chmod(0o755)
+        return subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                f'set -Eeuo pipefail\nPATH="{stubs}:$PATH"\nRELEASE_DIR="{releases}"\n'
+                f"{found.group(0)}\nnew_release\n",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_a_name_already_taken_is_never_merged_into(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            releases = Path(raw) / "releases"
+            made = self.run_it(releases, "20261024-120000")
+            self.assertEqual(made.stdout.strip(), str(releases / "20261024-120000"))
+            (releases / "20261024-120000" / "haproxy.cfg").write_text("first\n")
+
+            again = self.run_it(releases, "20261024-120000")
+
+            self.assertNotEqual(again.returncode, 0)
+            self.assertEqual(again.stdout, "")
+            self.assertEqual((releases / "20261024-120000" / "haproxy.cfg").read_text(), "first\n")
+
+
 class ChmodTakesManyFilesAtOnce(unittest.TestCase):
     """R6: `-exec … +` - the same modes, without a process per file."""
 

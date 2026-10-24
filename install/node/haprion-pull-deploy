@@ -483,6 +483,24 @@ waf_differs() {
 }
 
 #
+# A release's name, taken once. Two runs in the same second would otherwise
+# share one directory, the second copying its files over the first's (review
+# 26-10-24, 03-06). The lock makes that all but impossible; `mkdir` without
+# `-p` makes it impossible.
+#
+new_release() {
+    local release
+    mkdir -p "$RELEASE_DIR"
+    release="${RELEASE_DIR}/$(date +%Y%m%d-%H%M%S)"
+    if ! mkdir "$release" 2>/dev/null; then
+        sleep 1
+        release="${RELEASE_DIR}/$(date +%Y%m%d-%H%M%S)"
+        mkdir "$release" 2>/dev/null || return 1
+    fi
+    printf '%s\n' "$release"
+}
+
+#
 # The releases a node keeps (review 26-10-08, R4): the newest KEEP_RELEASES,
 # and always the one `current` names, the one HAProxy ran before this deploy
 # and the one an interrupted run left behind - whatever their age. Run only
@@ -938,9 +956,10 @@ validate_ipvs_candidate "$VALIDATE" || exit 1
 #
 # Create a new immutable release
 #
-RELEASE="${RELEASE_DIR}/$(date +%Y%m%d-%H%M%S)"
-
-mkdir -p "$RELEASE"
+if ! RELEASE="$(new_release)"; then
+    log "ERROR: No new release directory could be made under ${RELEASE_DIR}. The existing config is left untouched."
+    exit 1
+fi
 cp -a "${STAGE}/." "${RELEASE}/"
 
 chown -R root:root "$RELEASE"

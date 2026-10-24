@@ -307,6 +307,53 @@ class TheListsAreTheSteps(unittest.TestCase):
             path.name.removesuffix(suffix) for path in (PLATFORM / "examples").glob(f"*{suffix}")
         }
 
+    def test_every_sudo_boundary_check_asks_the_rules_and_runs_nothing(self) -> None:
+        """Review 26-10-24, 08-01: without -l a check could never fail."""
+
+        step = (PLATFORM / "07-platform-services").read_text()
+        asked = re.findall(r"sudo -n(?! -l)\S*\s+/", step)
+        self.assertEqual(asked, [], "a boundary check runs the helper instead of asking sudo")
+
+    def test_each_granted_helper_is_asked_for_by_every_other_account(self) -> None:
+        step = (PLATFORM / "07-platform-services").read_text()
+        start = step.index("refuse_granted_elsewhere() {")
+        body = step[start : step.index("\n}\n", start) + 3]
+        rules = (
+            '_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/a-helper ""\n'
+            '_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/b-helper ""\n'
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            sudoers = Path(raw) / "haprion-worker"
+            sudoers.write_text(rules)
+            empty = Path(raw) / "empty"
+            empty.write_text("# nothing\n")
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the step's own function
+                [
+                    "/bin/bash",
+                    "-c",
+                    "WEB_USER=_haprion-ui; WORKER_USER=_haprion-worker; "
+                    "POLLER_USER=_haprion-poller; failed=0; "
+                    'warn() { echo "$*"; }; refuse() { echo "asked $1 ${*:3}"; }; '
+                    f'{body}refuse_granted_elsewhere "{sudoers}" _haprion-worker; '
+                    f'refuse_granted_elsewhere "{empty}" _haprion-poller; echo "failed=$failed"',
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        asked = [line for line in done.stdout.splitlines() if line.startswith("asked")]
+        self.assertEqual(
+            asked,
+            [
+                "asked _haprion-ui sudo -n -l /opt/haprion/current/bin/a-helper",
+                "asked _haprion-poller sudo -n -l /opt/haprion/current/bin/a-helper",
+                "asked _haprion-ui sudo -n -l /opt/haprion/current/bin/b-helper",
+                "asked _haprion-poller sudo -n -l /opt/haprion/current/bin/b-helper",
+            ],
+        )
+        self.assertIn("FAIL     no _haprion-poller rule could be read", done.stdout)
+        self.assertIn("failed=1", done.stdout)
+
     def test_the_sockets_are_those_step_07_always_installs(self) -> None:
         step = (PLATFORM / "07-platform-services").read_text()
         always = set(

@@ -11,6 +11,12 @@ twice changes nothing.
     haprion-backup-schedule -c <cluster> --time HH:MM
                             [--weekly Mon,Thu | --monthly <day>]
                             [--retention <count>] [--disable] [--check] [--json]
+    haprion-backup-schedule -c <cluster> --disable [--check] [--json]
+
+What it is not told it keeps (review 26-10-24, 15-01): without `--retention`
+the number of archives in force, and `--disable` without `--time` the schedule
+the timer has. A left-out `--retention` used to be 14, and the next run removed
+every archive past the fourteenth.
 
 Runs as root, like `haprion-state-backup`. *Node backups* under the
 interface's Features is the interface's switch; this command works either way.
@@ -19,6 +25,7 @@ interface's Features is the interface's switch; this command works either way.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -26,7 +33,7 @@ from collections.abc import Callable
 from typing import Any, TextIO
 
 from haprion import backup_retention, backup_schedule_write, exit_codes, helper_socket
-from haprion.backup_schedule import Schedule, schedule_result
+from haprion.backup_schedule import Schedule, describe, schedule_result
 from haprion.cli import backup_job_helper
 from haprion.cli.backup_job_ask import SOCKET_PATH, TIMEOUT_SECONDS
 from haprion.envelope import Message, envelope, failure, new_request_id
@@ -57,12 +64,18 @@ def _parser() -> argparse.ArgumentParser:
         description="Set one cluster's node backup schedule. Runs as root.",
     )
     parser.add_argument("-c", "--cluster", required=True)
-    parser.add_argument("--time", required=True, help="HH:MM on the manager's clock")
+    parser.add_argument("--time", help="HH:MM on the manager's clock")
     shape = parser.add_mutually_exclusive_group()
     shape.add_argument("--weekly", metavar="DAYS", help="weekdays, such as Mon,Thu")
     shape.add_argument("--monthly", type=int, metavar="DAY", help="day of the month, 1 to 28")
-    parser.add_argument("--retention", type=int, default=backup_retention.DEFAULT_RETENTION)
-    parser.add_argument("--disable", action="store_true", help="keep the schedule, stop the timer")
+    parser.add_argument(
+        "--retention", type=int, help="archives each node keeps; left out, the number in force"
+    )
+    parser.add_argument(
+        "--disable",
+        action="store_true",
+        help="stop the timer; without --time it keeps its schedule",
+    )
     parser.add_argument(
         "--check", action="store_true", help="say whether it would change; change nothing"
     )
@@ -71,7 +84,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def requested(args: argparse.Namespace) -> Schedule:
-    parameters: dict[str, Any] = {"time": args.time, "retention": args.retention}
+    """The schedule as asked; the retention is the code's default when none is given."""
+
+    retention = backup_retention.DEFAULT_RETENTION if args.retention is None else args.retention
+    parameters: dict[str, Any] = {"time": args.time, "retention": retention}
     if args.weekly:
         parameters.update(
             frequency="weekly", weekdays=[day.strip() for day in args.weekly.split(",")]
@@ -132,13 +148,28 @@ def main(
 
     if require_root and os.geteuid() != 0:
         return refuse("not_root", "haprion-backup-schedule must run as root", exit_codes.NOT_ROOT)
+    if args.time is None and not args.disable:
+        return refuse("bad_input", "--time is required unless --disable", exit_codes.USAGE)
+    if args.time is None and (args.weekly or args.monthly is not None):
+        return refuse("bad_input", "--weekly and --monthly need --time", exit_codes.USAGE)
     try:
-        wanted = requested(args)
+        wanted = requested(args) if args.time is not None else None
         timer, retention = read(args.cluster)
     except backup_schedule_write.ScheduleWriteError as exc:
         return refuse("bad_input", str(exc), exit_codes.USAGE)
     except backup_retention.RetentionError as exc:
         return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)
+    kept = retention if args.retention is None else args.retention
+    if wanted is None:
+        wanted = describe((timer or {}).get("calendar"), retention=kept)
+        if wanted is None:
+            return refuse(
+                "bad_input",
+                f"the timer of {args.cluster} has no schedule this command can keep; give --time",
+                exit_codes.USAGE,
+            )
+    elif args.retention is None:
+        wanted = dataclasses.replace(wanted, retention=kept)
     enabled = not args.disable
     if not differs(wanted, enabled, timer, retention):
         result = {"cluster": args.cluster, **wanted.as_dict(), "enabled": enabled}
@@ -172,7 +203,10 @@ def main(
         if args.json:
             write_document(writer, document, exit_codes.OK)
         else:
-            writer.write(f"{args.cluster}: would set the backup schedule to {wanted.calendar()}\n")
+            writer.write(
+                f"{args.cluster}: would set the backup schedule to {wanted.calendar()}, "
+                f"keeping {wanted.retention} archives per node\n"
+            )
         return 0
     request = json.loads(
         backup_job_helper.build_schedule_request(
@@ -190,7 +224,10 @@ def main(
         write_document(writer, answer, exit_code)
     elif answer.get("ok") is True:
         state = "on" if enabled else "off"
-        writer.write(f"{args.cluster}: backup schedule {wanted.calendar()}, timer {state}.\n")
+        writer.write(
+            f"{args.cluster}: backup schedule {wanted.calendar()}, "
+            f"{wanted.retention} archives per node, timer {state}.\n"
+        )
     else:
         error = answer.get("error") or {}
         writer.write(f"ERROR: [{error.get('code')}] {error.get('message')}\n")

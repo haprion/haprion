@@ -90,6 +90,32 @@ class TheScheduleCommand(unittest.TestCase):
                     assert_contract("haprion-backup-schedule", out)["result"]["changed"]
                 )
 
+    def test_a_left_out_retention_keeps_the_number_in_force(self) -> None:
+        """Review 26-10-24, 15-01: it became 14, and the next run removed the older archives."""
+
+        code, out, asked = self.run_command(
+            "--time", "03:30", "--weekly", "Mon,Thu", "--json", retention=60
+        )
+
+        self.assertEqual((code, asked), (0, []))
+        answer = assert_contract("haprion-backup-schedule", out)
+        self.assertEqual((answer["result"]["changed"], answer["result"]["retention"]), (False, 60))
+
+    def test_disable_alone_keeps_the_schedule_and_the_retention(self) -> None:
+        code, out, asked = self.run_command("--disable", "--json", retention=30)
+
+        self.assertEqual(code, 0, out)
+        (request,) = asked
+        self.assertEqual(request["parameters"]["enabled"], False)
+        self.assertEqual(request["parameters"]["frequency"], "weekly")
+        self.assertEqual(request["parameters"]["weekdays"], ["Mon", "Thu"])
+        self.assertEqual(request["parameters"]["retention"], 30)
+
+    def test_without_time_or_disable_nothing_is_asked(self) -> None:
+        code, _, asked = self.run_command("--weekly", "Mon")
+
+        self.assertEqual((code, asked), (64, []))
+
     def test_check_asks_nothing(self) -> None:
         code, out, asked = self.run_command("--time", "05:00", "--check")
 

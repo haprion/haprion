@@ -2950,7 +2950,8 @@ something only when the timer or the retention differs from what is asked, so ru
 twice changes nothing.
 
 - Without `--weekly` or `--monthly <day>` it runs every day.
-- `--disable` keeps the schedule and stops the timer.
+- Without `--retention` each node keeps the number of archives it keeps now.
+- `--disable` stops the timer. Without `--time` the schedule stays as it is.
 - `--check` says whether it would change anything.
 - `--json` prints the service's envelope, with `changed`.
 

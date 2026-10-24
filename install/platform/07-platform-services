@@ -421,27 +421,33 @@ if [[ -d "${UI_SECRETS}/dns-profile-keys" ]]; then
         refuse "$POLLER_USER" "cannot read a DNS profile private key" test -r "$key"
     done < <(find "${UI_SECRETS}/dns-profile-keys" -maxdepth 1 -type f -name '*.key')
 fi
+#
+# Each write inside a transaction that is rolled back, as 03-verify asks: a
+# grant that is wrong lets the write through, and it must not then stay - a
+# real deploy job for a cluster, or every cache row marked done (review
+# 26-10-24, 03-07).
+#
 refuse "$POLLER_USER" "cannot write a job row" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
-    -c "insert into job (operation, cluster, payload) values ('deploy', 'alpha', '{}')"
+    -c "begin; insert into job (operation, cluster, payload) values ('deploy', 'alpha', '{}'); rollback"
 refuse "$WEB_USER" "cannot write the status cache" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
-    -c "update cluster_status set outcome = 'done'"
+    -c "begin; update cluster_status set outcome = 'done'; rollback"
 refuse "$WEB_USER" "cannot write the inventory cache" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
-    -c "update cluster_inventory set outcome = 'done'"
+    -c "begin; update cluster_inventory set outcome = 'done'; rollback"
 refuse "$WEB_USER" "cannot write the backup cache" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
-    -c "update cluster_backups set outcome = 'done'"
+    -c "begin; update cluster_backups set outcome = 'done'; rollback"
 refuse "$WEB_USER" "cannot write the certificate cache" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
-    -c "update cluster_certificates set outcome = 'done'"
+    -c "begin; update cluster_certificates set outcome = 'done'; rollback"
 refuse "$WEB_USER" "cannot write the history cache" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
-    -c "update cluster_history set outcome = 'done'"
+    -c "begin; update cluster_history set outcome = 'done'; rollback"
 refuse "$WEB_USER" "cannot write the network cache" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
-    -c "update cluster_network set outcome = 'done'"
+    -c "begin; update cluster_network set outcome = 'done'; rollback"
 [[ $failed -eq 0 ]] || die "an identity can do something it must not"
 
 echo

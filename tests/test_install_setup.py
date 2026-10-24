@@ -112,6 +112,29 @@ class TheVerifyStepChecksTheKeys(unittest.TestCase):
         self.assertRegex(out, r"SKIP=1 \(not checked\)")
 
 
+class AWriteProbeLeavesNothing(unittest.TestCase):
+    """Review 26-10-24, 03-07: a refusal probe that got through committed its write."""
+
+    def test_every_write_a_step_expects_refused_is_rolled_back(self) -> None:
+        probes = []
+        for path in sorted(INSTALL.rglob("*")):
+            if not path.is_file() or path.suffix in {".md", ".py"}:
+                continue
+            text = path.read_text(errors="replace")
+            for call in re.finditer(r"^refuse [^\n]*\\\n(?:[^\n]*\\\n)*[^\n]*", text, re.M):
+                for sql in re.findall(r'-c "([^"]*)"', call.group(0)):
+                    probes.append((path.name, sql))
+        writes = [
+            (name, sql)
+            for name, sql in probes
+            if re.search(r"\b(insert|update|delete)\b", sql, re.I)
+        ]
+        self.assertGreaterEqual(len(writes), 7)
+        for name, sql in writes:
+            with self.subTest(step=name, sql=sql):
+                self.assertTrue(sql.startswith("begin; ") and sql.endswith("; rollback"))
+
+
 class TheAnswersFileIsOptional(unittest.TestCase):
     def test_without_one_the_defaults_are_the_answers(self) -> None:
         values = answers_value(["CONFIG_ROOT", "CLUSTERS", "CERTIFICATE_REGISTRY", "SERVER_NAME"])

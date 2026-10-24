@@ -69,7 +69,7 @@ class DeleteRouteTestCase(LoginTestCase):
 
         for patch in (
             mock.patch("haprion_ui.db.queue_job", side_effect=queue),
-            mock.patch("haprion_ui.db.live_drafts", side_effect=lambda _c: list(self.drafts)),
+            mock.patch("haprion_ui.db.live_drafts", side_effect=lambda _c, _l: list(self.drafts)),
             mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
             mock.patch(
                 "haprion_ui.db.cluster_certificates",

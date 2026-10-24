@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -100,12 +100,13 @@ def cluster_drafts(connection: Connection[Any], cluster: str) -> list[ProxyDraft
         return cursor.fetchall()
 
 
-def live_drafts(connection: Connection[Any]) -> list[ProxyDraft]:
-    """Every draft and saved change in every cluster that still asks for an object to exist.
+def live_drafts(connection: Connection[Any], clusters: Sequence[str]) -> list[ProxyDraft]:
+    """Every draft and saved change in the listed clusters that still asks for an object to exist.
 
     A row marked `deleted` asks for its object to go and names nothing a
     deletion has to respect, so it is left out here rather than filtered by
-    every caller.
+    every caller. So is a cluster no longer listed: its drafts cannot be
+    opened, and must not hold anything back (review 26-10-24, 11-02).
     """
 
     with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
@@ -113,8 +114,9 @@ def live_drafts(connection: Connection[Any]) -> list[ProxyDraft]:
             "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
             "       updated_by, updated_at, deleted, stage, replaces, base_document "
             "  from proxy_draft "
-            " where not deleted "
-            " order by cluster, object_id, stage"
+            " where not deleted and cluster = any(%(clusters)s) "
+            " order by cluster, object_id, stage",
+            {"clusters": list(clusters)},
         )
         return cursor.fetchall()
 

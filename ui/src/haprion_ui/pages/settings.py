@@ -73,6 +73,14 @@ from haprion_ui.views import (
 )
 
 
+def _unpublished(connection: Any, cluster: str) -> list[str]:
+    """The cluster's drafts and saved changes, by what a person would open (11-02)."""
+
+    names = [draft.object_id for draft in db.cluster_drafts(connection, cluster)]
+    names += [f"the saved {kind}" for kind in db.cluster_changes(connection, cluster)]
+    return names
+
+
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
 
@@ -930,7 +938,9 @@ def build_router(config: Config) -> APIRouter:
         listed = listed_clusters(request, config)
         if cluster not in listed:
             return PlainTextResponse("Not found", status_code=404)
-        refused = cluster_nodes.cluster_removable(listed, cluster)
+        with request.app.state.pool.connection() as connection:
+            unpublished = _unpublished(connection, cluster)
+        refused = cluster_nodes.cluster_removable(listed, cluster, unpublished)
         if refused is not None:
             return _nodes_page(request, gate, cluster, problem=refused, status_code=400)
         if not confirm:

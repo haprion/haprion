@@ -592,6 +592,32 @@ class RemovingACluster(ClusterPage):
         self.assertIsNone(cluster_nodes.cluster_removable(("service-demo",), "service-demo"))
 
 
+class AClusterWithUnpublishedWork(ClusterPage):
+    """Review 26-10-24, 11-02: its drafts outlived it and held certificate deletion back."""
+
+    def test_its_drafts_and_saved_changes_stop_the_removal_and_are_named(self) -> None:
+        draft = mock.Mock(object_id="shop")
+        with (
+            mock.patch("haprion_ui.db.cluster_drafts", return_value=[draft]),
+            mock.patch("haprion_ui.db.cluster_changes", return_value={"network": object()}),
+        ):
+            response = self.post_to(
+                self.client_for(),
+                "/settings/nodes/service-demo/remove-cluster",
+                confirm="service-demo",
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("unpublished work: shop, the saved network", response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_the_rule_names_what_waits(self) -> None:
+        self.assertIn(
+            "shop",
+            cluster_nodes.cluster_removable(("alpha",), "alpha", ["shop"]) or "",
+        )
+
+
 class ARemovedClusterLeavesThePages(NodesPage):
     """Review 2026-09-30 F1: with the list from the cluster file, a removed cluster's cache is not drawn."""
 

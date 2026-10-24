@@ -57,6 +57,7 @@ from haprion_ui.views import (
     _zip_response,
     current_session,
     forbidden_page,
+    listed_clusters,
     read_certificate_takeouts,
     read_manager_certificates,
     read_source,
@@ -1123,7 +1124,7 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         registry = _registry_views(request, config)
         with request.app.state.pool.connection() as connection:
-            drafts = db.live_drafts(connection)
+            drafts = db.live_drafts(connection, listed_clusters(request, config))
             recent = db.recent_jobs(connection)
         picked: certificate_delete.Selection | None = None
         try:
@@ -1294,7 +1295,7 @@ def build_router(config: Config) -> APIRouter:
         registry = _registry_views(request, config)
         choices = _certificate_choices(request, config)
         with request.app.state.pool.connection() as connection:
-            drafts = db.live_drafts(connection)
+            drafts = db.live_drafts(connection, listed_clusters(request, config))
             recent = db.recent_jobs(connection)
         picked: certificate_retarget.Selection | None = None
         try:
@@ -1374,7 +1375,7 @@ def build_router(config: Config) -> APIRouter:
         registry = _registry_views(request, config)
         choices = _certificate_choices(request, config)
         with request.app.state.pool.connection() as connection:
-            drafts = db.live_drafts(connection)
+            drafts = db.live_drafts(connection, listed_clusters(request, config))
         try:
             picked = certificate_retarget.selection(
                 action, tuple(certificate), registry, choices.clusters, choices.receivers, drafts
@@ -1839,7 +1840,7 @@ def build_router(config: Config) -> APIRouter:
 
         registry = _registry_views(request, config)
         with request.app.state.pool.connection() as connection:
-            drafts = db.live_drafts(connection)
+            drafts = db.live_drafts(connection, listed_clusters(request, config))
         try:
             picked = certificate_delete.selection(tuple(certificate), registry, drafts)
         except certificate_delete.SelectionProblem as refused:

@@ -2726,6 +2726,9 @@ until then.
 editing policy and `safe.directory`, and takes its nodes out of the six places. It also stops
 `haprion-state-backup@<cluster>.timer`.
 
+A cluster with drafts or saved changes is not removed. The page names them; publish or discard them
+first, so no work is left behind where no page can open it.
+
 Nothing is deleted. Each of these is moved into `.removed/<cluster>-<time>/` under its own root
 directory:
 

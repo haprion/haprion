@@ -971,6 +971,33 @@ class ARealDatabase(unittest.TestCase):
                 connection.execute("delete from proxy_draft where cluster = 'alpha'")
                 connection.commit()
 
+    def test_a_cluster_no_longer_listed_holds_nothing_back(self) -> None:
+        """Review 26-10-24, 11-02: a removed cluster's draft refused a certificate's deletion."""
+
+        try:
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+                db.save_draft(
+                    connection,
+                    cluster="alpha",
+                    object_id="console",
+                    yaml="name: console\n",
+                    base_version=None,
+                    base_hash="a" * 40,
+                    updated_by="admin",
+                    base_document="",
+                    expected_revision=None,
+                )
+                connection.commit()
+                self.assertEqual(
+                    [draft.object_id for draft in db.live_drafts(connection, ["alpha"])],
+                    ["console"],
+                )
+                self.assertEqual(db.live_drafts(connection, ["beta"]), [])
+        finally:
+            with self.connect() as connection:
+                connection.execute("delete from proxy_draft where cluster = 'alpha'")
+                connection.commit()
+
     def test_saving_finishes_the_draft_in_one_transaction(self) -> None:
         """B257: the saved change is written and the draft dropped, or neither."""
 
@@ -3762,9 +3789,9 @@ class CertificateDeletion(unittest.TestCase):
             self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection,
             self.assertRaises(psycopg.errors.InsufficientPrivilege),
         ):
-            db.live_drafts(connection)
+            db.live_drafts(connection, ["alpha"])
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
-            self.assertEqual(db.live_drafts(connection), [])
+            self.assertEqual(db.live_drafts(connection, ["alpha"]), [])
 
     def test_the_migration_downgrades_and_upgrades_cleanly_on_an_empty_queue(self) -> None:
         migration_path = (

@@ -424,10 +424,25 @@ def _sentence(text: str) -> str:
     return text if text.endswith(".") else f"{text}."
 
 
-def cluster_removable(listed: Iterable[str], cluster: str) -> str | None:
-    """Why this cluster cannot be removed, or None. The helper checks again."""
+def cluster_removable(
+    listed: Iterable[str], cluster: str, unpublished: Iterable[str] = ()
+) -> str | None:
+    """Why this cluster cannot be removed, or None. The helper checks again.
+
+    `unpublished` names the cluster's drafts and saved changes. Removing the
+    cluster left them behind with no page to open or discard them on, and a
+    draft that names a certificate held its deletion back for good (review
+    26-10-24, 11-02). They are not removed with it: that would throw away work
+    without asking (B360).
+    """
 
     names = list(listed)
     if cluster not in names:
         return f"{cluster} is not a cluster."
+    waiting = sorted(set(unpublished))
+    if waiting:
+        return (
+            f"{cluster} has unpublished work: {', '.join(waiting)}. "
+            "Publish or discard it before the cluster is removed."
+        )
     return None

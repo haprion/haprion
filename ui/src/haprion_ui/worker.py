@@ -402,6 +402,34 @@ def _judged(
     return state, outcome, envelope
 
 
+def _judge_run(
+    completed: execution.Completed, envelope: dict[str, Any] | None
+) -> tuple[str, str, dict[str, Any] | None]:
+    """State, outcome and result of a finished run: a job's own, and a run after it.
+
+    One judgement for both. The two had drifted: a silent second step was
+    called an invalid document, and an answer written before a timeout was
+    thrown away (review 26-10-24, 02-04 and 02-05).
+
+    - A document beyond the hard cap, or not UTF-8, is no contract document;
+      the operation may still have taken effect, so `unknown`.
+    - An accepted envelope is judged on what it says, also after a timeout: a
+      helper that answered at its checkpoint and was then stopped said what it
+      did. A `done` without exit 0 stays `unknown` (`_judged`).
+    - A timeout with no answer may have finished its work first: `unknown`,
+      never retried automatically.
+    - Nothing at all is a different answer from a wrong one.
+    """
+
+    if completed.stdout_error is not None:
+        return "unknown", "unknown", _internal_error()
+    if envelope is not None:
+        return _judged(envelope, completed)
+    if completed.ending == "timeout":
+        return "unknown", "unknown", None
+    return "unknown", "unknown", _no_result() if not completed.stdout.strip() else _internal_error()
+
+
 def _sealed_profile(
     connection: Any, profile_id: str, *, ndes: bool = False
 ) -> operations.SealedProfileRow | None:
@@ -661,28 +689,7 @@ def run_one_job(
     envelope = _envelope(completed.stdout, job) if completed.stdout_error is None else None
     if _stopped_under_it(stopping, envelope, job, job.operation):
         return
-    if completed.stdout_error is not None:
-        #
-        # A document beyond the hard cap is rejected before JSON parsing, and
-        # invalid UTF-8 cannot be a contract document. The operation itself may
-        # still have taken effect, so the job remains `unknown`; the structured
-        # code says why the worker could not accept the answer.
-        #
-        state = outcome = "unknown"
-        result = _internal_error()
-    elif completed.ending == "timeout":
-        #
-        # A command that was stopped may have finished its work first. `unknown`
-        # is what the plan reserves for exactly this, and it is never retried
-        # automatically.
-        #
-        state = outcome = "unknown"
-        result = None
-    elif envelope is None:
-        state = outcome = "unknown"
-        result = _no_result() if not completed.stdout.strip() else _internal_error()
-    else:
-        state, outcome, result = _judged(envelope, completed)
+    state, outcome, result = _judge_run(completed, envelope)
 
     exit_code = completed.exit_code
     stderr = completed.stderr
@@ -773,12 +780,8 @@ def _run_after(
     )
     if _stopped_under_it(stopping, envelope, job, operation):
         return None
-    if envelope is None or completed.ending == "timeout":
-        state = outcome = "unknown"
-        answer: dict[str, Any] = {} if completed.ending == "timeout" else _internal_error()
-    else:
-        state, outcome, answer = _judged(envelope, completed)
-    return state, outcome, answer, completed.exit_code, completed.stderr
+    state, outcome, judged = _judge_run(completed, envelope)
+    return state, outcome, judged or {}, completed.exit_code, completed.stderr
 
 
 def _stopped_under_it(

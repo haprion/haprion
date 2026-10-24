@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -54,7 +54,7 @@ def build_router(config: Config) -> APIRouter:
         overview = backups.build_backup_overview(
             clusters,
             backup_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         with request.app.state.pool.connection() as connection:
             running = jobs.in_flight(db.recent_jobs(connection))
@@ -103,7 +103,7 @@ def build_router(config: Config) -> APIRouter:
         overview = backups.build_backup_overview(
             clusters,
             backup_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         return next((view for view in overview.clusters if view.cluster == cluster), None)
 

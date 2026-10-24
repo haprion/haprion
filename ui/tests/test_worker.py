@@ -310,6 +310,19 @@ class UndeterminedEndings(WorkerTestCase):
 
         self.assertEqual(self.finished[0]["state"], "unknown")
 
+    def test_an_answer_written_before_a_timeout_is_judged_on_what_it_says(self) -> None:
+        """Review 26-10-24, 02-04: the checkpoint's blocked was thrown away as unknown."""
+
+        job = claimed()
+        with mock.patch.object(
+            execution,
+            "run",
+            return_value=completed(ending="timeout", exit_code=None, stdout=answer(job, "blocked")),
+        ):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.assertEqual(self.finished[0]["state"], "blocked")
+
     def test_an_outcome_the_contract_does_not_define_is_unknown(self) -> None:
         job = claimed()
         document = result_document(job)
@@ -1063,6 +1076,17 @@ class PublishAndDeploy(WorkerTestCase):
 
         self.assertEqual(len(calls), 2)
         self.assertEqual(self.finished, [])
+
+    def test_a_silent_deploy_after_it_is_no_result_not_an_invalid_document(self) -> None:
+        """Review 26-10-24, 02-05: the second step's silence was called a wrong answer."""
+
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+
+        self.run_job(job, [self.published(job), completed(exit_code=1)])
+
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "unknown")
+        self.assertIn("without a result document", finished["result"]["error"]["message"])
 
     def test_the_deploy_follows_the_publish_and_ends_the_job(self) -> None:
         job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))

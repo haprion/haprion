@@ -829,7 +829,7 @@ def _registry_overview(config: Config, request: Request) -> certificates.Registr
         clusters,
         certificate_rows,
         manager=read_manager_certificates(request, config),
-        stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        stale_after=config.poller.stale_after,
     )
     return overview.registry
 
@@ -862,7 +862,7 @@ def _backup_overview(config: Config, request: Request) -> Any:
     return backups.build_backup_overview(
         clusters,
         backup_rows,
-        stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        stale_after=config.poller.stale_after,
     )
 
 
@@ -1117,7 +1117,7 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
     clusters, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
     if cluster not in clusters:
         raise HTTPException(status_code=404)
-    stale_after = timedelta(seconds=config.poller.interval_seconds * 2)
+    stale_after = config.poller.stale_after
     reading = next((row for row in object_rows if row.cluster == cluster), None)
     result = reading.result if reading is not None and isinstance(reading.result, dict) else {}
     commit = result.get("commit")
@@ -3323,7 +3323,7 @@ def _network_page(request: Request, config: Config) -> Response:
     overview = network.build_network_overview(
         clusters,
         network_rows,
-        stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        stale_after=config.poller.stale_after,
     )
     #
     # Published is not deployed, and this page had no way to say so: publishing
@@ -3344,7 +3344,7 @@ def _network_page(request: Request, config: Config) -> Response:
     board = dashboard.build_dashboard(
         clusters,
         status_rows,
-        stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        stale_after=config.poller.stale_after,
     )
     serving = {view.cluster: view for view in board.clusters}
     #
@@ -3706,7 +3706,7 @@ def _service_lamps(
 def _attention(request: Request, config: Config) -> attention.Attention:
     """What needs doing, worked out from the pages' own builders (B274)."""
 
-    stale_after = timedelta(seconds=config.poller.interval_seconds * 2)
+    stale_after = config.poller.stale_after
     now = datetime.now(UTC)
     clusters, status_rows = read_source(request, config, STATUS_SOURCE)
     status_rows = tuple(status_rows)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from datetime import timedelta
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -87,7 +86,7 @@ def build_router(config: Config) -> APIRouter:
             certificate_rows,
             manager=read_manager_certificates(request, config),
             status_readings=status_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
             taken_out=read_certificate_takeouts(request, config),
         )
         with request.app.state.pool.connection() as connection:
@@ -957,7 +956,7 @@ def build_router(config: Config) -> APIRouter:
             clusters,
             certificate_rows,
             manager=read_manager_certificates(request, config),
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         usable_profiles: tuple[str, ...] = ()
         profiles_required = config.dns_profiles_public_key is not None
@@ -1099,7 +1098,7 @@ def build_router(config: Config) -> APIRouter:
             clusters,
             certificate_rows,
             manager=read_manager_certificates(request, config),
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         if overview.registry is None:
             return {}

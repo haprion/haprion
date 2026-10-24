@@ -16,6 +16,7 @@ from __future__ import annotations
 import stat
 import tomllib
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from haprion import accounts, exit_codes
 # as a typo in a file.
 #
 from haprion.config import CLUSTER_ID
+from haprion.status_collect import STATUS_TIMEOUT_SECONDS
 
 from haprion_ui import labels
 
@@ -149,6 +151,19 @@ class Poller:
     """
 
     interval_seconds: int
+
+    @property
+    def stale_after(self) -> timedelta:
+        """How old a reading may be before it is shown as stale.
+
+        Two rounds, and the time one cluster's reading may take: the poller
+        reads the clusters one after another, so a node that takes the
+        connection and never answers held every other cluster back by up to
+        the status timeout, and two rounds alone called them stale (review
+        26-10-24, 02-09).
+        """
+
+        return timedelta(seconds=2 * self.interval_seconds + STATUS_TIMEOUT_SECONDS)
 
 
 @dataclass(frozen=True, slots=True)

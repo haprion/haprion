@@ -17,7 +17,6 @@ import os
 import sys
 import time
 from collections.abc import Callable
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +50,7 @@ def _readings(connection: Any, settings: config.Config) -> feature_switch.Readin
         backup_overview=lambda: backups.build_backup_overview(
             listed()[0],
             kept(db.cluster_backups(connection)),
-            stale_after=timedelta(seconds=settings.poller.interval_seconds * 2),
+            stale_after=settings.poller.stale_after,
         ),
         objects=lambda: kept(db.cluster_objects(connection)),
         restore_waiting=lambda: feature_switch.restore_waiting(connection),

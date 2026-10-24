@@ -10,9 +10,12 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 
-from haprion_ui.config import Config, ConfigError, load
+from haprion.status_collect import STATUS_TIMEOUT_SECONDS
+
+from haprion_ui.config import Config, ConfigError, Poller, load
 
 EXAMPLE = (
     Path(__file__).resolve().parents[2] / "install" / "platform" / "examples" / "ui.toml.example"
@@ -243,3 +246,23 @@ class TheExampleAndTheDefaultsAgree(unittest.TestCase):
             config = load(path, require_secure=False)
 
         self.assertEqual(config.poller.interval_seconds, example)
+
+
+class StalenessAllowsForTheSlowestReading(unittest.TestCase):
+    """Review 26-10-24, 02-09: one node that never answered made every other cluster stale."""
+
+    def test_two_rounds_and_the_status_timeout(self) -> None:
+        self.assertEqual(
+            Poller(interval_seconds=30).stale_after,
+            timedelta(seconds=60 + STATUS_TIMEOUT_SECONDS),
+        )
+
+    def test_it_is_said_in_one_place(self) -> None:
+        source = Path(__file__).resolve().parents[1] / "src" / "haprion_ui"
+        copies = [
+            f"{path.name}:{number}"
+            for path in sorted(source.rglob("*.py"))
+            for number, line in enumerate(path.read_text().splitlines(), start=1)
+            if "stale_after" in line and "interval_seconds" in line
+        ]
+        self.assertEqual(copies, [])

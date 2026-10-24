@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -115,7 +115,7 @@ def build_router(config: Config) -> APIRouter:
         overview = proxies.build_proxy_overview(
             clusters,
             inventory_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         #
         # One cluster's objects using one VIP, source or group, from the
@@ -805,7 +805,7 @@ def build_router(config: Config) -> APIRouter:
         overview = proxies.build_proxy_overview(
             clusters,
             inventory_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         published = tuple(
             proxy for view in overview.clusters if view.cluster == cluster for proxy in view.proxies
@@ -814,7 +814,7 @@ def build_router(config: Config) -> APIRouter:
         listing = history.build_history_overview(
             clusters,
             history_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         versions = tuple(
             version
@@ -831,7 +831,7 @@ def build_router(config: Config) -> APIRouter:
         board = dashboard.build_dashboard(
             clusters,
             status_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         serving = next((view for view in board.clusters if view.cluster == cluster), None)
         #
@@ -873,7 +873,7 @@ def build_router(config: Config) -> APIRouter:
                 for view in network.build_network_overview(
                     clusters,
                     network_rows,
-                    stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+                    stale_after=config.poller.stale_after,
                 )
                 if view.cluster == cluster
             ),
@@ -914,7 +914,7 @@ def build_router(config: Config) -> APIRouter:
             if resolved
             else (vip.address if vip else None),
             vip_is_default=resolved.vip_is_default if resolved else vip is not None,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         #
         # A draft makes a name a page too. An object that has only ever been

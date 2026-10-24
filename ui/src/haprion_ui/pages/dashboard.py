@@ -104,7 +104,7 @@ def build_router(config: Config) -> APIRouter:
         dashboard_view = dashboard.build_dashboard(
             clusters,
             status_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
             network_readings=network_rows,
         )
         moment = datetime.now(UTC)
@@ -387,7 +387,7 @@ def build_router(config: Config) -> APIRouter:
             for view in network.build_network_overview(
                 listed_clusters(request, config),
                 network_rows,
-                stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+                stale_after=config.poller.stale_after,
             )
         }
         settings_views = {
@@ -510,7 +510,7 @@ def build_router(config: Config) -> APIRouter:
         overview = history.build_history_overview(
             clusters,
             history_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         shown = next(
             (
@@ -553,7 +553,7 @@ def build_router(config: Config) -> APIRouter:
         overview = history.build_history_overview(
             clusters,
             history_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            stale_after=config.poller.stale_after,
         )
         with request.app.state.pool.connection() as connection:
             running = jobs.in_flight(db.recent_jobs(connection))

@@ -93,6 +93,9 @@ if [ "$1" = configure ]; then
     if [ ! -d "$release" ]; then
         echo "$RELEASE_SHA256  /{LIB}/$RELEASE_ARCHIVE" | sha256sum --check --quiet
         mkdir -p {ROOT}/releases
+        # A failed tar under set -e left its directory; dpkg's lock means no
+        # live run owns one now (review 26-10-24, 03-09).
+        rm -rf {ROOT}/.unpack.*
         unpack="$(mktemp -d {ROOT}/.unpack.XXXXXX)"
         tar -xf "/{LIB}/$RELEASE_ARCHIVE" -C "$unpack"
         mv -T "$unpack{ROOT}/releases/$RELEASE_ID" "$release"

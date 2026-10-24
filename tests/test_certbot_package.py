@@ -86,6 +86,18 @@ class ThePostinst(unittest.TestCase):
             self.assertFalse((root / "current").exists())
             self.assertIn("haprion-setup makes it current", said)
 
+    def test_an_unpack_a_failed_run_left_is_removed(self) -> None:
+        """Review 26-10-24, 03-09: each retry on a full disk left another copy."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            leftover = Path(raw) / "opt/haprion-certbot/.unpack.AbC123"
+            (leftover / "half").mkdir(parents=True)
+            root, _ = self.install(raw, set_up=False)
+
+            self.assertFalse(leftover.exists())
+            self.assertEqual(list(root.glob(".unpack.*")), [])
+            self.assertTrue((root / "releases" / RELEASE / "INSTALLATION.json").is_file())
+
     def test_a_manager_already_set_up_runs_step_14(self) -> None:
         """Step 14 makes it current only after a dry-run renewal, and puts the previous back."""
 

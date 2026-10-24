@@ -16,7 +16,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_receiver
+from haprion import cert_receiver, exit_codes
 from haprion.cli import cert_receiver_helper
 from haprion.envelope import new_request_id
 from tests.contract_schema import assert_contract
@@ -183,6 +183,26 @@ class RemovingThroughTheHelper(HelperFixture):
         self.assertEqual(document["result"]["action"], "removed")
         self.assertEqual(self.registered(), {})
         self.assertTrue(self.runner.ran("userdel crx-lb-02-example-net"))
+
+    def test_a_removal_that_left_the_account_is_partial(self) -> None:
+        """Review 26-10-24, 13-02: `partial` beside exit 0 crashed in the envelope."""
+
+        with (
+            mock.patch.object(cert_receiver, "account_exists", return_value=False),
+            mock.patch.object(cert_receiver, "_own"),
+        ):
+            self.add(public_key=KEY, owner=None)
+        self.runner.failures["userdel"] = (8, "userdel: user is currently used by process 1")
+        with mock.patch.object(cert_receiver, "account_exists", return_value=True):
+            code, document, _ = self.run_helper(
+                {"receiver": "lb-02.example.net", "action": "remove"}
+            )
+
+        self.assertEqual(code, exit_codes.PARTIAL)
+        assert document is not None
+        self.assertEqual(document["outcome"], "partial")
+        self.assertEqual(document["warnings"][0]["code"], "account_failed")
+        self.assertEqual(self.registered(), {})
 
     def test_a_removal_takes_no_transport_or_key(self) -> None:
         code, document, errors = self.run_helper(

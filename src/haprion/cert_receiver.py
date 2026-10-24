@@ -41,7 +41,7 @@ import secrets
 import shutil
 import socket
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,6 +61,7 @@ from haprion.config import (
     check_allow_entries,
     receiver_id_names_a_host,
 )
+from haprion.envelope import Message, Outcome, envelope
 
 USERADD = "/usr/sbin/useradd"
 USERDEL = "/usr/sbin/userdel"
@@ -140,6 +141,12 @@ class ReceiverError(Exception):
         self.code = code
         self.exit_code = exit_code
         self.details = details
+
+
+#
+# What the result is called, by the helper and by the command alike.
+#
+OPERATION = "cert_receiver"
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +231,33 @@ class Result:
             "layers": [layer.as_dict() for layer in self.layers],
             "instructions": list(self.instructions),
         }
+
+
+def answer(
+    result: Result, *, request_id: str, extra: Mapping[str, Any] | None = None
+) -> tuple[dict[str, Any], int]:
+    """A result as its envelope and exit code, the helper's and `--json`'s alike.
+
+    A layer that failed is a warning, and the whole is `partial`: the rest was
+    done, and that one is left for a person (review 26-10-24, 13-02). The two
+    used to build this each their own way - the helper crashed in the envelope
+    and the command said `done`.
+    """
+
+    failed = tuple(layer for layer in result.layers if layer.state == "failed")
+    outcome: Outcome = "partial" if failed else "done"
+    document = envelope(
+        operation=OPERATION,
+        outcome=outcome,
+        cluster=None,
+        request_id=request_id,
+        result=result.as_dict() | dict(extra or {}),
+        warnings=tuple(
+            Message(code=f"{layer.name}_failed", message=layer.detail or layer.name)
+            for layer in failed
+        ),
+    )
+    return document, exit_codes.for_outcome(outcome)
 
 
 #

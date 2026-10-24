@@ -39,7 +39,6 @@ from haprion.config import (
     load_policy,
     load_runtime_config,
 )
-from haprion.envelope import envelope
 from haprion.helper_protocol import (
     HelperProtocolError,
     JsonValue,
@@ -268,18 +267,8 @@ def main(
     except ReceiverError as exc:
         return refuse(exc.code, str(exc), exc.exit_code, exc.details)
 
-    failed = [layer for layer in result.layers if layer.state == "failed"]
-    return write_document(
-        writer,
-        envelope(
-            operation=OPERATION,
-            outcome="partial" if failed else "done",
-            cluster=None,
-            request_id=request.request_id,
-            result=result.as_dict(),
-        ),
-        0,
-    )
+    document, code = cert_receiver.answer(result, request_id=request.request_id)
+    return write_document(writer, document, code)
 
 
 if __name__ == "__main__":

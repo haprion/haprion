@@ -27,7 +27,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_receiver, cert_registry
+from haprion import cert_receiver, cert_registry, exit_codes
 from haprion.cert_receiver import Locations, ReceiverError, Result, Tools
 from haprion.cli import cert_receiver as command
 from haprion.config import PathPolicy, RuntimeConfig, load_policy, load_runtime_config
@@ -895,6 +895,30 @@ class TheCommand(ReceiverFixture):
         code, out, _ = self.run_cli("remove", "lb-02.example.net")
         self.assertEqual(code, 0, out)
         self.assertNotIn("lb-02.example.net", self.registered())
+
+    def test_a_removal_that_left_the_account_is_partial(self) -> None:
+        """Review 26-10-24, 13-02: the command said done when userdel had failed."""
+
+        self.run_cli(
+            "add",
+            "lb-02.example.net",
+            "--transport",
+            "rsync",
+            "--public-key",
+            str(self.key_file),
+            "--owner",
+            ME,
+        )
+        self.runner.failures["userdel"] = (8, "userdel: user is currently used by process 1")
+
+        code, out, _ = self.run_cli("remove", "lb-02.example.net", "--json")
+
+        self.assertEqual(code, exit_codes.PARTIAL, out)
+        document = assert_contract("haprion-cert-receiver", out)
+        self.assertEqual(document["outcome"], "partial")
+        self.assertEqual([warning["code"] for warning in document["warnings"]], ["account_failed"])
+        code, out, _ = self.run_cli("list")
+        self.assertNotIn("lb-02.example.net", out)
 
     def test_there_is_no_migrate_verb(self) -> None:
         code, out, _ = self.run_cli("migrate", "lb-02.example.net", "--finish")

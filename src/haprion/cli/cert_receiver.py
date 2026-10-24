@@ -26,6 +26,7 @@ from haprion.cert_receiver import (
     Result,
     Tools,
     add,
+    answer,
     listing,
     new_secret,
     remove,
@@ -306,22 +307,12 @@ def main(
     except ReceiverError as exc:
         return refuse(exc.code, str(exc), exc.exit_code)
 
+    document, code = answer(
+        result,
+        request_id=request_id,
+        extra={"password": password} if password is not None else None,
+    )
     if arguments.json_mode:
-        writer.write(
-            json.dumps(
-                envelope(
-                    operation=OPERATION,
-                    outcome="done",
-                    cluster=None,
-                    result=result.as_dict()
-                    | ({"password": password} if password is not None else {}),
-                    request_id=request_id,
-                ),
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            + "\n"
-        )
-    else:
-        _print_result(result, writer, password)
-    return 0
+        return write_document(writer, document, code)
+    _print_result(result, writer, password)
+    return code

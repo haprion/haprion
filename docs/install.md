@@ -23,8 +23,9 @@ and dnsdist.
 - **The manager** needs a DNS name that points to it, and ports 80 and 443 free for nginx.
 - **The nodes of a cluster** must share one network segment. keepalived moves the virtual address (the VIP)
   between them with VRRP. The manager reaches each node over SSH.
-- **PostgreSQL.** The setup installs PostgreSQL 18 when none is running. A server that already runs version 16 or
-  newer is kept and used.
+- **PostgreSQL.** The setup installs PostgreSQL 18 when the host has no PostgreSQL cluster. A server that already runs
+  version 16 or newer is kept and used. A cluster that is stopped, or is a standby, stops the setup: start or promote
+  it first, so a second version is never installed beside it.
 - How much traffic one vCPU handles, with and without the WAF, is under *Size* in
   [the manual's part on the nodes](user-manual.md#part-2--the-nodes).
 

@@ -524,11 +524,57 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
     def test_it_reads_and_judges_postgresql_as_the_database_step_does(self) -> None:
         step = (INSTALL / "platform/ensure-postgresql").read_text()
         check = SETUP.read_text()
-        reading = "pg_lsclusters --no-header 2>/dev/null | awk '$4 == \"online\" { print $1 }'"
-        self.assertIn(reading, step)
-        self.assertIn(reading, check)
+        for reading in (
+            "pg_lsclusters --no-header 2>/dev/null | awk '$4 == \"online\" { print $1 }'",
+            "pg_lsclusters --no-header 2>/dev/null"
+            ' | awk \'$4 != "online" { printf "%s%s/%s (%s)", sep, $1, $2, $4; sep = " " }\'',
+        ):
+            self.assertIn(reading, step)
+            self.assertIn(reading, check)
         self.assertIn("PG_OLDEST=16", step)
         self.assertIn("< 16 ))", check)
+
+    def test_a_cluster_that_does_not_run_is_named_rather_than_taken_for_none(self) -> None:
+        """Review 26-10-24, 03-04: a stopped 17 or a standby had 18 installed beside it."""
+
+        for status in ("down", "online,recovery"):
+            with self.subTest(status=status):
+                done = self.database(
+                    f"17 main 5432 {status} postgres /var/lib/postgresql/17/main x\n"
+                )
+                self.assertEqual(done.returncode, 1)
+                self.assertIn(f"no cluster runs: 17/main ({status})", done.stdout)
+        beside = self.database(
+            "16 old 5433 down postgres /var/lib/postgresql/16/old x\n"
+            "17 main 5432 online postgres /var/lib/postgresql/17/main x\n"
+        )
+        self.assertEqual((beside.returncode, beside.stdout), (0, ""))
+
+    def test_the_database_step_installs_nothing_beside_a_stopped_cluster(self) -> None:
+        """Review 26-10-24, 03-04: the step itself, not only the check before it."""
+
+        step = (INSTALL / "platform/ensure-postgresql").read_text()
+        functions = re.findall(r"^\w+_postgresql\(\) \{\n.*?^\}\n", step, re.MULTILINE | re.DOTALL)
+        with tempfile.TemporaryDirectory() as raw:
+            stubs = Path(raw)
+            (stubs / "pg_lsclusters").write_text(
+                "#!/bin/sh\necho '17 main 5432 down postgres /var/lib/postgresql/17/main x'\n"
+            )
+            for name in ("apt-get", "apt-cache", "apt-mark", "systemctl"):
+                (stubs / name).write_text(f'#!/bin/sh\necho {name} >> "{raw}/called"\n')
+            for stub in stubs.iterdir():
+                stub.chmod(0o755)
+            done = bash(
+                f'set -Eeuo pipefail; source "{LIB}"; PATH="$1:$PATH"; '
+                + "".join(functions)
+                + "ensure_postgresql",
+                raw,
+            )
+            called = (stubs / "called").read_text() if (stubs / "called").exists() else ""
+        self.assertEqual(len(functions), 3)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("no cluster runs: 17/main (down)", done.stderr)
+        self.assertEqual(called, "")
 
     def test_a_running_server_too_old_is_named(self) -> None:
         done = self.database("15 main 5432 online postgres /var/lib/postgresql/15/main x\n")

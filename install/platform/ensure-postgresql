@@ -39,8 +39,18 @@ running_postgresql() {
     pg_lsclusters --no-header 2>/dev/null | awk '$4 == "online" { print $1 }' | sort -n | tail -n 1
 }
 
+#
+# The clusters that are there and do not run: stopped, or a standby
+# (`online,recovery`). Taken for none, they had a second major installed beside
+# them on the next port while psql still reached the old one on 5432 (review
+# 26-10-24, 03-04). A new major goes only onto a host with no cluster at all.
+#
+idle_postgresql() {
+    pg_lsclusters --no-header 2>/dev/null | awk '$4 != "online" { printf "%s%s/%s (%s)", sep, $1, $2, $4; sep = " " }'
+}
+
 ensure_postgresql() {
-    local running candidate
+    local running idle candidate
     running="$(running_postgresql)"
     if [[ -n "$running" ]]; then
         (( ${running%%.*} >= PG_OLDEST )) \
@@ -51,6 +61,11 @@ ensure_postgresql() {
         log "  ok       PostgreSQL ${running} (kept, marked as installed by hand)"
         return 0
     fi
+    idle="$(idle_postgresql)"
+    [[ -z "$idle" ]] \
+        || fail "PostgreSQL is here and no cluster runs: ${idle}" \
+                "a second major version would be installed beside it, on another port" \
+                "start it, or promote it if it is a standby (pg_ctlcluster <version> <name> start|promote), and run this step again"
     candidate="$(apt-cache policy "postgresql-${PG_MAJOR}" 2>/dev/null | awk '/Candidate:/ { print $2 }')"
     if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
         [[ -x "$PGDG_SCRIPT" ]] \

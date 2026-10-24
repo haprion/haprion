@@ -4551,9 +4551,10 @@ rest of the manager's packages - so one `apt install` on each machine brings eve
     PyYAML 6, PyNaCl 1, psycopg 3 and PyJWT 2, and on `git`, `rsync`, `openssh-client` and `sudo`.
   - `haprion-ui` depends on nginx.
   - `haprion-certbot` carries its own certbot.
-  - The setup installs PostgreSQL 18 where no PostgreSQL cluster runs yet: from the distribution on Ubuntu
+  - The setup installs PostgreSQL 18 where the host has no PostgreSQL cluster: from the distribution on Ubuntu
     26.04, and from the PostgreSQL project's repository on Debian 13. A PostgreSQL that already runs
-    version 16 or newer is kept.
+    version 16 or newer is kept. A cluster that is stopped, or is a standby, stops the setup until it is
+    started or promoted; a second version is never installed beside it.
 
   16 is a hard floor, not a preference. From version 16 on, PostgreSQL lets each role membership carry
   its own `INHERIT` setting, and the installation sets it explicitly on every grant. On an older version

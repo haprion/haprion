@@ -78,14 +78,19 @@ setup_check_commands() {
 # and its advice named the package the step deliberately avoids.
 #
 setup_check_database() {
-    local running
-    # The same reading and floor as platform/ensure-postgresql's (a test holds
+    local running idle
+    # The same readings and floor as platform/ensure-postgresql's (a test holds
     # the two together); not in lib.sh, which the nodes' steps source too.
     running="$(pg_lsclusters --no-header 2>/dev/null | awk '$4 == "online" { print $1 }' | sort -n | tail -n 1)"
+    idle="$(pg_lsclusters --no-header 2>/dev/null | awk '$4 != "online" { printf "%s%s/%s (%s)", sep, $1, $2, $4; sep = " " }')"
     if [[ -n "$running" ]] && (( ${running%%.*} < 16 )); then
         setup_problem "PostgreSQL ${running} runs here" \
             "the web interface needs PostgreSQL 16 or newer" \
             "upgrade the cluster (pg_upgradecluster), then run haprion-setup again"
+    elif [[ -z "$running" && -n "$idle" ]]; then
+        setup_problem "PostgreSQL is here and no cluster runs: ${idle}" \
+            "a second major version would be installed beside it, on another port" \
+            "start it, or promote it if it is a standby (pg_ctlcluster <version> <name> start|promote), then run haprion-setup again"
     fi
 }
 

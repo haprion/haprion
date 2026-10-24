@@ -224,14 +224,14 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
     and its publish counts as one that worked.
     """
 
-    newest: dict[tuple[str | None, str], tuple[Job, str]] = {}
+    newest: dict[tuple[str | None, str, str], tuple[Job, str]] = {}
     for job in sorted(rows, key=lambda row: (row.created_at, row.id), reverse=True):
         if job.state in ("pending", "running"):
             continue
         for operation, state in jobs_module.step_states(job):
-            newest.setdefault((job.cluster, operation), (job, state))
+            newest.setdefault((job.cluster, operation, jobs_module.subject(job)), (job, state))
     items = []
-    for (cluster, operation), (job, state) in newest.items():
+    for (cluster, operation, _subject), (job, state) in newest.items():
         if state not in UNSETTLED:
             continue
         label = (

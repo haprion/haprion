@@ -439,6 +439,18 @@ class WhichClustersAreBehind(unittest.TestCase):
         rows = [self.status("alpha", {"summary": {"release_state": "converged"}})]
         self.assertEqual(jobs.awaiting_deployment(rows), frozenset())
 
+    def test_an_unread_node_alone_is_no_deploy_owed(self) -> None:
+        """Review 26-10-24, 02-07: incomplete and unknown kept 'Published, not deployed'."""
+
+        unread = {"release_state": "incomplete"}
+        for result, expected in (
+            ({"summary": {"release_state": "unknown"}}, frozenset()),
+            ({"summary": unread, "nodes": [{"current": True}, {"current": None}]}, frozenset()),
+            ({"summary": unread, "nodes": [{"current": False}, {"current": None}]}, {"alpha"}),
+        ):
+            with self.subTest(result=result):
+                self.assertEqual(jobs.awaiting_deployment([self.status("alpha", result)]), expected)
+
     def test_a_reading_that_says_nothing_useful_is_not_evidence(self) -> None:
         results: tuple[object, ...] = ({}, {"summary": None}, {"summary": {}}, "unreadable", None)
         for result in results:

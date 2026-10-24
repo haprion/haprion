@@ -261,6 +261,45 @@ def ending_step(job: Job) -> str:
     return "cert_deploy" if result.get("operation") == "cert_deploy_cluster" else "deploy"
 
 
+#
+# The payload field that names what an operation acted on inside its cluster.
+# Listed per operation rather than read from any payload that has the field:
+# an operation left out is about the cluster itself, so a field a future
+# operation adds for another purpose cannot keep its failures from settling.
+#
+SUBJECT_FIELDS = {
+    "cert_issue": "domain",
+    "cert_scep": "id",
+    "cert_import": "id",
+    "cert_request": "id",
+    "cert_receiver": "receiver",
+    "cert_publish": "certificates",
+    "cert_target": "certificates",
+    "cert_delete": "certificates",
+    "server_state": "object",
+    "dynamic_unblock": "object",
+}
+
+
+def subject(job: Job) -> str:
+    """What a job acted on inside its cluster, or "" for the cluster itself.
+
+    Two certificate issues for two names are two questions, and so are two
+    servers' states on two objects: keyed on the cluster and the operation
+    alone, a later success for one ended the other's failure (review 26-10-24,
+    02-02). Certificate jobs have no cluster at all.
+    """
+
+    field = SUBJECT_FIELDS.get(job.operation)
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    value = payload.get(field) if field else None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return ",".join(sorted(value))
+    return ""
+
+
 def step_states(job: Job) -> tuple[tuple[str, str], ...]:
     """Each step the job ran and how it ended: its own, then the one after it, if any."""
 
@@ -318,11 +357,20 @@ def awaiting_deployment(statuses: list[ClusterStatus]) -> frozenset[str]:
 
     pending = set()
     for status in statuses:
-        summary = status.result.get("summary") if isinstance(status.result, dict) else None
-        if isinstance(summary, dict) and summary.get("release_state") not in {
-            "converged",
-            None,
-        }:
+        result = status.result if isinstance(status.result, dict) else {}
+        summary = result.get("summary")
+        state = summary.get("release_state") if isinstance(summary, dict) else None
+        #
+        # `behind`, or `incomplete` with a node that answered and is off the
+        # target. `unknown` and an `incomplete` whose answering nodes are all
+        # current say nothing about a deploy being owed (review 26-10-24, 02-07).
+        #
+        nodes = result.get("nodes")
+        if state == "behind" or (
+            state == "incomplete"
+            and isinstance(nodes, list)
+            and any(isinstance(node, dict) and node.get("current") is False for node in nodes)
+        ):
             pending.add(status.cluster)
     return frozenset(pending)
 

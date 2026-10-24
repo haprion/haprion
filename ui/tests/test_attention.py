@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion_ui import attention, auth, dashboard, health
+from haprion_ui import attention, auth, dashboard, health, jobs, operations
 from haprion_ui.db import StatusAccess
 from tests.test_job_page import job
 from tests.test_login import LoginTestCase, configuration
@@ -57,6 +57,44 @@ class EachKindComesAndGoes(unittest.TestCase):
 
         self.assertEqual([item.subject for item in attention.from_jobs([failed, other])], ["job 1"])
         self.assertEqual(attention.from_jobs([failed, other, fixed]), [])
+
+    def test_a_certificate_that_works_does_not_end_another_s_failure(self) -> None:
+        """Review 26-10-24, 02-02: issuing Y hid that issuing X had failed."""
+
+        def issue(job_id: int, domain: str, state: str, minutes: int) -> Any:
+            row = job(state=state, outcome=state, operation="cert_issue", cluster=None)
+            return replace(
+                row,
+                id=job_id,
+                payload={"domain": domain},
+                created_at=NOW - timedelta(minutes=minutes),
+            )
+
+        failed_x = issue(1, "x.example.com", "failed", 30)
+        done_y = issue(2, "y.example.com", "done", 20)
+        self.assertEqual(
+            [item.subject for item in attention.from_jobs([failed_x, done_y])], ["job 1"]
+        )
+        done_x = issue(3, "x.example.com", "done", 10)
+        self.assertEqual(attention.from_jobs([failed_x, done_y, done_x]), [])
+
+    def test_a_server_state_on_one_object_does_not_end_another_s_failure(self) -> None:
+        def state(job_id: int, name: str, outcome: str, minutes: int) -> Any:
+            row = job(state=outcome, outcome=outcome, operation="server_state")
+            return replace(
+                row,
+                id=job_id,
+                payload={"object": name, "servers": ["s1"], "state": "drain"},
+                created_at=NOW - timedelta(minutes=minutes),
+            )
+
+        failed = state(1, "web", "failed", 30)
+        other = state(2, "api", "done", 20)
+        self.assertEqual([item.subject for item in attention.from_jobs([failed, other])], ["job 1"])
+        self.assertEqual(attention.from_jobs([failed, other, state(3, "web", "done", 10)]), [])
+
+    def test_only_operations_the_queue_takes_name_a_subject(self) -> None:
+        self.assertLessEqual(set(jobs.SUBJECT_FIELDS), operations.OPERATIONS)
 
     def test_a_running_job_does_not_settle_anything(self) -> None:
         failed = replace(job(state="failed", outcome="failed"), id=1, created_at=NOW)

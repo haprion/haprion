@@ -37,10 +37,21 @@ SPEC.loader.exec_module(install_release_module)
 
 
 class InstallReleaseTests(unittest.TestCase):
-    def make_wheel(self, root: Path) -> tuple[Path, str]:
+    def make_wheel(self, root: Path, *, config: str | None = None) -> tuple[Path, str]:
+        root.mkdir(parents=True, exist_ok=True)
         wheel = root / "haprion-0.1.0-py3-none-any.whl"
         with zipfile.ZipFile(wheel, "w") as archive:
             archive.writestr("haprion/__init__.py", "")
+            if config is not None:
+                # A reader that accepts, or refuses with `config` (11-03).
+                refuse = "" if config == "ok" else f"    raise ValueError({config!r})\n"
+                archive.writestr(
+                    "haprion/config.py",
+                    "def load_policy(path, require_secure=True):\n"
+                    f"{refuse}    return path\n"
+                    "def load_runtime_config(policy, require_secure=True):\n"
+                    "    return policy\n",
+                )
             archive.writestr(
                 "haprion/compatibility.json",
                 '{"schema_version":1,"engine_api":1}\n',
@@ -119,6 +130,40 @@ class InstallReleaseTests(unittest.TestCase):
             for path in sorted(release.rglob("*"), reverse=True):
                 path.chmod(0o700 if path.is_dir() else 0o600)
             release.chmod(0o700)
+
+    def test_a_release_that_cannot_read_the_configuration_does_not_become_current(self) -> None:
+        """Review 26-10-24, 11-03: going back with apt left helpers that answered CONFIG."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw).resolve()
+            policy = work / "runtime-policy.yaml"
+            policy.write_text("schema_version: 1\n")
+            target = work / "target"
+            accepting = self.make_wheel(work / "first", config="ok")
+            first = install_release_module.install_release(
+                wheel=accepting[0],
+                expected_sha256=accepting[1],
+                target=target,
+                python=Path(sys.executable),
+                require_root=False,
+                policy=policy,
+            )
+            refusing = self.make_wheel(work / "second", config="unknown key vrrp_router_id")
+            with self.assertRaisesRegex(
+                install_release_module.InstallError, "unknown key vrrp_router_id.*not moved"
+            ):
+                install_release_module.install_release(
+                    wheel=refusing[0],
+                    expected_sha256=refusing[1],
+                    target=target,
+                    python=Path(sys.executable),
+                    require_root=False,
+                    policy=policy,
+                )
+            self.assertEqual((target / "current").resolve().name, first)
+            for path in sorted(target.rglob("*"), reverse=True):
+                if not path.is_symlink():
+                    path.chmod(0o700 if path.is_dir() else 0o600)
 
     def test_the_waf_engine_package_travels_in_the_release_and_is_found_there(self) -> None:
         """B298: a restored node that ran the engine gets the release's."""

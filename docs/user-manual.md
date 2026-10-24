@@ -4379,6 +4379,10 @@ carries. If a matching release is already installed, it is verified, and `curren
 it in one step. Without the package, run the installer again with the retained wheel, node package and
 their recorded digests.
 
+Before `current` moves, the installer asks the target release to read the runtime policy and the
+cluster file in force. A release that cannot - a field added by a newer release - is refused, and
+`current` stays where it was. Remove the field first, as for the interface's rollback.
+
 **Ten releases stay on disk; older ones go when a new one is activated.** The installer removes old
 releases only after a successful activation, never before - a failed activation is exactly when nothing
 may be removed. It always keeps the release it just activated and the one that was current before,

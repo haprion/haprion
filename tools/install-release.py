@@ -48,6 +48,12 @@ class InstallError(RuntimeError):
     """A fail-closed installation error."""
 
 
+#
+# The runtime policy the CLI release reads, the one `haprion.config` names.
+#
+DEFAULT_POLICY = Path("/etc/haprion/runtime-policy.yaml")
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -247,6 +253,49 @@ def _verify_imports(python: Path, lib_dir: Path, modules: set[str]) -> None:
         raise InstallError(f"installed package import verification failed: {exc}") from exc
 
 
+def _verify_configuration(
+    python: Path, lib_dir: Path, policy: Path | None, *, release_id: str, secure: bool
+) -> None:
+    """Whether the release about to be current reads the configuration in force.
+
+    A newer release may have written a field an older one refuses - the cluster
+    file's `vrrp_router_id` - and going back with apt switched `current` without
+    asking: the helpers then answered CONFIG and the poller, the worker and the
+    CLI stood still (review 26-10-24, 11-03). The release's own reader decides,
+    as `haprion-rollback` does for the interface, and any exception is a
+    refusal. Asked only where a policy exists: a first installation has none.
+    """
+
+    if policy is None or not policy.exists():
+        return
+    options = "" if secure else ", require_secure=False"
+    code = (
+        "import sys;sys.path.insert(0,sys.argv[1]);from pathlib import Path;"
+        "from haprion.config import load_policy, load_runtime_config;"
+        f"load_runtime_config(load_policy(Path(sys.argv[2]){options}){options})"
+    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - validated absolute interpreter, fixed code
+            [str(python), "-I", "-c", code, str(lib_dir), str(policy)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise InstallError(
+            f"release {release_id} could not be asked to read {policy}: {exc}"
+        ) from exc
+    if completed.returncode != 0:
+        said = (completed.stderr.strip().splitlines() or ["no reason given"])[-1]
+        raise InstallError(
+            f"release {release_id} cannot read the configuration in force ({said}); "
+            "current is not moved. Configuration follows the same expand/contract rule as "
+            "the schema: a key added for a newer release has to be removed before going "
+            "back past the release that introduced it"
+        )
+
+
 def _verify_node_package(
     python: Path, lib_dir: Path, package: Path, expected: str
 ) -> dict[str, str]:
@@ -343,6 +392,7 @@ def install_release(
     waf_engine_package_sha256: str | None = None,
     keyring_package: Path | None = None,
     keyring_package_sha256: str | None = None,
+    policy: Path | None = None,
 ) -> str:
     if require_root and os.geteuid() != 0:
         raise InstallError("installer must run as root")
@@ -476,6 +526,9 @@ def install_release(
             shutil.rmtree(staging, ignore_errors=True)
             raise
 
+    _verify_configuration(
+        python, final_release / "lib", policy, release_id=release_id, secure=require_root
+    )
     current = target / "current"
     if current.exists() and not current.is_symlink():
         raise InstallError("current exists but is not a symlink")
@@ -574,6 +627,7 @@ def main(argv: list[str] | None = None) -> int:
             waf_engine_package_sha256=args.waf_engine_package_sha256,
             keyring_package=args.keyring_package,
             keyring_package_sha256=args.keyring_package_sha256,
+            policy=DEFAULT_POLICY,
         )
     except InstallError as exc:
         print(f"install-release: ERROR: {exc}", file=sys.stderr)

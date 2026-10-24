@@ -562,6 +562,11 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .node-table tbody tr:hover { background: var(--panel-soft); }
 .node-table td strong { display: block; color: var(--text-strong); font-size: 13px; font-weight: 680; }
 .node-table td small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+/* A value longer than its column is cut with an ellipsis, the whole of it in
+   its title, rather than drawn over the next column (review 26-10-24, 04-01):
+   an SSO name is often an e-mail address, a cluster ID may be 63 characters. */
+.node-table td strong, .node-table td small { overflow: hidden; text-overflow: ellipsis; }
+.job-table td { overflow: hidden; text-overflow: ellipsis; }
 .inline-status { display: inline-flex; align-items: center; gap: 8px; color: var(--text-strong); font-weight: 640; }
 .inline-status .status-dot { width: 6px; height: 6px; }
 .warning-text { color: var(--warning-text) !important; }

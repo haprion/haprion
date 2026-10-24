@@ -119,7 +119,7 @@ class ThePage(LoginTestCase):
             page = client.get("/jobs").text
 
         self.assertIn("<th>By</th>", page)
-        self.assertIn('<td data-label="By">operator</td>', page)
+        self.assertIn('<td data-label="By" title="operator">operator</td>', page)
         self.assertIn(">Events</a>", page)
 
     def test_an_admin_reads_the_record(self) -> None:

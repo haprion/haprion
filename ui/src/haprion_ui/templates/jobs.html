@@ -122,8 +122,8 @@
     {% for job in jobs.jobs %}
       <tr id="job-{{ job.id }}">
         <td data-label="Operation" title="Job {{ job.id }}">{% if job.link %}<a href="{{ job.link }}">{{ job.operation }}</a>{% else %}{{ job.operation }}{% endif %}</td>
-        <td data-label="Cluster"><strong>{{ job.cluster }}</strong></td>
-        <td data-label="By">{{ job.by or '—' }}</td>
+        <td data-label="Cluster"><strong title="{{ job.cluster }}">{{ job.cluster }}</strong></td>
+        <td data-label="By"{% if job.by %} title="{{ job.by }}"{% endif %}>{{ job.by or '—' }}</td>
         <td data-label="State"><span class="status-badge status-badge-{{ job.tone }}">{{ job.state_label }}</span></td>
         <td data-label="Requested"><time datetime="{{ job.requested_iso }}" title="{{ job.requested_at }}">{{ job.requested }}</time></td>
         <td data-label="Started">{{ job.started }}</td>

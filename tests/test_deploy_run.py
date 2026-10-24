@@ -60,6 +60,9 @@ def deploy(
     # (review 2026-10-24).
     # And the exit must be the one that outcome is, or writing it fails (06-04).
     exit_codes.check(outcome.report.as_envelope("alpha")["outcome"], outcome.exit_code)
+    # And the contract's own semantics on every run, not only on the cases that
+    # ask for it: the early returns kept rows it refuses (review 26-10-24, 01-02).
+    reconcile_semantics()(outcome.report.as_envelope("alpha"), Path("deploy"))
     return outcome.exit_code, out.getvalue()
 
 
@@ -1122,6 +1125,27 @@ class TheRunKeepsToItsBudget(unittest.TestCase):
         self.assertEqual(rows["node-a"]["outcome"], "not_attempted")
         self.assertEqual(rows["node-a"]["error"]["code"], "deploy_budget_exhausted")
         self.assertEqual(rows["node-b"]["outcome"], "updated")
+
+    def test_a_node_unread_after_its_deploy_is_not_called_updated_when_time_runs_out(
+        self,
+    ) -> None:
+        """Review 26-10-24, 01-02: the early return kept an unverified `updated` row."""
+
+        cluster = pair()
+        real = cluster.trigger
+
+        def trigger_then_drop(name: str) -> int:
+            code = real(name)
+            cluster.node(name).reachable = False
+            return code
+
+        cluster.trigger = trigger_then_drop  # type: ignore[method-assign]
+        code, document = self.run_slowly(cluster, per_node=500.0)
+
+        self.assertEqual(code, exit_codes.PARTIAL)
+        rows = {row["name"]: row for row in document["result"]["nodes"]}
+        self.assertEqual(rows["node-b"]["outcome"], "failed")
+        self.assertEqual(rows["node-b"]["error"]["code"], "node_unverified")
 
     def test_nodes_that_fit_are_all_deployed(self) -> None:
         cluster = pair()

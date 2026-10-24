@@ -203,6 +203,13 @@ def fence(parameters: Mapping[str, JsonValue]) -> tuple[str, str]:
     return expected_head, comment
 
 
+def _only_managed(porcelain: str) -> bool:
+    """Whether every path `git status --porcelain` names is the application's own layer."""
+
+    paths = [line[3:].split(" -> ")[-1] for line in porcelain.splitlines() if line.strip()]
+    return bool(paths) and all(path.startswith(MANAGED_PREFIX) for path in paths)
+
+
 def network_of(base_files: Mapping[str, bytes], *, doing: str) -> bytes:
     """The committed network description, carried through untouched.
 
@@ -267,14 +274,6 @@ def _publish(
     refuse: Refuse,
 ) -> int:
     repo = cluster.config_path
-    if unsaved_changes(repo):
-        return refuse(
-            "dirty_worktree",
-            "there are unsaved changes in the cluster worktree. Publish or discard them before "
-            f"{words.doing}.",
-            exit_codes.BLOCKED,
-        )
-
     branch, head = resolve_head(repo)
     #
     # Moved by this request's own version is not moved: that is a run which
@@ -284,6 +283,23 @@ def _publish(
     retry = head != change.expected_head and recorded_on(
         repo, head, base=change.expected_head, request_id=request.request_id
     )
+    dirty = unsaved_changes(repo)
+    if dirty and retry and _only_managed(dirty):
+        #
+        # The run stopped between its commit and writing the worktree out, so
+        # the application's own layer still shows the version before. Written
+        # out now, as that run would have; anything a person changed is
+        # outside managed/ and still refuses (review 26-10-24, 01-03).
+        #
+        restore_worktree(repo, head)
+        dirty = unsaved_changes(repo)
+    if dirty:
+        return refuse(
+            "dirty_worktree",
+            "there are unsaved changes in the cluster worktree. Publish or discard them before "
+            f"{words.doing}.",
+            exit_codes.BLOCKED,
+        )
     if head != change.expected_head and not retry:
         return refuse("expected_target_changed", words.moved, exit_codes.BLOCKED)
 

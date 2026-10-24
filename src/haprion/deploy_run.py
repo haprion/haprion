@@ -315,6 +315,7 @@ def run(
         # would have produced.
         #
         if lifeline is not None and lifeline.released:
+            _settle(status, report, target)
             return _released(writer, status, report, progress, lifeline.reason)
 
         #
@@ -349,6 +350,7 @@ def run(
                     "Some nodes carry the target and some do not. "
                     "Run the same command again once the cluster allows it.\n"
                 )
+            _settle(status, report, target)
             return DeployRun(step.exit_code, report)
 
         #
@@ -384,6 +386,7 @@ def run(
                     )
                     report.outcome = Outcome.FAILED
                     report.error = Message(code="status_unavailable", message=str(exc))
+                    _settle(status, report, target)
                     return DeployRun(exc.exit_code, report)
             _settle(status, report, target)
             return DeployRun(_report(writer, status, step, report), report)
@@ -404,6 +407,7 @@ def run(
             raise RuntimeError("a deploy step must name a node")
 
         if budget is not None and time_left() < budget.node_step:
+            _settle(status, report, target)
             return _out_of_time(writer, status, report, node_name, budget)
 
         writer.write(f"\n=== Deploy: {node_name} ===\n")
@@ -609,7 +613,11 @@ def _out_of_time(
     entry.outcome = "not_attempted"
     entry.error = Message(code="deploy_budget_exhausted", message=message, node=node_name)
     report.final_summary = status.summary
-    if any(node.outcome == "updated" for node in report.nodes.values()):
+    #
+    # Touched as `_released` counts it: a node deployed and then not readable
+    # is `failed` after `_settle`, and still not a cluster left as it was.
+    #
+    if any(node.outcome in ("updated", "failed") for node in report.nodes.values()):
         report.outcome = Outcome.PARTIAL
         report.warnings.append(Message(code="deploy_budget_exhausted", message=message))
         return DeployRun(exit_codes.PARTIAL, report)

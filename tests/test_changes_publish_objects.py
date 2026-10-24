@@ -420,6 +420,25 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertEqual(count_versions(self.repo), versions)
             self.assertEqual(os.readlink(self.publish_path / "current"), f"releases/{head}")
 
+    def test_a_retry_after_the_commit_and_before_the_worktree_was_written_finishes(self) -> None:
+        """Review 26-10-24, 01-03: the worktree still showed the version before, and every
+        later publish was refused as unsaved changes."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            sent = self.request().getvalue()
+            self.publish_objects(policy, io.BytesIO(sent))
+            head = git(self.repo, "rev-parse", "HEAD")
+            git(self.repo, "checkout", "HEAD~1", "--", "managed")
+            self.assertNotEqual(git(self.repo, "status", "--porcelain"), "")
+
+            code, document, err = self.publish_objects(policy, io.BytesIO(sent))
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertEqual(document["result"]["hash"], head)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+
     def test_a_retried_removal_is_not_refused_as_a_removal_of_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))

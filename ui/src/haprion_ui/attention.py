@@ -226,7 +226,7 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
 
     newest: dict[tuple[str | None, str, str], tuple[Job, str]] = {}
     for job in sorted(rows, key=lambda row: (row.created_at, row.id), reverse=True):
-        if job.state in ("pending", "running"):
+        if not jobs_module.ran(job):
             continue
         for operation, state in jobs_module.step_states(job):
             newest.setdefault((job.cluster, operation, jobs_module.subject(job)), (job, state))
@@ -234,7 +234,12 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
     for (cluster, operation, _subject), (job, state) in newest.items():
         if state not in UNSETTLED:
             continue
-        label = (
+        waiting = (
+            jobs_module.waiting_for(job)
+            if operation == job.operation and state == "partial"
+            else None
+        )
+        label = waiting or (
             jobs_module.failure_label(job, operation)
             if jobs_module.action_names(job) or operation in jobs_module.FAILURE_LABELS
             else f"{operation} did not work"
@@ -243,7 +248,7 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
         items.append(
             Item(
                 kind="job",
-                severity="critical",
+                severity="warning" if waiting else "critical",
                 cluster=cluster,
                 subject=f"job {job.id}",
                 message=label,

@@ -102,6 +102,41 @@ class EachKindComesAndGoes(unittest.TestCase):
 
         self.assertEqual(len(attention.from_jobs([failed, running])), 1)
 
+    def test_a_wait_is_a_warning_and_a_discarded_job_is_not_listed(self) -> None:
+        """Review 26-10-24, 02-08: both were a critical '... failed'."""
+
+        for operation, code, message in (
+            ("cert_scep", "request_pending", "Certificate enrollment waits for the CA"),
+            (
+                "cert_publish",
+                "source_missing",
+                "Certificate distribution waits for imported material",
+            ),
+        ):
+            with self.subTest(code=code):
+                result = {"warnings": [{"code": code, "message": "m"}]}
+                waiting = job(
+                    state="partial", outcome="partial", result=result, operation=operation
+                )
+                [item] = attention.from_jobs([replace(waiting, cluster=None)])
+                self.assertEqual((item.severity, item.message), ("warning", message))
+        mixed = {"warnings": [{"code": "source_missing"}, {"code": "write_failed"}]}
+        partial = job(state="partial", outcome="partial", result=mixed, operation="cert_publish")
+        self.assertEqual(attention.from_jobs([partial])[0].severity, "critical")
+
+        failed = replace(job(state="failed", outcome="failed"), id=1, created_at=NOW)
+        discarded = replace(
+            job(state="blocked", outcome="blocked", result={"error": {"code": "held_discarded"}}),
+            id=2,
+            created_at=NOW + timedelta(minutes=1),
+        )
+        self.assertEqual(attention.from_jobs([discarded]), [])
+        self.assertEqual(
+            [item.subject for item in attention.from_jobs([failed, discarded])], ["job 1"]
+        )
+        self.assertEqual(jobs.last_failure([discarded]), {})
+        self.assertEqual(jobs.last_failure([discarded, failed])["alpha"].label, "Deploy failed")
+
     def test_a_down_node_and_a_stale_reading_are_listed_and_a_drain_is_not(self) -> None:
         items = attention.from_dashboard(
             [

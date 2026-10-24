@@ -550,7 +550,7 @@ def _newest_finished(rows: Iterable[Job]) -> dict[str, int]:
 
     newest: dict[str, int] = {}
     for job in rows:
-        if job.cluster is None or job.cluster in newest or job.state in {"pending", "running"}:
+        if job.cluster is None or job.cluster in newest or not ran(job):
             continue
         newest[job.cluster] = job.id
     return newest
@@ -582,6 +582,43 @@ def certificate_blocks(rows: list[Job]) -> dict[str, CertificateBlock]:
 # about what counts as a bad ending.
 #
 ATTENTION = frozenset({"partial", "blocked", "failed", "unknown"})
+#
+# Warning codes that end a job `partial` while it waits on something outside
+# it, rather than because it went wrong (review 26-10-24, 02-08): a request the
+# CA has yet to approve, and an import whose material has not arrived.
+# `source_missing` among a publish's warnings is only ever that skipped import;
+# material that is there and cannot be read fails the certificate instead.
+#
+WAITING = {
+    "request_pending": "Certificate enrollment waits for the CA",
+    "source_missing": "Certificate distribution waits for imported material",
+}
+#
+# A held job an admin chose not to run (0082). It never started, so it neither
+# fails nor ends an earlier failure.
+#
+DISCARDED = "held_discarded"
+
+
+def ran(job: Job) -> bool:
+    """Whether a job finished a run: not queued, not running, not held and discarded."""
+
+    if job.state in {"pending", "running"}:
+        return False
+    return not (job.state == "blocked" and error_code(job) == DISCARDED)
+
+
+def waiting_for(job: Job) -> str | None:
+    """What a `partial` job waits on, when every warning it carries is a wait."""
+
+    envelope = job.result if isinstance(job.result, dict) else {}
+    warnings = envelope.get("warnings")
+    if job.state != "partial" or not isinstance(warnings, list) or not warnings:
+        return None
+    codes = {str(entry.get("code")) if isinstance(entry, dict) else "" for entry in warnings}
+    if not codes <= WAITING.keys():
+        return None
+    return "; ".join(WAITING[code] for code in sorted(codes))
 
 
 def error_code(job: Job) -> str | None:
@@ -968,7 +1005,7 @@ def _unresolved(rows: list[Job]) -> int:
         #
         if job.cluster is None:
             continue
-        if job.cluster not in latest and job.state not in {"pending", "running"}:
+        if job.cluster not in latest and ran(job):
             latest[job.cluster] = job.state
     return sum(state in ATTENTION for state in latest.values())
 
@@ -1208,7 +1245,7 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
 
     verdicts: dict[str, Failure] = {}
     for job in jobs:
-        if job.cluster is None or job.cluster in verdicts or job.state in {"pending", "running"}:
+        if job.cluster is None or job.cluster in verdicts or not ran(job):
             continue
         if job.operation in RESTORE_OPERATIONS:
             continue

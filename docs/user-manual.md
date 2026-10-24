@@ -904,6 +904,11 @@ Failed sign-ins are counted per username **and** client address together. Counti
 would let one attacker lock every real user out. Counting per address alone would let one address work
 through a list of names.
 
+Each account also has a budget of its own across all addresses: ten times the limit (`max_failures`) in
+the same window. It stops many addresses guessing at one name. An attempt refused by the throttle is not
+counted again, so one address that keeps trying cannot use up that budget for everyone else.
+`haprion-user unlock` clears both.
+
 The web service can add and read sign-in attempts, but cannot change or delete them. A counter the web
 process could reset would be a lock whose key is kept behind the door. An unlock therefore deletes
 nothing: `haprion-user unlock` (and, for an admin, the interface) records an unlock, and the throttle

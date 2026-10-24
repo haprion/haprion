@@ -123,7 +123,6 @@ def build_router(config: Config) -> APIRouter:
         # nothing about who has an account.
         #
         busy = False
-        counted = False
         if throttled:
             accepted = False
         elif not auth.HASHING.acquire(timeout=auth.HASHING_WAIT_SECONDS):
@@ -156,7 +155,6 @@ def build_router(config: Config) -> APIRouter:
                             client_ip=address,
                             succeeded=False,
                         )
-                        counted = True
                     connection.commit()
             except BaseException:
                 auth.HASHING.release()
@@ -204,9 +202,16 @@ def build_router(config: Config) -> APIRouter:
                     and not current.disabled
                     and current.password_hash == account.password_hash
                 )
-            if accepted or not counted:
+            #
+            # A success clears the count; a failure was written before the hash.
+            # A throttled attempt is not written at all - its audit row below
+            # says it happened. Written, it counted towards the account's own
+            # budget, and one address kept the right password out from every
+            # other (review 26-10-24, 09-01).
+            #
+            if accepted:
                 db.record_login_attempt(
-                    connection, username=username or "?", client_ip=address, succeeded=accepted
+                    connection, username=username or "?", client_ip=address, succeeded=True
                 )
             if not accepted:
                 db.record_audit_event(

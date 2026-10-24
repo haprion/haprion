@@ -759,7 +759,17 @@ class Throttling(LoginTestCase):
             response = self.sign_in(self.client(configuration(max_failures=3)))
             lookup.assert_not_called()
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(self.attempts[-1][2], False)
+        # Said in the audit trail, and not written as another failure (09-01).
+        self.assertEqual(self.attempts, [])
+
+    def test_a_throttled_source_adds_nothing_to_the_account_s_budget(self) -> None:
+        """Review 26-10-24, 09-01: one address held the account locked for every other."""
+
+        self.failures = 99
+        for _ in range(200):
+            self.sign_in(self.client())
+        self.assertEqual(self.attempts, [])
+        self.assertEqual(self.audit.count("login_failed"), 200)
 
     def test_a_throttled_answer_is_indistinguishable_from_a_wrong_password(self) -> None:
         wrong = self.sign_in(self.client(), password="wrong")

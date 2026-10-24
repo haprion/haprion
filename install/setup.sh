@@ -165,6 +165,21 @@ setup_activation() {
 }
 
 #
+# A release other than the running one is an update, and an update has its own
+# command: it takes a database dump, checks that the step back stays safe
+# before migrating, and puts the old release back when the switch fails. Run
+# here, the migration ran with the old release still serving and none of that
+# (review 26-10-24, 03-08).
+#
+setup_check_release_switch() {
+    local ui_root="$1" release_id="$2" updater="$3"
+    [[ "$(setup_activation "$ui_root" "$release_id")" == other ]] || return 0
+    setup_problem "this installation runs $(basename "$(readlink -f "${ui_root}/current")"), not ${release_id}" \
+        "moving a running installation to another release is an update, which haprion-setup does not do" \
+        "run the update instead: sudo ${updater} ${release_id}"
+}
+
+#
 # The problems, all of them, in the same shape as a failed step.
 #
 setup_report_problems() {

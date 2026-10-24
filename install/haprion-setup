@@ -80,6 +80,8 @@ elif [[ ! -d "${releases}/${release_id}" ]]; then
     setup_problem "the release ${release_id} is not in ${releases}" \
         "haprion-setup activates a release the package has already unpacked" \
         "install the package that carries it, or name one that is there"
+else
+    setup_check_release_switch "$UI_ROOT" "$release_id" "${here}/platform/update-platform-release"
 fi
 
 [[ -x /opt/haprion/current/bin/haprion-cluster-config ]] \

@@ -863,6 +863,34 @@ class ARerunAfterActivationSkipsTheCheckBeforeIt(unittest.TestCase):
             (root / "current").symlink_to("releases/0.8.0-abc")
             self.assertEqual(self.activation(root), "done")
 
+    def test_another_release_than_the_running_one_is_sent_to_the_update(self) -> None:
+        """Review 26-10-24, 03-08: it migrated with no dump and no check of the step back."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "releases" / "0.8.0-abc").mkdir(parents=True)
+            (root / "releases" / "0.8.0-old").mkdir()
+
+            def asked() -> subprocess.CompletedProcess[str]:
+                return bash(
+                    STRICT + 'setup_check_release_switch "$2" "$3" /x/update-platform-release; '
+                    "setup_report_problems",
+                    str(SETUP),
+                    str(root),
+                    "0.8.0-abc",
+                )
+
+            self.assertEqual(asked().returncode, 0)
+            (root / "current").symlink_to("releases/0.8.0-old")
+            refused = asked()
+            self.assertEqual(refused.returncode, 1)
+            self.assertIn("this installation runs 0.8.0-old, not 0.8.0-abc", refused.stdout)
+            self.assertIn("sudo /x/update-platform-release 0.8.0-abc", refused.stdout)
+            (root / "current").unlink()
+            (root / "current").symlink_to("releases/0.8.0-abc")
+            self.assertEqual(asked().returncode, 0)
+        self.assertIn('setup_check_release_switch "$UI_ROOT" "$release_id"', DRIVER.read_text())
+
     def test_the_driver_adds_the_check_and_the_activation_only_before_it(self) -> None:
         text = DRIVER.read_text()
         block = text[text.index('if [[ "$activation" != "done" ]]; then') :]

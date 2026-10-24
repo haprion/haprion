@@ -131,8 +131,24 @@ def build_candidate_tree(
         # survive in the new version, which is the same silent-drift failure in
         # the other direction.
         #
+        # `--force` because the base need not be the work tree's commit: a revert
+        # builds on an older version (B360), and git would otherwise refuse to
+        # drop index entries that differ from the files on disk. `--cached`
+        # keeps it to this private index; nothing on disk is touched.
+        #
         for prefix in prefixes:
-            _git(repo, "rm", "--cached", "-r", "--ignore-unmatch", "-q", "--", prefix, env=env)
+            _git(
+                repo,
+                "rm",
+                "--cached",
+                "--force",
+                "-r",
+                "--ignore-unmatch",
+                "-q",
+                "--",
+                prefix,
+                env=env,
+            )
 
         #
         # Every entry in one `update-index` rather than one process per file

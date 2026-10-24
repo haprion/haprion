@@ -188,7 +188,8 @@ without a deploy, and lasts until you press **Ready**.
 
 **Go back to an earlier version.** *Versions* lists every published version, with a **Diff** of
 what each one changed. **Publish this version** on an older one makes it the newest version again;
-then **Deploy configuration**. Nothing in the history is lost.
+then **Deploy configuration**. Nothing in the history is lost. The cluster keeps the nodes it has now:
+going back changes the configuration, not the node list.
 
 **Add or remove a node.** *Settings → Nodes & clusters*, then the cluster: under **Add a node**, paste the
 new node's block and press **Read block**. The page shows its host key; confirm, and the node is added and

@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import grp
+import io
+import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from haprion import node_publish
 from haprion.candidate_validation import ValidationResult
+from haprion.cli import revert, revert_helper
 from haprion.config import Cluster, load_policy, load_runtime_config
 from haprion.helper_protocol import HelperRequest
 from haprion.repo_snapshot import read_tree_files, resolve_head
 from haprion.version_history import count_versions
 from tests.test_changes_publish_objects import ObjectsPublishFixture
-from tests.test_publish_helper import Recorder, git
+from tests.test_publish_helper import HAPROXY_CFG, Recorder, git
 
 REQUEST = HelperRequest(
     operation="cluster_node",
@@ -67,6 +71,35 @@ class PublishingTheNodeList(ObjectsPublishFixture):
             change_owner=Recorder(),
             addresses=addresses,
         )
+
+    def revert(self, policy_path: Path, version: int, commit: str) -> tuple[int, dict[str, Any]]:
+        """The revert helper's answer, made against the newest version."""
+
+        request = revert.build_request(
+            "alpha",
+            "99999999-9999-4999-8999-999999999999",
+            version=version,
+            expected_commit=commit,
+            expected_head=git(self.repo, "rev-parse", "HEAD").strip(),
+        )
+        output = io.StringIO()
+        code = revert_helper.main(
+            [],
+            policy_path=policy_path,
+            run_root=self.run_root,
+            lock_root=self.lock_root,
+            input_stream=io.BytesIO(request.encode()),
+            output_stream=output,
+            error_stream=io.StringIO(),
+            require_secure=False,
+            require_root=False,
+            validator=lambda _candidate, _request_id: ValidationResult(
+                valid=True, diagnostics="candidate output"
+            ),
+            group=grp.getgrgid(os.getgid()).gr_name,
+            change_owner=Recorder(),
+        )
+        return code, json.loads(output.getvalue())
 
     def released(self, name: str) -> list[Path]:
         return sorted((self.publish_path / "current").rglob(f"node-{name}.conf"))
@@ -132,3 +165,41 @@ class PublishingTheNodeList(ObjectsPublishFixture):
             self.assertEqual(published["error"]["code"], "candidate_invalid")  # type: ignore[index]
             self.assertEqual(count_versions(self.repo), before)
             self.assertEqual(self.released("node-c"), [])
+
+    def test_a_revert_keeps_the_node_list_it_is_made_on(self) -> None:
+        """A revert restores configuration, never the node list (B360, review 26-10-24 01-01)."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.site(Path(raw))
+            two_nodes = self.publish(self.cluster(policy_path))
+            commit = git(self.repo, "rev-parse", "HEAD").strip()
+            (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # later\n")
+            git(self.repo, "commit", "-qam", "A later change")
+            self.add_node("node-c", "192.0.2.3")
+            self.publish(self.cluster(policy_path))
+
+            code, answer = self.revert(policy_path, int(str(two_nodes["version"])), commit)
+
+            self.assertEqual(code, 0, answer)
+            self.assertTrue(answer["result"]["changed"])
+            self.assertEqual((self.repo / "core/haproxy.cfg").read_bytes(), HAPROXY_CFG)
+            self.assertEqual(len(self.released("node-c")), 1)
+            self.assertIn("192.0.2.3", self.released("node-a")[0].read_text())
+
+    def test_a_revert_over_only_a_node_change_changes_nothing(self) -> None:
+        """The node list is not configuration, so there is nothing to go back to."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.site(Path(raw))
+            two_nodes = self.publish(self.cluster(policy_path))
+            commit = git(self.repo, "rev-parse", "HEAD").strip()
+            self.add_node("node-c", "192.0.2.3")
+            self.publish(self.cluster(policy_path))
+            before = count_versions(self.repo)
+
+            code, answer = self.revert(policy_path, int(str(two_nodes["version"])), commit)
+
+            self.assertEqual(code, 0, answer)
+            self.assertFalse(answer["result"]["changed"])
+            self.assertEqual(count_versions(self.repo), before)
+            self.assertEqual(len(self.released("node-c")), 1)

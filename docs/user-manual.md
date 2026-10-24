@@ -121,6 +121,10 @@ lists what the publish changed, field by field - before and now. Choose *Save ov
 version, or *Discard the changes* (*Discard the draft* for a draft) to drop it. A publish that changed
 other objects does not hold anything back.
 
+**Going back.** *Publish this version* on an older version makes its configuration the newest version
+again. The cluster keeps the nodes it has now. Their keepalived settings, shared counters and exporter
+addresses are made again for today's nodes, so a node added since stays in service.
+
 **Publish & deploy.** When a cluster has saved changes, its dashboard card offers *Publish & deploy N
 changes* instead of *Deploy configuration*. A dialog lists the changes and takes the comment. One job then
 publishes and deploys: the worker deploys the version the publish recorded. The job ends when the deploy

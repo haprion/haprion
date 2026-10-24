@@ -24,6 +24,12 @@ and keeps every intermediate version in the history.
 It validates. The content was published once before, but a revert must not slip
 past validation for that reason: what a node can accept depends on the
 certificates and the maps present now, not on what was true then.
+
+And it restores configuration, never the node list (B360). The chosen tree's
+generated layer is made again from its own objects and the cluster's nodes as
+they are now, the way every publish makes it: the old version's keepalived
+files name the nodes it had, and a node added since would find itself in no
+release and stop its own HAProxy and keepalived.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, TextIO
 
-from haprion import exit_codes
+from haprion import exit_codes, node_publish
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     VALIDATION_CERTIFICATE,
@@ -46,6 +52,7 @@ from haprion.candidate_validation import (
     validate_candidate,
     validate_in_sandbox,
 )
+from haprion.cli.managed_helper import Refusal
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.config import (
     DEFAULT_POLICY_PATH,
@@ -65,6 +72,8 @@ from haprion.helper_protocol import (
     require_no_arguments,
     write_document,
 )
+from haprion.managed_network import location as network_location
+from haprion.managed_publish import MANAGED_PREFIX
 from haprion.release_install import (
     PUBLISH_GROUP,
     ChangeOwner,
@@ -82,6 +91,7 @@ from haprion.repo_health import unsaved_changes
 from haprion.repo_snapshot import (
     ConcurrentUpdate,
     PublishError,
+    build_candidate_tree,
     commit_and_swap,
     read_tree_files,
     resolve_head,
@@ -412,6 +422,27 @@ def _revert(
 
     target_tree = _tree_of(repo, expected_commit)
     target_files = read_tree_files(repo, target_tree)
+    #
+    # The generated layer made again for today's nodes (B360). A version with no
+    # network description has no generated layer from the product to remake.
+    #
+    if network_location() in target_files:
+        try:
+            managed = node_publish.generated(target_files, cluster)
+        except Refusal as exc:
+            return refuse(exc.code, str(exc), exc.exit_code)
+        except ConfigError as exc:
+            return refuse(
+                "candidate_invalid",
+                f"version {version} cannot be generated for this cluster's nodes today: {exc}. "
+                "No version was created and nothing was published.",
+                exit_codes.REFUSED,
+                {"restored_version": version},
+            )
+        target_tree = build_candidate_tree(
+            repo, expected_commit, managed, prefixes=(MANAGED_PREFIX,)
+        ).tree
+        target_files = read_tree_files(repo, target_tree)
 
     if target_tree == _tree_of(repo, head):
         #

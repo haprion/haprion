@@ -33,7 +33,7 @@
   {% if renewal.way in ('certbot', 'ndes') %}
   <ul class="removal-consequences">
     {% if renewal.way == 'certbot' %}
-    <li>The same <code>certbot renew</code> the daily timer runs, forced before its time. The DNS or HTTP challenge runs again and can fail for the same reasons a first request can; certbot's own words then stand on the row.</li>
+    <li>The same <code>certbot renew</code> the renewal timer runs, forced before its time. The DNS or HTTP challenge runs again and can fail for the same reasons a first request can; certbot's own words then stand on the row.</li>
     <li>Let's Encrypt issues at most five identical certificates per week. Renewing this one now spends one of them.</li>
     {% else %}
     <li>The same enrollment the scheduled renewal makes: a new key, a new request to the CA through the profile's challenge. If the CA holds the request for approval, the row says <em>Request pending</em> and the enrollment is resumed from there.</li>

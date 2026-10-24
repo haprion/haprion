@@ -158,7 +158,7 @@ global
     tune.stick-counters 5
 
     # The TLS defaults the publish path checks this file against, written
-    # from the same source (docs/user-manual.md, 'Runtime policy').
+    # from the same source (docs/user-manual.md, 'Directory layout').
 {tls}
 defaults
     log     global

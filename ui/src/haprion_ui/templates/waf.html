@@ -18,7 +18,7 @@
 </section>
 {% include "_waf-views.html" %}
 {% if problem %}<p class="preview-notice form-problem" role="alert"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>{% endif %}
-{% if saved and saved_in %}<p class="preview-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span>Saved in the draft of <a href="/proxies/{{ saved_in | urlencode }}/{{ saved | urlencode }}/edit?open=waf">{{ saved }}</a>. Publish it there for the change to take effect.</p>{% endif %}
+{% if saved and saved_in %}<p class="preview-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span>Saved for <a href="/proxies/{{ saved_in | urlencode }}/{{ saved | urlencode }}/edit?open=waf">{{ saved }}</a>, not published yet. Publish it on <a href="/history">Versions</a>, or with Publish &amp; deploy on the dashboard.</p>{% endif %}
 
 {% from "_waf-finding.html" import finding_what %}
 
@@ -46,7 +46,7 @@
         <td><span class="finding-count">{{ finding.requests }}</span></td>
         <td><span class="finding-count">{{ finding.clients }}</span></td>
         <td><span class="users-date">{{ finding.last_seen | shown_at }}</span></td>
-        <td>{% if finding.ineffective %}<span class="status-badge status-badge-warning">Not working</span>{% elif finding.in_draft %}<span class="finding-draft">In draft</span>{% elif can_write and finding.allow_href %}<a class="secondary-button" href="{{ finding.allow_href }}&amp;matched={{ finding.matched | urlencode }}" data-waf-allow>Allow…</a>{% endif %}</td>
+        <td>{% if finding.ineffective %}<span class="status-badge status-badge-warning">Not working</span>{% elif finding.in_draft %}<span class="finding-draft">Not published</span>{% elif can_write and finding.allow_href %}<a class="secondary-button" href="{{ finding.allow_href }}&amp;matched={{ finding.matched | urlencode }}" data-waf-allow>Allow…</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -80,7 +80,7 @@
         <td>{% if row.counted %}<span class="finding-count">{{ row.clients }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td>{% if row.last_seen %}<span class="users-date">{{ row.last_seen | shown_at }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         {#- Who in the title, beside the counts (B273): the time is what a row is compared by. -#}
-        <td{% if row.exception.by %} title="Added by {{ row.exception.by }}"{% endif %}><span class="users-date">{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% elif row.exception.by %}{{ row.exception.by }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">In draft</span>{% endif %}</td>
+        <td{% if row.exception.by %} title="Added by {{ row.exception.by }}"{% endif %}><span class="users-date">{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% elif row.exception.by %}{{ row.exception.by }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">Not published</span>{% endif %}</td>
         <td>{% if can_write %}<form method="post" action="/waf/exceptions/remove" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="cluster" value="{{ row.cluster }}"><input type="hidden" name="object" value="{{ row.name }}">

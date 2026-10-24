@@ -232,7 +232,7 @@
           <tr>
             <td title="{{ row.message }}">{{ finding_what(row.kind, row.explanation, row.severity, row.message) }}</td>
             <td title="{{ waf_where(row.exception, row.name) }}">{{ waf_where(row.exception, row.name) }}</td>
-            <td><span class="users-date">{% if row.exception.by %}{{ row.exception.by }}{% endif %}{% if row.exception.by and row.exception.at %} · {% endif %}{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">In draft</span>{% endif %}</td>
+            <td><span class="users-date">{% if row.exception.by %}{{ row.exception.by }}{% endif %}{% if row.exception.by and row.exception.at %} · {% endif %}{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">Not published</span>{% endif %}</td>
             <td><button type="submit" name="drop_exception" value="{{ row.index }}" class="secondary-button" formnovalidate>Remove</button></td>
           </tr>
           {% endfor %}

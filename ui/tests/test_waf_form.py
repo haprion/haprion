@@ -303,7 +303,7 @@ class TheGroupOnTheEditor(EditorTestCase):
         rows = text.split('class="node-table form-exception-table"', 1)[1].split("</table>", 1)[0]
         self.assertIn("q on /search", rows)
         self.assertIn("id, every path", rows)
-        self.assertEqual(rows.count("In draft"), 1, "only the exception not yet published")
+        self.assertEqual(rows.count("Not published"), 1, "only the exception not yet published")
 
     def test_remove_draws_the_page_without_it_and_saves_nothing(self) -> None:
         # 26-10-03: change one's mind on the publishing page, not back in WAF logs.

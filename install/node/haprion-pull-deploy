@@ -60,6 +60,32 @@ if ! flock -n 9; then
     exit 1
 fi
 
+#
+# HAProxy reads the release only through the links 04-node-prepare makes. A
+# haproxy.cfg or conf.d of somebody's own would be validated and reloaded in
+# its place, and the deploy would say it succeeded (review 26-10-24, 03-03).
+# maps, waf and dns are there once a release uses them.
+#
+refuse_unlinked() {
+    local name path bad=0
+    for name in haproxy.cfg conf.d maps waf dns; do
+        path="${HAPROXY_DIR}/${name}"
+        if [[ -L "$path" && "$(readlink -m "$path")" == "$(readlink -m "$CURRENT")/${name}" ]]; then
+            continue
+        fi
+        if [[ ! -e "$path" && ! -L "$path" && "$name" != haproxy.cfg && "$name" != conf.d ]]; then
+            continue
+        fi
+        log "ERROR: ${path} is not the link to current/${name} that 04-node-prepare makes; HAProxy would not load the release."
+        bad=1
+    done
+    if (( bad )); then
+        log "Nothing was changed. Move it aside and run 04-node-prepare again on this node."
+        exit 1
+    fi
+}
+refuse_unlinked
+
 STAGE="$(mktemp -d -t haproxy-stage.XXXXXX)"
 VALIDATE="$(mktemp -d -t haproxy-validate.XXXXXX)"
 

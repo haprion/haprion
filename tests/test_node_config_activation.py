@@ -16,6 +16,7 @@ status side is `haprion-node-status`'s reader, extracted verbatim.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -234,6 +235,43 @@ class TheActivationIsRememberedUntilHaproxyReloads(Node):
             with self.subTest(content=content):
                 self.pending.write_text(content)
                 self.assertIsNone(self.read_release()["hash"])
+
+
+class AConfigurationOfItsOwnIsRefused(Node):
+    """Review 26-10-24, 03-03: a node's own haproxy.cfg or conf.d was loaded instead of the release."""
+
+    def test_a_plain_file_or_directory_stops_the_deploy_before_anything_changes(self) -> None:
+        for name in ("haproxy.cfg", "conf.d", "maps"):
+            with self.subTest(name=name):
+                path = self.haproxy / name
+                path.unlink()
+                if name == "haproxy.cfg":
+                    path.write_text("# mine\n")
+                else:
+                    path.mkdir()
+                    (path / "mine.cfg").write_text("# mine\n")
+
+                code, output = self.deploy()
+
+                self.assertEqual(code, 1, output)
+                self.assertIn(f"{path} is not the link to current/{name}", output)
+                self.assertEqual(self.reloads(), 0)
+                self.assertEqual(self.read_release()["hash"], "a" * 40)
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                path.symlink_to(Path("current") / name)
+
+    def test_a_missing_haproxy_cfg_is_refused_and_a_missing_waf_is_not(self) -> None:
+        (self.haproxy / "waf").unlink()
+        code, output = self.deploy()
+        self.assertEqual(code, 0, output)
+
+        (self.haproxy / "haproxy.cfg").unlink()
+        code, output = self.deploy()
+        self.assertEqual(code, 1, output)
+        self.assertIn("haproxy.cfg is not the link", output)
 
 
 class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):

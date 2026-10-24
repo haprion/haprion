@@ -323,6 +323,13 @@ else
     log "  ok       /etc/haproxy/current"
 fi
 
+#
+# A haproxy.cfg or conf.d of somebody's own is what HAProxy would load instead
+# of every release, while each deploy said it succeeded (review 26-10-24,
+# 03-03). So the step stops on one, after naming all of them.
+#
+UNLINKED=()
+
 link_into_current() {
     local name="$1" path="/etc/haproxy/$1"
     if [[ -L "$path" ]]; then
@@ -349,11 +356,21 @@ link_into_current() {
     fi
     if [[ -e "$path" ]]; then
         warn "${path} exists and is not a symlink - not touching it"
-        warn "  move it aside, then run this step again"
+        UNLINKED+=("$path")
         return
     fi
     ln -s "current/${name}" "$path"
     log "  created  ${path} -> current/${name}"
+}
+
+refuse_unlinked() {
+    (( ${#UNLINKED[@]} )) || return 0
+    local path
+    warn "HAProxy would load these instead of the cluster's releases. Move them aside:"
+    for path in "${UNLINKED[@]}"; do
+        warn "  mv ${path} ${path}.local"
+    done
+    die "then run this step again"
 }
 
 link_into_current haproxy.cfg
@@ -361,6 +378,7 @@ link_into_current conf.d
 link_into_current maps
 link_into_current waf
 link_into_current dns
+refuse_unlinked
 
 step "dnsdist"
 ensure_dnsdist

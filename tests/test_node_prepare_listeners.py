@@ -202,14 +202,16 @@ class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
 
     def link(self, packaged: bool, name: str = "haproxy.cfg") -> subprocess.CompletedProcess[str]:
         body = function(self.script, "link_into_current").replace("/etc/haproxy/", f"{self.etc}/")
+        refuse = function(self.script, "refuse_unlinked")
         verdict = "true" if packaged else "false"
-        return subprocess.run(  # fixed interpreter, the step's own function
+        return subprocess.run(  # fixed interpreter, the step's own functions
             [
                 "/bin/bash",
                 "-c",
                 f'log() {{ echo "$*"; }}; warn() {{ echo "WARNING: $*"; }}; '
+                f'die() {{ echo "ERROR: $*"; exit 1; }}; UNLINKED=(); '
                 f"is_packaged_conffile() {{ {verdict}; }}; is_packaged_empty_dir() {{ {verdict}; }}; "
-                f"{body} link_into_current {name}",
+                f"{body} {refuse} link_into_current {name}; refuse_unlinked",
             ],
             capture_output=True,
             text=True,
@@ -228,6 +230,9 @@ class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
         done = self.link(packaged=False)
         self.assertIn("not touching it", done.stdout)
         self.assertEqual((self.etc / "haproxy.cfg").read_text(), "mine\n")
+        # And the step stops: HAProxy would load it instead of every release (03-03).
+        self.assertEqual(done.returncode, 1, done.stdout)
+        self.assertIn(f"mv {self.etc}/haproxy.cfg {self.etc}/haproxy.cfg.local", done.stdout)
         self.assertFalse((self.etc / "haproxy.cfg.packaged").exists())
 
     def test_the_package_s_empty_conf_d_gives_way_to_the_release_s(self) -> None:
@@ -243,6 +248,7 @@ class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
         done = self.link(packaged=False, name="conf.d")
         self.assertIn("not touching it", done.stdout)
         self.assertTrue((self.etc / "conf.d" / "mine.cfg").exists())
+        self.assertEqual(done.returncode, 1, done.stdout)
 
     def test_without_a_node_path_the_node_takes_the_cluster_id(self) -> None:
         found = re.search(r'^node_path="\$\(cluster_value .*?\n(?=\n)', self.script, re.M | re.S)

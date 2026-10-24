@@ -6403,6 +6403,10 @@ identical.
 Each deploy is a new directory under `releases/`. `current` points at the active one, and the fixed
 paths that HAProxy, the WAF engine and dnsdist read all point through `current`.
 
+A `haproxy.cfg` or `conf.d` of your own in `/etc/haproxy` would be loaded instead of every release.
+So step 4 stops on one, and lists the `mv` command that moves each aside. A deploy refuses before it
+changes anything when one of these paths is not the link.
+
 **Who may read a release.** The releases directory and `/etc/haproxy/certs` are `root:root 0750`.
 HAProxy, deployment, status and backup read the releases as root, so no forced-command account
 needs to pass through. Files inside a release may stay `0644` without exposing the active

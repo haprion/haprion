@@ -147,7 +147,7 @@ def stream(
     deadline = monotonic() + timeout
     received = 0
     errors = bytearray()
-    timed_out = too_large = False
+    timed_out = too_large = finished = False
     try:
         while any(key.data != "stdin" for key in selected.get_map().values()):
             remaining = deadline - monotonic()
@@ -179,9 +179,15 @@ def stream(
                     errors.extend(chunk[: MAX_STDERR_BYTES - len(errors)])
             if too_large:
                 break
+        finished = True
     finally:
         selected.close()
-        if timed_out or too_large:
+        #
+        # Also when the loop did not finish: a sink that raised - a full disk
+        # under a backup - left a child still writing into a pipe nobody reads,
+        # and the wait below never ended (review 26-10-24, 06-03).
+        #
+        if timed_out or too_large or not finished:
             process.kill()
         process.wait()
         for pipe in (process.stdin, process.stdout, process.stderr):

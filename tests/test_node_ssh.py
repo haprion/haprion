@@ -55,6 +55,19 @@ class AnAnswerIsReadWithinItsBudget(unittest.TestCase):
             node_ssh.run_bounded(child("import time; time.sleep(60)"), timeout=1)
         self.assertLess(monotonic() - started, 10)
 
+    def test_a_sink_that_raises_stops_the_child_instead_of_waiting_for_it(self) -> None:
+        """Review 26-10-24, 06-03: a full disk under a backup hung the call for good."""
+
+        def full(_chunk: bytes) -> None:
+            raise OSError(28, "No space left on device")
+
+        started = monotonic()
+        with self.assertRaises(OSError):
+            node_ssh.stream(
+                child("import sys\nwhile True: sys.stdout.write('x' * 65536)"), full, timeout=30
+            )
+        self.assertLess(monotonic() - started, 10)
+
     def test_bytes_that_are_not_utf8_are_a_bad_answer_not_an_exception(self) -> None:
         completed = node_ssh.run_bounded(
             child('import sys; sys.stdout.buffer.write(b\'{"x": "\\xff"}\')'), timeout=10

@@ -86,6 +86,15 @@ class JobView:
     #
     error_message: str | None = None
     #
+    # A partial run's reason, and what a deploy that completed warned about
+    # (review 26-10-24, 02-03): a partial deploy names its reason among the
+    # warnings rather than as an error, and a deploy that left the VIP unowned
+    # read as a clean `Completed`. The codes for everybody, the sentences on
+    # the same terms as `error_message`.
+    #
+    warning_codes: str = ""
+    warning_message: str | None = None
+    #
     # Admin only, and empty for everyone else. Not merely hidden in the
     # template: the projection never carries it, so a role that may not see it
     # cannot be shown it by a later change to a page.
@@ -608,15 +617,25 @@ def ran(job: Job) -> bool:
     return not (job.state == "blocked" and error_code(job) == DISCARDED)
 
 
+def warnings_of(job: Job) -> tuple[tuple[str, str], ...]:
+    """The code and sentence of each warning the job's result carries, in order."""
+
+    envelope = job.result if isinstance(job.result, dict) else {}
+    listed = envelope.get("warnings")
+    found = []
+    for entry in listed if isinstance(listed, list) else ():
+        code = entry.get("code") if isinstance(entry, dict) else None
+        if isinstance(code, str) and code:
+            message = entry.get("message")
+            found.append((code, message.strip() if isinstance(message, str) else ""))
+    return tuple(found)
+
+
 def waiting_for(job: Job) -> str | None:
     """What a `partial` job waits on, when every warning it carries is a wait."""
 
-    envelope = job.result if isinstance(job.result, dict) else {}
-    warnings = envelope.get("warnings")
-    if job.state != "partial" or not isinstance(warnings, list) or not warnings:
-        return None
-    codes = {str(entry.get("code")) if isinstance(entry, dict) else "" for entry in warnings}
-    if not codes <= WAITING.keys():
+    codes = {code for code, _ in warnings_of(job)}
+    if job.state != "partial" or not codes or not codes <= WAITING.keys():
         return None
     return "; ".join(WAITING[code] for code in sorted(codes))
 
@@ -910,6 +929,18 @@ def _view(
     if held:
         label, tone = "Held", "warning"
     ended_badly = job.state in ATTENTION
+    #
+    # Every warning of a partial run; of a completed one only a deploy's, whose
+    # warnings are each about the cluster (deploy_run). Other helpers' warnings
+    # on success are not measured, and a note under every green row would bury
+    # the ones that mean something, as the diagnostics comment below says.
+    #
+    warned = (
+        warnings_of(job)
+        if job.state == "partial"
+        or (job.state == "done" and ending_step(job) in {"deploy", "cert_deploy"})
+        else ()
+    )
     return JobView(
         id=job.id,
         operation=named[0] if (named := action_names(job)) else _operation(job.operation),
@@ -934,6 +965,10 @@ def _view(
         link=_link(job),
         error_code=error_code(job) if ended_badly else None,
         error_message=error_message(job) if diagnostics and ended_badly else None,
+        warning_codes=", ".join(dict.fromkeys(code for code, _ in warned)),
+        warning_message=(
+            "; ".join(message for _, message in warned if message) or None if diagnostics else None
+        ),
         #
         # Only for a job that ended badly. A successful operation's stderr is
         # progress output, and putting a diagnostics panel under every green
@@ -1131,12 +1166,17 @@ def action_names(job: Job) -> tuple[str, str, str] | None:
     return ACTION_NAMES.get((job.operation, action)) if isinstance(action, str) else None
 
 
-def failure_label(job: Job, operation: str | None = None) -> str:
-    """What a job that did not work is called: by the step that ended it, or by `operation`."""
+def failure_label(job: Job, operation: str | None = None, state: str | None = None) -> str:
+    """What a job that did not work is called: by the step that ended it, or by `operation`.
+
+    `state` is how that step ended, the job's own state when left out.
+    """
 
     operation = operation or ending_step(job)
     if operation == job.operation and (named := action_names(job)):
         return named[2]
+    if (state or job.state) == "partial" and operation in PARTIAL_LABELS:
+        return PARTIAL_LABELS[operation]
     return FAILURE_LABELS.get(operation, operation)
 
 
@@ -1184,6 +1224,15 @@ RUNNING_LABELS = {
 # says a job is running and the badge that says it failed cannot come to use
 # different words for the same operation.
 #
+#
+# A run across the nodes that ended `partial` reached some of them, which is
+# not what "failed" says (review 26-10-24, 02-03).
+#
+PARTIAL_LABELS = {
+    "backup_run": "Backup reached only some nodes",
+    "deploy": "Deploy reached only some nodes",
+    "cert_deploy": "Certificate deploy reached only some nodes",
+}
 FAILURE_LABELS = {
     "backup_run": "Backup failed",
     "backup_schedule": "Schedule change failed",

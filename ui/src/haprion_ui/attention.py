@@ -240,7 +240,7 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
             else None
         )
         label = waiting or (
-            jobs_module.failure_label(job, operation)
+            jobs_module.failure_label(job, operation, state)
             if jobs_module.action_names(job) or operation in jobs_module.FAILURE_LABELS
             else f"{operation} did not work"
         )

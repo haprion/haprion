@@ -221,6 +221,22 @@ def _error_code(result: dict[str, Any] | None) -> str | None:
     return None
 
 
+def _warning_codes(result: dict[str, Any] | None) -> list[str]:
+    """The warnings' codes, kept for the reason `_error_code` keeps its one.
+
+    A partial run carries its reason among them and no error (review 26-10-24,
+    02-03), so a trail of error codes alone said nothing about why.
+    """
+
+    listed = (result or {}).get("warnings")
+    codes = [
+        entry["code"]
+        for entry in (listed if isinstance(listed, list) else ())
+        if isinstance(entry, dict) and isinstance(entry.get("code"), str)
+    ]
+    return list(dict.fromkeys(codes))
+
+
 def _finish(
     connection: Any,
     job: db.ClaimedJob,
@@ -327,6 +343,7 @@ def _finish(
             "outcome": outcome,
             "exit_code": exit_code,
             "error_code": _error_code(result),
+            **({"warning_codes": codes} if (codes := _warning_codes(result)) else {}),
             **({"removed_profile": removed_profile} if removed_profile is not None else {}),
         },
     )

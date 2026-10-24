@@ -171,10 +171,11 @@
         finds the job's lines in the worker's journal ("job 998 ended as
         failed"), which is only worth doing when it did not go.
       #}
-      {% if job.error_code or job.diagnostics or job.state in ('failed', 'blocked', 'unknown', 'partial') %}
+      {% if job.error_code or job.warning_codes or job.diagnostics or job.state in ('failed', 'blocked', 'unknown', 'partial') %}
       <tr class="job-follow-up job-failure">
         <td colspan="8">
-          {% if not job.error_code %}<span class="status-dot status-{{ job.tone }}" aria-hidden="true"></span><span>Job {{ job.id }}</span>{% endif %}
+          {% if not job.error_code and not job.warning_codes %}<span class="status-dot status-{{ job.tone }}" aria-hidden="true"></span><span>Job {{ job.id }}</span>{% endif %}
+          {% if job.warning_codes and not job.error_code %}<span class="status-dot status-warning" aria-hidden="true"></span><span>Job {{ job.id }} · {{ 'Reason' if job.state == 'partial' else 'Warning' }}:</span> <code>{{ job.warning_codes }}</code>{% if job.warning_message %} <span class="job-error-message">— {{ job.warning_message }}</span>{% endif %}{% endif %}
           {% if job.error_code %}<span class="status-dot status-critical" aria-hidden="true"></span><span>Job {{ job.id }} · Reason:</span> <code>{{ job.error_code }}</code>{% if job.error_message %} <span class="job-error-message">— {{ job.error_message }}</span>{% endif %}{% endif %}
           {% if job.diagnostics %}<details class="job-diagnostics" data-keep="job-{{ job.id }}"><summary>Diagnostics</summary><pre>{{ job.diagnostics }}</pre></details>{% endif %}
         </td>

@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from haprion import exit_codes
 
-from haprion_ui import db, jobs
+from haprion_ui import attention, db, jobs
 from tests.test_dashboard import reading as status_reading
 from tests.test_login import LoginTestCase, configuration
 
@@ -574,6 +574,37 @@ class TheErrorCodeReachesThePage(LoginTestCase):
 
         self.assertNotIn("Reason:", body)
         self.assertNotIn("Diagnostics", body)
+
+    def test_a_partial_deploy_names_its_reason_and_a_warned_deploy_its_warning(self) -> None:
+        """Review 26-10-24, 02-03: a partial showed no reason, a warned deploy read clean."""
+
+        reason = {"warnings": [{"code": "target_not_reached", "message": "node-b is behind"}]}
+        body = self.page([job(state="partial", outcome="partial", result=reason)])
+        self.assertIn("Reason:</span> <code>target_not_reached</code>", body)
+        self.assertIn("— node-b is behind", body)
+
+        warned = {"warnings": [{"code": "vip_not_owned", "message": "no node owns the VIP"}]}
+        body = self.page([job(state="done", outcome="done", result=warned)])
+        self.assertIn("Warning:</span> <code>vip_not_owned</code>", body)
+        self.account = replace(self.account, role="reader")
+        body = self.page([job(state="done", outcome="done", result=warned)])
+        self.assertIn("vip_not_owned", body)
+        self.assertNotIn("no node owns the VIP", body)
+        #
+        # Another helper's warnings on success are not a row under it.
+        #
+        quiet = job(state="done", outcome="done", result=warned, operation="cert_issue")
+        self.assertNotIn("vip_not_owned", self.page([replace(quiet, cluster=None)]))
+
+    def test_a_partial_run_across_the_nodes_is_not_called_failed(self) -> None:
+        partial = job(state="partial", outcome="partial", result={"warnings": []})
+        self.assertEqual(jobs.failure_label(partial), "Deploy reached only some nodes")
+        self.assertEqual(
+            jobs.last_failure([partial])["alpha"].label, "Deploy reached only some nodes"
+        )
+        self.assertEqual(
+            attention.from_jobs([partial])[0].message, "Deploy reached only some nodes"
+        )
 
     def test_a_result_that_is_not_the_expected_shape_is_survived(self) -> None:
         """The document is a privileged helper's, stored as it arrived."""

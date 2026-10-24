@@ -775,6 +775,13 @@ class TheAuditTrail(WorkerTestCase):
                     entry["detail"]["error_code"],
                     "synthetic_failure" if outcome in {"failed", "blocked"} else None,
                 )
+                #
+                # Review 26-10-24, 02-03: a partial run's reason is a warning.
+                #
+                self.assertEqual(
+                    entry["detail"].get("warning_codes"),
+                    ["synthetic_warning"] if outcome == "partial" else None,
+                )
 
     def test_an_undetermined_ending_is_recorded_rather_than_left_out(self) -> None:
         """`unknown` is the outcome most worth finding later.

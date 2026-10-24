@@ -591,6 +591,31 @@ class LosingTheLease(WorkerTestCase):
         self.connection.commit.assert_not_called()
 
 
+class StoppedUnderARun(WorkerTestCase):
+    """Review 26-10-24, 02-01: a stop of the worker kills its helper, and that is not `unknown`."""
+
+    def test_a_helper_silenced_by_the_stop_leaves_the_job_to_recovery(self) -> None:
+        with mock.patch.object(execution, "run", return_value=completed(exit_code=-15)):
+            worker.run_one_job(self.connection, claimed(), worker=WORKER, stopping=lambda: True)
+
+        self.assertEqual(self.finished, [])
+
+    def test_a_helper_that_answered_before_the_stop_is_judged_on_its_answer(self) -> None:
+        job = claimed()
+        with mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))):
+            worker.run_one_job(self.connection, job, worker=WORKER, stopping=lambda: True)
+
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "done")
+
+    def test_without_a_stop_a_silent_helper_is_still_unknown(self) -> None:
+        with mock.patch.object(execution, "run", return_value=completed(exit_code=-15)):
+            worker.run_one_job(self.connection, claimed(), worker=WORKER)
+
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "unknown")
+
+
 class ADatabaseThatDropsUnderARun(WorkerTestCase):
     """Review 2026-10-22, 1B-6: one failed renewal stopped the operation and the worker."""
 
@@ -994,7 +1019,9 @@ class PublishAndDeploy(WorkerTestCase):
         "deploy": True,
     }
 
-    def run_job(self, job: db.ClaimedJob, answers: list[Any]) -> list[Any]:
+    def run_job(
+        self, job: db.ClaimedJob, answers: list[Any], stopping: Any = lambda: False
+    ) -> list[Any]:
         calls: list[Any] = []
 
         def run(argv: Any, **kwargs: Any) -> execution.Completed:
@@ -1005,7 +1032,7 @@ class PublishAndDeploy(WorkerTestCase):
             return cast(execution.Completed, produced)
 
         with mock.patch.object(execution, "run", side_effect=run):
-            worker.run_one_job(self.connection, job, worker=WORKER)
+            worker.run_one_job(self.connection, job, worker=WORKER, stopping=stopping)
         return calls
 
     def published(self, job: db.ClaimedJob, outcome: str = "done") -> execution.Completed:
@@ -1024,6 +1051,18 @@ class PublishAndDeploy(WorkerTestCase):
             return completed(stdout=json.dumps(document), exit_code=0 if outcome == "done" else 1)
 
         return answer_for
+
+    def test_a_deploy_silenced_by_a_stop_leaves_the_job_to_recovery(self) -> None:
+        """02-01: the publish is recorded; the deploy after it is a reconcile, safe to repeat."""
+
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+
+        calls = self.run_job(
+            job, [self.published(job), completed(exit_code=-15)], stopping=lambda: True
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.finished, [])
 
     def test_the_deploy_follows_the_publish_and_ends_the_job(self) -> None:
         job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))

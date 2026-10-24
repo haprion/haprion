@@ -1,8 +1,9 @@
 """Stopping a long-running service the way systemd asks it to.
 
 Shared by the worker and the poller because both have the same shape: a loop
-that should finish what it is doing and then leave, rather than being killed
-partway through and restarted into whatever state that left.
+that leaves between one round and the next. systemd stops the whole unit, so a
+root helper under the worker ends with it; the job it was running is then left
+to recovery after the restart, not written with an end it did not have.
 
 The state is behind a method rather than an attribute for a reason that is not
 style. A signal handler mutates it, which no type checker can see, so a loop

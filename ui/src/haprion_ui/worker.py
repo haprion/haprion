@@ -497,6 +497,7 @@ def run_one_job(
     *,
     worker: str,
     connect: Callable[[], AbstractContextManager[Any]] | None = None,
+    stopping: Callable[[], bool] = lambda: False,
 ) -> None:
     """Run a claimed job and record how it ended.
 
@@ -658,6 +659,8 @@ def run_one_job(
         return
 
     envelope = _envelope(completed.stdout, job) if completed.stdout_error is None else None
+    if _stopped_under_it(stopping, envelope, job, job.operation):
+        return
     if completed.stdout_error is not None:
         #
         # A document beyond the hard cap is rejected before JSON parsing, and
@@ -684,14 +687,18 @@ def run_one_job(
     exit_code = completed.exit_code
     stderr = completed.stderr
     if state == "done" and job.operation == "changes_publish" and job.payload.get("deploy") is True:
-        deployed = _deploy_after(connection, job, cast(dict[str, Any], result), lease_is_ours)
+        deployed = _deploy_after(
+            connection, job, cast(dict[str, Any], result), lease_is_ours, stopping
+        )
         if deployed is None:
             return
         state, outcome, result, exit_code, stderr = deployed
     elif state == "done" and job.operation == "cluster_node":
         version = _node_change_deploys(job, result)
         if version is not None:
-            followed = _node_deploy_after(job, cast(dict[str, Any], result), version, lease_is_ours)
+            followed = _node_deploy_after(
+                job, cast(dict[str, Any], result), version, lease_is_ours, stopping
+            )
             if followed is None:
                 return
             state, outcome, result, exit_code, stderr = followed
@@ -728,11 +735,12 @@ def _run_after(
     payload: dict[str, Any],
     salt: UUID,
     still_ours: Callable[[], bool],
+    stopping: Callable[[], bool],
 ) -> Followed | None:
     """One more helper run inside a job that has already done its own (B257, B321).
 
     The state, outcome, answer, exit code and stderr of that run; None when the
-    lease was lost and nothing may be written.
+    lease was lost, or the worker was stopped under it, and nothing may be written.
     """
 
     request_id = uuid5(salt, str(job.request_id))
@@ -763,12 +771,39 @@ def _run_after(
         if completed.stdout_error is None
         else None
     )
+    if _stopped_under_it(stopping, envelope, job, operation):
+        return None
     if envelope is None or completed.ending == "timeout":
         state = outcome = "unknown"
         answer: dict[str, Any] = {} if completed.ending == "timeout" else _internal_error()
     else:
         state, outcome, answer = _judged(envelope, completed)
     return state, outcome, answer, completed.exit_code, completed.stderr
+
+
+def _stopped_under_it(
+    stopping: Callable[[], bool],
+    envelope: dict[str, Any] | None,
+    job: db.ClaimedJob,
+    operation: str,
+) -> bool:
+    """Whether the worker was stopped while the helper ran and left no answer.
+
+    systemd stops the whole unit, so a stop or restart of the worker - by hand,
+    by needrestart, by a reboot - ends the root helper under it as well. Its
+    silence then says nothing about what it did, and `unknown` would be a worse
+    end than a crash leaves: nothing is written, the job stays `running`, and
+    recovery settles it after the restart as it settles a dead worker's (review
+    26-10-24, 02-01). A helper that answered before it was stopped is judged on
+    its answer.
+    """
+
+    if envelope is not None or not stopping():
+        return False
+    logger.warning(
+        "job %s: the worker was stopped during its %s; recovery settles it", job.id, operation
+    )
+    return True
 
 
 def _node_change_deploys(job: db.ClaimedJob, result: dict[str, Any] | None) -> int | None:
@@ -794,7 +829,11 @@ def _node_change_deploys(job: db.ClaimedJob, result: dict[str, Any] | None) -> i
 
 
 def _node_deploy_after(
-    job: db.ClaimedJob, changed: dict[str, Any], version: int, still_ours: Callable[[], bool]
+    job: db.ClaimedJob,
+    changed: dict[str, Any],
+    version: int,
+    still_ours: Callable[[], bool],
+    stopping: Callable[[], bool],
 ) -> Followed | None:
     """Deploy a node change in its own job (B321), as Publish & deploy does a publish (B257).
 
@@ -807,7 +846,12 @@ def _node_deploy_after(
 
     if job.payload.get("action") == "add":
         certificates = _run_after(
-            job, "cert_deploy", {"allow_vip_unknown": False}, CERT_DEPLOY_AFTER, still_ours
+            job,
+            "cert_deploy",
+            {"allow_vip_unknown": False},
+            CERT_DEPLOY_AFTER,
+            still_ours,
+            stopping,
         )
         if certificates is None:
             return None
@@ -821,6 +865,7 @@ def _node_deploy_after(
         {"allow_vip_unknown": False, "expected_version": version},
         DEPLOY_AFTER,
         still_ours,
+        stopping,
     )
     if deployed is None:
         return None
@@ -833,6 +878,7 @@ def _deploy_after(
     job: db.ClaimedJob,
     published: dict[str, Any],
     still_ours: Callable[[], bool],
+    stopping: Callable[[], bool],
 ) -> Followed | None:
     """Deploy the version a publish of saved changes just recorded, in the same job (B257).
 
@@ -857,6 +903,7 @@ def _deploy_after(
         {"allow_vip_unknown": False, "expected_version": version},
         DEPLOY_AFTER,
         still_ours,
+        stopping,
     )
     if deployed is None:
         return None
@@ -971,7 +1018,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             try:
-                job = _one_turn(pool, worker)
+                job = _one_turn(pool, worker, stopping.requested)
             except psycopg.OperationalError as exc:
                 #
                 # The database went away between jobs, or under one whose end
@@ -991,7 +1038,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _one_turn(pool: Any, worker: str) -> db.ClaimedJob | None:
+def _one_turn(
+    pool: Any, worker: str, stopping: Callable[[], bool] = lambda: False
+) -> db.ClaimedJob | None:
     """Settle what dead workers left, claim one job and run it; the job, or None."""
 
     with pool.connection() as connection:
@@ -1021,7 +1070,7 @@ def _one_turn(pool: Any, worker: str) -> db.ClaimedJob | None:
         #
         connection.commit()
         if job is not None:
-            run_one_job(connection, job, worker=worker, connect=pool.connection)
+            run_one_job(connection, job, worker=worker, connect=pool.connection, stopping=stopping)
     return job
 
 

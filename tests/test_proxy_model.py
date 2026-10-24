@@ -279,6 +279,22 @@ class BackendsAndHealth(unittest.TestCase):
 
         self.assertIn("same host and port twice", str(caught.exception))
 
+    def test_a_pool_of_only_backup_servers_is_refused(self) -> None:
+        """The form refused it and the engine did not (review 2026-10-24)."""
+
+        with self.assertRaises(ModelError) as caught:
+            load_proxy(
+                "shop",
+                with_lines(
+                    (
+                        "      - host: 192.0.2.10\n        port: 8080",
+                        "      - host: 192.0.2.10\n        port: 8080\n        backup: true",
+                    )
+                ),
+            )
+
+        self.assertIn("every server is a backup", str(caught.exception))
+
     def test_a_port_that_is_a_boolean_is_refused(self) -> None:
         """`port: true` is 1 in Python. The same trap the worker's payload has."""
 

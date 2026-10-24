@@ -11,13 +11,14 @@
 #
 # These fourteen write. That is the point of them, and it is why the list is this
 # short: deploy brings nodes onto the published version, cert-deploy distributes
-# certificates, revert moves the cluster back to an earlier one, and the two
-# publish helpers write the network description and the objects into the cluster
-# repository. Everything else the worker might plausibly want - config edits,
-# history reset - is absent on purpose.
+# certificates, revert moves the cluster back to an earlier one, changes-publish
+# commits the saved changes - objects, network, cluster settings - as one
+# version, and server-state drains or readies servers on the nodes. Everything
+# else the worker might plausibly want - config edits, history reset - is absent
+# on purpose.
 #
-# The last seven are Phase 11's, and they are the ones to read twice, because
-# they are the only rules here that reach private key material. What limits them
+# The certificate and profile helpers are the ones to read twice, because they
+# are the only rules here that reach private key material. What limits them
 # is not this file but their own shape: issue obtains a certificate for a domain
 # with certbot parameters fixed in the engine, publish distributes what the
 # registry already lists, and target changes which registered targets a
@@ -28,7 +29,7 @@
 # read-only, so it answers on a socket from a unit of its own (B163) rather
 # than through a rule that could not work.
 #
-# The tenth, cert-delete, is the one rule here that removes key material, and
+# cert-delete is the one rule here that removes key material, and
 # it is bounded the same way: the request names registered certificate IDs
 # and nothing else; which of them may go is decided from the registry, the
 # cluster files and each cluster's committed objects, never from the request.
@@ -36,8 +37,9 @@
 # cluster's last certificate is refused row by row.
 #
 # What no rule here grants, and no rule ever should: reading a private key. The
-# helpers write key material to targets and never return it, which is why the
-# caller-matrix test asserts the absence rather than trusting this comment.
+# helpers write key material to targets and never return it, and the rules here
+# are held to exactly the helpers the interface's compatibility.json names
+# (ui/tests/test_compatibility.py), so no other command can be added unseen.
 #
 # Publishing was on that absent list until 2026-09-02, on the reasoning that it
 # was an operator's decision made at a terminal. What changed is that the

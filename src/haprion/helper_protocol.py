@@ -65,8 +65,8 @@ class ClusterlessRequest:
     absence into all of them so that three helpers could express it.
 
     The three that need it are the certificate operations, whose scope is the
-    registry: the wildcard names two clusters and the PVE certificates name
-    none. `cluster` is kept here, always null, because the envelope they answer
+    registry: one certificate may name two clusters, another only receivers
+    and none. `cluster` is kept here, always null, because the envelope they answer
     with still has the field and reads better beside the request that produced
     it.
     """

@@ -501,6 +501,41 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("the clock is not synchronised", done.stdout)
 
+    def database(self, clusters: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            stub = Path(raw) / "pg_lsclusters"
+            stub.write_text(f"#!/bin/sh\nprintf '%s' '{clusters}'\n")
+            stub.chmod(0o755)
+            return bash(
+                STRICT + 'PATH="$2:$PATH"; setup_check_database; setup_report_problems',
+                str(SETUP),
+                raw,
+            )
+
+    def test_no_database_server_yet_is_fine(self) -> None:
+        # The database step installs one (review 2026-10-24).
+        done = self.database("")
+        self.assertEqual((done.returncode, done.stdout), (0, ""))
+
+    def test_a_running_server_new_enough_is_fine(self) -> None:
+        done = self.database("16 main 5432 online postgres /var/lib/postgresql/16/main x\n")
+        self.assertEqual((done.returncode, done.stdout), (0, ""))
+
+    def test_it_reads_and_judges_postgresql_as_the_database_step_does(self) -> None:
+        step = (INSTALL / "platform/ensure-postgresql").read_text()
+        check = SETUP.read_text()
+        reading = "pg_lsclusters --no-header 2>/dev/null | awk '$4 == \"online\" { print $1 }'"
+        self.assertIn(reading, step)
+        self.assertIn(reading, check)
+        self.assertIn("PG_OLDEST=16", step)
+        self.assertIn("< 16 ))", check)
+
+    def test_a_running_server_too_old_is_named(self) -> None:
+        done = self.database("15 main 5432 online postgres /var/lib/postgresql/15/main x\n")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("PostgreSQL 15 runs here", done.stdout)
+        self.assertIn("pg_upgradecluster", done.stdout)
+
     def test_every_missing_command_is_named_with_its_package(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             done = bash(

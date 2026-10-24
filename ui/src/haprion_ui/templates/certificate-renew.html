@@ -11,7 +11,7 @@
   (2026-09-21).
 #}
 <section class="page-heading">
-  <div class="heading-title">{{ back_button(back, 'Settings' if back.startswith('/settings') else 'Certificates') }}<h1>{% if renewal %}{{ renewal.title }}{% else %}Renew certificate{% endif %}</h1>{% if renewal %}<p class="page-lede">{% if renewal.way == 'certbot' %}Certbot asks Let's Encrypt for the certificate again, now, and the result is published to the same targets.{% elif renewal.way == 'ndes' %}The manager enrolls the certificate again from the same NDES profile, with the same names, to the same targets.{% elif renewal.way == 'signed' %}The key is already on the manager; upload the certificate the CA signed for the request you downloaded.{% else %}Upload the renewed certificate. The key the manager holds is used unless the file brings a new one.{% endif %}</p>{% endif %}</div>
+  <div class="heading-title">{{ back_button(back, 'Settings' if back.startswith('/settings') else 'Certificates') }}<h1>{% if renewal %}{{ renewal.title }}{% else %}Renew certificate{% endif %}</h1>{% if renewal %}<p class="page-lede">{% if renewal.way == 'certbot' %}Certbot asks Let's Encrypt for the certificate again, now, and the result is published to the same targets.{% elif renewal.way == 'ndes' %}The manager enrolls the certificate again from the same NDES profile, with the same names, to the same targets.{% elif renewal.way == 'signed' %}The key is already on the manager; upload the certificate the CA signed for the request you downloaded.{% else %}Upload the renewed certificate, for the key the manager already holds.{% endif %}</p>{% endif %}</div>
 </section>
 
 {% if problem %}

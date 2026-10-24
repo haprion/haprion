@@ -143,7 +143,15 @@ def _render(result: Mapping[str, Any], cluster: str, writer: TextIO) -> None:
     else:
         sources = metrics.get("sources")
         listed = ", ".join(str(source) for source in sources) if isinstance(sources, list) else "-"
-        writer.write(f"on port {metrics.get('port')}, /metrics on every address, for {listed}\n")
+        # The exporter binds each node's own address, never a VIP (generate.py,
+        # `_metrics_frontend`); "every address" said otherwise (review 2026-10-24).
+        writer.write(f"on port {metrics.get('port')}, on each node's own address, for {listed}\n")
+    peers = result.get("peers")
+    writer.write("\nSHARED COUNTERS\n---------------\n")
+    if not isinstance(peers, Mapping):
+        writer.write("off\n")
+    else:
+        writer.write(f"on port {peers.get('port')}, between the nodes\n")
 
 
 def _read(

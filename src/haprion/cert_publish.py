@@ -8,8 +8,8 @@ idempotently, so a run that finds nothing new changes nothing and says so.
 
 What replaces what
 ------------------
-Two hand-built publishers did this before: one for the HAProxy wildcard with a
-hardcoded lineage and file name, one for the PVE hosts with a list file. They
+Two hand-built publishers did this before: one for the clusters' certificate
+with a hardcoded lineage and file name, one for other hosts with a list file. They
 agreed on the checks (certificate parses, key matches, at least a week left)
 and on `cmp` before write, and differed only in dispatch and format. That
 difference is now a `Target`: a cluster gets one combined PEM, group-readable

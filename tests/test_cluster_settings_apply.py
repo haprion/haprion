@@ -112,3 +112,21 @@ class TheSettingsFromAFile(unittest.TestCase):
             assert_contract("haprion-cluster-settings-apply", out)["error"]["code"],
             "settings_invalid",
         )
+
+
+class TheSettingsAsText(unittest.TestCase):
+    """What `haprion-cluster-settings -c <cluster>` prints (review 2026-10-24)."""
+
+    def render(self, result: dict[str, Any]) -> str:
+        out = io.StringIO()
+        cluster_settings._render(result, "alpha", out)
+        return out.getvalue()
+
+    def test_metrics_are_said_to_be_on_each_nodes_own_address(self) -> None:
+        shown = self.render({"metrics": {"port": 8405, "sources": ["192.0.2.0/24"]}})
+        self.assertIn("on port 8405, on each node's own address, for 192.0.2.0/24", shown)
+        self.assertNotIn("every address", shown)
+
+    def test_shared_counters_are_shown(self) -> None:
+        self.assertIn("SHARED COUNTERS\n---------------\noff\n", self.render({}))
+        self.assertIn("on port 10000, between the nodes", self.render({"peers": {"port": 10000}}))

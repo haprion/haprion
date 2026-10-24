@@ -1624,6 +1624,14 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     if len(set(addresses)) != len(addresses):
         raise ModelError(f"{location}.servers lists the same host and port twice")
     #
+    # Every member a standby is a pool with nothing serving it. HAProxy would
+    # accept it; the person writing it meant something else. The form refused
+    # it and the engine did not, so a file applied at the terminal got what the
+    # interface would not give (review 2026-10-24).
+    #
+    if all(member.backup for member in members):
+        raise ModelError(f"{location}: every server is a backup, so nothing would take traffic")
+    #
     # `first` fills one server before the next and ignores weights entirely
     # (HAProxy 3.4.6's documentation): a weight there would be a number that
     # changes nothing while reading as if it did.

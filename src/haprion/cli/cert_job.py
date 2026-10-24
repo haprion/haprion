@@ -3,8 +3,8 @@
 Why these three have no cluster
 -------------------------------
 Every other privileged helper acts on one cluster, and its request says which.
-A certificate does not work that way, and the registry is what says so: the
-wildcard names two clusters, the PVE certificates name none, and the publisher
+A certificate does not work that way, and the registry is what says so: one
+certificate may name two clusters, one only receivers and none, and the publisher
 serialises certificate work with a single lock across all of it rather than per
 cluster. So these requests carry a null cluster and name the certificate in
 their parameters instead, and the queue that feeds them agrees (migration 0024).

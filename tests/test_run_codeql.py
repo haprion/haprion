@@ -60,6 +60,23 @@ class RunCodeqlTests(unittest.TestCase):
         self.assertEqual(run.returncode, 64)
         self.assertFalse((BASE / "codeql-out").exists())
 
+    def test_a_relative_path_or_a_link_into_the_repository_is_refused(self) -> None:
+        # The plain string comparison let both through (review 2026-10-24).
+        with tempfile.TemporaryDirectory() as raw:
+            link = Path(raw) / "tree"
+            link.symlink_to(BASE)
+            for given, cwd in (("codeql-out", BASE), (str(link / "codeql-out"), None)):
+                run = subprocess.run(
+                    [str(SCRIPT), given],
+                    env={**os.environ, "CODEQL_BIN": "true"},
+                    cwd=cwd,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(run.returncode, 64, given)
+        self.assertFalse((BASE / "codeql-out").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

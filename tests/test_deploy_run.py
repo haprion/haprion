@@ -55,6 +55,10 @@ def deploy(
         pause=pause or (lambda _seconds: None),
     )
     LAST_REPORT[:] = [outcome.report]
+    # Every run must also make a valid answer: a partial that kept its error
+    # passed every assertion here and failed only when the envelope was built
+    # (review 2026-10-24).
+    outcome.report.as_envelope("alpha")
     return outcome.exit_code, out.getvalue()
 
 
@@ -329,6 +333,12 @@ class BlockedStateTests(unittest.TestCase):
         self.assertIn("split brain", shown)
         self.assertIn("node-b already carries the target", shown)
         self.assertIn("Some nodes carry the target and some do not.", shown)
+        # The block is named in the answer too: as a warning, since a partial
+        # envelope carries no top-level error (review 2026-10-24).
+        document = LAST_REPORT[0].as_envelope("alpha")
+        self.assertEqual(document["outcome"], "partial")
+        self.assertIsNone(document["error"])
+        self.assertIn("deploy_blocked", [warning["code"] for warning in document["warnings"]])
 
     def test_an_indeterminate_answer_blocks_and_the_override_releases_it(self) -> None:
         cluster = pair()
@@ -593,6 +603,7 @@ class StoppingBecauseTheCallerLetGo(unittest.TestCase):
             lifeline=lifeline,  # type: ignore[arg-type]
         )
         LAST_REPORT[:] = [outcome.report]
+        outcome.report.as_envelope("alpha")
         return outcome.exit_code, out.getvalue()
 
     def test_released_before_anything_ran_is_blocked_and_touches_nothing(self) -> None:
@@ -612,6 +623,10 @@ class StoppingBecauseTheCallerLetGo(unittest.TestCase):
         self.assertEqual(LAST_REPORT[0].outcome.value, "partial")
         self.assertEqual(len(cluster.triggered), 1)
         self.assertIn("Run the same command again", text)
+        document = LAST_REPORT[0].as_envelope("alpha")
+        self.assertEqual(document["outcome"], "partial")
+        self.assertIsNone(document["error"])
+        self.assertIn("caller_released", [warning["code"] for warning in document["warnings"]])
 
     def test_the_reason_is_carried_into_the_report(self) -> None:
         cluster = pair()

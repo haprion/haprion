@@ -14,8 +14,11 @@ if ! command -v "$codeql_bin" >/dev/null 2>&1; then
 fi
 
 output=$1
-case "$output" in
-    "$base"|"$base"/*)
+# Compared as resolved paths: a relative path, or one through a symbolic link,
+# into the tree passed the plain comparison (review 2026-10-24).
+resolved=$(realpath -m -- "$output")
+case "$resolved" in
+    "$(realpath -- "$base")"|"$(realpath -- "$base")"/*)
         echo "run-codeql: output directory must be outside the repository" >&2
         exit 64
         ;;

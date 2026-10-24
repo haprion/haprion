@@ -39,9 +39,9 @@ A certificate is refused, and nothing of it touched, when removing it from a
 cluster would leave that cluster's committed configuration naming a
 certificate it no longer has, when it is that cluster's `default_certificate`,
 or when it is that cluster's last certificate (the writer's own coverage
-guard). A receiver's pair is left in place when another certificate is also
-published to that receiver. One refused certificate stops nothing else in the
-batch.
+guard). A receiver that is dropped loses this certificate's own directory
+there; every certificate has its own, so no other is touched. One refused
+certificate stops nothing else in the batch.
 """
 
 from __future__ import annotations

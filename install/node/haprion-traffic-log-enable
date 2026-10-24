@@ -244,6 +244,20 @@ validate_or_restore() {
     die "the generated rule did not pass rsyslogd -N1; the previous state is back"
 }
 
+#
+# What a restart of rsyslog cost HAProxy's log lines. Where step 4 has systemd
+# hold HAProxy's log socket, the lines waited in it; only a node without that
+# socket loses the ones sent during the restart (review 2026-10-24: the message
+# said they were lost everywhere).
+#
+restart_note() {
+    if systemctl is-active --quiet haprion-haproxy-log.socket 2>/dev/null; then
+        log "  rsyslog was restarted; HAProxy's log lines waited in the socket systemd holds"
+    else
+        log "  rsyslog was restarted; HAProxy cannot buffer log lines during that brief window"
+    fi
+}
+
 restart_or_restore() {
     if systemctl restart rsyslog; then
         return 0
@@ -265,7 +279,7 @@ if [[ "${1:-}" == "--disable" ]]; then
     restart_or_restore
     rm -f "$restore"
     log "traffic logging disabled; ${LOG_ROOT} is left in place and no longer pruned"
-    log "  rsyslog was restarted; HAProxy cannot buffer log lines during that brief window"
+    restart_note
     exit 0
 fi
 
@@ -318,4 +332,4 @@ log "  installed ${RSYSLOG_RULE}"
 log "traffic logging active; records appear in ${LOG_ROOT} once a published"
 log "  configuration enables the second log stream for this cluster"
 log "  day files are deleted whole after 14 days, never renamed"
-log "  rsyslog was restarted; HAProxy cannot buffer log lines during that brief window"
+restart_note

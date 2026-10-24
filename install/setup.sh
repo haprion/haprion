@@ -69,11 +69,23 @@ setup_check_commands() {
     fi
 }
 
+#
+# PostgreSQL is installed by the database step when none runs, so a machine
+# without one is fine. What stops that step is a server that runs and is too
+# old - asked here before anything changes. The check before (review
+# 2026-10-24) asked whether postgresql.service was active: that unit is
+# postgresql-common's, a placeholder always active, so it passed everywhere,
+# and its advice named the package the step deliberately avoids.
+#
 setup_check_database() {
-    if ! systemctl is-active --quiet postgresql; then
-        setup_problem "the PostgreSQL database server is not running" \
-            "the web interface keeps its users, jobs and history in it" \
-            "install and start it: apt install postgresql, then systemctl enable --now postgresql"
+    local running
+    # The same reading and floor as platform/ensure-postgresql's (a test holds
+    # the two together); not in lib.sh, which the nodes' steps source too.
+    running="$(pg_lsclusters --no-header 2>/dev/null | awk '$4 == "online" { print $1 }' | sort -n | tail -n 1)"
+    if [[ -n "$running" ]] && (( ${running%%.*} < 16 )); then
+        setup_problem "PostgreSQL ${running} runs here" \
+            "the web interface needs PostgreSQL 16 or newer" \
+            "upgrade the cluster (pg_upgradecluster), then run haprion-setup again"
     fi
 }
 

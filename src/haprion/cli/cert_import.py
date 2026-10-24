@@ -54,7 +54,7 @@ USAGE = (
     "Imports a certificate issued elsewhere: writes it to the import store,\n"
     "registers it, publishes it to the named targets and rolls out the named\n"
     "clusters. Runs as root. An ID already imported is replaced - the new\n"
-    "material, the targets it had unless new ones are named.\n"
+    "material, the targets it had and any named now added to them.\n"
     "\n"
     "  --id <id>             The certificate ID; proxy objects name it. Lower-case\n"
     "                        letters, digits, dots, dashes.\n"

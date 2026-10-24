@@ -19,8 +19,8 @@ being a decision and become a hole.
 Without a line, one entry covers every finding with its message in its file,
 so each entry also states how many it covers. A new finding of the same kind
 in the same file then fails the gate until its reason is written into the
-entry too - the redirect entry for views.py had come to cover fourteen
-findings while its reason described three (found 2026-10-22).
+entry too - one entry had come to cover fourteen findings while its reason
+described three (found 2026-10-22).
 """
 
 from __future__ import annotations

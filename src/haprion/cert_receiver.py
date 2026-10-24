@@ -253,8 +253,9 @@ def default_owner(receiver_id: str) -> str:
 def check_identity(receiver_id: str, tools: Tools) -> None:
     """B141: the ID is the fetching host, because the lock binds to it.
 
-    `from=` in `authorized_keys` and `allow <id>` in nginx are what make a
-    stolen key or a guessed address useless. A name has to resolve, because
+    `from=` in `authorized_keys` is what makes a stolen key useless from
+    another host; an https receiver is held to its own `--allow` list and
+    password instead. A name has to resolve, because
     its addresses are what the lock is written with (`from_patterns`, B162);
     its PTR record is not asked about. sshd compares `from=` against the
     peer's address unless `UseDNS yes` is set, and against the address as
@@ -1096,8 +1097,8 @@ def manager_name(locations: Locations | None = None) -> str:
     """The name a receiver reaches this manager by.
 
     The interface's `SERVER_NAME` (05-platform-nginx): it is the name the
-    operator already resolves and pins a certificate to, and the three PVE
-    hosts fetch by it. The bare hostname only where that file is absent,
+    operator already resolves and pins a certificate to, and the receivers
+    fetch by it. The bare hostname only where that file is absent,
     which is an installation without the interface.
     """
 

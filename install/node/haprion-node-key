@@ -8,7 +8,7 @@
 #
 # Makes what does not depend on any manager - the accounts, the keys this node
 # fetches with, and a one-time key pair - and prints one line,
-# haprion-node-v2:..., to paste into Create cluster or Add node. Nothing is
+# haprion-node-v2:..., to paste into Create cluster or Add a node. Nothing is
 # asked, nothing is installed and nothing reaches the network: the package
 # runs this from its postinst, where dpkg holds the lock.
 #
@@ -146,7 +146,7 @@ PY
 
 cat <<OUT
 
-Paste this line into Create cluster or Add node under Settings. It joins this
+Paste this line into Create cluster or Add a node under Settings. It joins this
 node to the manager once, within ${VALID_HOURS} hours; keep it to yourself until then.
 
 ${BLOCK}

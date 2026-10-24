@@ -125,6 +125,15 @@ class DeployReport:
         """
 
         warnings = tuple(self.warnings)
+        error = self.error
+        #
+        # A block or a released caller after a node already carries the target
+        # is partial, and partial carries no top-level error: the reason is
+        # named among the warnings instead (review 2026-10-24).
+        #
+        if self.outcome is Outcome.PARTIAL and error is not None:
+            warnings = (*warnings, error)
+            error = None
         if self.outcome is Outcome.PARTIAL and not warnings:
             warnings = (
                 Message(
@@ -139,7 +148,7 @@ class DeployReport:
             result=self.result(),
             request_id=request_id,
             warnings=warnings,
-            error=self.error,
+            error=error,
         )
 
 

@@ -153,6 +153,7 @@ SHARED = (
     "install/03-manager-keys",
     "install/05-verify",
     "install/answers.example.env",
+    "install/certbot-deploy-hook",
     "install/apt-keys/",
     "install/sysusers/",
     "install/tmpfiles/",

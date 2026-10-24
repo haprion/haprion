@@ -104,6 +104,28 @@ restore_previous() {
     mv -T "${TARGET}/.current.$$" "${TARGET}/current"
 }
 
+step "The deploy hook"
+#
+# What publishes a renewed certificate and rolls it out: certbot runs every
+# file in the hook directory after a renewal. Nothing installed it before
+# (review 2026-10-24), so a renewal from a package installation stayed on the
+# manager. Not through install_file: its `.replaced-` copy beside the hook
+# would be one more executable there, and certbot would run that too.
+#
+HOOK_DIR="/etc/letsencrypt/renewal-hooks/deploy"
+HOOK="${HOOK_DIR}/50-haprion"
+ensure_dir /etc/letsencrypt/renewal-hooks root:root 755
+ensure_dir "$HOOK_DIR" root:root 755
+if [[ -f "$HOOK" ]] && cmp -s ../certbot-deploy-hook "$HOOK"; then
+    chown root:root "$HOOK"
+    chmod 755 "$HOOK"
+    log "  ok       ${HOOK}"
+else
+    [[ -f "$HOOK" ]] && log "  replaced ${HOOK}, which differed from the release's"
+    install -o root -g root -m 755 ../certbot-deploy-hook "$HOOK"
+    log "  written  ${HOOK}"
+fi
+
 step "Proving it against this host's lineages"
 #
 # A dry run renews every lineage against Let's Encrypt's staging server with

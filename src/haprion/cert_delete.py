@@ -46,9 +46,8 @@ A certificate is refused, before any of its layers is touched, when:
 * it is a cluster's `default_certificate`;
 * removing it would leave a cluster with no certificate at all - the engine
   refuses to load such a configuration, for every command;
-* another registry entry names the same certbot lineage or the same
-  receiver directory - the lineage and the receiver's pair are not the
-  entry's alone to remove;
+* another registry entry names the same certbot lineage - the lineage is
+  not the entry's alone to remove;
 * it is not in the registry and nothing of it remains anywhere.
 
 A refused certificate stops nothing else in the batch; it is reported on its

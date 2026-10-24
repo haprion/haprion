@@ -585,6 +585,10 @@ class Run:
             ),
             ("certbot", "/opt/haprion-certbot/current/venv/bin/certbot --version"),
             (
+                "the hook that publishes a renewed certificate",
+                "test -x /etc/letsencrypt/renewal-hooks/deploy/50-haprion",
+            ),
+            (
                 "the Location database",
                 "python3 -c 'import location' && test -r /var/lib/location/database.db",
             ),

@@ -4,7 +4,7 @@
 #
 #     sudo ./05-platform-nginx <answers-file>
 #
-# Installs haprion-tls, renders the site, and - if no pair is installed yet -
+# Checks for haprion-tls (the haprion-ui package's), renders the site, and - if no pair is installed yet -
 # generates a self-signed one so the UI is encrypted from the first login. The
 # session cookie is Secure, so plain HTTP is not a lesser option here; it is a
 # non-working one. See B21.

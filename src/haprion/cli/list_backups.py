@@ -34,8 +34,8 @@ USAGE = (
     "\n"
     "  -c      one cluster; without it, every configured cluster in turn\n"
     "  --node  one node, instead of every node in the cluster. A short name is\n"
-    "          accepted when it can only mean one node, so --node a02 finds\n"
-    "          gateway-a02\n"
+    "          accepted when it can only mean one node, so --node 01 finds\n"
+    "          lb-01\n"
     "  --all   every retained backup, instead of the 14 most recent per node\n"
     "  --json  the raw envelope, which is one cluster's answer - so -c is required\n"
 )

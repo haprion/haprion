@@ -402,8 +402,14 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
     def test_the_restart_loss_window_is_reported_for_enable_and_disable(self) -> None:
         script = (BASE / "install" / "node" / "haprion-traffic-log-enable").read_text()
 
-        message = "HAProxy cannot buffer log lines during that brief window"
-        self.assertEqual(script.count(message), 2)
+        # Said as it is on the node: lost only without the socket systemd
+        # holds (review 2026-10-24).
+        self.assertEqual(
+            script.count("HAProxy cannot buffer log lines during that brief window"), 1
+        )
+        self.assertIn("waited in the socket systemd holds", script)
+        self.assertIn("is-active --quiet haprion-haproxy-log.socket", script)
+        self.assertEqual(script.count("\n    restart_note\n") + script.count("\nrestart_note\n"), 2)
         self.assertIn("systemctl restart rsyslog", script)
 
     def test_it_matches_the_traffic_tag_exactly_and_stops(self) -> None:

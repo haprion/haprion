@@ -1009,8 +1009,8 @@ def prepare(
     the only form it can honestly parse into one.
 
     `cluster` is optional because the certificate operations have none: a
-    certificate is scoped by the registry, where the wildcard names two clusters
-    and the PVE certificates name none. The queue says the same thing in
+    certificate is scoped by the registry, where one may name two clusters and
+    another only receivers and none. The queue says the same thing in
     migration 0024, and the three helpers below take a null cluster in their
     requests. Every other operation still requires one, and is given one by the
     check at the end of this function rather than by trusting its caller.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -199,6 +200,31 @@ class TheTree(unittest.TestCase):
         # A src/haprion in the package would pass for a source tree: the
         # tools would import the engine from it (install test, 26-10-17).
         self.assertEqual({path for path in carried if path.startswith("src/")}, set())
+
+    def test_every_file_a_platform_step_reads_from_beside_it_is_carried(self) -> None:
+        #
+        # Step 14 installed the certbot hook from `../certbot-deploy-hook`, a
+        # file only a source tree had: on a package installation nothing put
+        # the hook in place (review 2026-10-24). Read from the steps, not
+        # listed, so the next such file fails here too.
+        #
+        carried = {relative for relative, _ in TOOL.shared_files(BASE)}
+        reference = re.compile(r"\.\./([A-Za-z0-9_.-]+)")
+        steps = [
+            path
+            for path in (BASE / "install/platform").iterdir()
+            if path.is_file() and path.suffix not in {".md", ".pyc"}
+        ]
+        named: set[str] = set()
+        for step in steps:
+            for line in step.read_text(encoding="utf-8").splitlines():
+                if line.lstrip().startswith("#"):
+                    continue
+                for name in reference.findall(line):
+                    if (BASE / "install" / name).is_file():
+                        named.add(f"install/{name}")
+        self.assertIn("install/certbot-deploy-hook", named)
+        self.assertEqual(sorted(named - carried), [])
 
 
 if __name__ == "__main__":

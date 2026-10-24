@@ -9,12 +9,12 @@
 #
 # This certificate is what an operator's browser meets when logging in. It is
 # not the certificate on the HAProxy pair, and it is not used between nginx and
-# the web service - that leg is plain HTTP over loopback, deliberately.
+# the web service - that leg is plain HTTP over a local socket, deliberately.
 #
-# It cannot come from the certbot chain the rest of the project uses: that chain
-# is ACME with DNS-01 against a public domain, and this manager's name is not
-# publicly resolvable. So the pair is either self-signed or issued by an
-# internal PKI and handed to this command. See B21.
+# It comes from the certificate registry - an entry marked `interface: true`,
+# issued or imported like any other and installed through this command - or,
+# until there is one, it is self-signed or a pair handed to this command. See
+# B21 and B188 (review 2026-10-24: this said the registry could not supply it).
 #
 # Root only, and it stays that way. The web identity must never read private key
 # material - a form that accepts a key would make a web intrusion sufficient to

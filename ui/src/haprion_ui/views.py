@@ -1118,6 +1118,18 @@ class EditorState:
     available: bool
 
 
+def _published_servers(stored: objects.ObjectView | None, networks: Collection[str]) -> list[str]:
+    """The server addresses of the object as published, in their order, or none."""
+
+    if stored is None:
+        return []
+    try:
+        fields = preview_module.form_from_document(stored.document, networks=networks)
+    except preview_module.Unexpressible:
+        return []
+    return str(fields.get("servers", "")).splitlines()
+
+
 def _editor_state(request: Request, config: Config, cluster: str) -> EditorState:
     clusters, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
     if cluster not in clusters:
@@ -1327,6 +1339,7 @@ def _editor_page(
         # in the logs somebody will read next.
         #
         addresses=str(fields.get("servers", "")).splitlines(),
+        deployed=_published_servers(stored, state.choices.networks),
         held_only=fields.get("protocol") in SENDERS_ADDRESS,
     )
     #

@@ -11,6 +11,7 @@ written anyway.
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -337,18 +338,39 @@ class KeepalivedsVerdictLightsTheLamp(unittest.TestCase):
         both = service(
             "receivers", receiver("s1", "UP"), receiver("s2", "DOWN", address="192.0.2.72")
         )
-        found = health.backend_health(
-            [status(node("node-a", services=[both]))],
-            cluster="alpha",
-            obj="logs",
-            backend="receivers",
-            addresses=["192.0.2.71:514", "192.0.2.72:514"],
+        running = replace(
+            status(node("node-a", services=[both])),
+            result={
+                "nodes": [node("node-a", services=[both])],
+                "summary": {"release_state": "converged"},
+            },
         )
+        written = ["192.0.2.71:514", "192.0.2.72:514"]
 
-        members = [
-            (found.address(member.server), member.status) for member in found.nodes[0].members
-        ]
-        self.assertEqual(members, [("192.0.2.71:514", "UP"), ("192.0.2.72:514", "DOWN")])
+        def card(
+            deployed: list[str], reading: ClusterStatus = running
+        ) -> list[tuple[str, str | None]]:
+            found = health.backend_health(
+                [reading],
+                cluster="alpha",
+                obj="logs",
+                backend="receivers",
+                addresses=written,
+                deployed=deployed,
+            )
+            return [
+                (found.address(member.server), member.status) for member in found.nodes[0].members
+            ]
+
+        self.assertEqual(card(written), [("192.0.2.71:514", "UP"), ("192.0.2.72:514", "DOWN")])
+        #
+        # Review 26-10-24, 02-10: a draft that moved s2, or nodes not yet on
+        # the published version, put the new address beside the old one's health.
+        #
+        unnamed = [("", "UP"), ("", "DOWN")]
+        self.assertEqual(card(["192.0.2.71:514", "192.0.2.99:514"]), unnamed)
+        behind = replace(running, result={**running.result, "summary": {"release_state": "behind"}})
+        self.assertEqual(card(written, behind), unnamed)
 
 
 class AMissingIncludeIsSaidInTheListing(unittest.TestCase):

@@ -399,6 +399,7 @@ def backend_health(
     backend: str,
     source: str = "",
     addresses: Iterable[str] = (),
+    deployed: Iterable[str] = (),
     held_only: bool = False,
 ) -> BackendHealth:
     """The nodes' verdict on one object's backend, from the poller's newest reading.
@@ -407,15 +408,26 @@ def backend_health(
     because a poll that failed still carries the nodes that answered - and a
     page that showed nothing at all whenever one node was unreachable would hide
     the half of the cluster that is fine.
+
+    `addresses` are the form's and `deployed` the published document's. A
+    runtime name is a position in the backend the nodes run, so the form's
+    address goes beside it only when the two lists agree and every node runs
+    the published version: a draft, a saved change or a publish not yet
+    deployed can hold another address at that position, and the card put it
+    beside the old one's health (review 26-10-24, 02-10).
     """
 
     name = backend
-    written = tuple(address.strip() for address in addresses if address.strip())
     reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
     if reading is None:
-        return BackendHealth(backend=name, nodes=(), observed_at=None, addresses=written)
+        return BackendHealth(backend=name, nodes=(), observed_at=None)
 
     result = reading.result if isinstance(reading.result, dict) else {}
+    summary = result.get("summary")
+    written = tuple(address.strip() for address in addresses if address.strip())
+    running = isinstance(summary, dict) and summary.get("release_state") == "converged"
+    if not running or written != tuple(address.strip() for address in deployed if address.strip()):
+        written = ()
     entries = result.get("nodes")
     nodes: list[NodeMembers] = []
     for entry in entries if isinstance(entries, Sequence) else ():

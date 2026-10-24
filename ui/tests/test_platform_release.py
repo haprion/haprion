@@ -132,6 +132,32 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertIn('"$rollback" --to "$previous_id"', self.update)
         self.assertIn("was restored but the installation is not compatible", self.update)
 
+    def test_a_way_out_after_the_switch_restores_the_previous_release(self) -> None:
+        """Review 26-10-24, 03-02: the files went back, the candidate stayed current."""
+
+        self.assertIn("trap on_exit EXIT", self.update)
+        start = self.update.index("on_exit() {")
+        body = self.update[start : self.update.index("\n}\n", start) + 3]
+        for settled, expected in (("no", ["restore", "settle"]), ("yes", ["settle"])):
+            with self.subTest(settled=settled):
+                done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f"files_settled={settled}; kept=/nonexistent; "
+                        "warn() { :; }; restore_previous() { echo restore; }; "
+                        f"settle_files() {{ echo settle; }}; {body}on_exit",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertEqual(done.stdout.split(), expected)
+
+    def test_a_failed_nginx_reload_does_not_end_the_update_unproved(self) -> None:
+        self.assertIn("if systemctl reload nginx; then", self.update)
+        self.assertNotIn("\n    systemctl reload nginx\n", self.update)
+
     def test_old_releases_are_pruned_only_after_the_update_is_proved(self) -> None:
         """B156: retention runs after the final compatibility check, keeps ten,
         and never the release just
@@ -497,7 +523,9 @@ class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
         text = (ROOT / "install/platform/update-platform-release").read_text()
         restore = text[text.index("restore_previous() {") :]
         self.assertLess(restore.index("settle_files"), restore.index('"$rollback" --to'))
-        self.assertIn("trap 'settle_files;", text)
+        exiting = text[text.index("on_exit() {") :]
+        self.assertIn("settle_files", exiting[: exiting.index("\n}\n")])
+        self.assertIn("trap on_exit EXIT", text)
         self.assertLess(
             text.index(
                 "files_settled=yes\n", text.index('step "Proving the running installation"')

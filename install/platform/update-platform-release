@@ -56,7 +56,21 @@ settle_files() {
         files_settled=yes
     fi
 }
-trap 'settle_files; rm -rf -- "$kept"' EXIT
+#
+# Any way out after the switch and before the proof - an error under `set -e`,
+# Ctrl-C, a dropped SSH session - puts the previous release back, not only its
+# files. With the files alone the candidate stayed current beside the previous
+# release's units, and the next run found it current and called it done
+# (review 26-10-24, 03-02).
+#
+on_exit() {
+    if [[ "$files_settled" != yes ]] && declare -F restore_previous >/dev/null; then
+        restore_previous || warn "the previous release could not be restored; run ${rollback} --to ${previous_id}"
+    fi
+    settle_files
+    rm -rf -- "$kept"
+}
+trap on_exit EXIT
 ./refresh-platform-files "$release_id" "$kept"
 
 step "Checking prerequisites and rollback-safe schema transition"
@@ -127,8 +141,15 @@ fi
 # says (haprion-web.socket).
 #
 if [[ -e /etc/nginx/sites-available/haprion ]]; then
-    systemctl reload nginx
-    log "  reloaded nginx"
+    #
+    # The site was proved with `nginx -t` before anything moved. A reload that
+    # fails here - nginx not running - is said, and the proof below decides.
+    #
+    if systemctl reload nginx; then
+        log "  reloaded nginx"
+    else
+        warn "nginx was not reloaded; once it runs: sudo systemctl reload nginx"
+    fi
 fi
 
 step "Proving the running installation"

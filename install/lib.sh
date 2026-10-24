@@ -228,6 +228,44 @@ refuse_link() {
 }
 
 #
+# The home of an account reached only through forced commands: the nodes' on
+# the manager, the manager's on a node. The account owns nothing in it. sshd
+# accepts an authorized_keys owned by root as readily as one owned by the
+# account, and a file the account cannot write is the difference between a
+# forced command and a suggestion. The same goes for the home itself - an
+# account that owns it could replace .ssh wholesale - and for the shell's
+# dotfiles: Debian's bash sources ~/.bashrc for a command it runs on behalf of
+# sshd, so a .bashrc the account could write would run before the forced
+# command does.
+#
+# Every change is made to the path itself, never through a link: a link the
+# account left in its home would have root change what it points at (review
+# 26-10-24, 10-01 and 10-02). Such a link stops the step.
+#
+ensure_forced_home() {
+    local user="$1" empty_note="$2"
+    local home="/home/${user}"
+    ensure_dir "$home" root:root 755
+    local entry
+    while IFS= read -r -d '' entry; do
+        refuse_link "$entry"
+        chown root:root "$entry"
+        log "  claimed  ${entry}  (now root's; the account owns nothing in its home)"
+    done < <(find "$home" -mindepth 1 -maxdepth 1 ! -name .ssh ! -user root -print0)
+    ensure_dir "${home}/.ssh" root:root 755
+    local keys="${home}/.ssh/authorized_keys"
+    refuse_link "$keys"
+    if [[ ! -f "$keys" ]]; then
+        install -o root -g root -m 644 /dev/null "$keys"
+        log "  created  ${keys}  (${empty_note})"
+    else
+        chown root:root "$keys"
+        chmod 644 "$keys"
+        log "  ok       ${keys}"
+    fi
+}
+
+#
 # The port the web service listens on, read from ui.toml by the running
 # release's own parser - the file the service itself reads, so a health check
 # cannot ask a port the service was never told.

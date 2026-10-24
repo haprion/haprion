@@ -36,18 +36,8 @@ step "Pull accounts"
 ensure_pull_account() {
     local user="$1" purpose="$2"
     id -u "$user" >/dev/null 2>&1 || die "${user} does not exist; sysusers/haprion.conf makes it"
-    ensure_dir "/home/${user}" "${user}:${user}" 755
     log "  ok       ${user}  (${purpose})"
-    ensure_dir "/home/${user}/.ssh" "${user}:${user}" 700
-    local keys="/home/${user}/.ssh/authorized_keys"
-    if [[ ! -f "$keys" ]]; then
-        install -o "$user" -g "$user" -m 600 /dev/null "$keys"
-        log "  created  ${keys}  (empty - step 4 prints what goes here)"
-    else
-        chown "${user}:${user}" "$keys"
-        chmod 600 "$keys"
-        log "  ok       ${keys}"
-    fi
+    ensure_forced_home "$user" "empty - step 4 prints what goes here"
 }
 
 command -v rrsync >/dev/null \

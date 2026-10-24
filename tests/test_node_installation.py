@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -135,20 +136,63 @@ class NodeInstallationReadingTests(unittest.TestCase):
     def test_the_service_accounts_own_nothing_in_their_homes(self) -> None:
         """B131: a key file or dotfile the account could write is its way out of the forced command."""
 
-        installer = INSTALLER.read_text()
-        account = installer[
-            installer.index("ensure_account() {") : installer.index(
-                'ensure_account "$TRIGGER_USER"'
+        library = (INSTALLER.parent / "lib.sh").read_text()
+        account = library[
+            library.index("ensure_forced_home() {") : library.index(
+                "\n}\n", library.index("ensure_forced_home() {")
             )
         ]
+        # Both sides of the forced commands: the nodes' accounts on the manager
+        # too (review 26-10-24, 10-01).
+        self.assertIn('ensure_forced_home "$user"', INSTALLER.read_text())
+        self.assertIn(
+            'ensure_forced_home "$user"', (INSTALLER.parent / "01-manager-prepare").read_text()
+        )
 
         self.assertIn('ensure_dir "$home" root:root 755', account)
         self.assertIn('ensure_dir "${home}/.ssh" root:root 755', account)
         self.assertIn("install -o root -g root -m 644 /dev/null", account)
         self.assertIn('chown root:root "$keys"', account)
         self.assertIn("! -name .ssh ! -user root -print0", account)
+        self.assertIn('refuse_link "$keys"', account)
+        self.assertIn('refuse_link "$entry"', account)
         self.assertNotIn("--create-home", account)
         self.assertNotIn('-o "$user"', account)
+
+    def test_a_link_in_an_account_s_home_stops_the_step(self) -> None:
+        """Review 26-10-24, 10-01/10-02: root followed it and changed what it pointed at."""
+
+        library = (INSTALLER.parent / "lib.sh").read_text()
+        start = library.index("ensure_forced_home() {")
+        body = library[start : library.index("\n}\n", start) + 3]
+        refuse = library[library.index("refuse_link() {") :]
+        refuse = refuse[: refuse.index("\n}\n") + 3]
+        for link in (".ssh/authorized_keys", ".bashrc"):
+            with self.subTest(link=link), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                home = root / "svc-pull"
+                (home / ".ssh").mkdir(parents=True)
+                target = root / "shadow"
+                target.write_text("secret\n")
+                (home / link).symlink_to(target)
+                done = subprocess.run(  # fixed interpreter, the library's own functions
+                    [
+                        "/bin/bash",
+                        "-c",
+                        'log() { :; }; die() { echo "ERROR: $*"; exit 1; }; '
+                        'ensure_dir() { :; }; chown() { echo "chown $*"; }; '
+                        'chmod() { echo "chmod $*"; }; install() { :; }; '
+                        f"{refuse}{body.replace('/home/', f'{root}/')}"
+                        'ensure_forced_home svc-pull "empty"',
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(done.returncode, 1, done.stdout)
+                self.assertIn(f"{home / link} is a symbolic link", done.stdout)
+                self.assertNotIn(f"chown root:root {home / link}", done.stdout)
+                self.assertEqual(target.read_text(), "secret\n")
 
     def test_a_changed_script_is_not_hidden_by_its_metadata(self) -> None:
         self.install()

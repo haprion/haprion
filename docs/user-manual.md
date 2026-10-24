@@ -6291,6 +6291,9 @@ readily as one owned by the account. The reasons:
   forced command for sshd. So no dotfiles are created, and any that exist are made root's on the
   next run of step 4.
 
+The manager's two pull accounts follow the same rule, set by step 01. A symbolic link in such a home,
+or as `authorized_keys`, stops the step: root would otherwise change what the link points at.
+
 Edit `authorized_keys` with `sudo`.
 
 #### Node scripts

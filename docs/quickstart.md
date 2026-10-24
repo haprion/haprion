@@ -1,9 +1,8 @@
 # Haprion quickstart
 
-The short way through Haprion: from empty machines to a site served by your HAProxy pair. After the
-installation everything here is done in the web interface. The [user manual](user-manual.md) is
-the reference for each step: why it works the way it does, every option, and what to do when
-something fails.
+The short way through Haprion: from empty machines to a site served by your HAProxy nodes. After the
+installation, everything here is done in the web interface. The [user manual](user-manual.md) explains each
+step in full: why it works the way it does, every option, and what to do when something fails.
 
 ## What you need
 
@@ -63,11 +62,10 @@ sudo apt install haprion-ui
 sudo haprion-setup
 ```
 
-`haprion-setup` first checks what it can know in advance - the distribution, the database server,
-that the manager's name resolves to it, that ports 80 and 443 are free - and names every problem
-before it changes anything. Then it installs the manager step by step, one line each, and asks
-last for the password of the first administrator, `admin`. A run that stopped is continued by
-running it again.
+`haprion-setup` first checks what it can before it changes anything – the distribution, the database
+server, that the manager's name points to it, that ports 80 and 443 are free – and lists every problem it
+finds. Then it installs the manager step by step, one line each, and last asks for a password for the first
+administrator, `admin`. If it stops, run it again: it continues where it was.
 
 It uses sensible defaults: a local PostgreSQL database, the machine's own name (`hostname -f`) and
 a self-signed certificate for the web interface until you replace it
@@ -96,7 +94,7 @@ has **Set up**: it opens *Set up your first cluster*, in five steps:
 
 1. **Name and address**: a cluster ID (for example `edge`) and the VIP; the display name is optional. Press
    **Continue**.
-2. **First node**: paste the first node's block and press **Add node**. Compare the host key the
+2. **First node**: paste the first node's block and press **Read block**. Compare the host key the
    page shows with the one the node printed, then press the button with the node's name, for
    example **Add node-a**. The cluster is created with it.
 3. **Second node**: the same with the second node's block, or **Skip** for a cluster of one.
@@ -127,11 +125,11 @@ proxy, the network is saved first and goes out with the next publish.
 
 An HTTPS site needs a certificate. Open *Certificates*.
 
-**From Let's Encrypt:** first add a **DNS provider** (your DNS host's API credentials, sealed so
-that only the manager's root helper can read them). Then **New certificate**: enter the domain
-(for example `www.example.com`, or `*.example.com` for a wildcard), choose the provider, tick
-the cluster under **Targets**, and press **Request the certificate**. HTTP-01 is offered only when
-the runtime policy names a webroot and port 80 reaches it
+**From Let's Encrypt:** first open **DNS profiles** and add your DNS host's API credentials with
+**New DNS profile**. They are encrypted so that only the manager's root helper can read them. Then
+**New certificate**: enter the domain (for example `www.example.com`, or `*.example.com` for a wildcard),
+choose the DNS profile, tick the cluster under **Targets**, and press **Request the certificate**.
+HTTP-01 is offered only when the runtime policy names a webroot
 ([ACME configuration](user-manual.md#acme-configuration-and-challenge-routing)); otherwise it is greyed.
 
 **From your own CA:** **Import certificate** takes a PEM or PKCS#12 file, with or without its key.
@@ -192,9 +190,9 @@ without a deploy, and lasts until you press **Ready**.
 what each one changed. **Publish this version** on an older one makes it the newest version again;
 then **Deploy configuration**. Nothing in the history is lost.
 
-**Add or remove a node.** *Settings → Nodes & clusters*: **Add node** takes the new node's block,
-shows its host key and adds it; its certificates and configuration are deployed to it in the same
-job. **Remove node** takes one out the same way. A new cluster is made with **Create cluster**
+**Add or remove a node.** *Settings → Nodes & clusters*, then the cluster: under **Add a node**, paste the
+new node's block and press **Read block**. The page shows its host key; confirm, and the node is added and
+gets its configuration and certificates in the same job. **Remove node** takes one out the same way. A new cluster is made with **Create cluster**
 under *Settings*.
 
 **See what is happening.** *Metrics* shows traffic per site and server, *Traffic logs* the recent

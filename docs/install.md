@@ -1,8 +1,10 @@
 # Installing Haprion
 
-These are the steps for a first installation: a manager with the web interface, and its nodes.
-Configuration, usage, administration and maintenance are in the [user manual](user-manual.md);
-the [quickstart](quickstart.md) is the same installation in short, continued in the interface.
+This guide installs Haprion for the first time: one manager with the web interface, and the HAProxy nodes it
+looks after. When it is done, you continue in the web interface, which walks you through your first cluster.
+
+- The [quickstart](quickstart.md) is the same installation in short.
+- The [user manual](user-manual.md) covers configuration, daily use and maintenance.
 
 ## Requirements
 
@@ -11,50 +13,44 @@ the [quickstart](quickstart.md) is the same installation in short, continued in 
 | Manager | one | Ubuntu 26.04 or Debian 13, amd64 | 2 vCPU, 4 GB memory |
 | HAProxy node | one to eight per cluster, two for failover | Ubuntu 26.04 or Debian 13, amd64 | 1 vCPU, 1 GB memory; 2 GB with the WAF |
 
-The packages are built and tested for those two distributions only, and `haprion-setup` refuses
-any other. Everything else the manager and the nodes run - Python and its libraries, nginx,
-PostgreSQL, HAProxy, keepalived, dnsdist - is installed with the packages or by the setup:
-PostgreSQL 18 where none runs, from the distribution on Ubuntu 26.04 and from the PostgreSQL
-project's repository on Debian 13, while a running 16 or newer is kept. HAProxy comes from its
-3.4 branch where the distribution's is older, and dnsdist from PowerDNS's repository, so the
-machines need to reach those repositories while they are installed.
+Only these two distributions are supported; `haprion-setup` refuses any other. You do not need to install
+anything else first. The packages and the setup bring the rest: Python, nginx, PostgreSQL, HAProxy, keepalived
+and dnsdist.
 
-- The manager needs a DNS name that resolves to it, and ports 80 and 443 free for nginx.
-- The nodes of a cluster share one network segment: keepalived moves the virtual address (VIP)
+- **Internet access while installing.** The machines fetch packages from Haprion's repository, from HAProxy's
+  (its 3.4 branch, newer than the distributions'), from PowerDNS's (dnsdist) and, on Debian 13, from the
+  PostgreSQL project's.
+- **The manager** needs a DNS name that points to it, and ports 80 and 443 free for nginx.
+- **The nodes of a cluster** must share one network segment. keepalived moves the virtual address (the VIP)
   between them with VRRP. The manager reaches each node over SSH.
-- How far one vCPU goes, with and without the WAF, is under *Size* in
+- **PostgreSQL.** The setup installs PostgreSQL 18 when none is running. A server that already runs version 16 or
+  newer is kept and used.
+- How much traffic one vCPU handles, with and without the WAF, is under *Size* in
   [the manual's part on the nodes](user-manual.md#part-2--the-nodes).
 
-**Disk on the nodes.** What grows on a node's root filesystem is the traffic log: fourteen days of
-day files under `/var/log/haprion` at about 800 bytes a request, and, per external receiver, a
-queue on disk under `/var/spool/rsyslog` of up to the cluster's `disk_mib` (1 GiB by default, at
-most four receivers). Free space for a node is therefore about
+**Disk space on the nodes.** The traffic log is what fills a node's disk. Each request takes about 800 bytes, and
+a node keeps 14 days. Each external log receiver can also queue up to `disk_mib` on disk (1 GiB by default, at
+most four receivers) while it is unreachable. Plan for about
 
 ```text
-requests a day × 800 bytes × 14  +  disk_mib of every receiver  +  margin for the system
+requests per day × 800 bytes × 14  +  1 GiB per receiver  +  room for the system
 ```
 
-At one million requests a day that is about 10 GiB of day files, plus 1 GiB a receiver. A full
-root filesystem stops journald and apt as well as the log, so leave the system its own margin. The
-traffic log is held to a space budget of a quarter of its filesystem. rsyslog writes each hour to a
-file of its own and stops that file at a twenty-fourth of the budget, so one day can never hold more
-than the budget, however many requests arrive; what comes after an hour's limit is dropped until
-the next hour, with a warning in the system log. Every hour the oldest finished days go before
-their fourteen while the files hold more than the budget or less than a tenth of the filesystem is
-free, each with a warning too. The manager keeps the same share of its own disk for its copy and
-for the traffic tables in PostgreSQL ([the manual](user-manual.md#keeping-jobs-sessions-and-metric-history-bounded)).
+One million requests a day is about 10 GiB. The log cannot fill the disk on its own: it may use at most a quarter
+of the filesystem, an hour that uses up its share stops logging until the next hour, and the oldest days are
+removed early when space runs short. Each of these writes a warning to the system log. The manager keeps the same
+share of its own disk for its copy of the log
+([the manual](user-manual.md#keeping-jobs-sessions-and-metric-history-bounded)).
 
-**Who reaches the interface.** The web interface changes what the clusters serve, so it belongs
-on a network only its administrators reach - a management network, or a VPN into one - and not
-on the one the proxied sites face. Haprion limits sign-in attempts and refuses what it should,
-but which networks can reach it at all is decided by the firewall in front of it.
+**Who should reach the interface.** The web interface changes what your clusters serve. Put it on a network only
+its administrators can reach – a management network, or a VPN into one – and not on the network your sites face.
+Haprion limits sign-in attempts, but which networks can reach it at all is up to the firewall in front of it.
 
 ## The packages
 
-Haprion is installed with apt from the project's repository, `https://haprion.github.io/haprion/`,
-which holds every package for Debian 13 (`deb13`) and Ubuntu 26.04 (`ubuntu26.04`), amd64. Add it
-once on the manager and on each node - the key first, then the source (`sudo apt install curl`
-if the machine has no curl).
+Haprion is installed with apt from its own repository, `https://haprion.github.io/haprion/`. Add the repository
+once on the manager and on every node: the key first, then the source. (If the machine has no curl:
+`sudo apt install curl`.)
 
 On **Ubuntu 26.04**:
 
@@ -86,52 +82,51 @@ EOF
 sudo apt update
 ```
 
-The key's fingerprint is `927422B0C5F005E0B710E4FFF30F5055A9FC0A53`
-(`gpg --show-keys /usr/share/keyrings/haprion-archive-keyring.asc` shows it). `Signed-By` makes
-apt trust the key for this repository and no other. The key file then belongs to the
-`haprion-archive-keyring` package, so a renewed signing key arrives with `apt upgrade` before
-the old one expires.
+The key's fingerprint is `927422B0C5F005E0B710E4FFF30F5055A9FC0A53`; check it with
+`gpg --show-keys /usr/share/keyrings/haprion-archive-keyring.asc`. Because of `Signed-By`, apt trusts this key
+for this repository only. After the first install the key file belongs to the `haprion-archive-keyring` package,
+so a new signing key arrives with `apt upgrade` before the old one expires.
 
-The packages are also files in each [release](https://github.com/haprion/haprion/releases/latest),
-with `SHA256SUMS`, for a machine that cannot reach the repository: install them together with
-`sudo apt install ./<file> ...`, taking the web interface and certbot files whose names end in
-`ubuntu26.04_amd64.deb` or `deb13_amd64.deb`. To build them yourself, see
+**Without access to the repository**, download the packages from the
+[latest release](https://github.com/haprion/haprion/releases/latest), check them against its `SHA256SUMS`, and
+install them together with `sudo apt install ./<file> ...`. For the web interface and certbot, take the files
+ending in `ubuntu26.04_amd64.deb` or `deb13_amd64.deb`. To build the packages yourself, see
 [Building the packages](#building-the-packages).
 
-| Package | Installed on | Carries |
+| Package | Installed on | What it contains |
 |---|---|---|
-| `haprion-ui` | the manager | the interface's release for one distribution, `haprion-setup` and the installation steps it runs; depends on the rest of the manager's packages |
-| `haprion-cli` | the manager | the CLI engine, the node package of the same commit, the operators' commands and sudo rules |
-| `haprion-certbot` | the manager | certbot and the DNS plugins the interface offers, as one locked environment for one distribution |
-| `haprion-crs` | the manager | the WAF rule set; releases carry the rules to the nodes |
-| `haprion-node` | each node | the node scripts, the block it prints at installation, and `04-node-prepare` |
-| `haprion-coraza-spoa` | the manager and the nodes | the WAF engine; the CLI release also carries it, so a node restored to a new VM gets it back |
+| `haprion-ui` | the manager | the web interface, `haprion-setup` and the installation steps; it pulls in the manager's other packages |
+| `haprion-cli` | the manager | the command-line engine, the commands and their sudo rules, and a copy of the node package |
+| `haprion-certbot` | the manager | certbot and the DNS plugins the interface offers |
+| `haprion-crs` | the manager | the WAF rules; each release carries them on to the nodes |
+| `haprion-node` | each node | the node's scripts and its preparation step |
+| `haprion-coraza-spoa` | the manager and the nodes | the WAF engine; the CLI release carries a copy, so a node restored onto a new VM gets it back |
 | `haprion-archive-keyring` | the manager and the nodes | the key the repository is signed with |
 
-`sudo apt update && sudo apt upgrade` is the whole update: the web interface's package updates the
-running platform itself, and a new engine restarts the engine on a node - so update the nodes one
-at a time, the standby first. Leave the repository out of unattended-upgrades (it is not in it
-unless you add it): an update is a step you choose the moment for.
+### Updating
+
+`sudo apt update && sudo apt upgrade` is the whole update. Update the manager first. Then update the nodes one at a
+time, starting with a node that does not hold the VIP: a new WAF engine restarts the engine on that node. The web
+interface's package updates the running interface by itself.
+
+Do not add the repository to unattended-upgrades. An update is something you choose the moment for.
 
 ## 1. Choose the answers, or keep the defaults
 
-Without an answers file the installation uses its defaults: the fixed accounts, the places under
-`/srv/haprion` and `/srv/certdist`, a local PostgreSQL database, this machine's own name
-(`hostname -f`) for the web interface, and no cluster. Clusters and their nodes are created in the
-interface: the first by the Dashboard's *Set up your first cluster*, more under *Settings* →
-*Nodes & clusters* → *Create cluster*.
+You can install without an answers file. The defaults are: the fixed service accounts, directories under
+`/srv/haprion` and `/srv/certdist`, a local PostgreSQL database, the machine's own name (`hostname -f`) for the
+web interface, and no cluster yet. Clusters and nodes are created in the web interface afterwards.
 
-To choose differently, copy the example from the source tree's `install/` directory and keep the
-lines you change:
+To change a default, copy the example from the `install/` directory of the source tree and keep only the lines
+you change:
 
 ```bash
 cp answers.example.env answers.env
 $EDITOR answers.env
 ```
 
-The file and every default are described in [install/answers.example.env](../install/answers.example.env).
-A line that sets a value to nothing keeps it empty, which is how an installation takes no node
-backups or deploys no certificates.
+Every setting and its default is described in [install/answers.example.env](../install/answers.example.env). A line
+that sets a value to nothing turns that part off – for example, no node backups or no certificate deployment.
 
 ## 2. Install the manager
 
@@ -140,195 +135,190 @@ sudo apt install haprion-ui
 sudo haprion-setup [--answers answers.env]
 ```
 
-`haprion-ui` brings the CLI, certbot, the WAF engine and its rules with it. The package installs `haprion-setup`
-together with the steps it runs, so the manager needs no source tree. It first checks what it can
-know in advance - the distribution, the commands the steps run, the database server, that the
-server name resolves to this machine, that ports 80 and 443 are free for nginx - and names every
-problem it found before it changes anything. A step that fails is reported in words: what went
-wrong, why, what to do, and where its whole output is (`/var/log/haprion/setup.log`). Every step is
-safe to run again, so the same command continues an installation that stopped. Certbot comes from
-the `haprion-certbot` package; the command says so when it is not installed. When everything else
-is done, it creates the first administrator, `admin`, and asks for its password at the terminal;
-without a terminal it ends with the command that does it.
+`haprion-ui` brings the CLI, certbot, the WAF engine and its rules with it. You need no source tree on the manager.
+
+`haprion-setup` first checks what it can before it changes anything: the distribution, the commands it needs, a
+PostgreSQL that is too old, that the server name points to this machine, and that ports 80 and 443 are free. It
+lists every problem it finds and stops. A clock that is not synchronised is only a warning.
+
+Then it runs the installation steps. If a step fails, it tells you what went wrong, why, what to do, and where the
+full output is (`/var/log/haprion/setup.log`). Every step can safely run again, so the same command continues an
+installation that stopped.
+
+Last, it creates the first administrator, `admin`, and asks for its password. Without a terminal it ends with the
+command to run instead.
 
 ## 3. Install the nodes
 
-On each node:
-
-With the repository added:
+On each node, with the repository added:
 
 ```bash
 sudo apt install haprion-node
 ```
 
-The WAF engine comes with it. The package makes the node's accounts and the keys it fetches with, and prints its enrollment
-block - one line starting with `haprion-node-v2:` - and its host key's fingerprint. A new
-installation's dashboard walks through the first cluster with these blocks; later nodes are added
-under *Settings* → *Nodes & clusters*, and on the command line it is `haprion-cluster add` or
-`haprion-node add` with the block on stdin. `sudo haprion-node-key` prints a block again. What the
-block holds, and preparing a node without the interface, are in
+The WAF engine comes with it. The package creates the node's accounts and keys, and prints the node's *block* –
+one line starting with `haprion-node-v2:` – and its host key fingerprint. You paste the block into the web
+interface to add the node:
+
+- for your first cluster, the Dashboard's *Set up your first cluster* walks you through it;
+- later, *Settings* → *Nodes & clusters*: *Create cluster* for a new cluster, or *Add a node* on an existing one;
+- at the terminal, `haprion-cluster add` or `haprion-node add`, with the block on stdin.
+
+`sudo haprion-node-key` makes a new block. Each run makes a new one-time key, so an earlier block stops working.
+What the block contains, and how to prepare a node without the web interface, is in
 [install/README.md](../install/README.md#step-4--each-node).
 
-## 4. Verify access
+## 4. Sign in
 
-Open `https://<SERVER_NAME>` and sign in with the administrator account created during
-installation. If no certificate was supplied, the nginx installer generates a self-signed
-one and the browser asks you to accept it.
+Open `https://<server name>` and sign in as `admin`. Until you install a certificate of your own, nginx uses a
+self-signed one, so the browser asks you to accept it.
 
-If an installation step fails, correct the error it reports and rerun that step.
-The installation scripts support repeated runs.
-
-History and metrics retention is part of every installation, not an option: the metric, traffic and
-WAF tables are partitioned by day, and `haprion-retention` makes the days ahead as well as removing
-the old ones. `haprion-setup` installs it; to run its installer again,
-`sudo ./11-platform-retention /path/to/answers.env` from `/usr/share/haprion-ui/install/platform/`.
+History and metrics are kept within limits on every installation: `haprion-retention` prepares the coming days'
+tables and removes old ones. `haprion-setup` installs it.
 
 ## Optional components
 
-`haprion-setup` installs all of these but the SCEP client. Each is also an installer of its own, to
-run again alone after a change to the answers, from `/usr/share/haprion-ui/install/platform/`. The
-steps that take a tree take the package's `/usr/share/haprion-ui`, which carries the tools and the
-certbot lock they read:
+`haprion-setup` installs all of these except the SCEP client. Each is also a step of its own, which you can run
+again after changing the answers. Run them from `/usr/share/haprion-ui/install/platform/`. Where a step takes a
+source tree, give it `/usr/share/haprion-ui`.
 
-| Component | Installer |
+| Component | Step |
 |---|---|
-| Platform database backups | `sudo ./06-platform-backup /path/to/answers.env` |
-| Traffic-log collection | `sudo ./13-platform-traffic-collector /path/to/answers.env` |
-| Certbot and DNS plugins | `sudo ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui` (with `UV_BIN=/path/to/uv`, builds the environment from the lock instead of the package's) |
-| Certificate and provider sealing keys | `sudo ./15-platform-dns-keys /path/to/answers.env /usr/share/haprion-ui` |
-| OpenID Connect helper | `sudo ./17-platform-oidc /path/to/answers.env /usr/share/haprion-ui` |
+| Database backups of the interface | `sudo ./06-platform-backup /path/to/answers.env` |
+| Traffic log collection | `sudo ./13-platform-traffic-collector /path/to/answers.env` |
+| Certbot, its DNS plugins and the hook that publishes a renewed certificate | `sudo ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui` |
+| The keys that protect DNS provider and NDES credentials | `sudo ./15-platform-dns-keys /path/to/answers.env /usr/share/haprion-ui` |
+| Sign-in through an OpenID Connect provider | `sudo ./17-platform-oidc /path/to/answers.env /usr/share/haprion-ui` |
 
-The SCEP client uses a separately built and verified bundle:
+Step 14 uses the release the `haprion-certbot` package carries. With `UV_BIN=/path/to/uv` it builds one from the
+lock file instead.
+
+The SCEP client, for certificates from Microsoft AD CS over NDES, is a separately built and verified bundle:
 
 ```bash
 sudo ./16-platform-scep /path/to/bundle.zip <verified-bundle-sha256>
 ```
 
-See [install/platform/README.md](../install/platform/README.md) for each component's
-installation inputs and follow-up setup.
+[install/platform/README.md](../install/platform/README.md) describes each step's inputs and what to set up
+afterwards.
 
 ## What the nodes run
 
-Installing the packages starts nothing. On a node, the deploy starts the engine when a
-release carries rules (`/etc/haproxy/waf`, a link into the release like `maps`) and stops
-it when one no longer does; a release with rules is refused on a node without the engine.
-The node status reports the engine's version, and the interface offers the engine on an
-object only when every node of its cluster has it.
+Installing the packages starts nothing on a node. A service starts when a published configuration needs it, and
+stops when it no longer does.
 
-From package revision 2 the engine starts before HAProxy and counts as started only once
-its port listens, and it logs into a journal namespace of its own, `haprion-waf`: each
-matched rule is a line carrying the matched value, longer than the system journal and
-rsyslog keep whole. The package sets that journal's line length and retention (14 days)
-under `/usr/lib/systemd/journald@haprion-waf.conf.d/`; override them in `/etc`.
-`04-node-prepare` grants the traffic log's read group read access to that namespace and
-nothing else in the journal (`/etc/tmpfiles.d/haprion-waf.conf`), and the
-collector reads it through the same forced command as the traffic log.
+### The WAF engine
 
-The engine runs as a dynamic user, which belongs to no group, and `/etc/haproxy/releases`
-is closed to every account but root. `04-node-prepare` therefore creates the group
-`_haprion-waf`, with no members, lets it pass through that directory without listing it
-(`/etc/tmpfiles.d/haprion-waf-engine.conf`), and gives the engine the group in a
-drop-in, `/etc/systemd/system/coraza-spoa.service.d/haprion.conf`. A node installation
-from before this cannot start the engine: the first deploy with rules fails on that node
-and returns it to the previous release.
+The engine runs when a release contains WAF rules. A release with rules is refused on a node that does not have
+the engine. The interface offers the WAF on an object only when every node in its cluster has the engine.
 
-When updating to a release that reads the engine's journal, install its node package on
-every node **before** the release on the management host. The nodes' reader still answers
-an older collector; the new collector counts a node whose reader cannot answer it as a
-failed run, rather than showing that node's WAF findings as none.
+The engine starts before HAProxy, and counts as started only when it is listening. It logs each rule match to a
+journal of its own, `haprion-waf`, because a match line is longer than the system journal keeps whole. That
+journal keeps 14 days; the settings are in `/usr/lib/systemd/journald@haprion-waf.conf.d/`, and you override them
+under `/etc`. The traffic log collector reads it.
 
-A dns listener (UDP and TCP, typically port 53) is served by dnsdist rather than HAProxy,
-which listens on UDP only for log forwarding. dnsdist comes from PowerDNS's own
-repository, in its 2.1 series, on Ubuntu 26.04 and Debian 13: `01-manager-prepare`
-installs it on the manager, where it only checks a listener's configuration before it is
-published (the service is masked), and `04-node-prepare` installs it on every node. Both
-write the repository's key, which ships beside the scripts in `install/apt-keys/` and is
-never fetched, its source in `/etc/apt/sources.list.d/pdns.list` and a pin in
-`/etc/apt/preferences.d/dnsdist-21` that takes dnsdist from it and holds everything else it might
-offer below the distribution's, so the hosts need to reach `repo.powerdns.com` over HTTPS. The
-HAProxy repository is pinned the same way: HAProxy from it, nothing else.
+The release directory `/etc/haproxy/releases` is closed to everyone but root. `04-node-prepare` gives the engine a
+group, `_haprion-waf`, that may pass through it and nothing else.
 
-Installing the package starts nothing. On a node, a drop-in
-(`/etc/systemd/system/dnsdist.service.d/haprion.conf`) points dnsdist at
-`/etc/haproxy/dns/dnsdist.conf`, a link into the release like `waf`, and lets it start only
-when that file exists. The deploy starts dnsdist when a release carries a listener, restarts
-it when the listener's file changed, stops it when a release no longer has one, and refuses
-a release with a listener on a node that has not been prepared for one. dnsdist runs as
-`_dnsdist`; the drop-in gives it the member-less group `_haprion-dns`, which may pass
-through `/etc/haproxy/releases` (`/etc/tmpfiles.d/haprion-dns.conf`), as the WAF
-engine's group does. A configuration dnsdist warns about is refused like one it cannot
-load: its check ignores a setting it does not know with only a warning.
+*Details:* the rules reach the engine as `/etc/haproxy/waf`, a link into the release like `maps`. The engine runs
+as a dynamic user; its group comes from the drop-in `/etc/systemd/system/coraza-spoa.service.d/haprion.conf`, and
+`/etc/tmpfiles.d/haprion-waf-engine.conf` lets that group through the release directory without listing it.
+`/etc/tmpfiles.d/haprion-waf.conf` lets the traffic log's read group read the `haprion-waf` journal and nothing
+else in the journal.
 
-dnsdist serves its counters on `127.0.0.1:9521`, without a key; its
-API keeps requiring one, and no console is configured. `haprion-node-status` reads them
-while dnsdist runs and reports them per pool and server, which is where the interface's
-DNS cards come from. With the cluster's Prometheus exporter its sources read them too, on the
-node's own address - never on a VIP.
+### DNS listeners
 
-A syslog listener (UDP only) is served by the kernel's IPVS through keepalived rather than
-by HAProxy, so the receivers see each message's sender. Every release carries
-`keepalived/ipvs.conf`, the cluster's virtual servers - empty of them on a cluster without
-a syslog listener - and the deploy installs it as `/etc/keepalived/ipvs.conf` beside the
-address list, by the same rules: inert until `keepalived.conf` includes it, and once it
-does, a `keepalived --config-test` and a reload only when the test passes, the previous
-file restored otherwise. A release whose file holds virtual servers - a cluster with a
-syslog object - is refused on a node without the include, before anything is activated. The include goes **at the top level** of `keepalived.conf`, outside
-every block, since that is where keepalived reads a virtual server:
+A DNS listener (UDP and TCP, usually port 53) is served by dnsdist, not by HAProxy. dnsdist comes from PowerDNS's
+repository, version 2.1. `04-node-prepare` installs it on every node; on the manager it is installed only to check
+a listener's configuration before it is published, and never runs. The repository's key ships with Haprion and is
+never downloaded, and a pin takes only dnsdist from that repository. The HAProxy repository is pinned the same way.
+
+dnsdist starts when a release has a DNS listener, restarts when the listener changes, and stops when the
+listener is removed. A release with a listener is refused on a node that has not been prepared for one, and so is
+a configuration dnsdist only warns about. Its counters are on `127.0.0.1:9521`, which is where the interface's DNS
+cards get their numbers; the cluster's Prometheus exporter reads them too, on the node's own address.
+
+*Details:* the source is `/etc/apt/sources.list.d/pdns.list`, the pin `/etc/apt/preferences.d/dnsdist-21`, and
+the key ships in `install/apt-keys/`. The hosts need to reach `repo.powerdns.com` over HTTPS. On a node, the drop-in
+`/etc/systemd/system/dnsdist.service.d/haprion.conf` points dnsdist at `/etc/haproxy/dns/dnsdist.conf` (a link into
+the release) and lets it start only when that file exists. dnsdist runs as `_dnsdist` with the member-less group
+`_haprion-dns`, which may pass through the release directory (`/etc/tmpfiles.d/haprion-dns.conf`). The counters
+need no key; dnsdist's API still requires one, and no console is configured.
+
+### Syslog listeners
+
+A syslog listener (UDP) is served by the kernel's IPVS through keepalived, so your log receivers see the real
+sender of each message. Each release carries the cluster's IPVS table, and the deploy installs it as
+`/etc/keepalived/ipvs.conf`.
+
+For that file to take effect, `keepalived.conf` must include it at the top level, outside every block:
 
 ```text
 include /etc/keepalived/ipvs.conf
 ```
 
-The `keepalived.conf` the deploy writes for a cluster created in the interface has it
-([keepalived on the nodes](user-manual.md#keepalived-on-the-nodes)). In one a person writes,
-add it after the first deploy has installed the file, one node at a time, with
-`keepalived --config-test -f /etc/keepalived/keepalived.conf` before the reload;
-`04-node-prepare` warns while it is missing. `04-node-prepare` also installs `ipvsadm`, which
-`haprion-node-status` reads the counters with, and masks `ipvsadm.service` first: Debian's
-package enables it, and it restores and clears the IPVS table at boot and shutdown, which
-keepalived owns. The nodes need no `ip_forward`: the receivers never answer through them.
+A `keepalived.conf` written by Haprion – for a cluster created in the interface – already has this line
+([keepalived on the nodes](user-manual.md#keepalived-on-the-nodes)). If you wrote `keepalived.conf` yourself, add
+the line after the first deploy has installed the file, one node at a time, and test with
+`keepalived --config-test -f /etc/keepalived/keepalived.conf` before reloading. A release with a syslog listener is
+refused on a node without the include, and `04-node-prepare` warns while it is missing.
 
-**Forwarding the traffic log.** A cluster's external log receivers are sent to by the node's own
-rsyslog, with a queue on disk per receiver. `04-node-prepare` installs
-`/etc/rsyslog.d/47-haprion-forward.conf`, which loads rsyslog's `impstats` (each receiver's queue
-once a minute, to `/var/log/haprion/rsyslog-stats.json`, rotated daily by
-`/etc/logrotate.d/haprion-rsyslog-stats`) and includes `/etc/rsyslog.d/haprion/forward.conf` when
-it is there; the package depends on `rsyslog-gnutls` for receivers over TLS. The deploy puts that
-file in place from a release that names receivers and removes it from one that does not: it checks
-the candidate with `rsyslogd -N1` before anything is activated, copies it to `/etc/rsyslog.d/haprion/`
-- rsyslogd's AppArmor profile does not let it read the releases under `/etc/haproxy` - checks the
-whole configuration again, and restarts rsyslog only when the file changed, putting the previous
-file back if rsyslog refuses it. The queues live in rsyslog's work directory (`/var/spool/rsyslog`
-on Ubuntu) and need the room the cluster's `disk_mib` gives each receiver. A release that names
-receivers is refused on a node without the include, before anything is activated. A site that
-already loads `impstats` itself gets a refusal from `rsyslogd -N1` when `04-node-prepare` runs.
-`04-node-prepare` also has systemd hold HAProxy's log socket in its chroot
-(`haprion-haproxy-log.socket`, `net.unix.max_dgram_qlen` in `/etc/sysctl.d/60-haproxy.conf`), so a
-restart of rsyslog loses no lines; taking the socket over restarts rsyslog once
+*Details:* every release carries `keepalived/ipvs.conf`, empty on a cluster without a syslog listener. The deploy
+runs `keepalived --config-test` and reloads only when the test passes, putting the previous file back otherwise.
+`04-node-prepare` installs `ipvsadm`, which the node status reads the counters with, and masks `ipvsadm.service`:
+Debian's package would restore and clear the IPVS table at boot and shutdown, which is keepalived's job. The nodes
+need no `ip_forward`, because the receivers never answer through them.
+
+### Sending the traffic log to other receivers
+
+A cluster can send its traffic log to external receivers. Each node's rsyslog sends it, with a queue on disk per
+receiver, so nothing is lost while a receiver is down – up to the cluster's `disk_mib` per receiver. The deploy
+checks the configuration with `rsyslogd -N1` before using it, restarts rsyslog only when something changed, and
+puts the previous configuration back if rsyslog refuses the new one.
+
+HAProxy's log lines wait in a socket that systemd holds while rsyslog restarts, so a restart loses no lines
 ([HAProxy and keepalived baseline](user-manual.md#haproxy-and-keepalived-baseline)).
+
+*Details:* `04-node-prepare` installs `/etc/rsyslog.d/47-haprion-forward.conf`. It loads rsyslog's `impstats`, which
+writes each receiver's queue once a minute to `/var/log/haprion/rsyslog-stats.json` (rotated daily by
+`/etc/logrotate.d/haprion-rsyslog-stats`), and includes `/etc/rsyslog.d/haprion/forward.conf` when that file is
+there. The deploy copies that file from the release into `/etc/rsyslog.d/haprion/`, because rsyslog's AppArmor
+profile cannot read the releases under `/etc/haproxy`. The queues are in rsyslog's work directory
+(`/var/spool/rsyslog` on Ubuntu). Receivers over TLS need `rsyslog-gnutls`, which the node package depends on. A
+release that names receivers is refused on a node without the include. A site that already loads `impstats` itself
+gets a refusal from `rsyslogd -N1` when `04-node-prepare` runs. The log socket is `haprion-haproxy-log.socket`,
+with `net.unix.max_dgram_qlen` set in `/etc/sysctl.d/60-haproxy.conf`; taking it over restarts rsyslog once.
 
 ## Step by step, without haprion-setup
 
-`haprion-setup` runs these steps in order. Run them by hand for an installation without the web
-interface, or to see one step's whole output.
+Use these steps to install without the web interface, or to see one step's full output. `haprion-setup` runs the
+same steps, in this order:
 
-### The CLI engine
+1. `01-manager-prepare`, then `platform/01-platform-prepare`, then `platform/15-platform-dns-keys`
+2. `02-manager-config`, `03-manager-keys`
+3. `platform/02-platform-database`, `platform/migrate`, `platform/03-verify`
+4. `platform/check-compatibility --first-install`, `platform/install-ui-release`
+5. `platform/04-platform-service`, `05-platform-nginx`, `07-platform-services`
+6. `platform/06-platform-backup`, `11-platform-retention`, `13-platform-traffic-collector`, `17-platform-oidc`
+7. `platform/14-platform-certbot`, when the `haprion-certbot` package is installed
+8. `platform/check-compatibility`
+
+Step 15 comes before `02-manager-config` so that the policy step 2 writes can name the keys step 15 made.
+
+### The CLI engine alone
 
 ```bash
 sudo apt install haprion-cli
 ```
 
-The package's `postinst` verifies the wheel, the node package, the WAF engine package and the repository key
-package it carries
-against their digests, installs the release under `/opt/haprion/releases/` and switches `/opt/haprion/current`.
-The operator commands are in `/usr/bin`. A later version of the package is the whole update.
-What the installer does, and installing without the package, are in the manual's
-[Part 3](user-manual.md#part-3--the-versioned-cli-release).
+The package checks the files it carries against their checksums, installs the release under
+`/opt/haprion/releases/` and points `/opt/haprion/current` at it. The commands are in `/usr/bin`. A newer version
+of the package is the whole update. More in the manual's [Part 3](user-manual.md#part-3--the-versioned-cli-release).
 
 ### The manager's configuration and keys
 
-From `/usr/share/haprion-ui/install/`, or from `install/` in a source tree of the same commit
-for an installation without the web interface:
+Run these from `/usr/share/haprion-ui/install/`, or from `install/` in a source tree of the same version when you
+install without the web interface:
 
 ```bash
 sudo ./01-manager-prepare answers.env
@@ -336,27 +326,24 @@ sudo ./02-manager-config answers.env
 sudo ./03-manager-keys answers.env | tee keys.txt
 ```
 
-The answers file is optional in every step: leave it out to use the defaults. Steps 14, 15 and 17
-take `-` in its place when a source tree follows it.
+The answers file is optional in every step. Steps 14, 15 and 17 take `-` in its place when a source tree follows.
 
-The nodes need nothing from step 3's output when they are added in the interface: each node's
-package prints a block, and the management host joins the node with it
-([install/README.md](../install/README.md#step-4--each-node)). Step 3's answers lines are for a
-node prepared by hand. Keep private keys on the host that generated them.
+Nodes added in the web interface need nothing from step 3's output: the manager hands the keys over when the node
+joins ([install/README.md](../install/README.md#step-4--each-node)). Step 3's lines are for a node prepared by hand.
+Keep private keys on the machine that made them.
 
-Check the manager installation from the same directory, as your normal account:
+Check the manager installation as your own user, from the same directory:
 
 ```bash
 ./05-verify answers.env
 ```
 
-For a command-line-only installation, the application is now installed.
+An installation without the web interface is now complete.
 
 ### The web interface
 
-Install the interface's package; it unpacks its release and prints its ID. Then, with the same answers
-file, from `/usr/share/haprion-ui/install/platform/`, prepare the platform, migrate its
-database and verify the candidate before activating it:
+Install the package; it unpacks its release and prints the release ID. Then, from
+`/usr/share/haprion-ui/install/platform/` and with the same answers file:
 
 ```bash
 sudo apt install haprion-ui
@@ -373,47 +360,38 @@ sudo ./07-platform-services /path/to/answers.env
 sudo ./check-compatibility
 ```
 
-Later versions of the package update the running platform themselves: their
-`postinst` runs `update-platform-release` with the release they carry, reads no answers file,
-and leaves the previous release running if it fails. The update also installs again the units,
-sudo rules, helper sockets, timers and nginx site the numbered steps installed, and puts the old
-ones back if it fails, so no step needs to be run again by hand after `apt upgrade`.
-
-The first activation creates the `admin` account if no account exists and asks for its
-password at the terminal. If installation ran without a terminal, create it afterwards:
+The first activation creates the `admin` account if there is no account yet, and asks for its password. If there
+was no terminal, create it afterwards:
 
 ```bash
 sudo haprion-user init-admin
 ```
 
+Later versions of the package update the running interface by themselves. They read no answers file, reinstall the
+units, sudo rules, sockets, timers and nginx site the steps installed, and leave the previous release running if
+anything fails. No step needs to be run again by hand after `apt upgrade`.
+
 ## Building the packages
 
-Build from a clean, committed source tree that has passed the repository checks, into a
-protected directory outside the repository, with the `uv` the repository is locked with. The CLI
-package carries the WAF engine and repository key packages, for restored nodes, so those are built first.
-
-The WAF engine (Coraza SPOA with the OWASP Core Rule Set) comes as two Debian packages,
-built from pinned upstream sources by `tools/build-coraza-package.py`; building the same
-version twice gives the same bytes. Before the engine is built, the tool runs
-govulncheck (the version it names in `GOVULNCHECK_VERSION`) over the source with the pinned
-Go, and refuses the build if the engine can reach a known vulnerability in its modules or
-in Go's standard library; a vulnerability only in code the engine never calls is reported
-but does not refuse. The database is read when the package is built, so rebuild to
-check again. Then it runs upstream's own tests with the pinned Go - the engine's, Coraza's and
-the SPOE library's, at the versions the engine's `go.mod` names (`TESTED`) - and refuses the
-build if any fails. Install govulncheck with the pinned Go
-(`GOBIN=<dir> <go>/bin/go install golang.org/x/vuln/cmd/govulncheck@<version>`).
-Both go on the manager, where publishing compiles the rules before they leave it, and the engine
-on every node.
-
-One command builds every package in that order, fetching the pinned Go toolchain, govulncheck and
-the engine's sources into a cache and checking each against its digest:
+Build from a clean, committed source tree that has passed the repository's checks, into a protected directory
+outside the tree, with the `uv` version the repository is locked to. One command builds every package, in the
+right order:
 
 ```bash
 tools/build-release-packages --source "$(pwd)" --output-dir <out> --uv /path/to/uv
 ```
 
-It writes `SHA256SUMS` beside the packages. The steps it runs, for building one package alone:
+It fetches the pinned Go toolchain, govulncheck and the WAF engine's sources into a cache, checks each against its
+checksum, and writes `SHA256SUMS` beside the packages. The web interface and certbot are built inside a container
+of the distribution they are for, with rootless podman (`ubuntu26.04` or `debian13`).
+
+The WAF engine (Coraza SPOA with the OWASP Core Rule Set) is built from pinned upstream sources, and building the
+same version twice gives the same bytes. Before the build, govulncheck checks the source with the pinned Go: the
+build stops if the engine can reach a known vulnerability, in its modules or in Go's standard library. A
+vulnerability only in code the engine never calls is reported but does not stop it. Then upstream's own tests run
+– the engine's, Coraza's and the SPOE library's – and the build stops if any fails.
+
+To build one package at a time, these are the steps the command runs:
 
 ```bash
 python3 tools/build-coraza-package.py crs --source-dir <dir> --output-dir <out>
@@ -428,17 +406,15 @@ tools/build-ui-package.py --source "$(pwd)" --output-dir <out> --distribution ub
 tools/build-certbot-package.py --source "$(pwd)" --output-dir <out> --distribution ubuntu26.04 --uv /path/to/uv
 ```
 
-The web interface and certbot are built inside a container of the distribution they are for, with
-rootless podman (`ubuntu26.04` or `debian13`).
+Install govulncheck with the pinned Go:
+`GOBIN=<dir> <go>/bin/go install golang.org/x/vuln/cmd/govulncheck@<version>`.
 
 ### How a release reaches the repository
 
-The repository is published by the workflow `.github/workflows/apt-repo.yml`. A release tag builds
-every package twice, on two runners, with `tools/build-release-packages`; the repository is
-published only when both builds, and the files the release already carries, are the same bytes. A
-change to the engine's pins on `main` builds the engine and the rules the same way, without a
-release. `tools/build-apt-repo` then starts from what the site serves - each suite's `InRelease`
-checked against the key, each index and package against what signs it - adds the new packages,
-keeps the two newest versions of each, and signs `Release` with the repository's signing subkey,
-which only the workflow's Pages environment holds. The primary key that certifies it is kept
-offline.
+The workflow `.github/workflows/apt-repo.yml` publishes the repository. A release tag builds every package twice,
+on two separate runners. The repository is published only when both builds – and the files already attached to the
+release – are byte for byte the same.
+
+`tools/build-apt-repo` then starts from what the site already serves, checks every index and package against the
+key, adds the new packages, keeps the two newest versions of each, and signs the result with the repository's
+signing subkey. Only the workflow's Pages environment holds that subkey.

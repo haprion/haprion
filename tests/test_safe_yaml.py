@@ -8,6 +8,7 @@ the same documents give the same values, and the same documents are refused.
 from __future__ import annotations
 
 import importlib
+import re
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -22,11 +23,14 @@ ACCEPTED = (
     "anchors: &base {port: 80}\nuse: *base\n",
     "text: 'räksmörgås ✓'\n",
     "on: yes\noff: no\nnull_value: ~\nfloat: 1.5\noctal: 010\ntime: 2026-10-03T09:10:00Z\n",
-    "same: 1\nsame: 2\n",
     "﻿bom: true\n",
     "- 1\n- two\n",
     "",
 )
+#
+# `yaml.load(` or `yaml.safe_load(`, and not `safe_yaml.load(`.
+#
+DIRECT = re.compile(r"(?<![\w.])yaml\.(?:safe_)?load\(")
 REFUSED = (
     "a: [1, 2\n",
     "!!python/object/apply:os.system ['true']\n",
@@ -53,6 +57,33 @@ class BothLoadersReadTheSame(unittest.TestCase):
                     yaml.load(document, Loader=yaml.SafeLoader)
                 with self.assertRaises(yaml.YAMLError):
                     safe_yaml.load(document)
+
+    def test_a_key_given_twice_is_refused_with_its_line(self) -> None:
+        """Review 26-10-24, 15-02: the second silently replaced the first."""
+
+        for document in ("same: 1\nsame: 2\n", "vips:\n  a: {address: 1}\n  a: {address: 2}\n"):
+            with self.subTest(document=document):
+                with self.assertRaisesRegex(yaml.YAMLError, "a second time") as caught:
+                    safe_yaml.load(document)
+                self.assertIn("line", str(caught.exception))
+
+    def test_a_merge_and_a_key_beside_it_are_not_a_repeat(self) -> None:
+        document = "base: &b {port: 80, host: x}\nuse:\n  <<: *b\n  port: 81\n"
+        self.assertEqual(safe_yaml.load(document)["use"], {"port": 81, "host": "x"})
+
+    def test_only_safe_yaml_reads_yaml(self) -> None:
+        """A reader beside it would take a repeated key again (15-02)."""
+
+        root = Path(__file__).resolve().parents[1]
+        found = [
+            f"{path.relative_to(root)}:{number}"
+            for tree in ("src", "ui/src", "install", "tools")
+            for path in sorted((root / tree).rglob("*.py"))
+            if path.name != "safe_yaml.py"
+            for number, line in enumerate(path.read_text().splitlines(), start=1)
+            if DIRECT.search(line)
+        ]
+        self.assertEqual(found, [])
 
     def test_without_libyaml_the_python_loader_reads_the_same(self) -> None:
         saved = yaml.__dict__.pop("CSafeLoader", None)

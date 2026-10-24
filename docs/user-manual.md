@@ -4004,6 +4004,8 @@ What they have in common:
 - **A file says what should be.** `apply` reads a file (or, for objects, a directory of files) and writes
   only what differs from what is stored, so the same file twice changes nothing. What the file does not
   name is left alone. `--prune`, where a command has it, removes what the file does not name.
+- **Each key once.** A file that gives the same key twice in one place is refused, with the line. A
+  copied block that was not renamed would otherwise replace the first one without a word.
 - **`--check`** says what would change, and changes nothing.
 - **`--json`** prints one answer in the contract's format, called the envelope (`docs/CONTRACT.md`,
   `schemas/v1/`). It includes `changed` where the command decides it, also when the command stops early.

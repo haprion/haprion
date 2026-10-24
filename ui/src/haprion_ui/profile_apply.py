@@ -44,7 +44,7 @@ from typing import Any
 
 import psycopg
 import yaml
-from haprion import exit_codes, ndes_profiles
+from haprion import exit_codes, ndes_profiles, safe_yaml
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.dns_profiles import ProfileError
 
@@ -153,7 +153,7 @@ def read_file(path: Path) -> dict[str, list[Wanted]]:
         status = path.stat()
         if status.st_size > MAX_FILE_BYTES:
             raise ApplyError(f"{path}: larger than {MAX_FILE_BYTES} bytes")
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document = safe_yaml.load(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise ApplyError(f"{path}: {exc.strerror}") from exc
     except (UnicodeDecodeError, yaml.YAMLError) as exc:

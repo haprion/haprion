@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from haprion import safe_yaml
 
 from haprion_ui import auth, db, labels, tool_answer, users
 
@@ -100,7 +101,7 @@ def read_file(path: Path) -> list[Wanted]:
     except UnicodeDecodeError as exc:
         raise ApplyError(f"{path}: not UTF-8") from exc
     try:
-        document = yaml.safe_load(text)
+        document = safe_yaml.load(text)
     except yaml.YAMLError as exc:
         raise ApplyError(f"{path}: not valid YAML") from exc
     if not isinstance(document, Mapping) or set(document) != {"accounts"}:

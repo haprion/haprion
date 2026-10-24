@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from haprion import oidc
+from haprion import oidc, safe_yaml
 
 from haprion_ui import attention, db, feature_switch, features, labels, oidc_web, tool_answer
 
@@ -120,7 +120,7 @@ def read_file(path: Path) -> Wanted:
     except UnicodeDecodeError as exc:
         raise ApplyError(f"{path}: not UTF-8") from exc
     try:
-        document = yaml.safe_load(text)
+        document = safe_yaml.load(text)
     except yaml.YAMLError as exc:
         raise ApplyError(f"{path}: not valid YAML") from exc
     if not isinstance(document, Mapping) or not document:

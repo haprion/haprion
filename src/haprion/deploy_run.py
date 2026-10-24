@@ -288,7 +288,9 @@ def run(
             error=Message(code="status_unavailable", message=str(exc)),
         )
         writer.write(f"ERROR: {exc}\n")
-        return DeployRun(exc.exit_code, report)
+        # The exit the outcome is, not the reading's: `blocked` beside 68 was
+        # refused when the envelope was written (review 26-10-24, 06-04).
+        return DeployRun(exit_codes.BLOCKED, report)
 
     report = DeployReport(
         target=target,
@@ -422,7 +424,8 @@ def run(
                 f"The deploy of {node_name} finished with exit {code}, "
                 "but the cluster could not be read afterwards.\n"
             )
-            entry.outcome = "failed" if code else "not_attempted"
+            # Attempted either way; whether it took is what could not be read.
+            entry.outcome = "failed"
             entry.error = Message(code="status_unavailable", message=str(exc), node=node_name)
             report.outcome = Outcome.FAILED
             report.error = Message(code="status_unavailable", message=str(exc))

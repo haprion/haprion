@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from haprion import deploy_run, exit_codes
-from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
+from haprion.cluster_status import ClusterStatus, NodeStatus, StatusError, parse_status
 from haprion.deploy_plan import CertificateRef, CertificateTarget, ReleaseTarget
 from haprion.deploy_run import CertificatePreflight, DeployReport
 from tests.node_harness import OLD_HASH, TARGET_HASH, FakeCluster, FakeNode, pair
@@ -58,7 +58,8 @@ def deploy(
     # Every run must also make a valid answer: a partial that kept its error
     # passed every assertion here and failed only when the envelope was built
     # (review 2026-10-24).
-    outcome.report.as_envelope("alpha")
+    # And the exit must be the one that outcome is, or writing it fails (06-04).
+    exit_codes.check(outcome.report.as_envelope("alpha")["outcome"], outcome.exit_code)
     return outcome.exit_code, out.getvalue()
 
 
@@ -448,6 +449,46 @@ class ReloadFailureTests(unittest.TestCase):
         deploy(cluster)
 
         self.assertEqual(cluster.reads, 2)
+
+
+class AStatusThatCannotBeRead(unittest.TestCase):
+    """Review 26-10-24, 06-04/13-04: both branches built answers the contract refused."""
+
+    def run_deploy(self, cluster: FakeCluster, *, readable: int) -> deploy_run.DeployRun:
+        reads = 0
+
+        def read_status() -> ClusterStatus:
+            nonlocal reads
+            reads += 1
+            if reads > readable:
+                raise StatusError("the status helper did not answer")
+            return parse_status(cluster.read_status())
+
+        run = deploy_run.run(
+            read_status,
+            lambda node: cluster.trigger(node.name),
+            io.StringIO(),
+            target=None,
+            allow_vip_unknown=False,
+            preflight=None,
+            pause=lambda _seconds: None,
+        )
+        exit_codes.check(run.report.as_envelope("alpha")["outcome"], run.exit_code)
+        return run
+
+    def test_no_reading_at_all_is_blocked_with_its_own_exit(self) -> None:
+        run = self.run_deploy(pair(), readable=0)
+
+        self.assertEqual(run.exit_code, exit_codes.BLOCKED)
+
+    def test_a_node_deployed_and_not_read_afterwards_is_failed(self) -> None:
+        cluster = pair()
+
+        run = self.run_deploy(cluster, readable=1)
+
+        self.assertEqual(cluster.triggered, ["node-b"])
+        self.assertEqual(run.report.as_envelope("alpha")["outcome"], "failed")
+        self.assertEqual(run.report.nodes["node-b"].outcome, "failed")
 
 
 class CurrentSkipTests(unittest.TestCase):

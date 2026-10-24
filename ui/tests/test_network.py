@@ -278,6 +278,14 @@ class WhereTheConfigurationHasGotTo(unittest.TestCase):
         self.assertEqual(state.label, "Behind")
         self.assertEqual(state.tone, "warning")
 
+    def test_a_node_that_is_not_reporting_leaves_save_in_place(self) -> None:
+        """Review 26-10-24, 12-02: Save gave way to a deploy that mends nothing."""
+
+        state = deployment(release_state="Incomplete", version="v53")
+
+        self.assertEqual(state.label, "A node is not reporting")
+        self.assertNotEqual(state.tone, "warning")
+
     def test_a_converged_cluster_names_the_version_it_is_on(self) -> None:
         state = deployment(release_state="Converged", version="v53")
 

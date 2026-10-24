@@ -232,6 +232,14 @@ def deployment(
     #
     if not release_state or release_state.lower() == "unknown":
         return Deployment("Deployment state unknown", "unknown", False, None)
+    if release_state.lower() == "incomplete":
+        #
+        # A node could not be read. Nothing is owed that a deploy mends, so the
+        # page keeps Save: the description stays editable while one node is
+        # down, which is when an address is most likely to need changing
+        # (review 26-10-24, 12-02).
+        #
+        return Deployment("A node is not reporting", "unknown", False, None)
     if release_state.lower() != "converged":
         #
         # Not "deploy to activate": nothing here was published, and a node that

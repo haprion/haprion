@@ -25,7 +25,7 @@ The repository has complementary gates. No single scanner replaces the others.
    gate that passes because it could not import what it was meant to check is not a gate. Both need
    `HAPRION_UI_PYTHON` and fail closed without it. The engine's and the interface's test modules
    run through one pool, one module per process (`tools/run_test_modules.py`), heaviest first by
-   the previous run's timings; each module's coverage is combined before the report.
+   the previous run's timings. The engine's modules run under coverage, combined before the report.
    `run-checks` then runs the interface's migrations and database tests against a disposable
    PostgreSQL cluster (`ui/tools/test-database`, below), and fails without PostgreSQL installed.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,
@@ -76,6 +76,7 @@ export HAPRION_SECRET_RULES=/path/to/private.rules
 export PATH="$PWD/.venv/bin:$PWD/.tools/shellcheck/0.11.0:$PWD/.tools/actionlint/1.7.12:$PATH"
 export GITLEAKS_BIN="$PWD/.tools/gitleaks/8.30.1/gitleaks"
 export HAPRION_UI_PYTHON=/path/to/ui-environment/bin/python
+export PLAYWRIGHT_BROWSERS_PATH=/path/to/playwright-browsers
 ./run-checks
 ```
 
@@ -110,7 +111,7 @@ The temporary accounts deliberately mirror the installed privilege model:
 | `app_web` | no | fixed contract role for web grants |
 | `app_worker` | no | fixed contract role for worker grants |
 | `app_poller` | no | fixed contract role for poller grants |
-| `app_collector` | no | fixed contract role with traffic-log `INSERT` only |
+| `app_collector` | no | fixed contract role that may only insert traffic-log rows and WAF matches |
 | `hm_test_web` | yes | inherits only `app_web`; exercises browser-facing SQL |
 | `hm_test_worker` | yes | inherits only `app_worker`; exercises job SQL |
 | `hm_test_poller` | yes | inherits only `app_poller`; exercises cache and metric writes |
@@ -137,9 +138,10 @@ tools/install-test --packages /path/to/release-packages --distribution all
 ```
 
 The command runs as the developer, with rootless podman. For each of Debian 13 and Ubuntu 26.04 it
-starts a manager and two nodes on a private network with RFC 5737 addresses, installs the CLI, UI
-and node packages with apt, runs `haprion-setup`, step 3 and `04-node-prepare`, pastes the key
-lines, creates a cluster with `haprion-cluster add`, publishes an object and deploys it. It then
+starts a manager and two nodes on a private network with RFC 5737 addresses. It installs the
+manager's packages with apt and runs `haprion-setup`; on each node it installs only the node package,
+whose installation prints the node's block. It creates the cluster with the first node's block
+(`haprion-cluster add`), joins the second with `haprion-node add`, publishes an object and deploys it. It then
 checks what an operator would: keepalived and HAProxy running on both nodes, the virtual address on
 exactly one, the object answering there, the address moving when its holder's keepalived stops and
 staying where it went when it comes back, and a second deploy that changes nothing. The first step
@@ -147,8 +149,8 @@ that does not hold stops the run with its output; every machine's output and jou
 the logs directory. `--keep` leaves the machines running for a look inside.
 
 Not covered: syslog objects' IPVS (a rootless container may not load the kernel table), certbot's
-environment (it downloads from pypi.org) and the web pages, whose root helpers the CLI drives the
-same way.
+dry-run renewal (it needs a public ACME server) and the web pages, whose root helpers the CLI drives
+the same way. Certbot itself is installed and run.
 
 `tests/test_package_commands.py` is the quick half in the ordinary suite: it reads every script a
 package carries and every module the engine imports, and fails when one names a package the
@@ -163,7 +165,8 @@ must be written outside the repository:
 CODEQL_BIN=/path/to/codeql tools/run-codeql /path/to/new-results-directory
 ```
 
-The wrapper rejects an output directory inside the source tree, refuses to overwrite an existing
+The wrapper rejects an output directory inside the source tree - compared as resolved paths, so a
+relative path or a symbolic link into the tree is rejected too - refuses to overwrite an existing
 result directory, and fails if either SARIF file contains an alert. Source snippets are not printed
 by the final gate summary.
 
@@ -176,10 +179,14 @@ checked separately, every Python acceptance would go stale against the JavaScrip
 
 ### Recorded acceptances
 
-A few alerts describe the privilege contract working as designed: `PRIVILEGE.md` requires the
-config repository and the published releases to be root-owned and group-readable by the identity
-that must read them, which CodeQL reports as an overly permissive mask. Tightening those modes
-would lock the worker and the nodes out of the trees they exist to read.
+A few alerts describe a decision working as designed, and are accepted rather than fixed. Most are
+file modes the design requires, which CodeQL reports as an overly permissive mask: `PRIVILEGE.md`
+requires the config repository, the published releases and each receiver's certificate directory to
+be root-owned and group-readable by the identity that must read them, and a fetch account's `.ssh`
+directory and a timer's drop-in directory are readable as sshd and systemd expect. Tightening those
+modes would lock out the accounts the trees exist for. The others are each explained in their entry:
+the TLS versions the node's health probe allows towards a backend, a password the receiver command
+prints once to the operator who asked for it, and the credentials file a certbot DNS plugin reads.
 
 Such a finding is not suppressed in the source - an inline suppression tells the next reader the
 query was wrong - but recorded in [`../tools/codeql-accepted.json`](../tools/codeql-accepted.json)
@@ -197,17 +204,8 @@ to the same file then fails the gate until it is written into the entry, rather 
 accepted by a reason written for another place. The gate reports every kind of failure before its
 verdict, so a stale entry does not hide the findings nobody has accepted.
 
-The second kind of entry is a redirect whose value CodeQL calls user-provided. The interface
-answers a form with a 303 back to the page it was on, and some of those carry an identifier the
-person acted on, so the page can land on that row. CodeQL does not follow the allowlist check that
-far. Such an entry is accepted only when both halves are written down and checkable: the value has
-passed a `fullmatch` against a pattern that admits no slash, colon, query or fragment character
-before the redirect is built, and it is appended to a literal path, so it can neither begin the
-target nor add a parameter. The entry names the pattern and the prefix, so a later reader can
-re-check both.
-
-Accepting a finding is a decision about one of those two contracts, not a way to reach a green
-gate. Anything that is not a contract working as written is fixed in the code.
+Accepting a finding is a decision written down, not a way to reach a green gate. Anything that is
+not a design working as written is fixed in the code.
 
 ## Upstream watch
 

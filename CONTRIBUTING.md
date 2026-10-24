@@ -49,16 +49,19 @@ git show --stat <commit>
 |---|---|
 | `src/haprion/` | the `haprion-cli` package and the `haprion-ui` package: the interface runs its own copy of the engine's modules, and reaches the helpers through the CLI's |
 | `tools/` | whichever package that tool builds or installs |
-| `ui/`, `install/` apart from the node's | the `haprion-ui` package; installing it runs `update-platform-release` |
-| `certbot/` | the `haprion-certbot` package; installing it runs platform step 14 |
-| `install/node/`, node scripts | the `haprion-node` package on every node |
+| `ui/`, the manager's installation steps (`install/platform/`, `install/0[1235]-*`, `install/*.sh`) | the `haprion-ui` package; installing it runs `update-platform-release` on an installation that already has a current release |
+| `install/sudoers/` | the `haprion-cli` package |
+| `certbot/` | the `haprion-certbot` package; installing it runs platform step 14 on a manager where step 14 has run |
+| `install/node/`, `install/04-node-prepare` | the `haprion-node` package on every node |
 
-**The CLI package goes first when both move.** The platform check compares the installed CLI before
-it activates a candidate, so the interface released first stops its own update after it has
-already prepared and migrated.
+**The CLI package goes first when both move.** apt will not install an interface that needs a newer
+engine than the one installed, and the platform's update checks the installed CLI before it migrates
+anything - so an interface released first stops before it changes the database.
 
 **The engine's API level is the contract between them.** `src/haprion/compatibility.json` holds
-it, with a digest of `schemas/v1`; a schema change fails the gate until the level is raised. The
+it, with a digest of `schemas/v1`; a schema change fails the gate until someone decides whether the
+level must rise, and records the new digest. Raise it whenever an older engine could not answer what
+the new interface asks. The
 interface requires the level it was built with (`ui/src/haprion_ui/compatibility.json`),
 `haprion-cli` provides `haprion-engine` at its level, and `haprion-ui` depends on
 `haprion-engine (>=` that level`)`, so apt will not put an older engine under it.

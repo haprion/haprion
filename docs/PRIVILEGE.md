@@ -1,103 +1,147 @@
 # Haprion privilege contract v1
 
-This contract defines the privilege boundary the installation enforces. It is intentionally
-environment-neutral. Production account names, paths selected by runtime configuration, SSH keys,
-and sudoers output remain private deployment data.
+This document says who may do what in an installation, and how that is enforced. It describes the
+shape of the boundary, not one installation: account names are fixed and listed here, while hosts,
+addresses, keys and paths chosen by configuration stay with each installation.
+
+The rule behind every part of it: **a process gets exactly the privileges its job needs, and each
+privileged action is a fixed command that checks its own input.** A compromised web process should
+be able to do what an administrator signed in to the interface can ask for, and nothing more.
 
 ## Identities
 
-| Role | Production config group | sudo helpers | Private keys | Database write scope |
+The interface runs as three separate operating-system accounts. Sharing one would make a web
+intrusion equal to worker access, which is deploy rights.
+
+| Account | What it is | Root helpers it may reach | Private keys it holds | Database role |
 |---|---|---|---|---|
-| web | no | none | none stored; a key in an upload is sealed before the request ends | allowlisted jobs; the interface's own state (sessions, accounts, sign-in attempts, drafts, profiles, switches, sign-in provider); see [Database boundary](#database-boundary) |
-| worker | yes, read-only | exact mutation/completion helpers | none | claim, lease, state, result, audit; a renamed backend's alias |
-| poller | no | exact read-only metadata helpers | none | poll/cache/metrics and the search index only |
-| traffic collector | no | none | one node-log forced-command key | inserts traffic-log and WAF-match rows only |
-| human operator | deployment policy | explicit wrappers and `sudoedit` policy | none directly | not used by app |
+| `_haprion-web` | the web interface | four sockets: probe, name lookup, certificate export, sign-in | none stored | `app_web` |
+| `_haprion-worker` | runs the jobs the interface queues | fourteen sudo helpers and five sockets (below) | none | `app_worker` |
+| `_haprion-poller` | reads status, metrics and listings in the background | four read-only sudo helpers | none | `app_poller` |
+| `_haprion-collector` | fetches the traffic log from the nodes | none | one read-only key to the nodes' logs | `app_collector` |
+| `_haprion-oidc` | talks to the sign-in provider for the web | is itself the helper behind the sign-in socket | the key that opens the stored client secret | none |
+| `_haprion-pull`, `_haprion-cert-pull` | the accounts the nodes fetch releases and certificates from | none | none (the nodes hold the keys) | none |
+| human operators | members of the group `haprion` | operator commands and `sudoedit` on declared files | their own | none |
 
-The traffic collector's key is the one private key an app identity holds: a forced-command key that
-can read a node's logs and do nothing else. Apart from it, no app identity owns or can read SSH
-private keys, certificate private keys, validation dummy-key material, secret files, or raw backup
-archives - with one exception made on purpose: a certificate the registry marks
-`exportable`, made for a device that is installed by hand and never connected here. Its key is
-read by a root helper on a socket only the web account may reach, handed to the person who asked
-in that one response, and written nowhere; the entry has no cluster and no receiver, and the mark
-is set when it is made, so no key HAProxy or a receiver uses can ever be exported. The other
-qualification is the certificate upload:
-the web process receives the file a person chose, seals it against the installation's public key
-inside that request, and hands the ciphertext to a job. The plaintext exists in the web process
-for the duration of the request and nowhere the web can read afterwards - not the job row, not
-the audit. The
-root helper is the only thing that opens the box. The promise is therefore *never stored, never
-readable back*, not *never seen*; it is the same exposure DNS provider credentials carry, and the
-command-line import remains for whoever wants the key to stay off the web entirely. A signing
-request made on the manager keeps even that exposure away: the root helper makes the key in the
-import store, and what crosses the boundary in either direction is the CSR and, later, the signed
-certificate - both public.
+The name lookup is done by a per-request helper running as a dynamic user with network access and
+nothing else; the web process itself reaches only localhost.
 
-Three separate node identities exist, one per thing the manager may ask a node to do: read status,
-pull a configuration release, pull a certificate. The status identity is the only one of the three
-that cannot change a node, which is what makes it the one a deployment can grant most widely. Each
-is a forced command with no argument, and each has its own key; none of them is a login.
+### Private keys
 
-### Identity provisioning
+No account of the interface can read a certificate's private key or a key that can change a node.
+There are four deliberate, narrow exceptions:
 
-Account names are fixed: service accounts are `_haprion-*`, the operators' configuration
-group is `haprion`. Two declarative `sysusers.d` fragments create them, `install/sysusers/haprion.conf`
-on the management host and `haprion-node.conf` on each node; the first installation step on each
-applies its fragment. The web, worker and poller accounts are distinct, locked and no-login; only
-the worker is a member of `haprion`.
+- **The traffic collector's key** reaches the nodes' log reader, which can return a node's traffic
+  log for one day, or the WAF engine's journal after a cursor, and nothing else.
+- **The sign-in helper's key** opens the stored OIDC client secret. It belongs to `_haprion-oidc`,
+  an account with no sudo rule and no database role.
+- **An exportable certificate.** A registry entry marked `exportable` - for a device installed by
+  hand, never connected here - can have its key handed out. A root helper reads it on a socket only
+  the web may reach, gives it to the person who asked in that one response, and writes it nowhere.
+  Such an entry has no cluster and no receiver, and the mark is set when it is made, so no key
+  HAProxy or a receiver uses can ever be exported.
+- **A certificate upload.** The web process receives the file a person chose and encrypts it against
+  the installation's public key inside that request; only a root helper can open it. The plain key
+  exists in the web process for the duration of the request and nowhere the web can read afterwards.
+  The promise is *never stored, never readable back* - not *never seen*. It is the same exposure DNS
+  provider credentials have. The command-line import keeps the key off the web entirely, and a
+  signing request made on the manager avoids even that exposure: the key is made by a root helper
+  and never leaves it.
 
-Human operator membership is deliberately absent from the fragments. It is a separate
-administrator action against an already existing human account, avoiding `sysusers.d` semantics
-that could implicitly create a missing local account.
+### Accounts on the nodes
+
+Every node has four service accounts, and the manager holds seven keys that reach them. Each key line
+has `restrict` and its own forced command, so a key can run exactly one command and open no shell.
+
+| Node account | Keys from the manager | What they run |
+|---|---|---|
+| `_haprion-trigger` | config deploy, certificate deploy, server state | fetch and install a release; fetch certificates; drain, maintenance, ready, unblock |
+| `_haprion-status` | status, probe | read the node's status; try a health check |
+| `_haprion-backup` | state backup | write the node's state archive to the manager |
+| `_haprion-logread` | traffic collector | read the traffic log and the WAF journal |
+
+Only the status and probe keys cannot change a node. A fifth account, `_haprion-join`, accepts one
+time-limited key once, when a node joins a manager. A node restore authorizes its own one-time key
+for root on the target, accepted from the manager's address only, and removes it when the run is discarded or after an hour.
+
+### How the accounts are created
+
+Account names are fixed. Two `sysusers.d` fragments create them - `install/sysusers/haprion.conf` on
+the manager and `haprion-node.conf` on each node - and the first installation step on each machine
+applies its fragment. The service accounts are locked and have no password. Only the worker is a
+member of `haprion`.
+
+Adding a person to `haprion` is left to the administrator, so that installing never creates a local
+human account by accident.
 
 ## Database boundary
 
-Each service connects as its own PostgreSQL role and is granted columns, not tables. The grants are
-written by the migrations under `ui/migrations/versions/`, and `install/platform/03-verify` is the
-executable form of this section: it compares every role's column privileges with an expected list
-and tries the writes each role must not make. When the two disagree, the check is right and this
-text is out of date.
+Each service connects as its own PostgreSQL role, and every privilege is granted by name: columns one
+at a time for reading and writing, and `delete` on the few tables where a role must remove rows. The
+grants are written by the migrations under `ui/migrations/versions/`. `install/platform/03-verify` is
+the executable form of this section: it compares every role's column and function privileges with an
+expected list in both directions, and tries a set of writes each role must not be able to make. When
+the check and this text disagree, the check is right.
 
 | Role | Writes | Reads |
 |---|---|---|
-| web | jobs (insert only, through the queue's allowlist, and an admin's answer to a held job); audit events (insert only); sessions; accounts (and deleting one); sign-in attempts and unlocks; drafts and cluster changes; DNS and NDES provider profiles (ciphertext only); feature switches; the sign-in provider and its pending sign-ins; the status endpoint's address list; acknowledgements on *Needs attention*; the getting-started list | everything it shows: the caches, metrics, traffic logs, WAF findings (not the raw matches), jobs, audit |
-| worker | a claimed job's state, lease and result; audit events; a renamed backend's alias once its publish is done; deleting a removed provider profile; holding the jobs queued before a boot (one function) | jobs, the claim pause, the version listing, the provider profiles it applies |
-| poller | the caches it reads from helpers, each cluster's pass and node list, metric samples, node events and their state, version diffs, the update check, the manager's certificates, its packages waiting in the repository (replaced whole), the search index (and deleting from it) | the same |
-| traffic collector | traffic-log and WAF-match rows (insert only) | nothing |
+| web | jobs (inserts only through the queue's allowlist, plus an admin's answer to a held job); audit events (insert only); sessions; accounts (and deleting one); sign-in attempts and unlocks; drafts and cluster changes; DNS and NDES provider profiles (encrypted only); feature switches; the sign-in provider and sign-ins in progress; the status endpoint's address list; acknowledgements on *Needs attention*; the getting-started list | what it shows: the caches, metrics, traffic logs, WAF counts (not the raw matches), jobs, audit |
+| worker | a claimed job's state, lease and result; audit events; a renamed backend's alias; deleting a removed provider profile; holding the jobs queued before a boot (one function) | jobs, the claim pause, the version listing, the provider profiles it applies |
+| poller | the caches it fills from its helpers, the cluster list and its passes, metric samples, the nodes' events and their state, version diffs, the update check, the manager's certificates, the packages waiting in the repository, the search index | what it writes, except the nodes' events, plus the feature switches and the hourly metrics |
+| collector | traffic-log rows and WAF matches (insert only) | nothing |
 
-Two boundaries are easy to confuse here. An administrator signed in to the interface is held by the
-application's checks: role, write switch, CSRF, and the queue's allowlist of operations. A
-compromised web process is held only by its database role and its account: it could write anything
-in the web column above - accounts and drafts included - but not a job's result, not the audit
-trail's past rows, not a cache, and nothing outside the database that its account cannot reach.
-Everything that changes a cluster still goes through a job that the worker hands to a root helper,
-and the helper validates the request again.
+Deleting is granted per table, so it is listed here exactly: the web may delete drafts, accounts,
+cluster changes, the status endpoint's addresses, acknowledgements and the getting-started list; the
+worker may delete a removed DNS or NDES profile; the poller may delete search entries, the nodes'
+event state and waiting packages. No role may delete from the audit trail, the job queue, the sign-in
+attempts, metrics or traffic: those are pruned by a root command (`haprion-retention`).
+
+Two boundaries are easy to confuse. An administrator signed in to the interface is held by the
+application's checks: role, the write switch, CSRF protection and the queue's allowlist. A compromised
+web process is held only by its database role and its account: it could write anything in the web
+row above - accounts and drafts included - but not a job's result, not past audit rows, not a cache,
+and nothing outside the database its account cannot reach. Everything that changes a cluster still
+goes through a job the worker hands to a root helper, and the helper checks the request again.
+
+## Database connections and roles
+
+The services connect over the local Unix socket with peer authentication: the kernel states which
+account is connecting, so no service holds a database password.
+
+The migration role owns every object and has no operating-system account; only root is mapped to it.
+A service therefore cannot run DDL - it cannot alter a table it does not own - and running a migration
+is a deliberate root action. Grants are named against the four contract roles (`app_web`,
+`app_worker`, `app_poller`, `app_collector`), never against an account.
+
+The web role says what it wants done and nothing about what happened: it inserts a job's operation,
+cluster, payload and idempotency key, while its state, request ID and timestamps come from column
+defaults. Its one update on jobs is an admin's answer to a held job (`held_decision`,
+`held_decided_by`); the worker acts on that answer. The audit trail is append-only: no role may update
+or delete it.
+
+Each role has a `statement_timeout` and an `idle_in_transaction_session_timeout`, so the worker can
+never hold a transaction open across a CLI command.
 
 ## Filesystem boundary
 
-- Config repositories, published releases, and management configuration are root-owned and never
-  group-writable.
-- The worker may receive group read/traverse only where candidate construction or completion proof
-  requires it. Web and poller do not join that group.
-- Certificate distribution and raw backup trees are never made group-readable to an app identity.
-- Traffic-log staging and the collector's SSH identity are private to the collector. Completed
-  mirrors and their freshness metadata are collector-owned and group-readable by web, never
-  group-writable; web reads those bounded files and cannot alter them.
-- Dev identities have no production config group membership and no read access to private
-  production trees.
-- Git uses explicit repository-specific `safe.directory` entries. Wildcard trust is forbidden.
+- Configuration repositories, published releases and the management configuration are root-owned
+  and never group-writable.
+- The worker gets group read and traverse only where building a candidate requires it. The web and
+  the poller are not in that group.
+- The certificate distribution trees and the node archives are never readable to an interface
+  account. The certificate tree is readable to `_haprion-cert-pull`, which the nodes fetch as.
+- The traffic log mirror is written by the collector and readable, never writable, by the web.
+- Git trusts each repository by an explicit `safe.directory` entry; wildcard trust is never used.
 
 ## Helper boundary
 
-Helpers are root-owned, not group/other writable, use absolute executables, a fixed environment,
-and fail closed. The target helper interface has no caller-selected filesystem path or shell text.
+A helper is a root-owned executable, not writable by group or others, that does one kind of
+privileged action. It uses absolute paths and a fixed environment, and fails closed. No helper takes
+a path or shell text from its caller.
 
-Where sudoers argument matching would otherwise require a wildcard, the helper is invoked with no
-argv and reads one size-bounded JSON request as a single line on stdin. Sudoers uses the explicit
-no-argument form supported by the installed sudo version. The helper validates operation, cluster ID,
-request ID, expected target, and all enum values before looking up private paths from root-owned
-runtime configuration.
+Helpers take no arguments. Each reads one JSON request, as a single line on stdin, so a sudo rule can
+name the helper exactly with no wildcard. The helper checks the operation, cluster ID, request ID,
+expected target and every value before it looks anything up in root-owned configuration.
 
 The common request document is exactly:
 
@@ -111,128 +155,108 @@ The common request document is exactly:
 }
 ```
 
+Each helper accepts a fixed set of operations - most exactly one - with an allowlist and a validator
+for each operation's parameters. The protocol refuses, before any privileged state is read: arguments,
+a request over its size limit (64 KiB, or more for the few helpers that take a whole candidate or a
+set of changes), invalid UTF-8, duplicate or unknown fields, trailing input, non-finite numbers,
+non-canonical request IDs and malformed cluster IDs.
+
+### The lifeline
+
 `lifeline` is an optional boolean beside those fields. Absent or false, the caller has finished with
-stdin and anything after the request is refused, which is how a caller at a terminal uses these
-helpers.
+stdin and anything after the request is refused - this is how a person at a terminal uses a helper.
 
-Set true, the caller states that it is holding stdin open for the life of the operation, and end of
-input on that stream means the caller has let go. A helper that supports it then stops at its next
-safe checkpoint and reports what it had done by then; one that does not support it refuses the
-request rather than accepting a promise it cannot keep.
+Set to true, the caller promises to keep stdin open for as long as the operation runs, and the end of
+that stream means the caller has let go. A helper that supports it then stops at its next safe point
+and reports what it had done; one that does not support it refuses the request. Anything written to
+the stream after the request is refused too.
 
-This exists because the caller cannot stop the helper. A helper runs as root and the unprivileged
-service that starts it holds no `CAP_KILL`, so `kill` is answered with `EPERM`. Closing a descriptor
-is the one signal that crosses the boundary without any privilege at all — and it is delivered by
-the kernel if the caller dies without running any code. Granting the ability to signal arbitrary
-processes, or a helper that kills a caller-supplied process group, would both be broader than the
-problem: this model is built on each privileged action being an exact command.
+It exists because the caller cannot stop a helper: the helper runs as root, and the service that
+started it may not signal it. Closing a stream needs no privilege, and the kernel closes it even if
+the caller dies. Once a helper has read its request, it moves that stream aside and gives itself
+`/dev/null` as input, so no process it starts - no `ssh` to a node - inherits it.
 
-Once its request has been read, a helper with a lifeline moves that descriptor to a private one and
-opens `/dev/null` on descriptor 0, so no child of it — every `ssh` to a node included — inherits the
-caller's stream.
+### The helpers
 
-Each executable compiles in one expected operation and an exact allowlist plus validator for its
-operation-specific parameters. The protocol rejects argv, input over 64 KiB, invalid UTF-8,
-duplicate or unknown fields, trailing input where no lifeline was declared, non-finite numbers,
-non-canonical request IDs, and unrecognised cluster-ID syntax before privileged state is consulted.
-Input arriving on a declared lifeline is refused too: the stream is there to be closed, not written
-to.
+| Reached by | Helpers |
+|---|---|
+| the poller, through sudo | status, inventory, readings, cluster list - read only |
+| the worker, through sudo | deploy, certificate deploy, revert, changes publish, certificate issue, publish, target, import, request, delete, NDES enrollment, DNS profile apply, NDES profile apply, server state |
+| the worker, through a socket | certificate receivers, backup jobs, node restore, the interface certificate, nodes and clusters |
+| the web, through a socket | health probe, name lookup, certificate export, sign-in |
 
-Read-only helper classes:
+A helper that writes `/etc` - accounts, sshd, nginx - answers on a socket from a unit of its own
+rather than through sudo: the worker's sandbox keeps `/etc` read-only, and a helper started through
+sudo inherits that sandbox. The certificate helpers are the only worker rules that reach private key
+material, and they write it to its targets and never return it.
 
-- status metadata, including the published release the nodes are compared against
-- inventory metadata
-- version metadata
-- backup metadata, never archive contents or absolute paths
-- certificate metadata, never PEM or private paths
+### Candidate validation
 
-Mutation helper classes:
+A candidate configuration is checked before it is published, by a helper that takes the files as a
+JSON object and no path from its caller. It accepts only the release's own layout: `haproxy.cfg`,
+`conf.d/*.cfg`, entries below `maps/`, `keepalived/*.conf`, `crt-lists/*.list`, the WAF engine's
+files under `waf/`, `dns/dnsdist.conf` and `rsyslog/forward.conf`. Certificate files are never
+caller input. It refuses absolute, escaping, special, oversized, NUL-containing and unknown paths,
+then writes the exact accepted bytes itself.
 
-- candidate validation using root-only dummy certificate material
-- publish/commit/release
-- config deploy trigger
-- revert/publish
-- bounded managed-network publish
-- certificate deploy trigger
-- operation-specific completion proof
+Each certificate the configuration names gets a copy of a dedicated validation certificate instead of
+the real one. HAProxy then checks the candidate in a sandbox with no network, no capabilities and an
+empty read-only root, into which only the system's programs and the candidate are bound. The copies
+are removed before the helper returns; the caller receives only the result, bounded diagnostics and
+the candidate's hash.
 
-### Candidate-validation helper
+### On the nodes
 
-Candidate validation accepts no argv and receives the complete candidate as a JSON `files` object.
-The only accepted paths are `haproxy.cfg`, one-level `conf.d/*.cfg`, and relative entries below
-`maps/`; certificate files are never caller input. The helper rejects absolute, normalised,
-escaping, special-purpose, oversized, NUL-containing, and unknown paths, then hashes and
-materialises the exact accepted bytes itself using exclusive no-follow file creation.
-
-Only configured certificate IDs receive copies of the dedicated validation PEM. Config references
-to the runtime HAProxy map and certificate prefixes are rewritten inside the private candidate.
-Validation runs through fixed `systemd-run` argv with no network, no capabilities, a read-only
-candidate bind and broad inaccessible private roots. The candidate and dummy PEM copies are
-removed before the helper returns; the caller receives only validity, bounded diagnostics and the
-candidate hash.
-
-Config deploy, certificate deploy, and status use separate root-owned SSH identities and separate
-node-side forced-command mappings. Every node-side sudo invocation uses `sudo -n` and an exact
-`NOPASSWD` command rule so a policy mismatch fails immediately instead of attempting an interactive
-password path.
-
-## Database connections and roles
-
-The interface's three services connect over the local Unix socket with peer authentication. No
-application identity holds a database password, and there is nowhere to put one: each service
-account is named after its database role, so the kernel establishes who is connecting.
-
-The migration role owns every object and has no operating-system account. A service process
-therefore cannot run DDL by construction rather than by the absence of a grant — you cannot drop a
-table you do not own. Running a migration is a deliberate root action, mapped explicitly.
-
-Table grants live in the migration that creates the table, named against three contract roles
-rather than against accounts, and column by column rather than table-wide. The web role may state
-what it wants done and nothing about what happened: it holds `insert` on the job table's operation,
-cluster and payload, while state, request ID and timestamps come from column defaults. Its one
-`update` is an admin's answer for a held job (`held_decision`, `held_decided_by`); the worker
-changes the job's state when it takes that answer. The audit trail is append-only by grant — no role holds `update` or `delete` on it.
-
-Each role carries a `statement_timeout` and an `idle_in_transaction_session_timeout`, set per role
-and per database. The worker must never hold a transaction open across a CLI subprocess, and this
-makes that a database rule rather than a discipline.
-
-`install/platform/03-verify` checks the resulting surface against the running database, in both
-directions. Only asking what a role must *not* do passes completely for a role with no privileges
-at all, which is a broken system reading as a secured one.
+Every escalation on a node uses `sudo -n`, so a missing rule fails at once instead of waiting for a
+password. The rules are in one file, `/etc/sudoers.d/haprion-node`, one per forced command. Most take
+no arguments. The certificate rules (`haprion-cert-pull`, `haprion-cert-remove`) and the server-state
+rules (`set`, `unblock`) do: a list of certificate IDs, or a server and state, cannot be expressed in
+sudoers more tightly than a wildcard. They are checked twice instead - by the unprivileged trigger
+the key runs, and again by the root command.
 
 ## Sudo policy
 
-- Web has no sudo rule.
-- Poller may invoke only read-only helpers.
-- Worker may invoke only named mutation/completion helpers required by its allowlisted operations.
-- No rule grants a shell, interpreter, editor, arbitrary executable, wildcard path, environment
-  preservation, or unrestricted command arguments.
-- Human `sudoedit` policy is separate from app sudoers and limited to declared config files.
-- A declared path whose file has been removed is revoked in the same change. `sudoedit`
-  creates what it does not find, so the rule would otherwise remain a way to add a
-  root-owned file to a loaded configuration directory.
-- DR/rebuild and certificate issuance/distribution remain separate operator policies.
+- The web has no sudo rule.
+- The poller may run only its four read-only helpers.
+- The worker may run only the helpers its job operations need.
+- No rule grants a shell, an interpreter, an editor, an arbitrary program, a wildcard path, a
+  preserved environment or free arguments - except the node rules described above, whose arguments
+  are validated twice.
+- The operators' `sudoedit` rules are separate from the services' and name each file in full. A rule
+  for a file that has been removed is removed in the same change: `sudoedit` creates a file it does
+  not find, so the rule would otherwise be a way to add a root-owned file to a configuration directory.
+- Rebuilding the manager itself is outside the product.
 
-## Mandatory negative tests
+## Negative tests
 
-Run these tests as the real installed identities, not only through mocks:
+A change to an identity, a helper or a rule is not done until these hold again, tested as the real
+installed accounts rather than through mocks:
 
-1. web cannot read config, published releases, cluster configuration, certificate material,
-   backup archives, secrets, or any management SSH key; a certificate file it receives in an
-   upload is sealed for root within the request and never stored in clear
-2. web cannot execute any management helper through sudo
-3. poller cannot read private trees or keys and cannot invoke a mutation helper
-4. worker cannot read any private key, PEM, secret, or raw backup archive
-5. worker cannot invoke an unlisted helper, pass argv to a no-argument helper, select a path, inject
-   `..`, use a symlink/special file, preserve environment, or reuse a request ID with another payload
-6. dev identity cannot read production config/published/management trees and is not in the
-   production config group
-7. helper files and their parent directories are root-owned and not group/other writable
-8. every helper rejects malformed, oversized, trailing, multi-document, and unknown-operation JSON
-9. deploy/status key identities map to the expected distinct forced commands on every node
-10. positive controls prove each role can perform exactly its intended operations
+1. the web cannot read configuration, releases, the cluster file, certificate material, archives,
+   secrets or any management SSH key, and an upload is encrypted for root within its request
+2. the web cannot run any management helper through sudo
+3. the poller cannot read private trees or keys, and cannot run a mutating helper
+4. the worker cannot read a private key, PEM, secret or raw archive
+5. the worker cannot run a helper it is not given, pass arguments to one, choose a path, use `..`, a
+   symbolic link or a special file, or keep its environment
+6. helper files and their directories are root-owned and not writable by group or others
+7. every helper refuses malformed, oversized, trailing, multi-document and unknown-operation requests
+8. each manager key maps to its own forced command on every node
+9. each role can do exactly what it is meant to
 
-A change to an identity, a helper or a rule is not done until these pass again as the installed
-identities. `install/platform/03-verify` carries the database part - what each role must and must not
-be able to do - and `install/05-verify` the files, keys and nodes.
+Where they are checked:
+
+- `install/platform/03-verify` - the database: every role's column and function grants both ways, and
+  the writes each role must not make.
+- `install/platform/07-platform-services` - the sudo rules, as the real accounts: the web and worker
+  cannot run the poller's helpers, the web and poller cannot run the worker's certificate and profile
+  helpers.
+- `install/platform/05-platform-nginx`, `06-platform-backup`, `13-platform-traffic-collector` - no
+  interface account can read the interface's TLS key or the database dumps, and the collector cannot
+  reach beyond its own files.
+- `install/05-verify` - ownership and modes of the cluster file and the policy, the keys exist, and
+  every node answers the status key.
+- The engine's tests - the request protocol's refusals (7).
+
+Items 1, 3, 4 and 5 are covered in part by the checks above; whatever a change touches beyond them is
+checked by hand, as the installed accounts, before it is done.

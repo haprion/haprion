@@ -84,8 +84,8 @@ The restore also needs, and these are firewall and mirror questions rather than 
 
 - SSH from the management host to the temporary address: `<...>`
 - SSH from the node's own address to the management host, for its pulls: `<...>`
-- Package repositories reachable from the new VM - the distribution's and HAProxy's; a site without
-  internet access needs a mirror: `<...>`
+- Package repositories reachable from the new VM - the distribution's, HAProxy's, and Haprion's own
+  when the node was installed from it; a site without internet access needs a mirror: `<...>`
 
 ### 2. How the management host survives
 
@@ -106,12 +106,14 @@ These exist only on the management host. Losing them is not recoverable from the
 
 | What | Where (defaults) | Without it |
 |---|---|---|
-| Cluster configuration history and drafts | the configuration repositories (1.2) | every change since the last copy is gone |
+| Cluster configuration history and drafts | the configuration repositories ([Directory layout](user-manual.md#directory-layout)) | every change since the last copy is gone |
+| The runtime policy, the cluster file and the certificate registry | `/etc/haprion/` | the manager no longer knows its clusters, nodes or certificates |
 | ACME account key | `/etc/letsencrypt/accounts` | certificates can be issued again, as new certificates, under a new account |
-| The DNS profile private key | `secrets/dns-profile-keys/` under the platform root (1.4.5) | every stored DNS and NDES profile is unreadable and must be registered again |
+| The DNS profile private key | `/etc/haprion/ui-secrets/dns-profile-keys/` ([The DNS profile key pair](user-manual.md#the-dns-profile-key-pair)) | every stored DNS and NDES profile is unreadable and must be registered again |
+| The sign-in helper's private key | `/etc/haprion/oidc/` | the stored OIDC client secret is unreadable and must be entered again |
 | Imported and NDES-enrolled keys | `/etc/haprion/certificates/<id>/` | those certificates must be replaced, and every receiver fetches the new ones |
-| The management host's SSH identities | the root-owned keys the runtime policy names (1.6) | every node's `authorized_keys` must be rewritten by hand |
-| The interface's database dumps | the platform backup directory (4.7) | accounts, history and job records are gone |
+| The management host's SSH identities | the root-owned keys the runtime policy names ([SSH identities](user-manual.md#ssh-identities)) | every node's `authorized_keys` must be rewritten by hand |
+| The interface's database dumps | `/var/lib/haprion-ui/dumps/` ([Platform backup installation](user-manual.md#platform-backup-installation)) | accounts, history and job records are gone |
 
 After restoring the management host, before restoring any node:
 

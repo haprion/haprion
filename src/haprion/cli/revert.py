@@ -300,6 +300,15 @@ def main(
             f"Cluster '{cluster_id}' already holds the content of version {version}. "
             "No new version was created.\n"
         )
+        if result.get("deployment_required") and result.get("next_command"):
+            #
+            # The helper cannot tell a repeat from a run cut short before
+            # anybody was told to deploy, and says so (review 26-10-24, 01-04).
+            #
+            writer.write(
+                "\nNo node deployment has run. If the nodes are behind, bring them "
+                f"into step with:\n\n  {result['next_command']}\n"
+            )
         return 0
 
     writer.write(

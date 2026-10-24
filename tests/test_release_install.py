@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from haprion.release_install import (
     DIRECTORY_MODE,
@@ -83,6 +84,33 @@ class EmptyDirectoryTests(unittest.TestCase):
             self.assertEqual(
                 [(0, os.getgid())], [call[1:] for call in recorder.calls if call[0] in owned]
             )
+
+
+class TheReleaseIsOnDiskBeforeItIsVisible(unittest.TestCase):
+    """Review 26-10-24, 01-05: after a power cut the files could come back empty."""
+
+    def test_every_file_is_synced_before_the_rename(self) -> None:
+        synced: list[int] = []
+        real = os.fsync
+
+        def fsync(descriptor: int) -> None:
+            synced.append(descriptor)
+            real(descriptor)
+
+        with tempfile.TemporaryDirectory() as raw, mock.patch("os.fsync", side_effect=fsync):
+            result = install_release(
+                Path(raw) / "published",
+                node_path=NODE_PATH,
+                artifact={"haproxy.cfg": b"global\n", "conf.d/0010-core.cfg": b"defaults\n"},
+                index={"index.json": b"{}"},
+                metadata=metadata(),
+                group=grp.getgrgid(os.getgid()).gr_name,
+                change_owner=Recorder(),
+            )
+            files = [path for path in result.release.rglob("*") if path.is_file()]
+            directories = [path for path in result.release.rglob("*") if path.is_dir()]
+        # Each file, and each directory and the release itself, at least once.
+        self.assertGreaterEqual(len(synced), len(files) + len(directories) + 1)
 
 
 class InstallFixture(unittest.TestCase):

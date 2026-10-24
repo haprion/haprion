@@ -11,7 +11,9 @@ import grp
 import io
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import unittest
 import uuid
 from pathlib import Path
@@ -21,8 +23,10 @@ from unittest import mock
 
 import yaml
 
+from haprion import exit_codes
 from haprion.cli import history_reset_helper
 from haprion.cli.history_reset_helper import ACKNOWLEDGEMENT, OPERATION, main
+from haprion.cluster_lock import hold
 
 BASE = Path(__file__).resolve().parents[1]
 HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"
@@ -97,6 +101,23 @@ class HelperTests(unittest.TestCase):
         )
         return policy, draft
 
+    def locks(self) -> Path:
+        raw = tempfile.mkdtemp(prefix="history-reset-locks-")
+        self.addCleanup(shutil.rmtree, raw)
+        return Path(raw)
+
+    def test_a_cluster_whose_lock_is_held_is_left_alone(self) -> None:
+        """Review 26-10-24, 01-06: the reset took no lock, so a publish could land in between."""
+
+        with TemporaryDirectory() as raw:
+            policy, draft = self.runtime(Path(raw))
+            before = git(draft, "rev-parse", "HEAD")
+            locks = self.locks()
+            with hold("alpha", operation="publish", root=locks):
+                code, _, err = self.run_helper(policy, self.request(), lock_root=locks)
+            self.assertEqual(code, exit_codes.BLOCKED, err)
+            self.assertEqual(git(draft, "rev-parse", "HEAD"), before)
+
     def request(self, **overrides: object) -> bytes:
         document: dict[str, object] = {
             "schema_version": 1,
@@ -119,6 +140,7 @@ class HelperTests(unittest.TestCase):
             "require_root": False,
             "change_owner": lambda path, uid, gid: None,
             "resolve_group": lambda _name: os.getgid(),
+            "lock_root": self.locks(),
         }
         arguments.update(overrides)
         code = main([], **arguments)

@@ -29,7 +29,9 @@ from pathlib import Path
 from typing import BinaryIO, TextIO
 
 from haprion import exit_codes
+from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
+from haprion.git_command import GitError
 from haprion.helper_protocol import (
     HelperProtocolError,
     read_helper_request,
@@ -84,6 +86,7 @@ def main(
     require_root: bool = True,
     change_owner: ChangeOwner = chown,
     resolve_group: ResolveGroup = _group_id,
+    lock_root: Path = DEFAULT_LOCK_ROOT,
 ) -> int:
     output = output_stream or sys.stdout
     errors = error_stream or sys.stderr
@@ -112,18 +115,25 @@ def main(
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
             request.cluster
         )
-        plan = preview(request.cluster, cluster.config_path)
-
         group_id = resolve_group(OWNER_GROUP)
 
-        result = reset_history(
-            plan,
-            stamp=datetime.now(UTC).strftime("%Y%m%d-%H%M%S"),
-            message=BASELINE_MESSAGE,
-            group_id=group_id,
-            change_owner=change_owner,
-        )
-    except (ConfigError, HelperProtocolError, ResetError) as exc:
+        #
+        # Under the cluster's lock, as every other write to its history is: a
+        # publish or a revert that ran while the history was replaced would
+        # commit onto the old branch and be archived with it (review 26-10-24,
+        # 01-06). The preview is read inside it, so what is reset is what was
+        # looked at.
+        #
+        with hold(request.cluster, operation="history_reset", root=lock_root):
+            plan = preview(request.cluster, cluster.config_path)
+            result = reset_history(
+                plan,
+                stamp=datetime.now(UTC).strftime("%Y%m%d-%H%M%S"),
+                message=BASELINE_MESSAGE,
+                group_id=group_id,
+                change_owner=change_owner,
+            )
+    except (ConfigError, HelperProtocolError, ResetError, LockBusy, GitError) as exc:
         print(f"ERROR: {exc}", file=errors)
         return exc.exit_code
 

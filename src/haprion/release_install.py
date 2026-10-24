@@ -52,6 +52,16 @@ FILE_MODE = 0o640
 type ChangeOwner = Callable[[Path, int, int], None]
 
 
+def _write_new(target: Path, content: bytes) -> None:
+    """One file of a release being built, written and on disk before it is needed."""
+
+    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, FILE_MODE)
+    with os.fdopen(descriptor, "wb") as output:
+        output.write(content)
+        output.flush()
+        os.fsync(output.fileno())
+
+
 def default_change_owner(path: Path, uid: int, gid: int) -> None:
     os.chown(path, uid, gid, follow_symlinks=False)
 
@@ -225,13 +235,7 @@ def install_release(
             for relative in sorted(files):
                 target = node_root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
-                descriptor = os.open(
-                    target,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                    FILE_MODE,
-                )
-                with os.fdopen(descriptor, "wb") as output:
-                    output.write(files[relative])
+                _write_new(target, files[relative])
 
             #
             # Beside `node_path`, not inside it. What a node pulls is that
@@ -240,14 +244,7 @@ def install_release(
             # view should be able to delete.
             #
             for relative in sorted(index):
-                target = stage / relative
-                descriptor = os.open(
-                    target,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                    FILE_MODE,
-                )
-                with os.fdopen(descriptor, "wb") as output:
-                    output.write(index[relative])
+                _write_new(stage / relative, index[relative])
 
             for path in (stage, *sorted(stage.rglob("*"))):
                 _own(
@@ -257,6 +254,15 @@ def install_release(
                     change_owner=change_owner,
                 )
 
+            #
+            # Every file and directory on disk before the rename makes the
+            # release visible: after a power cut the rename could otherwise
+            # survive and the files come back empty - an empty RELEASE refuses
+            # every retry, an empty haproxy.cfg every deploy (review 26-10-24,
+            # 01-05).
+            #
+            for directory in sorted(path for path in (stage, *stage.rglob("*")) if path.is_dir()):
+                atomic_file.sync_directory(directory)
             atomic_file.move(stage, release)
             created = True
         except BaseException:

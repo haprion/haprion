@@ -496,6 +496,8 @@ class ContractTests(RevertFixture):
             self.assertEqual(result["next_command"], "haprion-deploy -c alpha")
             self.assertEqual(result["new_version"], result["from_version"])
             self.assertIn("already holds the content of version 2", output)
+            # The deploy the helper says is owed, not left out (review 26-10-24, 01-04).
+            self.assertIn("haprion-deploy -c alpha", output)
 
     def test_an_interrupted_revert_is_finished_without_a_second_version(self) -> None:
         """Phase 6's repair, on the revert path.

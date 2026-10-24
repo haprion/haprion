@@ -493,7 +493,7 @@ class ARealDatabase(unittest.TestCase):
                 "/bin/bash",
                 "-c",
                 'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
-                " '/^profile_evidence() {/,/^}/p;/^draft_evidence() {/,/^}/p;"
+                " '/^[a-z_]*_evidence() {/,/^}/p;"
                 "/^where_removable() {/,/^}/p'"
                 ' "$0")"; where_removable',
                 str(script),
@@ -508,6 +508,7 @@ class ARealDatabase(unittest.TestCase):
             ("refused-removal", "dns_profile_apply", {"profile": "kept", "revision": 2,
                                                       "remove": True}),
             ("removed-profile", "dns_profile_apply", {"profile": "gone", "revision": 1}),
+            ("older-deploy", "deploy", {}),
             ("deploy", "deploy", {}),
         )  # fmt: skip
         with self.connect() as connection, connection.cursor() as cursor:
@@ -534,7 +535,55 @@ class ARealDatabase(unittest.TestCase):
                 named[_first(cursor)] = name
             cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
             removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
-            self.assertEqual(removable, {"old-apply", "removed-profile", "deploy"})
+            # The newest deploy stays for WAF's Not working (05-02).
+            self.assertEqual(removable, {"old-apply", "removed-profile", "older-deploy"})
+            connection.rollback()
+
+    def test_retention_keeps_the_newest_publish_and_deploy_of_each_cluster(self) -> None:
+        """Review 26-10-24, 05-02: with both pruned, a WAF exception that did not work hid its finding."""
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
+        clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
+                " '/^[a-z_]*_evidence() {/,/^}/p;"
+                "/^where_removable() {/,/^}/p'"
+                ' "$0")"; where_removable',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        jobs: tuple[tuple[str, str, str, dict[str, object], int], ...] = (
+            ("alpha-old-publish", "alpha", "changes_publish", {}, 40),
+            ("alpha-publish", "alpha", "changes_publish", {}, 30),
+            ("alpha-old-deploy", "alpha", "deploy", {}, 39),
+            ("alpha-deploy", "alpha", "deploy", {}, 29),
+            ("beta-publish-and-deploy", "beta", "changes_publish", {"deploy": True}, 30),
+        )
+        with self.connect() as connection, connection.cursor() as cursor:
+            named = {}
+            for name, cluster, operation, payload, days in jobs:
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values (%(operation)s, %(cluster)s, %(payload)s, "
+                    "%(key)s, 'done', now() - make_interval(days => %(days)s), "
+                    "now() - make_interval(days => %(days)s)) returning id",
+                    {
+                        "operation": operation,
+                        "cluster": cluster,
+                        "payload": json.dumps(payload),
+                        "key": uuid4(),
+                        "days": days,
+                    },
+                )
+                named[_first(cursor)] = name
+            cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
+            removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
+            self.assertEqual(removable, {"alpha-old-publish", "alpha-old-deploy"})
             connection.rollback()
 
     def test_retention_keeps_the_publish_a_draft_is_cleared_by(self) -> None:
@@ -550,7 +599,7 @@ class ARealDatabase(unittest.TestCase):
                 "/bin/bash",
                 "-c",
                 'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
-                " '/^profile_evidence() {/,/^}/p;/^draft_evidence() {/,/^}/p;"
+                " '/^[a-z_]*_evidence() {/,/^}/p;"
                 "/^where_removable() {/,/^}/p'"
                 ' "$0")"; where_removable',
                 str(script),
@@ -648,7 +697,7 @@ class ARealDatabase(unittest.TestCase):
                 "/bin/bash",
                 "-c",
                 'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
-                " '/^profile_evidence() {/,/^}/p;/^draft_evidence() {/,/^}/p;"
+                " '/^[a-z_]*_evidence() {/,/^}/p;"
                 "/^where_removable() {/,/^}/p'"
                 ' "$0")"; where_removable',
                 str(script),
@@ -694,7 +743,7 @@ class ARealDatabase(unittest.TestCase):
                 "/bin/bash",
                 "-c",
                 'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
-                " '/^profile_evidence() {/,/^}/p;/^draft_evidence() {/,/^}/p;"
+                " '/^[a-z_]*_evidence() {/,/^}/p;"
                 "/^where_removable() {/,/^}/p'"
                 ' "$0")"; where_removable',
                 str(script),
@@ -717,10 +766,11 @@ class ARealDatabase(unittest.TestCase):
             )
             change = str(_first(cursor))
             named = {}
+            # "gone" first: the newest publish is kept for WAF's Not working (05-02).
             for name, payload in (
+                ("gone", {"drafts": [{"id": str(uuid4()), "revision": 1}]}),
                 ("objects", {"drafts": [{"id": draft, "revision": 1}]}),
                 ("settings", {"changes": [{"id": change, "revision": 1}]}),
-                ("gone", {"drafts": [{"id": str(uuid4()), "revision": 1}]}),
             ):
                 cursor.execute(
                     "insert into job (operation, cluster, payload, idempotency_key, state, "

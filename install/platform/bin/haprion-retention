@@ -947,6 +947,33 @@ draft_evidence() {
 SQL
 }
 
+#
+# The newest publish and the newest deploy of each cluster, done. A WAF
+# exception's *Not working* is judged from when a deploy carried it (the web's
+# `deploys_carrying`), and with both pruned an exception that does not work was
+# shown as covering its finding, here and in Needs attention (review 26-10-24,
+# 05-02). The same conditions as there: a publish done or whose publish half
+# was, a deploy done, Publish & deploy counted as both.
+#
+waf_evidence() {
+    cat <<SQL
+    select id from (
+        select distinct on (cluster) id from job
+         where operation = 'changes_publish'
+           and (state = 'done' or result->'publish'->>'outcome' = 'done')
+         order by cluster, finished_at desc nulls last, id desc
+    ) as published
+    union
+    select id from (
+        select distinct on (cluster) id from job
+         where state = 'done'
+           and (operation = 'deploy'
+                or (operation = 'changes_publish' and payload->>'deploy' = 'true'))
+         order by cluster, finished_at desc nulls last, id desc
+    ) as deployed
+SQL
+}
+
 where_removable() {
     local applies="and coalesce(payload->>'remove', 'false') <> 'true'"
     cat <<SQL
@@ -958,6 +985,7 @@ where_removable() {
     and id not in ($(profile_evidence ndes_profile_apply ndes_provider_profile ""))
     and id not in ($(profile_evidence ndes_profile_apply ndes_provider_profile "$applies"))
     and id not in ($(draft_evidence))
+    and id not in ($(waf_evidence))
 SQL
 }
 

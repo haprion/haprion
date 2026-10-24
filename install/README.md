@@ -3,10 +3,11 @@
 Five steps. Three run on the management host, one on each node, and the last one
 checks your work.
 
-Everything that can be scripted is scripted. A node needs one package: it prints
+Everything that can be scripted is scripted. A node needs one package. It prints
 one line, its enrollment block, which you paste into the interface (the
-Dashboard's *Set up your first cluster*, *Create cluster* or *Add node*). The management host then joins the node once,
-with a key that only works for that, and prepares it itself.
+Dashboard's *Set up your first cluster*, *Create cluster*, or *Add a node* on a
+cluster's page). The management host then joins the node once, with a key that
+works only for that, and prepares it itself.
 
 [`../docs/user-manual.md`](../docs/user-manual.md) explains *why* each step
 looks the way it does. This file is what you follow.
@@ -98,24 +99,32 @@ its own forced command, and the management host's host key into root's
 
 ## Step 4 — each node
 
-The node package is built from the same commit on the management host:
+With Haprion's repository added on the node
+([docs/install.md](../docs/install.md#the-packages)):
 
 ```bash
-tools/node-package.py build --source . --output-dir /path/to/protected/staging
+sudo apt install haprion-node
 ```
 
-Copy it to the node and install it:
+Without the repository, install the node package together with the two packages
+it depends on, from the same release or build:
 
 ```bash
-sudo apt install ./haprion-node_<version>_all.deb
+sudo apt install ./haprion-node_<version>_all.deb ./haprion-coraza-spoa_<version>_amd64.deb \
+    ./haprion-archive-keyring_<version>_all.deb
 ```
+
+To build the node package yourself, from the same commit as the management host:
+`tools/node-package.py build --source . --output-dir /path/to/protected/staging`.
 
 The package makes the node's accounts and the keys it fetches with, and prints
 its enrollment block - one line starting with `haprion-node-v2:` - and its host
 key's fingerprint. Paste the block into the Dashboard's *Set up your first
-cluster* (or *Settings* → *Create cluster*) for the first node of a cluster, or the cluster's *Add node* for the next; on the
-command line it is `haprion-cluster add` or `haprion-node add` with the block on
-stdin. `sudo haprion-node-key` prints a block again.
+cluster* (or *Settings* → *Create cluster*) for the first node of a cluster, or
+into *Add a node* on the cluster's page for the next, and press *Read block*. On
+the command line it is `haprion-cluster add` or `haprion-node add` with the block
+on stdin. `sudo haprion-node-key` makes a new block; each run makes a new one-time
+key, so an earlier block stops working.
 
 The block holds a one-time key, valid for 24 hours. The management host connects
 with it once, as `_haprion-join`, whose only command is `haprion-node-join`: it

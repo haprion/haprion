@@ -13,7 +13,7 @@ none - every step then uses the defaults in `../defaults.sh`. `haprion-setup`
 one directory up runs the whole sequence in order:
 
 ```bash
-sudo apt install ./haprion-ui_<version>_amd64.deb
+sudo apt install haprion-ui
 cd /usr/share/haprion-ui/install/platform
 sudo ./01-platform-prepare /path/to/answers.env
 sudo ./02-platform-database /path/to/answers.env
@@ -37,11 +37,17 @@ nowhere to go.
 sudo ./11-platform-retention /path/to/answers.env
 ```
 
-Steps 13, 14 and 15 are optional and come after it:
+Steps 13 and 14 are optional and come after it:
 
 ```bash
 sudo ./13-platform-traffic-collector /path/to/answers.env
-sudo UV_BIN=/path/to/uv ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui
+sudo ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui
+```
+
+Step 15 is optional too, but runs **before** the manager's step 2, as `haprion-setup` runs it, so that
+the runtime policy step 2 writes can name its keys:
+
+```bash
 sudo ./15-platform-dns-keys /path/to/answers.env /usr/share/haprion-ui
 ```
 
@@ -56,10 +62,11 @@ The nodes are the cluster file's; with no cluster yet the collector starts with
 none, and adding a node adds it - a node joined from the interface is given the
 collector's key and turns its own log route on.
 
-Step 14 builds the locked certbot environment - certbot and every DNS plugin
-the web interface offers - under `/opt/haprion-certbot`, proves it with the
-profile-aware dry-run renewal wrapper, and moves renewal onto it. Rerun with a newer lock to upgrade;
-the previous release is restored if the dry run fails.
+Step 14 makes the certbot environment the `haprion-certbot` package carries current under
+`/opt/haprion-certbot` – certbot and every DNS plugin the web interface offers – or, with
+`UV_BIN=/path/to/uv`, builds one from the lock. It installs the deploy hook that publishes a renewed
+certificate (`/etc/letsencrypt/renewal-hooks/deploy/50-haprion`), proves the environment with a dry-run
+renewal, and moves renewal onto its own timer. If the dry run fails, the previous environment is put back.
 
 Step 15 makes the key pair that seals DNS provider credentials between the web
 interface and the root helper: private key under `/etc/haprion/ui-secrets/`,
@@ -85,7 +92,7 @@ its `postinst` runs the coordinated update command with the release it carries,
 and an operator can run the same command again by hand:
 
 ```bash
-sudo apt install ./haprion-ui_<version>_amd64.deb
+sudo apt upgrade
 sudo ./update-platform-release <release-id>
 ```
 
@@ -114,7 +121,7 @@ database privileges, activates, and checks the real processes. A failure after
 the symlink moves invokes the installed rollback command and proves the restored
 installation before it reports failure. After a proved update it prunes old
 releases: ten stay
-(`RELEASES_KEPT` in the answers file overrides, minimum two), always including
+(`RELEASES_KEPT` in the environment overrides, minimum two), always including
 the release just activated and the one it replaced.
 
 ## Step 1 — the filesystem
@@ -184,9 +191,8 @@ lock, and run by the release's own interpreter. The services' venv has no
 schema tool on its path; the role a service connects as is what forbids DDL in
 any case.
 
-**Grants live in the migration that creates the table**, named against three
-contract roles — `app_web`, `app_worker`, `app_poller` — and never against a
-service account. Step 2 connects whatever the accounts are actually called to
+**Grants live in the migrations**, named against four contract roles – `app_web`, `app_worker`,
+`app_poller` and `app_collector` – and never against a service account. Step 2 connects whatever the accounts are actually called to
 those roles. It is also the better design: a second worker later is a
 membership, not a migration.
 
@@ -305,24 +311,23 @@ restart or deploy anything on its own.
 
 ## Step 11 — retention
 
-`./11-platform-retention` installs `haprion-retention`, a daily timer and an hourly one that keeps
-the traffic and WAF partitions within a quarter of the database's volume (`haprion-retention
-budget`), and runs `haprion-retention horizon` once, which creates the daily partitions ahead and
-removes nothing.
+`./11-platform-retention` installs a daily timer and an hourly one for `haprion-retention` (the command
+comes with the `haprion-ui` package). The hourly one keeps the traffic and WAF partitions within a quarter
+of the database's volume (`haprion-retention budget`). The step runs `haprion-retention horizon` once,
+which creates the daily partitions ahead and removes nothing.
 
-**A root command, because no application role holds `delete` on any table and
-none is going to.** The audit trail, the login attempts and the job queue follow
-the same rule: a compromised web or worker process must not be able to remove
-the record of what it did. The migration role owns the tables and may delete
+**A root command, because no application role may delete from the tables that are the record** – the
+audit trail, the login attempts, the job queue, metrics and traffic. A compromised web or worker process
+must not be able to remove the record of what it did. The migration role owns the tables and may delete
 from them, and the ident map lets only root be that role for this database — a
 boundary the step verifies rather than describes.
 
 It removes finished jobs older than seven days. Never a `pending` or `running`
-one, however old, because those are the states the single-active-job index rests
-on; and never the twenty most recent, because a quiet fortnight would otherwise
-empty the jobs page and read as lost history rather than as a quiet fortnight.
-The audit trail is kept for two years: the job rows are the queue's working
-copy, the audit trail the record of what happened.
+one, however old, because the single-active-job rule rests on those; never the
+twenty most recent, because a quiet fortnight would otherwise empty the jobs page;
+and never a job that still shows a profile's or a draft's state. The audit trail
+is kept for two years and the nodes' own events for 90 days: the job rows are the
+queue's working copy, the audit trail the record of what happened.
 
 It also creates metric partitions, writes the hourly pool rollup and only then
 prunes raw metric partitions. Revision `0021` records the continuously completed
@@ -344,10 +349,11 @@ partitioned; the timer deletes their hours before the same boundary.
 
 ## Step 4 — the service
 
-`./04-platform-service` installs the unit from the example, starts it, and then
-**fetches `/healthz`**. The unit runs `/usr/sbin/haprion-web`, which asks the
-current release for its package and reads the port from `ui.toml`, so the unit
-is the same file for every release; `update-platform-release` installs it again
+`./04-platform-service` installs the unit and its socket, `haprion-web.socket`
+(`/run/haprion-web.sock`), starts them, and then **fetches `/healthz`**. The unit
+runs `/usr/sbin/haprion-web`, which runs the current release on the socket systemd
+hands it, so the unit is the same file for every release (the port in `ui.toml` is
+used only by a unit started without its socket); `update-platform-release` installs it again
 with the platform's other files, before it checks a release. systemd reports a unit as active as
 soon as the process is up, which is before it has reached its database; "up but
 unable to answer" is exactly the state worth catching during an installation.
@@ -408,8 +414,9 @@ sudo haprion-tls install --cert <file> --key <file>
 ```
 
 It verifies that certificate and key belong together by comparing public halves,
-refuses an expired certificate, installs root-owned `0600`, tests the config, and
-restores the previous pair if nginx refuses the new one.
+refuses an expired certificate, installs them root-owned (the certificate `0644`,
+the key `0600`), tests the config, and restores the previous pair if nginx refuses
+the new one.
 
 From the interface, **Settings → Interface certificate** issues or imports a
 certificate marked `interface: true` in the registry, and the TLS helper installs
@@ -417,22 +424,19 @@ it over its socket; the web identity names the entry, never the key.
 
 ## Step 7 — the worker and the poller
 
-`./07-platform-services` installs both as their own accounts, plus the two
-exact read-only sudoers rules the poller needs. The rules are validated with `visudo -cqf` in a
+`./07-platform-services` installs both as their own accounts, with their sudo rules – the poller's
+four read-only helpers and the worker's – and the helper sockets the services reach root through. The rules are validated with `visudo -cqf` in a
 temporary file **before** it is installed: a sudoers file that does not parse
 takes sudo down for everyone on the machine, including whoever would fix it.
 
-The step then waits for the poller to actually write status and inventory rows rather than
-treating an active unit as proof — a service that has started is not a service
-that has done its job once. It finishes by asking, as the real accounts, that
-the web and worker identities cannot run either metadata helper, that the
-poller cannot write a job, and that the web role cannot write either cache.
+The step then waits for the poller to actually write every reading it makes – or, with no cluster yet,
+an empty cluster list – rather than treating an active unit as proof: a service that has started is not
+a service that has done its job once. It finishes by asking, as the real accounts, that the web and
+worker cannot run the poller's helpers, that the web and poller cannot run the worker's certificate and
+profile helpers, that the poller cannot write a job, and that the web cannot write the poller's tables.
 
 With management writes off the worker claims nothing. That is the state a
 rollback returns to, so it has to be a state that runs.
-
-Set `clusters` in `ui.toml` before running this; with an empty list the poller
-has nothing to do and says so instead of starting.
 
 The step also installs the web's way to a name lookup:
 `haprion-resolve-helper.socket` (`/run/haprion/resolve.sock`, group
@@ -450,8 +454,9 @@ read-only sandbox and no network. It gives out the key of a registry entry marke
 
 ## Step 6 — backups that have been read back
 
-`./06-platform-backup` installs `haprion-backup`, a daily dump timer and a
-weekly restore check, then runs both immediately. A dump nobody has restored is
+`./06-platform-backup` installs a daily dump timer and a weekly restore check for
+`haprion-backup` (the command comes with the `haprion-ui` package), then runs both
+immediately. A dump nobody has restored is
 a belief rather than a backup, and installation is the cheap moment to find that
 out.
 
@@ -515,10 +520,10 @@ management host already reaches every node over SSH for configuration, status
 and certificates, so this adds one key on a path the product already requires.
 
 **The collector is not one of the three application accounts and joins no filesystem group.**
-Its database role can only insert traffic rows; it has no sudo rule and cannot read `ui-secrets/`, `ui.toml`, the dumps or
-any other identity's key. What it owns is one SSH key whose far end is a forced
-command that can do nothing but return one validated day of one node's traffic
-log. The step proves that boundary rather than describing it, with traversal
+Its database role can only insert traffic rows and WAF matches; it has no sudo rule and cannot read
+`ui-secrets/`, `ui.toml`, the dumps or any other identity's key. What it owns is one SSH key whose far
+end is a forced command that can do nothing but return one node's traffic log for a validated day, or
+the WAF engine's journal lines after a cursor. The step proves that boundary rather than describing it, with traversal
 rather than listing — `ls` fails whether or not an account can reach through a
 directory, which is exactly how an earlier privilege slip went unnoticed.
 
@@ -547,7 +552,7 @@ file the interface can read.
 OpenID Connect provider (schema `0041`). The web service reaches localhost and
 nothing else, and keeps doing so: every request to the provider goes through
 `/run/haprion/oidc.sock` to `haprion-oidc-helper`, which runs as
-`OIDC_USER` — an account of its own, not root, in no group, with no sudo rule.
+`_haprion-oidc` – an account of its own, not root, with no sudo rule.
 
 The step makes the key pair the web seals the client secret against: the
 private key in `/etc/haprion/oidc/` (the helper's account, 0600, in a
@@ -557,9 +562,8 @@ installs the socket (group `_haprion-web`) and the per-request service, and adds
 `[oidc] public_key` to `ui.toml` when the file names none - as step 15 does for the
 DNS profiles - and restarts the web service to read it.
 
-The account must exist first: add `oidc: <name>` under `roles` in the identity
-policy, render the sysusers fragment and apply it. The CLI release must carry
-`haprion-oidc-helper`.
+The account is fixed and made by `01-manager-prepare`, which applies the sysusers
+fragment. The CLI release must carry `haprion-oidc-helper`.
 
 ### Optional SCEP client bundle
 
@@ -568,5 +572,5 @@ bundle and its distribution runtime libraries as root. Build the bundle with
 `tools/build-scep-client.py`; retain the matching package, complete source, license
 and build instructions. The installer refuses a different OS release or architecture
 and activates only three client programs, without installing a Certmonger service.
-See user-manual.md, 'Preparing Microsoft AD CS / NDES for CSR enrollment', for root policy and provider configuration. This step is
-implemented in source; live installation and enrollment remain to be verified.
+See user-manual.md, *Preparing Microsoft AD CS / NDES for CSR enrollment*, for the policy and the provider's
+configuration.

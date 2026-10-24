@@ -481,16 +481,31 @@ class RestoreRouteTestCase(DeleteRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.runs: list[db.Job] = []
+        by_key: dict[Any, db.Job] = {}
 
         def queue(_c: object, **fields: Any) -> db.Job:
-            # As the database does: the row comes back with what was stored.
+            # As the database does: the row comes back with what was stored, a
+            # repeated key with the same payload is the same row, and other
+            # bytes under it meet the pending row the first one left.
+            earlier = by_key.get(fields["idempotency_key"])
+            if earlier is not None:
+                if earlier.payload == fields["payload"]:
+                    return earlier
+                raise db.ClusterBusy(fields["cluster"])
             self.queued.append(fields)
-            return queued(
+            row = queued(
                 operation=fields["operation"], cluster=fields["cluster"], payload=fields["payload"]
             )
+            by_key[fields["idempotency_key"]] = row
+            return row
+
+        def for_key(_c: object, key: Any, *, operation: str, cluster: str | None) -> Any:
+            row = by_key.get(key)
+            return row if row and (row.operation, row.cluster) == (operation, cluster) else None
 
         for patch in (
             mock.patch("haprion_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.job_for_key", side_effect=for_key),
             mock.patch("haprion_ui.db.cluster_backups", return_value=[reading()]),
             mock.patch("haprion_ui.db.restore_jobs", side_effect=lambda _c, _run: list(self.runs)),
         ):
@@ -594,6 +609,19 @@ class StartingARun(RestoreRouteTestCase):
         self.assertIn("The target is an IPv4 address", response.text)
         self.assertIn('value="lb-01.example.net"', response.text)
         self.assertEqual(self.queued, [])
+
+    def test_a_second_click_goes_to_the_run_the_first_one_queued(self) -> None:
+        """Review 26-10-24, 02-06: the second click drew another run and was told busy."""
+
+        client = self.writing_client()
+        key = str(uuid4())
+        first = self.start(client, idempotency_key=key)
+        second = self.start(client, idempotency_key=key)
+
+        self.assertEqual(len(self.queued), 1)
+        self.assertEqual(second.status_code, 303)
+        self.assertEqual(second.headers["location"], first.headers["location"])
+        self.assertEqual(self.audit.count("queue_job"), 1)
 
     def test_a_busy_cluster_is_said_on_the_form(self) -> None:
         with mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy()):

@@ -744,26 +744,34 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.CertificateBusy:
+            except (db.CertificateBusy, db.RequestConflict) as refused:
                 connection.rollback()
-                busy = (
-                    "A certificate job is already running. Wait for it to finish, then try again."
+                #
+                # The file is sealed again on every submission, so a second
+                # click is other bytes under the same key (review 26-10-24,
+                # 02-06); its answer is the job the first click queued.
+                #
+                if db.job_for_key(connection, key, operation="cert_import", cluster=None) is None:
+                    if isinstance(refused, db.RequestConflict):
+                        return PlainTextResponse("That request key asked for something else", 409)
+                    busy = "A certificate job is already running. Wait for it to finish, then try again."
+                    if form is not None:
+                        return _certificate_import_page(request, config, form, problem=busy)
+                    return PlainTextResponse(busy, status_code=409)
+            else:
+                db.record_audit_event(
+                    connection,
+                    actor=session.username,
+                    action="queue_job",
+                    cluster=None,
+                    request_id=job.request_id,
+                    detail={
+                        "operation": "cert_import",
+                        "job": job.id,
+                        "certificate": payload["id"],
+                    },
                 )
-                if form is not None:
-                    return _certificate_import_page(request, config, form, problem=busy)
-                return PlainTextResponse(busy, status_code=409)
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
-            db.record_audit_event(
-                connection,
-                actor=session.username,
-                action="queue_job",
-                cluster=None,
-                request_id=job.request_id,
-                detail={"operation": "cert_import", "job": job.id, "certificate": payload["id"]},
-            )
-            connection.commit()
+                connection.commit()
         if after:
             return RedirectResponse(after, status_code=303)
         if open_row:

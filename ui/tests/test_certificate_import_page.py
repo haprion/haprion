@@ -60,11 +60,23 @@ class ImportPageTestCase(LoginTestCase):
             self.queued.append(fields)
             return queued(operation="cert_import", cluster=None)
 
+        def for_key(_c: object, key: Any, *, operation: str, cluster: str | None) -> Any:
+            # As the database answers: a job this form's key already queued.
+            return next(
+                (
+                    queued(operation=operation, cluster=cluster)
+                    for fields in self.queued
+                    if fields["idempotency_key"] == key and fields["operation"] == operation
+                ),
+                None,
+            )
+
         def audit(_c: object, **fields: Any) -> None:
             self.audited.append(fields)
 
         for patch in (
             mock.patch("haprion_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.job_for_key", side_effect=for_key),
             mock.patch("haprion_ui.db.record_audit_event", side_effect=audit),
             mock.patch("haprion_ui.db.dns_profiles", return_value=[]),
             mock.patch("haprion_ui.db.ndes_profiles", return_value=[]),
@@ -248,6 +260,18 @@ class Submitting(ImportPageTestCase):
         self.assertEqual(self.post(client, idempotency_key="").status_code, 400)
         del token
         self.assertEqual(self.queued, [])
+
+    def test_a_second_click_lands_where_the_first_one_did(self) -> None:
+        """Review 26-10-24, 02-06: the file sealed again met its own first job as busy."""
+
+        client = self.writing_client()
+        first = self.post(client)
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):
+            second = self.post(client)
+
+        self.assertEqual(second.status_code, 303)
+        self.assertEqual(second.headers["location"], first.headers["location"])
+        self.assertEqual(len(self.queued), 1)
 
     def test_a_busy_queue_is_said_on_the_page(self) -> None:
         with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):

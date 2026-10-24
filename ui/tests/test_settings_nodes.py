@@ -27,7 +27,7 @@ from haprion.node_enrollment import Enrollment
 from haprion_ui import auth, cluster_nodes, db, demo, first_cluster
 from haprion_ui.db import ManagerCertificates
 from tests.test_login import configuration
-from tests.test_queue_route import KEY, QueueRouteTestCase
+from tests.test_queue_route import KEY, QueueRouteTestCase, queued
 
 NOW = datetime(2026, 9, 30, 9, 0, tzinfo=UTC)
 
@@ -223,6 +223,26 @@ class AddingANode(NodesPage):
                 self.assertIn('href="/first-cluster/haprion-node_all.deb" download', text)
                 self.assertRegex(text, r">Read blocks?</button>")
                 self.assertNotIn(">Add node</button>", text)
+
+    def test_a_second_click_lands_where_the_first_one_did(self) -> None:
+        """Review 26-10-24, 02-06: a join key sealed again met its own first job as busy."""
+
+        fields = {"block": block(), "host": "lb-edge-c.example.com", "confirm": "edge-c"}
+        client = self.client_for()
+        first = self.post_to(client, "/settings/nodes/edge-demo/add", **fields)
+        (earlier,) = self.queued
+        with (
+            mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy("edge-demo")),
+            mock.patch("haprion_ui.db.job_for_key", return_value=queued()) as asked,
+        ):
+            second = self.post_to(client, "/settings/nodes/edge-demo/add", **fields)
+
+        self.assertEqual(second.status_code, 303)
+        self.assertEqual(second.headers["location"], first.headers["location"])
+        self.assertEqual(asked.call_args.args[1], earlier["idempotency_key"])
+        self.assertEqual(
+            asked.call_args.kwargs, {"operation": "cluster_node", "cluster": "edge-demo"}
+        )
 
     def test_the_name_typed_back_queues_the_block_and_the_host(self) -> None:
         response = self.post_to(

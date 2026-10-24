@@ -226,27 +226,35 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.ClusterBusy:
+            except (db.ClusterBusy, db.RequestConflict) as refused:
                 connection.rollback()
-                return again(
-                    f"A job is already running for {cluster}. Wait for it to finish, then ask again."
+                #
+                # A run's ID is drawn on every submission, so a second click is
+                # other bytes under the same key (review 26-10-24, 02-06); its
+                # answer is the run the first click queued.
+                #
+                earlier = db.job_for_key(connection, key, operation=operation, cluster=cluster)
+                if earlier is None:
+                    if isinstance(refused, db.RequestConflict):
+                        return PlainTextResponse("That request key asked for something else", 409)
+                    return again(
+                        f"A job is already running for {cluster}. Wait for it to finish, then ask again."
+                    )
+                job = earlier
+            else:
+                #
+                # The run, node and archive, never the fingerprint or the pasted
+                # line: the audit log says who restored what, not how it was reached.
+                #
+                db.record_audit_event(
+                    connection,
+                    actor=session.username,
+                    action="queue_job",
+                    cluster=cluster,
+                    request_id=job.request_id,
+                    detail={"operation": operation, "job": job.id, "run": payload["run"]},
                 )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
-            #
-            # The run, node and archive, never the fingerprint or the pasted
-            # line: the audit log says who restored what, not how it was reached.
-            #
-            db.record_audit_event(
-                connection,
-                actor=session.username,
-                action="queue_job",
-                cluster=cluster,
-                request_id=job.request_id,
-                detail={"operation": operation, "job": job.id, "run": payload["run"]},
-            )
-            connection.commit()
+                connection.commit()
         #
         # To the run as the queue stored it, and only when it is still a run
         # ID: the row the insert returned, not the value this request carried.

@@ -915,35 +915,40 @@ def _queue_node_job(
                 payload=payload,
                 idempotency_key=key,
             )
-        except db.ClusterBusy:
+        except (db.ClusterBusy, db.RequestConflict) as refused:
             connection.rollback()
-            return again(
-                "A job is already running for this cluster. Try again when it has finished."
+            #
+            # A join key is sealed again on every submission, so a second click
+            # is other bytes under the same key (review 26-10-24, 02-06).
+            #
+            if db.job_for_key(connection, key, operation=operation, cluster=cluster) is None:
+                if isinstance(refused, db.RequestConflict):
+                    return PlainTextResponse("That request key asked for something else", 409)
+                return again(
+                    "A job is already running for this cluster. Try again when it has finished."
+                )
+        else:
+            #
+            # The audit row names the node and the action, never the block: the
+            # block holds public keys, and the audit log is not where a reader
+            # looks for one.
+            #
+            detail: dict[str, Any] = {
+                "operation": operation,
+                "job": job.id,
+                "action": payload["action"],
+            }
+            if node is not None:
+                detail["node"] = node
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=cluster,
+                request_id=job.request_id,
+                detail=detail,
             )
-        except db.RequestConflict:
-            connection.rollback()
-            return PlainTextResponse("That request key asked for something else", 409)
-        #
-        # The audit row names the node and the action, never the block: the
-        # block holds public keys, and the audit log is not where a reader
-        # looks for one.
-        #
-        detail: dict[str, Any] = {
-            "operation": operation,
-            "job": job.id,
-            "action": payload["action"],
-        }
-        if node is not None:
-            detail["node"] = node
-        db.record_audit_event(
-            connection,
-            actor=gate.username,
-            action="queue_job",
-            cluster=cluster,
-            request_id=job.request_id,
-            detail=detail,
-        )
-        connection.commit()
+            connection.commit()
     if back is not None:
         return RedirectResponse(back, status_code=303)
     #

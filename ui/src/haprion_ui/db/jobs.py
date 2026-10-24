@@ -406,6 +406,33 @@ def queue_job(
     return existing
 
 
+def job_for_key(
+    connection: Connection[Any], key: UUID, *, operation: str, cluster: str | None
+) -> Job | None:
+    """The job queued under this form's key for this operation and cluster, whatever it carried.
+
+    For the forms whose payload is drawn afresh on every submission - a restore
+    run's ID, a join key sealed again - and only after `queue_job` refused: a
+    second click carries other bytes under the same key, which the queue reads
+    as busy or as a collision although the first click queued the job (review
+    26-10-24, 02-06). The key was drawn into one rendered form, so a job under
+    it is the answer to that form.
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts "
+            "  from job "
+            " where idempotency_key = %(key)s "
+            "   and operation = %(operation)s "
+            "   and cluster is not distinct from %(cluster)s",
+            {"key": str(key), "operation": operation, "cluster": cluster},
+        )
+        return cursor.fetchone()
+
+
 def claim_job(
     connection: Connection[Any], *, worker_id: str, lease_seconds: int
 ) -> ClaimedJob | None:

@@ -3539,6 +3539,38 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
 
         self.assertEqual(second.id, first.id)
 
+    def test_a_drawn_payload_s_second_click_finds_the_job_its_key_queued(self) -> None:
+        """Review 26-10-24, 02-06: other bytes under the key meet the first job as busy."""
+
+        key = uuid4()
+        first = db.queue_job(
+            self.connection,
+            operation="cert_import",
+            cluster=None,
+            payload={"id": "example.com", "box": "first"},
+            idempotency_key=key,
+        )
+        with self.assertRaises((db.CertificateBusy, db.RequestConflict)):
+            db.queue_job(
+                self.connection,
+                operation="cert_import",
+                cluster=None,
+                payload={"id": "example.com", "box": "second"},
+                idempotency_key=key,
+            )
+
+        found = db.job_for_key(self.connection, key, operation="cert_import", cluster=None)
+        self.assertEqual(found.id if found else None, first.id)
+        self.assertIsNone(
+            db.job_for_key(self.connection, key, operation="cert_publish", cluster=None)
+        )
+        self.assertIsNone(
+            db.job_for_key(self.connection, key, operation="cert_import", cluster="alpha")
+        )
+        self.assertIsNone(
+            db.job_for_key(self.connection, uuid4(), operation="cert_import", cluster=None)
+        )
+
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):

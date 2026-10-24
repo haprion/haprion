@@ -276,7 +276,15 @@ def build_router(config: Config) -> APIRouter:
             )
         revision = existing.revision + 1 if existing else 1
         with request.app.state.pool.connection() as connection:
+            #
+            # The secret is sealed again and the row written before the job,
+            # so a second click under the same key met its own first one as
+            # "already exists" (review 26-10-24, 02-06).
+            #
+            earlier = db.job_for_key(connection, key, operation="dns_profile_apply", cluster=None)
             taken = [profile.id for profile in db.dns_profiles(connection)]
+        if earlier is not None:
+            return RedirectResponse("/dns-profiles", status_code=303)
         try:
             sealed = dns_profile_form.seal_submission(
                 form, public_key, revision=revision, taken=taken
@@ -568,7 +576,11 @@ def build_router(config: Config) -> APIRouter:
             )
         revision = existing.revision + 1 if existing else 1
         with request.app.state.pool.connection() as connection:
+            # Sealed again on every submission, as the DNS form says.
+            earlier = db.job_for_key(connection, key, operation="ndes_profile_apply", cluster=None)
             taken = [profile.id for profile in db.ndes_profiles(connection)]
+        if earlier is not None:
+            return RedirectResponse("/ndes-profiles", status_code=303)
         try:
             sealed = ndes_profile_form.seal_submission(
                 form, public_key, revision=revision, taken=taken

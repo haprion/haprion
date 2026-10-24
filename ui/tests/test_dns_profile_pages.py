@@ -197,6 +197,17 @@ class ProfileRouteTestCase(LoginTestCase):
             self.queued.append(fields)
             return queued(operation="dns_profile_apply", cluster=None)
 
+        def for_key(_c: object, key: Any, *, operation: str, cluster: str | None) -> Any:
+            # As the database answers: a job this form's key already queued.
+            return next(
+                (
+                    queued(operation=operation, cluster=cluster)
+                    for fields in self.queued
+                    if fields["idempotency_key"] == key and fields["operation"] == operation
+                ),
+                None,
+            )
+
         def create(_c: object, **fields: Any) -> db.DnsProfile:
             self.created.append(fields)
             return profile_row(id=fields["profile_id"], key_id=fields["key_id"])
@@ -207,6 +218,7 @@ class ProfileRouteTestCase(LoginTestCase):
 
         for patch in (
             mock.patch("haprion_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.job_for_key", side_effect=for_key),
             mock.patch("haprion_ui.db.create_dns_profile", side_effect=create),
             mock.patch("haprion_ui.db.replace_dns_profile", side_effect=replace_profile),
             mock.patch("haprion_ui.db.dns_profiles", side_effect=lambda _c: list(self.rows)),
@@ -359,6 +371,17 @@ class ThePages(ProfileRouteTestCase):
 
 
 class SavingAProfile(ProfileRouteTestCase):
+    def test_a_second_click_lands_where_the_first_one_did(self) -> None:
+        """Review 26-10-24, 02-06: the second click was told the profile already exists."""
+
+        client = self.writing_client()
+        self.post(client)
+        response = self.post(client)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/dns-profiles")
+        self.assertEqual((len(self.created), len(self.queued)), (1, 1))
+
     def test_a_good_submission_stores_a_box_and_queues_one_apply_job(self) -> None:
         response = self.post(self.writing_client())
 

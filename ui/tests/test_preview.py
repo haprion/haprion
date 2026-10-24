@@ -62,10 +62,8 @@ class TheFormBecomesTheObjectTheEngineReads(unittest.TestCase):
         self.assertIn("bind 192.0.2.20:443 ssl crt", frontends)
         self.assertIn("alpn h2,http/1.1", frontends)
         self.assertIn("redirect scheme https code 301", frontends)
-        self.assertIn(
-            'Strict-Transport-Security "max-age=31536000; includeSubDomains"',
-            result.files["1001-app.cfg"],
-        )
+        self.assertIn('str("max-age=31536000; includeSubDomains")', frontends)
+        self.assertIn("http-after-response set-header Strict-Transport-Security", frontends)
 
     def test_a_refusal_is_the_engine_s_words_not_ours(self) -> None:
         """The page must not have its own opinion about what is valid.

@@ -239,9 +239,9 @@ the certificate does not cover.
   for in the TLS handshake (SNI), so the site can still share its VIP with sites that use other versions.
 - *Redirect plain HTTP to HTTPS (301)* also puts the site on the VIP's http port. Every plain request there
   is answered with a 301 to the same address over https.
-- *Send HSTS* adds the `Strict-Transport-Security` header to every answer that comes from the site's
-  servers. Answers that HAProxy makes itself - a refusal, a 429 from the rate limit, the maintenance page,
-  a redirect, a 503 when no server answers - do not carry it. *HSTS lifetime, seconds* is one year
+- *Send HSTS* adds the `Strict-Transport-Security` header to every answer for the site's names over
+  https - also the answers HAProxy makes itself: a refusal, a 429 from a rate limit, the maintenance page,
+  a redirect, a 503 when no server answers. *HSTS lifetime, seconds* is one year
   (31536000) unless changed, and at most two years. *…including subdomains* extends it to every name under
   the site's.
 

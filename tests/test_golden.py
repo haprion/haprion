@@ -576,23 +576,30 @@ class HttpsIsRefusedWhereItCannotBeHonoured(unittest.TestCase):
         self.assertIn("redirect scheme https code 301", frontends)
         self.assertIn("bind 192.0.2.20:443 ssl crt", frontends)
 
-    def test_the_strict_transport_header_is_written_in_the_backend(self) -> None:
-        """HAProxy refuses to make it conditional anywhere else.
+    def test_the_strict_transport_header_is_set_on_every_answer_for_the_names(self) -> None:
+        """Not on the server's answer only (review 2026-10-24).
 
-        An `http-response` rule in a frontend cannot read the request's Host
-        header - HAProxy warns that such an ACL "will never match" - so the
-        header goes in the backend, which belongs to one object and needs no
-        condition at all.
+        A refusal, a redirect or the maintenance page is made by HAProxy and
+        never passes the backend's `http-response` rules. At response time a
+        frontend cannot read the Host header, so the request phase records the
+        value and one `http-after-response` rule writes it - before the
+        listener's own refusals, so those carry it too.
         """
 
         files = _generate([load_proxy("app", HTTPS)])
+        frontends = files["1000-frontends.cfg"]
 
-        self.assertNotIn("Strict-Transport-Security", files["1000-frontends.cfg"])
-        self.assertIn(
-            'http-response set-header Strict-Transport-Security "max-age=31536000; '
-            'includeSubDomains"',
-            files["1001-app.cfg"],
+        self.assertNotIn("Strict-Transport-Security", files["1001-app.cfg"])
+        recorded = frontends.index(
+            'http-request set-var(txn.hsts) str("max-age=31536000; includeSubDomains") '
+            "if mgd-app-hsts"
         )
+        self.assertIn(
+            "http-after-response set-header Strict-Transport-Security %[var(txn.hsts)] "
+            "if { var(txn.hsts) -m found }",
+            frontends,
+        )
+        self.assertLess(recorded, frontends.rindex("    # app\n"))
 
 
 HTTPS = (Path(__file__).parent / "golden" / "https" / "app.yaml").read_bytes()

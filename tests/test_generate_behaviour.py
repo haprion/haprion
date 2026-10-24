@@ -681,6 +681,11 @@ listen:
 routes:
   - path: /
     backend: web
+  - path: /old
+    match: exact
+    redirect:
+      location: https://{hostname}/new
+      status: 301
 backends:
   web:
     balance: roundrobin
@@ -814,6 +819,28 @@ class TlsIsServedTheWayTheObjectAsksFor(unittest.TestCase):
 
             self.assertEqual(response.status, 200)
             self.assertEqual(response.read().decode(), "web /")
+            self.assertEqual(
+                response.getheader("Strict-Transport-Security"),
+                "max-age=31536000; includeSubDomains",
+            )
+        finally:
+            connection.close()
+
+    def test_an_answer_haproxy_makes_itself_promises_https_too(self) -> None:
+        # A redirect, a refusal or the maintenance page never passes a server,
+        # so a header set on the server's answer missed them (review 2026-10-24).
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
+        connection = HTTPSConnection("127.0.0.1", self.https_port, timeout=5, context=context)
+        try:
+            connection.putrequest("GET", "/old", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", HOSTNAME)
+            connection.endheaders()
+            response = connection.getresponse()
+
+            self.assertEqual(response.status, 301)
             self.assertEqual(
                 response.getheader("Strict-Transport-Security"),
                 "max-age=31536000; includeSubDomains",

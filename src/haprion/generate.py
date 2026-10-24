@@ -56,6 +56,7 @@ from haprion.proxy_model import (
     URL_PLACEHOLDER,
     Backend,
     Health,
+    Hsts,
     Proxy,
     Route,
     Server,
@@ -1706,6 +1707,7 @@ def _frontend_file(
                 else ()
             ),
             f"    timeout client {TIMEOUT_CLIENT}",
+            *_hsts_rules(members, protocol),
             *_forwarded_rules(protocol, trusted_proxies),
             *_not_logged_rules(not_logged_from),
             *_abuse_rules(abuse_protection, bool(trusted_proxies), peers),
@@ -2603,7 +2605,7 @@ def _maintenance_rule(proxy: Proxy, host: str) -> list[str]:
     ]
 
 
-def _host_acl(proxy: Proxy, taken: Sequence[str] = ()) -> list[str]:
+def _host_acl(proxy: Proxy, taken: Sequence[str] = (), kind: str = "host") -> list[str]:
     """Which requests belong to this object at all.
 
     The Host header is lowercased and its port removed before comparison. A
@@ -2616,9 +2618,12 @@ def _host_acl(proxy: Proxy, taken: Sequence[str] = ()) -> list[str]:
     objects', and this one's rules - access, blocking, the WAF - must not reach
     them. Written as a second ACL the condition excludes (`_host_condition`),
     so an exact name wins wherever it stands in the file.
+
+    `kind` names the ACLs, so the same names can be declared again where a
+    rule must come before the object's own block (`_hsts_rules`).
     """
 
-    acl = _acl_name(proxy.name, "host")
+    acl = _acl_name(proxy.name, kind)
     lines = [
         f"    acl {acl} req.hdr(host),field(1,:),lower -m reg {wildcard_expression(hostname)}"
         if is_wildcard(hostname)
@@ -2626,16 +2631,58 @@ def _host_acl(proxy: Proxy, taken: Sequence[str] = ()) -> list[str]:
         for hostname in proxy.hostnames
     ]
     if taken:
-        other = _acl_name(proxy.name, "host-taken")
+        other = _acl_name(proxy.name, f"{kind}-taken")
         lines += [f"    acl {other} req.hdr(host),field(1,:),lower -m str {name}" for name in taken]
     return lines
 
 
-def _host_condition(proxy: Proxy, taken: Sequence[str]) -> str:
+def _host_condition(proxy: Proxy, taken: Sequence[str], kind: str = "host") -> str:
     """The condition every rule of the object starts with: its names, less the taken ones."""
 
-    host = _acl_name(proxy.name, "host")
-    return f"{host} !{_acl_name(proxy.name, 'host-taken')}" if taken else host
+    host = _acl_name(proxy.name, kind)
+    return f"{host} !{_acl_name(proxy.name, f'{kind}-taken')}" if taken else host
+
+
+HSTS_VARIABLE = "txn.hsts"
+
+
+def _hsts_rules(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> list[str]:
+    """The Strict-Transport-Security header, on every answer for the object's names.
+
+    Not as a server-answer rule in the backend: an answer HAProxy makes itself
+    - a refusal, a rate limit, a redirect, the maintenance page, a 503 with no
+    server up - never passes the backend's `http-response` rules, so it went
+    without the header (measured on 3.4.7, review 2026-10-24). An
+    `http-after-response` rule reaches every answer, but at response time a
+    frontend cannot read the request's Host header any more. So the request
+    phase records the object's value in a transaction variable, and one rule
+    sets the header from it.
+
+    Written at the top of the frontend, before the listener's own refusals, so
+    those carry it too; HAProxy wants an ACL declared before a rule names it,
+    hence the object's names declared here under their own ACL names.
+    """
+
+    if protocol != "https":
+        return []
+    listening = [proxy for _, proxy, _ in members]
+    lines: list[str] = []
+    for _, proxy, role in members:
+        hsts = proxy.listen.hsts
+        if role != "serve" or hsts is None:
+            continue
+        taken = _taken_names(proxy, listening)
+        lines.extend(_host_acl(proxy, taken, "hsts"))
+        condition = _host_condition(proxy, taken, "hsts")
+        lines.append(
+            f'    http-request set-var({HSTS_VARIABLE}) str("{_hsts_value(hsts)}") if {condition}'
+        )
+    if lines:
+        lines.append(
+            f"    http-after-response set-header Strict-Transport-Security "
+            f"%[var({HSTS_VARIABLE})] if {{ var({HSTS_VARIABLE}) -m found }}"
+        )
+    return lines
 
 
 def _taken_names(proxy: Proxy, members: Sequence[Proxy]) -> tuple[str, ...]:
@@ -3246,24 +3293,11 @@ def _header_value(value: str) -> str:
     return value.replace("%", "%%")
 
 
-def _hsts_line(proxy: Proxy) -> list[str]:
-    """The Strict-Transport-Security header, written where it can be written.
-
-    In the backend, not the frontend, and that is HAProxy's rule rather than a
-    preference: an `http-response` rule in a frontend cannot read the request's
-    Host header, and HAProxy says so out loud - "will never match because it
-    only involves keywords that are incompatible with 'frontend http-response
-    header rule'". Measured on 3.4.4 on this machine. In a backend no condition
-    is needed at all, since a backend belongs to exactly one object.
-    """
-
-    hsts = proxy.listen.hsts
-    if hsts is None:
-        return []
+def _hsts_value(hsts: Hsts) -> str:
     value = f"max-age={hsts.max_age}"
     if hsts.include_subdomains:
         value += "; includeSubDomains"
-    return [f'    http-response set-header Strict-Transport-Security "{value}"']
+    return value
 
 
 def _server_address(server: Server, resolvers: str | None) -> str:
@@ -3348,7 +3382,6 @@ def _backend(
     #
     lines.extend(rate)
     lines.extend(rewrites)
-    lines.extend(_hsts_line(proxy))
     lines.extend(_header_lines(proxy))
     lines.extend(_unavailable_lines(proxy))
 

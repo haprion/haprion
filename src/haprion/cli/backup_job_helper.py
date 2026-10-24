@@ -88,7 +88,7 @@ def run_document(
             warnings=warnings if report.outcome == "partial" else (),
             error=error,
         ),
-        0 if report.outcome in {"done", "partial"} else 1,
+        exit_codes.for_outcome(report.outcome),
     )
 
 

@@ -8,11 +8,12 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haprion import backup_retention, backup_schedule_write, state_backup
+from haprion import backup_retention, backup_schedule_write, exit_codes, state_backup
 from haprion.backup_schedule import Schedule
 from haprion.cli import backup_job_helper
 from haprion.config import DeployIdentity
 from haprion.state_backup import BackupResult, NodeResult
+from tests.contract_schema import assert_contract
 
 
 class BackupJobHelperTests(unittest.TestCase):
@@ -64,6 +65,30 @@ class BackupJobHelperTests(unittest.TestCase):
         self.assertEqual(len(document["result"]["nodes"]), 2)
         # The count the schedule set for this cluster, not the code's default.
         self.assertEqual(run.call_args.kwargs["retention"], 45)
+
+    def test_a_run_one_node_failed_is_partial_in_a_valid_envelope(self) -> None:
+        """Review 26-10-24, 13-01: exit 0 beside `partial` crashed in the envelope."""
+
+        report = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            (
+                NodeResult("node-a", "done", "2026-09-21_05-00-00", 4096, None),
+                NodeResult("node-b", "failed", None, None, "ssh_failed"),
+            ),
+        )
+        with (
+            mock.patch.object(state_backup, "run", return_value=report),
+            mock.patch.object(backup_retention, "read", return_value=14),
+        ):
+            document, code = self.execute(
+                backup_job_helper.build_run_request("alpha", str(uuid4()))
+            )
+
+        self.assertEqual(code, exit_codes.PARTIAL)
+        assert_contract("haprion-backup-run", json.dumps(document))
+        self.assertEqual(document["outcome"], "partial")
+        self.assertEqual([warning["node"] for warning in document["warnings"]], ["node-b"])
 
     def test_schedule_change_uses_only_the_bounded_schedule_and_switch(self) -> None:
         request_id = str(uuid4())

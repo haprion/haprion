@@ -60,6 +60,58 @@ def answers_value(names: list[str], answers: str = "") -> dict[str, str]:
     return dict(line.split("=", 1) for line in printed.stdout.splitlines())
 
 
+class TheVerifyStepChecksTheKeys(unittest.TestCase):
+    """Review 26-10-24, 03-05: a missing key was a PASS, and a missing .pub said nothing."""
+
+    def verify(self, *, sudo: str, present: tuple[str, ...]) -> str:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "keys").mkdir()
+            for name in present:
+                (root / "keys" / name).write_text("")
+            stubs = root / "bin"
+            stubs.mkdir()
+            for name, body in (
+                ("sudo", sudo),
+                ("haprion-cluster-config", "exit 0"),
+                ("haprion-config-status", "exit 0"),
+                ("systemctl", "echo loaded"),
+            ):
+                (stubs / name).write_text(f"#!/bin/sh\n{body}\n")
+                (stubs / name).chmod(0o755)
+            answers = root / "answers.env"
+            answers.write_text(f"KEY_DIR={root}/keys\nCLUSTER_FILE={root}/clusters.yaml\n")
+            done = subprocess.run(  # fixed interpreter, the repository's own step
+                ["/bin/bash", str(INSTALL / "05-verify"), str(answers)],
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env={
+                    **os.environ,
+                    "PATH": f"{stubs}:{os.environ['PATH']}",
+                    "CLUSTER_CONFIG": str(stubs / "haprion-cluster-config"),
+                },
+            )
+        return done.stdout
+
+    def test_a_missing_key_or_pub_fails(self) -> None:
+        keys = ("id_ed25519_config_deploy", "id_ed25519_node_status", "id_ed25519_cert_deploy")
+        present = (*keys, *(f"{key}.pub" for key in keys), "id_ed25519_node_backup")
+        out = self.verify(sudo='[ "$1" = -n ] && shift; exec "$@"', present=present)
+
+        self.assertRegex(out, r"PASS  id_ed25519_config_deploy exists")
+        self.assertRegex(out, r"FAIL  id_ed25519_node_backup\.pub exists")
+        self.assertNotIn("not readable from here", out)
+
+    def test_without_sudo_the_keys_are_unchecked_not_passed(self) -> None:
+        out = self.verify(sudo="exit 1", present=())
+
+        self.assertIn("SKIP  the manager's keys", out)
+        self.assertNotRegex(out, r"PASS  id_ed25519")
+        self.assertRegex(out, r"SKIP=1 \(not checked\)")
+
+
 class TheAnswersFileIsOptional(unittest.TestCase):
     def test_without_one_the_defaults_are_the_answers(self) -> None:
         values = answers_value(["CONFIG_ROOT", "CLUSTERS", "CERTIFICATE_REGISTRY", "SERVER_NAME"])

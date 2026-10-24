@@ -23,9 +23,11 @@ require_vars CONFIG_ROOT PUBLISH_ROOT CLUSTER_FILE KEY_DIR \
 
 PASS=0
 FAIL=0
+SKIP=0
 
 pass() { printf '  PASS  %-52s %s\n' "$1" "${2:-}"; PASS=$((PASS + 1)); }
 bad()  { printf '  FAIL  %-52s %s\n' "$1" "${2:-}"; FAIL=$((FAIL + 1)); }
+skip() { printf '  SKIP  %-52s %s\n' "$1" "${2:-}"; SKIP=$((SKIP + 1)); }
 check() { if [[ "$1" == "yes" ]]; then pass "$2" "${3:-}"; else bad "$2" "${3:-}"; fi; }
 
 step "Files and permissions"
@@ -47,21 +49,23 @@ done
 
 step "Keys"
 
-for key in "$CONFIG_DEPLOY_KEY" "$NODE_STATUS_KEY" ${CERT_DEPLOY_KEY:+"$CERT_DEPLOY_KEY"} \
-           ${BACKUP_ROOT:+"$NODE_BACKUP_KEY"}; do
-    if sudo -n test -f "${KEY_DIR}/${key}" 2>/dev/null; then
-        pass "${key} exists"
-    else
-        #
-        # Not being able to read root's keys is the correct answer for an
-        # operator account, so an unreadable key is reported as unknown rather
-        # than as a failure.
-        pass "${key}" "not readable from here, as expected"
-    fi
-    if [[ -f "${KEY_DIR}/${key}.pub" ]]; then
-        pass "${key}.pub is readable"
-    fi
-done
+#
+# Root's keys are behind sudo, and so is the node check below. Asked for once
+# here, when there is a terminal to ask on; without one the keys are said to be
+# unchecked rather than passed, which a missing key used to be (review 26-10-24,
+# 03-05).
+#
+if sudo -n true 2>/dev/null || { [[ -t 0 ]] && sudo -v; }; then
+    for key in "$CONFIG_DEPLOY_KEY" "$NODE_STATUS_KEY" ${CERT_DEPLOY_KEY:+"$CERT_DEPLOY_KEY"} \
+               ${BACKUP_ROOT:+"$NODE_BACKUP_KEY"}; do
+        for file in "$key" "${key}.pub"; do
+            check "$(sudo -n test -f "${KEY_DIR}/${file}" && echo yes || echo no)" \
+                "${file} exists" "${KEY_DIR}"
+        done
+    done
+else
+    skip "the manager's keys" "not checked: sudo needs a terminal to ask on"
+fi
 
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
     check "$([[ "$(systemctl show -p LoadState --value haprion-state-backup@verify.service 2>/dev/null)" == loaded ]] && echo yes || echo no)" \
@@ -110,7 +114,9 @@ for cluster in $clusters; do
 done
 
 echo
-echo "PASS=${PASS}  FAIL=${FAIL}"
+summary="PASS=${PASS}  FAIL=${FAIL}"
+(( SKIP == 0 )) || summary+="  SKIP=${SKIP} (not checked)"
+echo "$summary"
 echo
 if [[ $FAIL -eq 0 ]]; then
     cat <<'DONE'

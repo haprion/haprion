@@ -155,9 +155,10 @@ Back on the management host, as yourself:
 ./05-verify answers.env
 ```
 
-Read-only. It checks file ownership and modes, that each cluster resolves, and —
-the one that matters — that every node answers a status request through its own
-key and forced command.
+Read-only. It checks file ownership and modes, that the manager's keys exist, that
+each cluster resolves, and — the one that matters — that every node answers a status
+request through its own key and forced command. The keys are root's, so it asks for
+your sudo password once; without a terminal to ask on, it reports them as `SKIP`.
 
 ## Then prove it
 

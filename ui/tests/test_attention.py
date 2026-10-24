@@ -488,6 +488,20 @@ class TheTwoForms(unittest.TestCase):
         self.assertFalse(self.built({"alpha": 300}).fresh)
         self.assertFalse(self.built({"alpha": None}).fresh)
 
+    def test_no_cluster_is_fresh_while_the_cluster_list_is_read(self) -> None:
+        # A new installation is not down until its first cluster (26-10-24);
+        # a poller that stopped reading even the list still is.
+        item = attention.Item("job", "critical", None, "job 1", "Deploy failed", NOW, "/jobs")
+
+        def built(list_age: int | None) -> bool:
+            return attention.build_attention(
+                [item], status_age={}, stale_after_seconds=40, list_age=list_age, now=NOW
+            ).fresh
+
+        self.assertTrue(built(10))
+        self.assertFalse(built(300))
+        self.assertFalse(built(None))
+
     def test_the_metrics_carry_every_kind_and_each_clusters_age(self) -> None:
         text = self.built({"alpha": 10}).as_metrics()
 

@@ -3683,15 +3683,13 @@ GET https://<manager>/status/metrics
 The first answers `{"generated_at", "fresh", "counts": {"critical", "warning"}, "items": [...]}`. Each
 item has `kind`, `severity`, `cluster`, `subject`, `message`, `since` and `link`.
 
-`fresh` is how a monitor sees that the manager itself has stopped reading. It is `true` only when the
-installation has at least one cluster and every cluster's status was read within the last two poll
-intervals. It is therefore `false`:
+`fresh` is how a monitor sees that the manager itself has stopped reading. It is `true` when every
+cluster's status was read within the last two poll intervals - or, on an installation with no cluster yet,
+when the manager read its list of clusters within that time. It is `false`:
 
 - once any cluster's status reading is older than two poll intervals;
 - while a cluster has never been read;
-- on an installation with no cluster yet.
-
-A monitor that checks `fresh` reports a new installation as down until its first cluster has been read.
+- when the manager has stopped reading even its list of clusters.
 
 The second is Prometheus's text format: `haprion_attention_items{kind, severity}` for every kind, and
 `haprion_status_age_seconds{cluster}` for every cluster that has been read.
@@ -3765,8 +3763,7 @@ A monitor of type **HTTP(s) - Json Query**:
 | Method | `GET`, no body, no headers |
 
 The monitor is up while the expression is true. It goes down within one interval of anything turning
-red, or of the manager no longer reading the clusters - and, because of `fresh`, while the installation
-has no cluster that has been read. For the quieter second monitor:
+red, or of the manager no longer reading the clusters. For the quieter second monitor:
 `counts.critical = 0 and counts.warning = 0 and fresh = true`.
 
 Uptime Kuma runs on Node.js, which trusts its own list of public CAs rather than the operating system's.
@@ -3837,7 +3834,7 @@ echo "OK: nothing needs attention"; exit 0
 ```
 
 The message carries each item's subject and sentence, so the alert says what is wrong without opening the
-dashboard. Like any check of `fresh`, the script reports critical on an installation with no cluster yet.
+dashboard.
 
 ### Events: jobs, the nodes and the audit record
 

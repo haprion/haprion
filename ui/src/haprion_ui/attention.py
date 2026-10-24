@@ -762,9 +762,15 @@ def build_attention(
     *,
     status_age: Mapping[str, int | None],
     stale_after_seconds: int,
+    list_age: int | None = None,
     now: datetime | None = None,
 ) -> Attention:
-    """The list, worst first and then newest first, and whether the readings are fresh."""
+    """The list, worst first and then newest first, and whether the readings are fresh.
+
+    With no cluster there is no status to be old, so the readings are fresh
+    while the poller keeps reading the cluster list (`list_age`, seconds) - a
+    new installation is not down until its first cluster (26-10-24).
+    """
 
     ordered = sorted(
         items,
@@ -775,9 +781,10 @@ def build_attention(
             item.subject,
         ),
     )
-    fresh = bool(status_age) and all(
-        age is not None and age <= stale_after_seconds for age in status_age.values()
-    )
+    if status_age:
+        fresh = all(age is not None and age <= stale_after_seconds for age in status_age.values())
+    else:
+        fresh = list_age is not None and list_age <= stale_after_seconds
     return Attention(
         generated_at=now or datetime.now(UTC),
         items=tuple(ordered),

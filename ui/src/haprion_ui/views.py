@@ -3727,8 +3727,9 @@ def _attention(request: Request, config: Config) -> attention.Attention:
         features.read_in(db.feature_switches(connection))
         recent = db.recent_jobs(connection, limit=200)
         items += attention.from_jobs(recent)
+        cluster_list_at = db.cluster_list_observed(connection)
         items += attention.from_manager(
-            cluster_list_at=db.cluster_list_observed(connection),
+            cluster_list_at=cluster_list_at,
             poller_silent_after=max(stale_after, timedelta(minutes=5)),
             rows=recent,
             writes=config.management_writes,
@@ -3778,6 +3779,7 @@ def _attention(request: Request, config: Config) -> attention.Attention:
         items,
         status_age=status_age,
         stale_after_seconds=int(stale_after.total_seconds()),
+        list_age=None if cluster_list_at is None else int((now - cluster_list_at).total_seconds()),
         now=now,
     )
 

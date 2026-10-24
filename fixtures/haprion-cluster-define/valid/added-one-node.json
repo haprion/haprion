@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cluster_define",
+  "cluster": "beta",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "error": null,
+  "result": {
+    "action": "added",
+    "cluster": "beta",
+    "nodes": [
+      { "name": "node-a", "host": "node-a.example.com" }
+    ],
+    "files": [
+      "clusters.yaml",
+      "the certificate registry",
+      "root's known_hosts",
+      "svc-pull's authorized_keys",
+      "svc-cert-pull's authorized_keys",
+      "the traffic collector's node list",
+      "the traffic collector's known_hosts",
+      "root's git safe.directory",
+      "the operator editing policy"
+    ],
+    "archive": null,
+    "host_key_fingerprints": [
+      "SHA256:Qm9vdHN0cmFwLWZpbmdlcnByaW50LWV4YW1wbGUtMDA"
+    ],
+    "warnings": []
+  }
+}

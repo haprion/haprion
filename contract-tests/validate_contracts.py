@@ -1442,13 +1442,13 @@ def drop_the_shared_distribution_copy(document: dict[str, object]) -> None:
 
 
 def drop_a_created_node_key(document: dict[str, object]) -> None:
-    """A created cluster whose second node was never asked who it is."""
+    """A created cluster whose last node was never asked who it is."""
 
     result = document["result"]
     assert isinstance(result, dict)
     if result["action"] != "added":
         raise NotApplicable
-    result["host_key_fingerprints"] = result["host_key_fingerprints"][:1]
+    result["host_key_fingerprints"] = result["host_key_fingerprints"][:-1]
 
 
 def flip_release_state(document: dict[str, object]) -> None:

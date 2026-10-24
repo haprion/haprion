@@ -24,7 +24,7 @@
         "cluster": { "type": "string", "maxLength": 63 },
         "nodes": {
           "type": "array",
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 8,
           "items": {
             "type": "object",

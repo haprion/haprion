@@ -3206,6 +3206,7 @@ def _refusal_page(
     back: str,
     stale: bool = False,
     saved: bool = False,
+    status_code: int = 400,
 ) -> Response:
     """A refusal a person met mid-form, drawn inside the interface's own chrome.
 
@@ -3247,7 +3248,7 @@ def _refusal_page(
             "section": back.lstrip("/").split("/")[0],
             "demo_fixture": config.demo_fixture,
         },
-        status_code=400,
+        status_code=status_code,
     )
 
 

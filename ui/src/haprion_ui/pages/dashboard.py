@@ -81,6 +81,14 @@ from haprion_ui.views import (
     read_source,
 )
 
+#
+# What a refused form says, by operation, where the form can be got wrong in a
+# way a person can put right. Never the validation detail (07-01).
+#
+REFUSED_FORMS = {
+    "backup_schedule": "A weekly schedule needs at least one day, and the time must be HH:MM.",
+}
+
 
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
@@ -1317,10 +1325,20 @@ def build_router(config: Config) -> APIRouter:
         except operations.UnknownOperation:
             return PlainTextResponse("Unknown operation", status_code=400)
         except operations.BadPayload:
-            # Validation detail can contain request-derived values. It belongs
-            # in neither a client response nor CodeQL's stack-trace surface;
-            # the form already names the fields it accepts.
-            return PlainTextResponse("Invalid operation parameters", status_code=400)
+            #
+            # A fixed sentence, never the validation detail: that can carry
+            # request-derived values, and belongs in neither a client response
+            # nor CodeQL's stack-trace surface. Said inside the interface's own
+            # page, which a bare text answer was not (review 26-10-24, 07-01).
+            #
+            return _refusal_page(
+                request,
+                config,
+                REFUSED_FORMS.get(
+                    operation, "The form was not accepted. Go back and check its fields."
+                ),
+                back=_return_path(return_to, open=return_open),
+            )
 
         with request.app.state.pool.connection() as connection:
             try:
@@ -1333,10 +1351,22 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.ClusterBusy:
                 connection.rollback()
-                return PlainTextResponse("A job is already running for this cluster", 409)
+                return _refusal_page(
+                    request,
+                    config,
+                    "This cluster is already running a job. Try again when it has finished.",
+                    back=_return_path(return_to, open=return_open),
+                    status_code=409,
+                )
             except db.RequestConflict:
                 connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
+                return _refusal_page(
+                    request,
+                    config,
+                    "This form was already sent for something else. Reload the page and try again.",
+                    back=_return_path(return_to, open=return_open),
+                    status_code=409,
+                )
             db.record_audit_event(
                 connection,
                 actor=session.username,

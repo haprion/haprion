@@ -319,7 +319,10 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
             response = self.post(self.writing_client())
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.text, "Invalid operation parameters")
+        self.assertNotIn("request-derived detail", response.text)
+        # Inside the interface's own page, not bare text (review 26-10-24, 07-01).
+        self.assertIn("<h1>Not done</h1>", response.text)
+        self.assertIn("The form was not accepted. Go back and check its fields.", response.text)
         self.assertEqual(self.queued, [])
 
 
@@ -331,6 +334,8 @@ class ConflictsAreToldApart(QueueRouteTestCase):
         self.queue_job.start()
 
         self.assertEqual(response.status_code, 409)
+        self.assertIn("already running a job", response.text)
+        self.assertIn("<h1>Not done</h1>", response.text)
 
     def test_a_key_that_asked_for_something_else_answers_409(self) -> None:
         self.queue_job.stop()
@@ -339,6 +344,7 @@ class ConflictsAreToldApart(QueueRouteTestCase):
         self.queue_job.start()
 
         self.assertEqual(response.status_code, 409)
+        self.assertIn("<h1>Not done</h1>", response.text)
 
 
 if __name__ == "__main__":

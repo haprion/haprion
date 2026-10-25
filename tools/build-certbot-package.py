@@ -61,6 +61,7 @@ LIB = "usr/lib/haprion/certbot"
 ROOT = "/opt/haprion-certbot"
 STEP = "/usr/share/haprion-ui/install/platform/14-platform-certbot"
 TIMER = "/etc/systemd/system/haprion-certbot-renew.timer"
+SERVICE = "/etc/systemd/system/haprion-certbot-renew.service"
 HOOK = "/etc/letsencrypt/renewal-hooks/deploy/50-haprion"
 CERTBOT_VERSION = re.compile(r'^\[\[package\]\]\nname = "certbot"\nversion = "([^"]+)"', re.M)
 #
@@ -120,8 +121,11 @@ fi
 # Removed with the environment it renews with: the renewal timer, which would
 # fail twice a day without it, and the deploy hook step 14 installed. The
 # distribution's certbot.timer, which step 14 masked, is given back, so a
-# certbot used for anything else keeps renewing (review 26-10-24, 14-08). An
-# upgrade removes nothing.
+# certbot used for anything else keeps renewing (review 26-10-24, 14-08). The
+# timer's and service's files go too: "the timer is there" is how this
+# package's postinst and the interface's update tell that step 14 has run, and
+# a reinstall found it there, put the hook back and left the renewal off
+# (review 26-10-25, 3-02). An upgrade removes nothing.
 #
 PRERM = f"""\
 #!/bin/sh
@@ -130,6 +134,10 @@ if [ "$1" = remove ]; then
     rm -f {HOOK}
     if [ -d /run/systemd/system ]; then
         systemctl disable --now haprion-certbot-renew.timer >/dev/null 2>&1 || true
+    fi
+    rm -f {TIMER} {SERVICE}
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload || true
         if [ "$(systemctl is-enabled certbot.timer 2>/dev/null || true)" = masked ]; then
             systemctl unmask certbot.timer
             systemctl enable --now certbot.timer || true

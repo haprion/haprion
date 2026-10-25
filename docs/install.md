@@ -114,8 +114,9 @@ Do not add the repository to unattended-upgrades. An update is something you cho
 
 ### Removing
 
-Removing `haprion-certbot` (and `haprion-ui`, which needs it) turns off Haprion's renewal timer, removes its certbot
-deploy hook, and turns the distribution's `certbot.timer` back on if step 14 had masked it.
+Removing `haprion-certbot` (and `haprion-ui`, which needs it) turns off Haprion's renewal timer and removes its unit
+files and its certbot deploy hook, and turns the distribution's `certbot.timer` back on if step 14 had masked it. After
+a reinstall, `haprion-setup` sets the renewal up again.
 
 The other units, sockets and timers the steps installed stay enabled. Turn them off before you remove the packages:
 

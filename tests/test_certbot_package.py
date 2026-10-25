@@ -155,6 +155,9 @@ class ThePrerm(unittest.TestCase):
             top = Path(raw)
             hook = top / "50-haprion"
             hook.write_text("hook\n")
+            units = [top / "haprion-certbot-renew.timer", top / "haprion-certbot-renew.service"]
+            for unit in units:
+                unit.write_text("[Unit]\n")
             record = top / "record"
             stubs = top / "bin"
             stubs.mkdir()
@@ -163,8 +166,11 @@ class ThePrerm(unittest.TestCase):
                 f'[ "$1" = is-enabled ] && echo {certbot_timer}\nexit 0\n'
             )
             (stubs / "systemctl").chmod(0o755)
-            script = TOOL.PRERM.replace(TOOL.HOOK, str(hook)).replace(
-                "[ -d /run/systemd/system ]", "true"
+            script = (
+                TOOL.PRERM.replace(TOOL.HOOK, str(hook))
+                .replace(TOOL.TIMER, str(units[0]))
+                .replace(TOOL.SERVICE, str(units[1]))
+                .replace("[ -d /run/systemd/system ]", "true")
             )
             subprocess.run(
                 ["/bin/sh", "-c", script, "prerm", action],
@@ -172,6 +178,7 @@ class ThePrerm(unittest.TestCase):
                 check=True,
             )
             called = record.read_text().splitlines() if record.exists() else []
+            self.left = [unit.name for unit in units if unit.exists()]
             return called, hook.exists()
 
     def test_a_removal_takes_the_timer_and_hook_and_gives_certbot_s_timer_back(self) -> None:
@@ -180,6 +187,15 @@ class ThePrerm(unittest.TestCase):
         self.assertIn("systemctl disable --now haprion-certbot-renew.timer", called)
         self.assertIn("systemctl unmask certbot.timer", called)
         self.assertIn("systemctl enable --now certbot.timer", called)
+        # Review 26-10-25, 3-02: the files too, so a reinstall runs step 14 again.
+        self.assertEqual(self.left, [])
+        self.assertIn("systemctl daemon-reload", called)
+
+    def test_it_removes_the_timer_the_update_and_the_postinst_ask_about(self) -> None:
+        refresh = (BASE / "install/platform/refresh-platform-files").read_text()
+        self.assertIn(f"${{SYSTEMD_DIR}}/{Path(TOOL.TIMER).name}", refresh)
+        self.assertIn(f"[ -f {TOOL.TIMER} ]", TOOL.POSTINST)
+        self.assertIn(f"rm -f {TOOL.TIMER} {TOOL.SERVICE}", TOOL.PRERM)
 
     def test_a_certbot_timer_step_14_did_not_mask_is_left_alone(self) -> None:
         called, _ = self.remove("remove", "disabled")
@@ -190,6 +206,7 @@ class ThePrerm(unittest.TestCase):
         called, hook = self.remove("upgrade", "masked")
         self.assertTrue(hook)
         self.assertEqual(called, [])
+        self.assertEqual(len(self.left), 2)
 
 
 class TheBuild(unittest.TestCase):

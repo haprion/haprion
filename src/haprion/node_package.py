@@ -82,6 +82,11 @@ NODE_SCRIPTS = (
 #
 JOIN_SCRIPTS = ("haprion-node-key", "haprion-node-join")
 #
+# The same for the operator's command that runs step 4 again on a joined node
+# (B361): it changes what the scripts need, not the scripts.
+#
+PREPARE_SCRIPTS = ("haprion-node-prepare",)
+#
 # Path in the package -> (path in the commit, mode). Data rather than programs
 # is 0644: the shell library the step sources, the fixed account names and the
 # defaults it reads (B266, B302), the node's sysusers fragment, and the repository key `lib.sh`
@@ -90,7 +95,7 @@ JOIN_SCRIPTS = ("haprion-node-key", "haprion-node-join")
 CONTENTS: dict[str, tuple[str, int]] = {
     **{
         f"usr/sbin/{name}": (f"install/node/{name}", 0o755)
-        for name in (*NODE_SCRIPTS, *JOIN_SCRIPTS)
+        for name in (*NODE_SCRIPTS, *JOIN_SCRIPTS, *PREPARE_SCRIPTS)
     },
     f"{INSTALL_DIR[1:]}/04-node-prepare": ("install/04-node-prepare", 0o755),
     f"{INSTALL_DIR[1:]}/lib.sh": ("install/lib.sh", 0o644),
@@ -149,6 +154,9 @@ DEPENDS = (
 # them is written again: the scripts it attests are the ones dpkg has just put
 # there (review 26-10-24, 03-01). A block or a record that could not be made
 # does not leave the package half installed: the message says what to run.
+# Step 4 is not run from here - it installs packages, and dpkg holds the lock -
+# but when the package brings another step than the one that last ran, it says
+# so (B361).
 #
 POSTINST = f"""\
 #!/bin/sh
@@ -158,6 +166,9 @@ if [ "$1" = configure ]; then
         bash -c '. {INSTALL_DIR}/lib.sh && . {INSTALL_DIR}/node-installation.sh \\
             && record_node_installation {SBIN}' \\
             || echo "{PACKAGE}: the record of its scripts was not written; run  sudo dpkg-reconfigure {PACKAGE}" >&2
+        bash -c '. {INSTALL_DIR}/lib.sh && . {INSTALL_DIR}/node-installation.sh \\
+            && node_prepared_by {INSTALL_DIR}' \\
+            || echo "{PACKAGE}: this release changes what the node's preparation sets up; run  sudo haprion-node-prepare" >&2
     fi
     {SBIN}/haprion-node-key --package \\
         || echo "{PACKAGE}: the block was not made; run  sudo {SBIN}/haprion-node-key" >&2

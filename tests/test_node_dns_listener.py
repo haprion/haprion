@@ -124,7 +124,7 @@ class TheDnsListenerSteps(unittest.TestCase):
                     dnsdist=self.root / "absent" if missing == "binary" else None,
                 )
                 self.assertEqual(code, 1)
-                self.assertIn("run 04-node-prepare", output)
+                self.assertIn("run  sudo haprion-node-prepare  on this node", output)
 
     def test_a_clean_check_passes_and_names_the_candidates_file(self) -> None:
         self.listener(self.candidate)

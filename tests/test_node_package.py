@@ -287,10 +287,6 @@ class NodePackageTransportContractTests(unittest.TestCase):
         self.assertEqual(self.script.count("--allow-downgrades"), 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AnUpgradeRecordsTheScriptsItInstalled(unittest.TestCase):
     """Review 26-10-24, 03-01: after apt upgrade the record named the old scripts."""
 
@@ -333,3 +329,7 @@ class AnUpgradeRecordsTheScriptsItInstalled(unittest.TestCase):
         self.assertLess(guard, script.index("record_node_installation /usr/sbin"))
         self.assertIn(f"{node_package.INSTALL_DIR}/node-installation.sh", script)
         self.assertIn("usr/share/haprion-node/install/node-installation.sh", node_package.CONTENTS)
+
+
+if __name__ == "__main__":
+    unittest.main()

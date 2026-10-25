@@ -1,0 +1,163 @@
+#!/usr/bin/python3
+"""Prepare this node again, with the answers it was prepared with (B361).
+
+    sudo haprion-node-prepare
+
+Step 4 (04-node-prepare) sets up what the node scripts need beside them: the
+accounts and their sudo rules, the release layout, dnsdist, HAProxy's log
+socket, sshd's address. An upgrade of the package replaces the scripts and
+nothing else, so when a release changes what the step sets up, the step has to
+run again on each node - and the answers it ran with are the operator's file
+on another machine, or the document a manager joined the node with.
+
+Both rendered node.conf, which is the node's own truth. The answers are read
+back out of it, as a node restore reads them out of an archive
+(`haprion.restore_answers`, which a test holds this to), and the step runs from
+where the package put it. What node.conf does not carry is left as it is: the
+manager's keys in authorized_keys, the manager's host key in known_hosts, the
+traffic log's route.
+
+The package's postinst says when to run this: when the step it brings is not
+the one that last ran here.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+INSTALL = Path(os.environ.get("HAPRION_NODE_INSTALL", "/usr/share/haprion-node/install"))
+NODE_CONF = Path(os.environ.get("NODE_CONF", "/etc/haprion/node.conf"))
+STATE_DIR = Path(os.environ.get("JOIN_DIR", "/var/lib/haprion-node"))
+
+# The engine's pattern (config.py) and the fixed names (accounts.py), held to
+# them by a test.
+CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+SERVICE_ACCOUNTS = ["_haprion-trigger", "_haprion-status", "_haprion-backup", "_haprion-logread"]
+LOGS_GROUP = "_haprion-logs"
+PULL_USERS = {"CONFIG_PULL_USER": "_haprion-pull", "CERT_PULL_USER": "_haprion-cert-pull"}
+#
+# restore_answers.py's reading, line for line: node.conf is sourced as root, so
+# a value that could quote, expand or glob stops this rather than being passed on.
+#
+LINE = re.compile(r'^(?P<key>[A-Z_]+)="(?P<value>[^"]*)"$')
+SAFE = re.compile(r"^[A-Za-z0-9._@+/ -]*$")
+NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+NODE_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+REQUIRED = (
+    "CLUSTER",
+    "MANAGER",
+    "CONFIG_PULL_USER",
+    "CONFIG_PULL_KEY",
+    "CONFIG_REMOTE_PATH",
+    "BACKUP_SERVICE_ACCOUNTS",
+    "BACKUP_ACCOUNTS",
+    "BACKUP_GROUPS",
+)
+
+
+class Refused(Exception):
+    """Why node.conf cannot be read back into answers, in a sentence."""
+
+
+def _values(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        matched = LINE.fullmatch(line.strip())
+        if matched is None:
+            continue
+        if not SAFE.fullmatch(matched.group("value")):
+            raise Refused(f"node.conf gives {matched.group('key')} a value this refuses")
+        values[matched.group("key")] = matched.group("value")
+    missing = [key for key in REQUIRED if key not in values]
+    if missing:
+        raise Refused(f"node.conf does not set {', '.join(missing)}")
+    return values
+
+
+def _names(value: str, what: str) -> list[str]:
+    names = value.split()
+    for name in names:
+        if not NAME.fullmatch(name):
+            raise Refused(f"node.conf names an unusable {what}: {name!r}")
+    return names
+
+
+def answers(text: str) -> tuple[str, str]:
+    """Step 4's answers file and the cluster, from node.conf's text."""
+
+    values = _values(text)
+    cluster = values["CLUSTER"]
+    if not CLUSTER_ID.fullmatch(cluster):
+        raise Refused(f"node.conf's cluster {cluster!r} is not a cluster ID")
+    prefix = f"{cluster}/current/"
+    remote = values["CONFIG_REMOTE_PATH"]
+    node_path = remote.removeprefix(prefix).removesuffix("/")
+    if (
+        not remote.startswith(prefix)
+        or not remote.endswith("/")
+        or not NODE_PATH.fullmatch(node_path)
+    ):
+        raise Refused(f"node.conf has a CONFIG_REMOTE_PATH this cannot read: {remote}")
+    services = _names(values["BACKUP_SERVICE_ACCOUNTS"], "service account")
+    if services != SERVICE_ACCOUNTS:
+        raise Refused("node.conf names other service accounts than this package's (B266)")
+    listed = _names(values["BACKUP_ACCOUNTS"], "account")
+    if listed[:4] != services:
+        raise Refused("node.conf's BACKUP_ACCOUNTS does not begin with its service accounts")
+    groups = _names(values["BACKUP_GROUPS"], "group")
+    if not groups or groups[0] != LOGS_GROUP:
+        raise Refused(f"node.conf's BACKUP_GROUPS does not begin with {LOGS_GROUP}")
+    for key, fixed in PULL_USERS.items():
+        if key in values and values[key] != fixed:
+            raise Refused(f"node.conf's {key} is not {fixed}")
+    lines = [
+        "# Read back out of node.conf by haprion-node-prepare; not an operator's answers file.",
+        f'MANAGER_HOST="{values["MANAGER"]}"',
+        f'NODE_CONFIG_PULL_KEY="{values["CONFIG_PULL_KEY"]}"',
+        # NODE_PATH_<cluster>, each hyphen an underscore (`cluster_value` in lib.sh).
+        f'NODE_PATH_{cluster.replace("-", "_")}="{node_path}"',
+        f'OPERATOR_ACCOUNTS="{" ".join(listed[4:])}"',
+        f'EXTRA_BACKUP_GROUPS="{" ".join(groups[1:])}"',
+        f'EXTRA_BACKUP_PATHS="{values.get("EXTRA_BACKUP_PATHS", "")}"',
+    ]
+    if "CERT_PULL_KEY" in values:
+        lines.append(f'NODE_CERT_PULL_KEY="{values["CERT_PULL_KEY"]}"')
+    lines.append("PREPARED_AGAIN=yes")
+    return "\n".join(lines) + "\n", cluster
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        print("haprion-node-prepare: run as root:  sudo haprion-node-prepare", file=sys.stderr)
+        return 77
+    if not NODE_CONF.is_file():
+        print(
+            f"haprion-node-prepare: {NODE_CONF} is missing, so this node was never prepared."
+            " Join it to a manager (sudo haprion-node-key) or prepare it with step 4.",
+            file=sys.stderr,
+        )
+        return 64
+    try:
+        text, cluster = answers(NODE_CONF.read_text(encoding="utf-8"))
+    except (Refused, UnicodeDecodeError) as refused:
+        print(f"haprion-node-prepare: {refused}", file=sys.stderr)
+        return 64
+    STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    answers_file = STATE_DIR / "prepare.env"
+    answers_file.touch(mode=0o600)
+    answers_file.chmod(0o600)
+    answers_file.write_text(text, encoding="utf-8")
+    done = subprocess.run(  # noqa: S603 - step 4 of this package, with answers read here
+        [str(INSTALL / "04-node-prepare"), str(answers_file), cluster],
+        stdin=subprocess.DEVNULL,
+        check=False,
+    )
+    return done.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -830,17 +830,28 @@ if [[ -n "${MANAGER_HOST_KEY:-}" ]]; then
         chmod 644 "$ROOT_KNOWN_HOSTS"
         log "  written  ${MANAGER_HOST} in ${ROOT_KNOWN_HOSTS}"
     fi
+elif [[ "${PREPARED_AGAIN:-}" == yes ]]; then
+    log "  kept     ${ROOT_KNOWN_HOSTS} as it is"
 else
     log "  pending  accept ${MANAGER_HOST}'s host key once as root (below)"
 fi
 
+# Which step this was (node-installation.sh says why).
+record_node_prepared "$PWD"
+
 #
 # Joined by the manager (haprion-node-join): it has the node's block already,
-# and it asks the node for its status next. Nothing to print.
+# and it asks the node for its status next. Prepared again
+# (haprion-node-prepare): the manager has it already. Nothing to print.
 #
 if [[ "${JOINED_BY_MANAGER:-}" == yes ]]; then
     echo
     log "step 4 done on this node: joined to cluster ${CLUSTER}"
+    exit 0
+fi
+if [[ "${PREPARED_AGAIN:-}" == yes ]]; then
+    echo
+    log "step 4 done on this node: prepared again for cluster ${CLUSTER}"
     exit 0
 fi
 

@@ -6501,8 +6501,24 @@ sudo apt update && sudo apt upgrade                      # on that cluster's oth
 ```
 
 On a node that is already joined, the package replaces the node scripts and records their digests
-again; it changes nothing else. It does not run `04-node-prepare`. The installation from the manager, below, does run it, with a
-state backup on each side. Use that way when a release changes something that step sets up.
+again; it changes nothing else. It does not run `04-node-prepare`, the step that sets up what the
+scripts need (accounts, sudo rules, the release layout, dnsdist, the log socket). When a release
+changes that step, the upgrade says so:
+
+```text
+haprion-node: this release changes what the node's preparation sets up; run  sudo haprion-node-prepare
+```
+
+Then run it on that node:
+
+```bash
+sudo haprion-node-prepare
+```
+
+It runs the step again with the answers the node was prepared with, read back from
+`/etc/haprion/node.conf`. The manager's keys, the manager's host key and the traffic log's route are
+left as they are. It works the same for a node joined from the interface and one prepared by hand.
+The installation from the manager, below, also runs the step, with a state backup on each side.
 
 ##### Build and verify the package
 

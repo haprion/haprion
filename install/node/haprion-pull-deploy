@@ -80,7 +80,7 @@ refuse_unlinked() {
         bad=1
     done
     if (( bad )); then
-        log "Nothing was changed. Move it aside and run 04-node-prepare again on this node."
+        log "Nothing was changed. Move it aside and run  sudo haprion-node-prepare  on this node."
         exit 1
     fi
 }
@@ -613,7 +613,7 @@ validate_dns_candidate() {
     [[ -e "${candidate}/dns" ]] || return 0
     if [[ ! -x "$DNSDIST" || ! -f "$DNS_DROPIN" ]]; then
         log "ERROR: the release carries a dns listener, but this node is not prepared for one."
-        log "ERROR: run 04-node-prepare (tools/install-node-package does), then deploy again."
+        log "ERROR: run  sudo haprion-node-prepare  on this node, then deploy again."
         return 1
     fi
     log "Validating candidate dns listener..."
@@ -705,7 +705,7 @@ validate_rsyslog_candidate() {
     [[ -e "${candidate}/rsyslog" ]] || return 0
     if [[ ! -x "$RSYSLOGD" || ! -f "$RSYSLOG_FORWARD_RULE" || ! -d "$RSYSLOG_FORWARD_DIR" ]]; then
         log "ERROR: the release sends the traffic log to receivers, but this node is not prepared for it."
-        log "ERROR: run 04-node-prepare (tools/install-node-package does), then deploy again."
+        log "ERROR: run  sudo haprion-node-prepare  on this node, then deploy again."
         return 1
     fi
     log "Validating candidate log forwarding..."

@@ -153,7 +153,7 @@ class HelperTests(unittest.TestCase):
             policy, draft = self.runtime(Path(raw))
             before = git(draft, "rev-parse", "HEAD")
             code, _, err = self.run_helper(policy, self.request(parameters={}))
-            self.assertEqual(code, 77)
+            self.assertEqual(code, exit_codes.USAGE)
             self.assertIn("acknowledgement", err)
             self.assertEqual(git(draft, "rev-parse", "HEAD"), before)
 
@@ -164,7 +164,7 @@ class HelperTests(unittest.TestCase):
             code, _, _ = self.run_helper(
                 policy, self.request(parameters={"acknowledgement": "yes please"})
             )
-            self.assertEqual(code, 77)
+            self.assertEqual(code, exit_codes.USAGE)
             self.assertEqual(git(draft, "rev-parse", "HEAD"), before)
 
     def test_arguments_are_refused(self) -> None:

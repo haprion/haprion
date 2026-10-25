@@ -21,7 +21,7 @@ from unittest import mock
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-from haprion import cert_inventory, config, ui_interface
+from haprion import cert_inventory, config, exit_codes, ui_interface
 from haprion.certificates import leaf_fingerprint
 from haprion.cli import cert_list, cert_list_helper
 from haprion.config import ConfigError
@@ -1061,7 +1061,7 @@ class HelperTests(unittest.TestCase):
     def test_a_missing_certificate_root_is_a_structured_failure(self) -> None:
         code, out, _ = self._run(with_root=False)
 
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.CONFIG)
         document = assert_contract("haprion-cert-list", out)
         self.assertEqual(document["error"]["code"], "certificate_metadata_unavailable")
 

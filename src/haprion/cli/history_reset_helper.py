@@ -108,7 +108,8 @@ def main(
         if request.parameters.get("acknowledgement") != ACKNOWLEDGEMENT:
             raise HelperProtocolError(
                 "the request does not carry the operator's acknowledgement",
-                exit_code=exit_codes.NOT_ROOT,
+                # The request is incomplete; 77 says "must run as root" (06-08).
+                exit_code=exit_codes.USAGE,
             )
 
         policy = load_policy(policy_path, require_secure=require_secure)

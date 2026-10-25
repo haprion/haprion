@@ -98,7 +98,8 @@ def main(
             request_id=request.request_id,
             code="certificate_metadata_unavailable",
             message="the runtime policy declares no certificate_root",
-            exit_code=exit_codes.REFUSED,
+            # The installation's gap, not the request's (06-08).
+            exit_code=exit_codes.CONFIG,
         )
 
     # The pending-request field is read from the NDES state root when the
@@ -127,7 +128,8 @@ def main(
             request_id=request.request_id,
             code="certificate_metadata_unavailable",
             message=str(exc),
-            exit_code=exit_codes.REFUSED,
+            # What it needs could not be read (06-08).
+            exit_code=exit_codes.UNAVAILABLE,
         )
 
     #

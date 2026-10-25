@@ -273,6 +273,12 @@ def _finish(
     that may read it, and the contract forbids showing them to a reader anyway.
     """
 
+    #
+    # Once, and read below as stored: the audit row took its codes from the
+    # unredacted answer, and a NUL in one made the end unstorable (review
+    # 26-10-25, 5-02).
+    #
+    result = diagnostics.redact_result(result)
     if not db.finish_job(
         connection,
         job_id=job.id,
@@ -280,7 +286,7 @@ def _finish(
         state=state,
         exit_code=exit_code,
         outcome=outcome,
-        result=diagnostics.redact_result(result),
+        result=result,
         stderr_excerpt=stderr_excerpt,
     ):
         logger.error("job %s could not be finished; its lease was gone", job.id)

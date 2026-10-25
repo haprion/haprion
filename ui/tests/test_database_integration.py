@@ -259,6 +259,54 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(stored[0], "stderr\ufffd")
         self.assertEqual(stored[1]["error"]["code"], "x\ufffd")
 
+    def test_a_nul_in_a_helper_s_codes_is_stored_by_the_worker_with_its_audit_row(self) -> None:
+        """Review 26-10-25, 5-02: the audit row took the codes unredacted and the end was lost."""
+
+        from haprion_ui import worker as worker_module
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key) "
+                "values ('backup_run', 'alpha', '{}', %s) returning id",
+                (uuid4(),),
+            )
+            job_id = int(_first(cursor))
+            connection.commit()
+        self.addCleanup(self.forget_job, job_id)
+        said = {
+            "outcome": "failed",
+            "error": {"code": "x\x00"},
+            "warnings": [{"code": "w\x00", "message": "m"}],
+        }
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
+            claimed = db.claim_job(worker, worker_id="w", lease_seconds=60)
+            if claimed is None or claimed.id != job_id:
+                self.fail("the worker did not claim the job this test made")
+            worker.commit()
+            self.assertTrue(
+                worker_module._finish(
+                    worker,
+                    claimed,
+                    state="failed",
+                    outcome="failed",
+                    exit_code=1,
+                    result=said,
+                    stderr_excerpt=None,
+                    worker="w",
+                )  # fmt: skip
+            )
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select state, result->'error'->>'code' from job where id = %s", (job_id,)
+            )
+            self.assertEqual(cursor.fetchone(), ("failed", "x\ufffd"))
+            cursor.execute(
+                "select detail->>'error_code' from audit_event "
+                "where action = 'job_finished' and detail->>'job' = %s",
+                (str(job_id),),
+            )
+            self.assertEqual(cursor.fetchone(), ("x\ufffd",))
+
     def test_a_pause_left_behind_by_a_killed_release_runs_out(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(

@@ -1047,6 +1047,13 @@ class AClusterTheInterfaceMayCreateTheStepsAccept(unittest.TestCase):
         found = re.search(r'^valid_id\(\) \{\n    \[\[ "\$1" =~ (.*) \]\]\n\}', lib, re.MULTILINE)
         assert found
         self.assertEqual(found.group(1), CLUSTER_ID.pattern)
+        #
+        # The operator's installer too: it took `a_b` and `1x`, which step 4
+        # refused after the backup and apt had run (review 26-10-24, 03-10).
+        #
+        installer = (INSTALL.parent / "tools" / "install-node-package").read_text()
+        checks = re.findall(r'^\[\[ "\$cluster" =~ (\S+) \]\]', installer, re.MULTILINE)
+        self.assertEqual(checks, [CLUSTER_ID.pattern])
 
     def test_an_answer_for_a_hyphenated_cluster_is_found(self) -> None:
         done = subprocess.run(  # the helper under test

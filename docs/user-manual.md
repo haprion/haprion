@@ -1059,6 +1059,8 @@ Sign-in through the provider can be turned on only with settings that passed Ver
 active admin is break-glass. Every change to the settings counts as new, unverified settings. Saving while
 sign-in is on runs Verify first, and either saves the settings as verified or saves nothing. Each change is
 audited (`oidc_configured`, `oidc_verified`, `oidc_enabled`, `oidc_disabled`); the secret never is.
+Turning it off signs out everyone who signed in through the provider, at once; the page and the audit
+event say how many sessions ended. Local and break-glass accounts stay signed in.
 
 **Settings from a file**, for automation. `haprion-settings`, run as root on the manager, sets what three
 parts of the settings set: *External monitoring*, *Features* and the OIDC configuration. It uses the same

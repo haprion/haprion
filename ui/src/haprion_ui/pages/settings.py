@@ -32,6 +32,7 @@ from haprion_ui import (
     features,
     first_cluster,
     jobs,
+    labels,
     location_data,
     moments,
     network,
@@ -1322,9 +1323,11 @@ def build_router(config: Config) -> APIRouter:
             "on": "Sign-in through the provider is on.",
             "off": "Sign-in through the provider is off.",
         }
-        return _oidc_page(
-            config, request, gate, provider, done=done.get(request.query_params.get("done", ""), "")
-        )
+        said = done.get(request.query_params.get("done", ""), "")
+        ended = request.query_params.get("ended", "")
+        if said and request.query_params.get("done") == "off" and is_digits(ended):
+            said += f" {labels.counted(int(ended[:6]), 'session')} signed in through it ended."
+        return _oidc_page(config, request, gate, provider, done=said)
 
     @router.post("/settings/oidc", response_class=HTMLResponse)
     def change_oidc_settings(request: Request) -> Response:
@@ -1468,18 +1471,25 @@ def build_router(config: Config) -> APIRouter:
         if action in ("on", "off"):
             with request.app.state.pool.connection() as connection:
                 try:
-                    db.set_oidc_enabled(connection, enabled=action == "on", actor=gate.username)
+                    ended = db.set_oidc_enabled(
+                        connection, enabled=action == "on", actor=gate.username
+                    )
                 except db.ProviderRefused as error:
                     connection.rollback()
                     return again(str(error), status_code=409)
+                detail: dict[str, Any] = {"issuer": provider.issuer, "via": "web"}
+                if action == "off":
+                    detail["sessions_ended"] = ended
                 db.record_audit_event(
                     connection,
                     actor=gate.username,
                     action="oidc_enabled" if action == "on" else "oidc_disabled",
-                    detail={"issuer": provider.issuer, "via": "web"},
+                    detail=detail,
                 )
                 connection.commit()
-            return RedirectResponse("/settings/oidc?done=" + action, status_code=303)
+            if action == "on":
+                return RedirectResponse("/settings/oidc?done=on", status_code=303)
+            return RedirectResponse("/settings/oidc?done=off&ended=" + str(ended), status_code=303)
 
         return PlainTextResponse("Unknown action", status_code=400)
 

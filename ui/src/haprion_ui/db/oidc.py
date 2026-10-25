@@ -131,10 +131,16 @@ def record_oidc_verified(connection: Connection[Any], *, revision: int) -> bool:
         return cursor.rowcount == 1
 
 
-def set_oidc_enabled(connection: Connection[Any], *, enabled: bool, actor: str) -> None:
+def set_oidc_enabled(connection: Connection[Any], *, enabled: bool, actor: str) -> int:
     """Turn sign-in through the provider on or off. The database refuses on
     unless the settings are complete and verified and a break-glass admin is
-    active; each refusal comes back as its sentence."""
+    active; each refusal comes back as its sentence.
+
+    Off also ends every live session of an account the provider signs in, in
+    the same statement's transaction, and returns how many: those sessions
+    lived on for up to `oidc_absolute_hours` after the provider was turned off
+    (review 26-10-24, 09-05). Local and break-glass accounts keep theirs.
+    """
 
     try:
         with savepoint(connection), connection.cursor() as cursor:
@@ -142,6 +148,15 @@ def set_oidc_enabled(connection: Connection[Any], *, enabled: bool, actor: str) 
                 "update oidc_provider set enabled = %(enabled)s, updated_by = %(actor)s",
                 {"enabled": enabled, "actor": actor},
             )
+            if enabled:
+                return 0
+            cursor.execute(
+                "update app_session s set revoked_at = statement_timestamp() "
+                "  from app_user u "
+                " where s.user_id = u.id and u.source = 'oidc' and s.revoked_at is null "
+                "   and s.expires_at > statement_timestamp()"
+            )
+            return cursor.rowcount
     except psycopg.errors.CheckViolation as error:
         if "break-glass" in (error.diag.message_primary or ""):
             raise ProviderRefused(

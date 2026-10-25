@@ -458,14 +458,17 @@ def apply_oidc(
 
 def _set_enabled(connection: Any, enabled: bool, *, actor: str, issuer: str | None) -> None:
     try:
-        db.set_oidc_enabled(connection, enabled=enabled, actor=actor)
+        ended = db.set_oidc_enabled(connection, enabled=enabled, actor=actor)
     except db.ProviderRefused as error:
         raise ApplyError(f"oidc: {error}") from error
+    detail: dict[str, Any] = {"issuer": issuer, "via": "cli"}
+    if not enabled:
+        detail["sessions_ended"] = ended
     db.record_audit_event(
         connection,
         actor=actor,
         action="oidc_enabled" if enabled else "oidc_disabled",
-        detail={"issuer": issuer, "via": "cli"},
+        detail=detail,
     )
 
 

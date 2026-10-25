@@ -136,7 +136,7 @@ class SettingsOidc(LoginTestCase):
         for patch in (
             mock.patch("haprion_ui.db.save_oidc_provider", side_effect=save),
             mock.patch("haprion_ui.db.record_oidc_verified", return_value=True),
-            mock.patch("haprion_ui.db.set_oidc_enabled"),
+            mock.patch("haprion_ui.db.set_oidc_enabled", return_value=0),
             mock.patch("haprion_ui.db.record_audit_event", side_effect=audit),
             mock.patch("haprion_ui.oidc_web.ask", side_effect=ask),
         ):
@@ -359,6 +359,25 @@ class SettingsOidc(LoginTestCase):
         # Off is always there to be had, whatever Verify last said.
         self.provider = provider(issuer=ISSUER, enabled=True, revision=3, verified_revision=2)
         self.assertNotIn(" disabled", self.switch(switch))
+
+    def test_turning_off_says_how_many_sessions_it_ended(self) -> None:
+        # Off ends the provider's sessions in the same transaction; the page
+        # and the audit say how many (review 26-10-24, 09-05).
+        self.provider = provider(issuer=ISSUER, enabled=True, revision=2, verified_revision=2)
+        client = self.admin()
+        with mock.patch("haprion_ui.db.set_oidc_enabled", return_value=3) as switched:
+            response = self.post(client, action="off")
+
+        self.assertEqual(switched.call_args.kwargs["enabled"], False)
+        self.assertEqual(response.headers["location"], "/settings/oidc?done=off&ended=3")
+        self.assertEqual(
+            self.audit_details[-1],
+            ("oidc_disabled", {"issuer": ISSUER, "via": "web", "sessions_ended": 3}),
+        )
+        page = client.get(response.headers["location"]).text
+        self.assertIn(
+            "Sign-in through the provider is off. 3 sessions signed in through it ended.", page
+        )
 
     def test_turning_on_is_the_database_s_to_refuse(self) -> None:
         self.provider = provider(issuer=ISSUER)

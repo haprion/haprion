@@ -5458,6 +5458,46 @@ class TheProviderRowFromTheWeb(unittest.TestCase):
             with self.assertRaisesRegex(db.ProviderRefused, "break-glass"):
                 db.set_oidc_enabled(connection, enabled=True, actor="alice")
 
+    def test_off_ends_the_provider_s_sessions_and_only_those(self) -> None:
+        # They lived on for up to `oidc_absolute_hours` after Off (review
+        # 26-10-24, 09-05); a password account keeps its own.
+        with self.web() as connection:
+            db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")
+            db.record_oidc_verified(connection, revision=self.row(connection).revision)
+            db.set_oidc_enabled(connection, enabled=True, actor="alice")
+            db.create_oidc_account(
+                connection,
+                username="carol",
+                role="admin",
+                issuer=self.SETTINGS["issuer"],
+                subject="s1",
+            )
+            carol = db.account_by_oidc(connection, issuer=self.SETTINGS["issuer"], subject="s1")
+            alice = db.account_by_username(connection, "alice")
+            if carol is None or alice is None:
+                self.fail("no accounts")
+            later = datetime.now(UTC) + timedelta(hours=1)
+            for user, token in ((carol, "sso-1"), (carol, "sso-2"), (alice, "local")):
+                db.create_session(
+                    connection, token_hash=auth.token_hash(token), user_id=user.id, expires_at=later
+                )
+            connection.commit()
+
+            ended = db.set_oidc_enabled(connection, enabled=False, actor="alice")
+            connection.commit()
+
+            def revoked(token: str) -> bool:
+                session = db.session_by_hash(connection, auth.token_hash(token))
+                if session is None:
+                    self.fail(f"no session {token}")
+                return session.revoked_at is not None
+
+            self.assertEqual(ended, 2)
+            self.assertEqual(
+                [revoked("sso-1"), revoked("sso-2"), revoked("local")], [True, True, False]
+            )
+            self.assertEqual(db.set_oidc_enabled(connection, enabled=False, actor="alice"), 0)
+
     def test_while_on_a_change_saves_only_as_verified(self) -> None:
         with self.web() as connection:
             db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")

@@ -369,7 +369,7 @@ class TheReaderFindsCommandsAndNothingElse(unittest.TestCase):
             "# rsync is not run here\n"
             'log "  ok; done | fine"\n'
             '"$HELPER" reload\n'
-            'case "$x" in\n    cert-pull) run_it ;;\nesac\n'
+            'case "$x" in\n    cert-pull) run_it ;;\n    sudoers | hook) ;;\nesac\n'
             "for name in alpha beta; do :; done\n"
             "list=(one two)\n"
             "(( count > 0 )) && [[ -n $x ]]\n"

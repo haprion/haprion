@@ -14,8 +14,8 @@
 # site waited for step 05 to be run again by hand.
 #
 # Installed from this package's examples: what steps 04 and 07 always install,
-# and - only where their step installed it - the optional sockets, the timers
-# and the site. No answers are read again. The accounts are fixed names, the
+# and - only where their step installed it - the optional sockets, the timers,
+# the site and certbot's deploy hook. No answers are read again. The accounts are fixed names, the
 # worker's sandbox is the runtime policy's, and the site's three values are in
 # /etc/haprion/ui-tls.conf, where step 05 wrote them.
 #
@@ -34,6 +34,7 @@ SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SUDOERS_DIR="${SUDOERS_DIR:-/etc/sudoers.d}"
 NGINX_SITE="${NGINX_SITE:-/etc/nginx/sites-available/haprion}"
 TLS_CONF="${TLS_CONF:-/etc/haprion/ui-tls.conf}"
+CERTBOT_HOOK_DIR="${CERTBOT_HOOK_DIR:-/etc/letsencrypt/renewal-hooks/deploy}"
 
 #
 # The helper sockets step 07 always installs, and those an answer or a later
@@ -64,7 +65,13 @@ restore() {
     [[ -f "$(manifest)" ]] || return 0
     step "Putting back the platform files the update replaced"
     while IFS=$'\t' read -r kind path saved; do
-        if [[ -n "$saved" ]]; then
+        if [[ -n "$saved" && "$kind" == hook ]]; then
+            # Never beside it: certbot runs every file in the hook directory,
+            # so the copy is made outside it and moved over the hook.
+            cp -a "$saved" "${keep}/restoring"
+            mv -f -- "${keep}/restoring" "$path"
+            log "  restored ${path}"
+        elif [[ -n "$saved" ]]; then
             # Beside it and renamed over it: a sudo rule is never half there,
             # and sudo reads no file in sudoers.d whose name holds a dot.
             cp -a "$saved" "${path}.restoring"
@@ -78,7 +85,7 @@ restore() {
             log "  removed  ${path}"
         fi
         case "$kind" in
-            sudoers) ;;
+            sudoers | hook) ;;
             site) site=1 ;;
             *) reload=1 ;;
         esac
@@ -211,6 +218,17 @@ if [[ -e "$NGINX_SITE" ]]; then
         || die "${TLS_CONF} does not name SERVER_NAME, TLS_CERT and TLS_KEY"
     put site "$NGINX_SITE" 644 \
         "$(render_site "$site_host" "$site_certificate" "$site_key" examples/haprion.nginx.example)"
+fi
+
+#
+# What publishes a renewed certificate, where step 14 installed it. Only that
+# step wrote it, and an update runs that step only when certbot's own release
+# changes - so a changed hook stayed as the first installation wrote it (review
+# 26-10-24, 14-01). Kept outside the hook directory, as `put` keeps every file.
+#
+if [[ -e "${SYSTEMD_DIR}/haprion-certbot-renew.timer" ]]; then
+    step "Certbot's deploy hook"
+    put hook "${CERTBOT_HOOK_DIR}/50-haprion" 755 "$(cat ../certbot-deploy-hook)"
 fi
 
 #

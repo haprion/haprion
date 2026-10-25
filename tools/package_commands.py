@@ -134,9 +134,9 @@ WRAPPERS = {
 WRAPPER_ARGUMENT = {"sudo": {"-u", "-g", "-C"}, "nice": {"-n"}}
 SEPARATORS = re.compile(r"\|\||&&|;;|[;|&\n]|\$\(|`|\(|\{|\}")
 #
-# A `case` label at the start of a line: `cert-pull)`, `*|"")`.
+# A `case` label at the start of a line: `cert-pull)`, `*|"")`, `sudoers | hook)`.
 #
-CASE_LABEL = re.compile(r"^[ \t]*[^\s()=]+\)", re.M)
+CASE_LABEL = re.compile(r"^[ \t]*[^\s()=|]+(?:[ \t]*\|[ \t]*[^\s()=|]+)*\)", re.M)
 COMMAND_NAME = re.compile(r"^[a-z][a-z0-9._+-]*$")
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")

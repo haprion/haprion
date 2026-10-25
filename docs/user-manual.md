@@ -5516,7 +5516,8 @@ renewed. Haprion's hook there is `50-haprion`.
 Platform step 14 (`14-platform-certbot`, which `haprion-setup` runs) installs it, root-owned with mode 755,
 from the copy the `haprion-ui` package carries (`/usr/share/haprion-ui/install/certbot-deploy-hook`; in the
 source tree [`../install/certbot-deploy-hook`](../install/certbot-deploy-hook)). A hook there that differs
-from the release's copy is replaced. The step then proves it with a dry-run renewal
+from the release's copy is replaced, and each update of `haprion-ui` installs the new copy. The step then
+proves it with a dry-run renewal
 ([The certbot environment](#the-certbot-environment)). To reinstall and test it, run the step again:
 
 ```bash

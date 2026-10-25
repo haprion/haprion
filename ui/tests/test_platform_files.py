@@ -61,6 +61,7 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         self.addCleanup(shutil.rmtree, work)
         shutil.copytree(PLATFORM / "examples", work / "platform/examples")
         shutil.copy2(PLATFORM / "refresh-platform-files", work / "platform")
+        shutil.copy2(ROOT / "install/certbot-deploy-hook", work / "certbot-deploy-hook")
         (work / "lib.sh").write_text((ROOT / "install/lib.sh").read_text() + "need_root() { :; }\n")
         shutil.copy2(ROOT / "install/defaults.sh", work / "defaults.sh")
         (work / "accounts.sh").write_text(
@@ -85,7 +86,14 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         self.sudoers = work / "etc/sudoers.d"
         self.site = work / "etc/nginx/sites-available/haprion"
         self.tls = work / "etc/haprion/ui-tls.conf"
-        for directory in (self.systemd, self.sudoers, self.site.parent, self.tls.parent):
+        self.hooks = work / "etc/letsencrypt/renewal-hooks/deploy"
+        for directory in (
+            self.systemd,
+            self.sudoers,
+            self.site.parent,
+            self.tls.parent,
+            self.hooks,
+        ):
             directory.mkdir(parents=True)
         self.tls.write_text(
             "TLS_CERT=/etc/haprion/tls/ui.crt\nTLS_KEY=/etc/haprion/tls/ui.key\n"
@@ -103,6 +111,7 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
             "SUDOERS_DIR": str(self.sudoers),
             "NGINX_SITE": str(self.site),
             "TLS_CONF": str(self.tls),
+            "CERTBOT_HOOK_DIR": str(self.hooks),
         }
         #
         # A first installation's files, as an older package wrote them: every
@@ -271,6 +280,29 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         self.assertIn("systemctl reload nginx", recorded)
         self.assertEqual((self.keep / "manifest").read_text(), "")
 
+    def test_certbot_s_hook_follows_where_step_14_installed_it(self) -> None:
+        """Review 26-10-24, 14-01: only step 14 wrote it, and an update ran that
+        step only when certbot's own release changed."""
+
+        hook = self.hooks / "50-haprion"
+        hook.write_text("old hook\n")
+        (self.systemd / "haprion-certbot-renew.timer").write_text("old\n")
+        done = self.refresh()
+
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(hook.read_text(), (ROOT / "install/certbot-deploy-hook").read_text())
+        self.assertEqual(hook.stat().st_mode & 0o777, 0o755)
+        restored = self.run_script("--restore", str(self.keep))
+
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        self.assertEqual(hook.read_text(), "old hook\n")
+        # certbot runs every file in the directory: no copy is ever left beside it.
+        self.assertEqual([path.name for path in self.hooks.iterdir()], ["50-haprion"])
+
+    def test_without_step_14_there_is_no_hook(self) -> None:
+        self.assertEqual(self.refresh().returncode, 0)
+        self.assertEqual(list(self.hooks.iterdir()), [])
+
     def test_a_sudo_rule_that_does_not_parse_is_not_installed(self) -> None:
         rule = self.script.parent / "examples/haprion-worker.sudoers.example"
         rule.write_text("this rule does not parse\n")
@@ -306,6 +338,98 @@ class TheListsAreTheSteps(unittest.TestCase):
         return {
             path.name.removesuffix(suffix) for path in (PLATFORM / "examples").glob(f"*{suffix}")
         }
+
+    #
+    # Each file a platform step installs, as the step names it: what the update
+    # installs it from (a word refresh-platform-files must hold), or why the
+    # step alone writes it. Review 26-10-24, 14-01: certbot's hook was neither,
+    # and a changed hook never reached an installation.
+    #
+    REFRESHED = {
+        ("04-platform-service", '"/etc/systemd/system/${unit_name}.socket"'): (
+            "examples/haprion-web.socket.example"
+        ),
+        ("04-platform-service", '"$unit"'): "examples/haprion-web.service.example",
+        ("05-platform-nginx", "/etc/nginx/sites-available/haprion"): (
+            "examples/haprion.nginx.example"
+        ),
+        ("06-platform-backup", '"/etc/systemd/system/${unit}.${kind}"'): (
+            "haprion-backup haprion-restore-check"
+        ),
+        ("07-platform-services", '"/etc/sudoers.d/${POLLER_SUDOERS}"'): (
+            "examples/haprion-poller.sudoers.example"
+        ),
+        ("07-platform-services", '"/etc/sudoers.d/${WORKER_SUDOERS}"'): (
+            "examples/haprion-worker.sudoers.example"
+        ),
+        ("07-platform-services", '"/etc/systemd/system/${WORKER_UNIT}"'): (
+            "examples/haprion-worker.service.example"
+        ),
+        ("07-platform-services", '"/etc/systemd/system/${POLLER_UNIT}"'): (
+            "examples/haprion-poller.service.example"
+        ),
+        ("11-platform-retention", '"/etc/systemd/system/${timer}.${kind}"'): ("haprion-retention"),
+        ("13-platform-traffic-collector", '"/etc/systemd/system/${UNIT}.${kind}"'): (
+            "haprion-traffic-collector"
+        ),
+        ("14-platform-certbot", '"$HOOK"'): "../certbot-deploy-hook",
+        ("14-platform-certbot", '"/etc/systemd/system/${UNIT}.service"'): ("haprion-certbot-renew"),
+        ("14-platform-certbot", '"/etc/systemd/system/${UNIT}.timer"'): "haprion-certbot-renew",
+        ("17-platform-oidc", "/etc/systemd/system/haprion-oidc-helper@.service"): (
+            "OPTIONAL_SOCKETS=(probe oidc)"
+        ),
+        ("17-platform-oidc", "/etc/systemd/system/haprion-oidc-helper.socket"): (
+            "OPTIONAL_SOCKETS=(probe oidc)"
+        ),
+    }
+    REFRESHED |= {
+        ("07-platform-services", f'"/etc/systemd/system/haprion-{name}-helper{suffix}"'): name
+        for name in (
+            "probe",
+            "resolve",
+            "cert-export",
+            "cert-receiver",
+            "node",
+            "tls",
+            "backup-job",
+            "node-restore",
+        )
+        for suffix in ("@.service", ".socket")
+    }
+    LEFT_TO_THE_STEP = {
+        ("01-platform-prepare", '"$config"'): "ui.toml, the operator's; made empty once",
+        ("02-platform-database", '"$hba"'): "PostgreSQL's file, for the database the step makes",
+        ("02-platform-database", "/etc/haprion/ui-admin.conf"): "from the answers",
+        ("05-platform-nginx", "/etc/haprion/ui-tls.conf"): "from the answers",
+        ("05-platform-nginx", "/etc/nginx/snippets/haprion-receivers.conf"): (
+            "made empty once; haprion-cert-receiver writes it"
+        ),
+        ("05-platform-nginx", "/etc/nginx/snippets/haprion-real-ip.conf"): "from the answers",
+        ("13-platform-traffic-collector", '"$COLLECTOR_KNOWN_HOSTS"'): (
+            "the nodes' host keys, as the operator confirmed them"
+        ),
+        ("13-platform-traffic-collector", '"$COLLECTOR_CONFIG"'): (
+            "the nodes, kept by adding and removing them (node_enrollment)"
+        ),
+        ("13-platform-traffic-collector", '"$UI_CONFIG"'): "a table added to the operator's file",
+        ("15-platform-dns-keys", '"$UI_CONFIG"'): "a table added to the operator's file",
+        ("17-platform-oidc", '"$UI_CONFIG"'): "a table added to the operator's file",
+    }
+
+    def test_every_file_a_step_installs_is_refreshed_or_said_why_not(self) -> None:
+        refresh = (PLATFORM / "refresh-platform-files").read_text()
+        written = re.compile(
+            r"^\s*(?:install_file (\S+)|install -o \S+ -g \S+ -m \d+ \S+ (\S+)$)", re.MULTILINE
+        )
+        found: set[tuple[str, str]] = set()
+        for step in sorted(PLATFORM.glob("[01][0-9]-platform-*")):
+            for match in written.finditer(step.read_text()):
+                found.add((step.name, match.group(1) or match.group(2)))
+        self.assertEqual(sorted(found - set(self.REFRESHED) - set(self.LEFT_TO_THE_STEP)), [])
+        self.assertEqual(sorted((set(self.REFRESHED) | set(self.LEFT_TO_THE_STEP)) - found), [])
+        for (name, target), word in self.REFRESHED.items():
+            with self.subTest(step=name, target=target):
+                self.assertIn(word, refresh)
 
     def test_every_sudo_boundary_check_asks_the_rules_and_runs_nothing(self) -> None:
         """Review 26-10-24, 08-01: without -l a check could never fail."""

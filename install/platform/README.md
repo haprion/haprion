@@ -98,9 +98,10 @@ sudo ./update-platform-release <release-id>
 
 It reads no answers file. Before it checks anything it installs again, from the
 package, the files the numbered steps installed: the web's, the worker's and the
-poller's units, their sudo rules, the helper sockets, the timers, and the nginx
-site (from the three values step 05 keeps in `/etc/haprion/ui-tls.conf`). A file
-whose step was never run - an optional socket or timer - stays absent. When the
+poller's units, their sudo rules, the helper sockets, the timers, the nginx site
+(from the three values step 05 keeps in `/etc/haprion/ui-tls.conf`), and certbot's
+deploy hook. A file whose step was never run - an optional socket or timer - stays
+absent. When the
 update fails, the package is left unconfigured, the previous release is the one
 running, and the files it replaced are back. `./refresh-platform-files` is that
 part on its own.

@@ -182,7 +182,9 @@ interface to add the node:
 - later, *Settings* → *Nodes & clusters*: *Create cluster* for a new cluster, or *Add a node* on an existing one;
 - at the terminal, `haprion-cluster add` or `haprion-node add`, with the block on stdin.
 
-`sudo haprion-node-key` makes a new block. Each run makes a new one-time key, so an earlier block stops working.
+`sudo haprion-node-key` prints the block again. While its one-time key is unused and valid it is the same block, and
+an upgrade of the package keeps it. `sudo haprion-node-key --again` makes a new one-time key, and an earlier block
+stops working.
 What the block contains, and how to prepare a node without the web interface, is in
 [install/README.md](../install/README.md#step-4--each-node).
 

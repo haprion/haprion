@@ -54,6 +54,55 @@ def document(**changes: Any) -> dict[str, Any]:
     return base
 
 
+class TheOneTimeKeyOutlivesAnUpgrade(unittest.TestCase):
+    """Review 26-10-24, 10-03: every configure made a new one-time key, so an
+    upgrade ended a block the operator had copied, and nothing said so."""
+
+    KEY_SCRIPT = BASE / "install" / "node" / "haprion-node-key"
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root)
+        self.key = self.root / "join_key"
+        self.keys = self.root / "authorized_keys"
+        subprocess.run(
+            ["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)],
+            check=True,
+        )
+        text = self.KEY_SCRIPT.read_text()
+        start = text.index("join_key_expiry() {")
+        end = text.index("\n}\n", text.index("join_key_current() {")) + 3
+        self.functions = text[start:end]
+
+    def current(self, expires: str | None) -> bool:
+        public = " ".join(self.key.with_suffix(".pub").read_text().split()[:2])
+        self.keys.write_text(
+            ""
+            if expires is None
+            else f'restrict,expiry-time="{expires}Z",command="sudo -n /usr/sbin/haprion-node-join" '
+            f"{public}\n"
+        )
+        done = subprocess.run(
+            ["/bin/bash", "-c", f"set -Eeuo pipefail\n{self.functions}join_key_current"],
+            env={**os.environ, "JOIN_KEY": str(self.key), "JOIN_KEYS": str(self.keys)},
+            check=False,
+        )
+        return done.returncode == 0
+
+    def test_an_unused_key_that_has_not_expired_is_kept(self) -> None:
+        self.assertTrue(self.current("209901010000"))
+
+    def test_a_used_or_expired_key_is_not(self) -> None:
+        self.assertFalse(self.current(None))
+        self.assertFalse(self.current("202001010000"))
+
+    def test_a_new_key_is_made_only_when_there_is_none_to_keep(self) -> None:
+        text = self.KEY_SCRIPT.read_text()
+        keep = text.index('if [[ "$MODE" != --again ]] && join_key_current; then')
+        self.assertLess(keep, text.index('rm -f "$JOIN_KEY" "${JOIN_KEY}.pub"'))
+        self.assertLess(keep, text.index("ssh-keygen -t ed25519"))
+
+
 class TheDocument(unittest.TestCase):
     def test_a_good_document_is_step_four_s_answers(self) -> None:
         text, cluster = JOIN.answers(document(), "198.51.100.5")

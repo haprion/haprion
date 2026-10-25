@@ -3,7 +3,7 @@
 # This node's enrollment block, for a manager to join it with (B317).
 #
 #     sudo haprion-node-key             the block; a new one-time key when the last is used or old
-#     sudo haprion-node-key --again     the same on a node already joined, to join it again
+#     sudo haprion-node-key --again     a new one-time key, also on a node already joined
 #     haprion-node-key --package        what the package runs: nothing on a joined node
 #
 # Makes what does not depend on any manager - the accounts, the keys this node
@@ -34,6 +34,7 @@ load_answers ""
 NODE_CONF="${NODE_CONF:-/etc/haprion/node.conf}"
 JOIN_DIR="${JOIN_DIR:-/var/lib/haprion-node}"
 JOIN_KEY="${JOIN_DIR}/join_key"
+JOIN_KEYS="${JOIN_KEYS:-/home/${JOIN_USER}/.ssh/authorized_keys}"
 JOIN_SUDOERS="${JOIN_SUDOERS:-/etc/sudoers.d/haprion-node-join}"
 HOST_KEY_FILE="${HOST_KEY_FILE:-/etc/ssh/ssh_host_ed25519_key.pub}"
 SETUP_LOG="${SETUP_LOG:-/var/log/haprion-node/node-key.log}"
@@ -48,6 +49,30 @@ NODE_CERT_PULL_KEY=/root/.ssh/id_ed25519_cert_pull
 # nothing has to run to end it.
 #
 VALID_HOURS=24
+
+#
+# When the one-time key expires, yyyymmddHHMM UTC, as its line says - nothing
+# when the join has used it (it empties the file) or there is none.
+#
+join_key_expiry() {
+    [[ -f "$JOIN_KEY" && -f "${JOIN_KEY}.pub" && -f "$JOIN_KEYS" ]] || return 0
+    local public
+    public="$(cut -d' ' -f1,2 < "${JOIN_KEY}.pub")"
+    { grep -F " ${public}" "$JOIN_KEYS" || true; } \
+        | sed -n 's/^restrict,expiry-time="\([0-9]\{12\}\)Z".*/\1/p' | head -n 1
+}
+
+#
+# A key made before and neither used nor expired is the block's again: the
+# package runs this from its postinst at every upgrade, and a new key would
+# end a block the operator may have copied already, with nothing to say so
+# (review 26-10-24, 10-03). --again always makes a new one.
+#
+join_key_current() {
+    local expires
+    expires="$(join_key_expiry)"
+    [[ -n "$expires" && "$expires" > "$(date -u '+%Y%m%d%H%M')" ]]
+}
 
 if [[ -f "$NODE_CONF" && "$MODE" != --again ]]; then
     joined="$(sed -n 's/^CLUSTER="\(.*\)"$/\1/p' "$NODE_CONF")"
@@ -75,21 +100,25 @@ install -d -m 755 "${SETUP_LOG%/*}"
 
     step "One-time key"
     ensure_dir "$JOIN_DIR" root:root 700
-    rm -f "$JOIN_KEY" "${JOIN_KEY}.pub"
-    ssh-keygen -t ed25519 -N "" -C "haprion join" -f "$JOIN_KEY" >/dev/null
-    chmod 600 "$JOIN_KEY"
-    expires="$(date -u -d "+${VALID_HOURS} hours" '+%Y%m%d%H%M')"
-    #
-    # Only the join, only once (it removes this line), only until it expires.
-    # sudo keeps SSH_CONNECTION for this one command (below): which address the
-    # manager came from, and on which of this node's addresses.
-    #
-    install -o root -g root -m 644 /dev/null "/home/${JOIN_USER}/.ssh/authorized_keys.new"
-    printf 'restrict,expiry-time="%sZ",command="sudo -n /usr/sbin/haprion-node-join" %s\n' \
-        "$expires" "$(cut -d' ' -f1,2 < "${JOIN_KEY}.pub")" \
-        > "/home/${JOIN_USER}/.ssh/authorized_keys.new"
-    mv "/home/${JOIN_USER}/.ssh/authorized_keys.new" "/home/${JOIN_USER}/.ssh/authorized_keys"
-    log "  written  one-time key, valid until ${expires} UTC"
+    if [[ "$MODE" != --again ]] && join_key_current; then
+        log "  ok       one-time key, not yet used, valid until $(join_key_expiry) UTC"
+    else
+        rm -f "$JOIN_KEY" "${JOIN_KEY}.pub"
+        ssh-keygen -t ed25519 -N "" -C "haprion join" -f "$JOIN_KEY" >/dev/null
+        chmod 600 "$JOIN_KEY"
+        expires="$(date -u -d "+${VALID_HOURS} hours" '+%Y%m%d%H%M')"
+        #
+        # Only the join, only once (it removes this line), only until it
+        # expires. sudo keeps SSH_CONNECTION for this one command (below):
+        # which address the manager came from, and on which of this node's
+        # addresses.
+        #
+        install -o root -g root -m 644 /dev/null "${JOIN_KEYS}.new"
+        printf 'restrict,expiry-time="%sZ",command="sudo -n /usr/sbin/haprion-node-join" %s\n' \
+            "$expires" "$(cut -d' ' -f1,2 < "${JOIN_KEY}.pub")" > "${JOIN_KEYS}.new"
+        mv "${JOIN_KEYS}.new" "$JOIN_KEYS"
+        log "  written  one-time key, valid until ${expires} UTC"
+    fi
 
     tmp="$(mktemp)"
     cat > "$tmp" <<SUDOERS
@@ -147,7 +176,8 @@ PY
 cat <<OUT
 
 Paste this line into Create cluster or Add a node under Settings. It joins this
-node to the manager once, within ${VALID_HOURS} hours; keep it to yourself until then.
+node to the manager once, until $(join_key_expiry | sed 's/^\(....\)\(..\)\(..\)\(..\)/\1-\2-\3 \4:/') UTC; keep it to
+yourself until then.
 
 ${BLOCK}
 

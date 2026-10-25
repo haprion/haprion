@@ -1747,7 +1747,7 @@ LISTENER_PROTOCOLS = ("https", "http")
 # A generated redirect answer as it was named until 2026-10-05: eight hex
 # characters derived from the route. Recognised by shape only where no object
 # accounts for the name - a redirect whose object is gone; the names since then
-# are named from paths and recognised through the objects (`redirect_targets`).
+# are named from paths and recognised through the objects (`backend_targets`).
 #
 REDIRECT_SUFFIX = re.compile(r"-redirect-[0-9a-f]{8}$")
 

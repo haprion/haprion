@@ -2,7 +2,7 @@
 
 Runs as root, on the manager, and does the whole of it: the account, the
 directory, the lock for the transport, and the registry entry. Until C7 this
-was three manual steps in INSTALLATION 1.4.1, and three steps can be done
+was three manual steps, and three steps can be done
 two-thirds of the way.
 
 The private key of the receiver is never named here, because it never exists

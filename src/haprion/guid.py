@@ -120,7 +120,7 @@ def listener_guid_prefix(proxy: str) -> str:
     Returned as a prefix rather than as a GUID because that is the keyword:
     `guid-prefix` on the bind line, and HAProxy appends `-0`, `-1` and so on.
     The generated value therefore has to stay short enough that the suffix
-    still fits, which `check_guid` verifies for the widest index this reserves
+    still fits, which `guid_prefix_is_usable` verifies for the widest index this reserves
     room for.
     """
 

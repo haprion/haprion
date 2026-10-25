@@ -108,6 +108,58 @@ class PublicDocumentationHasNoProjectHistory(unittest.TestCase):
         self.assertEqual(findings("an archive 2026-01-01_04-00-00 and SHA-256"), [])
 
 
+def tracked_text() -> dict[str, str]:
+    listed = subprocess.run(  # fixed argv
+        ["git", "ls-files", "-z"],  # noqa: S607 - git on PATH, as the gate's other checks
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+    ).stdout.decode()
+    found: dict[str, str] = {}
+    for name in listed.split("\0"):
+        try:
+            found[name] = (ROOT / name).read_text(encoding="utf-8")
+        except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
+            continue
+    return found
+
+
+class TheCodeNamesTheManualAsItIs(unittest.TestCase):
+    """Review 26-10-24, 16-10: comments sent a reader to sections of an installation
+    guide that is gone, by its section numbers. The manual is named by a heading it has."""
+
+    RETIRED = re.compile(r"\bINSTALLATION \d")
+    NAMED = re.compile(r"user-manual\.md, '([^']+)'")
+
+    def test_nothing_names_the_old_guide_by_its_numbers(self) -> None:
+        found = [
+            f"{name}:{number}"
+            for name, text in tracked_text().items()
+            for number, line in enumerate(text.splitlines(), start=1)
+            if self.RETIRED.search(line)
+        ]
+        self.assertEqual(found, [])
+
+    def test_every_manual_heading_the_code_names_is_there(self) -> None:
+        headings: set[str] = set()
+        fenced = False
+        for line in (ROOT / "docs/user-manual.md").read_text(encoding="utf-8").splitlines():
+            if FENCE.match(line):
+                fenced = not fenced
+                continue
+            match = None if fenced else HEADING.match(line)
+            if match:
+                headings.add(match.group(1))
+        named = {
+            (name, heading)
+            for name, text in tracked_text().items()
+            for line in text.splitlines()
+            for heading in self.NAMED.findall(line)
+        }
+        self.assertGreater(len(named), 10)
+        self.assertEqual(sorted((n, h) for n, h in named if h not in headings), [])
+
+
 if __name__ == "__main__":
     unittest.main()
 

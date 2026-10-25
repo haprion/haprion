@@ -455,7 +455,8 @@ valid_abs_path() {
 
 #
 # The nginx lines that let a reverse proxy in front of the interface name the
-# client (TRUSTED_PROXIES in the answers file, INSTALLATION 4.5). Only a
+# client (TRUSTED_PROXIES in the answers file; see
+# user-manual.md, 'Behind another reverse proxy'). Only a
 # connection from one of these addresses has its X-Forwarded-For believed; a
 # client that reaches nginx directly and sends the header is still known by
 # its own address. With `real_ip_recursive` the client is the last address in

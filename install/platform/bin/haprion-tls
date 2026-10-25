@@ -193,7 +193,8 @@ activate() {
 #
 # A public copy of the certificate, served by the interface's own server block
 # at /certdist/manager-ui.pem, so a receiver that fetches over https can save
-# what to trust without openssl on its side (INSTALLATION 1.4.9). Public
+# what to trust without openssl on its side, as
+# user-manual.md, 'Registering a receiver' describes. Public
 # material: nginx sends it in every handshake. A copy rather than the file
 # itself because the TLS directory is root-only and nginx's workers are not.
 #

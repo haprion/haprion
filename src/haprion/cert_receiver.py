@@ -9,7 +9,7 @@ that binds its key to that directory, and an entry in the registry naming it.
 Why one command rather than three steps
 ---------------------------------------
 Because none of the layers is safe without the others, and each was a manual
-step until now (INSTALLATION 1.4.1). A registry entry without a directory
+step once. A registry entry without a directory
 makes every publish fail on that entry; a key without a registry entry is a
 way in that nothing names; a directory without a lock is key material with no
 door. So `add` writes them in order - account, directory, lock, entry - and a

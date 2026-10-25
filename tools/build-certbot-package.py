@@ -61,6 +61,7 @@ LIB = "usr/lib/haprion/certbot"
 ROOT = "/opt/haprion-certbot"
 STEP = "/usr/share/haprion-ui/install/platform/14-platform-certbot"
 TIMER = "/etc/systemd/system/haprion-certbot-renew.timer"
+HOOK = "/etc/letsencrypt/renewal-hooks/deploy/50-haprion"
 CERTBOT_VERSION = re.compile(r'^\[\[package\]\]\nname = "certbot"\nversion = "([^"]+)"', re.M)
 #
 # Runs inside the container, as its root. The source is mounted read-only and
@@ -112,6 +113,27 @@ if [ "$1" = configure ]; then
     else
         echo "haprion-certbot: release $RELEASE_ID is prepared in $release"
         echo "haprion-certbot: haprion-setup makes it current"
+    fi
+fi
+"""
+#
+# Removed with the environment it renews with: the renewal timer, which would
+# fail twice a day without it, and the deploy hook step 14 installed. The
+# distribution's certbot.timer, which step 14 masked, is given back, so a
+# certbot used for anything else keeps renewing (review 26-10-24, 14-08). An
+# upgrade removes nothing.
+#
+PRERM = f"""\
+#!/bin/sh
+set -e
+if [ "$1" = remove ]; then
+    rm -f {HOOK}
+    if [ -d /run/systemd/system ]; then
+        systemctl disable --now haprion-certbot-renew.timer >/dev/null 2>&1 || true
+        if [ "$(systemctl is-enabled certbot.timer 2>/dev/null || true)" = masked ]; then
+            systemctl unmask certbot.timer
+            systemctl enable --now certbot.timer || true
+        fi
     fi
 fi
 """
@@ -207,6 +229,7 @@ def build(source: Path, output_dir: Path, distribution: str, uv: Path, podman: P
             0o644,
         )
         write(root, "DEBIAN/postinst", POSTINST.encode(), 0o755)
+        write(root, "DEBIAN/prerm", PRERM.encode(), 0o755)
         write(root, "DEBIAN/postrm", POSTRM.encode(), 0o755)
         return package(
             root,

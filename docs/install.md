@@ -112,6 +112,22 @@ interface's package updates the running interface by itself.
 
 Do not add the repository to unattended-upgrades. An update is something you choose the moment for.
 
+### Removing
+
+Removing `haprion-certbot` (and `haprion-ui`, which needs it) turns off Haprion's renewal timer, removes its certbot
+deploy hook, and turns the distribution's `certbot.timer` back on if step 14 had masked it.
+
+The other units, sockets and timers the steps installed stay enabled. Turn them off before you remove the packages:
+
+```bash
+systemctl list-unit-files 'haprion-*' --state=enabled
+sudo systemctl disable --now <each unit it lists>
+sudo apt purge haprion-ui haprion-certbot haprion-cli
+```
+
+Purging removes the releases under `/opt`. The configuration under `/etc/haprion`, the data under
+`/var/lib/haprion-ui`, the database, and the unit files, sudo rules and nginx site the steps wrote stay.
+
 ## 1. Choose the answers, or keep the defaults
 
 You can install without an answers file. The defaults are: the fixed service accounts, directories under

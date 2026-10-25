@@ -146,6 +146,52 @@ class ThePostinst(unittest.TestCase):
             self.assertFalse((Path(raw) / "opt/haprion-certbot/releases" / RELEASE).exists())
 
 
+class ThePrerm(unittest.TestCase):
+    """Review 26-10-24, 14-08: a removed package left the renewal timer running a
+    command that was gone, and the distribution's certbot.timer masked."""
+
+    def remove(self, action: str, certbot_timer: str) -> tuple[list[str], bool]:
+        with tempfile.TemporaryDirectory() as raw:
+            top = Path(raw)
+            hook = top / "50-haprion"
+            hook.write_text("hook\n")
+            record = top / "record"
+            stubs = top / "bin"
+            stubs.mkdir()
+            (stubs / "systemctl").write_text(
+                f'#!/bin/sh\necho "systemctl $*" >> {record}\n'
+                f'[ "$1" = is-enabled ] && echo {certbot_timer}\nexit 0\n'
+            )
+            (stubs / "systemctl").chmod(0o755)
+            script = TOOL.PRERM.replace(TOOL.HOOK, str(hook)).replace(
+                "[ -d /run/systemd/system ]", "true"
+            )
+            subprocess.run(
+                ["/bin/sh", "-c", script, "prerm", action],
+                env={"PATH": f"{stubs}:/usr/bin:/bin"},
+                check=True,
+            )
+            called = record.read_text().splitlines() if record.exists() else []
+            return called, hook.exists()
+
+    def test_a_removal_takes_the_timer_and_hook_and_gives_certbot_s_timer_back(self) -> None:
+        called, hook = self.remove("remove", "masked")
+        self.assertFalse(hook)
+        self.assertIn("systemctl disable --now haprion-certbot-renew.timer", called)
+        self.assertIn("systemctl unmask certbot.timer", called)
+        self.assertIn("systemctl enable --now certbot.timer", called)
+
+    def test_a_certbot_timer_step_14_did_not_mask_is_left_alone(self) -> None:
+        called, _ = self.remove("remove", "disabled")
+        self.assertNotIn("systemctl unmask certbot.timer", called)
+        self.assertNotIn("systemctl enable --now certbot.timer", called)
+
+    def test_an_upgrade_removes_nothing(self) -> None:
+        called, hook = self.remove("upgrade", "masked")
+        self.assertTrue(hook)
+        self.assertEqual(called, [])
+
+
 class TheBuild(unittest.TestCase):
     def test_it_is_built_by_the_same_installer_a_manager_runs(self) -> None:
         self.assertIn("tools/install-certbot-env.py", TOOL.BUILD)

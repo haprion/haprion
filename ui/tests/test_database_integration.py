@@ -728,6 +728,37 @@ class ARealDatabase(unittest.TestCase):
                 connection.execute("delete from job where id = any(%s)", (list(made),))
                 connection.commit()
 
+    def test_a_finished_run_is_recorded_and_the_web_reads_it(self) -> None:
+        """05-09: the prune's last act, as the command runs it, read as the web reads it."""
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            before = db.retention_completed(connection)
+        self.assertIsNotNone(before)
+        subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'log() { :; }; psql_as() { psql -U "$DB_ROLE" -d "$DB_NAME" -qtAX "$@"; }; '
+                'eval "$(sed -n \'/^record_completed() {/,/^}/p\' "$0")"; record_completed',
+                str(script),
+            ],
+            env={
+                **os.environ,
+                "DB_ROLE": os.environ["HAPRION_UI_TEST_MIGRATION_ROLE"],
+                "DB_NAME": os.environ["HAPRION_UI_TEST_DATABASE_NAME"],
+                "PGHOST": os.environ["HAPRION_UI_TEST_DATABASE_SOCKET"],
+            },
+            check=True,
+        )
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            after = db.retention_completed(connection)
+        if before is None or after is None:
+            self.fail("the migration's row is gone")
+        self.assertGreater(after, before)
+        prune = script.read_text().split("        prune)", 1)[1].split(";;", 1)[0]
+        self.assertTrue(prune.rstrip().endswith("record_completed"), prune[-200:])
+
     def test_a_failure_nothing_settled_outlives_the_pruning_and_the_newest_200(self) -> None:
         """Review 26-10-24, 05-01: a month old under 25 newer jobs, and still listed."""
 

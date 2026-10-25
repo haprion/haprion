@@ -911,6 +911,15 @@ def cluster_list_observed(connection: Connection[Any]) -> datetime | None:
     return None if row is None else row[0]
 
 
+def retention_completed(connection: Connection[Any]) -> datetime | None:
+    """When `haprion-retention prune` last finished a whole run (0090, 05-09)."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select completed_at from retention_run")
+        row = cursor.fetchone()
+    return row[0] if row else None
+
+
 def partition_horizons(
     connection: Connection[Any], tables: Iterable[str]
 ) -> dict[str, date | None]:

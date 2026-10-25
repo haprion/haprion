@@ -729,6 +729,21 @@ class TheManagersOwnServices(unittest.TestCase):
     def test_all_three_at_work_is_nothing(self) -> None:
         self.assertEqual(self.items(), [])
 
+    def test_a_run_that_did_not_finish_for_two_nights_is_listed(self) -> None:
+        """Review 26-10-24, 05-09: the horizon was fresh, so nothing was said."""
+
+        self.assertEqual(self.items(maintained_at=NOW - timedelta(hours=40)), [])
+        late = NOW - timedelta(days=3)
+        (item,) = self.items(maintained_at=late)
+        self.assertEqual((item.subject, item.severity, item.since), ("retention", "warning", late))
+        self.assertIn("has not finished since", item.message)
+        short = {
+            table: NOW.date() + timedelta(days=ahead - 3)
+            for table, ahead in attention.MAINTENANCE_AHEAD.items()
+        }
+        (only,) = self.items(maintained_at=late, horizons=short)
+        self.assertIn("has not run since", only.message)
+
     def test_a_poller_that_stopped_writing_is_listed(self) -> None:
         for at in (NOW - timedelta(minutes=6), None):
             with self.subTest(at=at):

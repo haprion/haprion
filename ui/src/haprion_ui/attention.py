@@ -62,6 +62,10 @@ WORKER_WAITING = timedelta(minutes=10)
 # means it has not run.
 #
 MAINTENANCE_AHEAD = {"traffic_log": 31, "metric_frontend": 60}
+#
+# Two nights: one failed run is a warning the next night can clear by itself.
+#
+MAINTENANCE_UNFINISHED = timedelta(days=2)
 
 
 def card_link(cluster: str) -> str:
@@ -682,6 +686,7 @@ def from_manager(
     writes: bool,
     horizons: Mapping[str, date | None],
     now: datetime,
+    maintained_at: datetime | None = None,
 ) -> list[Item]:
     """The manager's own services, read from what they leave in the database.
 
@@ -784,6 +789,27 @@ def from_manager(
                 )
             )
             break
+    #
+    # A run that extended the partitions and then failed left the horizon
+    # fresh (review 26-10-24, 05-09): when the last whole run finished says it.
+    # One row about the maintenance, the horizon's first.
+    #
+    if (
+        maintained_at is not None
+        and now - maintained_at > MAINTENANCE_UNFINISHED
+        and not any(item.subject == "retention" for item in items)
+    ):
+        items.append(
+            Item(
+                kind="manager",
+                severity="warning",
+                cluster=None,
+                subject="retention",
+                message="the nightly maintenance (haprion-retention) has not finished since",
+                since=maintained_at,
+                link="/",
+            )
+        )
     return items
 
 

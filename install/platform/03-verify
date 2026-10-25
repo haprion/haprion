@@ -45,7 +45,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\nattention_ack\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\nproxy_draft\nsearch_entry\nstatus_access\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
+expected_tables=$'alembic_version\napp_session\napp_user\nattention_ack\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\nproxy_draft\nretention_run\nsearch_entry\nstatus_access\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -189,6 +189,7 @@ app_web	package_waiting	SELECT	available, installed, name, read_at
 app_web	proxy_draft	INSERT	base_document, base_hash, base_version, cluster, deleted, object_id, replaces, stage, updated_by, yaml
 app_web	proxy_draft	SELECT	base_document, base_hash, base_version, cluster, deleted, id, object_id, replaces, revision, stage, updated_at, updated_by, yaml
 app_web	proxy_draft	UPDATE	base_document, base_hash, base_version, deleted, object_id, replaces, updated_by, yaml
+app_web	retention_run	SELECT	completed_at
 app_web	search_entry	SELECT	admin_only, cluster, href, kind, label, source, title, value
 app_web	status_access	INSERT	added_by, network
 app_web	status_access	SELECT	added_at, added_by, network

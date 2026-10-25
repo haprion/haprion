@@ -193,6 +193,9 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
             # Needs attention's jobs of any age (0089): none beyond the recent.
             mock.patch("haprion_ui.db.attention_evidence", return_value=[]),
+            mock.patch(
+                "haprion_ui.db.retention_completed", side_effect=lambda _c: datetime.now(UTC)
+            ),
             #
             # Events (B275): nobody queued anything, the record is empty, and
             # no server state was ever asked for. A test about one of them

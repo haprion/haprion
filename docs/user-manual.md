@@ -3681,7 +3681,9 @@ box is not shown.
   - jobs queued before the manager last started, waiting for an admin to choose *Run* or *Discard*
     ([The worker](#the-worker)) - a warning;
   - the nightly maintenance (`haprion-retention`) has not run: the daily partitions it makes ahead of time
-    fall more than a day short (a warning), or there are none at all (critical).
+    fall more than a day short (a warning), or there are none at all (critical); or it has run but not
+    finished for two days - it stopped after the partitions, so jobs and records stopped being pruned
+    (a warning). The run's own log says why: `journalctl -u haprion-retention.service`.
 - **A newer version waiting** for one of the manager's own `haprion-*` packages, as a warning, until
   `apt upgrade` installs it. Nothing is fetched to know this: the answer comes from the lists apt already
   holds, so it is as new as the machine's last `apt update`.

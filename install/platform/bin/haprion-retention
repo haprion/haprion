@@ -1009,6 +1009,11 @@ counts() {
             -c "select count(*) from job where $(where_removable)"
 }
 
+record_completed() {
+    psql_as -c "update retention_run set completed_at = statement_timestamp()" >/dev/null
+    log "  recorded the run as finished"
+}
+
 main() {
     local total removable removed table
     { read -r total; read -r removable; } < <(counts)
@@ -1082,6 +1087,13 @@ main() {
                                        ) select count(*) from removed")"
                 log "  removed  $(counted "${removed}" "job row")"
             fi
+            #
+            # Last, so that it says the whole run finished: a run that stopped
+            # after the partitions left the horizon fresh and Needs attention
+            # silent (review 26-10-24, 05-09). Not for a dry run, which changes
+            # nothing.
+            #
+            [[ "$dry_run" -eq 1 ]] || record_completed
             ;;
         *)
             usage

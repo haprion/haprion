@@ -33,10 +33,10 @@ source ../lib.sh
 
 need_root
 #
-# The collector's login role is deliberately absent here: step 13 proves its
-# boundary with the account itself, and this file never reads the variable. What
-# this file owns is the contract role: `app_collector` appears
-# in the column matrix below like every other grantee.
+# The collector's login role is checked here for its membership alone - it is a
+# member of `app_collector` and of nothing else, like every service role. Its
+# boundary is proved by step 13 with the account itself. The contract role
+# `app_collector` appears in the column matrix below like every other grantee.
 #
 
 run() { psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" -qtAX -F $'\t' "$@"; }

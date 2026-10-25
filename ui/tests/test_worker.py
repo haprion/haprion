@@ -721,6 +721,46 @@ class ADatabaseThatDropsUnderARun(WorkerTestCase):
         self.assertEqual(self.finished[0]["state"], "done")
 
 
+class AnEndTheDatabaseWillNotStore(WorkerTestCase):
+    """Review 26-10-24, 07-03: a DataError in the finish stopped the worker and lost the job."""
+
+    def test_the_job_ends_unknown_without_the_answer(self) -> None:
+        job = claimed()
+        tries: list[dict[str, Any]] = []
+
+        def finish(_c: object, **fields: Any) -> bool:
+            tries.append(fields)
+            if len(tries) == 1:
+                raise psycopg.DataError("unsupported Unicode escape sequence")
+            self.finished.append(fields)
+            return True
+
+        with (
+            mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))),
+            mock.patch.object(db, "finish_job", side_effect=finish),
+        ):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.assertEqual(len(tries), 2)
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "unknown")
+        self.assertEqual(finished["outcome"], "unknown")
+        self.assertEqual(finished["result"]["error"]["code"], "result_unstorable")
+        self.assertIsNone(finished["stderr_excerpt"])
+        self.connection.rollback.assert_called()
+
+    def test_an_end_refused_twice_is_not_tried_a_third_time(self) -> None:
+        job = claimed()
+        with (
+            mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))),
+            mock.patch.object(db, "finish_job", side_effect=psycopg.DataError("no")) as finish,
+            self.assertRaises(psycopg.DataError),
+        ):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.assertEqual(finish.call_count, 2)
+
+
 class StoredDiagnosticsAreBounded(WorkerTestCase):
     def test_a_long_stderr_keeps_both_edges_before_the_write(self) -> None:
         job = claimed()

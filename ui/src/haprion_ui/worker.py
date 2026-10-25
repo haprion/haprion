@@ -387,6 +387,15 @@ def _no_result() -> dict[str, Any]:
     }
 
 
+def _unstorable() -> dict[str, Any]:
+    return {
+        "error": {
+            "code": "result_unstorable",
+            "message": "the operation's answer could not be stored, and it may have acted",
+        }
+    }
+
+
 def _judged(
     envelope: dict[str, Any], completed: execution.Completed
 ) -> tuple[str, str, dict[str, Any]]:
@@ -515,8 +524,14 @@ def _finish_on(
 
     Gives up while the lease is still this worker's, so that the job is left
     `running` for recovery to settle and never written by two workers.
+
+    An end the database will not store - a value no column or jsonb can hold
+    - is written once more as `unknown` with nothing of the answer in it. The
+    error went uncaught before: the worker stopped, the job was left `running`
+    and run again, and its real outcome was lost twice (review 26-10-24, 07-03).
     """
 
+    unstorable = False
     while True:
         try:
             if connect is not None and _broken(connection):
@@ -525,6 +540,21 @@ def _finish_on(
             else:
                 _finish(connection, job, **fields)
             return
+        except psycopg.DataError as exc:
+            if unstorable:
+                raise
+            unstorable = True
+            logger.error("job %s: its end could not be stored (%s); it ends unknown", job.id, exc)
+            if not _broken(connection):
+                with suppress(psycopg.Error):
+                    connection.rollback()
+            fields = {
+                **fields,
+                "state": "unknown",
+                "outcome": "unknown",
+                "result": _unstorable(),
+                "stderr_excerpt": None,
+            }
         except psycopg.OperationalError as exc:
             left = renewed_at() + LEASE_SECONDS - LEASE_MARGIN_SECONDS - time.monotonic()
             if connect is None or left <= FINISH_RETRY_SECONDS:

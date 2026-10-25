@@ -5,6 +5,7 @@ import math
 import os
 import re
 import signal
+import sys
 import threading
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -617,6 +618,13 @@ def read_scoped_request(
     )
 
 
+#
+# Set by `run-tests` for both suites: there a contradiction between a
+# document's outcome and its exit code stops the test, as it is a bug.
+#
+STRICT_VARIABLE = "HAPRION_EXIT_STRICT"
+
+
 def write_document(stream: TextIO, document: Mapping[str, Any], exit_code: int) -> int:
     """Write one helper result to stdout in the one form every helper uses, and hand back its exit.
 
@@ -624,15 +632,34 @@ def write_document(stream: TextIO, document: Mapping[str, Any], exit_code: int) 
     question produce byte-identical documents and a diff between a fixture and a
     real run is a difference in content rather than in formatting.
 
-    The exit code is checked against the document's outcome before anything is
-    written (`exit_codes.check`): a `blocked` that exited 65 and a `partial`
-    that exited 0 were two answers to one question (review 2026-10-22, 4-1).
+    The exit code is checked against the document's outcome (`exit_codes.check`):
+    a `blocked` that exited 65 and a `partial` that exited 0 were two answers to
+    one question (review 2026-10-22, 4-1). A contradiction is a bug, and the
+    test suites refuse it. In use it no longer costs the document: refusing it
+    after the work was done left no answer at all - a backup whose second node
+    was down, a deploy that could not read its status (review 26-10-24, part
+    06's own point). The outcome decides the code for `done`, `partial` and
+    `blocked`; `failed` keeps a failure code of its own, or `FAILED`; and the
+    contradiction is said on stderr. The text is made before a byte is written,
+    so a document that cannot be serialised leaves none half written.
     """
 
-    exit_codes.check(document.get("outcome"), exit_code)
-    json.dump(document, stream, separators=(",", ":"), sort_keys=True)
-    stream.write("\n")
-    return exit_code
+    stated = document.get("outcome")
+    try:
+        code = exit_codes.check(stated, exit_code)
+    except ValueError as contradiction:
+        if os.environ.get(STRICT_VARIABLE) == "1":
+            raise
+        if stated in ("done", "partial", "blocked"):
+            code = exit_codes.for_outcome(stated)
+        elif exit_code in exit_codes.MEANINGS and exit_codes.outcome(exit_code) == "failed":
+            code = exit_code
+        else:
+            code = exit_codes.FAILED
+        sys.stderr.write(f"haprion: {contradiction}; exiting {code}\n")
+    text = json.dumps(document, separators=(",", ":"), sort_keys=True)
+    stream.write(text + "\n")
+    return code
 
 
 def config_error_code(exit_code: int) -> str:

@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import ast
 import io
+import json
+import os
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from haprion import exit_codes
+from haprion import exit_codes, helper_protocol
 from haprion.envelope import Message, envelope
 from haprion.helper_protocol import write_document
 
@@ -81,6 +84,15 @@ def _exit_literals(path: Path) -> list[str]:
                     found.append(f"{path.name}:{node.lineno} {_name(node)}(..., {given.value})")  # type: ignore[attr-defined]
         elif isinstance(node, ast.Return):
             values = node.value.elts if isinstance(node.value, ast.Tuple) else [node.value]
+            #
+            # `return code or 70` too: the number is the second operand
+            # (review 26-10-24, 06-09).
+            #
+            values = [
+                operand
+                for value in values
+                for operand in (value.values if isinstance(value, ast.BoolOp) else [value])
+            ]
             for value in values:
                 if literal(value):
                     found.append(f"{path.name}:{node.lineno} return {value.value}")  # type: ignore[union-attr]
@@ -153,19 +165,41 @@ class TheExitFollowsTheOutcome(unittest.TestCase):
                 self.assertEqual(write_document(stream, self.document(outcome), code), code)
                 self.assertTrue(stream.getvalue())
 
-    def test_a_contradiction_is_refused_before_anything_is_written(self) -> None:
-        for outcome, code in (
-            ("blocked", exit_codes.REFUSED),
-            ("partial", exit_codes.OK),
-            ("failed", exit_codes.PARTIAL),
-            ("done", exit_codes.FAILED),
-            ("failed", 42),
-        ):
-            with self.subTest(outcome, code=code):
+    CONTRADICTIONS = (
+        ("blocked", exit_codes.REFUSED, exit_codes.BLOCKED),
+        ("partial", exit_codes.OK, exit_codes.PARTIAL),
+        ("failed", exit_codes.PARTIAL, exit_codes.FAILED),
+        ("done", exit_codes.FAILED, exit_codes.OK),
+        ("failed", 42, exit_codes.FAILED),
+        ("failed", -9, exit_codes.FAILED),
+    )
+
+    def test_a_contradiction_fails_the_test_suites_before_anything_is_written(self) -> None:
+        for outcome, code, _ in self.CONTRADICTIONS:
+            with (
+                self.subTest(outcome, code=code),
+                mock.patch.dict(os.environ, {helper_protocol.STRICT_VARIABLE: "1"}),
+            ):
                 stream = io.StringIO()
                 with self.assertRaises(ValueError):
                     write_document(stream, self.document(outcome), code)
                 self.assertEqual(stream.getvalue(), "")
+
+    def test_in_use_a_contradiction_still_writes_the_document_with_the_outcome_s_code(
+        self,
+    ) -> None:
+        """Part 06's own point: work done and no answer was the worst way out."""
+
+        for outcome, code, used in self.CONTRADICTIONS:
+            with (
+                self.subTest(outcome, code=code),
+                mock.patch.dict(os.environ, {helper_protocol.STRICT_VARIABLE: "0"}),
+                mock.patch("sys.stderr", new_callable=io.StringIO) as said,
+            ):
+                stream = io.StringIO()
+                self.assertEqual(write_document(stream, self.document(outcome), code), used)
+                self.assertEqual(json.loads(stream.getvalue())["outcome"], outcome)
+                self.assertIn(f"exiting {used}", said.getvalue())
 
     def test_a_passed_on_document_takes_its_outcome_s_code(self) -> None:
         self.assertEqual(exit_codes.for_outcome("partial"), exit_codes.PARTIAL)

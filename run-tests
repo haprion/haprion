@@ -99,6 +99,11 @@ python3 "$base/contract-tests/validate_contracts.py"
 # failure this repository already had once. Each module's coverage is written
 # to its own file and combined before the report.
 #
+#
+# A document whose exit code contradicts its outcome is written anyway in use,
+# with the outcome's code; here it fails the test (helper_protocol.STRICT_VARIABLE).
+#
+export HAPRION_EXIT_STRICT=1
 coverage_dir=$(mktemp -d)
 trap 'rm -rf -- "$coverage_dir"' EXIT HUP INT TERM
 COVERAGE_FILE="$coverage_dir/.coverage" python3 "$base/tools/run_test_modules.py" \

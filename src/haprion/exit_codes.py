@@ -115,6 +115,18 @@ def for_outcome(document_outcome: object) -> int:
     return {"done": OK, "partial": PARTIAL, "blocked": BLOCKED}.get(str(document_outcome), FAILED)
 
 
+def of_process(returncode: int, fallback: int) -> int:
+    """A child's return code when it is one of these, and `fallback` when not.
+
+    A helper killed by a signal comes back negative through `sudo -n`, and 126
+    or 127 when it could not be run at all; neither is an exit this table
+    explains, and passing one on made a document no check would write (review
+    26-10-24, 06-05).
+    """
+
+    return returncode if returncode in MEANINGS else fallback
+
+
 def check(document_outcome: object, code: int) -> int:
     """`code`, when it agrees with the outcome a document states; ValueError when not.
 

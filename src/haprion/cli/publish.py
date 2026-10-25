@@ -245,7 +245,7 @@ def main(
         # here would be guessing.
         #
         writer.write(err or f"ERROR: publishing failed with exit code {code}.\n")
-        return code or 70
+        return exit_codes.of_process(code, exit_codes.INTERNAL) or exit_codes.INTERNAL
 
     if document.get("outcome") != "done":
         error = document.get("error") or {}
@@ -253,7 +253,7 @@ def main(
         if diagnostics:
             writer.write(f"\n{diagnostics}\n")
         writer.write(f"ERROR: {error.get('message', 'publishing did not run.')}\n")
-        return code or 70
+        return exit_codes.of_process(code, exit_codes.INTERNAL) or exit_codes.INTERNAL
 
     result = document.get("result") or {}
     if not result.get("changed"):

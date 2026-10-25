@@ -85,7 +85,7 @@
   2026-09-21): the providers, the receivers, and the two ways a certificate
   comes in - with *New* rightmost, where the eye ends.
 #}
-{% macro page_actions() %}<span class="action-group"><a class="secondary-button" href="/dns-profiles">DNS profiles</a><a class="secondary-button" href="/ndes-profiles">NDES providers</a></span>{% if certificates.registry %}{% if feature_on('cert_receivers') %}<span class="action-group"><a class="secondary-button" href="/certificates/receivers">Receivers</a></span>{% endif %}<span class="action-group"><a class="secondary-button" href="/certificates/import">Import certificate</a><a class="secondary-button" href="/certificates/new">New certificate</a></span>{% endif %}{% endmacro %}
+{% macro page_actions() %}<span class="action-group"><a class="secondary-button" href="/dns-profiles">DNS profiles</a><a class="secondary-button" href="/ndes-profiles">NDES profiles</a></span>{% if certificates.registry %}{% if feature_on('cert_receivers') %}<span class="action-group"><a class="secondary-button" href="/certificates/receivers">Receivers</a></span>{% endif %}<span class="action-group"><a class="secondary-button" href="/certificates/import">Import certificate</a><a class="secondary-button" href="/certificates/new">New certificate</a></span>{% endif %}{% endmacro %}
 
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <script defer src="{{ url_for('static', path='/certificates.js') }}?v={{ asset_token }}"></script>

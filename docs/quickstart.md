@@ -128,7 +128,7 @@ proxy, the network is saved first and goes out with the next publish.
 An HTTPS site needs a certificate. Open *Certificates*.
 
 **From Let's Encrypt:** first open **DNS profiles** and add your DNS host's API credentials with
-**New DNS profile**. They are encrypted so that only the manager's root helper can read them. Then
+**New profile**. They are encrypted so that only the manager's root helper can read them. Then
 **New certificate**: enter the domain (for example `www.example.com`, or `*.example.com` for a wildcard),
 choose the DNS profile, tick the cluster under **Targets**, and press **Request the certificate**.
 HTTP-01 is offered only when the runtime policy names a webroot
@@ -136,7 +136,7 @@ HTTP-01 is offered only when the runtime policy names a webroot
 
 **From your own CA:** **Import certificate** takes a PEM or PKCS#12 file, with or without its key.
 **New certificate** can also make the key on the manager and give you a signing request
-(**Download CSR**) to have signed. A Microsoft CA can be used directly through **NDES providers**.
+(**Download CSR**) to have signed. A Microsoft CA can be used directly through **NDES profiles**.
 
 The certificate is published to the clusters you ticked. Renewal is automatic for Let's Encrypt
 and NDES certificates.

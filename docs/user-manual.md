@@ -2250,7 +2250,7 @@ A certificate the CLI enrolls is registered as `source.kind: import`, with `sour
 naming the profile whose challenge enrolled it. The interface shows such a certificate as **NDES**
 rather than **Imported**.
 
-Removing a profile (*Certificates → NDES providers → Remove*) runs one job that deletes the root-only
+Removing a profile (*Certificates → NDES profiles → Remove*) runs one job that deletes the root-only
 record and then the row. It is refused while the registry still names the profile, or while an
 enrollment request under `state_root` is still tied to it. A refused removal leaves the profile in
 effect.
@@ -5740,7 +5740,7 @@ prepare the Microsoft side. Using it - enrolling, renewing, pending requests - i
 
 **What the manager provides:**
 
-- NDES provider profiles, with the challenge stored encrypted (*Certificates → NDES providers*)
+- NDES profiles, with the challenge stored encrypted (*Certificates → NDES profiles*)
 - the Certmonger client, kept as a reviewed bundle, which speaks SCEP
 - the root enrollment command, `haprion-cert-scep`, and the job helper behind it
 - the certificate form's *NDES* method
@@ -5884,7 +5884,7 @@ need not change for this request type.
 | `UseSinglePassword` | `UseSinglePassword` | `1` |
 
 An administrator fetches the master challenge once, from `https://<ndes-fqdn>/certsrv/mscep_admin/`, and
-enters it in the NDES provider profile under *Certificates → NDES providers*.
+enters it in the NDES profile under *Certificates → NDES profiles*.
 
 - As with DNS provider credentials, the web application encrypts it with the installation's public key, and
   the database stores only the encrypted form. Only the root helper can decrypt it.

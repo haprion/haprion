@@ -1,4 +1,4 @@
-"""The DNS and NDES provider profiles a certificate is issued through."""
+"""The DNS and NDES profiles a certificate is issued through."""
 
 from __future__ import annotations
 

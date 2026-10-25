@@ -268,11 +268,9 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
         )
     if form.method == NDES_METHOD:
         if not choices.ndes_profiles:
-            raise FormProblem(
-                "No NDES provider profile is in effect; enrollment over NDES is unavailable."
-            )
+            raise FormProblem("No NDES profile is in effect; enrollment over NDES is unavailable.")
         if form.ndes_profile not in choices.ndes_profiles:
-            raise FormProblem("Choose an NDES provider profile that is in effect.")
+            raise FormProblem("Choose an NDES profile that is in effect.")
         if form.dns_profile:
             raise FormProblem("A DNS profile belongs to DNS-01 only.")
     elif form.method == CSR_METHOD:
@@ -288,7 +286,7 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "has none; use DNS-01."
         )
     elif form.ndes_profile:
-        raise FormProblem("An NDES provider profile belongs to NDES enrollment only.")
+        raise FormProblem("An NDES profile belongs to NDES enrollment only.")
     if form.key_type and form.method != CSR_METHOD:
         raise FormProblem("A key type belongs to a signing request only.")
     if wildcard and form.method not in {"dns-01", NDES_METHOD, CSR_METHOD}:
@@ -404,7 +402,7 @@ def _interface_payload(form: IssueForm, choices: IssueChoices, name: str) -> dic
         raise FormProblem("The interface certificate has no targets.")
     if form.method == NDES_METHOD:
         if form.ndes_profile not in choices.ndes_profiles:
-            raise FormProblem("Choose an NDES provider profile that is in effect.")
+            raise FormProblem("Choose an NDES profile that is in effect.")
         identifier = interface_id_for(choices.manager, choices.taken)
         return {
             "id": identifier,

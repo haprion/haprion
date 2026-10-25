@@ -1,4 +1,4 @@
-"""The DNS and NDES provider profiles, sealed."""
+"""The DNS and NDES profiles, sealed."""
 
 from __future__ import annotations
 

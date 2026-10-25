@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -263,3 +265,35 @@ class RemovingAnNdesProfile(NdesPages):
                 payload={"profile": "internal-ca", "revision": 1, "remove": True},
                 profile_lookup=lambda _p: row,
             )
+
+
+class TheyAreCalledProfilesEverywhere(unittest.TestCase):
+    """One word for one thing (review 26-10-24, 12-09).
+
+    The button and the page said "NDES providers" while the form, the removal
+    and the manual's glossary said "profile", and the quickstart named a
+    "New DNS profile" button the page does not have.
+    """
+
+    ROOT = Path(__file__).resolve().parents[2]
+
+    def test_no_page_or_document_calls_them_providers(self) -> None:
+        places = [
+            *(self.ROOT / "ui/src/haprion_ui").rglob("*.html"),
+            *(self.ROOT / "ui/src/haprion_ui").rglob("*.py"),
+            *(self.ROOT / "docs").glob("*.md"),
+        ]
+        found = [
+            str(path.relative_to(self.ROOT))
+            for path in places
+            if "NDES provider" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(found, [])
+
+    def test_the_quickstart_names_the_button_the_profile_pages_have(self) -> None:
+        quickstart = (self.ROOT / "docs/quickstart.md").read_text(encoding="utf-8")
+        pages = (self.ROOT / "ui/src/haprion_ui/templates/dns-profiles.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("**New DNS profile**", quickstart)
+        self.assertIn(">New profile</a>", pages)

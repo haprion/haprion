@@ -583,7 +583,7 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
 
     def test_ndes_needs_a_profile_in_effect_and_refuses_a_dns_profile(self) -> None:
         page = self.post(self.ndes_client(), method="ndes").text
-        self.assertIn("Choose an NDES provider profile that is in effect", page)
+        self.assertIn("Choose an NDES profile that is in effect", page)
         page = self.post(
             self.ndes_client(in_effect=False), method="ndes", ndes_profile="certserver1"
         ).text

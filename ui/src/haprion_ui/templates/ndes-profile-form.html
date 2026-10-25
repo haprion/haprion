@@ -10,7 +10,7 @@
   empty - a value echoed into a response is a value in a cache.
 #}
 <section class="page-heading">
-  <div class="heading-title">{{ back_button('/ndes-profiles', 'NDES providers') }}<h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New NDES profile{% endif %}</h1><p class="page-lede">{% if existing %}The new challenge is sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous one stays in effect until it finishes.{% else %}The challenge is sealed against the installation's key before it is stored, and only the enrollment helper can open it.{% endif %}</p></div>
+  <div class="heading-title">{{ back_button('/ndes-profiles', 'NDES profiles') }}<h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New NDES profile{% endif %}</h1><p class="page-lede">{% if existing %}The new challenge is sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous one stays in effect until it finishes.{% else %}The challenge is sealed against the installation's key before it is stored, and only the enrollment helper can open it.{% endif %}</p></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
@@ -27,7 +27,7 @@
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
 
   <section class="cluster-card">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Microsoft AD CS over NDES</h3><p>SCEP with a reusable challenge · one fixed template on the CA · <a href="/ndes-profiles">Back to NDES providers</a>.</p></div></div></header>
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Microsoft AD CS over NDES</h3><p>SCEP with a reusable challenge · one fixed template on the CA · <a href="/ndes-profiles">Back to NDES profiles</a>.</p></div></div></header>
     <div class="form-grid">
       {% if existing %}
       <label><span class="field-title">Profile ID</span><input value="{{ existing.id }}" disabled><small>Fixed. The profile record and the command line use it.</small></label>

@@ -658,7 +658,7 @@ def poll_manager(pool: Any, readings: ReadingsHelper = run_readings_helper) -> b
         reading: dict[str, Any] = {
             "outcome": "unavailable",
             "result": {},
-            "poll_error": f"could not run the cert_list helper: {exc}",
+            "poll_error": _excerpt(f"could not run the cert_list helper: {exc}"),
         }
     else:
         reading = _judge(

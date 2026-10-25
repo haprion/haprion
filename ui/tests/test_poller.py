@@ -899,6 +899,20 @@ class TheManagerIsReadWithoutACluster(unittest.TestCase):
         self.assertEqual(recorded.call_args.kwargs["outcome"], "unavailable")
         searched.assert_not_called()
 
+    def test_a_helper_that_could_not_be_run_is_masked_as_a_cluster_s_is(self) -> None:
+        """Review 26-10-25, 08-02: the manager's reading wrote the exception as it came."""
+
+        def readings(*_args: Any) -> Any:
+            raise OSError("cannot open /root/.ssh/id_x")
+
+        with (
+            unittest.mock.patch("haprion_ui.db.record_manager_certificates") as recorded,
+            unittest.mock.patch("haprion_ui.db.replace_search_entries"),
+        ):
+            self.assertFalse(poller.poll_manager(self.Pool(), readings))
+
+        self.assertNotIn("/root/.ssh", recorded.call_args.kwargs["poll_error"])
+
 
 class TheLocalReadingsComeFromOneCall(unittest.TestCase):
     """`_local_readings`: one `haprion-readings-helper` call, each answer as its own reading (N2)."""

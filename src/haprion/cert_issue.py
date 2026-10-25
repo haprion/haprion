@@ -621,6 +621,21 @@ def add_to_registry(
         # attempt is refused on the lineage and the operator needs to know what
         # to do instead.
         #
+        if exc.code == "already_exists":
+            #
+            # Registering the lineage by hand would write over the certificate
+            # that took the name, which is what the refusal kept from happening
+            # (review 26-10-25, 1-04). The lineage is the one thing to undo.
+            #
+            raise IssueError(
+                exc.code,
+                f"certbot issued {request.certificate_id!r}, and another certificate was "
+                "registered under that name while it ran; nothing was written over it. The "
+                "issued lineage is not registered: remove it with "
+                f"'sudo certbot delete --cert-name {request.certificate_id}', then issue under "
+                "another name.",
+                exit_code=exc.exit_code,
+            ) from exc
         raise IssueError(
             exc.code,
             f"certbot issued {request.certificate_id!r} but the registry did not take it: "
@@ -643,6 +658,7 @@ def _add_entry(
         raise cert_registry.RegistryError(
             "already_exists",
             f"certificate {request.certificate_id!r} was registered while certbot ran.",
+            exit_code=exit_codes.BLOCKED,
         )
     entry: dict[str, Any] = {"source": {"kind": "acme"}}
     if request.dns_profile is not None:

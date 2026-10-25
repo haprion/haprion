@@ -646,10 +646,14 @@ class WhenCertbotSucceeds(IssueFixture):
         )
 
         document = assert_contract("haprion-cert-issue", out)
-        self.assertEqual(document["outcome"], "failed", err)
+        self.assertEqual(document["outcome"], "blocked", err)
         self.assertEqual(document["error"]["code"], "already_exists")
-        self.assertIn("registered while certbot ran", document["error"]["message"])
-        self.assertEqual(code, exit_codes.USAGE)
+        # Review 26-10-25, 1-04: not "register it by hand", which would write over it.
+        self.assertIn(
+            "sudo certbot delete --cert-name www.example.com", document["error"]["message"]
+        )
+        self.assertNotIn("by hand", document["error"]["message"])
+        self.assertEqual(code, exit_codes.BLOCKED)
         registry = yaml.safe_load(self.registry_path.read_text())
         self.assertEqual(registry["certificates"]["www.example.com"], imported)
         self.assertEqual(deployed, [])

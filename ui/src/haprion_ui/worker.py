@@ -36,7 +36,17 @@ from uuid import UUID, uuid5
 
 import psycopg
 
-from haprion_ui import answers, db, diagnostics, execution, labels, operations, recovery, service
+from haprion_ui import (
+    answers,
+    db,
+    diagnostics,
+    execution,
+    jobs,
+    labels,
+    operations,
+    recovery,
+    service,
+)
 from haprion_ui.config import DEFAULT_CONFIG_PATH
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
@@ -313,10 +323,8 @@ def _finish(
     # A publish followed by a deploy in the same job (B257) published even
     # when the deploy did not; its own answer is under `publish`.
     #
-    embedded = (result or {}).get("publish")
-    published = state == "done" or (
-        isinstance(embedded, dict) and embedded.get("outcome") == "done"
-    )
+    answer = jobs.publish_answer(result)
+    published = state == "done" or (answer is not None and answer.get("outcome") == "done")
     if (
         published
         and job.operation == "changes_publish"

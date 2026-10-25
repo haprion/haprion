@@ -22,7 +22,7 @@ every failure. See B44.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -224,6 +224,33 @@ def deploys(job: Job) -> bool:
     return job.operation == "changes_publish" and payload.get("deploy") is True
 
 
+def publish_answer(result: object) -> Mapping[str, Any] | None:
+    """The publish's own answer inside a publish job's stored result.
+
+    Every reader asks this, so a change in where the worker keeps it is made
+    once (review 26-10-24, 07-11):
+
+    - a *Publish & deploy* (B257) keeps it under `publish`, beside the
+      deploy's answer the job ended with;
+    - an answer whose process exited against it is kept under `answer`, beside
+      `exit_mismatch`. It is no account of what took effect, so it is not
+      read: nothing is taken from it, as nothing was before;
+    - otherwise the result is the publish's answer itself.
+
+    The queries that find a cluster's publishes (`db.draft_publishes`,
+    `db.change_publishes`) ask the first and the last in SQL.
+    """
+
+    if not isinstance(result, Mapping):
+        return None
+    embedded = result.get("publish")
+    if isinstance(embedded, Mapping):
+        return embedded
+    if "answer" in result:
+        return None
+    return result
+
+
 def published(job: Job) -> bool:
     """Whether a publish job recorded its version.
 
@@ -235,8 +262,8 @@ def published(job: Job) -> bool:
 
     if job.state == "done":
         return True
-    embedded = job.result.get("publish") if isinstance(job.result, dict) else None
-    return isinstance(embedded, dict) and embedded.get("outcome") == "done"
+    answer = publish_answer(job.result)
+    return answer is not None and answer.get("outcome") == "done"
 
 
 #
@@ -343,8 +370,8 @@ def step_note(job: Job) -> str | None:
         return None
     result = job.result if isinstance(job.result, dict) else {}
     if job.operation == "changes_publish":
-        envelope = result.get("publish")
-        body = envelope.get("result") if isinstance(envelope, dict) else None
+        envelope = publish_answer(result)
+        body = envelope.get("result") if envelope is not None else None
         version = body.get("version") if isinstance(body, dict) else None
         stands = (
             f"Published as version {version}"
@@ -768,9 +795,8 @@ def unresolved_note(job: Job) -> str | None:
 
     if job.operation != "changes_publish" or not isinstance(job.result, dict):
         return None
-    embedded = job.result.get("publish")
-    envelope = embedded if isinstance(embedded, dict) else job.result
-    body = envelope.get("result")
+    envelope = publish_answer(job.result)
+    body = envelope.get("result") if envelope is not None else None
     names = body.get("unresolved_servers") if isinstance(body, dict) else None
     if not isinstance(names, list):
         return None

@@ -2698,11 +2698,8 @@ def _publish_changed(result: Any) -> bool | None:
     followed by a deploy in one job (B257) keeps its own answer under `publish`.
     """
 
-    if not isinstance(result, Mapping):
-        return None
-    embedded = result.get("publish")
-    envelope: Mapping[str, Any] = embedded if isinstance(embedded, Mapping) else result
-    body = envelope.get("result")
+    envelope = jobs.publish_answer(result)
+    body = envelope.get("result") if envelope is not None else None
     changed = body.get("changed") if isinstance(body, Mapping) else None
     return changed if isinstance(changed, bool) else None
 
@@ -2930,11 +2927,8 @@ def _settled_changes(
 def _publish_recorded(result: Any) -> tuple[str, int | None] | None:
     """The commit and version a finished publish recorded, from inside its envelope."""
 
-    if not isinstance(result, Mapping):
-        return None
-    embedded = result.get("publish")
-    envelope: Mapping[str, Any] = embedded if isinstance(embedded, Mapping) else result
-    body = envelope.get("result")
+    envelope = jobs.publish_answer(result)
+    body = envelope.get("result") if envelope is not None else None
     if not isinstance(body, Mapping):
         return None
     commit, version = body.get("hash"), body.get("version")

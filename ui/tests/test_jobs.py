@@ -851,3 +851,31 @@ class AJobInTwoStepsIsToldOneWay(unittest.TestCase):
         dashboard, listed, note = self.told(refused)
 
         self.assertEqual((dashboard, listed, note), ("Publish failed", "Publish failed", None))
+
+
+class ThePublishAnswerIsReadInOnePlace(unittest.TestCase):
+    """Review 26-10-24, 07-11: six readers each knew where the publish's answer was."""
+
+    def test_its_three_places(self) -> None:
+        own = {"outcome": "done", "result": {"version": 27}}
+        self.assertEqual(jobs.publish_answer(own), own)
+        self.assertEqual(jobs.publish_answer({"outcome": "failed", "publish": own}), own)
+        self.assertIsNone(jobs.publish_answer({"error": {"code": "exit_mismatch"}, "answer": own}))
+        self.assertIsNone(jobs.publish_answer(None))
+
+    def test_no_other_reader_digs_it_out(self) -> None:
+        source = Path(jobs.__file__).parent
+        readers = [
+            f"{path.relative_to(source)}:{number}"
+            for path in sorted(source.rglob("*.py"))
+            for number, line in enumerate(path.read_text().splitlines(), 1)
+            if re.search(r"""\.get\(\s*["']publish["']""", line)
+        ]
+        self.assertEqual(readers, ["jobs.py:" + str(self.line_of_the_one_reader())])
+
+    @staticmethod
+    def line_of_the_one_reader() -> int:
+        lines = Path(jobs.__file__).read_text().splitlines()
+        return next(
+            n for n, line in enumerate(lines, 1) if 'embedded = result.get("publish")' in line
+        )

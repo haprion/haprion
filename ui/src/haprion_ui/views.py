@@ -78,6 +78,7 @@ from haprion.proxy_model import (
     ModelError,
     load_proxy,
 )
+from pydantic import ValidationError
 from starlette.datastructures import FormData
 from starlette.templating import _TemplateResponse
 
@@ -1323,11 +1324,24 @@ def _editor_page(
             except preview_module.Unexpressible as exc:
                 fields = dict(preview_module.DEFAULTS, name=name)
                 unexpressible = str(exc)
-        form = editor_module.ObjectForm(
-            **_form_defaults(fields),
-            saved_revision=str(work.saved.revision) if work.saved is not None else "",
-            object_fingerprint=editor_module.fingerprint(stored.document if stored else None),
-        )
+        try:
+            form = editor_module.ObjectForm(
+                **_form_defaults(fields),
+                saved_revision=str(work.saved.revision) if work.saved is not None else "",
+                object_fingerprint=editor_module.fingerprint(stored.document if stored else None),
+            )
+        except ValidationError as exc:
+            #
+            # Said when it is opened, as an object the form cannot say is: one
+            # it could show and not save was an error page (review 26-10-24,
+            # 15-08).
+            #
+            form = editor_module.ObjectForm(
+                **_form_defaults(dict(preview_module.DEFAULTS, name=name)),
+                saved_revision=str(work.saved.revision) if work.saved is not None else "",
+                object_fingerprint=editor_module.fingerprint(stored.document if stored else None),
+            )
+            unexpressible = ".".join(str(part) for part in exc.errors()[0]["loc"])
         draft_revision = str(work.draft.revision) if work.draft is not None else ""
 
     fields = form.fields()

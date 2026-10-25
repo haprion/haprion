@@ -393,6 +393,50 @@ class SavingADraft(EditorTestCase):
         self.assertIn("reserved in manual/reservations.yaml", answer.text)
         self.assertNotIn("<strong>Valid", answer.text)
 
+    def test_an_object_written_on_the_command_line_with_many_names_opens_and_saves(self) -> None:
+        """Review 26-10-24, 15-08: it opened, and Save refused it as too long."""
+
+        names = [f"host-{number:03d}.shop.example.com" for number in range(90)]
+        document = SHOP.replace("- shop.example.com\n", "".join(f"- {n}\n" for n in names))
+        stored = replace(
+            OBJECTS,
+            result={
+                **OBJECTS.result,
+                "objects": [{**OBJECTS.result["objects"][0], "document": document}],
+            },
+        )
+        client = self.editor()
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=[stored]):
+            page = client.get("/proxies/alpha/shop/edit")
+            answer = self.submit(
+                client, "/proxies/alpha/shop/edit", action="draft", hostnames="\n".join(names)
+            )
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(names[-1], page.text)
+        self.assertEqual(answer.status_code, 303, answer.text[-2000:])
+        self.assertIn(names[-1], self.saved[0]["yaml"])
+
+    def test_an_object_beyond_what_the_form_takes_says_so_when_opened(self) -> None:
+        """Review 26-10-24, 15-08: the form's limit is said where the object is opened."""
+
+        names = [f"host-{number:04d}.shop.example.com" for number in range(2600)]
+        document = SHOP.replace("- shop.example.com\n", "".join(f"- {n}\n" for n in names))
+        stored = replace(
+            OBJECTS,
+            result={
+                **OBJECTS.result,
+                "objects": [{**OBJECTS.result["objects"][0], "document": document}],
+            },
+        )
+        client = self.editor()
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=[stored]):
+            page = client.get("/proxies/alpha/shop/edit")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("cannot be opened in the form", page.text)
+        self.assertIn("<code>hostnames</code>", page.text)
+
     def test_a_document_that_is_not_an_object_is_not_saved(self) -> None:
         """The refusal is about the object, so there is nothing to keep yet."""
 
@@ -1269,12 +1313,12 @@ class AFormTooLongForTheModel(EditorTestCase):
             client,
             "/proxies/alpha/shop/edit",
             action="save",
-            servers="\n".join(["192.0.2.10:8080"] * 300),
+            servers="\n".join(["192.0.2.10:8080"] * (editor_module.FORM_TEXT // 15)),
         )
 
         self.assertEqual(answer.status_code, 400)
         self.assertIn("text/html", answer.headers["content-type"])
-        self.assertIn("Servers is longer than 4,096 characters", answer.text)
+        self.assertIn(f"Servers is longer than {editor_module.FORM_TEXT:,} characters", answer.text)
         self.assertNotIn("192.0.2.10:8080", answer.text)
         self.assertEqual(self.saved, [])
 
@@ -1282,7 +1326,7 @@ class AFormTooLongForTheModel(EditorTestCase):
         client = self.editor()
         answer = client.post(
             "/proxies/alpha/shop/edit",
-            json={"servers": "x" * 5000},
+            json={"servers": "x" * (editor_module.FORM_TEXT + 1)},
             follow_redirects=False,
         )
 

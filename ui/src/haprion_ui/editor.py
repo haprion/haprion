@@ -451,6 +451,16 @@ def sequence(values: Sequence[str]) -> tuple[str, ...]:
 METHOD_ORDER = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE")
 
 
+#
+# What a free-text field may hold: a guard against an absurd post and nothing
+# more. What an object may say is the engine's to judge, as it judges a file
+# applied from the command line. Tighter limits here let the editor open an
+# object written there - ninety hostnames - and then refuse to save it, even
+# for a change somewhere else (review 26-10-24, 15-08).
+#
+FORM_TEXT = 64 * 1024
+
+
 RuleList = Annotated[
     list[Annotated[str, StringConstraints(max_length=64)]], Field(max_length=MAX_RULES)
 ]
@@ -461,7 +471,7 @@ class ObjectForm(BaseModel):
 
     name: Annotated[str, StringConstraints(max_length=64)] = ""
     description: Annotated[str, StringConstraints(max_length=200)] = ""
-    hostnames: Annotated[str, StringConstraints(max_length=2048)] = ""
+    hostnames: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
     protocol: Annotated[str, StringConstraints(max_length=8)] = "https"
     tcp_port: Annotated[str, StringConstraints(max_length=5)] = ""
     vip: Annotated[str, StringConstraints(max_length=64)] = ""
@@ -475,9 +485,9 @@ class ObjectForm(BaseModel):
     balance_key: Annotated[str, StringConstraints(max_length=64)] = ""
     cookie: Annotated[str, StringConstraints(max_length=32)] = ""
     backend: Annotated[str, StringConstraints(max_length=64)] = ""
-    servers: Annotated[str, StringConstraints(max_length=4096)] = ""
+    servers: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
     health_type: Annotated[str, StringConstraints(max_length=16)] = "disabled"
-    health_path: Annotated[str, StringConstraints(max_length=1024)] = ""
+    health_path: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
     health_host: Annotated[str, StringConstraints(max_length=255)] = ""
     health_port: Annotated[str, StringConstraints(max_length=8)] = ""
     health_interval: Annotated[str, StringConstraints(max_length=8)] = ""
@@ -522,7 +532,7 @@ class ObjectForm(BaseModel):
     server_timeout: Annotated[str, StringConstraints(max_length=8)] = ""
     slow_start: Annotated[str, StringConstraints(max_length=8)] = ""
     allow_from: list[Annotated[str, StringConstraints(max_length=64)]] = Field(default_factory=list)
-    allow_ranges: Annotated[str, StringConstraints(max_length=2048)] = ""
+    allow_ranges: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
     rate_limit: Annotated[str, StringConstraints(max_length=8)] = ""
     rate_window: Annotated[str, StringConstraints(max_length=8)] = ""
     #
@@ -538,7 +548,7 @@ class ObjectForm(BaseModel):
     block_exempt_from: list[Annotated[str, StringConstraints(max_length=64)]] = Field(
         default_factory=list
     )
-    block_exempt_ranges: Annotated[str, StringConstraints(max_length=2048)] = ""
+    block_exempt_ranges: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
     #
     # Access rules (Fas 21, B227). A rule is a row of parallel lists, one entry
     # per rule in page order; the boxes a browser leaves out when unticked
@@ -546,14 +556,14 @@ class ObjectForm(BaseModel):
     # cannot shift the next row's ticks onto this one.
     #
     deny_from: list[Annotated[str, StringConstraints(max_length=64)]] = Field(default_factory=list)
-    deny_ranges: Annotated[str, StringConstraints(max_length=2048)] = ""
+    deny_ranges: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
     deny_mode: Annotated[str, StringConstraints(max_length=8)] = "log"
     max_request_body: Annotated[str, StringConstraints(max_length=16)] = ""
     rule_index: RuleList = Field(default_factory=list)
     rule_name: RuleList = Field(default_factory=list)
     rule_mode: RuleList = Field(default_factory=list)
     rule_path: Annotated[
-        list[Annotated[str, StringConstraints(max_length=1024)]], Field(max_length=MAX_RULES)
+        list[Annotated[str, StringConstraints(max_length=FORM_TEXT)]], Field(max_length=MAX_RULES)
     ] = Field(default_factory=list)
     rule_match: RuleList = Field(default_factory=list)
     rule_header: RuleList = Field(default_factory=list)
@@ -562,7 +572,7 @@ class ObjectForm(BaseModel):
         list[Annotated[str, StringConstraints(max_length=255)]], Field(max_length=MAX_RULES)
     ] = Field(default_factory=list)
     rule_source: Annotated[
-        list[Annotated[str, StringConstraints(max_length=1024)]], Field(max_length=MAX_RULES)
+        list[Annotated[str, StringConstraints(max_length=FORM_TEXT)]], Field(max_length=MAX_RULES)
     ] = Field(default_factory=list)
     rule_methods: Annotated[
         list[Annotated[str, StringConstraints(max_length=16)]], Field(max_length=MAX_RULES * 9)
@@ -571,11 +581,11 @@ class ObjectForm(BaseModel):
     maintenance: bool = False
     maintenance_message: Annotated[str, StringConstraints(max_length=200)] = ""
     unavailable_message: Annotated[str, StringConstraints(max_length=200)] = ""
-    request_headers: Annotated[str, StringConstraints(max_length=2048)] = ""
-    response_headers: Annotated[str, StringConstraints(max_length=2048)] = ""
-    redirect_path: Annotated[str, StringConstraints(max_length=1024)] = ""
+    request_headers: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
+    response_headers: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
+    redirect_path: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
     redirect_match: Annotated[str, StringConstraints(max_length=8)] = "prefix"
-    redirect_location: Annotated[str, StringConstraints(max_length=1024)] = ""
+    redirect_location: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
     redirect_status: Annotated[str, StringConstraints(max_length=3)] = "301"
     #
     # Carried through unchanged (Fas 17): edited in the object's own dialog, not

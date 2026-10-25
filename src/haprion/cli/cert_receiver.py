@@ -12,7 +12,6 @@ that may travel (B157).
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -36,7 +35,7 @@ from haprion.cert_receiver import (
 )
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import envelope, failure, new_request_id
-from haprion.helper_protocol import write_document
+from haprion.helper_protocol import config_error_code, write_document
 
 OPERATION = "cert_receiver"
 
@@ -227,7 +226,7 @@ def main(
         runtime = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
+            config_error_code(exc.exit_code),
             str(exc),
             exc.exit_code,
         )
@@ -236,22 +235,18 @@ def main(
         if arguments.action == "list":
             rows = listing(policy, runtime)
             if arguments.json_mode:
-                writer.write(
-                    json.dumps(
-                        envelope(
-                            operation=OPERATION,
-                            outcome="done",
-                            cluster=None,
-                            result={"receivers": rows},
-                            request_id=request_id,
-                        ),
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    )
-                    + "\n"
+                return write_document(
+                    writer,
+                    envelope(
+                        operation=OPERATION,
+                        outcome="done",
+                        cluster=None,
+                        result={"receivers": rows},
+                        request_id=request_id,
+                    ),
+                    exit_codes.OK,
                 )
-            else:
-                _print_listing(rows, writer)
+            _print_listing(rows, writer)
             return 0
 
         #

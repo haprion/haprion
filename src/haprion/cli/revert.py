@@ -35,7 +35,7 @@ from haprion.cli.caller import config_path as _config_path
 from haprion.digits import is_digits
 from haprion.envelope import envelope, failure
 from haprion.git_command import GitError
-from haprion.helper_protocol import write_document
+from haprion.helper_protocol import config_error_code, write_document
 from haprion.repo_health import describe_problem, is_repo_root, unsaved_changes
 from haprion.repo_snapshot import resolve_head
 from haprion.version_history import count_versions, version_commit, version_summary
@@ -200,7 +200,7 @@ def main(
             #
             code = stopped.code if isinstance(stopped.code, int) else exit_codes.USAGE
             return refuse(
-                "bad_input" if code == exit_codes.USAGE else "dependency_unavailable",
+                config_error_code(code),
                 f"cluster {cluster_id} could not be looked up",
                 exit_codes.of_process(code, exit_codes.USAGE) or exit_codes.USAGE,
             )

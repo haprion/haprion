@@ -11,7 +11,6 @@ interface's upload, and lands on the targets named here.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
@@ -24,8 +23,8 @@ from haprion.cert_publish import DEFAULT_LOCK_PATH
 from haprion.cert_request_state import DEFAULT_KEY_TYPE, KEY_TYPES
 from haprion.cli import arguments, cert_job
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
-from haprion.envelope import envelope, failure, new_request_id
-from haprion.helper_protocol import HelperProtocolError
+from haprion.envelope import envelope, new_request_id
+from haprion.helper_protocol import HelperProtocolError, write_document, write_failure
 
 OPERATION = cert_request.OPERATION
 
@@ -157,18 +156,14 @@ def main(
     def refuse(code: str, message: str, exit_code: int) -> int:
         errors.write(f"ERROR: [{code}] {message}\n")
         if args.json:
-            writer.write(
-                json.dumps(
-                    failure(
-                        operation=OPERATION,
-                        cluster=None,
-                        request_id=request_id,
-                        code=code,
-                        message=message,
-                        exit_code=exit_code,
-                    )
-                )
-                + "\n"
+            return write_failure(
+                writer,
+                operation=OPERATION,
+                cluster=None,
+                request_id=request_id,
+                code=code,
+                message=message,
+                exit_code=exit_code,
             )
         return exit_code
 
@@ -197,7 +192,7 @@ def main(
     except RequestRefusal as exc:
         return refuse(exc.code, str(exc), exc.exit_code)
     if args.json:
-        writer.write(json.dumps(doc, separators=(",", ":")) + "\n")
+        return write_document(writer, doc, exit_code)
     else:
         #
         # The CSR itself, and nothing about the key: what the reader does

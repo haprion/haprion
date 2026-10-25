@@ -68,6 +68,7 @@ from haprion.helper_protocol import (
     HelperProtocolError,
     HelperRequest,
     JsonValue,
+    config_error_code,
     read_helper_request,
     require_no_arguments,
     write_document,
@@ -293,7 +294,7 @@ def main(
         return refuse("bad_input", str(exc), exc.exit_code)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
+            config_error_code(exc.exit_code),
             str(exc),
             exc.exit_code,
         )

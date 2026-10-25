@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import sys
@@ -24,8 +23,8 @@ from haprion.config import (
     load_runtime_config,
 )
 from haprion.dns_profiles import ProfileError
-from haprion.envelope import Message, envelope, failure, new_request_id
-from haprion.helper_protocol import HelperProtocolError, write_document
+from haprion.envelope import Message, envelope, new_request_id
+from haprion.helper_protocol import HelperProtocolError, write_document, write_failure
 from haprion.ndes_state import (
     request_formats,
     request_is_exportable,
@@ -367,18 +366,14 @@ def main(
     def refuse(code: str, message: str, exit_code: int) -> int:
         errors.write(f"ERROR: [{code}] {message}\n")
         if args.json:
-            writer.write(
-                json.dumps(
-                    failure(
-                        operation=OPERATION,
-                        cluster=None,
-                        request_id=request_id,
-                        code=code,
-                        message=message,
-                        exit_code=exit_code,
-                    )
-                )
-                + "\n"
+            return write_failure(
+                writer,
+                operation=OPERATION,
+                cluster=None,
+                request_id=request_id,
+                code=code,
+                message=message,
+                exit_code=exit_code,
             )
         return exit_code
 

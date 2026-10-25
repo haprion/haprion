@@ -41,6 +41,7 @@ from haprion.helper_protocol import (
     HelperProtocolError,
     HelperRequest,
     JsonValue,
+    config_error_code,
     read_helper_request,
     require_no_arguments,
     write_document,
@@ -541,7 +542,7 @@ def run(
         return refuse("bad_input", str(exc), exc.exit_code)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
+            config_error_code(exc.exit_code),
             str(exc),
             exc.exit_code,
         )
@@ -575,6 +576,11 @@ def run(
     except (InstallError, LayoutError, PublishError) as exc:
         return refuse("publish_incomplete", str(exc), exc.exit_code)
     except ConfigError as exc:
-        return refuse("bad_input", str(exc), exc.exit_code)
+        #
+        # What the build read under the lock - the base's network, the
+        # certificate inventory - not the request, unless it says so; the
+        # request's own content is refused as a `Refusal` (review 26-10-24, 06-07).
+        #
+        return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
     except GitError as exc:
         return refuse("internal_error", str(exc), exc.exit_code)

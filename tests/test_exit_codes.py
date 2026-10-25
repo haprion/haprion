@@ -229,5 +229,43 @@ class TheExitFollowsTheOutcome(unittest.TestCase):
         self.assertEqual(exit_codes.for_outcome("unknown"), exit_codes.FAILED)
 
 
+class OneWayToWriteADocument(unittest.TestCase):
+    """Review 26-10-24, 06-07: the refusals' copies had drifted apart.
+
+    Two wrote `json.dumps(failure(...))` past `write_document`, without its
+    exit check or its one form, and eleven spelled out `config_error_code` by
+    hand.
+    """
+
+    def test_no_envelope_is_serialised_outside_write_document(self) -> None:
+        found = []
+        for path in _modules():
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if (
+                    isinstance(node, ast.Call)
+                    and _name(node) == "dumps"
+                    and node.args
+                    and isinstance(node.args[0], ast.Call)
+                    and _name(node.args[0]) in {"failure", "envelope"}
+                ):
+                    found.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+        self.assertEqual(found, [], "write the document with helper_protocol.write_document")
+
+    def test_the_code_of_a_configuration_failure_is_chosen_in_one_place(self) -> None:
+        found = []
+        for path in _modules():
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if (
+                    isinstance(node, ast.IfExp)
+                    and isinstance(node.body, ast.Constant)
+                    and node.body.value == "bad_input"
+                    and isinstance(node.orelse, ast.Constant)
+                    and node.orelse.value == "dependency_unavailable"
+                    and path.name != "helper_protocol.py"
+                ):
+                    found.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+        self.assertEqual(found, [], "use helper_protocol.config_error_code")
+
+
 if __name__ == "__main__":
     unittest.main()

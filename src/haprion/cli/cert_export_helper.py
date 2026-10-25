@@ -31,7 +31,7 @@ from haprion.config import (
     load_runtime_config,
 )
 from haprion.envelope import envelope
-from haprion.helper_protocol import HelperProtocolError, write_document
+from haprion.helper_protocol import HelperProtocolError, config_error_code, write_document
 from haprion.version_history import trailer_name
 
 OPERATION = "cert_export"
@@ -96,7 +96,7 @@ def main(
         )
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
+            config_error_code(exc.exit_code),
             str(exc),
             exc.exit_code,
         )

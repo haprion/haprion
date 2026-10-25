@@ -36,7 +36,7 @@ from haprion.cert_publish import (
 )
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope, failure, new_request_id
-from haprion.helper_protocol import write_document
+from haprion.helper_protocol import config_error_code, write_document
 
 OPERATION = "cert_publish"
 CERT_DEPLOY = "haprion-cert-deploy"
@@ -243,7 +243,7 @@ def main(
         runtime = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         return refuse(
-            "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
+            config_error_code(exc.exit_code),
             str(exc),
             exc.exit_code,
         )

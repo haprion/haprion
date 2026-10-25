@@ -15,9 +15,11 @@ from unittest import mock
 
 import yaml
 
+from haprion import exit_codes
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import changes_publish
 from haprion.cluster_settings import LOCATION as SETTINGS_LOCATION
+from haprion.config import ConfigError
 from haprion.version_history import count_versions, recent_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_changes_publish_objects import NETWORK, ObjectsPublishFixture, proxy
@@ -128,6 +130,24 @@ class ChangesPublishTests(ObjectsPublishFixture):
             assert_contract("haprion-changes-publish", json.dumps(published))
             self.assertEqual(published["result"]["unresolved_servers"], ["typo.example.com"])
             self.assertTrue((self.repo / "managed/proxies/shop.yaml").exists())
+
+    def test_a_dependency_that_cannot_be_read_under_the_lock_is_named_as_one(self) -> None:
+        """Review 26-10-24, 06-07: a configuration failure under the lock is not the request's."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            with mock.patch(
+                "haprion.held_ports.read",
+                side_effect=ConfigError("the nodes' ports are unreadable"),
+            ):
+                code, document, _ = self.publish(
+                    policy, self.changes(objects={"shop": proxy("shop", "shop.example.com")})
+                )
+
+            self.assertEqual(code, exit_codes.REFUSED)
+            assert_contract("haprion-changes-publish", json.dumps(document))
+            self.assertEqual(document["error"]["code"], "dependency_unavailable")
 
     def test_an_object_on_a_vip_the_package_does_not_add_is_refused(self) -> None:
         """The other half of the case above: the network is read from the base."""

@@ -39,6 +39,8 @@ from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 from uuid import UUID
 
+from haprion import atomic_file
+
 ROOT = Path("/var/lib/haprion/answers")
 #
 # How long a receipt is kept. A job is settled within minutes of its lease
@@ -131,7 +133,7 @@ class Kept(io.TextIOBase):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
             os.fchown(fd, -1, os.stat(self._directory).st_gid)
-            os.rename(staging, self._directory / name)
+            atomic_file.move(staging, self._directory / name)
         except OSError as exc:
             os.close(fd)
             staging.unlink(missing_ok=True)

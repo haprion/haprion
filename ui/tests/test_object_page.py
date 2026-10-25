@@ -499,7 +499,10 @@ class ADraftInTheListing(DraftReading):
             ),
         ):
             with self.subTest(expected=expected):
-                self.assertIn(f">{expected}<", badge(row))
+                # The way to the publish, which only Versions makes (review 26-10-24, 12-13).
+                self.assertIn(f'waiting-badge" href="/history">{expected}</a>', badge(row))
+
+        self.assertNotIn('href="/history"', badge(self.drafted("public-web")))
 
     def test_without_drafts_the_listing_says_nothing_about_them(self) -> None:
         self.assertNotIn(">Draft<", self.listing([]))

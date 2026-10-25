@@ -16,7 +16,10 @@
         what it looked like was that publishing had quietly turned the object
         back into a draft. The reason is named here; the full text is one click
         away, where it has room.
-      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.stage == 'saved' %}{% if draft.deleted %}Removal · not published{% elif draft.replaces %}Renamed · not published{% elif stored %}Changed · not published{% else %}New · not published{% endif %}{% elif draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endmacro %}
+      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}{% if draft.stage == 'saved' %}{#
+        Saved and waiting for a publish, which is made on Versions and nowhere
+        else; the badge is the way there (review 26-10-24, 12-13).
+      #}<a class="status-badge status-badge-info waiting-badge" href="/history">{% if draft.deleted %}Removal · not published{% elif draft.replaces %}Renamed · not published{% elif stored %}Changed · not published{% else %}New · not published{% endif %}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endif %}{% endmacro %}
 
 {% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}, unforwarded=(), used=none) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}

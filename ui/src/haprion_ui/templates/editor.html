@@ -96,9 +96,10 @@
   {% include "_object-form.html" %}
 
   {#
-    One click for the common case. Saving and publishing separately was three
-    screens for one change - but they stay two acts underneath, so a publish
-    that is refused leaves the work saved rather than lost.
+    Saving and publishing are two acts, so a publish that is refused leaves the
+    work saved rather than lost. Save lands on Proxies, where the row says
+    "not published" and links to Versions: the one place a publish is made,
+    with every saved change of the cluster in view.
 
     Deploy is deliberately not here. It makes the nodes pull the cluster's
     release, which carries everything published since the last one, so a deploy
@@ -108,10 +109,10 @@
     saving, and a button beside three others that writes nothing is the one
     people press by accident.
 
-    The row ends with the act it is for. The publish is the rightmost thing,
-    where the row is read to, and the leave link moved to the far left for the
-    same reason it is a link: the two must not be neighbours, or a hand aimed
-    at leaving lands on the one button that puts a change on the nodes.
+    The row ends with the act it is for. Save is the rightmost thing, where
+    the row is read to, and the leave link sits at the far left for the same
+    reason it is a link: the two must not be neighbours, or a hand aimed at
+    leaving lands on the button that writes.
 
     It said "Cancel", which claims to undo something. Saving a draft leaves you
     here, so by then there is nothing to undo and the word was wrong - and it

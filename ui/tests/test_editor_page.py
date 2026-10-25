@@ -721,7 +721,8 @@ class SavingADraft(EditorTestCase):
             client, "/proxies/alpha/shop/edit", action="draft", expected_revision="1"
         )
 
-        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(answer.status_code, 409)
+        self.assertIn("<h1>Not done</h1>", answer.text)
         self.assertEqual(self.pool.rollbacks, 1)
 
     def test_a_post_without_a_csrf_token_is_refused(self) -> None:

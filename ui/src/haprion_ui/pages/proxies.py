@@ -684,9 +684,6 @@ def build_router(config: Config) -> APIRouter:
             except db.ClusterBusy:
                 connection.rollback()
                 return RedirectResponse(back + "?servers=busy", status_code=303)
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
             db.record_audit_event(
                 connection,
                 actor=gate.username,
@@ -764,9 +761,6 @@ def build_router(config: Config) -> APIRouter:
             except db.ClusterBusy:
                 connection.rollback()
                 return RedirectResponse(back + "?blocked=busy", status_code=303)
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
             db.record_audit_event(
                 connection,
                 actor=gate.username,

@@ -24,11 +24,15 @@ from typing import Any
 
 import psycopg
 from fastapi import FastAPI, Request
-from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from haprion_ui import compatibility, db, page_headers, pages, timing, views
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
@@ -149,6 +153,25 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.exception_handler(psycopg.OperationalError)
     async def database_errors(request: Request, exc: psycopg.OperationalError) -> Response:
         return views.database_unavailable(request, exc)
+
+    #
+    # A job or a draft refused because of another is one page wherever it is
+    # met, and a page that is not there is a page too, for somebody signed in
+    # (review 26-10-24, 07-02). Each route used to say it its own way.
+    #
+    async def conflicts(request: Request, exc: Exception) -> Response:
+        return await run_in_threadpool(views.conflict_page, request, settings, exc)
+
+    for refusal in (db.ClusterBusy, db.CertificateBusy, db.RequestConflict, db.DraftConflict):
+        app.add_exception_handler(refusal, conflicts)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def not_found(request: Request, exc: StarletteHTTPException) -> Response:
+        if exc.status_code == 404:
+            page = await run_in_threadpool(views.not_found_page, request, settings)
+            if page is not None:
+                return page
+        return await http_exception_handler(request, exc)
 
     #
     # Each response says where its time went (`timing`): in a header for the

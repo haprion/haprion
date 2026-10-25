@@ -200,23 +200,13 @@ def build_router(config: Config) -> APIRouter:
             existing = db.dns_profile(connection, profile_id)
             if existing is None:
                 return PlainTextResponse("Not found", status_code=404)
-            try:
-                job = db.queue_job(
-                    connection,
-                    operation="dns_profile_apply",
-                    cluster=None,
-                    payload={"profile": existing.id, "revision": existing.revision, "remove": True},
-                    idempotency_key=key,
-                )
-            except db.CertificateBusy:
-                connection.rollback()
-                return PlainTextResponse(
-                    "A certificate job is already running. Wait for it to finish, then try again.",
-                    status_code=409,
-                )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
+            job = db.queue_job(
+                connection,
+                operation="dns_profile_apply",
+                cluster=None,
+                payload={"profile": existing.id, "revision": existing.revision, "remove": True},
+                idempotency_key=key,
+            )
             db.record_audit_event(
                 connection,
                 actor=gate.username,
@@ -358,9 +348,6 @@ def build_router(config: Config) -> APIRouter:
                     problem="A certificate job is already running. Wait for it to finish "
                     "on the Jobs page, then save again.",
                 )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
             db.record_audit_event(
                 connection,
                 actor=session.username,
@@ -656,9 +643,6 @@ def build_router(config: Config) -> APIRouter:
                     problem="A certificate job is already running. Wait for it to finish "
                     "on the Jobs page, then save again.",
                 )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
             db.record_audit_event(
                 connection,
                 actor=session.username,
@@ -723,23 +707,13 @@ def build_router(config: Config) -> APIRouter:
             existing = db.ndes_profile(connection, profile_id)
             if existing is None:
                 return PlainTextResponse("Not found", status_code=404)
-            try:
-                job = db.queue_job(
-                    connection,
-                    operation="ndes_profile_apply",
-                    cluster=None,
-                    payload={"profile": existing.id, "revision": existing.revision, "remove": True},
-                    idempotency_key=key,
-                )
-            except db.CertificateBusy:
-                connection.rollback()
-                return PlainTextResponse(
-                    "A certificate job is already running. Wait for it to finish, then try again.",
-                    status_code=409,
-                )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
+            job = db.queue_job(
+                connection,
+                operation="ndes_profile_apply",
+                cluster=None,
+                payload={"profile": existing.id, "revision": existing.revision, "remove": True},
+                idempotency_key=key,
+            )
             db.record_audit_event(
                 connection,
                 actor=gate.username,

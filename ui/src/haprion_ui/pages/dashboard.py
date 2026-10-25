@@ -684,30 +684,13 @@ def build_router(config: Config) -> APIRouter:
                 back=back,
             )
         with request.app.state.pool.connection() as connection:
-            try:
-                job = db.queue_job(
-                    connection,
-                    operation="changes_publish",
-                    cluster=cluster,
-                    payload=payload,
-                    idempotency_key=key,
-                )
-            except db.ClusterBusy:
-                connection.rollback()
-                return _refusal_page(
-                    request,
-                    config,
-                    "This cluster is already running a job. Publish when it has finished.",
-                    back=back,
-                )
-            except db.RequestConflict:
-                connection.rollback()
-                return _refusal_page(
-                    request,
-                    config,
-                    "That publish was already asked for with different content.",
-                    back=back,
-                )
+            job = db.queue_job(
+                connection,
+                operation="changes_publish",
+                cluster=cluster,
+                payload=payload,
+                idempotency_key=key,
+            )
             db.record_audit_event(
                 connection,
                 actor=gate.username,
@@ -1195,13 +1178,9 @@ def build_router(config: Config) -> APIRouter:
                         request, config, "There is nothing to discard.", back="/network"
                     )
                 with request.app.state.pool.connection() as connection:
-                    try:
-                        db.discard_cluster_change(
-                            connection, cluster=cluster, kind="network", expected_revision=revision
-                        )
-                    except db.DraftConflict as conflict:
-                        connection.rollback()
-                        return _refusal_page(request, config, str(conflict), back="/network")
+                    db.discard_cluster_change(
+                        connection, cluster=cluster, kind="network", expected_revision=revision
+                    )
                     db.record_audit_event(
                         connection,
                         actor=session.username,
@@ -1260,19 +1239,15 @@ def build_router(config: Config) -> APIRouter:
             # Saved, and published with the next publish from Versions (B257).
             #
             with request.app.state.pool.connection() as connection:
-                try:
-                    change = db.save_cluster_change(
-                        connection,
-                        cluster=cluster,
-                        kind="network",
-                        document=document,
-                        base_hash=expected_head,
-                        updated_by=session.username,
-                        expected_revision=revision,
-                    )
-                except db.DraftConflict as conflict:
-                    connection.rollback()
-                    return _refusal_page(request, config, str(conflict), back="/network")
+                change = db.save_cluster_change(
+                    connection,
+                    cluster=cluster,
+                    kind="network",
+                    document=document,
+                    base_hash=expected_head,
+                    updated_by=session.username,
+                    expected_revision=revision,
+                )
                 db.record_audit_event(
                     connection,
                     actor=session.username,
@@ -1323,32 +1298,13 @@ def build_router(config: Config) -> APIRouter:
             )
 
         with request.app.state.pool.connection() as connection:
-            try:
-                job = db.queue_job(
-                    connection,
-                    operation=operation,
-                    cluster=cluster,
-                    payload=payload,
-                    idempotency_key=key,
-                )
-            except db.ClusterBusy:
-                connection.rollback()
-                return _refusal_page(
-                    request,
-                    config,
-                    "This cluster is already running a job. Try again when it has finished.",
-                    back=_return_path(return_to, open=return_open),
-                    status_code=409,
-                )
-            except db.RequestConflict:
-                connection.rollback()
-                return _refusal_page(
-                    request,
-                    config,
-                    "This form was already sent for something else. Reload the page and try again.",
-                    back=_return_path(return_to, open=return_open),
-                    status_code=409,
-                )
+            job = db.queue_job(
+                connection,
+                operation=operation,
+                cluster=cluster,
+                payload=payload,
+                idempotency_key=key,
+            )
             db.record_audit_event(
                 connection,
                 actor=session.username,

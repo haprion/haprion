@@ -298,9 +298,6 @@ def build_router(config: Config) -> APIRouter:
                     problem="A certificate job is already running. Wait for it to "
                     "finish on the Jobs page, then ask again.",
                 )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
             db.record_audit_event(
                 connection,
                 actor=session.username,
@@ -855,23 +852,13 @@ def build_router(config: Config) -> APIRouter:
         except operations.BadPayload:
             return PlainTextResponse("Invalid operation parameters", status_code=400)
         with request.app.state.pool.connection() as connection:
-            try:
-                job = db.queue_job(
-                    connection,
-                    operation="cert_scep",
-                    cluster=None,
-                    payload=payload,
-                    idempotency_key=key,
-                )
-            except db.CertificateBusy:
-                connection.rollback()
-                return PlainTextResponse(
-                    "A certificate job is already running. Wait for it to finish, then try again.",
-                    status_code=409,
-                )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
+            job = db.queue_job(
+                connection,
+                operation="cert_scep",
+                cluster=None,
+                payload=payload,
+                idempotency_key=key,
+            )
             db.record_audit_event(
                 connection,
                 actor=session.username,
@@ -923,23 +910,13 @@ def build_router(config: Config) -> APIRouter:
         except operations.BadPayload:
             return PlainTextResponse("Invalid operation parameters", status_code=400)
         with request.app.state.pool.connection() as connection:
-            try:
-                job = db.queue_job(
-                    connection,
-                    operation="cert_publish",
-                    cluster=None,
-                    payload=payload,
-                    idempotency_key=key,
-                )
-            except db.CertificateBusy:
-                connection.rollback()
-                return PlainTextResponse(
-                    "A certificate job is already running. Wait for it to finish, then try again.",
-                    status_code=409,
-                )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
+            job = db.queue_job(
+                connection,
+                operation="cert_publish",
+                cluster=None,
+                payload=payload,
+                idempotency_key=key,
+            )
             db.record_audit_event(
                 connection,
                 actor=session.username,
@@ -1263,9 +1240,6 @@ def build_router(config: Config) -> APIRouter:
                     problem="A certificate job is already running. Wait for it to finish on "
                     "the Jobs page, then ask again.",
                 )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
             db.record_audit_event(
                 connection,
                 actor=gate.username,
@@ -1422,9 +1396,6 @@ def build_router(config: Config) -> APIRouter:
                     problem="A certificate job is already running. Wait for it to finish, "
                     "then ask again.",
                 )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
             db.record_audit_event(
                 connection,
                 actor=gate.username,
@@ -1579,9 +1550,6 @@ def build_router(config: Config) -> APIRouter:
                 return again(
                     "A certificate job is already running. Wait for it to finish, then ask again."
                 )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
             #
             # The audit row names the receiver and the action, never the key:
             # a public key is not a secret, but the audit log is not where a
@@ -1903,9 +1871,6 @@ def build_router(config: Config) -> APIRouter:
                     problem="A certificate job is already running. Wait for it to finish on "
                     "the Jobs page, then ask again.",
                 )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
             db.record_audit_event(
                 connection,
                 actor=gate.username,

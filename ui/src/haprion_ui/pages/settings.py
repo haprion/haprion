@@ -548,16 +548,9 @@ def build_router(config: Config) -> APIRouter:
             if revision is None:
                 return PlainTextResponse("There is nothing to discard", status_code=400)
             with request.app.state.pool.connection() as connection:
-                try:
-                    db.discard_cluster_change(
-                        connection, cluster=cluster, kind="settings", expected_revision=revision
-                    )
-                except db.DraftConflict:
-                    connection.rollback()
-                    return PlainTextResponse(
-                        "The saved settings changed since they were read; reload and try again",
-                        status_code=409,
-                    )
+                db.discard_cluster_change(
+                    connection, cluster=cluster, kind="settings", expected_revision=revision
+                )
                 db.record_audit_event(
                     connection,
                     actor=gate.username,

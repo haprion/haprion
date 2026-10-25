@@ -87,6 +87,20 @@ class Switched(LoginTestCase):
 
     # - hiding -----------------------------------------------------------
 
+    def test_a_hidden_page_is_not_found_inside_the_interface(self) -> None:
+        """Review 26-10-24, 07-02: a bookmark behind a switch answered the framework's JSON."""
+
+        client = self.admin()
+        self.off(features.NODE_BACKUPS)
+
+        page = client.get("/backups")
+        self.assertEqual(page.status_code, 404)
+        self.assertIn("<h1>Not found</h1>", page.text)
+        self.assertIn('href="/settings"', page.text)
+        scripted = client.post("/backups/restore/new", json={})
+        self.assertEqual(scripted.status_code, 404)
+        self.assertNotIn("<h1>", scripted.text)
+
     def test_node_backups_off_hides_the_tab_the_pages_and_the_operations(self) -> None:
         client = self.admin()
         self.assertIn('href="/backups"', client.get("/").text)

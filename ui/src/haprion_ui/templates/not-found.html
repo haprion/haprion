@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+{% block title %}Not found — Haprion{% endblock %}
+{% block content %}
+{#
+  A page that is not there - a bookmark to a feature turned off, a name that
+  went - inside the interface rather than as the framework's JSON (review
+  26-10-24, 07-02).
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Not found</h1></div>
+</section>
+
+<div class="refusal-card">
+  <div class="editor-actions"><a class="secondary-button" href="/">Open the dashboard</a></div>
+</div>
+{% endblock %}

@@ -69,7 +69,12 @@ def configuration(*, cookie_secure: bool = True, max_failures: int = 3) -> Confi
 
 
 class FakePool:
-    """Hands out a connection object that records commits and does nothing else."""
+    """Hands out a connection object that records commits and does nothing else.
+
+    A block that raises is rolled back, as psycopg's pool does: a refusal the
+    application answers for every route (review 26-10-24, 07-02) leaves its
+    route's transaction that way rather than with a rollback of its own.
+    """
 
     def __init__(self) -> None:
         self.commits = 0
@@ -77,7 +82,11 @@ class FakePool:
 
     @contextmanager
     def connection(self) -> Any:
-        yield self
+        try:
+            yield self
+        except Exception:
+            self.rollback()
+            raise
 
     def commit(self) -> None:
         self.commits += 1

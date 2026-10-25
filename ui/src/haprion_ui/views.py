@@ -38,7 +38,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from uuid import UUID, uuid4, uuid5
 
 import anyio
@@ -1568,22 +1568,18 @@ def _lookup_again(
     except (ValueError, ModelError) as refusal:
         return _refusal_page(request, config, str(refusal), back=_proxy_path(cluster, name))
     with request.app.state.pool.connection() as connection:
-        try:
-            saved = db.save_change(
-                connection,
-                cluster=cluster,
-                object_id=stored.name,
-                base_document=_published_document(state, stored.name),
-                yaml=document,
-                base_version=state.base_version,
-                base_hash=state.commit or "",
-                updated_by=session.username,
-                saved_revision=None,
-                draft_revision=None,
-            )
-        except db.DraftConflict as conflict:
-            connection.rollback()
-            return _refusal_page(request, config, str(conflict), back=_proxy_path(cluster, name))
+        saved = db.save_change(
+            connection,
+            cluster=cluster,
+            object_id=stored.name,
+            base_document=_published_document(state, stored.name),
+            yaml=document,
+            base_version=state.base_version,
+            base_hash=state.commit or "",
+            updated_by=session.username,
+            saved_revision=None,
+            draft_revision=None,
+        )
         db.record_audit_event(
             connection,
             actor=session.username,
@@ -1851,23 +1847,13 @@ def _editor_submit(
                 back=_proxy_path(cluster, name, "edit"),
             )
         with request.app.state.pool.connection() as connection:
-            try:
-                db.discard_draft(
-                    connection,
-                    cluster=cluster,
-                    object_id=object_id,
-                    expected_revision=discarded_revision,
-                    stage=stage,
-                )
-            except db.DraftConflict as conflict:
-                connection.rollback()
-                return _refusal_page(
-                    request,
-                    config,
-                    str(conflict),
-                    back=_proxy_path(cluster, object_id, "edit"),
-                    stale=True,
-                )
+            db.discard_draft(
+                connection,
+                cluster=cluster,
+                object_id=object_id,
+                expected_revision=discarded_revision,
+                stage=stage,
+            )
             db.record_audit_event(
                 connection,
                 actor=session.username,
@@ -2010,73 +1996,63 @@ def _editor_submit(
 
     key = name or object_id
     with request.app.state.pool.connection() as connection:
-        try:
-            if form.action != "draft":
+        if form.action != "draft":
+            #
+            # Save: the saved change is written and the draft it was
+            # finished from goes, in one transaction (B257). A rename
+            # moves the saved row's key.
+            #
+            saved = db.save_change(
+                connection,
+                cluster=cluster,
+                object_id=key,
+                new_object_id=object_id if object_id != key else None,
+                yaml=result.document,
+                base_version=state.base_version,
+                base_hash=state.commit,
+                updated_by=session.username,
                 #
-                # Save: the saved change is written and the draft it was
-                # finished from goes, in one transaction (B257). A rename
-                # moves the saved row's key.
+                # From the whole form, with what moved shown above it:
+                # the one write that takes the object as it is now.
                 #
-                saved = db.save_change(
-                    connection,
-                    cluster=cluster,
-                    object_id=key,
-                    new_object_id=object_id if object_id != key else None,
-                    yaml=result.document,
-                    base_version=state.base_version,
-                    base_hash=state.commit,
-                    updated_by=session.username,
-                    #
-                    # From the whole form, with what moved shown above it:
-                    # the one write that takes the object as it is now.
-                    #
-                    base_document=_published_document(state, replaces or key),
-                    replaces=replaces,
-                    saved_revision=saved_revision,
-                    draft_revision=draft_revision,
-                )
-            elif object_id != key and draft_revision is not None:
-                #
-                # One statement, not a write and then a delete. `save_draft`
-                # commits a transaction of its own, so a two-step rename left
-                # the new row standing when the second step was refused - two
-                # drafts where somebody had made one. The key moves or it does
-                # not.
-                #
-                saved = db.rename_draft(
-                    connection,
-                    cluster=cluster,
-                    object_id=key,
-                    new_object_id=object_id,
-                    yaml=result.document,
-                    base_version=state.base_version,
-                    base_hash=state.commit,
-                    updated_by=session.username,
-                    base_document=_carried_base(state, replaces or key, work.draft),
-                    replaces=replaces,
-                    expected_revision=draft_revision,
-                )
-            else:
-                saved = db.save_draft(
-                    connection,
-                    cluster=cluster,
-                    object_id=object_id,
-                    yaml=result.document,
-                    base_version=state.base_version,
-                    base_hash=state.commit,
-                    updated_by=session.username,
-                    base_document=_carried_base(state, replaces or key, work.draft, work.saved),
-                    replaces=replaces,
-                    expected_revision=draft_revision if object_id == key else None,
-                )
-        except db.DraftConflict as conflict:
-            connection.rollback()
-            return _refusal_page(
-                request,
-                config,
-                str(conflict),
-                back=_proxy_path(cluster, object_id, "edit"),
-                stale=True,
+                base_document=_published_document(state, replaces or key),
+                replaces=replaces,
+                saved_revision=saved_revision,
+                draft_revision=draft_revision,
+            )
+        elif object_id != key and draft_revision is not None:
+            #
+            # One statement, not a write and then a delete. `save_draft`
+            # commits a transaction of its own, so a two-step rename left
+            # the new row standing when the second step was refused - two
+            # drafts where somebody had made one. The key moves or it does
+            # not.
+            #
+            saved = db.rename_draft(
+                connection,
+                cluster=cluster,
+                object_id=key,
+                new_object_id=object_id,
+                yaml=result.document,
+                base_version=state.base_version,
+                base_hash=state.commit,
+                updated_by=session.username,
+                base_document=_carried_base(state, replaces or key, work.draft),
+                replaces=replaces,
+                expected_revision=draft_revision,
+            )
+        else:
+            saved = db.save_draft(
+                connection,
+                cluster=cluster,
+                object_id=object_id,
+                yaml=result.document,
+                base_version=state.base_version,
+                base_hash=state.commit,
+                updated_by=session.username,
+                base_document=_carried_base(state, replaces or key, work.draft, work.saved),
+                replaces=replaces,
+                expected_revision=draft_revision if object_id == key else None,
             )
         detail: dict[str, Any] = {
             "object": object_id,
@@ -2563,36 +2539,30 @@ def _removal_submit(
 
     with request.app.state.pool.connection() as connection:
         existing = _settled_work(connection, cluster, name, _state_reading(state))
-        try:
+        #
+        # A removal is finished work, so it is a saved change (B257). A
+        # draft over the object goes with it, as the removal replaced the
+        # draft before there were two: there is nothing left to finish.
+        #
+        saved = db.save_change(
+            connection,
+            cluster=cluster,
+            object_id=name,
             #
-            # A removal is finished work, so it is a saved change (B257). A
-            # draft over the object goes with it, as the removal replaced the
-            # draft before there were two: there is nothing left to finish.
+            # The stored document, kept as the draft's text. The publish
+            # sends `null` and never this - it is here so the row says what
+            # is being removed rather than being empty, and so a removal
+            # that is refused leaves the object's own text to look at.
             #
-            saved = db.save_change(
-                connection,
-                cluster=cluster,
-                object_id=name,
-                #
-                # The stored document, kept as the draft's text. The publish
-                # sends `null` and never this - it is here so the row says what
-                # is being removed rather than being empty, and so a removal
-                # that is refused leaves the object's own text to look at.
-                #
-                yaml=stored.document,
-                base_version=state.base_version,
-                base_hash=state.commit,
-                updated_by=session.username,
-                base_document=stored.document,
-                deleted=True,
-                saved_revision=existing.saved.revision if existing.saved else None,
-                draft_revision=existing.draft.revision if existing.draft else None,
-            )
-        except db.DraftConflict as conflict:
-            connection.rollback()
-            return _refusal_page(
-                request, config, str(conflict), back=_proxy_path(cluster, name), stale=True
-            )
+            yaml=stored.document,
+            base_version=state.base_version,
+            base_hash=state.commit,
+            updated_by=session.username,
+            base_document=stored.document,
+            deleted=True,
+            saved_revision=existing.saved.revision if existing.saved else None,
+            draft_revision=existing.draft.revision if existing.draft else None,
+        )
         db.record_audit_event(
             connection,
             actor=session.username,
@@ -3366,6 +3336,95 @@ def _refusal_page(
             "demo_fixture": config.demo_fixture,
         },
         status_code=status_code,
+    )
+
+
+#
+# The one sentence each refusal of the queue or the drafts is answered with,
+# wherever it is met (review 26-10-24, 07-02). A draft's conflict carries its
+# own sentence, which names the draft.
+#
+CONFLICT_SENTENCES: dict[type[Exception], str] = {
+    db.ClusterBusy: "This cluster is already running a job. Try again when it has finished.",
+    db.CertificateBusy: (
+        "A certificate job is already running. Wait for it to finish, then try again."
+    ),
+    db.RequestConflict: (
+        "This form was already sent for something else. Reload the page and try again."
+    ),
+}
+
+
+def _from_a_browser(request: Request) -> bool:
+    """A page asked for or a form posted: what is answered with a page (CR-06)."""
+
+    kind = request.headers.get("content-type", "")
+    return request.method in ("GET", "HEAD") or kind.startswith(
+        ("application/x-www-form-urlencoded", "multipart/form-data")
+    )
+
+
+def _page_it_came_from(request: Request) -> str:
+    """The path of the page the request was sent from, when it is one of ours; else `/`."""
+
+    referer = urlsplit(request.headers.get("referer", ""))
+    if referer.netloc and referer.netloc != request.url.netloc:
+        return "/"
+    path = referer.path
+    if not path.startswith("/") or path.startswith("//"):
+        return "/"
+    return path
+
+
+def conflict_page(request: Request, config: Config, exc: Exception) -> Response:
+    """A job or a draft refused because of another, said as a page wherever it is met.
+
+    Five forms of the same refusal - bare text, a page, a redirect with a
+    query, a form drawn again, JSON - became one (review 26-10-24, 07-02).
+    The routes that do something of their own first, such as answering a
+    second click with the job the first one queued, still catch it.
+    """
+
+    stale = isinstance(exc, db.DraftConflict)
+    message = str(exc) if stale else CONFLICT_SENTENCES[type(exc)]
+    if not _from_a_browser(request):
+        return PlainTextResponse(message, status_code=409)
+    return _refusal_page(
+        request,
+        config,
+        message,
+        back=_page_it_came_from(request),
+        stale=stale,
+        status_code=409,
+    )
+
+
+def not_found_page(request: Request, config: Config) -> Response | None:
+    """A page that is not there, inside the interface; None where the framework answers.
+
+    A bookmarked page behind a feature turned off answered `{"detail":
+    "Not found"}` (review 26-10-24, 07-02). Only for somebody signed in: the
+    pages say nothing to anybody else.
+    """
+
+    if not _from_a_browser(request):
+        return None
+    session = current_session(request)
+    if session is None:
+        return None
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    return TEMPLATES.TemplateResponse(
+        request,
+        "not-found.html",
+        {
+            "username": session.username,
+            "role": session.role,
+            "management_writes": config.management_writes,
+            "csrf_token": auth.csrf_token(token),
+            "section": "",
+            "demo_fixture": config.demo_fixture,
+        },
+        status_code=404,
     )
 
 

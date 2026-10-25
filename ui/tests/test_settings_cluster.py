@@ -17,7 +17,7 @@ from unittest import mock
 
 from haprion.cluster_settings import load_document
 
-from haprion_ui import auth, cluster_settings_page, demo
+from haprion_ui import auth, cluster_settings_page, db, demo
 from tests.test_login import configuration
 from tests.test_queue_route import KEY, QueueRouteTestCase
 
@@ -385,3 +385,21 @@ class TheDeliveryTable(SettingsClusterTestCase):
         self.assertIn("Not delivered since", loki)
         self.assertIn("· Connection timed out", loki)
         self.assertIn("status-warning", loki)
+
+
+class ADiscardFromTwoTabs(SettingsClusterTestCase):
+    """Review 26-10-24, 07-02: the second tab's Discard was a bare 409 line of text."""
+
+    def test_the_second_is_answered_inside_the_interface(self) -> None:
+        client = self.client_for()
+        client.headers["referer"] = "https://manager.example.com/settings/clusters/service-demo"
+        with mock.patch(
+            "haprion_ui.db.discard_cluster_change",
+            side_effect=db.DraftConflict("the saved settings changed since they were read"),
+        ):
+            answer = self.save(client, settings_action="discard", saved_revision="2")
+
+        self.assertEqual(answer.status_code, 409)
+        self.assertIn("<h1>Not done</h1>", answer.text)
+        self.assertIn("the saved settings changed since they were read", answer.text)
+        self.assertIn('href="/settings/clusters/service-demo"', answer.text)

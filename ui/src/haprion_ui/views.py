@@ -2193,6 +2193,12 @@ class Package:
     rows: tuple[PendingRow, ...]
     payload: dict[str, Any]
     problem: str
+    #
+    # A network description or settings whose reading stands at another
+    # version than the objects': the package waits for the poller, and the
+    # Versions page asks for itself again until it has (review 26-10-24, 12-14).
+    #
+    lagging: tuple[str, ...] = ()
 
     @property
     def identity(self) -> str:
@@ -2390,13 +2396,20 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
         "older version. Open and save again before publishing."
         if stale
         else f"{' and '.join(lagging)} {'is' if len(lagging) == 1 else 'are'} still being read "
-        "at the newest version. Publish again in a minute."
+        "at the newest version. Publishing opens again within a minute."
         if lagging
         else f"{len(objects)} proxies; at most {changes_publish.MAX_OBJECTS} go in one publish."
         if len(objects) > changes_publish.MAX_OBJECTS
         else ""
     )
-    return Package(cluster=cluster, head=head, rows=tuple(rows), payload=payload, problem=problem)
+    return Package(
+        cluster=cluster,
+        head=head,
+        rows=tuple(rows),
+        payload=payload,
+        problem=problem,
+        lagging=tuple(lagging),
+    )
 
 
 def _network_changes(

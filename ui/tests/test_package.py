@@ -289,6 +289,18 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertNotIn("Saved against an older version", text)
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(self.queued, [])
+        #
+        # The page has no publish button while it waits, so it does not tell
+        # anybody to publish again; it asks for itself again until the reading
+        # has caught up (review 26-10-24, 12-14).
+        #
+        self.assertNotIn("Publish again", text)
+        self.assertIn('<meta name="haproxy-live" content="5">', text)
+
+    def test_a_package_that_waits_for_nothing_leaves_the_page_still(self) -> None:
+        self.rows = [row()]
+
+        self.assertNotIn("haproxy-live", self.page(self.editor()))
 
     def test_more_objects_than_one_publish_carries_are_refused(self) -> None:
         self.rows = [row(f"site-{index}", id=uuid4()) for index in range(65)]

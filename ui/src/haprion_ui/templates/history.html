@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}Versions — Haprion{% endblock %}
+{% block head_extra %}{% if pending.values() | selectattr('lagging') | list %}<meta name="haproxy-live" content="5">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endif %}{% endblock %}
 {% block content %}
 {% from "_network-change.html" import network_change %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>

@@ -84,7 +84,7 @@
   --shadow-menu: 0 14px 40px rgb(15 23 42 / 0.14);
   --radius: 8px;
   --radius-sm: 6px;
-  --focus: 0 0 0 3px rgb(47 179 68 / 0.22);
+  --focus: 0 0 0 2px var(--brand-strong);
 }
 
 :root[data-theme="dark"] {
@@ -140,7 +140,7 @@
   --accent-5: #b87064;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.25);
   --shadow-menu: 0 16px 48px rgb(0 0 0 / 0.4);
-  --focus: 0 0 0 3px rgb(90 196 106 / 0.28);
+  --focus: 0 0 0 2px var(--brand-strong);
 }
 
 @font-face {
@@ -180,7 +180,13 @@ button, summary, a { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; }
 svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 
-:focus-visible { outline: none; box-shadow: var(--focus); }
+/*
+ * Where the keyboard is: a solid ring in the strong brand colour, 3:1 or more
+ * against the panel and the page in both themes (WCAG 1.4.11). The soft halo
+ * it replaces was about 1.2:1 in light and 1.7:1 in dark (review 26-10-24,
+ * 04-12); a test reads the tokens and holds the ratio.
+ */
+:focus-visible { outline: 2px solid var(--brand-strong); outline-offset: 2px; }
 
 /* Reuse these semantic levels in all future views and controls. */
 .text-primary { color: var(--text-primary); font-weight: var(--font-weight-regular); }
@@ -1647,7 +1653,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .toggle-switch:hover:not(:disabled) .toggle-track { box-shadow: 0 0 0 3px var(--hover-surface); }
 .toggle-switch:disabled { cursor: default; opacity: .45; }
 .toggle-switch:focus-visible { outline: none; }
-.toggle-switch:focus-visible .toggle-track { outline: 2px solid var(--brand); outline-offset: 2px; }
+.toggle-switch:focus-visible .toggle-track { outline: 2px solid var(--brand-strong); outline-offset: 2px; }
 .receiver-commands td { padding-top: 4px; padding-bottom: 16px; background: var(--panel-soft); }
 .receiver-commands .table-note { padding-left: 0; padding-right: 0; }
 .receiver-commands .table-note code { font-size: inherit; }

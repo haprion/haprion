@@ -69,5 +69,26 @@ class ButtonsAreReadable(unittest.TestCase):
                 self.assertIn(f"color: {text}", painted[0])
 
 
+class TheFocusRingIsSeen(unittest.TestCase):
+    """Review 26-10-24, 04-12: the halo was about 1.2:1 in light and 1.7:1 in dark.
+
+    WCAG 1.4.11 asks 3:1 for what shows a control's state.
+    """
+
+    def test_the_ring_s_colour_against_the_panel_and_the_page_in_each_theme(self) -> None:
+        for theme, selector in (("light", ":root"), ("dark", ':root[data-theme="dark"]')):
+            colours = _block(selector)
+            for ground in ("--panel", "--bg"):
+                with self.subTest(theme, ground=ground):
+                    self.assertGreaterEqual(_ratio(colours["--brand-strong"], colours[ground]), 3.0)
+
+    def test_every_focus_ring_is_drawn_in_that_colour(self) -> None:
+        self.assertIn(":focus-visible { outline: 2px solid var(--brand-strong);", CSS)
+        self.assertEqual(
+            re.findall(r"--focus: ([^;]+);", CSS), ["0 0 0 2px var(--brand-strong)"] * 2
+        )
+        self.assertNotRegex(CSS, r"focus[^{]*\{[^}]*outline: 2px solid var\(--brand\)")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -634,9 +634,20 @@ def read_scoped_request(
 
 #
 # Set by `run-tests` for both suites: there a contradiction between a
-# document's outcome and its exit code stops the test, as it is a bug.
+# document's outcome and its exit code stops the test, as it is a bug. Unset,
+# a process running unittest is strict too, so a test run on its own - one
+# module after a change - catches what the whole gate would (review 26-10-25,
+# part 1's own point); "0" turns it off, which one test of the lenient path
+# does.
 #
 STRICT_VARIABLE = "HAPRION_EXIT_STRICT"
+
+
+def _strict() -> bool:
+    stated = os.environ.get(STRICT_VARIABLE)
+    if stated is not None:
+        return stated == "1"
+    return "unittest" in sys.modules
 
 
 def write_document(stream: TextIO, document: Mapping[str, Any], exit_code: int) -> int:
@@ -662,7 +673,7 @@ def write_document(stream: TextIO, document: Mapping[str, Any], exit_code: int) 
     try:
         code = exit_codes.check(stated, exit_code)
     except ValueError as contradiction:
-        if os.environ.get(STRICT_VARIABLE) == "1":
+        if _strict():
             raise
         if stated in ("done", "partial", "blocked"):
             code = exit_codes.for_outcome(stated)

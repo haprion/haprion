@@ -239,6 +239,13 @@ class TheExitFollowsTheOutcome(unittest.TestCase):
                 self.assertEqual(json.loads(stream.getvalue())["outcome"], outcome)
                 self.assertIn(f"exiting {used}", said.getvalue())
 
+    def test_a_test_run_on_its_own_is_strict_too(self) -> None:
+        """Review 26-10-25, part 1's own point: only `run-tests` set it, not one module run alone."""
+
+        environment = {k: v for k, v in os.environ.items() if k != helper_protocol.STRICT_VARIABLE}
+        with mock.patch.dict(os.environ, environment, clear=True), self.assertRaises(ValueError):
+            write_document(io.StringIO(), self.document("blocked"), exit_codes.REFUSED)
+
     def test_a_passed_on_document_takes_its_outcome_s_code(self) -> None:
         self.assertEqual(exit_codes.for_outcome("partial"), exit_codes.PARTIAL)
         self.assertEqual(exit_codes.for_outcome("blocked"), exit_codes.BLOCKED)

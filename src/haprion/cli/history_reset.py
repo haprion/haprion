@@ -132,6 +132,7 @@ def main(
     *,
     stream_in: TextIO | None = None,
     stream_out: TextIO | None = None,
+    stream_err: TextIO | None = None,
     run_helper: RunHelper = _run_helper,
     publish: PublishCall = _publish,
     config_path: Callable[[str], Path] = _config_path,
@@ -139,6 +140,7 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     reader: TextIO = stream_in or sys.stdin
     writer: TextIO = stream_out or sys.stdout
+    errors: TextIO = stream_err or sys.stderr
     cluster_id, confirm, json_mode = _parse(argv)
     request_id = str(uuid.uuid4())
     say: TextIO = io.StringIO() if json_mode else writer
@@ -157,7 +159,8 @@ def main(
                 exit_code,
             )
         else:
-            writer.write(f"{message}\n" if message.startswith("ERROR") else f"ERROR: {message}\n")
+            # On stderr, as every command says a refusal (review 26-10-25, 06-07).
+            errors.write(f"{message}\n" if message.startswith("ERROR") else f"ERROR: {message}\n")
         return exit_code
 
     def emit(document: dict[str, object], exit_code: int) -> int:

@@ -84,14 +84,17 @@ class CommandTests(unittest.TestCase):
             return publish_code
 
         output = io.StringIO()
+        errors = io.StringIO()
         code = main(
             ["-c", "alpha"],
             stream_in=io.StringIO(answers),
             stream_out=output,
+            stream_err=errors,
             run_helper=run_helper,
             publish=publish,
             config_path=lambda _cluster: draft,
         )
+        self.errors = errors.getvalue()
         return code, output.getvalue(), crossed, published
 
     def test_a_helper_killed_by_a_signal_is_a_document_with_an_exit_the_table_has(self) -> None:
@@ -163,7 +166,9 @@ class CommandTests(unittest.TestCase):
             (draft / "core" / "haproxy.cfg").write_bytes(HAPROXY_CFG + b"# unsaved\n")
             code, output, crossed, _ = self.run_command(draft, f"y\n{CONFIRMATION}\n")
             self.assertEqual(code, 65)
-            self.assertIn("not published", output)
+            # On stderr, as every command says a refusal (review 26-10-25, 06-07).
+            self.assertIn("not published", self.errors)
+            self.assertNotIn("ERROR", output)
             self.assertEqual(crossed, [])
 
     # ------------------------------------------------------- what crosses over
@@ -228,7 +233,7 @@ class CommandTests(unittest.TestCase):
                 draft, f"y\n{CONFIRMATION}\n", helper_code=77
             )
             self.assertEqual(code, 77)
-            self.assertIn("refused on the other side", output)
+            self.assertIn("refused on the other side", self.errors)
             self.assertEqual(published, [], "publishing must not follow a failed reset")
 
     def test_a_failed_publish_is_reported_as_unfinished(self) -> None:

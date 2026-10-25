@@ -45,6 +45,7 @@ from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.views import (
     COMMIT_ID,
+    HASHING_BUSY,
     OBJECTS_SOURCE,
     SETTINGS_SOURCE,
     STATUS_SOURCE,
@@ -56,6 +57,7 @@ from haprion_ui.views import (
     _backup_overview,
     _creations,
     _dns_public_key,
+    _hashed,
     _new_password_problem,
     _oidc_page,
     _oidc_provider,
@@ -1157,12 +1159,15 @@ def build_router(config: Config) -> APIRouter:
             problem = _new_password_problem(new_password, repeat_password)
         if problem:
             return _new_user_page(request, gate, problem=problem, form=form, status_code=400)
+        password_hash = _hashed(new_password)
+        if password_hash is None:
+            return _new_user_page(request, gate, problem=HASHING_BUSY, form=form, status_code=503)
 
         with request.app.state.pool.connection() as connection:
             if not db.create_account(
                 connection,
                 username=username,
-                password_hash=auth.hash_password(new_password),
+                password_hash=password_hash,
                 role=role,
             ):
                 connection.rollback()
@@ -1245,6 +1250,9 @@ def build_router(config: Config) -> APIRouter:
             return again("The account is already disabled.")
         if action == "enable" and not row.disabled:
             return again("The account is already enabled.")
+        password_hash = _hashed(new_password) if new_secret else None
+        if new_secret and password_hash is None:
+            return again(HASHING_BUSY, status_code=503)
 
         with request.app.state.pool.connection() as connection:
             changes: list[tuple[str, dict[str, object]]] = []
@@ -1256,9 +1264,9 @@ def build_router(config: Config) -> APIRouter:
                 if new_role:
                     db.set_role(connection, user_id=row.id, role=role)
                     changes.append(("role_changed", detail(role=role, previous=row.role)))
-                if new_secret:
+                if password_hash is not None:
                     ended = db.reset_password(
-                        connection, user_id=row.id, password_hash=auth.hash_password(new_password)
+                        connection, user_id=row.id, password_hash=password_hash
                     )
                     changes.append(("password_reset", detail(sessions_revoked=ended)))
                 if new_break_glass:

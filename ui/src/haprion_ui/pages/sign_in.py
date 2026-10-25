@@ -20,12 +20,14 @@ from haprion_ui import (
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.views import (
+    HASHING_BUSY,
     SIGN_IN_BUSY,
     SIGN_IN_FAILED,
     TEMPLATES,
     UNAVAILABLE_PROVIDER,
     _admin_write_gate,
     _cookie,
+    _hashed,
     _login_again,
     _new_password_problem,
     _oidc_account_refusal,
@@ -302,23 +304,28 @@ def build_router(config: Config) -> APIRouter:
             return _password_page(request, config, session, problem=problem, status_code=400)
 
         address = client_address(request)
-        with request.app.state.pool.connection() as connection:
-            refused = _prove_password(
-                connection,
-                config,
-                session,
-                current_password,
-                address=address,
-                failed_action="password_change_failed",
-                wrong="The current password is not correct.",
+        refused = _prove_password(
+            request.app.state.pool,
+            config,
+            session,
+            current_password,
+            address=address,
+            failed_action="password_change_failed",
+            wrong="The current password is not correct.",
+        )
+        if refused:
+            busy = refused == HASHING_BUSY
+            return _password_page(
+                request, config, session, problem=refused, status_code=503 if busy else 400
             )
-            if refused:
-                connection.commit()
-                return _password_page(request, config, session, problem=refused, status_code=400)
+        password_hash = _hashed(new_password)
+        if password_hash is None:
+            return _password_page(request, config, session, problem=HASHING_BUSY, status_code=503)
+        with request.app.state.pool.connection() as connection:
             ended = db.change_password(
                 connection,
                 user_id=session.user_id,
-                password_hash=auth.hash_password(new_password),
+                password_hash=password_hash,
                 keep=auth.token_hash(token),
             )
             db.record_audit_event(

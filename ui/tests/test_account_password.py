@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any
 from unittest import mock
@@ -14,7 +15,7 @@ from tests.test_login import PASSWORD, LoginTestCase
 NEW = "another sufficiently long password"
 
 
-class ChangingOnesOwnPassword(LoginTestCase):
+class OwnPasswordTestCase(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.changed: list[dict[str, Any]] = []
@@ -56,6 +57,8 @@ class ChangingOnesOwnPassword(LoginTestCase):
             follow_redirects=False,
         )
 
+
+class ChangingOnesOwnPassword(OwnPasswordTestCase):
     def test_the_account_menu_leads_to_the_form(self) -> None:
         client = self.signed_in()
 
@@ -153,3 +156,81 @@ class ChangingOnesOwnPassword(LoginTestCase):
             client.post("/account/password", data={}, follow_redirects=False),
         ):
             self.assertEqual(response.headers["location"], "/login")
+
+
+class ThePasswordHashesHoldNoConnection(OwnPasswordTestCase):
+    """Review 26-10-24, 09-02: Argon2 ran inside a pool connection, throttled or not."""
+
+    def counting(self) -> list[int]:
+        held: list[int] = []
+        real = self.pool.connection
+
+        @contextmanager
+        def counted() -> Any:
+            held.append(1)
+            try:
+                with real() as connection:
+                    yield connection
+            finally:
+                held.pop()
+
+        patch = mock.patch.object(self.pool, "connection", counted)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return held
+
+    def test_neither_the_check_nor_the_new_hash_runs_inside_a_connection(self) -> None:
+        client = self.signed_in()
+        held = self.counting()
+        real_verify, real_hash = auth.verify_password, auth.hash_password
+        hashed: list[str] = []
+
+        def verify(password_hash: str, password: str) -> bool:
+            self.assertEqual(held, [], "the current password was checked inside a connection")
+            return real_verify(password_hash, password)
+
+        def hash_password(password: str) -> str:
+            self.assertEqual(held, [], "the new password was hashed inside a connection")
+            hashed.append(password)
+            return real_hash(password)
+
+        with (
+            mock.patch.object(auth, "verify_password", verify),
+            mock.patch.object(auth, "hash_password", hash_password),
+        ):
+            response = self.submit(client)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(hashed, [NEW])
+
+    def test_a_throttled_attempt_hashes_nothing(self) -> None:
+        client = self.signed_in()
+        self.failures = 99
+        with (
+            mock.patch.object(auth, "verify_password") as verify,
+            mock.patch.object(auth, "burn_absent_user_time") as burn,
+            mock.patch.object(auth, "hash_password") as hashed,
+        ):
+            response = self.submit(client)
+
+        self.assertEqual(response.status_code, 400)
+        verify.assert_not_called()
+        burn.assert_not_called()
+        hashed.assert_not_called()
+
+    def test_when_the_hashing_is_full_nothing_is_tried_or_counted(self) -> None:
+        client = self.signed_in()
+        attempts = len(self.attempts)
+        for _ in range(auth.HASHING_AT_ONCE):
+            auth.HASHING.acquire()
+        try:
+            with mock.patch.object(auth, "HASHING_WAIT_SECONDS", 0.05):
+                response = self.submit(client)
+        finally:
+            for _ in range(auth.HASHING_AT_ONCE):
+                auth.HASHING.release()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Try again in a moment", response.text)
+        self.assertEqual(len(self.attempts), attempts)
+        self.assertEqual(self.changed, [])

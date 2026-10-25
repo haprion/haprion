@@ -3071,8 +3071,27 @@ def _new_password_problem(new_password: str, repeat_password: str) -> str:
     return ""
 
 
+HASHING_BUSY = "Too many passwords are being checked at once. Try again in a moment."
+
+
+def _hashed(password: str) -> str | None:
+    """`password` hashed for storing, holding no connection; None while the hashing is full.
+
+    At most auth.HASHING_AT_ONCE at a time, as the sign-in hashes: six
+    connections serve every page, and Argon2 held one for each password set
+    here (review 26-10-24, 09-02).
+    """
+
+    if not auth.HASHING.acquire(timeout=auth.HASHING_WAIT_SECONDS):
+        return None
+    try:
+        return auth.hash_password(password)
+    finally:
+        auth.HASHING.release()
+
+
 def _prove_password(
-    connection: Any,
+    pool: Any,
     config: Config,
     session: AuthenticatedSession,
     password: str,
@@ -3086,39 +3105,51 @@ def _prove_password(
 
     A wrong one is a failed sign-in for this name and address - the same row
     the sign-in writes and the same throttle it reads - so a session somebody
-    else is holding cannot be used to guess the password behind it. Throttled,
-    the password is not even tried. The caller commits either way.
+    else is holding cannot be used to guess the password behind it.
+
+    The hash runs holding no connection and under the sign-in's limit, and a
+    throttled attempt is not hashed at all (review 26-10-24, 09-02). A full
+    limit is said as such and counts against nobody.
     """
 
-    failures = db.failures_since_last_success(
-        connection,
-        username=session.username,
-        client_ip=address,
-        window_minutes=config.throttle.window_minutes,
-    )
-    throttled = failures >= config.throttle.max_failures
-    account = None if throttled else db.account_by_username(connection, session.username)
-    if account is None or account.disabled or account.password_hash is None:
-        auth.burn_absent_user_time(password)
-        accepted = False
-    else:
-        accepted = auth.verify_password(account.password_hash, password)
-    if accepted:
-        return ""
-    db.record_login_attempt(
-        connection, username=session.username, client_ip=address, succeeded=False
-    )
-    db.record_audit_event(
-        connection,
-        actor=session.username,
-        action=failed_action,
-        detail={
-            **(detail or {}),
-            "client_ip": address,
-            "reason": "throttled" if throttled else "rejected",
-            "via": "web",
-        },
-    )
+    with pool.connection() as connection:
+        failures = db.failures_since_last_success(
+            connection,
+            username=session.username,
+            client_ip=address,
+            window_minutes=config.throttle.window_minutes,
+        )
+        throttled = failures >= config.throttle.max_failures
+        account = None if throttled else db.account_by_username(connection, session.username)
+    if not throttled:
+        if not auth.HASHING.acquire(timeout=auth.HASHING_WAIT_SECONDS):
+            return HASHING_BUSY
+        try:
+            if account is None or account.disabled or account.password_hash is None:
+                auth.burn_absent_user_time(password)
+                accepted = False
+            else:
+                accepted = auth.verify_password(account.password_hash, password)
+        finally:
+            auth.HASHING.release()
+        if accepted:
+            return ""
+    with pool.connection() as connection:
+        db.record_login_attempt(
+            connection, username=session.username, client_ip=address, succeeded=False
+        )
+        db.record_audit_event(
+            connection,
+            actor=session.username,
+            action=failed_action,
+            detail={
+                **(detail or {}),
+                "client_ip": address,
+                "reason": "throttled" if throttled else "rejected",
+                "via": "web",
+            },
+        )
+        connection.commit()
     return "Too many failed attempts. Try again later." if throttled else wrong
 
 

@@ -10,6 +10,7 @@ audit name and `via: web`.
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -297,6 +298,40 @@ class SettingsUsers(LoginTestCase):
         self.assertEqual(response.status_code, 403)
 
     # - adding -----------------------------------------------------------
+
+    def test_a_password_an_admin_sets_is_hashed_holding_no_connection(self) -> None:
+        """Review 26-10-24, 09-02: Argon2 ran inside a pool connection."""
+
+        client = self.admin()
+        held: list[int] = []
+        real_connection, real_hash = self.pool.connection, auth.hash_password
+
+        @contextmanager
+        def counted() -> Any:
+            held.append(1)
+            try:
+                with real_connection() as connection:
+                    yield connection
+            finally:
+                held.pop()
+
+        def hash_password(password: str) -> str:
+            self.assertEqual(held, [], "the password was hashed inside a connection")
+            return real_hash(password)
+
+        with (
+            mock.patch.object(self.pool, "connection", counted),
+            mock.patch.object(auth, "hash_password", hash_password),
+        ):
+            for path, fields in (
+                ("/settings/new-user", {"username": "carol", "role": "reader"}),
+                ("/settings/users/bob", {"action": "save", "role": "reader"}),
+            ):
+                with self.subTest(path):
+                    response = self.post(
+                        client, path, new_password=NEW, repeat_password=NEW, **fields
+                    )
+                    self.assertEqual(response.status_code, 303)
 
     def test_an_account_is_added_with_the_cli_s_audit_name(self) -> None:
         client = self.admin()

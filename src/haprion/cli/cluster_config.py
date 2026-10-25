@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from haprion import exit_codes
+from haprion.cli import arguments
 from haprion.cluster_definition import seed_files
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 
@@ -29,7 +30,7 @@ def main(
     policy_path: Path = DEFAULT_POLICY_PATH,
     require_secure: bool = True,
 ) -> int:
-    parser = argparse.ArgumentParser(prog="haprion-cluster-config")
+    parser = arguments.ArgumentParser(prog="haprion-cluster-config")
     #
     # --list names the clusters the file holds, one per line, so an
     # installation step reads the clusters that exist - including those created

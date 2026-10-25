@@ -11,7 +11,6 @@ interface's upload, and lands on the targets named here.
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import sys
@@ -23,7 +22,7 @@ from haprion import cert_request, exit_codes
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH
 from haprion.cert_request_state import DEFAULT_KEY_TYPE, KEY_TYPES
-from haprion.cli import cert_job
+from haprion.cli import arguments, cert_job
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import envelope, failure, new_request_id
 from haprion.helper_protocol import HelperProtocolError
@@ -118,7 +117,7 @@ def main(
 ) -> int:
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = arguments.ArgumentParser(description=__doc__)
     parser.add_argument("--id", required=True, help="the certificate's name in the registry")
     parser.add_argument(
         "--domain",

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from haprion import exit_codes
-from haprion.cli import changes_publish
+from haprion.cli import arguments, changes_publish
 from haprion.cli.apply_common import (
     Refused,
     RunHelper,
@@ -41,7 +41,7 @@ COMMENT = "From the terminal: the network"
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="haprion-network apply")
+    parser = arguments.ArgumentParser(prog="haprion-network apply")
     parser.add_argument("-c", "--cluster", required=True)
     parser.add_argument("file")
     parser.add_argument(

@@ -34,7 +34,7 @@ from typing import Any, TextIO
 
 from haprion import backup_retention, backup_schedule_write, exit_codes, helper_socket
 from haprion.backup_schedule import Schedule, describe, schedule_result
-from haprion.cli import backup_job_helper
+from haprion.cli import arguments, backup_job_helper
 from haprion.cli.backup_job_ask import SOCKET_PATH, TIMEOUT_SECONDS
 from haprion.envelope import Message, envelope, failure, new_request_id
 from haprion.helper_protocol import write_document
@@ -59,7 +59,7 @@ def current(cluster: str) -> tuple[dict[str, Any] | None, int]:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = arguments.ArgumentParser(
         prog="haprion-backup-schedule",
         description="Set one cluster's node backup schedule. Runs as root.",
     )

@@ -9,7 +9,6 @@ registry's ``source.dns_profile`` binding.
 
 from __future__ import annotations
 
-import argparse
 import os
 import subprocess
 import sys
@@ -27,7 +26,7 @@ from haprion.cert_issue import (
     IssueError,
     renewal_invocation,
 )
-from haprion.cli import cert_scep
+from haprion.cli import arguments, cert_scep
 from haprion.cli.cert_publish import default_deployer
 from haprion.config import (
     CERTIFICATE_ID,
@@ -227,7 +226,7 @@ def renew_ndes(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Renew Certbot lineages with DNS profiles")
+    parser = arguments.ArgumentParser(description="Renew Certbot lineages with DNS profiles")
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY_PATH)
     parser.add_argument("--certbot", help="certbot binary used by the upgrade gate")
     parser.add_argument("--dry-run", action="store_true")

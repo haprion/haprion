@@ -693,6 +693,23 @@ class JsonModeTests(RevertFixture):
                     self.assertEqual((code, document["outcome"]), (exit_codes.INTERNAL, "failed"))
                     self.assertEqual(document["error"]["code"], "helper_failed")
 
+    def test_an_unknown_cluster_is_an_envelope_too(self) -> None:
+        """Review 26-10-24, 06-06: cluster-config's exit ended the command before its document."""
+
+        def unknown(_cluster: str) -> Path:
+            raise SystemExit(exit_codes.USAGE)
+
+        writer = io.StringIO()
+        code = revert.main(
+            ["-c", "nosuch", "2", "--json"],
+            stream_out=writer,
+            run_helper=lambda _request: (0, "", ""),
+            config_path=unknown,
+        )
+        document = assert_contract("haprion-revert", writer.getvalue())
+        self.assertEqual((code, document["outcome"]), (exit_codes.USAGE, "failed"))
+        self.assertEqual(document["error"]["code"], "bad_input")
+
     def test_a_refusal_before_the_helper_is_an_envelope_too(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))

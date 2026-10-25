@@ -28,7 +28,7 @@ from typing import Any, TextIO
 
 from haprion import exit_codes
 from haprion.cert_retarget import HELPER, OPERATION
-from haprion.cli import cert_target_helper
+from haprion.cli import arguments, cert_target_helper
 from haprion.cli.caller import without_answer
 from haprion.cli.cluster_settings import _through
 from haprion.envelope import new_request_id
@@ -44,7 +44,7 @@ def run_helper(argv: list[str], request: str) -> subprocess.CompletedProcess[str
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = arguments.ArgumentParser(
         prog="haprion-cert-target",
         description="Publish certificates to more clusters or receivers, or withdraw them.",
     )

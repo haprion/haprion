@@ -190,7 +190,20 @@ def main(
         return exit_code
 
     try:
-        repo = config_path(cluster_id)
+        try:
+            repo = config_path(cluster_id)
+        except SystemExit as stopped:
+            #
+            # cluster-config has said why on stderr - an unknown cluster, with
+            # the ones there are. In --json the answer is still a document
+            # (review 26-10-24, 06-06).
+            #
+            code = stopped.code if isinstance(stopped.code, int) else exit_codes.USAGE
+            return refuse(
+                "bad_input" if code == exit_codes.USAGE else "dependency_unavailable",
+                f"cluster {cluster_id} could not be looked up",
+                exit_codes.of_process(code, exit_codes.USAGE) or exit_codes.USAGE,
+            )
         if not is_repo_root(repo):
             return refuse(
                 "not_a_repository", describe_problem(cluster_id, repo), exit_codes.UNAVAILABLE

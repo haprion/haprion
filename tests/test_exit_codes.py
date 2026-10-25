@@ -104,6 +104,28 @@ def _exit_literals(path: Path) -> list[str]:
 
 
 class OneTable(unittest.TestCase):
+    def test_every_command_parses_with_the_parser_that_exits_usage(self) -> None:
+        """Review 26-10-24, 06-06: argparse's own 2 is in no table."""
+
+        cli = Path(__file__).resolve().parents[1] / "src/haprion/cli"
+        own = [
+            path.name
+            for path in sorted(cli.glob("*.py"))
+            if path.name != "arguments.py" and "argparse.ArgumentParser(" in path.read_text()
+        ]
+        self.assertEqual(own, [])
+
+    def test_a_mistyped_flag_exits_usage(self) -> None:
+        from haprion.cli import cert_target
+
+        with (
+            mock.patch("sys.stderr", new_callable=io.StringIO) as said,
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            cert_target.main(["--no-such-flag"])
+        self.assertEqual(stopped.exception.code, exit_codes.USAGE)
+        self.assertIn("haprion-cert-target: error:", said.getvalue())
+
     def test_no_module_names_an_exit_code_of_its_own(self) -> None:
         named = []
         for path in _modules():

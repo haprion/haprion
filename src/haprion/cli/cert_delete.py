@@ -20,13 +20,12 @@ live in the interface's database, which this command does not read.
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from typing import TextIO
 
 from haprion.cert_delete import HELPER, OPERATION
-from haprion.cli import cert_delete_helper
+from haprion.cli import arguments, cert_delete_helper
 from haprion.cli.caller import without_answer
 from haprion.cli.cert_target import RunHelper, run_helper, summary
 from haprion.cli.cluster_settings import _through
@@ -43,7 +42,7 @@ def main(
 ) -> int:
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
-    parser = argparse.ArgumentParser(
+    parser = arguments.ArgumentParser(
         prog="haprion-cert-delete",
         description="Delete certificates from the registry, the targets, certbot and the nodes.",
     )

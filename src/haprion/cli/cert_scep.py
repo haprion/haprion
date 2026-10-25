@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import shutil
@@ -14,7 +13,7 @@ from typing import Any, TextIO
 from haprion import cert_import, exit_codes, ndes, ndes_profiles, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
-from haprion.cli import cert_job
+from haprion.cli import arguments, cert_job
 from haprion.cli.cert_import import result_envelope
 from haprion.cli.cert_publish import default_deployer
 from haprion.config import (
@@ -322,7 +321,7 @@ def main(
 ) -> int:
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = arguments.ArgumentParser(description=__doc__)
     parser.add_argument("--id", required=True)
     parser.add_argument("--profile", default="", help="required unless --resume")
     parser.add_argument(

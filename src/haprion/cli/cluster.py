@@ -31,14 +31,14 @@ import sys
 from typing import TextIO
 
 from haprion import node_publish
-from haprion.cli import node_helper
+from haprion.cli import arguments, node_helper
 from haprion.cli.node import RunHelper, _answer, json_answer, run_helper
 from haprion.envelope import new_request_id
 from haprion.node_enrollment import BLOCK_PREFIX, MAX_BLOCK_BYTES, V2_PREFIXES
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="haprion-cluster")
+    parser = arguments.ArgumentParser(prog="haprion-cluster")
     actions = parser.add_subparsers(dest="action", required=True)
     create = actions.add_parser("add")
     create.add_argument("-c", "--cluster", required=True)

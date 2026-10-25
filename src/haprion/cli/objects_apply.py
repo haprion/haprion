@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from haprion import exit_codes, labels, server_names
-from haprion.cli import changes_publish
+from haprion.cli import arguments, changes_publish
 from haprion.cli.apply_common import (
     PartlyDone,
     Refused,
@@ -66,7 +66,7 @@ class Plan:
 
 
 def _parser(command: str) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=f"haprion-objects {command}", add_help=True)
+    parser = arguments.ArgumentParser(prog=f"haprion-objects {command}", add_help=True)
     parser.add_argument("-c", "--cluster", required=True)
     parser.add_argument("targets", nargs="+", metavar="FILE|DIR" if command == "apply" else "NAME")
     parser.add_argument(

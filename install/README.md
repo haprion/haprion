@@ -123,8 +123,9 @@ key's fingerprint. Paste the block into the Dashboard's *Set up your first
 cluster* (or *Settings* → *Create cluster*) for the first node of a cluster, or
 into *Add a node* on the cluster's page for the next, and press *Read block*. On
 the command line it is `haprion-cluster add` or `haprion-node add` with the block
-on stdin. `sudo haprion-node-key` makes a new block; each run makes a new one-time
-key, so an earlier block stops working.
+on stdin. `sudo haprion-node-key` prints the block again: the same block while
+its one-time key is unused and valid. `sudo haprion-node-key --again` makes a new
+one-time key, and an earlier block stops working.
 
 The block holds a one-time key, valid for 24 hours. The management host connects
 with it once, as `_haprion-join`, whose only command is `haprion-node-join`: it

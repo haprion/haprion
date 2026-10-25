@@ -131,6 +131,16 @@ class TheCodeNamesTheManualAsItIs(unittest.TestCase):
     RETIRED = re.compile(r"\bINSTALLATION \d")
     NAMED = re.compile(r"user-manual\.md, '([^']+)'")
 
+    def test_no_document_says_every_run_makes_a_new_join_key(self) -> None:
+        """Review 26-10-25, 3-03: only --again does; a leaked block was thought dead."""
+
+        claim = re.compile(r"(?:each|every) run makes a new one-time\s+key")
+        for path in sorted(ROOT.rglob("*.md")):
+            if ".git" in path.parts:
+                continue
+            with self.subTest(path=path.relative_to(ROOT)):
+                self.assertIsNone(claim.search(path.read_text(encoding="utf-8")))
+
     def test_nothing_names_the_old_guide_by_its_numbers(self) -> None:
         found = [
             f"{name}:{number}"

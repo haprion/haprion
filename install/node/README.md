@@ -9,7 +9,7 @@ one is there.
 | `haprion-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates (`cert-pull`, `cert-remove`, and `ca-pull`, `ca-remove` for CA files) |
 | `haprion-cert-pull` | fetches the requested certificates, validates them, installs, reloads; with `--authority`, CA files into `/etc/haproxy/certs/ca/`, reloaded only when the configuration names one |
 | `haprion-cert-remove` | removes certificates nothing installed names; with `--authority`, CA files |
-| `haprion-node-key` | makes this node's enrollment block for a manager to join it with; every run makes a new one-time key, so an earlier block stops working |
+| `haprion-node-key` | makes this node's enrollment block for a manager to join it with; prints the same block while its one-time key is unused and valid; `--again` makes a new key, and an earlier block stops working |
 | `haprion-node-join` | joins the node to the manager that connected with the block's key: runs step 4 from the manager's answers and installs its keys |
 | `haprion-node-prepare` | runs step 4 again on a prepared node, with the answers read back from `node.conf`; run it by hand when an upgrade says to, or with `--manager <new name or address>` when the manager has moved |
 | `haprion-server-state-trigger` | unprivileged forced command for the server state key: validates the request, then escalates |

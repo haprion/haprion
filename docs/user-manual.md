@@ -3630,7 +3630,8 @@ pressed:
 - *TLS and source address*: a TLS version chosen on every VIP;
 - *Interface certificate*: an interface certificate that is not self-signed;
 - *Users and sign-in*: a second account, or sign-in through SSO;
-- *Certificates for your proxies*: a certificate from ACME or NDES.
+- *Certificates for your proxies*: a certificate in the registry other than a CA - issued over ACME or NDES,
+  imported, or signed from a request.
 
 The optional lines come last: the features, node backups (scheduled on every cluster), the traffic log
 (forwarded from every cluster) and external monitoring. The features come first among them, since node

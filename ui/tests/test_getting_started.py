@@ -2,7 +2,7 @@
 
 Held here: each item is done only when the installation shows it - a cluster
 serving, every VIP's TLS chosen, a certificate that is not self-signed, more
-than one account or SSO, a certificate from ACME or NDES, every cluster
+than one account or SSO, a certificate for the proxies, every cluster
 forwarding its log and backing up - and the optional two are said to be; the
 list is an admin's, and Hide removes it for the whole installation, audited.
 """

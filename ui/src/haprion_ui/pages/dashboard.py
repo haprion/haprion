@@ -407,7 +407,6 @@ def build_router(config: Config) -> APIRouter:
             else set()
         )
         registry = _registry_overview(config, request)
-        interface = registry.interface.identifier if registry and registry.interface else None
         served = certificates.interface_served(read_manager_certificates(request, config))
         facts = getting_started.Facts(
             clusters=tuple(
@@ -429,10 +428,7 @@ def build_router(config: Config) -> APIRouter:
             interface_self_signed=served.self_signed if served is not None else None,
             accounts=len(_account_rows(config, request)),
             sso=provider is not None and provider.enabled,
-            site_certificates=sum(
-                entry.source_label in {"Certbot", "NDES"} and entry.identifier != interface
-                for entry in (registry.certificates if registry else ())
-            ),
+            site_certificates=registry.for_proxies if registry else 0,
             node_backups_on=backups_on,
             status_access=bool(access),
             features_changed=any(switch.updated_by for switch in switches.values()),

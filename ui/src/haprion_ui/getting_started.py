@@ -197,9 +197,9 @@ def checklist(facts: Facts) -> Checklist:
         Item(
             "Certificates for your proxies",
             facts.site_certificates > 0,
-            labels.counted(facts.site_certificates, "certificate") + " from ACME or NDES"
+            labels.counted(facts.site_certificates, "certificate")
             if facts.site_certificates
-            else "None from ACME or NDES yet",
+            else "None yet",
             "Certificates",
             "/certificates",
         ),

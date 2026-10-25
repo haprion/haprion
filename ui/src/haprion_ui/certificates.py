@@ -281,6 +281,26 @@ class RegistryView:
     age_label: str = ""
     stale: bool = False
 
+    @property
+    def for_proxies(self) -> int:
+        """Certificates in the list a proxy could serve, wherever they came from.
+
+        Getting started counted only ACME and NDES, so an installation of
+        imported or CSR-signed certificates was never done (review 26-10-24,
+        12-08). Not counted: a CA, which a pool trusts rather than serves; a
+        signing request still waiting for its signature, or a request the
+        registry has not answered; and a certificate taken out to be installed
+        by hand. The interface's own is kept out of the list already.
+        """
+
+        return sum(
+            entry.source_label != "CA"
+            and not entry.csr_pending
+            and not entry.placeholder
+            and not entry.exportable
+            for entry in self.certificates
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CertificateOverview:

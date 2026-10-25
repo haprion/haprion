@@ -948,6 +948,37 @@ class TheStateIsReadFromTheContractsShape(unittest.TestCase):
         self.assertEqual(view.clusters[0].certificates[0].state_label, "On all 2 nodes")
 
 
+class GettingStartedCountsWhatAProxyCouldServe(unittest.TestCase):
+    """Imported and CSR-signed certificates count, wherever they came from (review 26-10-24, 12-08).
+
+    Only ACME and NDES counted, so an installation of imported certificates
+    showed "None from ACME or NDES yet" for good.
+    """
+
+    def test_every_source_counts_but_a_ca_a_waiting_request_and_the_interface(self) -> None:
+        authority = registered("corp-root", kind="authority", fingerprint="d" * 64, sans=[])
+        authority["bundle_sha256"] = "e" * 64
+        waiting = registered("signed.example.com", kind="import", readable=False, clusters=())
+        waiting["request"] = {"kind": "csr", "domains": ["signed.example.com"], "csr_pem": "CSR"}
+        interface = registered("manager.example.com", kind="import", clusters=())
+        interface["interface"] = True
+        taken_out = registered("laptop.example.com", kind="import", clusters=())
+        taken_out["exportable"] = True
+        view = overview(
+            with_registry(
+                reading(),
+                registered("acme.example.com"),
+                registered("imported.example.com", kind="import"),
+                authority,
+                waiting,
+                interface,
+                taken_out,
+            )
+        )
+
+        self.assertEqual(registry_of(view).for_proxies, 2)
+
+
 class ACaCertificateIsARowOfItsOwn(unittest.TestCase):
     """B276: a CA reads as one, is judged by every certificate in it, and is offered to pools."""
 

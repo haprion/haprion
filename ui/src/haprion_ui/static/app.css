@@ -517,6 +517,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .status-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
 a.status-badge { text-decoration: none; }
 a.status-badge:hover { text-decoration: underline; }
+.csr-actions { display: inline-flex; gap: 8px; vertical-align: middle; white-space: nowrap; }
 .status-badge-healthy { color: var(--healthy-text); background: var(--healthy-soft); }
 .status-badge-warning { color: var(--warning-text); background: var(--warning-soft); }
 .status-badge-critical { color: var(--critical-text); background: var(--critical-soft); }

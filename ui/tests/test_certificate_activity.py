@@ -687,6 +687,15 @@ class ADownloadableSigningRequest(DeleteRouteTestCase):
             )
             self.assertIn(">Download CSR<", page)
             self.assertNotIn(">Resume enrollment<", page)
+            #
+            # The row's text says the certificate is uploaded here, so the row
+            # carries the upload too (review 26-10-24, 12-05).
+            #
+            self.assertIn(
+                '<input type="hidden" name="certificate" value="csr.example.net">'
+                '<button type="submit" class="secondary-button">Upload certificate…</button>',
+                page,
+            )
             self.assertIn("csr.example.net, *.csr.example.net", page)
             #
             # The signed certificate goes through Renew… (C9c), worded for

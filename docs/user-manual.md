@@ -2169,7 +2169,7 @@ clusters fail. The listing shows it from the store instead, as **Awaiting signat
 a certbot lineage, imported material, or an NDES request in progress.
 
 When the CA has signed, the certificate comes back without a key. Use `haprion-cert-import --id <id>
---certificate <file> [--chain <file>]` with no `--key`, or *Renew…* with the row ticked. The
+--certificate <file> [--chain <file>]` with no `--key`, or *Upload certificate…* on the row. The
 certificate is matched against the stored key, imported, and published to the targets the request
 named, plus any named now. A certificate for another key is refused, and the request is kept.
 

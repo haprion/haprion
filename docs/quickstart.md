@@ -136,7 +136,7 @@ HTTP-01 is offered only when the runtime policy names a webroot
 
 **From your own CA:** **Import certificate** takes a PEM or PKCS#12 file, with or without its key.
 **New certificate** can also make the key on the manager and give you a signing request
-(**Download CSR**) to have signed. A Microsoft CA can be used directly through **NDES profiles**.
+(**Download CSR**) to have signed; **Upload certificate…** on the same row takes the signed certificate back. A Microsoft CA can be used directly through **NDES profiles**.
 
 The certificate is published to the clusters you ticked. Renewal is automatic for Let's Encrypt
 and NDES certificates.

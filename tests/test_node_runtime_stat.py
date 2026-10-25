@@ -261,6 +261,13 @@ class ReadingUnappliedStates(unittest.TestCase):
 
         self.assertEqual(self.read(), {"srv:shop.1111111111111111": "drain"})
 
+    def test_a_guid_with_a_trailing_newline_is_dropped(self) -> None:
+        """Review 26-10-24, 10-07: `$` matches before a final newline."""
+
+        self.path.write_text('{"servers": {"srv:shop.1111111111111111\\n": "drain"}}')
+
+        self.assertEqual(self.read(), {})
+
     def test_an_unreadable_record_is_unknown(self) -> None:
         self.path.write_text("not json")
 

@@ -272,7 +272,7 @@ def read_wanted() -> dict[str, str]:
     return {
         guid: state
         for guid, state in servers.items()
-        if isinstance(guid, str) and GUID.match(guid) and state in ("drain", "maint")
+        if isinstance(guid, str) and GUID.fullmatch(guid) and state in ("drain", "maint")
     }
 
 
@@ -341,7 +341,7 @@ def answer(document: dict[str, object], code: int) -> int:
 
 
 def command_set(guid: str, state: str) -> int:
-    if not GUID.match(guid) or state not in STATES:
+    if not GUID.fullmatch(guid) or state not in STATES:
         return answer(
             {"outcome": "refused", "message": "expected a server GUID and ready, drain or maint"},
             EXIT_USAGE,
@@ -612,7 +612,7 @@ def update_one(name: str, pem: str) -> str | None:
 
 
 def command_update_certs(identifiers: list[str]) -> int:
-    if not identifiers or not all(CERTIFICATE_ID.match(name) for name in identifiers):
+    if not identifiers or not all(CERTIFICATE_ID.fullmatch(name) for name in identifiers):
         log("ERROR: expected one or more certificate IDs")
         return EXIT_USAGE
     held_lock = lock()
@@ -662,7 +662,7 @@ def command_unblock(name: str, words: list[str]) -> int:
     if any(getattr(address, "scope_id", None) is not None for address in parsed):
         parsed = []
     addresses = list(dict.fromkeys(str(address) for address in parsed))
-    if not OBJECT.match(name) or not addresses or len(words) > MAX_UNBLOCK:
+    if not OBJECT.fullmatch(name) or not addresses or len(words) > MAX_UNBLOCK:
         return answer(
             {
                 "outcome": "refused",

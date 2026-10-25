@@ -387,6 +387,25 @@ class WhatTheProbeRefuses(unittest.TestCase):
             ),
         )
 
+    def test_a_trailing_newline_is_refused_in_every_field(self) -> None:
+        """Review 26-10-24, 10-07: `$` matches before a final newline, so "/x\\n"
+        passed and became `GET /x\\n HTTP/1.1`."""
+
+        http = {"type": "http", "host": "127.0.0.1", "port": 80}
+        dns = {"type": "dns", "host": "127.0.0.1", "address": "127.0.0.1", "port": 53,
+               "query_name": "example.com.", "query_type": "A"}  # fmt: skip
+        for target, authorities, said in (
+            ({**http, "path": "/x\n"}, {}, "path is not usable"),
+            ({**http, "host": "example.com\n"}, {}, "host is not usable"),
+            ({**http, "host_header": "example.com\n"}, {}, "host_header is not usable"),
+            ({**http, "ca": "ca\n"}, {}, "ca is not usable"),
+            ({**dns, "query_name": "example.com.\n"}, {}, "query_name is not a DNS name"),
+            (http, {"ca\n": "x"}, "an authority's id is not usable"),
+        ):
+            with self.subTest(said=said):
+                request = {"schema_version": 1, "targets": [target], "authorities": authorities}
+                self.assertIn(said, self.refusal(request))
+
     def test_arguments_are_refused_even_though_the_key_forbids_them(self) -> None:
         completed = sp.run(
             [str(SCRIPT), "--all"],

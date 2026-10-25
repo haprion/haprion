@@ -24,7 +24,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
@@ -543,6 +543,32 @@ class TheHelperReplacesACertificateWithoutAReload(unittest.TestCase):
         ):
             with self.subTest(argv):
                 self.assertEqual(self.run_helper(*argv)[0], self.helper.EXIT_USAGE)
+
+
+class TheHelperRefusesATrailingNewline(unittest.TestCase):
+    """Review 26-10-24, 10-07: `$` matches before a final newline, so a GUID,
+    certificate ID or object name with one passed the helper's own check."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="srvstate-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.helper = load_helper()
+        self.helper.LOCK_FILE = str(self.root / "lock")
+        self.helper.STATE_FILE = self.root / "server-state.json"
+        self.helper.ADMIN_SOCKET = str(self.root / "missing.sock")
+
+    def test_each_name_is_refused_before_anything_runs(self) -> None:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(self.helper.command_set(f"{WEB_A}\n", "drain"), 64)
+            self.assertEqual(self.helper.command_update_certs(["shop\n"]), 64)
+            self.assertEqual(self.helper.command_unblock("shop\n", ["192.0.2.1"]), 64)
+        self.assertFalse((self.root / "lock").exists())
+
+    def test_a_kept_state_with_one_is_not_put_back(self) -> None:
+        self.helper.STATE_FILE.write_text(
+            json.dumps({"servers": {f"{WEB_A}\n": "drain", WEB_B: "maint"}})
+        )
+        self.assertEqual(self.helper.read_wanted(), {WEB_B: "maint"})
 
 
 class TheTriggerValidatesBeforeSudo(unittest.TestCase):

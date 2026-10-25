@@ -105,7 +105,7 @@ def text(
         if required:
             refuse(f"{key} is required")
         return ""
-    if not isinstance(value, str) or not pattern.match(value):
+    if not isinstance(value, str) or not pattern.fullmatch(value):
         refuse(f"{key} is not usable")
     return value
 
@@ -140,7 +140,7 @@ def dns_question(entry: dict[str, Any]) -> dict[str, str]:
     """The question and the address it is asked of, refused unless each is exactly that."""
 
     name = entry.get("query_name")
-    if not isinstance(name, str) or not DNS_NAME.match(name):
+    if not isinstance(name, str) or not DNS_NAME.fullmatch(name):
         refuse("a target's query_name is not a DNS name")
     kind = entry.get("query_type")
     if kind not in DNS_TYPES:
@@ -259,7 +259,7 @@ def read_request(stream: IO[bytes]) -> dict[str, Any]:
     if not isinstance(authorities, dict) or len(authorities) > MAX_AUTHORITIES:
         refuse("authorities must be an object of at most 8 CAs")
     for name, pem in authorities.items():
-        if not CA_ID.match(name):
+        if not CA_ID.fullmatch(name):
             refuse("an authority's id is not usable")
         if (
             not isinstance(pem, str)

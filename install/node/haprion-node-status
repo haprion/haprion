@@ -923,7 +923,7 @@ def read_server_state_unapplied() -> dict[str, str] | None:
     return {
         guid: state
         for guid, state in sorted(servers.items())[:MAX_STAT_ROWS]
-        if isinstance(guid, str) and SERVER_GUID.match(guid) and state in ("drain", "maint")
+        if isinstance(guid, str) and SERVER_GUID.fullmatch(guid) and state in ("drain", "maint")
     }
 
 

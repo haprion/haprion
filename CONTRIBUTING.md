@@ -62,7 +62,9 @@ anything - so an interface released first stops before it changes the database.
 it, with a digest of `schemas/v1` and one of what the helpers take (their operations, parameters and
 actions); a change to either fails the gate until someone decides whether the level must rise, and
 records the new digest. Raise it whenever an older engine could not answer what
-the new interface asks. The
+the new interface asks. `installed` in the same file is the newest level that went out, with its
+digests, recorded when a release is rolled out: a contract that differs from it must be a higher
+level, so a level is never given two contracts. The
 interface requires the level it was built with (`ui/src/haprion_ui/compatibility.json`),
 `haprion-cli` provides `haprion-engine` at its level, and `haprion-ui` depends on
 `haprion-engine (>=` that level`)`, so apt will not put an older engine under it.

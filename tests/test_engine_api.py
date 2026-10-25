@@ -94,6 +94,28 @@ class TheLevelFollowsTheContract(unittest.TestCase):
             "record the new requests_sha256",
         )
 
+    def test_a_contract_changed_since_it_was_installed_has_a_higher_level(self) -> None:
+        """Review 26-10-25, 1-03: the digests were recorded again and the level stayed.
+
+        Re-recording a digest makes the two checks above pass; the level is
+        what the interface and the package dependency read. `installed` is the
+        newest level any build of this engine went out with - the release
+        list records it, with its digests, when a release is rolled out - so
+        a contract that differs from it is a contract no installed engine has,
+        and has to be a level none has either.
+        """
+
+        recorded = json.loads(ENGINE.read_text())
+        installed = recorded["installed"]
+        self.assertGreaterEqual(recorded["engine_api"], installed["engine_api"])
+        if recorded["engine_api"] == installed["engine_api"]:
+            self.assertEqual(
+                (installed.get("schemas_sha256"), installed.get("requests_sha256")),
+                (schemas_digest(), requests_digest()),
+                f"engine_api {installed['engine_api']} went out with another contract: raise "
+                "engine_api and the interface's requirement with it",
+            )
+
     def test_the_inventory_holds_what_a_helper_takes(self) -> None:
         inventory = requests_inventory()
         self.assertEqual(inventory["resolve_helper"]["PARAMETERS"], ["any", "names"])

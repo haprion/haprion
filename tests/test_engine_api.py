@@ -54,7 +54,14 @@ def _plain(value: object) -> object:
 
 
 def requests_inventory() -> dict[str, dict[str, object]]:
-    """What every module in `haprion.cli` states it takes, as plain JSON."""
+    """What every module in `haprion.cli` states it takes, as plain JSON.
+
+    The contract is what the interface may ask of an engine of another
+    release. The helpers only the engine itself calls - candidate validation,
+    the published release, the managed publish's own half - always run beside
+    the code that asks them, so they state nothing here (review 26-10-25,
+    11-05).
+    """
 
     inventory: dict[str, dict[str, object]] = {}
     for path in sorted((BASE / "src/haprion/cli").glob("*.py")):

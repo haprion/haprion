@@ -13,6 +13,9 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from haprion import node_package
+from tests.test_package_commands import manager_scripts, node_scripts
+
 BASE = Path(__file__).resolve().parents[1]
 
 
@@ -201,30 +204,90 @@ class TheTree(unittest.TestCase):
         # tools would import the engine from it (install test, 26-10-17).
         self.assertEqual({path for path in carried if path.startswith("src/")}, set())
 
-    def test_every_file_a_platform_step_reads_from_beside_it_is_carried(self) -> None:
-        #
-        # Step 14 installed the certbot hook from `../certbot-deploy-hook`, a
-        # file only a source tree had: on a package installation nothing put
-        # the hook in place (review 2026-10-24). Read from the steps, not
-        # listed, so the next such file fails here too.
-        #
-        carried = {relative for relative, _ in TOOL.shared_files(BASE)}
-        reference = re.compile(r"\.\./([A-Za-z0-9_.-]+)")
-        steps = [
-            path
-            for path in (BASE / "install/platform").iterdir()
-            if path.is_file() and path.suffix not in {".md", ".pyc"}
-        ]
+    #
+    # A path a script reads from beside it that is no file of the package, with
+    # why. Step 14 installed the certbot hook from `../certbot-deploy-hook`, a
+    # file only a source tree had: on a package installation nothing put the
+    # hook in place (review 2026-10-24). Read from the scripts, not listed, so
+    # the next such file fails here too; review 26-10-24, 14-03, widened it to
+    # every script the packages carry and to paths of more than one part.
+    #
+    NOT_CARRIED = {
+        ("install/lib.sh", "../src/haprion/apt-keys/"): (
+            "a source tree's HAProxy keys; the package carries them in install/apt-keys/, "
+            "where lib.sh looks first"
+        ),
+        ("install/platform/05-platform-nginx", "../sites-available/haprion"): (
+            "the target of a link, which nginx resolves in /etc/nginx/sites-enabled"
+        ),
+        **{
+            (f"install/platform/{step}", "../.."): "the tree the step runs from"
+            for step in (
+                "14-platform-certbot",
+                "15-platform-dns-keys",
+                "16-platform-scep",
+                "17-platform-oidc",
+            )
+        },
+    }
+    BESIDE = re.compile(
+        r"""(?:^|[\s"'(=])(\.\./[A-Za-z0-9_./-]*)"""
+        r"""|^\s*(?:source|apply_sysusers|apply_tmpfiles) +(\.?/?[A-Za-z0-9_][A-Za-z0-9_./-]*)$""",
+        re.MULTILINE,
+    )
+
+    def beside(self, scripts: list[Path]) -> tuple[set[str], set[tuple[str, str]]]:
+        """What the scripts read from beside them, by path in the tree, and the
+        exceptions they used."""
+
         named: set[str] = set()
-        for step in steps:
-            for line in step.read_text(encoding="utf-8").splitlines():
-                if line.lstrip().startswith("#"):
+        excepted: set[tuple[str, str]] = set()
+        for script in scripts:
+            relative = script.relative_to(BASE).as_posix()
+            text = "\n".join(
+                line
+                for line in script.read_text(encoding="utf-8").splitlines()
+                if not line.lstrip().startswith("#")
+            )
+            for match in self.BESIDE.finditer(text):
+                name = match.group(1) or match.group(2)
+                if (relative, name) in self.NOT_CARRIED:
+                    excepted.add((relative, name))
                     continue
-                for name in reference.findall(line):
-                    if (BASE / "install" / name).is_file():
-                        named.add(f"install/{name}")
+                # A node command reads from the package's install directory,
+                # where it changes to first (haprion-node-key).
+                here = script.parent.parent if script.parent.name == "node" else script.parent
+                path = Path(os.path.normpath(here / name))
+                with self.subTest(script=relative, name=name):
+                    self.assertTrue(path.exists(), f"{relative} reads {name}, which is not there")
+                named.add(path.relative_to(BASE).as_posix() + ("/" if path.is_dir() else ""))
+        return named, excepted
+
+    @staticmethod
+    def missing(named: set[str], carried: set[str]) -> list[str]:
+        return sorted(
+            name
+            for name in named
+            if not (
+                any(path.startswith(name) for path in carried)
+                if name.endswith("/")
+                else name in carried
+            )
+        )
+
+    def test_every_file_a_manager_script_reads_from_beside_it_is_carried(self) -> None:
+        carried = {relative for relative, _ in TOOL.shared_files(BASE)}
+        named, excepted = self.beside(manager_scripts())
         self.assertIn("install/certbot-deploy-hook", named)
-        self.assertEqual(sorted(named - carried), [])
+        self.assertIn("install/sysusers/haprion.conf", named)
+        self.assertEqual(self.missing(named, carried), [])
+        self.assertEqual(sorted(set(self.NOT_CARRIED) - excepted), [])
+
+    def test_every_file_the_node_step_reads_from_beside_it_is_carried(self) -> None:
+        carried = {source for source, _ in node_package.CONTENTS.values()}
+        named, _ = self.beside(node_scripts())
+        self.assertIn("install/sysusers/haprion-node.conf", named)
+        self.assertEqual(self.missing(named, carried), [])
 
 
 if __name__ == "__main__":

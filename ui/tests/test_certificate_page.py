@@ -92,6 +92,20 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         self.assertNotIn("On all targets", page)
         self.assertNotIn("certificate-cluster-card cluster-accent-", page)
 
+    def test_the_registry_card_has_a_lamp_and_an_age_of_its_own(self) -> None:
+        """Review 26-10-24, 04-05: the lamp was green whatever the registry held.
+
+        The fixture's reading is from August and the page reads the clock, so
+        the registry here is one whose reading has stopped.
+        """
+
+        page = self.page("?view=registry")
+        card = page[page.index('<article class="cluster-card certificate-cluster-card">') :]
+        header = card[: card.index("</header>")]
+        self.assertIn('<span class="status-orb status-warning"', header)
+        self.assertIn("Stale data", header)
+        self.assertIn('<time datetime="2026-08-29T09:59:45+00:00"', header)
+
     def test_only_actual_cluster_cards_have_a_cluster_accent(self) -> None:
         self.assertIn("certificate-cluster-card cluster-accent-", self.page("?view=clusters"))
         self.assertNotIn("certificate-cluster-card cluster-accent-", self.page("?view=registry"))

@@ -129,7 +129,8 @@
 {% if chosen_view == 'registry' %}
 <article class="cluster-card certificate-cluster-card">
   <header class="cluster-header">
-    <div class="cluster-identity"><span class="status-orb status-healthy" aria-hidden="true"></span><div><h3>Certificate registry</h3></div></div>
+    <div class="cluster-identity"><span class="status-orb status-{{ certificates.registry.tone }}" aria-hidden="true"></span><div><h3>Certificate registry</h3></div></div>
+    {% if certificates.registry %}<div class="cluster-state">{% if certificates.registry.stale %}<span class="status-badge status-badge-warning">Stale data</span>{% endif %}<time datetime="{{ certificates.registry.observed_iso }}" title="{{ certificates.registry.observed_at | shown_at }}">{{ certificates.registry.age_label }}</time></div>{% endif %}
   </header>
   {% if certificates.registry.certificates %}
   {#

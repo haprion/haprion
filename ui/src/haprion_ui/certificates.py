@@ -270,6 +270,16 @@ class RegistryView:
     # the settings page hands its CSR out and takes the certificate back.
     #
     interface_request: RegistryCertificateView | None = None
+    #
+    # The card's lamp and the reading's age, as the cluster cards have them
+    # (review 26-10-24, 04-05): green beside expired certificates, and no
+    # sign when the manager's reading had stopped.
+    #
+    tone: Tone = "healthy"
+    observed_at: datetime | None = None
+    observed_iso: str = ""
+    age_label: str = ""
+    stale: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1254,6 +1264,7 @@ def _registry_view(
     status_readings: Iterable[Any],
     *,
     now: datetime,
+    stale_after: timedelta | None = None,
     taken_out: Mapping[str, TakenOut] | None = None,
 ) -> RegistryView | None:
     """The registry as one list, from the manager's own reading (B304).
@@ -1263,7 +1274,7 @@ def _registry_view(
     """
 
     result = _manager_result(reading)
-    if result is None or not isinstance(result.get("registry"), Mapping):
+    if reading is None or result is None or not isinstance(result.get("registry"), Mapping):
         return None
     block = _mapping(result.get("registry"))
     carriage = _carriage(status_readings)
@@ -1291,6 +1302,11 @@ def _registry_view(
     )
     receivers = block.get("receivers")
     manager, receiver_rows = certificate_receivers.parse_receiver_rows(block)
+    attention_count = sum(
+        entry.tone in {"critical", "warning"} or entry.state_tone in {"critical", "warning"}
+        for entry in certificates
+    )
+    stale = stale_after is not None and now - reading.observed_at > stale_after
     return RegistryView(
         targets={entry.identifier: entry.targets for entry in certificates},
         certificates=certificates,
@@ -1299,15 +1315,17 @@ def _registry_view(
         else (),
         certificate_count=len(certificates),
         acme_count=sum(entry.source_label == "Certbot" for entry in certificates),
-        attention_count=sum(
-            entry.tone in {"critical", "warning"} or entry.state_tone in {"critical", "warning"}
-            for entry in certificates
-        ),
+        attention_count=attention_count,
         receiver_rows=receiver_rows,
         manager=manager,
         interface=marked[0] if marked else None,
         served=_served_view(block.get("interface_served"), now=now),
         interface_request=waiting[0] if waiting else None,
+        tone="warning" if stale or attention_count else "healthy",
+        observed_at=reading.observed_at,
+        observed_iso=reading.observed_at.astimezone(UTC).isoformat(),
+        age_label=observation_label(reading.observed_at, now),
+        stale=stale,
     )
 
 
@@ -1352,7 +1370,9 @@ def build_certificate_overview(
     # The registry and the node status first: the cluster rows carry the
     # registry's columns, and their state is read from the same carriage.
     #
-    registry = _registry_view(manager, status_readings, now=now, taken_out=taken_out)
+    registry = _registry_view(
+        manager, status_readings, now=now, stale_after=stale_after, taken_out=taken_out
+    )
     carriage = _carriage(status_readings)
     targets = registry.targets if registry is not None else None
 

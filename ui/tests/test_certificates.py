@@ -442,6 +442,26 @@ def registry_of(view: CertificateOverview) -> RegistryView:
     return view.registry
 
 
+class TheRegistryCardsLampAndAge(unittest.TestCase):
+    """Review 26-10-24, 04-05: green beside expired certificates, and silent when the reading stopped."""
+
+    def test_a_fresh_registry_with_nothing_due_is_green_and_dated(self) -> None:
+        registry = registry_of(overview(with_registry(reading(), registered())))
+        self.assertEqual((registry.tone, registry.stale), ("healthy", False))
+        self.assertEqual(registry.observed_at, NOW - timedelta(seconds=15))
+        self.assertTrue(registry.age_label)
+
+    def test_a_certificate_needing_attention_turns_the_lamp(self) -> None:
+        registry = registry_of(overview(with_registry(reading(), registered(days_left=-1))))
+        self.assertEqual(registry.attention_count, 1)
+        self.assertEqual(registry.tone, "warning")
+
+    def test_a_reading_older_than_the_poll_window_is_stale(self) -> None:
+        old = reading(age_seconds=int(STALE_AFTER.total_seconds()) + 60)
+        registry = registry_of(overview(with_registry(old, registered())))
+        self.assertEqual((registry.tone, registry.stale), ("warning", True))
+
+
 class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
     """The C5 central view. Its whole risk is claiming more than it knows.
 

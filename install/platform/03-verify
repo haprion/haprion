@@ -539,23 +539,33 @@ allow "$WEB_USER" "can record an unlock" \
       ""
 
 #
-# The claim, exactly as the worker will write it, against however many pending
+# The claim as the worker writes it (`claim_job` in db/jobs.py), with its two
+# parameters as constants and without the row it returns; a test holds the two
+# to the same statement (review 26-10-24, 05-05). Against however many pending
 # jobs there are - usually none. PostgreSQL checks column privileges when it
 # plans the statement, not when it finds a row, so this proves the worker may
 # write every column the claim touches without needing a row to exist and
 # without leaving one behind.
 #
 allow "$WORKER_USER" "may run the claim as written" \
-      "update job set state = 'running',
-                      claim_token = gen_random_uuid(),
-                      worker_id = 'probe',
-                      started_at = statement_timestamp(),
-                      lease_until = statement_timestamp() + interval '30 seconds'
-        where id = (select id from job
-                     where state = 'pending'
-                     order by created_at, id
-                     limit 1
-                       for update skip locked)" \
+      "update job
+          set state = 'running',
+              claim_token = gen_random_uuid(),
+              worker_id = 'probe',
+              lease_until = statement_timestamp()
+                            + 30 * interval '1 second',
+              started_at = coalesce(started_at, statement_timestamp()),
+              attempts = attempts + 1
+        where id = (
+                select id from job
+                 where state = 'pending'
+                   and (held_since is null or held_decision is not null)
+                   and not exists (
+                       select 1 from job_claim_gate
+                        where paused_until > statement_timestamp())
+                 order by created_at, id
+                   for update skip locked
+                 limit 1)" \
       ""
 
 allow "$POLLER_USER" "can replace its rows in the search index" \

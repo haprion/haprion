@@ -3282,6 +3282,16 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
         self.assertEqual(actual_tables, tables)
         self.assertEqual(actual_grants, grants)
 
+    def test_the_worker_may_run_the_claim_probe_as_the_step_runs_it(self) -> None:
+        """05-05: the probe is the worker's claim, and the worker's role may run it."""
+
+        from tests.test_verify_claim_probe import verify_probe
+
+        role = os.environ["HAPRION_UI_TEST_WORKER_ROLE"]
+        with psycopg.connect(f"{DSN} user={role}") as connection:
+            connection.execute(verify_probe())
+            connection.rollback()
+
     def test_the_table_level_grants_are_the_ones_the_step_expects(self) -> None:
         """Review 26-10-24, 05-03: `delete on job` would have passed the column matrix."""
 

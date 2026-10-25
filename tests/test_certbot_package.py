@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import os
 import subprocess
 import sys
 import tarfile
@@ -12,6 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -151,6 +153,33 @@ class TheBuild(unittest.TestCase):
 
     def test_the_interface_needs_it(self) -> None:
         self.assertIn("haprion-certbot", TOOL.ui.depends("3.13", 1).split(", "))
+
+    def test_it_mounts_the_uv_cache_uv_reads_and_makes_it(self) -> None:
+        """Review 26-10-24, 14-07: it mounted ~/.cache/uv whatever UV_CACHE_DIR said,
+        and podman stops at a directory that is not there - after the interface's
+        packages were built."""
+
+        mounted: list[str] = []
+
+        def podman(argv: list[str], **_: object) -> None:
+            mounted.extend(argv)
+            out = Path(next(item for item in argv if item.endswith(":/out")).split(":")[0])
+            (out / "release.tar").write_bytes(b"")
+            (out / "RELEASE_ID").write_text(RELEASE)
+
+        empty = io.BytesIO()
+        tarfile.open(fileobj=empty, mode="w").close()
+        with tempfile.TemporaryDirectory() as raw:
+            cache, work = Path(raw) / "cache" / "uv", Path(raw) / "work"
+            work.mkdir()
+            with (
+                mock.patch.dict(os.environ, {"UV_CACHE_DIR": str(cache)}),
+                mock.patch.object(TOOL.ui, "_git", return_value=empty.getvalue()),
+                mock.patch.object(TOOL.subprocess, "run", side_effect=podman),
+            ):
+                TOOL.build_release(BASE, "HEAD", 0, "image", Path("/uv"), Path("/podman"), work)
+            self.assertIn(f"{cache}:/uv-cache", mounted)
+            self.assertTrue(cache.is_dir())
 
     def test_it_needs_the_cli_its_renewal_runs_through(self) -> None:
         self.assertIn("haprion-cli", TOOL.depends("3.13").split(", "))

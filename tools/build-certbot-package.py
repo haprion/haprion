@@ -148,7 +148,7 @@ def build_release(
     script = work / "build.sh"
     script.write_text(BUILD)
     script.chmod(0o755)
-    cache = Path.home() / ".cache/uv"
+    cache = ui.uv_cache()
     subprocess.run(  # noqa: S603 - the operator's podman, fixed arguments
         [
             str(podman), "run", "--rm",

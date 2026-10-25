@@ -253,6 +253,16 @@ def _git(source: Path, *arguments: str) -> bytes:
     ).stdout
 
 
+def uv_cache() -> Path:
+    """The uv cache a build mounts: UV_CACHE_DIR when set, as uv reads it, and made
+    when missing - podman refuses to mount a directory that is not there. The
+    certbot build mounts the same (review 26-10-24, 14-07)."""
+
+    cache = Path(os.environ.get("UV_CACHE_DIR") or Path.home() / ".cache/uv")
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
+
+
 def image_digest(podman: Path, image: str) -> str:
     subprocess.run([str(podman), "pull", "-q", image], check=True, capture_output=True)  # noqa: S603
     digest = subprocess.run(  # noqa: S603 - the operator's podman, fixed arguments
@@ -284,7 +294,7 @@ def build_release(
     script = work / "build.sh"
     script.write_text(BUILD)
     script.chmod(0o755)
-    cache = Path(os.environ.get("UV_CACHE_DIR", Path.home() / ".cache/uv"))
+    cache = uv_cache()
     subprocess.run(  # noqa: S603 - the operator's podman, fixed arguments
         [
             str(podman), "run", "--rm",

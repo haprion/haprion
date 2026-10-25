@@ -35,7 +35,9 @@
       "haprion-backup-job-helper": "/run/haprion/backup-job.sock",
       "haprion-node-restore-helper": "/run/haprion/node-restore.sock",
       "haprion-tls-helper": "/run/haprion/ui-tls.sock",
-      "haprion-node-helper": "/run/haprion/cluster-node.sock"
+      "haprion-node-helper": "/run/haprion/cluster-node.sock",
+      "haprion-resolve-helper": "/run/haprion/resolve.sock",
+      "haprion-cert-export-helper": "/run/haprion/cert-export.sock"
     }
   }
 }

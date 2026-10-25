@@ -100,6 +100,23 @@ class CompatibilityMetadataTests(unittest.TestCase):
         self.assertIn(f"ListenStream={node_restore_ask.SOCKET_PATH}\n", unit)
         self.assertIn("SocketGroup=WORKER_USER", unit)
 
+    def test_every_socket_a_release_installs_is_checked(self) -> None:
+        # Resolve and cert-export were installed with every release and never
+        # checked: a dead socket still read COMPATIBLE, and the editor said
+        # nothing about names it could not look up (review 26-10-24, 11-04).
+        requirements = compatibility.load_requirements(MANIFEST)
+        refresh = (ROOT / "install/platform/refresh-platform-files").read_text()
+        found = re.search(r"^SOCKETS=\(([^)]*)\)$", refresh, re.MULTILINE)
+        if found is None:
+            self.fail("refresh-platform-files names no SOCKETS")
+        installed = {f"haprion-{name}-helper" for name in found.group(1).split()}
+
+        self.assertEqual(set(requirements.socket_helpers), installed)
+        for helper, path in requirements.socket_helpers.items():
+            with self.subTest(helper):
+                unit = (ROOT / f"install/platform/examples/{helper}.socket.example").read_text()
+                self.assertIn(f"ListenStream={path}\n", unit)
+
     def test_invalid_metadata_is_refused_instead_of_defaulted(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "compatibility.json"

@@ -24,6 +24,18 @@ def _commands(*args: Any, **kwargs: Any) -> tuple[cert_renew.RenewalInvocation, 
     return renewals.commands
 
 
+class TheHelp(unittest.TestCase):
+    def test_it_says_the_ndes_certificates_are_renewed_too(self) -> None:
+        """Review 26-10-24, 16-09: someone after an NDES renewal passed the command by."""
+
+        shown = io.StringIO()
+        with contextlib.redirect_stdout(shown), self.assertRaises(SystemExit):
+            cert_renew.main(["--help"])
+        help_text = " ".join(shown.getvalue().split())
+        self.assertIn("every certbot lineage that is due, then every NDES certificate", help_text)
+        self.assertIn("NDES", cert_renew.__doc__ or "")
+
+
 class RenewalInvocations(Fixture):
     def setUp(self) -> None:
         super().setUp()

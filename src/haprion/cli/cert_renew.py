@@ -1,10 +1,11 @@
-"""Renew every Certbot lineage with the DNS profile environment it needs.
+"""Renew every certbot lineage that is due, then every NDES certificate.
 
-Most plugins persist a credentials-file flag in ``renewal/*.conf``. Route53
-has no such flag: boto3 only discovers its file through an environment
-variable, which Certbot cannot persist.  The timer therefore invokes each
-lineage separately and reconstructs only that fixed environment from the
-registry's ``source.dns_profile`` binding.
+What the renewal timer runs. A certbot lineage is renewed with the DNS profile
+environment it needs: most plugins persist a credentials-file flag in
+``renewal/*.conf``, but Route53 has no such flag - boto3 only discovers its
+file through an environment variable, which Certbot cannot persist. The timer
+therefore invokes each lineage separately and reconstructs only that fixed
+environment from the registry's ``source.dns_profile`` binding.
 """
 
 from __future__ import annotations
@@ -226,7 +227,10 @@ def renew_ndes(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = arguments.ArgumentParser(description="Renew Certbot lineages with DNS profiles")
+    parser = arguments.ArgumentParser(
+        description="Renew every certbot lineage that is due, then every NDES certificate; "
+        "what the renewal timer runs."
+    )
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY_PATH)
     parser.add_argument("--certbot", help="certbot binary used by the upgrade gate")
     parser.add_argument("--dry-run", action="store_true")

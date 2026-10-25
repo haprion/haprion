@@ -14,6 +14,15 @@ from typing import Any
 LIMIT_BYTES = 65_536
 TRUNCATION_MARKER = "\n...[diagnostics truncated]...\n"
 REDACTED = "[REDACTED]"
+#
+# PostgreSQL stores no NUL: a text column refuses the byte and jsonb the
+# escape. One in a helper's stderr or answer failed `finish_job` with a
+# DataError that nothing caught, the worker stopped, and the job ended
+# `unknown` with its real outcome lost (review 26-10-24, 05-08). It becomes
+# the replacement character, which says a byte was there.
+#
+NUL = "\x00"
+NUL_SHOWN = "\ufffd"
 
 _PRIVATE_KEY = re.compile(
     r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?"
@@ -72,7 +81,7 @@ def safe_excerpt(value: str, *, limit_bytes: int = LIMIT_BYTES) -> str:
     if limit_bytes < len(TRUNCATION_MARKER.encode("utf-8")) + 2:
         raise ValueError("the diagnostics limit is too small for the truncation marker")
 
-    redacted = redact(value)
+    redacted = redact(value.replace(NUL, NUL_SHOWN))
     encoded = redacted.encode("utf-8")
     if len(encoded) <= limit_bytes:
         return redacted
@@ -85,7 +94,7 @@ def safe_excerpt(value: str, *, limit_bytes: int = LIMIT_BYTES) -> str:
 
 
 def redact_result(value: Any) -> Any:
-    """The result document with every `diagnostics` text in it redacted.
+    """The result document with every `diagnostics` text in it redacted, and no NUL in it.
 
     A helper's refusal carries its evidence under `error.details.diagnostics`
     and the job row stores the document as it arrived; the manual promises the
@@ -96,11 +105,17 @@ def redact_result(value: Any) -> Any:
 
     if isinstance(value, dict):
         return {
-            key: redact(item)
+            _stored(key) if isinstance(key, str) else key: redact(_stored(item))
             if key == "diagnostics" and isinstance(item, str)
             else redact_result(item)
             for key, item in value.items()
         }
     if isinstance(value, list):
         return [redact_result(item) for item in value]
+    if isinstance(value, str):
+        return _stored(value)
     return value
+
+
+def _stored(text: str) -> str:
+    return text.replace(NUL, NUL_SHOWN)

@@ -107,6 +107,29 @@ class TheDiagnosticsInAResultAreMaskedToo(unittest.TestCase):
         self.assert_masked(str(shown))
 
 
+class NoNulReachesTheDatabase(unittest.TestCase):
+    """Review 26-10-24, 05-08: PostgreSQL refuses NUL, and the worker died on it."""
+
+    def test_the_excerpt_shows_where_a_nul_was(self) -> None:
+        self.assertEqual(diagnostics.safe_excerpt("before\x00after"), "before\ufffdafter")
+
+    def test_every_string_and_key_in_a_result_at_any_depth(self) -> None:
+        result = {
+            "outcome": "failed\x00",
+            "error": {"details": {"diagnostics": "x\x00y", "lines": ["a\x00", 1, None]}},
+            "key\x00": True,
+        }
+        self.assertEqual(
+            diagnostics.redact_result(result),
+            {
+                "outcome": "failed\ufffd",
+                "error": {"details": {"diagnostics": "x\ufffdy", "lines": ["a\ufffd", 1, None]}},
+                "key\ufffd": True,
+            },
+        )
+        self.assertNotIn("\x00", repr(diagnostics.redact_result(result)))
+
+
 class TheDatabaseByteLimitIsKept(unittest.TestCase):
     def test_utf8_is_cut_by_bytes_with_both_edges_and_a_marker(self) -> None:
         value = "first-line\n" + ("å" * 40_000) + "\nlast-line"

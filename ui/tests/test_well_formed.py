@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import unittest
+from pathlib import Path
 
 from tests import well_formed
 
@@ -33,3 +35,31 @@ class WhatTheCheckFinds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoPageSendsAReaderToADocumentThatIsGone(unittest.TestCase):
+    """The pages named "the installation guide, 1.4.5", a document and a
+    numbering that no longer exist (review 26-10-24, 16-04). A page names the
+    manual's section by its heading, which the manual must have.
+    """
+
+    def test_no_template_names_the_old_guide_or_its_numbers(self) -> None:
+        templates = Path(__file__).resolve().parents[1] / "src/haprion_ui/templates"
+        found = [
+            path.name
+            for path in sorted(templates.glob("*.html"))
+            if re.search(r"installation guide|INSTALLATION|\b1\.4\.\d", path.read_text())
+        ]
+        self.assertEqual(found, [])
+
+    def test_a_section_a_page_names_is_a_heading_in_the_manual(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        headings = {
+            line.lstrip("#").strip()
+            for line in (root / "docs/user-manual.md").read_text().splitlines()
+            if line.startswith("#")
+        }
+        for path in sorted((root / "ui/src/haprion_ui/templates").glob("*.html")):
+            for named in re.findall(r"<em>([^<]+)</em> in the user manual", path.read_text()):
+                with self.subTest(page=path.name):
+                    self.assertIn(named, headings)

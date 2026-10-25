@@ -981,6 +981,26 @@ class SessionsAndSigningOut(LoginTestCase):
         self.assertEqual(len(self.sessions), 1)
         self.assertEqual(client.get("/", follow_redirects=False).status_code, 200)
 
+    def test_a_sign_out_from_a_page_older_than_the_session_asks_again(self) -> None:
+        """Review 26-10-24, 09-08: it did nothing, and landed signed in on the dashboard."""
+
+        client = self.client()
+        self.sign_in(client)
+        stale = auth.csrf_token("a session this browser had before")
+        response = client.post("/logout", data={auth.CSRF_FIELD: stale}, follow_redirects=False)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("<h1>Sign out</h1>", response.text)
+        self.assertEqual(len(self.sessions), 1)
+        fresh = re.findall(r'name="csrf_token" value="([^"]+)"', response.text)
+        self.assertIn(auth.csrf_token(client.cookies[auth.SESSION_COOKIE]), fresh)
+
+        signed_out = client.post(
+            "/logout", data={auth.CSRF_FIELD: fresh[-1]}, follow_redirects=False
+        )
+        self.assertEqual(signed_out.headers["location"], "/login")
+        self.assertEqual(self.sessions, {})
+
     def test_signing_out_with_a_token_outside_ascii_is_a_refusal_not_a_crash(self) -> None:
         """CR-05, through the route: the review reproduced the 500 here."""
 

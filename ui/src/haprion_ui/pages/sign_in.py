@@ -600,8 +600,29 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         response = RedirectResponse("/login", status_code=303)
-        if not token or not auth.csrf_token_is_valid(token, csrf_token):
+        if not token:
             return response
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            #
+            # Nothing is revoked without this session's token. A session that
+            # is still good is asked again, with one (review 26-10-24, 09-08);
+            # without one this is the sign-in page, as before.
+            #
+            session = current_session(request)
+            if session is None:
+                return response
+            return TEMPLATES.TemplateResponse(
+                request,
+                "sign-out.html",
+                {
+                    "username": session.username,
+                    "role": session.role,
+                    "management_writes": config.management_writes,
+                    "csrf_token": auth.csrf_token(token),
+                    "section": "",
+                    "demo_fixture": config.demo_fixture,
+                },
+            )
 
         with request.app.state.pool.connection() as connection:
             digest = auth.token_hash(token)

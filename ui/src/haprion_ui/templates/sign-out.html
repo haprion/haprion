@@ -1,0 +1,20 @@
+{% extends "layout.html" %}
+{% block title %}Sign out — Haprion{% endblock %}
+{% block content %}
+{#
+  A sign-out sent from a page opened before the last sign-in carries a token
+  this session never issued. It did nothing and landed on the dashboard, signed
+  in, without a word (review 26-10-24, 09-08). Asked again here, with a token of
+  this session's own.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Sign out</h1><p class="page-lede">You are still signed in. The page you signed out from was older than this sign-in.</p></div>
+</section>
+
+<div class="refusal-card">
+  <form method="post" action="/logout" class="editor-actions editor-submit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="form-buttons"><a class="secondary-button" href="/">Stay signed in</a><button class="primary-button" type="submit">Sign out</button></div>
+  </form>
+</div>
+{% endblock %}

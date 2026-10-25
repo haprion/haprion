@@ -920,6 +920,31 @@ class TheCommand(ReceiverFixture):
         code, out, _ = self.run_cli("list")
         self.assertNotIn("lb-02.example.net", out)
 
+    def test_a_registry_that_cannot_let_go_says_which_layers_went(self) -> None:
+        """Review 26-10-24, 13-08: the layers already removed were lost from the answer."""
+
+        self.run_cli(
+            "add",
+            "lb-02.example.net",
+            "--transport",
+            "rsync",
+            "--public-key",
+            str(self.key_file),
+            "--owner",
+            ME,
+        )
+        with mock.patch.object(
+            cert_registry, "drop_receiver", side_effect=OSError(28, "No space left on device")
+        ):
+            code, out, _ = self.run_cli("remove", "lb-02.example.net", "--json")
+
+        self.assertEqual(code, exit_codes.IO_ERROR, out)
+        document = assert_contract("haprion-cert-receiver", out)
+        self.assertEqual(document["error"]["code"], "write_failed")
+        removed = [layer["layer"] for layer in document["error"]["details"]["removed"]]
+        self.assertEqual(removed, ["lock", "directory", "account"])
+        self.assertIn("lb-02.example.net", self.registered())
+
     def test_there_is_no_migrate_verb(self) -> None:
         code, out, _ = self.run_cli("migrate", "lb-02.example.net", "--finish")
 

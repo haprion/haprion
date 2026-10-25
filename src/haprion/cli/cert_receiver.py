@@ -188,7 +188,9 @@ def main(
     except SystemExit as exc:
         return int(exc.code or 0)
 
-    def refuse(code: str, message: str, exit_code: int) -> int:
+    def refuse(
+        code: str, message: str, exit_code: int, details: dict[str, Any] | None = None
+    ) -> int:
         errors.write(f"ERROR: [{code}] {message}\n")
         if arguments.json_mode:
             document = failure(
@@ -198,6 +200,7 @@ def main(
                 code=code,
                 message=message,
                 exit_code=exit_code,
+                details=details,
             )
             write_document(writer, document, exit_code)
         return exit_code
@@ -300,7 +303,7 @@ def main(
                 lock_path=lock_path,
             )
     except ReceiverError as exc:
-        return refuse(exc.code, str(exc), exc.exit_code)
+        return refuse(exc.code, str(exc), exc.exit_code, exc.details)
 
     document, code = answer(
         result,

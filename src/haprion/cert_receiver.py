@@ -1418,7 +1418,17 @@ def remove(
     except ReceiverError:
         raise
     except (OSError, cert_registry.RegistryError) as exc:
-        raise ReceiverError("write_failed", str(exc), exit_code=exit_codes.IO_ERROR) from exc
+        #
+        # With the layers that did go: the registry still names the receiver,
+        # rightly, and a second attempt finishes it, but what this one took
+        # away is gone and the answer says so (review 26-10-24, 13-08).
+        #
+        raise ReceiverError(
+            "write_failed",
+            str(exc),
+            exit_code=exit_codes.IO_ERROR,
+            details={"removed": [layer.as_dict() for layer in layers]},
+        ) from exc
     return Result(receiver_id, "removed", tuple(layers))
 
 

@@ -9,9 +9,8 @@
 #          haprion-traffic-log-enable --print        # show the rsyslog rule only
 #          haprion-traffic-log-enable --print-units  # show the retention units
 #
-# Activation is deliberately separate from 04-node-prepare. The second log
-# stream is opt-in in the generator too, and a node that has not been published
-# with it would otherwise get a rule matching a tag nothing ever sends.
+# 04-node-prepare runs this when the node has the collector's key; run it by
+# hand only to turn the route off (--disable) or on again.
 #
 set -Eeuo pipefail
 

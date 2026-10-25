@@ -14,10 +14,11 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
-from haprion import cert_import, exit_codes
+from haprion import cert_import, cert_pending, exit_codes
 from haprion.cert_import import (
     ImportError_,
     Material,
@@ -29,6 +30,7 @@ from haprion.cert_import import (
 from haprion.cert_inventory import FULLCHAIN, PRIVKEY
 from haprion.cli import cert_import as command
 from haprion.config import load_policy, load_runtime_config
+from tests.contract_schema import assert_contract
 from tests.test_cert_publish import Fixture
 
 OPENSSL = shutil.which("openssl") or "/usr/bin/openssl"
@@ -453,6 +455,28 @@ class TheCommand(ImportFixture):
         self.assertEqual(document["result"]["certificate"], "shop.example")
         self.assertNotIn("PRIVATE", out)
         self.assertEqual(self.deployed, ["alpha"])
+
+    def test_a_due_note_that_cannot_be_written_is_said(self) -> None:
+        """Review 26-10-24, 13-06: the publish's warning reaches the answer."""
+
+        with mock.patch.object(cert_pending.Ledger, "keep", side_effect=OSError("disk full")):
+            code, out, err = self.run_cli(
+                "--id",
+                "shop.example",
+                "--certificate",
+                str(self.pki.leaf),
+                "--key",
+                str(self.pki.leaf_key),
+                "--cluster",
+                "alpha",
+                "--json",
+            )
+        self.assertEqual(code, 0, err)
+        document = assert_contract("haprion-cert-import", out)
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(
+            [warning["code"] for warning in document["warnings"]], ["pending_unrecorded"]
+        )
 
     def test_pkcs12_at_a_terminal(self) -> None:
         bundle = self.pki.pkcs12("pw")

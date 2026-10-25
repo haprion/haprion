@@ -25,7 +25,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_issue, dns_provider_catalog, exit_codes
+from haprion import cert_issue, cert_pending, dns_provider_catalog, exit_codes
 from haprion.cert_issue import CertbotResult, IssueError, certbot_arguments, parse_domain
 from haprion.cli import cert_issue as command
 from haprion.cli import cert_issue_helper, cert_renew
@@ -585,6 +585,32 @@ class WhenCertbotSucceeds(IssueFixture):
         self.assertTrue((self.live / "www.example.com").exists())
         self.assertNotIn("www.example.com", self.registry_path.read_text())
         self.assertEqual(deployed, [])
+
+    def test_a_due_note_that_cannot_be_written_is_said(self) -> None:
+        """Review 26-10-24, 13-06: the publish's warning reaches the answer."""
+
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        with mock.patch.object(cert_pending.Ledger, "keep", side_effect=OSError("disk full")):
+            code, out, err, _ = self.run_issue(
+                policy_path,
+                "--domain",
+                "www.example.com",
+                "--method",
+                "dns-01",
+                "--cluster",
+                "alpha",
+                "--json",
+            )
+
+        self.assertEqual(code, 0, err)
+        document = assert_contract("haprion-cert-issue", out)
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(
+            [warning["code"] for warning in document["warnings"]], ["pending_unrecorded"]
+        )
 
     def test_an_entry_registered_while_certbot_ran_is_not_written_over(self) -> None:
         """Review 26-10-24, 08-06: the ID is checked again under the registry's lock."""

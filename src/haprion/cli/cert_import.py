@@ -206,6 +206,13 @@ def _summary(result: ImportResult, writer: TextIO) -> None:
 def result_envelope(result: ImportResult, *, request_id: str) -> tuple[dict[str, Any], int]:
     """`done`, or `failed` with the narrow sentence: imported and registered, not fully published."""
 
+    #
+    # Said in both answers: a note of what is due that could not be written
+    # (`pending_unrecorded`) was lost on the way here (review 26-10-24, 13-06).
+    #
+    warnings = tuple(
+        Message(code=code, message=message) for code, message in result.publish.warnings
+    )
     failed_publish = result.publish.failed
     failed_deploy = [d.cluster for d in result.publish.deployments if d.exit_code != 0]
     if not failed_publish and not failed_deploy:
@@ -216,6 +223,7 @@ def result_envelope(result: ImportResult, *, request_id: str) -> tuple[dict[str,
                 cluster=None,
                 result=result.as_dict(),
                 request_id=request_id,
+                warnings=warnings,
             ),
             0,
         )
@@ -231,6 +239,7 @@ def result_envelope(result: ImportResult, *, request_id: str) -> tuple[dict[str,
             cluster=None,
             result=result.as_dict(),
             request_id=request_id,
+            warnings=warnings,
             error=Message(code="publish_failed", message="; ".join(parts)),
         ),
         1,

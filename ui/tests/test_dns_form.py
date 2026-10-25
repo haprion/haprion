@@ -91,7 +91,7 @@ class WritingADnsObject(unittest.TestCase):
 
         from haprion import helper_socket
 
-        from haprion_ui.preview import PREVIEW_CLUSTER, preview
+        from tests.test_preview import check
 
         answer = json.dumps(
             {
@@ -109,7 +109,7 @@ class WritingADnsObject(unittest.TestCase):
             ),
             mock.patch.object(helper_socket, "ask", return_value=answer) as asked,
         ):
-            result = preview(dns_form(servers="ns1.example.com:53"), PREVIEW_CLUSTER)
+            result = check(dns_form(servers="ns1.example.com:53"))
 
         self.assertIsNone(result.problem)
         self.assertEqual(asked.call_args.args[0]["parameters"], {"names": ["ns1.example.com"]})
@@ -132,13 +132,13 @@ class WritingADnsObject(unittest.TestCase):
     def test_a_name_that_does_not_resolve_is_said_on_save(self) -> None:
         from haprion.dnsdist_config import Unresolved
 
-        from haprion_ui.preview import PREVIEW_CLUSTER, preview
+        from tests.test_preview import check
 
         with mock.patch(
             "haprion.resolve_socket.lookup",
             side_effect=Unresolved("ns1.example.com does not resolve on the manager"),
         ):
-            result = preview(dns_form(servers="ns1.example.com:53"), PREVIEW_CLUSTER)
+            result = check(dns_form(servers="ns1.example.com:53"))
 
         self.assertIn("does not resolve", result.problem or "")
         self.assertTrue(result.about_the_object)

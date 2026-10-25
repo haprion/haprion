@@ -16,15 +16,38 @@ from typing import Any
 
 import yaml
 
+from haprion_ui import editor
 from haprion_ui.preview import (
     DEFAULTS,
+    PREVIEW_CERTIFICATE_SANS,
     PREVIEW_CLUSTER,
+    Preview,
     Unexpressible,
     build_document,
     form_from_document,
-    preview,
     suggested_cookie,
 )
+
+#
+# The example cluster as the editor holds a cluster, and the editor's own
+# check over it: what these tests prove is what the editor runs (review
+# 26-10-24, 07-10).
+#
+PREVIEW_EDITOR = editor.EditorCluster(
+    cluster=PREVIEW_CLUSTER.cluster_id,
+    default_vip=PREVIEW_CLUSTER.default_vip,
+    vips=PREVIEW_CLUSTER.vips,
+    sources=PREVIEW_CLUSTER.sources,
+    networks=PREVIEW_CLUSTER.networks,
+    certificate_ids=PREVIEW_CLUSTER.certificate_ids,
+    certificate_sans=PREVIEW_CERTIFICATE_SANS,
+    complete=True,
+    authority_ids=PREVIEW_CLUSTER.authority_ids,
+)
+
+
+def check(written: dict[str, object]) -> Preview:
+    return editor.check(written, PREVIEW_EDITOR)
 
 
 def form(**overrides: object) -> dict[str, object]:
@@ -48,7 +71,7 @@ def form(**overrides: object) -> dict[str, object]:
 
 class TheFormBecomesTheObjectTheEngineReads(unittest.TestCase):
     def test_the_document_is_what_would_be_stored(self) -> None:
-        result = preview(form(), PREVIEW_CLUSTER)
+        result = check(form())
 
         self.assertIsNone(result.problem)
         self.assertIn("schema: 1", result.document)
@@ -56,7 +79,7 @@ class TheFormBecomesTheObjectTheEngineReads(unittest.TestCase):
         self.assertEqual(sorted(result.files), ["1000-frontends.cfg", "1001-app.cfg"])
 
     def test_the_generated_configuration_is_the_engine_s(self) -> None:
-        result = preview(form(hsts=True, hsts_subdomains=True), PREVIEW_CLUSTER)
+        result = check(form(hsts=True, hsts_subdomains=True))
 
         frontends = result.files["1000-frontends.cfg"]
         self.assertIn("bind 192.0.2.20:443 ssl crt", frontends)
@@ -73,14 +96,14 @@ class TheFormBecomesTheObjectTheEngineReads(unittest.TestCase):
         supposed to prevent.
         """
 
-        result = preview(form(certificate="not-issued"), PREVIEW_CLUSTER)
+        result = check(form(certificate="not-issued"))
 
         self.assertIsNotNone(result.problem)
         self.assertIn("not-issued", str(result.problem))
         self.assertIn("schema: 1", result.document)
 
     def test_a_server_line_that_is_not_a_host_and_port_says_so(self) -> None:
-        result = preview(form(servers="not a server"), PREVIEW_CLUSTER)
+        result = check(form(servers="not a server"))
 
         self.assertIn("host and port", str(result.problem))
 
@@ -125,7 +148,7 @@ class TheFieldsAddedAfterTheFirstLook(unittest.TestCase):
     def test_addresses_may_be_written_straight_into_the_object(self) -> None:
         """A range belonging to one site has no business being named cluster-wide."""
 
-        result = preview(form(allow_ranges="198.51.100.0/24\n203.0.113.10"), PREVIEW_CLUSTER)
+        result = check(form(allow_ranges="198.51.100.0/24\n203.0.113.10"))
 
         self.assertIsNone(result.problem)
         self.assertIn("198.51.100.0/24", result.document)
@@ -135,7 +158,7 @@ class TheFieldsAddedAfterTheFirstLook(unittest.TestCase):
         )
 
     def test_a_group_and_an_address_may_be_used_together(self) -> None:
-        result = preview(form(allow_from=("office",), allow_ranges="203.0.113.10"), PREVIEW_CLUSTER)
+        result = check(form(allow_from=("office",), allow_ranges="203.0.113.10"))
 
         self.assertIn(
             "acl mgd-app-allow src 198.51.100.0/24 203.0.113.10/32",
@@ -143,18 +166,18 @@ class TheFieldsAddedAfterTheFirstLook(unittest.TestCase):
         )
 
     def test_the_health_check_may_answer_on_its_own_port(self) -> None:
-        result = preview(form(health_type="http", health_port="8413"), PREVIEW_CLUSTER)
+        result = check(form(health_type="http", health_port="8413"))
 
         self.assertIn("check port 8413", result.files["1001-app.cfg"])
 
     def test_no_port_means_the_server_s_own(self) -> None:
-        result = preview(form(health_type="http"), PREVIEW_CLUSTER)
+        result = check(form(health_type="http"))
 
         self.assertNotIn("check port", result.files["1001-app.cfg"])
         self.assertIn("check inter", result.files["1001-app.cfg"])
 
     def test_a_port_that_is_not_a_number_says_so(self) -> None:
-        result = preview(form(health_type="http", health_port="eight"), PREVIEW_CLUSTER)
+        result = check(form(health_type="http", health_port="eight"))
 
         self.assertIn("port must be a number", str(result.problem))
 
@@ -175,13 +198,13 @@ class WhatTheObjectIsFor(unittest.TestCase):
             form_from_document(document, networks=())["description"],
             "The shop, ask the web team",
         )
-        self.assertIsNone(preview(written, PREVIEW_CLUSTER).problem)
+        self.assertIsNone(check(written).problem)
 
     def test_an_empty_one_is_not_written(self) -> None:
         self.assertNotIn("description", yaml.safe_load(build_document(form())))
 
     def test_the_engine_refuses_what_is_not_a_note(self) -> None:
-        result = preview(form(description="x" * 201), PREVIEW_CLUSTER)
+        result = check(form(description="x" * 201))
 
         self.assertIn("at most 200", result.problem or "")
 
@@ -196,12 +219,12 @@ class TheSourceAddressMayBeChosen(unittest.TestCase):
     """
 
     def test_the_vip_s_own_source_is_used_when_nothing_is_chosen(self) -> None:
-        result = preview(form(vip="internal"), PREVIEW_CLUSTER)
+        result = check(form(vip="internal"))
 
         self.assertIn("source 192.0.2.25", result.files["1001-app.cfg"])
 
     def test_a_named_source_overrides_it(self) -> None:
-        result = preview(form(vip="internal", source="outbound"), PREVIEW_CLUSTER)
+        result = check(form(vip="internal", source="outbound"))
 
         self.assertIn("source 192.0.2.35", result.files["1001-app.cfg"])
         self.assertIn("source: outbound", result.document)
@@ -209,7 +232,7 @@ class TheSourceAddressMayBeChosen(unittest.TestCase):
     def test_everywhere_is_not_a_group_name(self) -> None:
         """The `Everywhere` option submits an empty value, which must not be a group."""
 
-        result = preview(form(allow_from=("",)), PREVIEW_CLUSTER)
+        result = check(form(allow_from=("",)))
 
         self.assertIsNone(result.problem)
         self.assertNotIn("allow_from", result.document)
@@ -223,13 +246,13 @@ class TheSourceAddressMayBeChosen(unittest.TestCase):
 
 class ARefusalNamesTheFieldItIsAbout(unittest.TestCase):
     def test_the_field_is_separated_from_the_sentence(self) -> None:
-        result = preview(form(certificate=""), PREVIEW_CLUSTER)
+        result = check(form(certificate=""))
 
         self.assertEqual(result.problem_field, "app.listen.certificate")
         self.assertEqual(result.problem_text, "is required for https")
 
     def test_a_refusal_without_a_field_is_shown_whole(self) -> None:
-        result = preview(form(servers="not a server"), PREVIEW_CLUSTER)
+        result = check(form(servers="not a server"))
 
         self.assertEqual(result.problem_field, "")
         self.assertEqual(result.problem_text, str(result.problem))
@@ -239,23 +262,21 @@ class MaintenanceIsAStateOfTheObject(unittest.TestCase):
     """The checkbox produces a `maintenance` block, and nothing else moves."""
 
     def test_the_message_reaches_both_the_object_and_the_configuration(self) -> None:
-        result = preview(
-            form(maintenance=True, maintenance_message="Back at 18:00."), PREVIEW_CLUSTER
-        )
+        result = check(form(maintenance=True, maintenance_message="Back at 18:00."))
 
         self.assertIsNone(result.problem)
         self.assertIn("message: Back at 18:00.", result.document)
         self.assertIn('string "Back at 18:00."', result.files["1000-frontends.cfg"])
 
     def test_an_unticked_box_writes_no_block_at_all(self) -> None:
-        result = preview(form(maintenance_message="Back at 18:00."), PREVIEW_CLUSTER)
+        result = check(form(maintenance_message="Back at 18:00."))
 
         self.assertNotIn("maintenance", result.document)
 
     def test_a_ticked_box_without_a_message_is_refused_by_the_engine(self) -> None:
         """Not defaulted by the form: what a visitor is told is not this page's to decide."""
 
-        result = preview(form(maintenance=True), PREVIEW_CLUSTER)
+        result = check(form(maintenance=True))
 
         self.assertEqual(result.problem_field, "app.maintenance.message")
 
@@ -264,7 +285,7 @@ class TheAnswerWhenNoServerAnswers(unittest.TestCase):
     """A message rather than a checkbox: writing one is what turns it on."""
 
     def test_the_message_reaches_the_backend(self) -> None:
-        result = preview(form(unavailable_message="The shop is not answering."), PREVIEW_CLUSTER)
+        result = check(form(unavailable_message="The shop is not answering."))
 
         self.assertIsNone(result.problem)
         self.assertIn(
@@ -273,16 +294,14 @@ class TheAnswerWhenNoServerAnswers(unittest.TestCase):
         )
 
     def test_an_empty_field_leaves_haproxy_s_own_text(self) -> None:
-        result = preview(form(), PREVIEW_CLUSTER)
+        result = check(form())
 
         self.assertNotIn("http-error", result.files["1001-app.cfg"])
 
 
 class TheSiteNameCanBeAskedForRatherThanTyped(unittest.TestCase):
     def test_the_token_reaches_the_configuration_as_the_site_s_name(self) -> None:
-        result = preview(
-            form(unavailable_message="The site %URL% is not answering."), PREVIEW_CLUSTER
-        )
+        result = check(form(unavailable_message="The site %URL% is not answering."))
 
         self.assertIsNone(result.problem)
         self.assertIn("message: The site %URL% is not answering.", result.document)
@@ -298,45 +317,45 @@ class TheSiteNameCanBeAskedForRatherThanTyped(unittest.TestCase):
         writes by hand the same document.
         """
 
-        result = preview(form(unavailable_message="%URL% is not answering."), PREVIEW_CLUSTER)
+        result = check(form(unavailable_message="%URL% is not answering."))
 
         self.assertIsNone(result.problem)
         self.assertIn("'%URL% is not answering.'", result.document)
         self.assertIn('string "app.example.com is not answering."', result.files["1001-app.cfg"])
 
     def test_a_token_nobody_fills_in_is_refused_before_it_reaches_a_visitor(self) -> None:
-        result = preview(form(unavailable_message="The site %SITE% is down."), PREVIEW_CLUSTER)
+        result = check(form(unavailable_message="The site %SITE% is down."))
 
         self.assertEqual(result.problem_field, "app.unavailable.message")
 
 
 class BoundingWhatOneServerIsHanded(unittest.TestCase):
     def test_a_limit_reaches_the_server_line_and_bounds_the_queue(self) -> None:
-        result = preview(form(max_connections="50"), PREVIEW_CLUSTER)
+        result = check(form(max_connections="50"))
 
         self.assertIsNone(result.problem)
         self.assertIn(" maxconn 50", result.files["1001-app.cfg"])
         self.assertIn("timeout queue 5s", result.files["1001-app.cfg"])
 
     def test_a_ramp_reaches_the_server_line(self) -> None:
-        result = preview(form(health_type="http", slow_start="30s"), PREVIEW_CLUSTER)
+        result = check(form(health_type="http", slow_start="30s"))
 
         self.assertIsNone(result.problem)
         self.assertIn(" slowstart 30s", result.files["1001-app.cfg"])
 
     def test_a_server_timeout_reaches_the_backend(self) -> None:
-        result = preview(form(server_timeout="5m"), PREVIEW_CLUSTER)
+        result = check(form(server_timeout="5m"))
 
         self.assertIsNone(result.problem)
         self.assertIn("    timeout server 5m\n", result.files["1001-app.cfg"])
 
     def test_a_server_timeout_past_the_ceiling_is_refused(self) -> None:
-        result = preview(form(server_timeout="100m"), PREVIEW_CLUSTER)
+        result = check(form(server_timeout="100m"))
 
         self.assertIsNotNone(result.problem)
 
     def test_a_limit_that_is_not_a_number_is_named_before_the_engine_sees_it(self) -> None:
-        result = preview(form(max_connections="fifty"), PREVIEW_CLUSTER)
+        result = check(form(max_connections="fifty"))
 
         self.assertIsNotNone(result.problem)
 
@@ -345,13 +364,13 @@ class TheClusterWideRulesAreVisibleInThePreview(unittest.TestCase):
     """The page shows the whole frontend, not only the object's part of it."""
 
     def test_the_forwarded_headers_are_written_before_any_routing(self) -> None:
-        frontends = preview(form(), PREVIEW_CLUSTER).files["1000-frontends.cfg"]
+        frontends = check(form()).files["1000-frontends.cfg"]
 
         self.assertIn("http-request del-header X-Forwarded-For", frontends)
         self.assertIn("set-header X-Forwarded-Proto https", frontends)
 
     def test_the_abuse_brake_is_written_with_its_thresholds(self) -> None:
-        frontends = preview(form(), PREVIEW_CLUSTER).files["1000-frontends.cfg"]
+        frontends = check(form()).files["1000-frontends.cfg"]
 
         self.assertIn("stick-table type ip", frontends)
         self.assertIn("sc_http_req_rate(0) gt 100", frontends)
@@ -361,9 +380,7 @@ class HeaderEditsAreWrittenAsLines(unittest.TestCase):
     """One line per edit, in the three shapes the note describes."""
 
     def test_the_three_shapes_become_the_three_actions(self) -> None:
-        result = preview(
-            form(request_headers="X-Tenant: acme\n+X-Trace: 1\n-X-Debug"), PREVIEW_CLUSTER
-        )
+        result = check(form(request_headers="X-Tenant: acme\n+X-Trace: 1\n-X-Debug"))
 
         self.assertIsNone(result.problem)
         backend = result.files["1001-app.cfg"]
@@ -372,17 +389,17 @@ class HeaderEditsAreWrittenAsLines(unittest.TestCase):
         self.assertIn("http-request del-header X-Debug", backend)
 
     def test_the_response_direction_is_separate(self) -> None:
-        result = preview(response_headers_form(), PREVIEW_CLUSTER)
+        result = check(response_headers_form())
 
         self.assertIn("http-response del-header Server", result.files["1001-app.cfg"])
 
     def test_a_line_that_is_not_an_edit_is_named_before_the_engine_sees_it(self) -> None:
-        result = preview(form(request_headers="X-Tenant acme"), PREVIEW_CLUSTER)
+        result = check(form(request_headers="X-Tenant acme"))
 
         self.assertIsNotNone(result.problem)
 
     def test_a_forwarded_header_is_refused_by_the_engine(self) -> None:
-        result = preview(form(request_headers="X-Forwarded-For: 203.0.113.1"), PREVIEW_CLUSTER)
+        result = check(form(request_headers="X-Forwarded-For: 203.0.113.1"))
 
         self.assertEqual(result.problem_field, "app.headers.request.set")
 
@@ -393,13 +410,12 @@ def response_headers_form() -> dict[str, object]:
 
 class ARouteMayRedirect(unittest.TestCase):
     def test_the_redirect_becomes_a_backend_of_its_own(self) -> None:
-        result = preview(
+        result = check(
             form(
                 redirect_path="/old",
                 redirect_location="https://example.net/new",
                 redirect_status="308",
             ),
-            PREVIEW_CLUSTER,
         )
 
         self.assertIsNone(result.problem)
@@ -409,7 +425,7 @@ class ARouteMayRedirect(unittest.TestCase):
         )
 
     def test_a_path_without_a_location_is_named_before_the_engine_sees_it(self) -> None:
-        result = preview(form(redirect_path="/old"), PREVIEW_CLUSTER)
+        result = check(form(redirect_path="/old"))
 
         self.assertIsNotNone(result.problem)
 
@@ -423,14 +439,13 @@ class ARouteMayRedirect(unittest.TestCase):
         it points at and the browser would follow it forever.
         """
 
-        result = preview(
+        result = check(
             form(
                 redirect_path="/",
                 redirect_match="exact",
                 redirect_location="https://app.example.com/web/admin/login",
                 redirect_status="301",
             ),
-            PREVIEW_CLUSTER,
         )
 
         self.assertIsNone(result.problem)
@@ -453,12 +468,11 @@ class ARouteMayRedirect(unittest.TestCase):
         for often enough that meeting it with a puzzle is the wrong answer.
         """
 
-        result = preview(
+        result = check(
             form(
                 redirect_path="/",
                 redirect_location="https://app.example.com/web/admin/login",
             ),
-            PREVIEW_CLUSTER,
         )
 
         self.assertIsNotNone(result.problem)
@@ -473,16 +487,15 @@ class ARouteMayRedirect(unittest.TestCase):
         not ask for the first time somebody opened it.
         """
 
-        result = preview(
+        result = check(
             form(redirect_path="/old", redirect_location="https://example.net/new"),
-            PREVIEW_CLUSTER,
         )
 
         self.assertIsNone(result.problem)
         self.assertNotIn("match:", result.document)
 
     def test_no_redirect_leaves_the_object_with_one_route(self) -> None:
-        result = preview(form(), PREVIEW_CLUSTER)
+        result = check(form())
 
         self.assertNotIn("redirect", result.files["1001-app.cfg"])
 
@@ -491,7 +504,7 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
     """One form, two shapes: the fields that mean nothing are left out."""
 
     def test_a_tcp_object_becomes_a_port_and_one_backend(self) -> None:
-        result = preview(form(protocol="tcp", tcp_port="5432", hostnames=""), PREVIEW_CLUSTER)
+        result = check(form(protocol="tcp", tcp_port="5432", hostnames=""))
 
         self.assertIsNone(result.problem)
         self.assertIn("frontend mgd-internal-tcp-5432", result.files["1000-frontends.cfg"])
@@ -507,15 +520,13 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
         refused for hostnames left from before its protocol was changed.
         """
 
-        result = preview(
-            form(protocol="tcp", tcp_port="5432", hostnames="db.example.com"), PREVIEW_CLUSTER
-        )
+        result = check(form(protocol="tcp", tcp_port="5432", hostnames="db.example.com"))
 
         self.assertIsNone(result.problem)
         self.assertNotIn("hostnames", result.document)
 
     def test_a_redirect_left_in_the_form_is_not_sent(self) -> None:
-        result = preview(
+        result = check(
             form(
                 protocol="tcp",
                 tcp_port="5432",
@@ -523,23 +534,20 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
                 redirect_path="/old",
                 redirect_location="https://example.com/new",
             ),
-            PREVIEW_CLUSTER,
         )
 
         self.assertIsNone(result.problem)
         self.assertNotIn("routes", result.document)
 
     def test_a_tcp_object_without_a_port_is_named_before_the_engine_sees_it(self) -> None:
-        result = preview(form(protocol="tcp"), PREVIEW_CLUSTER)
+        result = check(form(protocol="tcp"))
 
         self.assertIsNotNone(result.problem)
 
     def test_session_persistence_left_in_the_form_is_not_sent_for_a_raw_port(self) -> None:
         """Hidden for a raw port, so not sent; the engine still refuses it in a file."""
 
-        result = preview(
-            form(protocol="tcp", tcp_port="5432", hostnames="", cookie="SRV"), PREVIEW_CLUSTER
-        )
+        result = check(form(protocol="tcp", tcp_port="5432", hostnames="", cookie="SRV"))
 
         self.assertIsNone(result.problem)
         self.assertNotIn("cookie", result.document)
@@ -552,7 +560,7 @@ class TheRateLimitTheObjectAsksFor(unittest.TestCase):
         self.assertNotIn("rate_limit:", build_document(form()))
 
     def test_a_site_counts_requests_in_its_own_backend(self) -> None:
-        result = preview(form(rate_limit="100", rate_window="1m"), PREVIEW_CLUSTER)
+        result = check(form(rate_limit="100", rate_window="1m"))
 
         self.assertIsNone(result.problem)
         self.assertIn(
@@ -564,7 +572,7 @@ class TheRateLimitTheObjectAsksFor(unittest.TestCase):
         written = form(protocol="tcp", tcp_port="5432", hostnames="", rate_limit="20")
 
         self.assertIn("max_new_connections: 20", build_document(written))
-        self.assertIsNone(preview(written, PREVIEW_CLUSTER).problem)
+        self.assertIsNone(check(written).problem)
 
     def test_a_window_without_a_limit_is_named_before_the_engine_sees_it(self) -> None:
         with self.assertRaises(ValueError) as raised:
@@ -628,7 +636,7 @@ class TheDynamicBlockTheObjectAsksFor(unittest.TestCase):
                 "exempt": ["office", "192.0.2.10"],
             },
         )
-        result = preview(written, PREVIEW_CLUSTER)
+        result = check(written)
         self.assertIsNone(result.problem)
         self.assertIn(
             "deny_status 429 if { var(txn.rule) -m str dynamic-block:deny }",
@@ -647,7 +655,7 @@ class TheDynamicBlockTheObjectAsksFor(unittest.TestCase):
         document = yaml.safe_load(build_document(written))
 
         self.assertEqual(document["dynamic_block"], {"max_new_connections": 50, "block_for": "30m"})
-        self.assertIsNone(preview(written, PREVIEW_CLUSTER).problem)
+        self.assertIsNone(check(written).problem)
 
     def test_never_blocked_without_a_trigger_is_refused(self) -> None:
         with self.assertRaises(ValueError) as raised:
@@ -726,9 +734,8 @@ class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
         self.assertNotIn("fall:", document)
 
     def test_what_is_written_reaches_the_server_line(self) -> None:
-        result = preview(
+        result = check(
             form(health_type="http", health_interval="5s", health_rise="3", health_fall="2"),
-            PREVIEW_CLUSTER,
         )
 
         self.assertIsNone(result.problem)
@@ -738,9 +745,8 @@ class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
         )
 
     def test_a_written_fast_and_down_interval_win_over_the_default(self) -> None:
-        result = preview(
+        result = check(
             form(health_type="http", health_fast_interval="1s", health_down_interval="3s"),
-            PREVIEW_CLUSTER,
         )
 
         self.assertIsNone(result.problem)
@@ -749,7 +755,7 @@ class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
         )
 
     def test_a_count_that_is_not_a_count_is_named_before_the_engine_sees_it(self) -> None:
-        result = preview(form(health_type="http", health_rise="twice"), PREVIEW_CLUSTER)
+        result = check(form(health_type="http", health_rise="twice"))
 
         self.assertIn("rise must be a number", str(result.problem))
 
@@ -1090,11 +1096,10 @@ class APoolVerifiedAgainstACa(unittest.TestCase):
     """B276: the form's third TLS choice, written as the engine reads it and read back."""
 
     def test_the_choice_and_the_ca_reach_the_document_and_the_configuration(self) -> None:
-        result = preview(
+        result = check(
             form(
                 backend_tls="ca", backend_tls_ca="example-root-ca", servers="app.example.com:8443"
             ),
-            PREVIEW_CLUSTER,
         )
 
         self.assertIsNone(result.problem)
@@ -1103,9 +1108,8 @@ class APoolVerifiedAgainstACa(unittest.TestCase):
         self.assertIn("ca-file /etc/haproxy/certs/ca/example-root-ca.pem", configuration)
 
     def test_a_ca_the_cluster_does_not_carry_is_the_engines_refusal(self) -> None:
-        result = preview(
+        result = check(
             form(backend_tls="ca", backend_tls_ca="unknown-ca", servers="app.example.com:8443"),
-            PREVIEW_CLUSTER,
         )
 
         self.assertIn("does not carry", result.problem or "")
@@ -1141,7 +1145,7 @@ class ATcpPoolToldTheClientsAddress(unittest.TestCase):
         return form(protocol="tcp", tcp_port="2525", hostnames="", certificate="", **fields)
 
     def test_the_box_becomes_the_key_and_the_server_line(self) -> None:
-        result = preview(self.tcp(proxy_protocol="on"), PREVIEW_CLUSTER)
+        result = check(self.tcp(proxy_protocol="on"))
 
         self.assertIsNone(result.problem)
         self.assertIn("proxy_protocol: v2", result.document)

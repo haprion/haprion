@@ -27,7 +27,7 @@ from haprion import dnsdist_config, geo, resolve_socket
 from haprion.advanced import normalise as normalise_advanced
 from haprion.config import DEFAULT_ABUSE_WINDOW, AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haprion.digits import is_digits
-from haprion.generate import GeneratorError, countries_named, generate
+from haprion.generate import countries_named
 from haprion.proxy_model import (
     BALANCE,
     DEFAULT_BLOCK_STATUS,
@@ -41,7 +41,6 @@ from haprion.proxy_model import (
     ModelError,
     Proxy,
     dump_document,
-    load_proxy,
     pool_written_by_hand,
     read_document,
 )
@@ -58,9 +57,10 @@ from haprion.tls_policy import DEFAULT_BACKEND_POLICY
 #
 # What is left is a test fixture, and it is kept because it is a good one: it
 # lets the form's whole path, filled-in fields to stored document to generated
-# configuration, be exercised without standing up a cluster. Named here rather
-# than in the tests because `choices` and `preview` below are its only callers
-# and they read as production code otherwise.
+# configuration, be exercised without standing up a cluster. The tests run it
+# through the editor's own `check`, as an `EditorCluster`: a second generate
+# call kept for them alone was one the editor could drift from unseen (review
+# 26-10-24, 07-10).
 #
 # Every value below is from the repository's fictional set.
 #
@@ -1196,51 +1196,6 @@ def _header_edits(written: str, phase: str) -> dict[str, object]:
     if removed:
         edits["delete"] = removed
     return edits
-
-
-def preview(form: dict[str, object], cluster: Cluster) -> Preview:
-    """The whole page's content, or the one thing standing in its way.
-
-    Every refusal below comes from the engine rather than from this module, so
-    what the page says about an object is exactly what a publish would say
-    about it.
-    """
-
-    try:
-        document = saved_document(form)
-    except ValueError as exc:
-        return Preview(problem=str(exc), about_the_object=True)
-
-    try:
-        proxy = load_proxy(str(form.get("name", "") or "").strip(), document.encode())
-    except ModelError as exc:
-        return Preview(document=document, problem=str(exc), about_the_object=True)
-
-    try:
-        #
-        # The configuration half. The preview shows what a person would read in
-        # `conf.d`; the certificate lists are named by a bind line and proved by
-        # HAProxy, and printing one here would be a file with no context.
-        #
-        files = generate(
-            [proxy],
-            vips=cluster.vips,
-            default_vip=cluster.default_vip,
-            certificates=cluster.certificate_ids,
-            authorities=cluster.authority_ids,
-            resolvers=cluster.resolvers,
-            networks=cluster.networks,
-            sources=cluster.sources,
-            unknown_host=cluster.unknown_host,
-            trusted_proxies=cluster.trusted_proxy_cidrs,
-            abuse_protection=cluster.abuse_protection,
-            certificate_sans=PREVIEW_CERTIFICATE_SANS,
-            countries=unchecked_countries([proxy]),
-        ).configuration
-    except GeneratorError as exc:
-        return Preview(document=document, problem=str(exc))
-
-    return Preview(document=document, files=files)
 
 
 def unchecked_countries(proxies: Sequence[Proxy]) -> geo.Countries:

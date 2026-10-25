@@ -1,10 +1,10 @@
 """Editing one proxy object against the cluster it is actually served on.
 
-`preview` answers what the generator does with a filled-in form, against a
-documented example cluster. This narrows that to a real one: the VIPs, source
-addresses, groups and certificates below are the ones the poller last read from
-the cluster being edited, so the refusals a person meets here are the refusals a
-publish would give them - a hostname another object already claims, a
+`preview` turns a filled-in form into the object the engine reads. This checks
+that object against a real cluster: the VIPs, source addresses, groups and
+certificates below are the ones the poller last read from the cluster being
+edited, so the refusals a person meets here are the refusals a publish would
+give them - a hostname another object already claims, a
 certificate that does not answer for the name (B66), a balancing algorithm the
 protocol has no use for.
 
@@ -193,7 +193,7 @@ def check(
         return Preview(document=document)
 
     try:
-        generate(
+        files = generate(
             [edited, *neighbours],
             vips=cluster.vips,
             default_vip=cluster.default_vip,
@@ -207,10 +207,10 @@ def check(
             abuse_protection=VALIDATION_ABUSE_PROTECTION,
             certificate_sans=cluster.certificate_sans,
             countries=unchecked_countries([edited, *neighbours]),
-        )
+        ).configuration
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))
-    return Preview(document=document, beside_others=True)
+    return Preview(document=document, files=files, beside_others=True)
 
 
 def unchanged(document: str, stored: str | None) -> bool:

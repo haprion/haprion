@@ -59,7 +59,12 @@ class NoPageSendsAReaderToADocumentThatIsGone(unittest.TestCase):
             for line in (root / "docs/user-manual.md").read_text().splitlines()
             if line.startswith("#")
         }
+        seen = 0
         for path in sorted((root / "ui/src/haprion_ui/templates").glob("*.html")):
             for named in re.findall(r"<em>([^<]+)</em> in the user manual", path.read_text()):
+                seen += 1
                 with self.subTest(page=path.name):
                     self.assertIn(named, headings)
+        # The pattern still finds the pages' references; none found proved nothing
+        # (review 26-10-25, part 5's own point).
+        self.assertGreater(seen, 0)

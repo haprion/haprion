@@ -492,3 +492,24 @@ class TheAgentSparesWhatThePlanSpares(unittest.TestCase):
         from haprion import restore_agent
 
         self.assertEqual(restore_agent.REPLACED.pattern, restore_plan.REPLACED.pattern)
+
+
+class ANodesOwnNetplanFile(Planning):
+    def test_a_key_netplan_accepts_twice_does_not_stop_the_restore(self) -> None:
+        """Review 26-10-25, 1-02: netplan reads it, and the restore refused the archive."""
+
+        repeated = NETPLAN.replace(
+            "      set-name: eth0\n",
+            "      set-name: eth0\n      dhcp4: false\n      dhcp4: false\n",
+        )
+        files = {**FILES, "/etc/netplan/50-cloud-init.yaml": (repeated, 0o600)}
+
+        plan = restore_plan.build(self.source(files), "new_vm", TARGET)
+
+        self.assertEqual(str(plan.address), "192.0.2.21/24")
+
+    def test_a_file_that_is_not_yaml_says_why(self) -> None:
+        files = {**FILES, "/etc/netplan/50-cloud-init.yaml": ("network: [\n", 0o600)}
+
+        with self.assertRaisesRegex(PlanError, "is not valid YAML: .+"):
+            restore_plan.build(self.source(files), "new_vm", TARGET)

@@ -341,9 +341,10 @@ def _network(
     node_address: ipaddress.IPv4Interface | None = None
     for entry in _netplan_files(source):
         try:
-            document = safe_yaml.load(_text(source, entry))
+            # Netplan's file, read as netplan reads it.
+            document = safe_yaml.load(_text(source, entry), each_key_once=False)
         except yaml.YAMLError as exc:
-            raise PlanError(f"{entry.path} is not valid YAML") from exc
+            raise PlanError(f"{entry.path} is not valid YAML: {exc}") from exc
         found = _ethernet(document, entry.path)
         if found is None:
             files.append(_planned(entry))

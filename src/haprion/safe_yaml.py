@@ -56,7 +56,13 @@ class _UniqueKeys(SafeLoader):  # type: ignore[misc, valid-type]
         return super().construct_mapping(node, deep=deep)  # type: ignore[no-any-return]
 
 
-def load(text: str | bytes) -> Any:
-    """`yaml.safe_load`, with LibYAML's safe loader when it is installed, and each key once."""
+def load(text: str | bytes, *, each_key_once: bool = True) -> Any:
+    """`yaml.safe_load`, with LibYAML's safe loader when it is installed, and each key once.
 
-    return yaml.load(text, Loader=_UniqueKeys)  # noqa: S506 - a safe loader, never yaml.Loader
+    `each_key_once=False` reads a file another program owns as that program
+    does: a node's Netplan file in its backup, which `netplan` accepts with a
+    key given twice, and a restore must not refuse (review 26-10-25, 1-02).
+    """
+
+    loader = _UniqueKeys if each_key_once else SafeLoader
+    return yaml.load(text, Loader=loader)  # noqa: S506 - a safe loader, never yaml.Loader

@@ -17,9 +17,18 @@ from pathlib import Path
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haprion import accounts, cert_issue, cert_receiver, helper_protocol, state_backup
+from haprion import (
+    accounts,
+    cert_issue,
+    cert_receiver,
+    helper_protocol,
+    server_state,
+    state_backup,
+)
+from haprion import cert_publish as cert_publish_model
 from haprion.cli import (
     backup_job_helper,
+    cert_publish,
     cert_receiver_helper,
     changes_publish,
     deploy,
@@ -1228,6 +1237,51 @@ class EveryOutcomeABuilderGivesIsTaken(unittest.TestCase):
                 self.taken(document, exit_code, cluster=None)
                 seen.add(str(document["outcome"]))
         self.assertEqual(seen, {"done", "partial"})
+
+    def test_a_certificate_publish_with_and_without_warnings_and_a_deploy_left(self) -> None:
+        """Review 26-10-25, 13-07: the test held only the two builders that had crashed."""
+
+        seen = set()
+        for report in (
+            cert_publish_model.Report(certificates=(), changed_clusters=()),
+            cert_publish_model.Report(
+                certificates=(), changed_clusters=(), warnings=(("pending", "still to roll"),)
+            ),
+            cert_publish_model.Report(
+                certificates=(),
+                changed_clusters=("alpha",),
+                deployments=(cert_publish_model.DeployResult(cluster="alpha", exit_code=1),),
+            ),
+        ):
+            document, exit_code = cert_publish.result_envelope(report, request_id=self.REQUEST)
+            with self.subTest(document["outcome"]):
+                self.taken(document, exit_code, cluster=None)
+                seen.add(str(document["outcome"]))
+        self.assertEqual(seen, {"done", "partial", "failed"})
+
+    def test_an_unblock_on_every_node_some_and_none(self) -> None:
+        seen = set()
+        for outcomes in (("done", "done"), ("done", "failed"), ("refused", "failed")):
+            nodes = tuple(
+                server_state.Unblocked(node=f"node-{i}", outcome=outcome, message="m")
+                for i, outcome in enumerate(outcomes)
+            )
+            written = io.StringIO()
+            with mock.patch.dict(os.environ, {helper_protocol.STRICT_VARIABLE: "1"}):
+                server_state_helper._write_unblocked(written, "alpha", self.REQUEST, "shop", nodes)
+            stated = json.loads(written.getvalue())
+            with self.subTest(stated["outcome"]):
+                self.assertIsNotNone(
+                    answers.accepted(
+                        written.getvalue(),
+                        operation=server_state.UNBLOCK_OPERATION,
+                        cluster="alpha",
+                        request_id=self.REQUEST,
+                        outcomes=worker._OPERATION_OUTCOMES[server_state.UNBLOCK_OPERATION],
+                    )
+                )
+                seen.add(stated["outcome"])
+        self.assertEqual(seen, {"done", "partial", "failed"})
 
 
 if __name__ == "__main__":

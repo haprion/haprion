@@ -118,11 +118,12 @@ You can install without an answers file. The defaults are: the fixed service acc
 `/srv/haprion` and `/srv/certdist`, a local PostgreSQL database, the machine's own name (`hostname -f`) for the
 web interface, and no cluster yet. Clusters and nodes are created in the web interface afterwards.
 
-To change a default, copy the example from the `install/` directory of the source tree and keep only the lines
-you change:
+To change a default, copy the example and keep only the lines you change. The example comes with the
+`haprion-ui` package, so install the package first; step 2 then runs the setup with your file:
 
 ```bash
-cp answers.example.env answers.env
+sudo apt install haprion-ui
+cp /usr/share/haprion-ui/install/answers.example.env answers.env
 $EDITOR answers.env
 ```
 

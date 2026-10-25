@@ -204,6 +204,36 @@ class TheTree(unittest.TestCase):
         # tools would import the engine from it (install test, 26-10-17).
         self.assertEqual({path for path in carried if path.startswith("src/")}, set())
 
+    def test_every_packaged_path_the_documents_name_is_carried(self) -> None:
+        """Review 26-10-24, 12-12: install.md sent a reader to the source tree for a
+        file the package carries; a path under the packages' share that the
+        documents name is one of their files."""
+
+        documents = "".join(
+            (BASE / "docs" / name).read_text() for name in ("install.md", "user-manual.md")
+        )
+        for share, carried in (
+            ("usr/share/haprion-ui/", {relative for relative, _ in TOOL.shared_files(BASE)}),
+            (
+                "usr/share/haprion-node/",
+                {
+                    path.removeprefix("usr/share/haprion-node/")
+                    for path in node_package.CONTENTS
+                    if path.startswith("usr/share/haprion-node/")
+                },
+            ),
+        ):
+            named = set(re.findall(rf"/{share}([A-Za-z0-9_./-]*[A-Za-z0-9_/-])", documents))
+            missing = sorted(
+                name
+                for name in named
+                if name not in carried
+                and not any(path.startswith(name.rstrip("/") + "/") for path in carried)
+            )
+            with self.subTest(share=share):
+                self.assertEqual(missing, [])
+        self.assertIn("/usr/share/haprion-ui/install/answers.example.env", documents)
+
     #
     # A path a script reads from beside it that is no file of the package, with
     # why. Step 14 installed the certbot hook from `../certbot-deploy-hook`, a

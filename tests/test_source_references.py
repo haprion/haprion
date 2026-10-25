@@ -48,27 +48,47 @@ class EveryNamedTestExists(unittest.TestCase):
         self.assertEqual(sorted(missing), [])
 
 
-class NoInstallationsClusterNames(unittest.TestCase):
-    """Review 26-10-24, 16-01: help texts and fixtures used a real installation's cluster IDs.
+class EveryExampleClusterIsMadeUp(unittest.TestCase):
+    """Review 26-10-24 16-01, 26-10-25 5-04: help texts and fixtures used a real installation's IDs.
 
-    The repository's examples use `alpha` and `beta`. The two words caught here
-    were exactly one installation's pair, in four commands' help and five
-    contract fixtures.
+    Held by the names that may be used rather than by the ones that may not:
+    a list of real names would itself be the leak. A cluster ID given to a
+    command, in a request document or in a unit instance is one of these.
     """
 
-    REAL = re.compile(
-        r"(?:-c|--cluster) (?:internal|external)\b"
-        r'|"cluster": "(?:internal|external)"'
-        r"|@(?:internal|external)\.(?:timer|service)\b"
+    MADE_UP = frozenset({"alpha", "beta", "gamma", "edge-a", "edge-demo", "service-demo", "verify"})
+    NAMED = re.compile(
+        r"haprion-[a-z-]+(?: [a-z][a-z-]*)?(?: --?[a-z-]+)* (?:-c|--cluster)[ =](?P<command>[a-z][a-z0-9-]*)\b"
+        r'|"cluster": ?"(?P<document>[a-z][a-z0-9-]*)"'
+        r"|@(?P<unit>[a-z][a-z0-9-]*)\.(?:timer|service)\b"
+        r"|^\s*-?\s*cluster: (?P<yaml>[a-z][a-z0-9-]*)\s*$",
+        re.MULTILINE,
     )
 
-    def test_no_example_or_fixture_names_them(self) -> None:
+    def test_no_example_or_fixture_names_another(self) -> None:
         found = [
             f"{name}: {match.group()}"
             for name, text in tracked(*SOURCES, "tests/", "ui/tests/", "fixtures/", "docs/")
-            for match in self.REAL.finditer(text)
+            # This file's own forms, below, name one on purpose.
+            if name != "tests/test_source_references.py"
+            for match in self.NAMED.finditer(text)
+            if (match.lastgroup != "yaml" or not name.endswith(".py"))
+            and match.group(match.lastgroup or "") not in self.MADE_UP
         ]
         self.assertEqual(found, [])
+
+    def test_it_sees_each_form(self) -> None:
+        for text in (
+            "haprion-deploy -c delta",
+            "haprion-status --cluster=delta",
+            '{"cluster": "delta"}',
+            "haprion-state-backup@delta.timer",
+            "cluster: delta",
+        ):
+            with self.subTest(text=text):
+                match = self.NAMED.search(text)
+                assert match is not None
+                self.assertEqual(match.group(match.lastgroup or ""), "delta")
 
 
 if __name__ == "__main__":

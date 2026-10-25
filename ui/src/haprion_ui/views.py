@@ -3904,8 +3904,19 @@ def _attention(request: Request, config: Config) -> attention.Attention:
         features.read_in(db.feature_switches(connection))
         recent = db.recent_jobs(connection, limit=200)
         known = {job.id for job in recent}
+        #
+        # A removed cluster's failures are no longer anybody's to settle: no
+        # step runs on a cluster that is gone, and a new cluster given the
+        # name would inherit them (review 26-10-25, 4-02). An unread list
+        # hides nothing.
+        #
         items += attention.from_jobs(
-            recent + [job for job in db.attention_evidence(connection) if job.id not in known]
+            [
+                job
+                for job in recent
+                + [job for job in db.attention_evidence(connection) if job.id not in known]
+                if job.cluster is None or not clusters or job.cluster in clusters
+            ]
         )
         cluster_list_at = db.cluster_list_observed(connection)
         items += attention.from_manager(

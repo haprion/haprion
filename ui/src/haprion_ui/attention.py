@@ -257,12 +257,19 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
     for job in sorted(rows, key=lambda row: (row.created_at, row.id), reverse=True):
         if not jobs_module.ran(job):
             continue
-        for operation, state in jobs_module.step_states(job):
-            newest.setdefault((job.cluster, operation, jobs_module.subject(job)), (job, state))
-    items = []
+        for operation, subject, state in jobs_module.keyed_states(job):
+            newest.setdefault((job.cluster, operation, subject), (job, state))
+    #
+    # One row per job and step, however many of its certificates are still
+    # unsettled: the job is the thing to open.
+    #
+    unsettled: dict[tuple[int, str], tuple[str | None, Job]] = {}
     for (cluster, operation, _subject), (job, state) in newest.items():
-        if state not in UNSETTLED:
-            continue
+        if state in UNSETTLED:
+            unsettled.setdefault((job.id, operation), (cluster, job))
+    items = []
+    for (_id, operation), (cluster, job) in unsettled.items():
+        state = dict(jobs_module.step_states(job))[operation]
         waiting = (
             jobs_module.waiting_for(job)
             if operation == job.operation and state == "partial"

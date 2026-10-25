@@ -588,8 +588,10 @@ class ARealDatabase(unittest.TestCase):
                 named[_first(cursor)] = name
             cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
             removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
-            # The newest deploy stays for WAF's Not working (05-02).
-            self.assertEqual(removable, {"old-apply", "removed-profile", "older-deploy"})
+            # The newest deploy stays for WAF's Not working (05-02), and the
+            # newest apply of each profile, a removed one's too, is that
+            # profile's Needs attention evidence (0091, B366).
+            self.assertEqual(removable, {"old-apply", "older-deploy"})
             connection.rollback()
 
     def test_retention_keeps_the_newest_publish_and_deploy_of_each_cluster(self) -> None:
@@ -661,12 +663,20 @@ class ARealDatabase(unittest.TestCase):
         ("changes_publish", "alpha", {"deploy": True}, "done", {"publish": "not an answer"}),
         ("deploy", "alpha", {}, "done", None),
         ("changes_publish", "beta", {"deploy": True}, "blocked",
-         {"publish": {}, "operation": "cert_deploy_cluster"}),
+         {"publish": {}, "operation": "cert_deploy"}),
         ("cluster_node", "beta", {"deploy": True}, "unknown", {"node": {}}),
         ("cluster_node", "beta", {"deploy": False}, "done", {"node": {}}),
         ("deploy", "beta", {}, "done", None),
         ("deploy", "beta", {}, "blocked", {"error": {"code": "held_discarded"}}),
         ("deploy", "beta", {}, "pending", None),
+        ("cert_delete", None, {"certificates": ["x", "y", "z"]}, "partial",
+         {"result": {"refused": ["z"]}}),
+        ("cert_delete", None, {"certificates": ["z"]}, "done", None),
+        ("dns_profile_apply", None, {"profile": "p-a"}, "failed", None),
+        ("dns_profile_apply", None, {"profile": "p-b"}, "done", None),
+        # A later publish on beta: the blocked one above is then kept by its
+        # certificate deploy alone, which is how 07-06 shows (0091).
+        ("changes_publish", "beta", {"deploy": False}, "done", None),
     )  # fmt: skip
 
     def _attention_jobs(self, cursor: Any) -> dict[int, int]:
@@ -700,7 +710,7 @@ class ARealDatabase(unittest.TestCase):
         return made
 
     def test_the_attention_evidence_is_the_interface_s_own_reading(self) -> None:
-        """0089: the SQL function and `from_jobs`' keying name the same jobs (05-01)."""
+        """0089, 0091: the SQL function and `from_jobs`' keying name the same jobs (05-01, 2-02)."""
 
         with self.connect() as connection, connection.cursor() as cursor:
             made = self._attention_jobs(cursor)
@@ -713,8 +723,8 @@ class ARealDatabase(unittest.TestCase):
             for job in sorted(rows, key=lambda row: (row.created_at, row.id), reverse=True):
                 if not jobs_module.ran(job):
                     continue
-                for operation, _state in jobs_module.step_states(job):
-                    newest.setdefault((job.cluster, operation, jobs_module.subject(job)), job.id)
+                for operation, subject, _state in jobs_module.keyed_states(job):
+                    newest.setdefault((job.cluster, operation, subject), job.id)
             self.assertEqual(len(rows), len(self.ATTENTION_JOBS))
             self.assertEqual(
                 sorted(made[job_id] for job_id in evidence),
@@ -722,7 +732,7 @@ class ARealDatabase(unittest.TestCase):
             )
             # The cases above meant something: each kind of key is in it.
             self.assertEqual(sorted(made[job_id] for job_id in evidence),
-                             [0, 1, 3, 5, 6, 7, 8, 10, 11, 12, 14, 15])  # fmt: skip
+                             [0, 1, 3, 5, 6, 7, 8, 10, 11, 12, 14, 15, 18, 19, 20, 21, 22])  # fmt: skip
         finally:
             with self.connect() as connection:
                 connection.execute("delete from job where id = any(%s)", (list(made),))

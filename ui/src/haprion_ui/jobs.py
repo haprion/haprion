@@ -316,26 +316,81 @@ SUBJECT_FIELDS = {
     "cert_delete": "certificates",
     "server_state": "object",
     "dynamic_unblock": "object",
+    "dns_profile_apply": "profile",
+    "ndes_profile_apply": "profile",
+}
+
+#
+# The operations that act on a list of certificates, and the lists in their
+# answer that name the certificates it did not finish.
+#
+_UNFINISHED = {
+    "cert_delete": ("refused", "incomplete"),
+    "cert_target": ("refused", "incomplete"),
 }
 
 
-def subject(job: Job) -> str:
-    """What a job acted on inside its cluster, or "" for the cluster itself.
+def subjects(job: Job) -> tuple[str, ...]:
+    """What a job acted on inside its cluster, each on its own; ("",) for the cluster itself.
 
     Two certificate issues for two names are two questions, and so are two
     servers' states on two objects: keyed on the cluster and the operation
     alone, a later success for one ended the other's failure (review 26-10-24,
-    02-02). Certificate jobs have no cluster at all.
+    02-02). A list is one question per certificate: keyed on the whole list, a
+    deletion of a, b and c that c refused stayed failed after c alone was
+    deleted, since no later job could name the same three (review 26-10-25,
+    2-02). Certificate jobs have no cluster at all.
     """
 
     field = SUBJECT_FIELDS.get(job.operation)
     payload = job.payload if isinstance(job.payload, dict) else {}
     value = payload.get(field) if field else None
     if isinstance(value, str):
-        return value
-    if isinstance(value, list) and all(isinstance(item, str) for item in value):
-        return ",".join(sorted(value))
-    return ""
+        return (value,)
+    if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+        return tuple(sorted(set(value)))
+    return ("",)
+
+
+def _unfinished(job: Job) -> frozenset[str] | None:
+    """The certificates a list operation's answer says it did not finish; None when it says none."""
+
+    envelope = job.result if isinstance(job.result, dict) else {}
+    body = envelope.get("result")
+    if not isinstance(body, dict):
+        return None
+    named: set[str] = set()
+    if job.operation == "cert_publish":
+        for entry in body.get("certificates") or ():
+            if isinstance(entry, dict) and entry.get("status") == "failed":
+                named.add(str(entry.get("id")))
+    for key in _UNFINISHED.get(job.operation, ()):
+        listed = body.get(key)
+        if isinstance(listed, list):
+            named.update(item for item in listed if isinstance(item, str))
+    return frozenset(named) or None
+
+
+def keyed_states(job: Job) -> tuple[tuple[str, str, str], ...]:
+    """(step, subject, state) for each thing a finished run settled or left unsettled.
+
+    Needs attention keys a job's failure on these, and the evidence the
+    pruning keeps (0091) names the newest job per step and subject. A list
+    operation that did not finish says which certificates it left; the rest of
+    its list worked. When it names none, the whole list stands as it ended - a
+    deploy after it that failed is not one certificate's.
+    """
+
+    keyed = []
+    for operation, state in step_states(job):
+        left = (
+            _unfinished(job)
+            if operation == job.operation and state != "done" and len(subjects(job)) > 1
+            else None
+        )
+        for name in subjects(job):
+            keyed.append((operation, name, state if left is None or name in left else "done"))
+    return tuple(keyed)
 
 
 def step_states(job: Job) -> tuple[tuple[str, str], ...]:

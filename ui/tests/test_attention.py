@@ -100,6 +100,45 @@ class EachKindComesAndGoes(unittest.TestCase):
         self.assertEqual([item.subject for item in attention.from_jobs([failed, other])], ["job 1"])
         self.assertEqual(attention.from_jobs([failed, other, state(3, "web", "done", 10)]), [])
 
+    def test_a_list_of_certificates_is_settled_one_certificate_at_a_time(self) -> None:
+        """Review 26-10-25, 2-02: a, b, c with c refused was never settled by c alone."""
+
+        def delete(job_id: int, names: list[str], state: str, minutes: int, **body: Any) -> Any:
+            row = job(state=state, outcome=state, operation="cert_delete", cluster=None)
+            return replace(
+                row,
+                id=job_id,
+                payload={"certificates": names},
+                result={"outcome": state, "result": body} if body else None,
+                created_at=NOW - timedelta(minutes=minutes),
+            )
+
+        refused_c = delete(1, ["a", "b", "c"], "partial", 30, refused=["c"])
+        self.assertEqual([item.subject for item in attention.from_jobs([refused_c])], ["job 1"])
+        done_c = delete(2, ["c"], "done", 20)
+        self.assertEqual(attention.from_jobs([refused_c, done_c]), [])
+
+        # An answer that names no certificate leaves the whole list as it ended.
+        failed = delete(3, ["d", "e"], "failed", 15)
+        done_d = delete(4, ["d"], "done", 10)
+        self.assertEqual(
+            [item.subject for item in attention.from_jobs([failed, done_d])], ["job 3"]
+        )
+
+    def test_one_profile_that_applies_does_not_end_another_s_failure(self) -> None:
+        def apply(job_id: int, profile: str, state: str, minutes: int) -> Any:
+            row = job(state=state, outcome=state, operation="dns_profile_apply", cluster=None)
+            return replace(
+                row,
+                id=job_id,
+                payload={"profile": profile, "revision": 1},
+                created_at=NOW - timedelta(minutes=minutes),
+            )
+
+        rows = [apply(1, "p-a", "failed", 30), apply(2, "p-b", "done", 20)]
+
+        self.assertEqual([item.subject for item in attention.from_jobs(rows)], ["job 1"])
+
     def test_only_operations_the_queue_takes_name_a_subject(self) -> None:
         self.assertLessEqual(set(jobs.SUBJECT_FIELDS), operations.OPERATIONS)
 
@@ -1019,3 +1058,28 @@ class TheAcknowledgement(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ARemovedCluster_sFailures(LoginTestCase):
+    """Review 26-10-25, 4-02: no step runs on a cluster that is gone, so nothing settles them."""
+
+    def failures_shown(self, cluster: str) -> bool:
+        failed = replace(
+            job(state="failed", outcome="failed", operation="deploy"),
+            id=7,
+            cluster=cluster,
+            created_at=NOW,
+        )
+        with (
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[failed]),
+            mock.patch("haprion_ui.db.attention_evidence", return_value=[failed]),
+        ):
+            client = self.client(
+                replace(configuration(), management_writes=True, clusters=("alpha",))
+            )
+            self.sign_in(client)
+            return "/jobs#job-7" in client.get("/").text
+
+    def test_are_left_out_and_a_listed_cluster_s_are_not(self) -> None:
+        self.assertTrue(self.failures_shown("alpha"))
+        self.assertFalse(self.failures_shown("beta"))

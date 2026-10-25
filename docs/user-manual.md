@@ -3322,7 +3322,8 @@ role, `delete` being withheld would mean nothing.
     is judged from when a deploy carried it; with both removed, an exception that does not work would
     read as covering its finding;
   - **never the newest finished job of each step on each thing** - a cluster's deploy, one certificate's
-    issue, one object's server state. *Needs attention* reads a failure from it until the same step on
+    issue, one object's server state, one DNS or NDES profile. A job on several certificates counts for
+    each of them. *Needs attention* reads a failure from it until the same step on
     the same thing works again; removed, a failure nothing had settled would leave the list, and
     `/status/attention.json` with it.
 - **Audit records older than two years** (730 days), except each certificate's newest
@@ -3677,6 +3678,8 @@ box is not shown.
   critical.
 - **Jobs**: the latest job of an operation on a cluster that failed, partly worked, was blocked or ended
   *unknown* - until a later run of the same operation on the same thing works, however long that takes.
+  A job on several certificates is settled certificate by certificate: when its answer says which ones
+  it did not finish, only those wait for a later run. A removed cluster's jobs are not listed.
 - **Clusters** with a fault no single node shows: a VIP in split brain or with no owner while every node
   reports Online, or a status reading that failed or returned no node.
 - **Nodes** that are down or have a warning - for example *Counters not shared*. A node that is only

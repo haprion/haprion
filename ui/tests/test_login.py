@@ -832,8 +832,14 @@ class Throttling(LoginTestCase):
         """Review 26-10-24, 09-01: one address held the account locked for every other."""
 
         self.failures = 99
+        #
+        # One client: an app each held two hundred of them open until the
+        # cleanup, over a gigabyte, and the gate's run of this module was
+        # killed while three gates shared the machine.
+        #
+        client = self.client()
         for _ in range(200):
-            self.sign_in(self.client())
+            self.sign_in(client)
         self.assertEqual(self.attempts, [])
         self.assertEqual(self.audit.count("login_failed"), 200)
 

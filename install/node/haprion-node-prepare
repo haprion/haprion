@@ -2,6 +2,7 @@
 """Prepare this node again, with the answers it was prepared with (B361).
 
     sudo haprion-node-prepare
+    sudo haprion-node-prepare --manager <new name or address>
 
 Step 4 (04-node-prepare) sets up what the node scripts need beside them: the
 accounts and their sudo rules, the release layout, dnsdist, HAProxy's log
@@ -13,9 +14,14 @@ on another machine, or the document a manager joined the node with.
 Both rendered node.conf, which is the node's own truth. The answers are read
 back out of it, as a node restore reads them out of an archive
 (`haprion.restore_answers`, which a test holds this to), and the step runs from
-where the package put it. What node.conf does not carry is left as it is: the
-manager's keys in authorized_keys, the manager's host key in known_hosts, the
-traffic log's route.
+where the package put it. The manager's keys in authorized_keys are bound
+again to the manager's addresses as they are now; the keys themselves, and the
+traffic log's route, are left as they are.
+
+`--manager` is for a manager that moved: the step runs with the new name or
+address, node.conf records it, the keys are bound to it, and the manager's
+host key is carried over from the old one's line in root's known_hosts - the
+key did not change, only where it is (review 26-10-25, 3-01).
 
 The package's postinst says when to run this: when the step it brings is not
 the one that last ran here.
@@ -31,6 +37,8 @@ from pathlib import Path
 
 INSTALL = Path(os.environ.get("HAPRION_NODE_INSTALL", "/usr/share/haprion-node/install"))
 NODE_CONF = Path(os.environ.get("NODE_CONF", "/etc/haprion/node.conf"))
+KNOWN_HOSTS = Path(os.environ.get("ROOT_KNOWN_HOSTS", "/root/.ssh/known_hosts"))
+SSH_KEYGEN = "/usr/bin/ssh-keygen"
 STATE_DIR = Path(os.environ.get("JOIN_DIR", "/var/lib/haprion-node"))
 
 # The engine's pattern (config.py) and the fixed names (accounts.py), held to
@@ -47,6 +55,10 @@ LINE = re.compile(r'^(?P<key>[A-Z_]+)="(?P<value>[^"]*)"$')
 SAFE = re.compile(r"^[A-Za-z0-9._@+/ -]*$")
 NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 NODE_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# A name or an IPv4 address, as step 4's MANAGER_HOST is.
+HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+HOST_KEY = re.compile(r"^ssh-ed25519 [A-Za-z0-9+/]+=*$")
+USAGE = "usage: sudo haprion-node-prepare [--manager <new name or address>]"
 REQUIRED = (
     "CLUSTER",
     "MANAGER",
@@ -86,8 +98,13 @@ def _names(value: str, what: str) -> list[str]:
     return names
 
 
-def answers(text: str) -> tuple[str, str]:
-    """Step 4's answers file and the cluster, from node.conf's text."""
+def answers(
+    text: str, *, manager: str | None = None, host_key: str | None = None
+) -> tuple[str, str]:
+    """Step 4's answers file and the cluster, from node.conf's text.
+
+    `manager` replaces node.conf's manager, and `host_key` is its host key.
+    """
 
     values = _values(text)
     cluster = values["CLUSTER"]
@@ -116,7 +133,7 @@ def answers(text: str) -> tuple[str, str]:
             raise Refused(f"node.conf's {key} is not {fixed}")
     lines = [
         "# Read back out of node.conf by haprion-node-prepare; not an operator's answers file.",
-        f'MANAGER_HOST="{values["MANAGER"]}"',
+        f'MANAGER_HOST="{manager or values["MANAGER"]}"',
         f'NODE_CONFIG_PULL_KEY="{values["CONFIG_PULL_KEY"]}"',
         # NODE_PATH_<cluster>, each hyphen an underscore (`cluster_value` in lib.sh).
         f'NODE_PATH_{cluster.replace("-", "_")}="{node_path}"',
@@ -126,11 +143,41 @@ def answers(text: str) -> tuple[str, str]:
     ]
     if "CERT_PULL_KEY" in values:
         lines.append(f'NODE_CERT_PULL_KEY="{values["CERT_PULL_KEY"]}"')
+    if host_key is not None:
+        lines.append(f'MANAGER_HOST_KEY="{host_key}"')
     lines.append("PREPARED_AGAIN=yes")
     return "\n".join(lines) + "\n", cluster
 
 
-def main() -> int:
+def carried_host_key(old: str) -> str | None:
+    """The manager's ed25519 host key, as root's known_hosts holds it for `old`."""
+
+    if not HOST.fullmatch(old) or not KNOWN_HOSTS.is_file():
+        return None
+    found = subprocess.run(  # noqa: S603 - fixed program, a host this has checked
+        [SSH_KEYGEN, "-F", old, "-f", str(KNOWN_HOSTS)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for line in found.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and not line.startswith("#"):
+            key = f"{fields[1]} {fields[2]}"
+            if HOST_KEY.fullmatch(key):
+                return key
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    manager: str | None = None
+    if argv:
+        if len(argv) != 2 or argv[0] != "--manager" or not HOST.fullmatch(argv[1]):
+            print(USAGE, file=sys.stderr)
+            return 64
+        manager = argv[1]
     if os.geteuid() != 0:
         print("haprion-node-prepare: run as root:  sudo haprion-node-prepare", file=sys.stderr)
         return 77
@@ -142,7 +189,11 @@ def main() -> int:
         )
         return 64
     try:
-        text, cluster = answers(NODE_CONF.read_text(encoding="utf-8"))
+        conf = NODE_CONF.read_text(encoding="utf-8")
+        host_key = None
+        if manager is not None:
+            host_key = carried_host_key(_values(conf)["MANAGER"])
+        text, cluster = answers(conf, manager=manager, host_key=host_key)
     except (Refused, UnicodeDecodeError) as refused:
         print(f"haprion-node-prepare: {refused}", file=sys.stderr)
         return 64

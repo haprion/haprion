@@ -148,16 +148,7 @@ log "  member    ${LOGREAD_USER} -> ${LOGS_GROUP}"
 # table in lib.sh gives its purpose.
 #
 MANAGER_SOURCES="$(manager_sources "$MANAGER_HOST")" || exit 1
-for purpose_line in "${NODE_KEY_PURPOSES[@]}"; do
-    read -r purpose _ account_var command <<<"$purpose_line"
-    key_var="${purpose}_PUBKEY"
-    if [[ -z "${!key_var:-}" ]]; then
-        # Joined, the document is the whole set: a purpose it leaves out has no key here.
-        [[ "${JOINED_BY_MANAGER:-}" != yes ]] || remove_key_line "${!account_var}" "$command"
-        continue
-    fi
-    write_key_line "${!account_var}" "$command" "${!key_var}" "$MANAGER_SOURCES"
-done
+write_manager_keys
 #
 # The WAF engine logs into a journal namespace of its own (its package, from
 # revision 2), and the reader reads it there. The same group is granted read on

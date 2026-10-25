@@ -651,10 +651,9 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
     lib.sh (B263 for the server state key, B317 for the rest), on scratch files."""
 
     def setUp(self) -> None:
-        text = INSTALLER.read_text()
-        start = text.index('for purpose_line in "${NODE_KEY_PURPOSES[@]}"; do')
-        end = text.index("\ndone\n", start) + len("\ndone\n")
-        self.loop = text[start:end]
+        # The step's own call, run with lib.sh's function.
+        self.assertIn("\nwrite_manager_keys\n", INSTALLER.read_text())
+        self.loop = "write_manager_keys\n"
         self.root = Path(tempfile.mkdtemp(prefix="srvkeys-"))
         self.addCleanup(shutil.rmtree, self.root, True)
         for user in ("_haprion-trigger", "_haprion-status", "_haprion-backup"):
@@ -714,6 +713,28 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
             self.keys("_haprion-trigger"),
             [f'{FROM}restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" {KEY_B}'],
         )
+
+    def test_a_manager_that_moved_is_bound_again_when_the_step_runs_again(self) -> None:
+        """Review 26-10-25, 3-01: haprion-node-prepare gives no keys, and the old
+        `from=` stayed, so the manager reached no node at its new address."""
+
+        self.run_loop(DEPLOY_PUBKEY=KEY_A, STATUS_PUBKEY=KEY_B, MANAGER_SOURCES="192.0.2.10")
+
+        done = self.run_loop(MANAGER_SOURCES="192.0.2.99")
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(
+            self.keys("_haprion-trigger"),
+            [f'from="192.0.2.99",restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" {KEY_A}'],
+        )
+        self.assertEqual(
+            self.keys("_haprion-status"),
+            [
+                f'from="192.0.2.99",restrict,command="sudo -n /usr/sbin/haprion-node-status --json"'
+                f" {KEY_B}"
+            ],
+        )
+        self.assertEqual(self.keys("_haprion-backup"), [])
 
     def test_a_key_works_only_from_the_manager_s_addresses(self) -> None:
         """Review 26-10-24, 10-05: a key copied off the manager worked from anywhere."""

@@ -164,21 +164,43 @@ class TheCommand(unittest.TestCase):
 
     def test_it_runs_step_four_with_the_answers_and_the_cluster(self) -> None:
         seen = self.step(0)
-        self.assertEqual(PREPARE.main(), 0)
+        self.assertEqual(PREPARE.main([]), 0)
         answers = self.state / "prepare.env"
         self.assertEqual(seen.read_text().split(), [str(answers), "alpha"])
         self.assertEqual(oct(answers.stat().st_mode & 0o777), "0o600")
         self.assertIn("PREPARED_AGAIN=yes", answers.read_text())
 
+    def test_a_manager_that_moved_is_given_with_its_host_key_carried_over(self) -> None:
+        """Review 26-10-25, 3-01: the manager's key did not change, only where it is."""
+
+        self.step(0)
+        known_hosts = self.root / "known_hosts"
+        key = "ssh-ed25519 AAAAexampleHostKey"
+        old = PREPARE._values(NODE_CONF)["MANAGER"]
+        known_hosts.write_text(f"{old} {key}\n")
+        with mock.patch.object(PREPARE, "KNOWN_HOSTS", known_hosts):
+            self.assertEqual(PREPARE.main(["--manager", "mgr-new.example.com"]), 0)
+
+        answers = (self.state / "prepare.env").read_text()
+        self.assertIn('MANAGER_HOST="mgr-new.example.com"', answers)
+        self.assertIn(f'MANAGER_HOST_KEY="{key}"', answers)
+
+    def test_only_a_name_or_an_address_is_a_manager(self) -> None:
+        self.step(0)
+        for argv in (["--manager"], ["--manager", "a b"], ["--manager", "-oProxy"], ["x"]):
+            with self.subTest(argv=argv), mock.patch.object(PREPARE.sys, "stderr"):
+                self.assertEqual(PREPARE.main(argv), 64)
+        self.assertFalse((self.state / "prepare.env").exists())
+
     def test_a_stopped_step_is_its_exit_code(self) -> None:
         self.step(1)
-        self.assertEqual(PREPARE.main(), 1)
+        self.assertEqual(PREPARE.main([]), 1)
 
     def test_a_node_never_prepared_is_told_how(self) -> None:
         self.step(0)
         self.node_conf.unlink()
         with mock.patch.object(PREPARE.sys, "stderr") as stderr:
-            self.assertEqual(PREPARE.main(), 64)
+            self.assertEqual(PREPARE.main([]), 64)
         self.assertIn(
             "haprion-node-key", "".join(call.args[0] for call in stderr.write.call_args_list)
         )
@@ -188,7 +210,7 @@ class TheCommand(unittest.TestCase):
             mock.patch.object(PREPARE.os, "geteuid", return_value=1000),
             mock.patch.object(PREPARE.sys, "stderr"),
         ):
-            self.assertEqual(PREPARE.main(), 77)
+            self.assertEqual(PREPARE.main([]), 77)
 
 
 class TheRecordOfTheStep(unittest.TestCase):

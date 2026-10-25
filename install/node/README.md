@@ -11,7 +11,7 @@ one is there.
 | `haprion-cert-remove` | removes certificates nothing installed names; with `--authority`, CA files |
 | `haprion-node-key` | makes this node's enrollment block for a manager to join it with; every run makes a new one-time key, so an earlier block stops working |
 | `haprion-node-join` | joins the node to the manager that connected with the block's key: runs step 4 from the manager's answers and installs its keys |
-| `haprion-node-prepare` | runs step 4 again on a prepared node, with the answers read back from `node.conf`; run it by hand when an upgrade says to |
+| `haprion-node-prepare` | runs step 4 again on a prepared node, with the answers read back from `node.conf`; run it by hand when an upgrade says to, or with `--manager <new name or address>` when the manager has moved |
 | `haprion-server-state-trigger` | unprivileged forced command for the server state key: validates the request, then escalates |
 | `haprion-server-state` | sets a server to ready, drain or maintenance and keeps it through reloads, which it performs itself, and unblocks addresses |
 | `haprion-node-status` | reports version, health, carried certificates, pool members and keepalived state |

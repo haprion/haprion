@@ -189,7 +189,7 @@ What the block contains, and how to prepare a node without the web interface, is
 [install/README.md](../install/README.md#step-4--each-node).
 
 A node accepts the manager's keys only from the manager's address. If the manager moves to another address, run
-`sudo haprion-node-prepare` on each node.
+`sudo haprion-node-prepare --manager <new name or address>` on each node.
 
 ## 4. Sign in
 

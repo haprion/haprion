@@ -1155,7 +1155,7 @@ PUBKEY_PATTERN='^ssh-ed25519 [A-Za-z0-9+/]+=*$'
 # fetch keys to theirs (node_enrollment.pull_sources). sshd's UseDNS is off by
 # default, so `from=` matches the connecting address and a name alone would
 # lock the manager out. A manager at another address reaches no node until
-# step 4 has run again on each of them (sudo haprion-node-prepare).
+# step 4 has run again on each of them (sudo haprion-node-prepare --manager <new>).
 #
 manager_sources() {
     local host="$1" addresses
@@ -1218,6 +1218,44 @@ remove_key_line() {
     rm -f "$tmp"
     [[ "$EUID" -ne 0 ]] || chown root:root "$keys"
     log "  removed  ${command} from ${keys}  (the manager sent no key for it)"
+}
+
+#
+# The key a purpose's line in its account's authorized_keys carries, or nothing.
+#
+existing_key_of() {
+    local user="$1" command="$2"
+    local keys="${KEYS_HOME:-/home}/${user}/.ssh/authorized_keys"
+    [[ -f "$keys" ]] || return 0
+    grep -F "command=\"${command}\"" "$keys" | grep -oE 'ssh-ed25519 [A-Za-z0-9+/]+=*' \
+        | head -n 1 || true
+}
+
+#
+# The manager's keys, one line per purpose (NODE_KEY_PURPOSES), each usable from
+# MANAGER_SOURCES alone. A key in the answers is written. A join's document is
+# the whole set, so a purpose it leaves out is taken away. Otherwise - step 4
+# run again, by hand or by haprion-node-prepare - the line already there is
+# bound again to the manager's addresses as they are now: a manager that moved
+# reached no node, and running the step again changed nothing (review 26-10-25,
+# 3-01).
+#
+write_manager_keys() {
+    local purpose_line purpose account_var command key_var key
+    for purpose_line in "${NODE_KEY_PURPOSES[@]}"; do
+        read -r purpose _ account_var command <<<"$purpose_line"
+        key_var="${purpose}_PUBKEY"
+        key="${!key_var:-}"
+        if [[ -z "$key" ]]; then
+            if [[ "${JOINED_BY_MANAGER:-}" == yes ]]; then
+                remove_key_line "${!account_var}" "$command"
+                continue
+            fi
+            key="$(existing_key_of "${!account_var}" "$command")"
+            [[ -n "$key" ]] || continue
+        fi
+        write_key_line "${!account_var}" "$command" "$key" "$MANAGER_SOURCES"
+    done
 }
 
 #

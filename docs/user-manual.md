@@ -6011,7 +6011,8 @@ and no privileged process takes part in moving data from a node.
 **On each node, the manager's keys work only from the manager's address.** Every line step 4 writes for them
 carries `from=` with the manager's host and the IPv4 addresses it resolved to, so a copied key does not work
 from another machine. A manager that moves to another address reaches no node until step 4 has run again on
-each of them: `sudo haprion-node-prepare`.
+each of them with the new name or address: `sudo haprion-node-prepare --manager <new name or address>`. The
+node then fetches from the new address too, and the manager's host key is carried over from the old one.
 
 A node also has a one-time join key. It is part of the enrollment block the node prints, and lets a manager
 join the node once, as `_haprion-join`, within 24 hours; the join removes it after use.
@@ -6574,8 +6575,8 @@ sudo haprion-node-prepare
 ```
 
 It runs the step again with the answers the node was prepared with, read back from
-`/etc/haprion/node.conf`. The manager's keys, the manager's host key and the traffic log's route are
-left as they are. It works the same for a node joined from the interface and one prepared by hand.
+`/etc/haprion/node.conf`. The manager's keys are bound again to the manager's addresses as they are now;
+the keys themselves, the manager's host key and the traffic log's route are left as they are. It works the same for a node joined from the interface and one prepared by hand.
 The installation from the manager, below, also runs the step, with a state backup on each side.
 
 ##### Build and verify the package

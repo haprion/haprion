@@ -149,7 +149,11 @@ log "  member    ${LOGREAD_USER} -> ${LOGS_GROUP}"
 for purpose_line in "${NODE_KEY_PURPOSES[@]}"; do
     read -r purpose _ account_var command <<<"$purpose_line"
     key_var="${purpose}_PUBKEY"
-    [[ -n "${!key_var:-}" ]] || continue
+    if [[ -z "${!key_var:-}" ]]; then
+        # Joined, the document is the whole set: a purpose it leaves out has no key here.
+        [[ "${JOINED_BY_MANAGER:-}" != yes ]] || remove_key_line "${!account_var}" "$command"
+        continue
+    fi
     write_key_line "${!account_var}" "$command" "${!key_var}"
 done
 #

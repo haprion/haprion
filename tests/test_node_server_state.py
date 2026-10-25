@@ -671,6 +671,20 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
             [f'restrict,command="/usr/sbin/haprion-server-state-trigger" {KEY_B}'],
         )
 
+    def test_a_join_without_a_purposes_key_leaves_no_line_for_it(self) -> None:
+        """Review 26-10-24, 10-04: joined to a manager without a backup key, the
+        node keeps no earlier manager's backup line; prepared by hand, it does."""
+        self.run_loop(DEPLOY_PUBKEY=KEY_A, BACKUP_PUBKEY=KEY_B)
+        self.run_loop(DEPLOY_PUBKEY=KEY_A)
+        self.assertEqual(len(self.keys("_haprion-backup")), 1)
+        done = self.run_loop(DEPLOY_PUBKEY=KEY_B, JOINED_BY_MANAGER="yes")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.keys("_haprion-backup"), [])
+        self.assertEqual(
+            self.keys("_haprion-trigger"),
+            [f'restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" {KEY_B}'],
+        )
+
     def test_anything_but_one_ed25519_key_is_refused(self) -> None:
         for bad in ("ssh-rsa AAAAB3Nza", f"{KEY_A} comment", f"{KEY_A}\\nssh-ed25519 AAAA", ""):
             with self.subTest(key=bad):

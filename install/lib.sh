@@ -1041,6 +1041,28 @@ write_key_line() {
 }
 
 #
+# A purpose's line taken out of its account's authorized_keys, written as root:
+# the join's document leaves out a key the manager does not have, and a line an
+# earlier manager left for that purpose would otherwise still let it ask
+# (review 26-10-24, 10-04).
+#
+remove_key_line() {
+    local user="$1" command="$2"
+    local keys="${KEYS_HOME:-/home}/${user}/.ssh/authorized_keys"
+    local forced="command=\"${command}\""
+    if [[ ! -f "$keys" ]] || ! grep -qF "$forced" "$keys"; then
+        return 0
+    fi
+    local tmp
+    tmp="$(mktemp)"
+    grep -vF "$forced" "$keys" > "$tmp" || true
+    install -m 644 "$tmp" "$keys"
+    rm -f "$tmp"
+    [[ "$EUID" -ne 0 ]] || chown root:root "$keys"
+    log "  removed  ${command} from ${keys}  (the manager sent no key for it)"
+}
+
+#
 # A key pair this node authenticates with, made here and never anywhere else:
 # a private key a node uses has no reason to exist on the management host.
 #

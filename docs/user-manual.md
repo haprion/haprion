@@ -2543,7 +2543,8 @@ and add it again.
 `_haprion-join`, whose only command is `haprion-node-join`, and hands over its own keys, its host key,
 the cluster and the VIP. The node prepares itself with them: the packages HAProxy needs, the release
 layout, the sudo rules, `node.conf`, the manager's keys each with its own forced command, and sshd on
-the address the manager came in on. Then it removes the one-time key. This takes from half a minute to
+the address the manager came in on. A purpose the manager has no key for gets no line, so a key an earlier
+manager left for it stops working. Then it removes the one-time key. This takes from half a minute to
 a few minutes, most of it apt.
 
 The one-time key is valid for 24 hours and works once. Keep the block to yourself until it has been

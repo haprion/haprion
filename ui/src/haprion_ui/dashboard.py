@@ -147,6 +147,12 @@ class DashboardView:
     #
     unread_clusters: int
     #
+    # Clusters read, but not within two polls: their nodes are counted as last
+    # read, and the card says so rather than "All reporting" in green (review
+    # 26-10-24, 04-06).
+    #
+    stale_clusters: int
+    #
     # Addresses, not clusters. The card said 2 for an installation with three
     # VIPs until 2026-09-20, because it counted clusters whose VRRP state was
     # healthy; the number a person checks it against is the VIPs they know.
@@ -755,6 +761,16 @@ def _cluster_view(
         )
 
     observed_at = reading.observed_at.astimezone(UTC)
+    if stale:
+        #
+        # What the nodes said when last read, not what they say now: "Serving
+        # and reporting normally" beside "Stale data" contradicted the badge
+        # (review 26-10-24, 04-06).
+        #
+        last_read = f"Last read {relative_age(observed_at, now).lower()}"
+        nodes = tuple(
+            replace(node, detail=last_read) if node.label == "Online" else node for node in nodes
+        )
     return ClusterView(
         cluster=reading.cluster,
         accent=accent_index(reading.cluster),
@@ -846,6 +862,7 @@ def build_dashboard(
         node.label == JOINING for cluster in configured_views for node in cluster.nodes
     )
     unread = sum(not cluster.nodes for cluster in configured_views)
+    stale_clusters = sum(cluster.stale and bool(cluster.nodes) for cluster in configured_views)
     active_vips = sum(
         cluster.vip_count
         for cluster in configured_views
@@ -867,9 +884,11 @@ def build_dashboard(
         if unread and (total_nodes or counted > unread)
         else "unknown"
         if not total_nodes
-        else "healthy"
-        if online_nodes == total_nodes
         else "critical"
+        if online_nodes != total_nodes
+        else "warning"
+        if stale_clusters
+        else "healthy"
     )
     vip_tone: Tone = (
         "unknown"
@@ -899,6 +918,7 @@ def build_dashboard(
         online_nodes=online_nodes,
         total_nodes=total_nodes,
         unread_clusters=unread,
+        stale_clusters=stale_clusters,
         active_vips=active_vips,
         total_vips=total_vips,
         converged_clusters=converged,

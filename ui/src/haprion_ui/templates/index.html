@@ -27,7 +27,7 @@
     <span class="metric-icon metric-icon-{{ dashboard.node_tone }}" aria-hidden="true">
       <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 9h.01M11 9h6M7 15h.01M11 15h6"></path></svg>
     </span>
-    <div><strong>{{ dashboard.online_nodes }}<small>/{{ dashboard.total_nodes }}</small></strong><span>Nodes online</span><small>{% if dashboard.unread_clusters %}{{ dashboard.unread_clusters }} cluster{{ 's' if dashboard.unread_clusters != 1 }} unread{% elif dashboard.online_nodes == dashboard.total_nodes %}All reporting{% else %}{{ dashboard.total_nodes - dashboard.online_nodes }} not reporting{% endif %}</small></div>
+    <div><strong>{{ dashboard.online_nodes }}<small>/{{ dashboard.total_nodes }}</small></strong><span>Nodes online</span><small>{% if dashboard.unread_clusters %}{{ dashboard.unread_clusters }} cluster{{ 's' if dashboard.unread_clusters != 1 }} unread{% elif dashboard.online_nodes != dashboard.total_nodes %}{{ dashboard.total_nodes - dashboard.online_nodes }} not reporting{% elif dashboard.stale_clusters %}{{ dashboard.stale_clusters }} cluster{{ 's' if dashboard.stale_clusters != 1 }} stale{% else %}All reporting{% endif %}</small></div>
   </article>
   <article class="metric-card">
     <span class="metric-icon metric-icon-{{ dashboard.vip_tone }}" aria-hidden="true">

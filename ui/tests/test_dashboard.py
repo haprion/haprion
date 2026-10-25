@@ -447,6 +447,21 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(cluster.label, "Stale data")
         self.assertEqual(cluster.tone, "warning")
 
+    def test_old_data_does_not_say_all_is_reporting(self) -> None:
+        """Review 26-10-24, 04-06: the card said "All reporting" in green and the
+        nodes "Serving and reporting normally" beside the cluster's "Stale data"."""
+
+        view = self.dashboard(reading("done-single-owner.json", age_seconds=121))
+        fresh = self.dashboard(reading("done-single-owner.json"))
+        self.assertEqual((view.stale_clusters, view.node_tone), (1, "warning"))
+        self.assertEqual((fresh.stale_clusters, fresh.node_tone), (0, "healthy"))
+        online = [node for node in view.clusters[0].nodes if node.label == "Online"]
+        self.assertTrue(online)
+        self.assertEqual({node.detail for node in online}, {"Last read 2m ago"})
+        self.assertIn(
+            "Serving and reporting normally", {node.detail for node in fresh.clusters[0].nodes}
+        )
+
     def test_a_poller_failure_is_not_reported_as_a_cluster_answer(self) -> None:
         cluster = self.dashboard(
             reading("done-single-owner.json", poll_error="sudo refused")

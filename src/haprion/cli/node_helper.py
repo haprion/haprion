@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
 from haprion import (
+    answer_receipt,
     cert_registry,
     change_journal,
     cluster_definition,
@@ -568,6 +569,7 @@ def _converged(runtime: Any, cluster: str, ask: AskNode) -> bool:
     return isinstance(summary, dict) and summary.get("release_state") == "converged"
 
 
+@answer_receipt.keeps_answer
 def main(
     argv: list[str] | None = None,
     *,
@@ -616,6 +618,7 @@ def main(
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+    answer_receipt.begin(output, request.request_id)
 
     #
     # Who the version a node change publishes is recorded for (B335): read once

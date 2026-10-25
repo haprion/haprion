@@ -33,6 +33,17 @@ requeued run exit `blocked` before it touches anything. Reading the lock would
 also mean reading a root-owned path from the worker's account. The fencing that
 already exists is stronger than the check that would have needed the privilege.
 
+A helper that outlived its worker
+---------------------------------
+The helpers behind the manager's sockets run in units of their own, and a
+stopped worker does not stop them (B367). Each keeps a receipt of its answer
+(`haprion.answer_receipt`), read here for every abandoned job before anything
+else: a receipt its helper still holds is a job still running, and one whose
+helper has ended carries the answer the job ends on. The worker adopts the job
+and ends it as it would have - with what follows in the same job, a node
+change's deploy, run then. Only these helpers keep receipts; for every other
+job there is none, and what follows below decides.
+
 Why the evidence has to be newer than the lease
 -----------------------------------------------
 A listing observed while the operation may still have been running describes a
@@ -45,8 +56,11 @@ poller rather than being judged on it.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from haprion import answer_receipt
 
 from haprion_ui import db
 
@@ -77,7 +91,9 @@ REPEATABLE = frozenset({"deploy", "cert_deploy"})
 #
 RECORDED = frozenset({"revert", "changes_publish"})
 
-type Verdict = Literal["requeue", "abandon", "wait"]
+type Verdict = Literal["requeue", "abandon", "wait", "adopt"]
+
+NO_RECEIPT = answer_receipt.Receipt("unavailable")
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,14 +130,42 @@ def _newest_version(listing: dict[str, Any]) -> int | None:
     return max(numbers) if numbers else None
 
 
-def judge(job: db.AbandonedJob, history: db.ClusterHistory | None) -> Judgement:
+def judge(
+    job: db.AbandonedJob,
+    history: db.ClusterHistory | None,
+    receipt: answer_receipt.Receipt = NO_RECEIPT,
+) -> Judgement:
     """Decide what may be done with one abandoned job, from evidence alone."""
+
+    if receipt.state == "running":
+        #
+        # Before the attempts: a helper still at work is not a job that keeps
+        # killing its worker, and its answer is still to come.
+        #
+        return Judgement(
+            "wait",
+            "helper_running",
+            "its helper is still running; the job ends on the answer it keeps",
+        )
+    if receipt.state == "answered" and job.attempts <= MAX_ATTEMPTS:
+        return Judgement(
+            "adopt",
+            "answer_kept",
+            "its helper ended after the worker stopped and kept its answer; the job ends on it",
+        )
 
     if job.attempts >= MAX_ATTEMPTS:
         return Judgement(
             "abandon",
             "attempts_exhausted",
             f"the job was handed to a worker {job.attempts} times and answered neither time",
+        )
+
+    if receipt.state == "silent":
+        return Judgement(
+            "abandon",
+            "helper_silent",
+            "its helper ended without an answer, so what it did is not known",
         )
 
     if job.operation in REPEATABLE:
@@ -213,13 +257,27 @@ def judge(job: db.AbandonedJob, history: db.ClusterHistory | None) -> Judgement:
     )
 
 
-def adjudicate(connection: Any, *, worker: str) -> int:
+type Resume = Callable[[db.ClaimedJob, answer_receipt.Receipt], None]
+
+
+def adjudicate(
+    connection: Any,
+    *,
+    worker: str,
+    resume: Resume | None = None,
+    lease_seconds: int = 60,
+    receipts: Callable[[str], answer_receipt.Receipt] = answer_receipt.read,
+) -> int:
     """Judge every abandoned job once, and act on the ones that can be settled.
 
     Returns how many jobs were moved, which is what a caller logs. Each job is
     its own transaction: one undecidable job must not hold up the next, and a
     requeue that succeeded must not be rolled back because a later judgement
     failed.
+
+    An adopted job is committed as this worker's before `resume` ends it, so
+    the claim holds no row lock while what follows in the job runs. Without
+    `resume` an adoptable job is left for a worker that can end it.
     """
 
     moved = 0
@@ -235,14 +293,30 @@ def adjudicate(connection: Any, *, worker: str) -> int:
             if job.operation in RECORDED and job.cluster is not None
             else None
         )
-        judgement = judge(job, history)
+        receipt = receipts(str(job.request_id))
+        judgement = judge(job, history, receipt)
+
+        if judgement.verdict == "adopt" and resume is None:
+            connection.rollback()
+            continue
 
         if judgement.verdict == "wait":
             logger.info("job %s is not yet decidable: %s", job.id, judgement.reason)
             connection.rollback()
             continue
 
-        if judgement.verdict == "requeue":
+        adopted: db.ClaimedJob | None = None
+        if judgement.verdict == "adopt":
+            adopted = db.adopt_expired(
+                connection,
+                job_id=job.id,
+                attempts=job.attempts,
+                worker_id=worker,
+                lease_seconds=lease_seconds,
+            )
+            settled = adopted is not None
+            action = "job_adopted"
+        elif judgement.verdict == "requeue":
             settled = db.requeue_expired(connection, job_id=job.id, attempts=job.attempts)
             action = "job_requeued"
         else:
@@ -282,5 +356,7 @@ def adjudicate(connection: Any, *, worker: str) -> int:
         connection.commit()
         moved += 1
         logger.warning("job %s %s: %s", job.id, action, judgement.reason)
+        if adopted is not None and resume is not None:
+            resume(adopted, receipt)
 
     return moved

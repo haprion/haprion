@@ -33,7 +33,7 @@ class AuditEvent:
 # What the worker writes about jobs it ran; their outcome is the Jobs view's,
 # so *Audit* leaves them out (B275).
 #
-JOB_EVENTS = ("job_finished", "job_requeued", "job_abandoned")
+JOB_EVENTS = ("job_finished", "job_requeued", "job_abandoned", "job_adopted")
 
 
 #

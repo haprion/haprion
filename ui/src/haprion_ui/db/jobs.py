@@ -723,6 +723,48 @@ def requeue_expired(connection: Connection[Any], *, job_id: int, attempts: int) 
         return cursor.fetchone() is not None
 
 
+def adopt_expired(
+    connection: Connection[Any], *, job_id: int, attempts: int, worker_id: str, lease_seconds: int
+) -> ClaimedJob | None:
+    """Take one abandoned job over, to end it on the answer its helper kept (B367).
+
+    Not a requeue: the operation is not run again. The helper behind a socket
+    lived on when the worker that asked it stopped, and its kept answer is what
+    the job ends on - with what follows it in the same job, a node change's
+    deploy, run as the first worker would have. A fresh claim token and lease,
+    so the adopting worker writes the end as any holder does, and one more
+    attempt, so a job whose ending keeps stopping its worker is not adopted
+    without end.
+
+    Guarded as `requeue_expired` is; None means the world moved.
+    """
+
+    with connection.cursor(row_factory=class_row(ClaimedJob)) as cursor:
+        cursor.execute(
+            "update job "
+            "   set claim_token = gen_random_uuid(), "
+            "       worker_id = %(worker_id)s, "
+            "       lease_until = statement_timestamp() "
+            "                     + %(lease_seconds)s * interval '1 second', "
+            "       attempts = attempts + 1 "
+            " where id = %(job_id)s "
+            "   and state = 'running' "
+            "   and lease_until < statement_timestamp() "
+            "   and attempts = %(attempts)s "
+            "returning id, request_id, operation, cluster, payload, state, created_at, "
+            "          started_at, finished_at, exit_code, outcome, result, "
+            "          stderr_excerpt, idempotency_key, attempts, claim_token, "
+            "          held_decision, held_decided_by",
+            {
+                "job_id": job_id,
+                "attempts": attempts,
+                "worker_id": worker_id,
+                "lease_seconds": lease_seconds,
+            },
+        )
+        return cursor.fetchone()
+
+
 def abandon_expired(
     connection: Connection[Any], *, job_id: int, attempts: int, code: str, message: str
 ) -> bool:

@@ -10,7 +10,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import backup_retention, backup_schedule_write, exit_codes, state_backup
+from haprion import (
+    answer_receipt,
+    backup_retention,
+    backup_schedule_write,
+    exit_codes,
+    state_backup,
+)
 from haprion.backup_schedule import Schedule
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope, failure
@@ -142,6 +148,7 @@ def _refuse(
     )
 
 
+@answer_receipt.keeps_answer
 def main(
     argv: list[str] | None = None,
     *,
@@ -171,6 +178,7 @@ def main(
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+    answer_receipt.begin(writer, request.request_id)
 
     if operation == SCHEDULE:
         try:

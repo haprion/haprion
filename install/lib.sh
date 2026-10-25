@@ -163,6 +163,12 @@ ensure_worker_directories() {
     # Step 15's, as it makes it; that step is optional and may come later.
     ensure_dir /etc/haprion/dns-profiles root:root 700
     #
+    # Where the helpers behind sockets keep their answers for recovery (B367):
+    # root's, read by the worker. Not in the worker's ReadWritePaths - it only
+    # reads, and ProtectSystem=strict leaves /var/lib readable.
+    #
+    ensure_dir /var/lib/haprion/answers "root:${WORKER_USER}" 750
+    #
     # Certbot's own three, made with the owner and mode certbot gives them when
     # they are missing - on a new machine no certbot has run yet, and the worker
     # would not start (26-10-13). Never corrected when they exist: they are

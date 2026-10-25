@@ -13,6 +13,8 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
+from haprion import answer_receipt
+
 from haprion_ui import db, recovery
 
 REQUEST = uuid4()
@@ -291,3 +293,106 @@ class Adjudicating(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AHelperThatOutlivedItsWorker(unittest.TestCase):
+    """The helpers behind sockets keep a receipt of their answer (B367)."""
+
+    def test_a_helper_still_running_is_waited_for_however_often_it_was_taken(self) -> None:
+        running = answer_receipt.Receipt("running")
+        for attempts in (1, recovery.MAX_ATTEMPTS):
+            with self.subTest(attempts=attempts):
+                judgement = recovery.judge(
+                    abandoned("node_restore", attempts=attempts), None, running
+                )
+                self.assertEqual((judgement.verdict, judgement.code), ("wait", "helper_running"))
+
+    def test_a_kept_answer_is_adopted_and_not_run_again(self) -> None:
+        answered = answer_receipt.Receipt("answered", stdout="{}", exit_code=0)
+
+        judgement = recovery.judge(abandoned("cluster_node"), None, answered)
+
+        self.assertEqual((judgement.verdict, judgement.code), ("adopt", "answer_kept"))
+
+    def test_a_job_adopted_once_too_often_is_given_up(self) -> None:
+        answered = answer_receipt.Receipt("answered", stdout="{}", exit_code=0)
+
+        judgement = recovery.judge(
+            abandoned("cluster_node", attempts=recovery.MAX_ATTEMPTS + 1), None, answered
+        )
+
+        self.assertEqual((judgement.verdict, judgement.code), ("abandon", "attempts_exhausted"))
+
+    def test_a_helper_that_ended_without_an_answer_is_unknown(self) -> None:
+        judgement = recovery.judge(abandoned("backup_run"), None, answer_receipt.Receipt("silent"))
+
+        self.assertEqual((judgement.verdict, judgement.code), ("abandon", "helper_silent"))
+
+    def test_without_a_receipt_the_rules_before_it_decide(self) -> None:
+        for state in ("absent", "unavailable"):
+            with self.subTest(state=state):
+                receipt = answer_receipt.Receipt(state)
+                self.assertEqual(
+                    recovery.judge(abandoned("deploy"), None, receipt).code,
+                    "operation_repeatable",
+                )
+                self.assertEqual(
+                    recovery.judge(abandoned("cluster_node"), None, receipt).code,
+                    "operation_unknown",
+                )
+
+
+class AdoptingAJob(unittest.TestCase):
+    def setUp(self) -> None:
+        self.connection = mock.MagicMock()
+        self.audited: list[dict[str, Any]] = []
+        patch = mock.patch(
+            "haprion_ui.db.record_audit_event",
+            side_effect=lambda _c, **fields: self.audited.append(fields),
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.answered = answer_receipt.Receipt("answered", stdout="{}", exit_code=0)
+
+    def test_the_job_is_claimed_committed_and_then_ended_on_the_answer(self) -> None:
+        claimed = mock.sentinel.claimed
+        order: list[str] = []
+        self.connection.commit.side_effect = lambda: order.append("commit")
+
+        def resume(job: object, receipt: answer_receipt.Receipt) -> None:
+            order.append("resume")
+            self.assertIs(job, claimed)
+            self.assertIs(receipt, self.answered)
+
+        with (
+            mock.patch.object(db, "expired_leases", return_value=[abandoned("cluster_node")]),
+            mock.patch.object(db, "adopt_expired", return_value=claimed) as adopt,
+        ):
+            moved = recovery.adjudicate(
+                self.connection,
+                worker=WORKER,
+                resume=resume,
+                lease_seconds=60,
+                receipts=lambda _request_id: self.answered,
+            )
+
+        self.assertEqual(moved, 1)
+        self.assertEqual(
+            adopt.call_args.kwargs,
+            {"job_id": 7, "attempts": 1, "worker_id": WORKER, "lease_seconds": 60},
+        )
+        self.assertEqual(order, ["commit", "resume"])
+        self.assertEqual(self.audited[0]["action"], "job_adopted")
+
+    def test_without_a_worker_to_end_it_the_job_is_left_alone(self) -> None:
+        with (
+            mock.patch.object(db, "expired_leases", return_value=[abandoned("cluster_node")]),
+            mock.patch.object(db, "adopt_expired") as adopt,
+        ):
+            moved = recovery.adjudicate(
+                self.connection, worker=WORKER, receipts=lambda _request_id: self.answered
+            )
+
+        self.assertEqual(moved, 0)
+        adopt.assert_not_called()
+        self.assertEqual(self.audited, [])

@@ -35,6 +35,7 @@ from typing import Any, cast
 from uuid import UUID, uuid5
 
 import psycopg
+from haprion import answer_receipt
 
 from haprion_ui import (
     answers,
@@ -574,6 +575,51 @@ def _finish_on(
             time.sleep(FINISH_RETRY_SECONDS)
 
 
+class _Lease:
+    """A job's lease, renewed and checked as one.
+
+    `ours` is asked on every tick of a run. Renewing and checking are one
+    operation on purpose: a worker that checked without renewing would lose the
+    job to its own idleness, and one that renewed without checking would keep
+    running after somebody else took it.
+    """
+
+    def __init__(
+        self,
+        connection: Any,
+        job: db.ClaimedJob,
+        connect: Callable[[], AbstractContextManager[Any]] | None,
+    ) -> None:
+        self.connection = connection
+        self.job = job
+        self.connect = connect
+        self.renewed_at = time.monotonic()
+
+    def ours(self) -> bool:
+        """Push the lease forward, and say whether this worker still holds it."""
+
+        try:
+            if self.connect is not None and _broken(self.connection):
+                with self.connect() as fresh:
+                    ours = _renewed(fresh, self.job)
+            else:
+                ours = _renewed(self.connection, self.job)
+        except psycopg.Error as exc:
+            left = self.renewed_at + LEASE_SECONDS - LEASE_MARGIN_SECONDS - time.monotonic()
+            logger.warning(
+                "job %s: the lease could not be renewed (%s); %d s of it is left",
+                self.job.id,
+                exc,
+                max(0, int(left)),
+            )
+            with suppress(psycopg.Error):
+                self.connection.rollback()
+            return left > 0
+        if ours:
+            self.renewed_at = time.monotonic()
+        return ours
+
+
 def run_one_job(
     connection: Any,
     job: db.ClaimedJob,
@@ -680,38 +726,7 @@ def run_one_job(
         )
         return
 
-    renewed_at = time.monotonic()
-
-    def lease_is_ours() -> bool:
-        """Push the lease forward, and say whether this worker still holds it.
-
-        Asked on every tick of the run. Renewing and checking are one operation
-        on purpose: a worker that checked without renewing would lose the job to
-        its own idleness, and one that renewed without checking would keep
-        running after somebody else took it.
-        """
-
-        nonlocal renewed_at
-        try:
-            if connect is not None and _broken(connection):
-                with connect() as fresh:
-                    ours = _renewed(fresh, job)
-            else:
-                ours = _renewed(connection, job)
-        except psycopg.Error as exc:
-            left = renewed_at + LEASE_SECONDS - LEASE_MARGIN_SECONDS - time.monotonic()
-            logger.warning(
-                "job %s: the lease could not be renewed (%s); %d s of it is left",
-                job.id,
-                exc,
-                max(0, int(left)),
-            )
-            with suppress(psycopg.Error):
-                connection.rollback()
-            return left > 0
-        if ours:
-            renewed_at = time.monotonic()
-        return ours
+    lease = _Lease(connection, job, connect)
 
     refused = execution.sudo_refusal(prepared.argv)
     if refused is not None:
@@ -733,13 +748,58 @@ def run_one_job(
         prepared.argv,
         request=prepared.request,
         timeout_seconds=prepared.timeout_seconds,
-        still_ours=lease_is_ours,
+        still_ours=lease.ours,
         lifeline=prepared.lifeline,
     )
 
     if completed.ending == "lease_lost":
         logger.error("job %s was taken over while it ran; writing nothing", job.id)
         return
+    _conclude(connection, job, completed, lease, worker=worker, connect=connect, stopping=stopping)
+
+
+def resume_adopted(
+    connection: Any,
+    job: db.ClaimedJob,
+    receipt: answer_receipt.Receipt,
+    *,
+    worker: str,
+    connect: Callable[[], AbstractContextManager[Any]] | None = None,
+    stopping: Callable[[], bool] = lambda: False,
+) -> None:
+    """End a job recovery adopted on the answer its helper kept (B367).
+
+    As `run_one_job` ends a job once its helper has answered, and through the
+    same steps: the answer judged, what follows it in the job run - a node
+    change's deploy - and the end written under the adopted lease.
+    """
+
+    logger.warning("job %s: ended on the answer its helper kept", job.id)
+    completed = execution.Completed(
+        ending="finished", exit_code=receipt.exit_code, stdout=receipt.stdout, stderr=""
+    )
+    _conclude(
+        connection,
+        job,
+        completed,
+        _Lease(connection, job, connect),
+        worker=worker,
+        connect=connect,
+        stopping=stopping,
+    )
+
+
+def _conclude(
+    connection: Any,
+    job: db.ClaimedJob,
+    completed: execution.Completed,
+    lease: _Lease,
+    *,
+    worker: str,
+    connect: Callable[[], AbstractContextManager[Any]] | None,
+    stopping: Callable[[], bool],
+) -> None:
+    """Judge a job's own run, run what follows it in the job, and write the end."""
 
     envelope = _envelope(completed.stdout, job) if completed.stdout_error is None else None
     if _stopped_under_it(stopping, envelope, job, job.operation):
@@ -749,7 +809,7 @@ def run_one_job(
     exit_code = completed.exit_code
     stderr = completed.stderr
     if state == "done" and job.operation == "changes_publish" and job.payload.get("deploy") is True:
-        deployed = _deploy_after(job, cast(dict[str, Any], result), lease_is_ours, stopping)
+        deployed = _deploy_after(job, cast(dict[str, Any], result), lease.ours, stopping)
         if deployed is None:
             return
         state, outcome, result, exit_code, stderr = deployed
@@ -757,7 +817,7 @@ def run_one_job(
         version = _node_change_deploys(job, result)
         if version is not None:
             followed = _node_deploy_after(
-                job, cast(dict[str, Any], result), version, lease_is_ours, stopping
+                job, cast(dict[str, Any], result), version, lease.ours, stopping
             )
             if followed is None:
                 return
@@ -766,7 +826,7 @@ def run_one_job(
     _finish_on(
         connection,
         connect,
-        lambda: renewed_at,
+        lambda: lease.renewed_at,
         job,
         state=state,
         outcome=outcome,
@@ -1117,7 +1177,14 @@ def _one_turn(
         # pause, and an abandoned job is still there to adjudicate when
         # writes come back.
         #
-        recovery.adjudicate(connection, worker=worker)
+        recovery.adjudicate(
+            connection,
+            worker=worker,
+            resume=lambda job, receipt: resume_adopted(
+                connection, job, receipt, worker=worker, connect=pool.connection, stopping=stopping
+            ),
+            lease_seconds=LEASE_SECONDS,
+        )
 
         job = db.claim_job(connection, worker_id=worker, lease_seconds=LEASE_SECONDS)
         #

@@ -22,6 +22,7 @@ from unittest import mock
 from uuid import uuid4
 
 import psycopg
+from haprion import answer_receipt
 
 from haprion_ui import db, execution, operations, worker
 
@@ -962,7 +963,16 @@ class TheWorkerKeepsOutOfTheDraftTable(unittest.TestCase):
 class NodeChangeAndDeploy(WorkerTestCase):
     """B321: a node change that is all a deploy would roll out is deployed in the same job."""
 
-    def run_job(self, job: db.ClaimedJob, answers: list[Any]) -> list[dict[str, Any]]:
+    def run_job(
+        self,
+        job: db.ClaimedJob,
+        answers: list[Any],
+        *,
+        stopping: bool = False,
+        kept: answer_receipt.Receipt | None = None,
+    ) -> list[dict[str, Any]]:
+        """Run the job, or with `kept` end it as recovery's adoption does (B367)."""
+
         calls: list[dict[str, Any]] = []
 
         def run(_argv: Any, **kwargs: Any) -> execution.Completed:
@@ -971,7 +981,10 @@ class NodeChangeAndDeploy(WorkerTestCase):
             return cast(execution.Completed, answers.pop(0)(request))
 
         with mock.patch.object(execution, "run", side_effect=run):
-            worker.run_one_job(self.connection, job, worker=WORKER)
+            if kept is not None:
+                worker.resume_adopted(self.connection, job, kept, worker=WORKER)
+            else:
+                worker.run_one_job(self.connection, job, worker=WORKER, stopping=lambda: stopping)
         return calls
 
     @staticmethod
@@ -1044,6 +1057,47 @@ class NodeChangeAndDeploy(WorkerTestCase):
         self.assertEqual(finished["state"], "failed")
         self.assertEqual(finished["result"]["step"], "cert_deploy")
         self.assertEqual(finished["result"]["node"]["result"]["action"], "added")
+
+    def test_a_worker_stopped_during_the_deploy_leaves_the_job_and_the_kept_answer_ends_it(
+        self,
+    ) -> None:
+        """Review 26-10-25 2-01, B367: the node change stands and its deploy is still run.
+
+        The deploy runs under the worker and stops with it; the node helper
+        runs behind its socket and kept its answer. Recovery adopts the job,
+        and it ends as it would have: the deploy run, the change beside it.
+        """
+
+        job = self.job("remove")
+        change = self.changed(job)({})
+
+        calls = self.run_job(
+            job, [lambda _request: change, lambda _request: completed(exit_code=-15)], stopping=True
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.finished, [])
+
+        kept = answer_receipt.Receipt("answered", stdout=change.stdout, exit_code=0)
+        calls = self.run_job(job, [self.ran("deploy")], kept=kept)
+
+        self.assertEqual([call["operation"] for call in calls], ["deploy_cluster"])
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "done")
+        self.assertEqual(finished["result"]["step"], "deploy")
+        self.assertEqual(finished["result"]["node"]["result"]["action"], "removed")
+
+    def test_a_kept_answer_that_says_the_change_failed_ends_the_job_on_it(self) -> None:
+        job = self.job("remove")
+        refused = result_document(job, "failed")
+        refused["error"] = {"code": "node_unreachable", "message": "node-b did not answer"}
+        kept = answer_receipt.Receipt("answered", stdout=json.dumps(refused), exit_code=69)
+
+        calls = self.run_job(job, [], kept=kept)
+
+        self.assertEqual(calls, [])
+        (finished,) = self.finished
+        self.assertEqual((finished["state"], finished["exit_code"]), ("failed", 69))
 
     def test_what_is_left_to_a_person(self) -> None:
         cases: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {

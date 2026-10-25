@@ -36,7 +36,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import exit_codes, node_restore, restore_agent
+from haprion import answer_receipt, exit_codes, node_restore, restore_agent
 from haprion.backup_archive import ArchiveError
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import Message, envelope, failure
@@ -220,6 +220,7 @@ def _raw(stream: BinaryIO) -> tuple[bytes, str]:
     return raw, str(operation)
 
 
+@answer_receipt.keeps_answer
 def main(
     argv: list[str] | None = None,
     *,
@@ -290,6 +291,7 @@ def _answer(
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+    answer_receipt.begin(writer, request.request_id)
     parameters = request.parameters
 
     def refuse(code: str, message: str, exit_code: int) -> int:

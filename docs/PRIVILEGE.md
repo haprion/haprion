@@ -136,6 +136,9 @@ never hold a transaction open across a CLI command.
 - The certificate distribution trees and the node archives are never readable to an interface
   account. The certificate tree is readable to `_haprion-cert-pull`, which the nodes fetch as.
 - The traffic log mirror is written by the collector and readable, never writable, by the web.
+- The answers the socket helpers keep for recovery are in `/var/lib/haprion/answers`, root's and
+  readable by the worker's group, never writable by it. A helper locks its answer while it runs; the
+  worker reads the lock and the answer and changes neither.
 - Git trusts each repository by an explicit `safe.directory` entry; wildcard trust is never used.
 
 ## Helper boundary

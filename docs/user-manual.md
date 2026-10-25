@@ -3979,6 +3979,14 @@ explained in the unit file beside it. The real limit is not the sandbox but
 `/etc/sudoers.d/haprion-worker`. It names each helper and permits no arguments. Widening the unit does not
 widen what may be run; only that file does.
 
+**A helper that outlives a stopped worker.** The helpers behind sockets - node and cluster changes,
+node backups and restores, receivers - run in systemd units of their own. A worker that is stopped or
+restarted - a UI release, `needrestart`, a reboot - does not stop them. Each keeps its answer in
+`/var/lib/haprion/answers` (root's, readable by the worker, removed after two weeks). The job stays
+*running* while its helper works, and then ends on the helper's own answer, with what follows it in the
+same job: a node change's deploy runs then. A helper that ended without an answer leaves the job
+`unknown`.
+
 **Jobs from before a restart or a restore.** A manager restored from an image or a backup comes up holding
 the jobs that were waiting when the backup was taken - and those ran back then. Running them again could,
 for example, drain a server that has since been set ready. The worker guards against this in two ways:
@@ -7675,7 +7683,8 @@ request, closes its write side and passes the answer through untouched.
 - When nothing listens, the answer is an envelope that says so (`dependency_unavailable`), never
   `unknown`.
 - A helper that was asked and went quiet leaves the job `unknown` (see the backup and restore
-  helpers below).
+  helpers below). When the worker was stopped, the job ends on the helper's kept answer instead
+  ([The worker](#the-worker)).
 
 The helper's own stderr goes to the journal (`journalctl -u 'haprion-cert-receiver-helper@*'`), not
 to the job.
@@ -7733,7 +7742,8 @@ exactly as it runs the receiver client. Two answers differ from a helper that ra
   ran.
 - **A helper that was asked and then went quiet** - the client's time ran out, or the connection
   dropped - is **no** envelope, and the job ends `unknown`. The root service carries on without the
-  client and may have finished.
+  client and may have finished. When the worker itself was stopped, the job waits and ends on the
+  answer the service kept ([The worker](#the-worker)).
 
 The client's sentence is in the job's stderr excerpt. The helper's own lines are in the journal
 (`journalctl -u 'haprion-node-restore-helper@*'`).

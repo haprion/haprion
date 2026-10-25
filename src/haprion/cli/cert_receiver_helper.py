@@ -28,7 +28,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import cert_receiver, exit_codes
+from haprion import answer_receipt, cert_receiver, exit_codes
 from haprion.cert_lock import DEFAULT_LOCK_PATH
 from haprion.cert_receiver import Locations, ReceiverError, Result, Tools
 from haprion.cli import cert_job
@@ -135,6 +135,7 @@ def _allow(parameters: Mapping[str, JsonValue]) -> tuple[str, ...]:
     return tuple(str(item) for item in raw)
 
 
+@answer_receipt.keeps_answer
 def main(
     argv: list[str] | None = None,
     *,
@@ -164,6 +165,7 @@ def main(
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+    answer_receipt.begin(writer, request.request_id)
 
     refuse = cert_job.Refuse(OPERATION, request, writer, errors)
     parameters = request.parameters

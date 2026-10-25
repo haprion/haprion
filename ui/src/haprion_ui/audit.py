@@ -184,6 +184,7 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "job_finished": lambda detail: f"Job {detail.get('job', '?')} ended",
     "job_requeued": lambda detail: f"Job {detail.get('job', '?')} was queued again",
     "job_abandoned": lambda detail: f"Job {detail.get('job', '?')} was given up",
+    "job_adopted": lambda detail: f"Job {detail.get('job', '?')} was ended on its kept answer",
     "jobs_held": lambda detail: (
         f"Held {labels.counted(len(detail.get('jobs') or []), 'job')} for an admin: {detail.get('reason', '')}"
     ),

@@ -37,10 +37,11 @@ from haprion.config import (
 from haprion.envelope import Message, envelope
 from haprion.git_command import GitError
 from haprion.helper_protocol import (
-    MAX_REQUEST_BYTES,
     HelperProtocolError,
     config_error_code,
+    peek_operation,
     read_helper_request,
+    read_raw_request,
     require_no_arguments,
     write_document,
     write_failure,
@@ -174,11 +175,8 @@ def main(
         #
         # Read once, then parsed as the operation it names.
         #
-        raw = stream.read(MAX_REQUEST_BYTES + 1)
-        try:
-            named = json.loads(raw).get("operation")
-        except (ValueError, AttributeError):
-            named = None
+        raw = read_raw_request(stream)
+        named = peek_operation(raw)
         operation = named if named in PARAMETERS else OPERATION
         request = read_helper_request(
             io.BytesIO(raw),

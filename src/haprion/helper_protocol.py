@@ -396,6 +396,26 @@ def read_raw_request(stream: BinaryIO, *, max_bytes: int = MAX_REQUEST_BYTES) ->
     return raw
 
 
+def peek_operation(raw: bytes) -> str | None:
+    """The operation a request read whole names, or None when it names none it can be read for.
+
+    For the helpers that answer several operations: they look before the
+    protocol reads the request as the one it names. What this look cannot read
+    is None, never an exception - a number past Python's digit limit raised
+    ValueError and a document nested past the stack RecursionError, and either
+    left a traceback instead of the protocol's refusal (review 26-10-24, 08-03).
+    """
+
+    try:
+        text = raw.decode("utf-8")
+        _refuse_deep_nesting(text)
+        document = json.loads(text)
+    except (HelperProtocolError, ValueError, RecursionError):
+        return None
+    operation = document.get("operation") if isinstance(document, dict) else None
+    return operation if isinstance(operation, str) else None
+
+
 def _read_request(
     stream: BinaryIO,
     *,

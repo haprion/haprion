@@ -44,6 +44,7 @@ from haprion.helper_protocol import (
     HelperProtocolError,
     JsonValue,
     config_error_code,
+    peek_operation,
     read_helper_request,
     read_raw_request,
     write_document,
@@ -210,16 +211,11 @@ def build_request(
 
 def _raw(stream: BinaryIO) -> tuple[bytes, str]:
     raw = read_raw_request(stream)
-    try:
-        document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise HelperProtocolError(
-            "helper request is not valid JSON", exit_code=exit_codes.REFUSED
-        ) from exc
-    operation = document.get("operation") if isinstance(document, dict) else None
+    operation = peek_operation(raw)
     if operation not in OPERATIONS:
         raise HelperProtocolError(
-            "operation is not allowed by this helper", exit_code=exit_codes.REFUSED
+            "helper request names no operation this helper answers",
+            exit_code=exit_codes.REFUSED,
         )
     return raw, str(operation)
 

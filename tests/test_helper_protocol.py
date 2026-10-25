@@ -9,7 +9,7 @@ import unittest.mock
 from pathlib import Path
 from typing import Any
 
-from haprion import helper_protocol
+from haprion import exit_codes, helper_protocol
 from haprion.helper_protocol import (
     MAX_NESTING,
     HelperProtocolError,
@@ -155,6 +155,77 @@ class HelperProtocolTests(unittest.TestCase):
             allowed_parameter_keys=frozenset({"target"}),
         )
         self.assertEqual(result.parameters, {"target": ["not", "a", "name"]})
+
+
+class ThePeekBeforeTheProtocol(unittest.TestCase):
+    """Review 26-10-24, 08-03: the helpers that see the operation first refuse as the protocol does.
+
+    A number past Python's digit limit raised ValueError, and a document nested
+    past the stack RecursionError, out of the look at `operation` that comes
+    before the protocol's own reading - a traceback and no refusal.
+    """
+
+    HUGE_NUMBER = b'{"operation": "run", "n": ' + b"1" * 5000 + b"}"
+    NESTED_70 = b"[" * 70 + b"]" * 70
+    # Inside the size limit, and past the stack of the Python this was found on.
+    NESTED_DEEP = b"[" * 20_000 + b"]" * 20_000
+
+    def helpers(self) -> dict[str, Any]:
+        from haprion.cli import backup_job_helper, node_restore_helper, server_state_helper
+
+        return {
+            "backup_job": backup_job_helper.main,
+            "node_restore": node_restore_helper.main,
+            "server_state": server_state_helper.main,
+        }
+
+    def test_peek_operation_answers_none_for_what_it_cannot_read(self) -> None:
+        self.assertEqual(helper_protocol.peek_operation(b'{"operation": "run"}'), "run")
+        for raw in (
+            self.HUGE_NUMBER,
+            self.NESTED_70,
+            self.NESTED_DEEP,
+            b"\xff",
+            b"[]",
+            b'{"operation": 7}',
+        ):
+            with self.subTest(raw=raw[:30]):
+                self.assertIsNone(helper_protocol.peek_operation(raw))
+
+    def test_each_helper_refuses_them_with_the_protocol_s_exit(self) -> None:
+        for name, main in self.helpers().items():
+            for raw in (self.HUGE_NUMBER, self.NESTED_70, self.NESTED_DEEP):
+                with self.subTest(helper=name, raw=raw[:30]):
+                    out, err = io.StringIO(), io.StringIO()
+                    code = main(
+                        [],
+                        input_stream=io.BytesIO(raw),
+                        output_stream=out,
+                        error_stream=err,
+                        require_root=False,
+                    )
+                    self.assertEqual(code, exit_codes.REFUSED, err.getvalue())
+                    self.assertEqual(out.getvalue(), "")
+
+    def test_the_server_state_helper_reads_within_the_deadline(self) -> None:
+        from haprion.cli import server_state_helper
+
+        class Slow(io.BytesIO):
+            def read(self, size: int | None = -1, /) -> bytes:
+                time.sleep(2)
+                return b""
+
+        err = io.StringIO()
+        with unittest.mock.patch.object(helper_protocol, "REQUEST_DEADLINE_SECONDS", 0.2):
+            code = server_state_helper.main(
+                [],
+                input_stream=Slow(),
+                output_stream=io.StringIO(),
+                error_stream=err,
+                require_root=False,
+            )
+        self.assertEqual(code, exit_codes.REFUSED)
+        self.assertIn("no complete request arrived", err.getvalue())
 
 
 if __name__ == "__main__":

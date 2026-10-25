@@ -3636,7 +3636,8 @@ pressed:
 The optional lines come last: the features, node backups (scheduled on every cluster), the traffic log
 (forwarded from every cluster) and external monitoring. The features come first among them, since node
 backups are one of the features. While the first cluster is not yet serving, its line names the guide's
-step, and **Continue** opens it.
+step, and **Continue** opens it. Once the first node has joined, **Continue** opens *Deploy*: the second node
+is optional, and *Deploy*'s **Back** returns to it.
 
 *Hide getting started* removes the list for the whole installation. For seven days after that,
 *Show getting started* beside *Clusters* brings it back; then that button goes too. The audit record says

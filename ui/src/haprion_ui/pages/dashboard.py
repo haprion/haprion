@@ -432,7 +432,7 @@ def build_router(config: Config) -> APIRouter:
             node_backups_on=backups_on,
             status_access=bool(access),
             features_changed=any(switch.updated_by for switch in switches.values()),
-            guide=guide.current if guide is not None else None,
+            guide=guide.resumed if guide is not None else None,
         )
         return getting_started.checklist(facts)
 

@@ -92,6 +92,21 @@ class Guide:
         return self.step, STEPS[self.step - 1]
 
     @property
+    def resumed(self) -> tuple[int, str, str]:
+        """Where the getting started row's Continue leads: step, name and address (B328).
+
+        The second node is the one step that may be skipped, and Skip is said
+        only in the address - so Continue from the dashboard opened *Second
+        node* again after it had been skipped (review 26-10-24, 12-11). Once
+        the first node has joined, the deploy is what must still happen: the
+        row leads there, and the deploy step's Back returns to the second node.
+        """
+
+        if self.step == 3 and self.busy is None:
+            return 4, STEPS[3], "/first-cluster?first-cluster=" + SKIP
+        return self.step, STEPS[self.step - 1], "/first-cluster"
+
+    @property
     def steps(self) -> list[tuple[int, str, str]]:
         """(number, name, state) per step: `is-done`, `is-current` or ``."""
 

@@ -14,7 +14,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from haprion_ui import auth
+from haprion_ui import auth, first_cluster
 from haprion_ui.getting_started import ClusterFacts, Facts, Vip, checklist, offered_again
 from tests.test_login import LoginTestCase, configuration
 
@@ -178,10 +178,23 @@ class OnTheDashboard(LoginTestCase):
         self.assertNotIn("Set up your first cluster", self.signed_in(role="reader").get("/").text)
 
     def test_a_guide_half_way_is_named_on_the_row(self) -> None:
-        first = item(facts(guide=(3, "Second node")), "Nodes and a cluster")
+        first = item(facts(guide=(2, "First node", "/first-cluster")), "Nodes and a cluster")
         self.assertEqual(
             (first.state, first.action, first.href),
-            ("Step 3: Second node", "Continue", "/first-cluster"),
+            ("Step 2: First node", "Continue", "/first-cluster"),
+        )
+
+    def test_continue_after_the_first_node_leads_to_the_deploy(self) -> None:
+        # Skip lives only in the address, so Continue opened "Second node" again
+        # after it was skipped (review 26-10-24, 12-11). The deploy step's Back
+        # returns to the second node.
+        waiting = first_cluster.Guide(step=3, cluster="alpha")
+        self.assertEqual(waiting.resumed, (4, "Deploy", "/first-cluster?first-cluster=skip"))
+        joining = first_cluster.Guide(step=3, cluster="alpha", busy="Adding node-b")
+        self.assertEqual(joining.resumed, (3, "Second node", "/first-cluster"))
+        row = item(facts(guide=waiting.resumed), "Nodes and a cluster")
+        self.assertEqual(
+            (row.state, row.href), ("Step 4: Deploy", "/first-cluster?first-cluster=skip")
         )
 
     def test_a_hidden_list_is_offered_back_for_a_week(self) -> None:

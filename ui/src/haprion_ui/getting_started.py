@@ -65,7 +65,7 @@ class Facts:
     features_changed: bool
     # The first cluster's guide, while it has a step to show (B328): the
     # number and the name of that step.
-    guide: tuple[int, str] | None = None
+    guide: tuple[int, str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,19 +96,19 @@ def _every(clusters: Iterable[ClusterFacts], test: str) -> bool:
     return bool(chosen) and all(getattr(cluster, test) for cluster in chosen)
 
 
-def _cluster_item(clusters: tuple[ClusterFacts, ...], guide: tuple[int, str] | None) -> Item:
+def _cluster_item(clusters: tuple[ClusterFacts, ...], guide: tuple[int, str, str] | None) -> Item:
     #
     # The guide is this row's next step while it has one (B328): the dashboard
     # stays the dashboard, and the row leads to the guide's page.
     #
     if guide is not None:
-        number, name = guide
+        number, name, href = guide
         return Item(
             "Nodes and a cluster",
             False,
             "No cluster yet" if number == 1 else f"Step {number}: {name}",
             "Set up" if number == 1 else "Continue",
-            "/first-cluster",
+            href,
         )
     serving = [cluster for cluster in clusters if cluster.nodes and cluster.owner]
     if serving:

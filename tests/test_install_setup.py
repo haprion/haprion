@@ -789,8 +789,7 @@ class TheKeyStepsNameTheirKeyForTheWeb(unittest.TestCase):
         for step, table in (("15-platform-dns-keys", "dns_profiles"), ("17-platform-oidc", "oidc")):
             with self.subTest(step=step):
                 text = (INSTALL / "platform" / step).read_text()
-                self.assertIn('install_file "$UI_CONFIG" "root:${PLATFORM_GROUP}" 640', text)
-                self.assertIn(f"\n[{table}]\npublic_key = ", text)
+                self.assertIn(f'add_ui_toml_table "$UI_CONFIG" {table} "public_key = ', text)
                 self.assertIn('systemctl restart "$WEB_UNIT"', text)
                 self.assertNotIn("give the web interface the public key", text)
 

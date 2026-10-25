@@ -94,6 +94,66 @@ def run_lib(script: str, *args: str, cwd: Path | None = None) -> subprocess.Comp
     )
 
 
+class ATableInUiToml(unittest.TestCase):
+    """Review 26-10-24, 15-05: steps 13, 15 and 17 looked for their ui.toml table
+    with a line match. `[oidc]  # comment` is a table it missed, and the step then
+    added a second one, which the web refuses to start with."""
+
+    def setUp(self) -> None:
+        self.config = Path(tempfile.mkdtemp()) / "ui.toml"
+        self.addCleanup(shutil.rmtree, self.config.parent)
+
+    def ask(self, text: str, key: str = "public_key") -> tuple[int, str]:
+        self.config.write_text(text)
+        done = run_lib(
+            'status=0; ui_toml_table "$1" oidc "$2" || status=$?; '
+            'printf "%s %s" "$status" "$UI_TOML_VALUE"',
+            str(self.config),
+            key,
+        )
+        return done.returncode, done.stdout + done.stderr
+
+    def test_the_table_is_found_however_it_is_written(self) -> None:
+        for text in (
+            '[oidc]  # the key the web seals with\npublic_key = "/etc/haprion/oidc-keys/a.pub"\n',
+            '[ oidc ]\npublic_key = "/etc/haprion/oidc-keys/a.pub"\n',
+            'oidc.public_key = "/etc/haprion/oidc-keys/a.pub"\n',
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.ask(text), (0, "0 /etc/haprion/oidc-keys/a.pub"))
+
+    def test_a_table_without_the_key_and_no_table_are_told_apart(self) -> None:
+        self.assertEqual(self.ask("[oidc]\nissuer = 1\n"), (0, "0 "))
+        self.assertEqual(self.ask('[session]\nname = "oidc"\n# [oidc]\n'), (0, "1 "))
+
+    def test_a_file_that_does_not_parse_stops_the_step(self) -> None:
+        code, said = self.ask("[oidc\n")
+        self.assertNotEqual(code, 0)
+        self.assertIn("does not parse", said)
+
+    def test_a_table_is_added_only_when_the_result_parses(self) -> None:
+        added = (
+            'install_file() { printf "%s\\n" "$4" > "$1"; }; '
+            'add_ui_toml_table "$1" oidc "public_key = \\"$2\\""'
+        )
+        self.config.write_text('[session]\nname = "x"\n')
+        done = run_lib(added, str(self.config), "/etc/haprion/oidc-keys/a.pub")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.ask(self.config.read_text()), (0, "0 /etc/haprion/oidc-keys/a.pub"))
+        self.config.write_text('oidc.issuer = "x"\n')
+        refused = run_lib(added, str(self.config), "/etc/haprion/oidc-keys/a.pub")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.config.read_text(), 'oidc.issuer = "x"\n')
+
+    def test_no_step_finds_a_table_with_a_line_match(self) -> None:
+        for step in ("13-platform-traffic-collector", "15-platform-dns-keys", "17-platform-oidc"):
+            with self.subTest(step=step):
+                text = (BASE / "install/platform" / step).read_text()
+                self.assertNotIn("grep -Eq '^", text)
+                self.assertIn("if ui_toml_table ", text)
+                self.assertIn("add_ui_toml_table ", text)
+
+
 class AFileInADirectoryNotThereYet(unittest.TestCase):
     """/etc/haprion did not exist on a new node when the step wrote into it (Fas 18, finding 22)."""
 

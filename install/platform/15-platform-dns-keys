@@ -119,8 +119,8 @@ step "The web interface's public key"
 #
 newest="$(find "$PUBLIC_DIR" -maxdepth 1 -name '*.pub' -type f -printf '%T@ %p\n' | sort -n | tail -n 1 | cut -d' ' -f2-)"
 [[ -n "$newest" ]] || die "${PUBLIC_DIR} holds no public key, though the step above made one"
-if grep -Eq '^\s*\[dns_profiles\]\s*$' "$UI_CONFIG"; then
-    named="$(sed -n '/^\s*\[dns_profiles\]/,/^\s*\[/s/^\s*public_key\s*=\s*"\(.*\)"\s*$/\1/p' "$UI_CONFIG" | head -n 1)"
+if ui_toml_table "$UI_CONFIG" dns_profiles public_key; then
+    named="$UI_TOML_VALUE"
     if [[ -n "$named" && -f "$named" ]]; then
         log "  ok       ${UI_CONFIG} names ${named}"
     else
@@ -128,10 +128,7 @@ if grep -Eq '^\s*\[dns_profiles\]\s*$' "$UI_CONFIG"; then
         warn "  Set it to ${newest}, then restart ${WEB_UNIT}."
     fi
 else
-    install_file "$UI_CONFIG" "root:${PLATFORM_GROUP}" 640 "$(cat "$UI_CONFIG")
-
-[dns_profiles]
-public_key = \"${newest}\""
+    add_ui_toml_table "$UI_CONFIG" dns_profiles "public_key = \"${newest}\""
     log "  added    [dns_profiles] public_key = ${newest}"
     if systemctl is-active --quiet "$WEB_UNIT"; then
         systemctl restart "$WEB_UNIT"

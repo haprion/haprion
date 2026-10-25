@@ -411,9 +411,6 @@ class TheListsAreTheSteps(unittest.TestCase):
         ("13-platform-traffic-collector", '"$COLLECTOR_CONFIG"'): (
             "the nodes, kept by adding and removing them (node_enrollment)"
         ),
-        ("13-platform-traffic-collector", '"$UI_CONFIG"'): "a table added to the operator's file",
-        ("15-platform-dns-keys", '"$UI_CONFIG"'): "a table added to the operator's file",
-        ("17-platform-oidc", '"$UI_CONFIG"'): "a table added to the operator's file",
     }
 
     def test_every_file_a_step_installs_is_refreshed_or_said_why_not(self) -> None:

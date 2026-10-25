@@ -331,10 +331,52 @@ ensure_forced_home() {
 }
 
 #
-# The port the web service listens on, read from ui.toml by the running
-# release's own parser - the file the service itself reads, so a health check
-# cannot ask a port the service was never told.
+# A table in ui.toml (FILE), read by TOML's own parser rather than by a line match:
+# `[oidc]  # comment` is a table a match missed, and the step then added a
+# second one, which the web refuses to start with (review 26-10-24, 15-05).
+# Succeeds when the file has TABLE, with its KEY - empty when it has none - in
+# UI_TOML_VALUE; fails when it has not. A file that does not parse stops the
+# step.
 #
+ui_toml_table() {
+    local file="$1" table="$2" key="${3:-}" status=0
+    # shellcheck disable=SC2034 # read by the steps that call this
+    UI_TOML_VALUE="$(python3 -I -c 'import sys
+import tomllib
+
+path, table, key = sys.argv[1:4]
+try:
+    with open(path, "rb") as handle:
+        section = tomllib.load(handle).get(table)
+except (OSError, tomllib.TOMLDecodeError) as error:
+    print(error, file=sys.stderr)
+    sys.exit(2)
+if not isinstance(section, dict):
+    sys.exit(1)
+value = section.get(key) if key else None
+print(value if isinstance(value, str) else "")' "$file" "$table" "$key")" || status=$?
+    (( status <= 1 )) || die "${file} does not parse as TOML; correct it and run the step again"
+    return "$status"
+}
+
+#
+# ui.toml (FILE) with TABLE and its LINES added at the end - a TOML file may always
+# end with a new table - and proved to parse before it is installed.
+#
+add_ui_toml_table() {
+    local file="$1" table="$2" lines="$3" content
+    content="$(cat "$file")
+
+[${table}]
+${lines}"
+    printf '%s\n' "$content" | python3 -I -c 'import sys
+import tomllib
+
+tomllib.loads(sys.stdin.read())' \
+        || die "${file} would not parse with [${table}] added; nothing was changed"
+    install_file "$file" "root:${PLATFORM_GROUP}" 640 "$content"
+}
+
 #
 # The import package of the UI release a Python interpreter belongs to, asked of
 # the release itself: the package behind its `haprion-worker` command. A release

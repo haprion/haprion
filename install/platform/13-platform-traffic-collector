@@ -218,13 +218,10 @@ step "The web interface"
 # end with a new one. A table that is there is the operator's and is left as
 # it is, `enabled = false` included.
 #
-if grep -Eq '^\s*\[traffic_logs\]\s*$' "$UI_CONFIG"; then
+if ui_toml_table "$UI_CONFIG" traffic_logs; then
     log "  ok       ${UI_CONFIG} has a [traffic_logs] table"
 else
-    install_file "$UI_CONFIG" "root:${PLATFORM_GROUP}" 640 "$(cat "$UI_CONFIG")
-
-[traffic_logs]
-enabled = true
+    add_ui_toml_table "$UI_CONFIG" traffic_logs "enabled = true
 directory = \"${MIRROR}\""
     log "  added    [traffic_logs] enabled = true"
     if systemctl is-active --quiet "$WEB_UNIT"; then

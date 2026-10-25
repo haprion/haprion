@@ -3636,7 +3636,7 @@ def _login_again(request: Request, config: Config, *, error: str | None = None) 
         httponly=True,
         secure=config.session.cookie_secure,
         samesite="lax",
-        path="/login",
+        path="/",
     )
     return response
 

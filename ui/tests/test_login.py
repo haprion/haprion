@@ -696,6 +696,23 @@ class TheCookiesCannotBePlantedFromASiblingDomain(LoginTestCase):
                 self.assertIn("Secure", header)
                 self.assertNotIn("Domain=", header)
 
+    def test_a_refused_sign_in_gives_the_form_cookie_the_same_attributes(self) -> None:
+        # The refusal draws the form again with a fresh cookie; at Path=/login
+        # it sat beside the first one, and the browser sent both.
+        client = self.client()
+        refused = self.sign_in(client, password="wrong")
+        header = refused.headers["set-cookie"]
+        self.assertTrue(header.startswith("__Host-haprion_ui_login="), header)
+        self.assertIn("Path=/;", header + ";")
+        self.assertEqual(
+            [
+                cookie.path
+                for cookie in client.cookies.jar
+                if cookie.name == auth.PRE_SESSION_COOKIE
+            ],
+            ["/"],
+        )
+
     def test_a_plain_named_session_cookie_is_not_a_session(self) -> None:
         signed_in = self.client()
         self.sign_in(signed_in)

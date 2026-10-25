@@ -102,3 +102,40 @@ class HowFreshACluster_sCountriesAre(unittest.TestCase):
         )
 
         self.assertEqual(result["geo"], {"database": "2026-10-01", "published": "2026-09-14"})
+
+
+class AVersion_sOwnCountries(unittest.TestCase):
+    """A revert reads the networks the version ran, not today's database (B366)."""
+
+    FILES = {
+        "managed/maps/geo-se.lst": b"# IPFire Location 2026-01-02 (CC BY-SA 4.0) SE\n192.0.2.0/24\n",
+        "managed/maps/geo-no.lst": b"# IPFire Location 2026-01-02 (CC BY-SA 4.0) NO\n198.51.100.0/24\n",
+    }
+
+    def today(self, countries: object) -> geo.Countries:
+        self.asked = countries
+        return geo.Countries(stamp="2026-10-25", networks={"SE": ("203.0.113.0/24",)})
+
+    def test_the_version_s_files_are_read_back_as_written(self) -> None:
+        read = geo.tree_reader(self.FILES, self.today)
+
+        countries = read({"SE", "NO"})
+
+        self.assertEqual(countries.stamp, "2026-01-02")
+        self.assertEqual(
+            dict(countries.networks), {"NO": ("198.51.100.0/24",), "SE": ("192.0.2.0/24",)}
+        )
+        self.assertFalse(hasattr(self, "asked"))
+
+    def test_a_country_the_version_has_no_file_for_reads_all_of_them_today(self) -> None:
+        read = geo.tree_reader(self.FILES, self.today)
+
+        countries = read({"SE", "DK"})
+
+        self.assertEqual(countries.stamp, "2026-10-25")
+        self.assertEqual(self.asked, {"SE", "DK"})
+
+    def test_a_file_for_another_country_is_not_taken(self) -> None:
+        files = {"managed/maps/geo-se.lst": self.FILES["managed/maps/geo-no.lst"]}
+
+        self.assertEqual(geo.tree_reader(files, self.today)({"SE"}).stamp, "2026-10-25")

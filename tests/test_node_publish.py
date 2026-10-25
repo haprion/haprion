@@ -9,17 +9,18 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
-from haprion import node_publish
+from haprion import crs, node_publish
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import revert, revert_helper
 from haprion.config import Cluster, load_policy, load_runtime_config
 from haprion.helper_protocol import HelperRequest
 from haprion.repo_snapshot import read_tree_files, resolve_head
 from haprion.version_history import count_versions
-from tests.test_changes_publish_objects import ObjectsPublishFixture
+from tests.test_changes_publish_objects import ObjectsPublishFixture, proxy
 from tests.test_publish_helper import HAPROXY_CFG, Recorder, git
 
 REQUEST = HelperRequest(
@@ -203,3 +204,46 @@ class PublishingTheNodeList(ObjectsPublishFixture):
             self.assertFalse(answer["result"]["changed"])
             self.assertEqual(count_versions(self.repo), before)
             self.assertEqual(len(self.released("node-c")), 1)
+
+    def test_a_revert_gives_back_the_rule_set_the_version_ran(self) -> None:
+        """The rule set is configuration; today's installed one is not (B366, review 26-10-25 1-01).
+
+        Version A ran rule set 1.0.0. The package was upgraded and the next
+        publish carried 2.0.0 and nothing else. Going back to A is a new
+        version with A's rules - not "already holds the content" made from
+        today's.
+        """
+
+        def rules(version: str) -> crs.RuleSet:
+            return crs.RuleSet(
+                version=version,
+                files={
+                    "VERSION": f"{version}\n".encode(),
+                    "crs-setup.conf": b"# setup\n",
+                    "rules/REQUEST-901-INITIALIZATION.conf": f"# {version}\n".encode(),
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.site(Path(raw))
+            shop = self.repo / "managed/proxies/shop.yaml"
+            shop.parent.mkdir(parents=True, exist_ok=True)
+            shop.write_text(
+                proxy("shop", "shop.example.com").replace("routes:", "waf: {mode: block}\nroutes:")
+            )
+            git(self.repo, "add", "-A")
+            git(self.repo, "commit", "-qm", "The shop with the engine")
+            with mock.patch.object(crs, "installed", lambda: rules("1.0.0")):
+                first = self.publish(self.cluster(policy_path))
+            commit = git(self.repo, "rev-parse", "HEAD").strip()
+            with mock.patch.object(crs, "installed", lambda: rules("2.0.0")):
+                upgraded = self.publish(self.cluster(policy_path))
+                self.assertTrue(upgraded["changed"])
+
+                code, answer = self.revert(policy_path, int(str(first["version"])), commit)
+
+            self.assertEqual(code, 0, answer)
+            self.assertTrue(answer["result"]["changed"])
+            self.assertEqual((self.repo / "managed/waf/crs/VERSION").read_bytes(), b"1.0.0\n")
+            (released,) = (self.publish_path / "current").rglob("REQUEST-901-INITIALIZATION.conf")
+            self.assertEqual(released.read_bytes(), b"# 1.0.0\n")

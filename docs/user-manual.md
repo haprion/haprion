@@ -123,7 +123,8 @@ other objects does not hold anything back.
 
 **Going back.** *Publish this version* on an older version makes its configuration the newest version
 again. The cluster keeps the nodes it has now. Their keepalived settings, shared counters and exporter
-addresses are made again for today's nodes, so a node added since stays in service.
+addresses are made again for today's nodes, so a node added since stays in service. The version's WAF
+rule set and country networks come back as it ran them, not as installed today.
 
 **Publish & deploy.** When a cluster has saved changes, its dashboard card offers *Publish & deploy N
 changes* instead of *Deploy configuration*. A dialog lists the changes and takes the comment. One job then
@@ -1617,7 +1618,8 @@ figure, with every node's on hover - and marks a cluster when any node is at 85 
   host only.
 - Publishing compiles the rules on the management host before they leave it, and copies the rule set into
   the release's `waf/`. Every publish of a cluster with rules takes up the rule set installed at that
-  moment, whatever the publish changes. A cluster therefore runs the rule set it was published with.
+  moment, whatever the publish changes. A cluster therefore runs the rule set it was published with, and
+  going back to an older version gives back that version's rule set.
 - The form offers the engine on an object only when the manager and every node of its cluster have it.
   Otherwise the *WAF* group says where it is missing.
 - A node starts the engine when a release carries rules, and stops it when one no longer does. It refuses

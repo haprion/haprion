@@ -50,16 +50,25 @@ type Addresses = Callable[[Cluster], Sequence[tuple[str, str]]]
 
 
 def generated(
-    base_files: Mapping[str, bytes], cluster: Cluster, *, addresses: Addresses = peers.addresses
+    base_files: Mapping[str, bytes],
+    cluster: Cluster,
+    *,
+    addresses: Addresses = peers.addresses,
+    rule_set: Callable[[], crs.RuleSet | None] | None = None,
+    country_reader: geo.CountryReader | None = None,
 ) -> dict[str, bytes]:
-    """The managed layer for `base_files` and the cluster's node list as it is now."""
+    """The managed layer for `base_files` and the cluster's node list as it is now.
+
+    The rule set and the countries' networks are today's unless the caller
+    says otherwise; a revert passes the version's own (B366).
+    """
 
     return managed_files(
         base_files,
         network_document=network_of(base_files, doing=WORDS.doing),
         cluster=cluster,
-        country_reader=geo.location_database(),
-        rule_set=crs.installed,
+        country_reader=country_reader or geo.location_database(),
+        rule_set=rule_set or crs.installed,
         node_addresses=lambda: addresses(cluster),
     )
 

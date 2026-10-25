@@ -186,3 +186,29 @@ class EachRuleAsItIsWritten(unittest.TestCase):
         }
         self.assertEqual(written, set(found))
         self.assertTrue(all(link.operator for d in found.values() for link in d.links))
+
+
+class ADamagedRuleSet(unittest.TestCase):
+    def test_is_refused_like_any_configuration_error(self) -> None:
+        """Every publish path refuses a ConfigError; a RuleSetError used to escape as a traceback."""
+
+        from haprion.config import ConfigError
+
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "VERSION").write_text("not a version\n")
+            with self.assertRaises(ConfigError):
+                crs.installed(Path(raw))
+
+    def test_a_version_s_own_rule_set_is_read_from_its_tree(self) -> None:
+        files = {
+            "managed/waf/crs/VERSION": b"4.1.0\n",
+            "managed/waf/crs/rules/REQUEST-901-INITIALIZATION.conf": b"# rules\n",
+            "managed/proxies/shop.yaml": b"name: shop\n",
+        }
+
+        rule_set = crs.from_tree(files)
+
+        assert rule_set is not None
+        self.assertEqual(rule_set.version, "4.1.0")
+        self.assertEqual(set(rule_set.files), {"VERSION", "rules/REQUEST-901-INITIALIZATION.conf"})
+        self.assertIsNone(crs.from_tree({"managed/proxies/shop.yaml": b"name: shop\n"}))

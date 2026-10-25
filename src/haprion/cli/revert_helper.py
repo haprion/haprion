@@ -41,7 +41,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, TextIO
 
-from haprion import exit_codes, node_publish
+from haprion import crs, exit_codes, geo, node_publish
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     VALIDATION_CERTIFICATE,
@@ -426,10 +426,20 @@ def _revert(
     #
     # The generated layer made again for today's nodes (B360). A version with no
     # network description has no generated layer from the product to remake.
+    # The rule set and the countries' networks are the version's own (B366):
+    # going back to a release that was good must give back what it ran, and
+    # must not depend on what is installed today. Only what the version does
+    # not carry is read from the manager.
     #
     if network_location() in target_files:
+        carried = target_files
         try:
-            managed = node_publish.generated(target_files, cluster)
+            managed = node_publish.generated(
+                target_files,
+                cluster,
+                rule_set=lambda: crs.from_tree(carried) or crs.installed(),
+                country_reader=geo.tree_reader(carried, geo.location_database()),
+            )
         except Refusal as exc:
             return refuse(exc.code, str(exc), exc.exit_code)
         except ConfigError as exc:

@@ -11,9 +11,11 @@ from __future__ import annotations
 import re
 import stat
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from haprion.config import ConfigError
 from haprion.digits import is_digits
 
 ROOT = Path("/usr/share/haprion/crs")
@@ -27,8 +29,8 @@ MAX_FILES = 128
 MAX_BYTES = 3 * 1024 * 1024
 
 
-class RuleSetError(Exception):
-    pass
+class RuleSetError(ConfigError):
+    """A rule set that cannot be read; a refusal like any other configuration error."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +75,24 @@ def installed(root: Path = ROOT) -> RuleSet | None:
     if sum(len(content) for content in files.values()) > MAX_BYTES:
         raise RuleSetError(f"{root} is larger than a rule set is")
     return RuleSet(version=version, files=files)
+
+
+def from_tree(files: Mapping[str, bytes], prefix: str = "managed/waf/crs/") -> RuleSet | None:
+    """The rule set a version carries, or None when it carries none.
+
+    A revert gives back the rule set the version ran, not the one installed
+    today (B366): which rule set a cluster runs is in its release history.
+    """
+
+    carried = {
+        path[len(prefix) :]: content for path, content in files.items() if path.startswith(prefix)
+    }
+    if "VERSION" not in carried:
+        return None
+    version = carried["VERSION"].decode("ascii", "replace").strip()
+    if not VERSION.fullmatch(version):
+        raise RuleSetError(f"{prefix}VERSION does not name a version")
+    return RuleSet(version=version, files=carried)
 
 
 def _read(path: Path) -> bytes:

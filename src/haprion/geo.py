@@ -132,3 +132,34 @@ def published_stamp(files: Mapping[str, bytes], prefix: str = "managed/maps/") -
         if found:
             stamps.append(found.group(1))
     return min(stamps) if stamps else None
+
+
+def tree_reader(
+    files: Mapping[str, bytes], fallback: CountryReader, prefix: str = "managed/maps/"
+) -> CountryReader:
+    """A reader over the country files a version carries, `fallback` for the rest.
+
+    A revert gives back the networks the version ran, not today's database
+    (B366). A country the version has no file for - it named none, or the
+    file is damaged - is read from `fallback`, all of them at once, so one
+    answer has one stamp.
+    """
+
+    def read(countries: Collection[str]) -> Countries:
+        stamps: set[str] = set()
+        networks: dict[str, tuple[str, ...]] = {}
+        for country in sorted(countries):
+            content = files.get(f"{prefix}{file_name(country)}")
+            if content is None:
+                return fallback(countries)
+            header, _, body = content.decode("utf-8", "replace").partition("\n")
+            found = STAMP.match(header)
+            if found is None or not header.endswith(f" {country}"):
+                return fallback(countries)
+            stamps.add(found.group(1))
+            networks[country] = tuple(line for line in body.split("\n") if line)
+        if len(stamps) > 1:
+            return fallback(countries)
+        return Countries(stamp=stamps.pop() if stamps else "", networks=networks)
+
+    return read

@@ -1068,6 +1068,26 @@ class TheFirstDeployWaitsForTheVip(unittest.TestCase):
         rows = {row["name"]: row for row in document["result"]["nodes"]}
         self.assertEqual(rows["node-b"]["error"]["code"], "target_not_reached")
 
+    def test_split_brain_when_the_wait_ends_is_no_done(self) -> None:
+        """Review 26-10-25, 13-03: a reading refused before the first node read as done after."""
+
+        cluster = self.nobody()
+        paused: list[float] = []
+
+        def pause(seconds: float) -> None:
+            paused.append(seconds)
+            if len(paused) == 2:
+                cluster.split_brain()
+
+        code, shown = deploy(cluster, expected_hash=TARGET_HASH, pause=pause)
+
+        self.assertNotEqual(code, 0, shown)
+        self.assertIn("split brain", shown)
+        self.assertNotIn("RESULT: OK", shown)
+        document = LAST_REPORT[0].as_envelope("alpha")
+        self.assertEqual(document["outcome"], "partial")
+        self.assertIn("deploy_blocked", [warning["code"] for warning in document["warnings"]])
+
     def test_nothing_deployed_is_not_waited_for(self) -> None:
         cluster = self.nobody()
         for node in cluster.nodes:

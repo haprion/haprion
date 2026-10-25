@@ -340,18 +340,7 @@ def run(
         )
 
         if step.action is Action.BLOCKED:
-            writer.write(f"\nERROR: {step.reason}\n")
-            # Partial when a node was deployed before the block; see next_step.
-            report.outcome = step.outcome or Outcome.BLOCKED
-            report.final_summary = status.summary
-            report.error = Message(code="deploy_blocked", message=step.reason)
-            if step.outcome is Outcome.PARTIAL:
-                writer.write(
-                    "Some nodes carry the target and some do not. "
-                    "Run the same command again once the cluster allows it.\n"
-                )
-            _settle(status, report, target)
-            return DeployRun(step.exit_code, report)
+            return _blocked(writer, status, step, report, target)
 
         #
         # After the cluster-wide blocks and before the first node. Split brain
@@ -402,6 +391,13 @@ def run(
                 )
                 if again.action is Action.FINISHED:
                     step = again
+                elif again.action is Action.BLOCKED:
+                    #
+                    # Split brain, or a VIP nobody holds, when the wait ended:
+                    # what a reading before the first node is refused on is no
+                    # done after the last (review 26-10-25, 13-03).
+                    #
+                    return _blocked(writer, status, again, report, target)
             _settle(status, report, target)
             return DeployRun(_report(writer, status, step, report), report)
 
@@ -835,6 +831,25 @@ def _record_skip(report: DeployReport, step: Step) -> None:
     else:
         entry.outcome = "current"
         entry.verified = True
+
+
+def _blocked(
+    writer: TextIO, status: ClusterStatus, step: Step, report: DeployReport, target: Target | None
+) -> DeployRun:
+    """A reading the deploy may not go on from, before the first node or after the last."""
+
+    writer.write(f"\nERROR: {step.reason}\n")
+    # Partial when a node was deployed before the block; see next_step.
+    report.outcome = step.outcome or Outcome.BLOCKED
+    report.final_summary = status.summary
+    report.error = Message(code="deploy_blocked", message=step.reason)
+    if step.outcome is Outcome.PARTIAL:
+        writer.write(
+            "Some nodes carry the target and some do not. "
+            "Run the same command again once the cluster allows it.\n"
+        )
+    _settle(status, report, target)
+    return DeployRun(step.exit_code, report)
 
 
 def _report(writer: TextIO, status: ClusterStatus, step: Step, report: DeployReport) -> int:

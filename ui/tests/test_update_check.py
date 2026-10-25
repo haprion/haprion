@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import http.server
 import json
 import threading
@@ -167,6 +168,19 @@ class TheAskHasADeadline(unittest.TestCase):
             with self.assertRaisesRegex(update_check.NoAnswer, "took longer"):
                 update_check.fetch("0.9.2", url=url)
             self.assertLess(time.monotonic() - started, 1.0)
+
+
+class ABrokenAnswerIsNoAnswer(unittest.TestCase):
+    """Review 26-10-24, 07-08: a protocol error escaped, and every pass asked again."""
+
+    def test_an_answer_cut_short_or_without_a_status_line(self) -> None:
+        for broken in (http.client.IncompleteRead(b"{"), http.client.BadStatusLine("garbage")):
+            with (
+                self.subTest(type(broken).__name__),
+                mock.patch("urllib.request.urlopen", side_effect=broken),
+                self.assertRaises(update_check.NoAnswer),
+            ):
+                update_check.fetch("0.9.2")
 
 
 class ThePollerDoesNotWait(OnePass):

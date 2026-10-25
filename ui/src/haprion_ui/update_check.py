@@ -19,6 +19,7 @@ version in the header when the release is newer than the one running.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import re
@@ -103,7 +104,12 @@ def fetch(installed: str, *, url: str = URL) -> bytes:
             body = _read_by(response, deadline)
     except urllib.error.HTTPError as exc:
         raise NoAnswer(f"GitHub answered {exc.code}") from exc
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
+        #
+        # A broken answer - cut short, or no status line - is no answer too.
+        # It was not recorded as a failure, so the check stayed due and asked
+        # again on every pass (review 26-10-24, 07-08).
+        #
         raise NoAnswer(f"GitHub could not be reached: {exc}") from exc
     if len(body) > MAX_BYTES:
         raise NoAnswer("the answer is larger than one release")

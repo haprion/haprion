@@ -21,7 +21,7 @@ from haprion import cert_upload
 from haprion.certificates import DELIMITER
 from haprion.dns_profile_keys import generate, render_public_key
 
-from haprion_ui import auth, certificate_import_form, db
+from haprion_ui import auth, certificate_import_form, db, operations
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
 from tests.test_login import LoginTestCase, configuration
@@ -320,6 +320,21 @@ class TheRowUpload(ImportPageTestCase):
         )
         self.assertEqual(opened.data, FAKE_CERT)
         self.assertIsNone(opened.password)
+        #
+        # The key stays: a file that carries one anyway - a PKCS#12 this page
+        # cannot read - is refused by the helper (review 26-10-24, 09-07).
+        #
+        self.assertEqual(payload["key"], "keep")
+        prepared = operations.prepare(
+            operation="cert_import", cluster=None, request_id=uuid4(), payload=payload
+        )
+        self.assertEqual(json.loads(prepared.request)["parameters"]["key"], "keep")
+
+    def test_the_import_page_asks_for_no_key_to_be_kept(self) -> None:
+        response = self.post(self.writing_client())
+
+        self.assertEqual(response.status_code, 303, response.text)
+        self.assertNotIn("key", self.queued[0]["payload"])
 
     def test_a_file_with_a_key_is_refused_and_pointed_at_the_import_page(self) -> None:
         response = self.upload(self.writing_client(), "imported.example.net", FAKE_CERT + FAKE_KEY)

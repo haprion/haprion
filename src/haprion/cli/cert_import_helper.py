@@ -63,6 +63,7 @@ PARAMETERS = frozenset(
         "formats",
         "interface",
         "authority",
+        "key",
     }
 )
 AUTHORITY_SOURCES = ("upload", "ndes")
@@ -142,6 +143,9 @@ def main(
             raise HelperProtocolError(
                 "a CA certificate goes to clusters only: no receivers, not the interface"
             )
+        keep_key = request.parameters.get("key")
+        if keep_key not in (None, "keep") or (keep_key is not None and authority is not None):
+            raise HelperProtocolError("parameters.key may only be keep, for a certificate")
     except (HelperProtocolError, binascii.Error, ValueError) as exc:
         return refuse("bad_input", str(exc), exit_codes.REFUSED)
 
@@ -226,6 +230,19 @@ def main(
             )
             document, exit_code = result_envelope(result, request_id=request.request_id)
             return write_document(writer, document, exit_code)
+        if keys and keep_key == "keep":
+            #
+            # The row's upload promises the key stays. A key in the file -
+            # a PKCS#12 the page cannot read for one - is a new pair, and that
+            # is Import certificate's (review 26-10-24, 09-07).
+            #
+            return refuse(
+                "bad_input",
+                "the file holds a private key, and this upload keeps the key the manager "
+                "holds. Upload only the certificate, or use Import certificate to replace "
+                "the key as well.",
+                exit_codes.REFUSED,
+            )
         if not keys:
             existing = stored_key(store, certificate_id)
             if existing is None:

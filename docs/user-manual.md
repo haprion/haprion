@@ -2112,7 +2112,7 @@ command-line import.
 **A certificate without a key.** A file without a key is accepted for a name whose key the manager
 already holds. That covers an imported certificate renewed on the same key, and the certificate a CA
 returns for a signing request made here. *Renew…* under the list, with that row ticked, takes exactly
-this: the certificate only. A file holding a key is refused there and pointed to the import page,
+this: the certificate only. A file holding a key, in any format, is refused there and pointed to the import page,
 where replacing the key is the stated intent. Enrollment from a Microsoft CA needs no file at all
 ([Preparing Microsoft AD CS / NDES for CSR enrollment](#preparing-microsoft-ad-cs--ndes-for-csr-enrollment)).
 

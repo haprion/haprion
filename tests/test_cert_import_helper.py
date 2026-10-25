@@ -367,6 +367,27 @@ class TheHelper(HelperFixture):
         self.assertIn("haprion-cert-import", document["error"]["message"])
         self.assertFalse((self.store / "shop.example").exists())
 
+    def test_a_file_with_a_key_is_refused_when_the_key_is_to_be_kept(self) -> None:
+        """Review 26-10-24, 09-07: a PKCS#12 without a password replaced the key quietly."""
+
+        code, _, errors = self.invoke(self.request(self.pair()))
+        self.assertEqual(code, 0, errors)
+        kept = (self.store / "shop.example" / PRIVKEY).read_bytes()
+        bundle = self.pki.pkcs12("").read_bytes()
+
+        code, document, _ = self.invoke(self.request(bundle, key="keep"))
+
+        self.assertEqual(code, 65)
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertIn("Import certificate", document["error"]["message"])
+        self.assertEqual((self.store / "shop.example" / PRIVKEY).read_bytes(), kept)
+
+    def test_only_keep_is_asked_for(self) -> None:
+        for wrong in ("replace", True):
+            with self.subTest(wrong=wrong):
+                code, document, _ = self.invoke(self.request(self.pair(), key=wrong))
+                self.assertEqual((code, document["error"]["code"]), (65, "bad_input"))
+
     def test_a_key_that_does_not_belong_leaves_nothing_behind(self) -> None:
         data = self.pki.leaf.read_bytes() + self.pki.intermediate_key.read_bytes()
         code, document, _ = self.invoke(self.request(data))

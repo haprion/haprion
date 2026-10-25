@@ -691,6 +691,7 @@ def build_router(config: Config) -> APIRouter:
                 data=data,
                 clusters=[t.name for t in row.targets if t.kind == "cluster"],
                 receivers=[t.name for t in row.targets if t.kind == "receiver"],
+                keep_key=True,
             )
         except certificate_form.FormProblem as problem:
             return _refusal_page(request, config, str(problem), back=back)

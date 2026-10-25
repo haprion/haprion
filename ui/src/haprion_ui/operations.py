@@ -515,6 +515,7 @@ def _certificate_operation(
             "formats",
             "interface",
             "authority",
+            "key",
         )
         certificate_id = payload.get("id")
         if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
@@ -557,6 +558,13 @@ def _certificate_operation(
         interface = _flag(payload, "interface", default=False)
         clusters, receivers = _targets(payload, interface=interface)
         formats = _formats(payload, receivers)
+        #
+        # A row's upload keeps the key the manager holds (review 26-10-24,
+        # 09-07): the helper refuses a file that brings one.
+        #
+        keep = payload.get("key")
+        if keep not in (None, "keep") or (keep is not None and authority is not None):
+            raise BadPayload("key may only be keep, for a certificate")
         return Prepared(
             argv=(cert_upload.SUDO, *SUDO_FLAGS, cert_upload.HELPER),
             request=cert_upload.build_request(
@@ -569,6 +577,7 @@ def _certificate_operation(
                 formats=formats,
                 interface=interface,
                 authority=authority if isinstance(authority, str) else None,
+                keep_key=keep == "keep",
             ),
         )
 

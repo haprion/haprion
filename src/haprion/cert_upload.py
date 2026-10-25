@@ -155,11 +155,14 @@ def build_request(
     formats: Mapping[str, str] | None = None,
     interface: bool = False,
     authority: str | None = None,
+    keep_key: bool = False,
 ) -> str:
     """The bounded request the worker sends. Null cluster, by contract.
 
     `authority` (B276) asks for a CA certificate: `upload` with the box as
-    usual, `ndes` with no box at all.
+    usual, `ndes` with no box at all. `keep_key` asks for a certificate on the
+    key the manager already holds, and a file that carries a key of its own is
+    then refused.
     """
 
     parameters: dict[str, Any] = {"certificate": certificate_id}
@@ -176,6 +179,8 @@ def build_request(
         parameters["interface"] = True
     if authority is not None:
         parameters["authority"] = authority
+    if keep_key:
+        parameters["key"] = "keep"
     return json.dumps(
         {
             "schema_version": 1,

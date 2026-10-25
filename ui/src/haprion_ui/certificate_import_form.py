@@ -248,8 +248,13 @@ def sealed_payload(
     clusters: Iterable[str] = (),
     receivers: Iterable[str] = (),
     formats: dict[str, str] | None = None,
+    keep_key: bool = False,
 ) -> dict[str, Any]:
-    """The payload a `cert_import` job carries: the box, and what binds it."""
+    """The payload a `cert_import` job carries: the box, and what binds it.
+
+    `keep_key` is the row's upload: a certificate on the key the manager
+    holds, which the helper holds it to, since the page reads no PKCS#12.
+    """
 
     try:
         box = cert_upload.seal_upload(
@@ -266,6 +271,8 @@ def sealed_payload(
     }
     if formats:
         payload["formats"] = formats
+    if keep_key:
+        payload["key"] = "keep"
     return payload
 
 

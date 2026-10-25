@@ -432,7 +432,7 @@ step "Node scripts"
 # rather than recording the edited bytes as the installation.
 #
 dpkg-query -W -f='${Status}' haprion-node 2>/dev/null | grep -q "install ok installed" \
-    || die "the haprion-node package is not installed; install it with tools/install-node-package"
+    || die "the haprion-node package is not installed; install it with apt install haprion-node (from a source tree: tools/install-node-package)"
 changed="$(node_package_changes)"
 if [[ -n "$changed" ]]; then
     warn "dpkg --verify haprion-node:"

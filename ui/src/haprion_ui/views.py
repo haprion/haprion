@@ -3745,7 +3745,10 @@ def _attention(request: Request, config: Config) -> attention.Attention:
     with request.app.state.pool.connection() as connection:
         features.read_in(db.feature_switches(connection))
         recent = db.recent_jobs(connection, limit=200)
-        items += attention.from_jobs(recent)
+        known = {job.id for job in recent}
+        items += attention.from_jobs(
+            recent + [job for job in db.attention_evidence(connection) if job.id not in known]
+        )
         cluster_list_at = db.cluster_list_observed(connection)
         items += attention.from_manager(
             cluster_list_at=cluster_list_at,

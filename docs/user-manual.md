@@ -3282,7 +3282,7 @@ role, `delete` being withheld would mean nothing.
 #### What it removes, and what it will not
 
 - **Finished jobs older than seven days.** A management request older than that has been acted on or
-  superseded, and what it did is in the audit trail. Three kinds of jobs stay, whatever their age:
+  superseded, and what it did is in the audit trail. These jobs stay, whatever their age:
   - **never a `pending` or `running` job.** Those are the states that stop a second operation starting
     against a cluster; removing one would let it start while the cluster is still being changed. Every
     other state always has a finish time, so the age test cannot match a row without one;
@@ -3297,6 +3297,13 @@ role, `delete` being withheld would mean nothing.
     of the certificate form. In the same way, the publish job of a draft, a saved network description or
     a settings change stays as long as that draft or change exists: the interface clears them by
     reading it.
+  - **never the newest publish and the newest deploy of each cluster.** A WAF exception's *Not working*
+    is judged from when a deploy carried it; with both removed, an exception that does not work would
+    read as covering its finding;
+  - **never the newest finished job of each step on each thing** - a cluster's deploy, one certificate's
+    issue, one object's server state. *Needs attention* reads a failure from it until the same step on
+    the same thing works again; removed, a failure nothing had settled would leave the list, and
+    `/status/attention.json` with it.
 - **Audit records older than two years** (730 days), except each certificate's newest
   `certificate_export` or `certificate_download` record. The registry row reads from that record which
   version was last taken out, so a certificate nobody fetched for two years does not start to read as
@@ -3646,7 +3653,7 @@ box is not shown.
   with 25 days left (certbot renews at 30, so 25 means renewal is failing). Under seven days it is
   critical.
 - **Jobs**: the latest job of an operation on a cluster that failed, partly worked, was blocked or ended
-  *unknown* - until a later run of the same operation works.
+  *unknown* - until a later run of the same operation on the same thing works, however long that takes.
 - **Clusters** with a fault no single node shows: a VIP in split brain or with no owner while every node
   reports Online, or a status reading that failed or returned no node.
 - **Nodes** that are down or have a warning - for example *Counters not shared*. A node that is only

@@ -39,7 +39,8 @@ from haprion.traffic_collector import (
 )
 from psycopg.types.json import Jsonb
 
-from haprion_ui import auth, db, metrics, search_index, timing, traffic_logs
+from haprion_ui import attention, auth, db, metrics, search_index, timing, traffic_logs
+from haprion_ui import jobs as jobs_module
 
 DSN = os.environ.get("HAPRION_UI_TEST_DATABASE_DSN", "")
 
@@ -510,6 +511,8 @@ class ARealDatabase(unittest.TestCase):
             ("removed-profile", "dns_profile_apply", {"profile": "gone", "revision": 1}),
             ("older-deploy", "deploy", {}),
             ("deploy", "deploy", {}),
+            # The newest apply of all, which Needs attention reads (05-01).
+            ("newest-of-the-step", "dns_profile_apply", {"profile": "other", "revision": 1}),
         )  # fmt: skip
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -586,6 +589,148 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(removable, {"alpha-old-publish", "alpha-old-deploy"})
             connection.rollback()
 
+    #
+    # (operation, cluster, payload, state, result) in the order they were made.
+    # Each step and subject of what Needs attention keys a failure on, and the
+    # shapes the Python reading tells apart: lists in another order, a list with
+    # a number in it, a field that is no string, Publish & deploy with and
+    # without its deploy's answer, a held job discarded, a job still queued.
+    #
+    ATTENTION_JOBS: tuple[tuple[str, str | None, dict[str, Any], str, Any], ...] = (
+        ("cert_issue", None, {"domain": "a.example.com"}, "failed", None),
+        ("cert_issue", None, {"domain": "b.example.com"}, "done", None),
+        ("cert_publish", None, {"certificates": ["b", "a"]}, "failed", None),
+        ("cert_publish", None, {"certificates": ["a", "b"]}, "done", None),
+        ("cert_delete", None, {"certificates": ["a", 1]}, "failed", None),
+        ("cert_delete", None, {}, "done", None),
+        ("cert_target", None, {"certificates": []}, "partial", None),
+        ("server_state", "alpha", {"object": "shop"}, "partial", None),
+        ("dynamic_unblock", "alpha", {"object": {"name": "shop"}}, "failed", None),
+        ("changes_publish", "alpha", {"deploy": True}, "failed",
+         {"publish": {"outcome": "done"}, "step": "deploy"}),
+        ("changes_publish", "alpha", {"deploy": True}, "done", {"publish": "not an answer"}),
+        ("deploy", "alpha", {}, "done", None),
+        ("changes_publish", "beta", {"deploy": True}, "blocked",
+         {"publish": {}, "operation": "cert_deploy_cluster"}),
+        ("cluster_node", "beta", {"deploy": True}, "unknown", {"node": {}}),
+        ("cluster_node", "beta", {"deploy": False}, "done", {"node": {}}),
+        ("deploy", "beta", {}, "done", None),
+        ("deploy", "beta", {}, "blocked", {"error": {"code": "held_discarded"}}),
+        ("deploy", "beta", {}, "pending", None),
+    )  # fmt: skip
+
+    def _attention_jobs(self, cursor: Any) -> dict[int, int]:
+        """The jobs above, a minute apart and a month old; position by id."""
+
+        made = {}
+        for position, (operation, cluster, payload, state, result) in enumerate(
+            self.ATTENTION_JOBS
+        ):
+            finished = state not in ("pending", "running")
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key, state, result, "
+                "created_at, started_at, finished_at) values (%(operation)s, %(cluster)s, "
+                "%(payload)s, %(key)s, %(state)s, %(result)s, %(at)s, %(started)s, %(finished)s) "
+                "returning id",
+                {
+                    "operation": operation,
+                    "cluster": cluster,
+                    "payload": json.dumps(payload),
+                    "key": uuid4(),
+                    "state": state,
+                    "result": None if result is None else json.dumps(result),
+                    "at": datetime.now(UTC) - timedelta(days=30) + timedelta(minutes=position),
+                    "started": None
+                    if state == "pending"
+                    else datetime.now(UTC) - timedelta(days=30),
+                    "finished": datetime.now(UTC) - timedelta(days=30) if finished else None,
+                },
+            )
+            made[_first(cursor)] = position
+        return made
+
+    def test_the_attention_evidence_is_the_interface_s_own_reading(self) -> None:
+        """0089: the SQL function and `from_jobs`' keying name the same jobs (05-01)."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            made = self._attention_jobs(cursor)
+            connection.commit()
+        try:
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+                rows = [job for job in db.recent_jobs(connection, limit=1000) if job.id in made]
+                evidence = {job.id for job in db.attention_evidence(connection) if job.id in made}
+            newest: dict[tuple[str | None, str, str], int] = {}
+            for job in sorted(rows, key=lambda row: (row.created_at, row.id), reverse=True):
+                if not jobs_module.ran(job):
+                    continue
+                for operation, _state in jobs_module.step_states(job):
+                    newest.setdefault((job.cluster, operation, jobs_module.subject(job)), job.id)
+            self.assertEqual(len(rows), len(self.ATTENTION_JOBS))
+            self.assertEqual(
+                sorted(made[job_id] for job_id in evidence),
+                sorted({made[job_id] for job_id in newest.values()}),
+            )
+            # The cases above meant something: each kind of key is in it.
+            self.assertEqual(sorted(made[job_id] for job_id in evidence),
+                             [0, 1, 3, 5, 6, 7, 8, 10, 11, 12, 14, 15])  # fmt: skip
+        finally:
+            with self.connect() as connection:
+                connection.execute("delete from job where id = any(%s)", (list(made),))
+                connection.commit()
+
+    def test_a_failure_nothing_settled_outlives_the_pruning_and_the_newest_200(self) -> None:
+        """Review 26-10-24, 05-01: a month old under 25 newer jobs, and still listed."""
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
+        clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'KEEP_DAYS=7; KEEP_MINIMUM=20; eval "$(sed -n'
+                " '/^[a-z_]*_evidence() {/,/^}/p;"
+                "/^where_removable() {/,/^}/p'"
+                ' "$0")"; where_removable',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key, state, "
+                "created_at, started_at, finished_at) values ('server_state', 'alpha', "
+                "%(payload)s, %(key)s, 'failed', now() - interval '30 days', "
+                "now() - interval '30 days', now() - interval '30 days') returning id",
+                {"payload": json.dumps({"object": "shop"}), "key": uuid4()},
+            )
+            failed = _first(cursor)
+            for _ in range(25):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "created_at, started_at, finished_at) values ('server_state', 'alpha', "
+                    "%(payload)s, %(key)s, 'done', now() - interval '20 days', "
+                    "now() - interval '20 days', now() - interval '20 days')",
+                    {"payload": json.dumps({"object": "api"}), "key": uuid4()},
+                )
+            cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
+            removable = {row[0] for row in cursor.fetchall()}
+            self.assertNotIn(failed, removable)
+            self.assertEqual(len(removable & set(range(failed + 1, failed + 26))), 5)
+            connection.commit()
+        try:
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+                recent = db.recent_jobs(connection, limit=10)
+                evidence = db.attention_evidence(connection)
+            known = {job.id for job in recent}
+            listed = attention.from_jobs(recent + [job for job in evidence if job.id not in known])
+            self.assertIn(f"job {failed}", [item.subject for item in listed])
+            self.assertNotIn(failed, known)
+        finally:
+            with self.connect() as connection:
+                connection.execute("delete from job where id >= %s", (failed,))
+                connection.commit()
+
     def test_retention_keeps_the_publish_a_draft_is_cleared_by(self) -> None:
         """A done publish is the evidence a draft is published; it outlives the week (CR-04).
 
@@ -617,7 +762,12 @@ class ARealDatabase(unittest.TestCase):
             kept = str(_first(cursor))
             named = {}
             with _retired_operations(cursor):
-                for name, draft in (("kept", kept), ("gone", str(uuid4()))):
+                # The last is the step's newest, which Needs attention reads (05-01).
+                for name, draft in (
+                    ("kept", kept),
+                    ("gone", str(uuid4())),
+                    ("newest", str(uuid4())),
+                ):
                     cursor.execute(
                         "insert into job (operation, cluster, payload, idempotency_key, state, "
                         "started_at, finished_at) values ('objects_publish', 'alpha', %(payload)s, "
@@ -715,7 +865,12 @@ class ARealDatabase(unittest.TestCase):
             kept = str(_first(cursor))
             named = {}
             with _retired_operations(cursor):
-                for name, change in (("kept", kept), ("gone", str(uuid4()))):
+                # The last is the step's newest, which Needs attention reads (05-01).
+                for name, change in (
+                    ("kept", kept),
+                    ("gone", str(uuid4())),
+                    ("newest", str(uuid4())),
+                ):
                     cursor.execute(
                         "insert into job (operation, cluster, payload, idempotency_key, state, "
                         "started_at, finished_at) values ('network_publish', 'alpha', %(payload)s, "

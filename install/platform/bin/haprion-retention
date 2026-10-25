@@ -974,6 +974,17 @@ waf_evidence() {
 SQL
 }
 
+#
+# The newest finished job of every cluster, step and subject: what Needs
+# attention reads a failure from until the same step on the same thing works
+# again. Pruned after a week, a failure nothing had settled left the list and
+# `/status/attention.json` (review 26-10-24, 05-01). The set is the
+# interface's reading in SQL (0089), which the web reads too.
+#
+attention_evidence() {
+    echo "select job_attention_evidence()"
+}
+
 where_removable() {
     local applies="and coalesce(payload->>'remove', 'false') <> 'true'"
     cat <<SQL
@@ -986,6 +997,7 @@ where_removable() {
     and id not in ($(profile_evidence ndes_profile_apply ndes_provider_profile "$applies"))
     and id not in ($(draft_evidence))
     and id not in ($(waf_evidence))
+    and id not in ($(attention_evidence))
 SQL
 }
 

@@ -161,6 +161,28 @@ def recent_jobs(
         return cursor.fetchall()
 
 
+def attention_evidence(connection: Connection[Any]) -> list[Job]:
+    """The newest finished job of every cluster, step and subject, however old
+    (0089, review 26-10-24, 05-01).
+
+    Needs attention reads these beside the newest jobs. The newest 200 alone
+    lost a failure nothing had settled once that many jobs came after it, and
+    the pruning removed it a week on; the function is the set the pruning
+    keeps, so the two cannot disagree about which job is still the answer.
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by "
+            "  from job "
+            " where id in (select job_attention_evidence()) "
+            " order by created_at desc, id desc"
+        )
+        return cursor.fetchall()
+
+
 def draft_publishes(
     connection: Connection[Any], *, cluster: str, draft_ids: Collection[str]
 ) -> list[Job]:

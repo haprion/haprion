@@ -230,7 +230,7 @@ fi
 # anyone else call. A function runs with its owner's rights when it is a
 # definer's, so EXECUTE on one is a grant of what it does (0085).
 #
-expected_routines=$'app_worker\thold_jobs_queued_before\tEXECUTE'
+expected_routines=$'app_web\tjob_attention_evidence\tEXECUTE\napp_worker\thold_jobs_queued_before\tEXECUTE'
 actual_routines="$(run -c "
     select grantee, routine_name, privilege_type
       from information_schema.routine_privileges

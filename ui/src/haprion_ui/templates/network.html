@@ -54,7 +54,7 @@
     {% if not editing %}
 
     <h4 class="network-subhead">Virtual addresses</h4>
-    <div class="table-scroll"><table class="node-table network-table">
+    <div class="table-scroll"><table class="node-table network-table network-table-vips">
       <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>TLS version</th><th>HTTP/3</th><th>Default</th><th>Used by</th></tr></thead>
       <tbody>
         {% for vip in cluster.vips %}

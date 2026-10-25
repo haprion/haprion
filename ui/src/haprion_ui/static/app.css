@@ -1841,6 +1841,12 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .network-table th:nth-child(2), .network-table td:nth-child(2) { width: 220px; }
 .network-table td { white-space: normal; overflow-wrap: anywhere; }
 /*
+ * The VIP table's source column, wide enough for its heading and for
+ * "whatever routing picks" on one line at 1280 (review 26-10-24, 04-14).
+ */
+.network-table-vips th:nth-child(3), .network-table-vips td:nth-child(3) { width: 170px; }
+.network-table-vips td:nth-child(3) .table-empty { white-space: nowrap; }
+/*
  * The group table has two columns where the others have three or four, so its
  * second one is widened to start where DEFAULT SOURCE and USED BY start. Left
  * at the shared width it drifted right instead: with a fixed layout the space
@@ -2207,7 +2213,15 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .log-filters { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(100px, .45fr) minmax(240px, 1.35fr) minmax(185px, .8fr) minmax(185px, .8fr) auto auto; gap: 12px; align-items: end; margin: 0 0 18px; }
 .log-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
 .log-object-filter { margin: -6px 0 14px; color: var(--text-secondary); font-size: 13px; }
-.log-filters input, .log-filters select { min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
+/*
+ * One font and one line for every field in the row (review 26-10-24, 04-14):
+ * a select keeps the browser's own font unless told, and the date field sits
+ * outside the 12px label, so From and To stood 37px against the others' 33-34.
+ */
+.log-filters input, .log-filters select { min-width: 0; height: 34px; font: inherit; font-size: 13px; line-height: 18px; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
+/* Filter and Clear on the fields' line, 34px like them. */
+.log-filters > .secondary-button { height: 34px; }
+.log-filters > .text-link { line-height: 34px; }
 .log-date-field { position: relative; display: grid; gap: 5px; min-width: 0; }
 .log-date-field > label { color: var(--muted); font-size: 12px; }
 .log-calendar { position: absolute; z-index: 25; top: calc(100% + 7px); right: 0; width: 294px; padding: 13px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-raised); box-shadow: var(--shadow-menu); }

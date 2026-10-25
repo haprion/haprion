@@ -956,7 +956,10 @@ SQL
 # `deploys_carrying`), and with both pruned an exception that does not work was
 # shown as covering its finding, here and in Needs attention (review 26-10-24,
 # 05-02). The same conditions as there: a publish done or whose publish half
-# was, a deploy done, Publish & deploy counted as both.
+# was, a deploy done, Publish & deploy counted as both. And the publish that
+# newest deploy carried: a publish after it that nobody deployed is the newest,
+# and with the carried one pruned the web found no deploy after the publish
+# that took an exception (review 26-10-25, 4-01).
 #
 waf_evidence() {
     cat <<SQL
@@ -974,6 +977,20 @@ waf_evidence() {
                 or (operation = 'changes_publish' and payload->>'deploy' = 'true'))
          order by cluster, finished_at desc nulls last, id desc
     ) as deployed
+    union
+    select id from (
+        select distinct on (publish.cluster) publish.id from job publish
+          join (select distinct on (cluster) cluster, created_at from job
+                 where state = 'done'
+                   and (operation = 'deploy'
+                        or (operation = 'changes_publish' and payload->>'deploy' = 'true'))
+                 order by cluster, finished_at desc nulls last, id desc) as newest
+            on newest.cluster = publish.cluster
+         where publish.operation = 'changes_publish'
+           and (publish.state = 'done' or publish.result->'publish'->>'outcome' = 'done')
+           and publish.finished_at <= newest.created_at
+         order by publish.cluster, publish.finished_at desc nulls last, publish.id desc
+    ) as carried
 SQL
 }
 

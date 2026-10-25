@@ -641,6 +641,51 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(removable, {"alpha-old-publish", "alpha-old-deploy"})
             connection.rollback()
 
+    def test_retention_keeps_the_publish_the_newest_deploy_carried(self) -> None:
+        """Review 26-10-25, 4-01: a later publish nobody deployed pushed it out.
+
+        Saved, published and deployed weeks ago, then published again and not
+        deployed. With the carried publish pruned the web found no deploy
+        after the publish that took the exception, and read it as covering.
+        """
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
+        clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
+                " '/^[a-z_]*_evidence() {/,/^}/p;"
+                "/^where_removable() {/,/^}/p'"
+                ' "$0")"; where_removable',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        jobs = (("carried", "changes_publish", 20), ("deploy", "deploy", 19),
+                ("later", "changes_publish", 8))  # fmt: skip
+        with self.connect() as connection, connection.cursor() as cursor:
+            named = {}
+            for name, operation, days in jobs:
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "created_at, started_at, finished_at) values (%(operation)s, 'gamma', '{}', "
+                    "%(key)s, 'done', now() - make_interval(days => %(days)s), "
+                    "now() - make_interval(days => %(days)s), "
+                    "now() - make_interval(days => %(days)s) + interval '1 minute') returning id",
+                    {"operation": operation, "key": uuid4(), "days": days},
+                )
+                named[_first(cursor)] = name
+            cursor.execute(f"delete from job where {clause} and cluster = 'gamma'")  # noqa: S608
+            cursor.execute("select id from job where cluster = 'gamma'")
+            self.assertEqual({named[row[0]] for row in cursor.fetchall()}, set(named.values()))
+            saved = datetime.now(UTC) - timedelta(days=21)
+            carrying = db.deploys_carrying(connection, cluster="gamma", moments=[saved])
+            self.assertIn(saved, carrying)
+            connection.rollback()
+
     #
     # (operation, cluster, payload, state, result) in the order they were made.
     # Each step and subject of what Needs attention keys a failure on, and the

@@ -3318,9 +3318,9 @@ role, `delete` being withheld would mean nothing.
     of the certificate form. In the same way, the publish job of a draft, a saved network description or
     a settings change stays as long as that draft or change exists: the interface clears them by
     reading it.
-  - **never the newest publish and the newest deploy of each cluster.** A WAF exception's *Not working*
-    is judged from when a deploy carried it; with both removed, an exception that does not work would
-    read as covering its finding;
+  - **never the newest publish and the newest deploy of each cluster, nor the publish that deploy
+    carried.** A WAF exception's *Not working* is judged from when a deploy carried it; with these
+    removed, an exception that does not work would read as covering its finding;
   - **never the newest finished job of each step on each thing** - a cluster's deploy, one certificate's
     issue, one object's server state, one DNS or NDES profile. A job on several certificates counts for
     each of them. *Needs attention* reads a failure from it until the same step on

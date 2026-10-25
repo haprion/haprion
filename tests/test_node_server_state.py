@@ -643,6 +643,9 @@ KEY_A = "ssh-ed25519 AAAAexampleKeyA"
 KEY_B = "ssh-ed25519 AAAAexampleKeyB"
 
 
+FROM = 'from="mgr.example.com,192.0.2.10",'
+
+
 class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
     """Step 4 writes each of the manager's keys from the answers, by the table in
     lib.sh (B263 for the server state key, B317 for the rest), on scratch files."""
@@ -662,6 +665,7 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
         return (self.root / user / ".ssh" / "authorized_keys").read_text().splitlines()
 
     def run_loop(self, **answers: str) -> subprocess.CompletedProcess[str]:
+        answers = {"MANAGER_SOURCES": "mgr.example.com,192.0.2.10", **answers}
         assigned = "".join(f'{name}="{value}"\n' for name, value in answers.items())
         script = (
             f'source "{BASE / "install" / "lib.sh"}"\nKEYS_HOME="{self.root}"\n'
@@ -677,13 +681,13 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
         self.assertEqual(
             self.keys("_haprion-trigger"),
             [
-                f'restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" {KEY_A}',
-                f'restrict,command="/usr/sbin/haprion-server-state-trigger" {KEY_B}',
+                f'{FROM}restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" {KEY_A}',
+                f'{FROM}restrict,command="/usr/sbin/haprion-server-state-trigger" {KEY_B}',
             ],
         )
         self.assertEqual(
             self.keys("_haprion-status"),
-            [f'restrict,command="sudo -n /usr/sbin/haprion-node-status --json" {KEY_A}'],
+            [f'{FROM}restrict,command="sudo -n /usr/sbin/haprion-node-status --json" {KEY_A}'],
         )
         self.assertEqual(self.keys("_haprion-backup"), [])
 
@@ -694,7 +698,7 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
         self.assertIn("ok", again.stdout)
         self.assertEqual(
             self.keys("_haprion-trigger"),
-            [f'restrict,command="/usr/sbin/haprion-server-state-trigger" {KEY_B}'],
+            [f'{FROM}restrict,command="/usr/sbin/haprion-server-state-trigger" {KEY_B}'],
         )
 
     def test_a_join_without_a_purposes_key_leaves_no_line_for_it(self) -> None:
@@ -708,8 +712,34 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
         self.assertEqual(self.keys("_haprion-backup"), [])
         self.assertEqual(
             self.keys("_haprion-trigger"),
-            [f'restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" {KEY_B}'],
+            [f'{FROM}restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" {KEY_B}'],
         )
+
+    def test_a_key_works_only_from_the_manager_s_addresses(self) -> None:
+        """Review 26-10-24, 10-05: a key copied off the manager worked from anywhere."""
+
+        done = self.run_loop(DEPLOY_PUBKEY=KEY_A, MANAGER_SOURCES="192.0.2.10")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(
+            self.keys("_haprion-trigger"),
+            [f'from="192.0.2.10",restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" {KEY_A}'],
+        )
+        refused = self.run_loop(DEPLOY_PUBKEY=KEY_B, MANAGER_SOURCES='192.0.2.10" x')
+        self.assertNotEqual(refused.returncode, 0)
+
+    def test_the_manager_s_host_is_bound_to_its_addresses(self) -> None:
+        def sources(host: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(  # the function under test
+                ["/bin/bash", "-c", f'source "{BASE / "install" / "lib.sh"}"; manager_sources "$1"',
+                 "-", host],
+                capture_output=True, text=True, check=False,
+            )  # fmt: skip
+
+        self.assertEqual(sources("192.0.2.10").stdout, "192.0.2.10\n")
+        self.assertEqual(sources("localhost").stdout, "localhost,127.0.0.1\n")
+        self.assertNotEqual(sources("mgr.invalid").returncode, 0)
+        step = INSTALLER.read_text()
+        self.assertIn('MANAGER_SOURCES="$(manager_sources "$MANAGER_HOST")" || exit 1\n', step)
 
     def test_anything_but_one_ed25519_key_is_refused(self) -> None:
         for bad in ("ssh-rsa AAAAB3Nza", f"{KEY_A} comment", f"{KEY_A}\\nssh-ed25519 AAAA", ""):

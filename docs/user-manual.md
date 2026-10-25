@@ -5981,6 +5981,11 @@ The manager's private keys are root-owned, and no application account can read t
 the traffic collector's key: it is owned by the collector account, because the collector never runs as root
 and no privileged process takes part in moving data from a node.
 
+**On each node, the manager's keys work only from the manager's address.** Every line step 4 writes for them
+carries `from=` with the manager's host and the IPv4 addresses it resolved to, so a copied key does not work
+from another machine. A manager that moves to another address reaches no node until step 4 has run again on
+each of them: `sudo haprion-node-prepare`.
+
 A node also has a one-time join key. It is part of the enrollment block the node prints, and lets a manager
 join the node once, as `_haprion-join`, within 24 hours; the join removes it after use.
 

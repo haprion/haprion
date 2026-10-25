@@ -144,8 +144,10 @@ log "  member    ${LOGREAD_USER} -> ${LOGS_GROUP}"
 # server state key, B317 for the rest): a public key is no secret, and this
 # runs only under the node's own root - the operator's sudo, or the join the
 # node's one-time key allowed - so the manager gains no way to write here. Each
-# with `restrict` and the forced command the table in lib.sh gives its purpose.
+# with `from=` the manager's addresses, `restrict` and the forced command the
+# table in lib.sh gives its purpose.
 #
+MANAGER_SOURCES="$(manager_sources "$MANAGER_HOST")" || exit 1
 for purpose_line in "${NODE_KEY_PURPOSES[@]}"; do
     read -r purpose _ account_var command <<<"$purpose_line"
     key_var="${purpose}_PUBKEY"
@@ -154,7 +156,7 @@ for purpose_line in "${NODE_KEY_PURPOSES[@]}"; do
         [[ "${JOINED_BY_MANAGER:-}" != yes ]] || remove_key_line "${!account_var}" "$command"
         continue
     fi
-    write_key_line "${!account_var}" "$command" "${!key_var}"
+    write_key_line "${!account_var}" "$command" "${!key_var}" "$MANAGER_SOURCES"
 done
 #
 # The WAF engine logs into a journal namespace of its own (its package, from

@@ -186,6 +186,9 @@ interface to add the node:
 What the block contains, and how to prepare a node without the web interface, is in
 [install/README.md](../install/README.md#step-4--each-node).
 
+A node accepts the manager's keys only from the manager's address. If the manager moves to another address, run
+`sudo haprion-node-prepare` on each node.
+
 ## 4. Sign in
 
 Open `https://<server name>` and sign in as `admin`. Until you install a certificate of your own, nginx uses a

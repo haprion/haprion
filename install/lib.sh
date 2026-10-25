@@ -1122,17 +1122,39 @@ NODE_KEY_PURPOSES=(
 PUBKEY_PATTERN='^ssh-ed25519 [A-Za-z0-9+/]+=*$'
 
 #
-# One key's line in its account's authorized_keys, written as root. A line
-# for the same forced command is replaced, so a rotated key does not leave the
-# old one able to ask.
+# Where the manager's keys may be used from (review 26-10-24, 10-05): its host
+# and the IPv4 addresses that resolves to, as the manager binds the nodes'
+# fetch keys to theirs (node_enrollment.pull_sources). sshd's UseDNS is off by
+# default, so `from=` matches the connecting address and a name alone would
+# lock the manager out. A manager at another address reaches no node until
+# step 4 has run again on each of them (sudo haprion-node-prepare).
+#
+manager_sources() {
+    local host="$1" addresses
+    if [[ "$host" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+        echo "$host"
+        return 0
+    fi
+    addresses="$(getent ahostsv4 "$host" | awk '!seen[$1]++ { printf "%s%s", sep, $1; sep = "," }')" \
+        || true
+    [[ -n "$addresses" ]] \
+        || die "cannot resolve MANAGER_HOST ${host} to an IPv4 address; the manager's keys are bound to it"
+    echo "${host},${addresses}"
+}
+
+#
+# One key's line in its account's authorized_keys, written as root, usable from
+# SOURCES alone (manager_sources). A line for the same forced command is
+# replaced, so a rotated key does not leave the old one able to ask.
 #
 write_key_line() {
-    local user="$1" command="$2" key="$3"
+    local user="$1" command="$2" key="$3" sources="$4"
     [[ "$key" =~ $PUBKEY_PATTERN ]] \
         || die "a key for ${command} must be one ssh-ed25519 public key (type and key, no comment)"
+    [[ "$sources" =~ ^[A-Za-z0-9.,-]+$ ]] || die "the manager's addresses are not usable: ${sources}"
     local keys="${KEYS_HOME:-/home}/${user}/.ssh/authorized_keys"
     local forced="command=\"${command}\""
-    local line="restrict,${forced} ${key}"
+    local line="from=\"${sources}\",restrict,${forced} ${key}"
     if grep -qxF "$line" "$keys"; then
         log "  ok       ${command} in ${keys}"
         return

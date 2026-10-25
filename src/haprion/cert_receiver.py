@@ -306,7 +306,7 @@ def check_identity(receiver_id: str, tools: Tools) -> None:
             "bad_input",
             f"{receiver_id!r} is neither a hostname nor an IP address. A receiver is named "
             "by the host that fetches, because that is what its key and its whitelist are "
-            "bound to (B141).",
+            "bound to.",
         )
     from_patterns(receiver_id, tools)
 
@@ -852,7 +852,7 @@ def check_request(
             raise ReceiverError(
                 "bad_input",
                 "an https receiver fetches with a secret of its own as well as from its "
-                "addresses (B306); the request carries no valid one",
+                "addresses; the request carries no valid one",
             )
         return
     if hashed_secret is not None:
@@ -863,7 +863,7 @@ def check_request(
         raise ReceiverError(
             "bad_input",
             "--public-key is required: the pair is made on the receiver and only its public "
-            "half is given to the manager (B157).",
+            "half is given to the manager.",
         )
 
 
@@ -906,7 +906,7 @@ def add(
         raise ReceiverError(
             "already_exists",
             f"receiver {receiver_id} is already registered. A transport or a directory is "
-            "not edited under a receiver (B138); remove it and register it again.",
+            "not edited under a receiver; remove it and register it again.",
         )
 
     if transport == "https":
@@ -928,7 +928,7 @@ def add(
             raise ReceiverError(
                 "already_exists",
                 f"account {account} already fetches for another receiver. One account per "
-                "receiver, or a receiver reads its neighbour's key material (§4).",
+                "receiver, or a receiver reads its neighbour's key material.",
             )
 
     directory = path

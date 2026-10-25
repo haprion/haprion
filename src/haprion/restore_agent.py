@@ -1343,7 +1343,7 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
     items = [item for item in items if item is not carried]
     problems = _conflicts(header)
     if header.get("overwrite") and not host.path(NODE_PREPARE).is_file():
-        problems.append(f"the node has no {NODE_PREPARE}; install its node package first (B183)")
+        problems.append(f"the node has no {NODE_PREPARE}; install its node package first")
     if problems:
         raise Refused("; ".join(problems))
     report = Report()

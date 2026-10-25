@@ -59,7 +59,7 @@ from haprion.config import (
 # does, so it belongs where that is decided.
 #
 HEADER = """\
-# The certificate registry (B135). Maintained by haprion-cert-issue and the
+# The certificate registry. Maintained by haprion-cert-issue and the
 # registry helper; hand edits are kept but comments are not, since the file is
 # rewritten as a whole. See user-manual.md, 'The certificate registry', for the fields.
 """

@@ -56,7 +56,7 @@ USAGE = (
     "\n"
     "  <id>                  The fetching host's DNS name or IP address. An rsync or\n"
     '                        sftp key is bound to it with from="..."; a name has\n'
-    "                        to resolve (B141).\n"
+    "                        to resolve.\n"
     "  --transport rsync     Fetches with rsync over ssh, forced to rrsync -ro.\n"
     "  --transport sftp      Fetches with sftp, read-only, chrooted into its own\n"
     "                        directory.\n"

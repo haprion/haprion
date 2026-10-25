@@ -1,4 +1,4 @@
-"""Root CLI for a signing request made on the manager (C9b).
+"""Root CLI for a signing request made on the manager.
 
     haprion-cert-request --id shop.example --domain shop.example --domain '*.shop.example' \\
         --cluster alpha --receiver lb-01 [--key-type ec-p256|rsa-2048|rsa-4096] [--json]

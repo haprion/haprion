@@ -362,7 +362,7 @@ def main(
     parser.add_argument(
         "--exportable",
         action="store_true",
-        help="for a device never connected to this manager (B255): one name, no targets, "
+        help="for a device never connected to this manager: one name, no targets, "
         "a key that may be exported from the interface",
     )
     parser.add_argument("--json", action="store_true")

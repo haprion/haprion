@@ -1,13 +1,13 @@
 """Build and verify the node package, `haprion-node`, from one commit.
 
-The package is how node software travels (B266, D4): the node scripts in
+The package is how node software travels: the node scripts in
 /usr/sbin, owned by dpkg, and the configuration step with what it reads under
 /usr/share/haprion-node/install. Installing it changes nothing a node does;
 04-node-prepare, run from where the package put it, does that with the answers.
 
 The operator's `tools/install-node-package` verifies a package with this module
 before it sends one to a node, the release installer verifies the package a CLI
-release carries with it (B180), and a node restore verifies it again before it
+release carries with it, and a node restore verifies it again before it
 sends it to the restored node. One implementation for all three, run from a
 checkout by `tools/node-package.py`.
 

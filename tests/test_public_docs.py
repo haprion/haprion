@@ -8,6 +8,7 @@ has no use for. Both are refused in every tracked Markdown file.
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import unittest
@@ -137,3 +138,65 @@ class TheContractListsEveryOperation(unittest.TestCase):
 
         self.assertGreater(len(answered), 40)
         self.assertEqual(sorted(answered - listed), [])
+
+
+#
+# A decision (B141), a plan item (C9b, D4) or a section (§4), alone or in a
+# parenthesis with others.
+#
+REFERENCE = re.compile(
+    r"\((?:[^()]*\b)?(?:B\d{1,4}|C\d{1,3}[a-z]?|D\d{1,2}|§\s?\d+)\b[^)]*\)|\bB\d{2,4}\b|§\s?\d+"
+)
+
+
+def _statement_strings(tree: ast.AST) -> set[int]:
+    """The strings that stand as statements - docstrings, which a maintainer reads."""
+
+    return {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+
+
+def _module_docstring_is_help(tree: ast.Module) -> bool:
+    return any(
+        isinstance(node, ast.keyword)
+        and node.arg == "description"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "__doc__"
+        for node in ast.walk(tree)
+    )
+
+
+def references_a_reader_sees() -> list[str]:
+    found = []
+    for path in sorted((ROOT / "src" / "haprion").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        skipped = _statement_strings(tree)
+        if _module_docstring_is_help(tree) and isinstance(tree.body[0], ast.Expr):
+            skipped.discard(id(tree.body[0].value))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in skipped
+                and REFERENCE.search(node.value)
+            ):
+                found.append(f"{path.relative_to(ROOT)}:{node.lineno} {node.value[:60]!r}")
+    return found
+
+
+class TheEngineSaysNoProjectHistory(unittest.TestCase):
+    """Review 26-10-24, 16-06: the same rule for what the engine says.
+
+    Decision and plan references belong in comments and docstrings, where the
+    next maintainer can look them up. In an error message or a command's help
+    they reach someone who cannot - at the terminal and, by a helper's answer,
+    on the interface's jobs page.
+    """
+
+    def test_no_message_or_help_text_names_a_decision(self) -> None:
+        self.assertEqual(references_a_reader_sees(), [])

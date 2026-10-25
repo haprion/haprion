@@ -105,7 +105,7 @@ def derive(source: RestoreSource, cluster: str, publish_root: Path) -> str:
     if services != SERVICE_ACCOUNTS:
         raise AnswersError(
             "node.conf names other service accounts than this release's; the archive is from "
-            "before the accounts were renamed (B266)"
+            "before the accounts were renamed"
         )
     listed = _names(values["BACKUP_ACCOUNTS"], "account")
     if listed[:4] != services:

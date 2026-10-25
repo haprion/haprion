@@ -59,7 +59,7 @@ USAGE = (
     "                        one that had it, which is deleted once this one serves.\n"
     "  --exportable          For a device never connected to this manager: one name,\n"
     "                        no targets, an RSA key that may be exported from the\n"
-    "                        interface (B255).\n"
+    "                        interface.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 

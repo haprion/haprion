@@ -77,6 +77,7 @@ from haprion.proxy_model import (
     SENDERS_ADDRESS,
     ModelError,
     load_proxy,
+    load_written,
 )
 from pydantic import ValidationError
 from starlette.datastructures import FormData
@@ -1565,6 +1566,7 @@ def _lookup_again(
         document = dnsdist_config.with_addresses(
             stored.name, stored.document, resolve_socket.lookup
         )
+        load_written(stored.name, document.encode())
     except (ValueError, ModelError) as refusal:
         return _refusal_page(request, config, str(refusal), back=_proxy_path(cluster, name))
     with request.app.state.pool.connection() as connection:
@@ -4096,7 +4098,7 @@ def _waf_save(
         return "The stored proxies have not been read yet."
     try:
         document = change(base)
-        load_proxy(name, document.encode())
+        load_written(name, document.encode())
     except (ValueError, ModelError) as exc:
         return str(exc)
     if editor_module.unchanged(document, base):

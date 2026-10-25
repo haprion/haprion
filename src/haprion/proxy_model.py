@@ -1908,6 +1908,21 @@ def load_proxy(name: str, document: bytes) -> Proxy:
         raise ModelError(str(exc)) from exc
 
 
+def load_written(name: str, document: bytes) -> Proxy:
+    """`load_proxy` for a document being written: held to what a write may be (15-06).
+
+    A stored object is read as it was stored; one being saved - by the editor,
+    the advanced dialog, a WAF exception, a name lookup, `apply` or a publish
+    of saved changes - is held to the rules for what is written. One function,
+    so that no way to save forgets them: a WAF exception saved an object a
+    publish then refused, with everybody's saved changes behind it (review
+    26-10-25, 5-01).
+    """
+
+    with address_ranges.writing():
+        return load_proxy(name, document)
+
+
 def read_document(name: str, document: bytes) -> dict[str, Any]:
     """The stored object as a plain mapping, without interpreting it.
 

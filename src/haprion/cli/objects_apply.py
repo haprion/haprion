@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import address_ranges, exit_codes, labels, server_names
+from haprion import exit_codes, labels, server_names
 from haprion.cli import arguments, changes_publish
 from haprion.cli.apply_common import (
     PartlyDone,
@@ -41,7 +41,7 @@ from haprion.cli.apply_common import (
 from haprion.cli.cluster_settings import run_publish_helper
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
-from haprion.proxy_model import MAX_MODEL_BYTES, NAME, NAME_RULE, ModelError, load_proxy
+from haprion.proxy_model import MAX_MODEL_BYTES, NAME, NAME_RULE, ModelError, load_written
 
 OPERATION = "objects_apply"
 SUFFIXES = (".yaml", ".yml")
@@ -126,8 +126,7 @@ def read_files(targets: Sequence[str]) -> dict[str, str]:
             raise Refused("too_long", f"{path}: larger than {MAX_MODEL_BYTES} bytes")
         try:
             text = data.decode("utf-8")
-            with address_ranges.writing():
-                load_proxy(name, data)
+            load_written(name, data)
         except (UnicodeDecodeError, ModelError) as exc:
             raise Refused("object_invalid", f"{path}: {exc}") from exc
         documents[name] = text

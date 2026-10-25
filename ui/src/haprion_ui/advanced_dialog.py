@@ -13,13 +13,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from haprion import address_ranges
 from haprion import advanced as advanced_config
 from haprion.proxy_model import (
     ModelError,
     advanced_placement,
     dump_document,
-    load_proxy,
+    load_written,
     pool_written_by_hand,
     read_document,
 )
@@ -157,8 +156,7 @@ def check(name: str, document: str) -> Answer:
         return Answer(document=document, problem=str(exc))
     lines = tuple(line for line in placement.lines if line.text) if placement else ()
     try:
-        with address_ranges.writing():
-            load_proxy(name, document.encode())
+        load_written(name, document.encode())
     except ModelError as exc:
         return Answer(document=document, lines=lines, problem=str(exc))
     return Answer(document=document, lines=lines)

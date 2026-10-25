@@ -399,6 +399,28 @@ class ThePage(EditorTestCase):
         self.assertRegex(exception["at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertIsNone(saved["expected_revision"])
 
+    def test_an_exception_on_an_object_a_write_would_refuse_is_not_saved(self) -> None:
+        """Review 26-10-25, 5-01: it was saved, and the publish refused every saved change."""
+
+        stored = LOGGING + "allow_from: [192.0.2.1/24]\n"
+        client = self.editor()
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=objects(stored)):
+            answer = client.post(
+                "/waf/allow",
+                data={
+                    "csrf_token": self.token(client),
+                    "cluster": "alpha",
+                    "object": "shop",
+                    "rule": "942100",
+                    "scope": "object",
+                },
+                follow_redirects=False,
+            )
+
+        self.assertNotEqual(answer.status_code, 303)
+        self.assertIn("host bits", answer.text)
+        self.assertEqual(self.saved, [])
+
     def test_allow_keeps_the_reason_on_one_line(self) -> None:
         client = self.editor()
         answer = client.post(

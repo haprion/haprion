@@ -60,6 +60,7 @@ from haprion.proxy_model import (
     NAME_RULE,
     ModelError,
     load_proxy,
+    load_written,
     name_refusal,
 )
 from haprion.release_install import PUBLISH_GROUP, ChangeOwner, default_change_owner
@@ -271,8 +272,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                 if document is None:
                     continue
                 try:
-                    with address_ranges.writing():
-                        load_proxy(name, document)
+                    load_written(name, document)
                 except ModelError as exc:
                     raise Refusal("changes_invalid", str(exc), exit_codes.REFUSED) from exc
             #

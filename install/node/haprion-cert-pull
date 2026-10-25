@@ -118,7 +118,8 @@ for id in "$@"; do
     [[ "$id" =~ $ID_PATTERN ]] || fail "invalid certificate ID"
 done
 
-exec 9>/run/lock/haprion-cert-pull.lock
+# In /run, root's alone (haprion-pull-deploy says why).
+exec 9>/run/haprion-cert-pull.lock
 if ! flock -n 9; then
     fail "another certificate deployment is already running"
 fi

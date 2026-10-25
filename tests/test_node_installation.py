@@ -104,11 +104,14 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.assertEqual(listed, NODE_SCRIPTS)
         self.assertEqual(PACKAGED, NODE_SCRIPTS)
 
-    def test_installer_does_not_repermission_the_system_lock_directory(self) -> None:
-        installer = INSTALLER.read_text()
+    def test_no_node_script_takes_a_lock_in_the_shared_lock_directory(self) -> None:
+        """Review 26-10-24, 10-06: any local account can create a file in /run/lock
+        (1777) or hold its lock, and every deploy then answered "already running"."""
 
-        self.assertNotRegex(installer, r"ensure_dir\s+/run/lock")
-        self.assertIn('[[ -d /run/lock ]] || die "/run/lock is missing"', installer)
+        scripts = sorted(path for path in (INSTALLER.parent / "node").iterdir() if path.is_file())
+        for script in scripts:
+            with self.subTest(script=script.name):
+                self.assertNotIn("/run/lock/", script.read_text())
 
     def test_release_root_denies_unprivileged_service_accounts(self) -> None:
         self.assertIn("ensure_dir /etc/haproxy/releases root:root 750", INSTALLER.read_text())

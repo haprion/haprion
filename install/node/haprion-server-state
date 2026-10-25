@@ -90,7 +90,8 @@ def _digits(text: str, limit: int = 18) -> bool:
 
 ADMIN_SOCKET = "/run/haproxy/manager.sock"
 STATE_FILE = Path("/var/lib/haprion/server-state.json")
-LOCK_FILE = "/run/lock/haprion-server-state.lock"
+# In /run, root's alone (haprion-pull-deploy says why).
+LOCK_FILE = "/run/haprion-server-state.lock"
 CONFIG = Path("/etc/haproxy/haproxy.cfg")
 CONFIG_DIR = Path("/etc/haproxy/conf.d")
 RELEASES = Path("/etc/haproxy/releases")

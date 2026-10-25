@@ -265,10 +265,6 @@ install_file "$HAPROXY_DROPIN" root:root 644 "# Installed by install/04-node-pre
 ExecStartPost=-${SBIN}/haprion-server-state reapply"
 systemctl daemon-reload
 log "  applied  ${HAPROXY_DROPIN}"
-# /run/lock is a distribution-owned shared directory, normally mode 1777.
-# The deploy helpers own their root-created lock files, not this directory.
-[[ -d /run/lock ]] || die "/run/lock is missing"
-log "  present  /run/lock  (system-owned; permissions left unchanged)"
 
 if [[ ! -e /etc/haproxy/current ]]; then
     empty="/etc/haproxy/releases/00000000-000000"

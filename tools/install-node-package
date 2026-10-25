@@ -135,7 +135,6 @@ trap cleanup EXIT
 preflight="
     set -Eeuo pipefail
     sudo -v
-    test -d /run/lock
     command -v rsyslogd >/dev/null
     echo \"node architecture: \$(dpkg --print-architecture)\"
     if [[ -n '${package_arch}' && '${package_arch}' != all ]]; then

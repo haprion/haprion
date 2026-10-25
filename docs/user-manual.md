@@ -6438,7 +6438,7 @@ identical.
 /etc/haproxy/waf         -> current/waf
 /etc/haproxy/dns         -> current/dns
 /etc/haproxy/certs/          local certificate directory
-/run/lock/haprion-deploy.lock
+/run/haprion-deploy.lock
 ```
 
 Each deploy is a new directory under `releases/`. `current` points at the active one, and the fixed
@@ -6494,9 +6494,9 @@ finished days while the files hold more than their share or less than a tenth of
 free. Each dropped hour and each day removed early is a warning in the node's system log. A
 filesystem of its own keeps the rest of the node out of reach of even that quarter.
 
-*Details:* `/run/lock` belongs to the operating system and is commonly mode `1777`. The node
-installer requires it to exist but never changes its owner or permissions. Haprion owns only the
-lock files it creates inside it, as root.
+*Details:* the node scripts keep their lock files directly in `/run`, which only root can write. In
+the shared `/run/lock` (mode `1777`) any local account could create a lock file first, or hold its lock,
+and every deploy would answer that another one is running.
 
 #### Installing and changing node scripts
 

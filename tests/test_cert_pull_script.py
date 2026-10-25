@@ -143,7 +143,7 @@ class PullHarness(unittest.TestCase):
             .replace('CERTS_DIR="/etc/haproxy/certs"', f'CERTS_DIR="{self.certs}"')
             .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.tree.haproxy}"')
             .replace('PENDING="/run/haprion-cert-pull.pending"', f'PENDING="{self.pending}"')
-            .replace("/run/lock/haprion-cert-pull.lock", str(self.root / "cert.lock"))
+            .replace("/run/haprion-cert-pull.lock", str(self.root / "cert.lock"))
             .replace(
                 'SERVER_STATE="/usr/sbin/haprion-server-state"',
                 f'SERVER_STATE="{self.bin}/haprion-server-state"',

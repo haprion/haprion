@@ -66,7 +66,7 @@ class ScriptFixture(unittest.TestCase):
                 'DEPLOY_PENDING="/run/haprion-pull-deploy.pending"',
                 f'DEPLOY_PENDING="{self.deploy_pending}"',
             )
-            .replace("/run/lock/haprion-cert-pull.lock", str(self.root / "lock" / "cert.lock"))
+            .replace("/run/haprion-cert-pull.lock", str(self.root / "lock" / "cert.lock"))
         )
         self.remove.chmod(0o755)
         self.pull = self.root / "bin" / "haprion-cert-pull"

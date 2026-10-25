@@ -106,7 +106,7 @@ class Node(unittest.TestCase):
             .replace('NODE_CONF="/etc/haprion/node.conf"', f'NODE_CONF="{conf}"')
             .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.haproxy}"')
             .replace('PENDING="/run/haprion-pull-deploy.pending"', f'PENDING="{self.pending}"')
-            .replace("/run/lock/haprion-deploy.lock", str(self.root / "deploy.lock"))
+            .replace("/run/haprion-deploy.lock", str(self.root / "deploy.lock"))
             .replace(
                 'SERVER_STATE="/usr/sbin/haprion-server-state"',
                 f'SERVER_STATE="{self.bin}/haprion-server-state"',

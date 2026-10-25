@@ -189,6 +189,25 @@ class BadAnswers(unittest.TestCase):
         self.assertTrue(reading["poll_error"].endswith("[…]"))
 
 
+class WhatAFailedReadingStoresIsRedacted(unittest.TestCase):
+    """Review 26-10-24, 08-02: a helper's stderr was stored as it came and shown on /network."""
+
+    def test_stderr_is_masked_before_it_is_kept(self) -> None:
+        said = "reading /root/.ssh/id_x failed; " + "pass" + "word=synthetic-password-value\x00"
+        reading = poller.poll_cluster("alpha", lambda *_: completed("", returncode=1, stderr=said))
+        self.assertIn("[REDACTED]", reading["poll_error"])
+        self.assertNotIn("/root/.ssh", reading["poll_error"])
+        self.assertNotIn("synthetic-password-value", reading["poll_error"])
+        self.assertNotIn("\x00", reading["poll_error"])
+
+    def test_a_helper_that_could_not_be_run_is_masked_too(self) -> None:
+        def explode(*_: object) -> Any:
+            raise OSError("cannot open /root/.ssh/id_x")
+
+        reading = poller.poll_cluster("alpha", explode)
+        self.assertNotIn("/root/.ssh", reading["poll_error"])
+
+
 class Passes(unittest.TestCase):
     def test_one_bad_cluster_does_not_stop_the_others_being_recorded(self) -> None:
         #

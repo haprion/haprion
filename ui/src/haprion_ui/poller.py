@@ -45,7 +45,7 @@ from haprion.cli.status import run_status_helper
 from haprion.envelope import new_request_id
 from haprion.version_history import MAX_LIST_LIMIT
 
-from haprion_ui import answers, db, labels, search_index, service, update_check
+from haprion_ui import answers, db, diagnostics, labels, search_index, service, update_check
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
@@ -221,7 +221,15 @@ SOURCES: tuple[Source, ...] = (
 
 
 def _excerpt(text: str) -> str:
-    text = text.strip()
+    """What a failed reading stores and the pages show of a helper's words.
+
+    Redacted before it is cut, as the contract asks of anything from stderr
+    a reader can see: it was stored as it came, and /network showed it to
+    every signed-in role (review 26-10-24, 08-02). A NUL, which no text column
+    stores, is shown as the replacement character.
+    """
+
+    text = diagnostics.redact(text.replace(diagnostics.NUL, diagnostics.NUL_SHOWN)).strip()
     return text if len(text) <= MAX_ERROR_BYTES else text[:MAX_ERROR_BYTES] + " […]"
 
 
@@ -252,7 +260,7 @@ def poll_cluster(
         return {
             "outcome": "unavailable",
             "result": {},
-            "poll_error": f"could not run the {operation} helper: {exc}",
+            "poll_error": _excerpt(f"could not run the {operation} helper: {exc}"),
         }
     return _judge(
         completed,

@@ -91,6 +91,8 @@
         "Status",
         "Destination",
         "Bytes",
+        "Rule",
+        "Mode",
       ];
       const fields = [
         "exportTime",
@@ -103,6 +105,8 @@
         "exportStatus",
         "exportDestination",
         "exportBytes",
+        "exportRule",
+        "exportMode",
       ];
       const lines = [headings.map(csvCell).join(",")];
       selectedRows().forEach((row) => {
@@ -114,8 +118,13 @@
       const link = document.createElement("a");
       const now = new Date();
       link.href = URL.createObjectURL(blob);
+      //
+      // Named for the page it came from (review 26-10-24, 04-09): the WAF
+      // page's export was a traffic-logs file without the rule it was about.
+      //
+      const kind = document.querySelector(REGION)?.dataset.logKind === "waf" ? "waf" : "traffic";
       link.download =
-        `traffic-logs-${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-` +
+        `${kind}-logs-${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-` +
         `${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}.csv`;
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(link.href), 0);

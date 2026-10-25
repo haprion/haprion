@@ -561,6 +561,10 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn('href="/waf?view=requests&amp;sort=', waf)
         self.assertIn('<input type="hidden" name="view" value="requests">', waf)
         self.assertNotIn('name="waf"', waf)
+        # What the export carries (review 26-10-24, 04-09).
+        self.assertIn('data-log-kind="waf"', waf)
+        self.assertIn('data-export-rule="admin-post" data-export-mode="denied"', waf)
+        self.assertIn('data-export-rule="scanner" data-export-mode="logged"', waf)
 
     def test_the_traffic_page_filters_on_rule_hits_and_keeps_the_filter(self) -> None:
         self.healthy_meta()

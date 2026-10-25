@@ -118,6 +118,37 @@ class LogControlsInABrowser(unittest.TestCase):
         self.assertNotIn("/not-selected", content)
         self.assertEqual(len(content.splitlines()), 2)
 
+    def test_a_waf_export_carries_the_rule_and_is_named_for_the_waf(self) -> None:
+        """Review 26-10-24, 04-09: the WAF page's export had no rule and said traffic-logs."""
+
+        self.load(
+            """
+            <div data-log-region data-log-kind="waf">
+            <button type="button" data-log-export disabled>Export selected (.csv)</button>
+            <span data-log-selected-count></span>
+            <input type="checkbox" data-log-select-all>
+            <table><tbody>
+              <tr data-log-row data-export-time="26-09-10 20:00:00"
+                  data-export-cluster="alpha" data-export-node="node-a"
+                  data-export-client="192.0.2.5" data-export-method="GET"
+                  data-export-host="app.example.com" data-export-path="/admin"
+                  data-export-status="403" data-export-destination="app.example:8080"
+                  data-export-bytes="0" data-export-rule="block-admin" data-export-mode="denied"
+                  ><td><input type="checkbox" data-log-select></td></tr>
+            </tbody></table>
+            </div>
+            """
+        )
+
+        self.page.locator("[data-log-select]").first.check()
+        with self.page.expect_download() as pending:
+            self.page.click("[data-log-export]")
+        content = pending.value.path().read_text(encoding="utf-8-sig").splitlines()
+
+        self.assertTrue(pending.value.suggested_filename.startswith("waf-logs-"))
+        self.assertTrue(content[0].endswith('"Bytes","Rule","Mode"'))
+        self.assertTrue(content[1].endswith('"0","block-admin","denied"'))
+
     def test_filter_and_clear_replace_only_the_log_region_and_update_the_address(self) -> None:
         def markup(value: str) -> str:
             return f"""

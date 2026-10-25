@@ -3360,7 +3360,8 @@ request of the week.
 **What a row shows.** The time, the cluster and node, the client, the request, the status, the destination
 and the size - nothing more. When the WAF matched a rule, the *Request* cell starts with a badge naming
 the rule: red when the rule refused the request, amber when it only logged it. Rows can be ticked and
-saved with *Export selected (.csv)*.
+saved with *Export selected (.csv)*. The file has the row's columns plus *Rule* and *Mode* (`denied` or
+`logged`), empty when no rule matched; from *WAF logs* it is named `waf-logs-…`.
 
 **One object's requests.** An object's page links to its own requests: *Traffic log* and *WAF logs* on
 its *Metrics* card, and a link beside each backend on the cluster's *Metrics* page. They open the page

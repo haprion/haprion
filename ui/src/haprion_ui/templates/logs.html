@@ -4,7 +4,7 @@
 {% block title %}{{ "WAF logs" if waf_page else "Traffic logs" }} — Haprion{% endblock %}
 {% block head_extra %}<script defer src="{{ url_for('static', path='/date-picker.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/logs.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
-<div data-log-region>
+<div data-log-region data-log-kind="{{ 'waf' if waf_page else 'traffic' }}">
 <section class="page-heading{% if waf_page %} waf-heading{% endif %}">
   <div class="heading-title">{% if waf_page %}<h1>WAF logs</h1><p class="page-lede">Requests an access rule or the WAF engine logged or refused.</p>{% else %}<h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p>{% endif %}</div>
   <div class="heading-badges">
@@ -33,7 +33,7 @@
 <div class="table-scroll log-table-wrap">
   <table class="node-table log-table{% if waf_page %} waf-table{% endif %}">
     <thead><tr><th class="log-select"><input type="checkbox" data-log-select-all aria-label="Select all visible requests"></th>{{ sort.heading(log_sorts.time, 'Time') }}{{ sort.heading(log_sorts.node, 'Cluster / node') }}{{ sort.heading(log_sorts.client, 'Client') }}{{ sort.heading(log_sorts.request, 'Request') }}{{ sort.heading(log_sorts.status, 'Status') }}{{ sort.heading(log_sorts.destination, 'Destination') }}{% if waf_page %}{{ sort.heading(log_sorts.rule, 'Rule') }}{% else %}{{ sort.heading(log_sorts.bytes, 'Bytes') }}{% endif %}</tr></thead>
-    <tbody>{% for entry in reading.entries %}<tr data-log-row data-export-time="{{ entry.at | shown_at }}" data-export-cluster="{{ entry.cluster }}" data-export-node="{{ entry.node }}" data-export-client="{{ entry.client }}" data-export-method="{{ entry.method }}" data-export-host="{{ entry.host }}" data-export-path="{{ entry.path }}" data-export-status="{{ entry.status }}" data-export-destination="{{ entry.server or 'Destination unavailable' }}" data-export-bytes="{{ entry.bytes }}">
+    <tbody>{% for entry in reading.entries %}<tr data-log-row data-export-time="{{ entry.at | shown_at }}" data-export-cluster="{{ entry.cluster }}" data-export-node="{{ entry.node }}" data-export-client="{{ entry.client }}" data-export-method="{{ entry.method }}" data-export-host="{{ entry.host }}" data-export-path="{{ entry.path }}" data-export-status="{{ entry.status }}" data-export-destination="{{ entry.server or 'Destination unavailable' }}" data-export-bytes="{{ entry.bytes }}" data-export-rule="{{ entry.rule.partition(':')[0] if entry.rule else '' }}" data-export-mode="{{ ('denied' if entry.rule.endswith(':deny') else 'logged') if entry.rule else '' }}">
       <td class="log-select"><input type="checkbox" data-log-select aria-label="Select request at {{ entry.at | shown_at }}"></td>
       <td><time datetime="{{ entry.at.isoformat() }}">{{ entry.at | shown_at }}</time></td>
       <td title="{{ entry.cluster }} / {{ entry.node }}"><strong>{{ entry.cluster }}</strong><span> / {{ entry.node }}</span></td>

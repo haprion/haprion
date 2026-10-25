@@ -56,9 +56,9 @@ USAGE = (
     "  haprion-revert -c <cluster> VERSION [--json]\n"
     "\n"
     "Examples:\n"
-    "  haprion-revert -c internal\n"
-    "  haprion-revert -c internal 7\n"
-    "  haprion-revert -c external\n"
+    "  haprion-revert -c alpha\n"
+    "  haprion-revert -c alpha 7\n"
+    "  haprion-revert -c beta\n"
 )
 
 type RunHelper = Callable[[bytes], tuple[int, str, str]]

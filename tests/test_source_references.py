@@ -33,5 +33,36 @@ class EveryNamedTestExists(unittest.TestCase):
         self.assertEqual(sorted(missing), [])
 
 
+class NoInstallationsClusterNames(unittest.TestCase):
+    """Review 26-10-24, 16-01: help texts and fixtures used a real installation's cluster IDs.
+
+    The repository's examples use `alpha` and `beta`. The two words caught here
+    were exactly one installation's pair, in four commands' help and five
+    contract fixtures.
+    """
+
+    REAL = re.compile(
+        r"(?:-c|--cluster) (?:internal|external)\b"
+        r'|"cluster": "(?:internal|external)"'
+        r"|@(?:internal|external)\.(?:timer|service)\b"
+    )
+
+    def test_no_example_or_fixture_names_them(self) -> None:
+        found = []
+        for root in (*SOURCES, *TESTS, ROOT / "fixtures", ROOT / "docs"):
+            for path in root.rglob("*"):
+                if not path.is_file() or "__pycache__" in path.parts:
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    continue
+                found += [
+                    f"{path.relative_to(ROOT)}: {match.group()}"
+                    for match in self.REAL.finditer(text)
+                ]
+        self.assertEqual(found, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,10 +3,10 @@
   "ok": true,
   "outcome": "done",
   "operation": "backup_schedule",
-  "cluster": "external",
+  "cluster": "beta",
   "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
   "result": {
-    "cluster": "external",
+    "cluster": "beta",
     "time": "05:00",
     "frequency": "weekly",
     "weekdays": [
@@ -18,7 +18,7 @@
     "retention": 21,
     "enabled": true,
     "schedule": {
-      "unit": "haprion-state-backup@external.timer",
+      "unit": "haprion-state-backup@beta.timer",
       "known": true,
       "enabled": true,
       "active": true,

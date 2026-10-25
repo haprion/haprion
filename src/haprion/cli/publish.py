@@ -49,8 +49,8 @@ USAGE = (
     "  haprion-publish -c <cluster> <comment>\n"
     "\n"
     "Examples:\n"
-    '  haprion-publish -c internal "Added serverxyz"\n'
-    '  haprion-publish -c external "Added public service"\n'
+    '  haprion-publish -c alpha "Add a backend server"\n'
+    '  haprion-publish -c beta "Add a public service"\n'
 )
 
 type RunHelper = Callable[[bytes], tuple[int, str, str]]

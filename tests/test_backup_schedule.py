@@ -124,7 +124,7 @@ class ScheduleTests(unittest.TestCase):
     def test_a_cluster_instance_is_read_in_exactly_the_shape_it_is_derived_in(self) -> None:
         #
         # Found on the first policy with `backup_identity` (2026-09-21): the
-        # listing derived `haprion-state-backup@internal.timer` and its own
+        # listing derived `haprion-state-backup@alpha.timer` and its own
         # name check, written for the policy's plain timer, refused it.
         #
         show, asked = reader(LOADED)

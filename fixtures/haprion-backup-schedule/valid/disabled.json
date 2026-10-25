@@ -3,10 +3,10 @@
   "ok": true,
   "outcome": "done",
   "operation": "backup_schedule",
-  "cluster": "internal",
+  "cluster": "alpha",
   "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
   "result": {
-    "cluster": "internal",
+    "cluster": "alpha",
     "time": "05:30",
     "frequency": "daily",
     "weekdays": [],
@@ -14,7 +14,7 @@
     "retention": 14,
     "enabled": false,
     "schedule": {
-      "unit": "haprion-state-backup@internal.timer",
+      "unit": "haprion-state-backup@alpha.timer",
       "known": true,
       "enabled": false,
       "active": false,

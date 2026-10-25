@@ -89,7 +89,9 @@ the cluster did not converge. `done` includes a verified no-op.
   operations the matrix marks "`cluster` is always null": they span clusters or belong to none, and
   their result names what they touched. `cert_list` is null when it lists the manager's registry.
 - `request_id` is UUID formatted and is in every document. A helper that cannot read its request at
-  all writes no document - only a message on stderr - since it has no request to answer.
+  all writes no document - only a message on stderr - since it has no request to answer. One that
+  has read its request and refuses a parameter's value answers with a `failed` document whose error
+  code is `bad_input`.
 - Messages are for humans. Callers branch only on `operation`, `outcome`, stable codes, and typed
   result fields.
 - Unknown fields inside schema v1 are ignored. Unknown enum values or schema versions are not.

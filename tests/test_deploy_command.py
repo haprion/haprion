@@ -265,10 +265,22 @@ class HelperBoundaryTests(HelperFixture):
         self.assertEqual(self.triggered, [])
 
     def test_the_helper_refuses_a_non_boolean_option(self) -> None:
-        code, _, err = self.run_helper(request(allow_vip_unknown="yes"))
+        code, out, err = self.run_helper(request(allow_vip_unknown="yes"))
 
-        self.assertEqual(code, 65)
+        self.assertEqual(code, exit_codes.USAGE)
         self.assertIn("allow_vip_unknown must be a boolean", err)
+        self.assertEqual(out, "", "JSON mode was not asked for")
+        self.assertEqual(self.triggered, [])
+
+    def test_a_refused_option_in_json_mode_is_answered_with_a_document(self) -> None:
+        # Review 26-10-24, 06-10: the request is read, so the refusal is bound to it.
+        code, out, _ = self.run_helper(request(allow_vip_unknown="yes", json=True))
+
+        self.assertEqual(code, exit_codes.USAGE)
+        document = assert_contract("haprion-deploy", out)
+        self.assertEqual(document["request_id"], REQUEST_ID)
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertEqual(self.triggered, [])
 
     def test_an_unknown_cluster_is_refused_inside_the_boundary_too(self) -> None:
         code, _, err = self.run_helper(request(cluster="gamma"))
@@ -347,9 +359,12 @@ class HelperBehaviourTests(HelperFixture):
     def test_an_expected_version_that_is_not_a_version_is_refused(self) -> None:
         for value in (True, 0, -3, "8"):
             with self.subTest(value=value):
-                code, _, err = self.run_helper(request(expected_version=value))
-                self.assertEqual(code, 65)
+                code, out, err = self.run_helper(request(expected_version=value, json=True))
+                self.assertEqual(code, exit_codes.USAGE)
                 self.assertIn("expected_version must be a positive integer", err)
+                self.assertEqual(
+                    assert_contract("haprion-deploy", out)["error"]["code"], "bad_input"
+                )
                 self.assertEqual(self.triggered, [])
 
     def test_json_mode_prints_one_document_and_no_progress(self) -> None:

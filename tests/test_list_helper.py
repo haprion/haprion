@@ -21,6 +21,7 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
+from haprion import exit_codes
 from haprion.cli import list_helper
 from tests.contract_schema import assert_contract
 
@@ -196,8 +197,8 @@ class ListHelperTests(unittest.TestCase):
         for diffs in ("HEAD", ["HEAD"], ["abc"], ["a" * 40] * 11, [None]):
             with self.subTest(diffs=diffs):
                 code, out, err, _ = self.asked_for_diffs(diffs)
-                self.assertEqual(code, 65)
-                self.assertEqual(out, "")
+                self.assertEqual(code, exit_codes.USAGE)
+                self.assert_bad_input(out)
                 self.assertIn("parameters.diffs", err)
 
     def test_an_unpublished_cluster_answers_without_a_release(self) -> None:
@@ -277,8 +278,20 @@ class ListHelperTests(unittest.TestCase):
         for limit in (0, 251, True, "10", 2.5):
             with self.subTest(limit=limit):
                 code, out, err = self.run_helper(payload=request(parameters={"limit": limit}))
-                self.assertEqual((code, out), (65, ""))
+                self.assertEqual(code, exit_codes.USAGE)
+                self.assert_bad_input(out)
                 self.assertIn("parameters.limit", err)
+
+    def assert_bad_input(self, out: str) -> None:
+        """A refused parameter is answered with a document bound to the request.
+
+        The request was read, so its ID and cluster are known (review 26-10-24, 06-10).
+        """
+
+        document = assert_contract("haprion-list", out)
+        self.assertEqual(document["request_id"], REQUEST_ID)
+        self.assertEqual(document["cluster"], "alpha")
+        self.assertEqual(document["error"]["code"], "bad_input")
 
     def test_an_unknown_parameter_is_refused_before_any_repository_is_read(self) -> None:
         code, out, err = self.run_helper(payload=request(parameters={"offset": 50}))

@@ -124,8 +124,21 @@ class HelperTest(unittest.TestCase):
         *,
         cluster: str = "alpha",
         now: float | None = None,
+        checked: bool = True,
     ) -> tuple[dict[str, Any], int]:
-        request = node_restore_helper.build_request(operation, cluster, str(uuid4()), parameters)
+        request = (
+            node_restore_helper.build_request(operation, cluster, str(uuid4()), parameters)
+            if checked
+            else json.dumps(
+                {
+                    "schema_version": 1,
+                    "operation": operation,
+                    "cluster": cluster,
+                    "request_id": str(uuid4()),
+                    "parameters": parameters,
+                }
+            )
+        )
         policy = SimpleNamespace(backup_root=self.backups, publish_root=PUBLISH_ROOT)
         runtime = SimpleNamespace(cluster=lambda _cluster: CLUSTER)
         output = io.StringIO()
@@ -323,6 +336,13 @@ class Discard(HelperTest):
         # The first run's hour is past by the second call's clock; the second is new.
         self.assertFalse((self.root / RUN_ID).exists())
         self.assertTrue((self.root / other).is_dir())
+
+    def test_a_run_id_the_helper_refuses_is_answered_with_a_document(self) -> None:
+        # Review 26-10-24, 06-10: the request is read, so the refusal is bound to it.
+        document, code = self.ask(DISCARD, {"run": "../runs"}, checked=False)
+        self.assertEqual((document["outcome"], code), ("failed", exit_codes.USAGE))
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertIn("run ID", document["error"]["message"])
 
 
 class Status(HelperTest):

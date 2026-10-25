@@ -125,16 +125,27 @@ class BackupJobHelperTests(unittest.TestCase):
                 "alpha", str(uuid4()), schedule=Schedule("04:30"), enabled=True
             )
         )
+        document["parameters"] = {"time": "daily; reboot", "enabled": True, "unit": "x.timer"}
+        output, code = self.execute(json.dumps(document))
+        self.assertEqual(code, exit_codes.REFUSED)
+        self.assertEqual(output, {})
+
+        #
+        # A value refused once the request is read is answered with a document
+        # bound to it (review 26-10-24, 06-10).
+        #
         for parameters in (
-            {"time": "daily; reboot", "enabled": True, "unit": "x.timer"},
             {"time": "04:30", "enabled": True, "frequency": "weekly", "weekdays": ["Mon..Fri"]},
             {"time": "04:30", "enabled": True, "retention": 1000},
+            {"time": "04:30", "enabled": "yes"},
         ):
             with self.subTest(parameters=parameters):
                 document["parameters"] = parameters
                 output, code = self.execute(json.dumps(document))
-                self.assertEqual(code, 65)
-                self.assertEqual(output, {})
+                self.assertEqual(code, exit_codes.USAGE)
+                assert_contract("haprion-backup-schedule", json.dumps(output))
+                self.assertEqual(output["request_id"], document["request_id"])
+                self.assertEqual(output["error"]["code"], "bad_input")
 
 
 if __name__ == "__main__":

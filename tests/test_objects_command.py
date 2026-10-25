@@ -16,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from haprion import exit_codes
 from haprion.cli import objects, objects_helper
 from tests.contract_schema import assert_contract
 
@@ -246,8 +247,9 @@ class ObjectsHelperTests(unittest.TestCase):
     def test_a_fingerprint_that_is_not_one_is_refused(self) -> None:
         code, out, err = self.run_helper(parameters={"unchanged_since": "../../etc"})
 
-        self.assertEqual(code, 65)
-        self.assertEqual(out, "")
+        # Review 26-10-24, 06-10: the request is read, so the refusal is bound to it.
+        self.assertEqual(code, exit_codes.USAGE)
+        self.assertEqual(assert_contract("haprion-objects", out)["error"]["code"], "bad_input")
         self.assertIn("unchanged_since", err)
 
     # B222: the helper reads the network description the generator reads.

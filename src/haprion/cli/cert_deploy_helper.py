@@ -77,7 +77,7 @@ def _validate(parameters: Mapping[str, JsonValue]) -> None:
     for key in PARAMETERS:
         value = parameters.get(key, False)
         if not isinstance(value, bool):
-            raise HelperProtocolError(f"{key} must be a boolean", exit_code=exit_codes.REFUSED)
+            raise HelperProtocolError(f"{key} must be a boolean")
 
 
 def trigger_node(
@@ -140,7 +140,6 @@ def main(
             input_stream or sys.stdin.buffer,
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
-            validate_parameters=_validate,
             lifeline=True,
         )
     except HelperProtocolError as exc:
@@ -154,7 +153,10 @@ def main(
         return exc.exit_code
 
     allow_vip_unknown = bool(request.parameters.get("allow_vip_unknown", False))
-    json_mode = bool(request.parameters.get("json", False))
+    #
+    # Exactly true: JSON mode is itself one of the parameters checked below.
+    #
+    json_mode = request.parameters.get("json") is True
 
     def refuse(code: str, message: str, exit_code: int) -> int:
         """End the run with a result, not just an exit code.
@@ -186,6 +188,11 @@ def main(
                 exit_code,
             )
         return exit_code
+
+    try:
+        _validate(request.parameters)
+    except HelperProtocolError as exc:
+        return refuse("bad_input", str(exc), exit_codes.USAGE)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)

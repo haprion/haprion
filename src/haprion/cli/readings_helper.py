@@ -49,6 +49,7 @@ from haprion.helper_protocol import (
     JsonValue,
     read_scoped_request,
     require_no_arguments,
+    write_bad_input,
     write_document,
 )
 
@@ -114,21 +115,16 @@ def run_readings_helper(
 def _reads(parameters: Mapping[str, JsonValue]) -> dict[str, dict[str, JsonValue]]:
     raw = parameters.get("reads")
     if not isinstance(raw, dict) or not raw:
-        raise HelperProtocolError(
-            "parameters.reads must name at least one reading", exit_code=exit_codes.REFUSED
-        )
+        raise HelperProtocolError("parameters.reads must name at least one reading")
     unknown = sorted(set(raw) - set(READINGS))
     if unknown:
         raise HelperProtocolError(
-            f"unknown {labels.noun(len(unknown), 'reading')}: {', '.join(unknown)}",
-            exit_code=exit_codes.REFUSED,
+            f"unknown {labels.noun(len(unknown), 'reading')}: {', '.join(unknown)}"
         )
     reads: dict[str, dict[str, JsonValue]] = {}
     for name, value in raw.items():
         if not isinstance(value, dict):
-            raise HelperProtocolError(
-                f"parameters.reads.{name} must be an object", exit_code=exit_codes.REFUSED
-            )
+            raise HelperProtocolError(f"parameters.reads.{name} must be an object")
         reads[name] = value
     return reads
 
@@ -189,17 +185,21 @@ def main(
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
         )
-        reads = _reads(request.parameters)
-        cluster = request.cluster if isinstance(request, HelperRequest) else None
-        if cluster is None and not set(reads) <= MANAGER_READINGS:
-            refused = ", ".join(sorted(set(reads) - MANAGER_READINGS))
-            raise HelperProtocolError(
-                f"{labels.noun(len(set(reads) - MANAGER_READINGS), 'reading').capitalize()} that need a cluster: {refused}",
-                exit_code=exit_codes.REFUSED,
-            )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+
+    cluster = request.cluster if isinstance(request, HelperRequest) else None
+    try:
+        reads = _reads(request.parameters)
+        if cluster is None and not set(reads) <= MANAGER_READINGS:
+            refused = ", ".join(sorted(set(reads) - MANAGER_READINGS))
+            raise HelperProtocolError(
+                f"{labels.noun(len(set(reads) - MANAGER_READINGS), 'reading').capitalize()} that need a cluster: {refused}"
+            )
+    except HelperProtocolError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return write_bad_input(writer, OPERATION, request, str(exc))
 
     answers = {
         name: read_one(

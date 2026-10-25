@@ -8,7 +8,7 @@ import signal
 import sys
 import threading
 import uuid
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO, cast
@@ -43,7 +43,6 @@ REQUEST_FIELDS = REQUIRED_REQUEST_FIELDS | OPTIONAL_REQUEST_FIELDS
 
 type JsonScalar = None | bool | int | float | str
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
-type ParameterValidator = Callable[[Mapping[str, JsonValue]], None]
 
 
 class HelperProtocolError(ValueError):
@@ -362,7 +361,6 @@ def _read_common(
     *,
     expected_operation: str,
     allowed_parameter_keys: frozenset[str] = frozenset(),
-    validate_parameters: ParameterValidator | None = None,
     max_bytes: int = MAX_REQUEST_BYTES,
     lifeline: bool = False,
 ) -> _Common:
@@ -373,7 +371,6 @@ def _read_common(
             stream,
             expected_operation=expected_operation,
             allowed_parameter_keys=allowed_parameter_keys,
-            validate_parameters=validate_parameters,
             max_bytes=max_bytes,
             lifeline=lifeline,
         )
@@ -404,7 +401,6 @@ def _read_request(
     *,
     expected_operation: str,
     allowed_parameter_keys: frozenset[str] = frozenset(),
-    validate_parameters: ParameterValidator | None = None,
     max_bytes: int = MAX_REQUEST_BYTES,
     lifeline: bool = False,
 ) -> _Common:
@@ -496,8 +492,12 @@ def _read_request(
             f"{', '.join(unknown_parameters)}",
             exit_code=exit_codes.REFUSED,
         )
-    if validate_parameters is not None:
-        validate_parameters(parameters)
+    #
+    # The parameters' values are the helper's to check, after this returns:
+    # the request is known by then, so a value it refuses is answered with a
+    # `bad_input` document bound to it (`write_failure`). Checked in here, it
+    # could only reach stderr (review 26-10-24, 06-10).
+    #
 
     return _Common(
         operation=operation,
@@ -513,7 +513,6 @@ def read_helper_request(
     *,
     expected_operation: str,
     allowed_parameter_keys: frozenset[str] = frozenset(),
-    validate_parameters: ParameterValidator | None = None,
     max_bytes: int = MAX_REQUEST_BYTES,
     lifeline: bool = False,
 ) -> HelperRequest:
@@ -523,7 +522,6 @@ def read_helper_request(
         stream,
         expected_operation=expected_operation,
         allowed_parameter_keys=allowed_parameter_keys,
-        validate_parameters=validate_parameters,
         max_bytes=max_bytes,
         lifeline=lifeline,
     )
@@ -544,7 +542,6 @@ def read_clusterless_request(
     *,
     expected_operation: str,
     allowed_parameter_keys: frozenset[str] = frozenset(),
-    validate_parameters: ParameterValidator | None = None,
     max_bytes: int = MAX_REQUEST_BYTES,
 ) -> ClusterlessRequest:
     """One request for an operation with no cluster, which is the certificate three.
@@ -563,7 +560,6 @@ def read_clusterless_request(
         stream,
         expected_operation=expected_operation,
         allowed_parameter_keys=allowed_parameter_keys,
-        validate_parameters=validate_parameters,
         max_bytes=max_bytes,
         lifeline=False,
     )
@@ -581,7 +577,6 @@ def read_scoped_request(
     *,
     expected_operation: str,
     allowed_parameter_keys: frozenset[str] = frozenset(),
-    validate_parameters: ParameterValidator | None = None,
     max_bytes: int = MAX_REQUEST_BYTES,
 ) -> HelperRequest | ClusterlessRequest:
     """One request for an operation that reads either a cluster or the manager.
@@ -597,7 +592,6 @@ def read_scoped_request(
         stream,
         expected_operation=expected_operation,
         allowed_parameter_keys=allowed_parameter_keys,
-        validate_parameters=validate_parameters,
         max_bytes=max_bytes,
         lifeline=False,
     )
@@ -705,4 +699,28 @@ def write_failure(
             details=details,
         ),
         exit_code,
+    )
+
+
+def write_bad_input(
+    stream: TextIO,
+    operation: str,
+    request: HelperRequest | ClusterlessRequest,
+    message: str,
+) -> int:
+    """Answer a request that was read but whose parameters are refused.
+
+    `bad_input` and `USAGE`, bound to the request: the caller sent something
+    this helper does not take, and the worker stores that answer rather than
+    `unknown` for a run that never started (review 26-10-24, 06-10).
+    """
+
+    return write_failure(
+        stream,
+        operation=operation,
+        cluster=request.cluster if isinstance(request, HelperRequest) else None,
+        request_id=request.request_id,
+        code="bad_input",
+        message=message,
+        exit_code=exit_codes.USAGE,
     )

@@ -7,7 +7,9 @@ import json
 import unittest
 from typing import Any, BinaryIO, TextIO
 
+from haprion import exit_codes
 from haprion.cli import readings_helper
+from tests.contract_schema import assert_contract
 
 
 def request(**reads: Any) -> io.BytesIO:
@@ -111,8 +113,11 @@ class OneCallForTheLocalReadings(unittest.TestCase):
             request(inventory={}), dict(readings_helper.READINGS)
         )
 
-        self.assertEqual(code, 65)
-        self.assertIsNone(answer)
+        # Review 26-10-24, 06-10: the request is read, so the refusal is bound to it.
+        self.assertEqual(code, exit_codes.USAGE)
+        self.assertEqual(
+            assert_contract("haprion-readings", json.dumps(answer))["error"]["code"], "bad_input"
+        )
         self.assertIn("unknown reading", errors)
 
     def test_a_null_cluster_carries_the_manager_s_reading_and_no_other(self) -> None:
@@ -135,8 +140,9 @@ class OneCallForTheLocalReadings(unittest.TestCase):
         code, answer, errors = self.run_helper(
             manager(cert_list={}, network={}), dict(readings_helper.READINGS)
         )
-        self.assertEqual(code, 65)
-        self.assertIsNone(answer)
+        self.assertEqual(code, exit_codes.USAGE)
+        self.assertIsNone(answer["cluster"])
+        self.assertEqual(answer["error"]["code"], "bad_input")
         self.assertIn("need a cluster: network", errors)
 
     def test_the_six_are_the_poller_s_manager_local_helpers(self) -> None:

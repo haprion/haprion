@@ -35,6 +35,7 @@ from haprion.helper_protocol import (
     config_error_code,
     read_helper_request,
     require_no_arguments,
+    write_bad_input,
     write_document,
     write_failure,
 )
@@ -60,10 +61,7 @@ def _limit(parameters: Mapping[str, Any]) -> int | None:
     if raw is None:
         return None
     if not isinstance(raw, int) or isinstance(raw, bool) or not 1 <= raw <= MAX_LIMIT:
-        raise HelperProtocolError(
-            f"limit must be null or an integer between 1 and {MAX_LIMIT}",
-            exit_code=exit_codes.REFUSED,
-        )
+        raise HelperProtocolError(f"limit must be null or an integer between 1 and {MAX_LIMIT}")
     return raw
 
 
@@ -80,15 +78,8 @@ def _node(parameters: Mapping[str, Any]) -> str | None:
     if raw is None:
         return None
     if not isinstance(raw, str) or not NAME.fullmatch(raw):
-        raise HelperProtocolError("node is not a valid node name", exit_code=exit_codes.USAGE)
+        raise HelperProtocolError("node is not a valid node name")
     return raw
-
-
-def _validate_parameters(parameters: Mapping[str, Any]) -> None:
-    """Reject a bad limit or node while the request is being read, not after."""
-
-    _limit(parameters)
-    _node(parameters)
 
 
 def main(
@@ -115,7 +106,6 @@ def main(
             input_stream or sys.stdin.buffer,
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
-            validate_parameters=_validate_parameters,
         )
     except HelperProtocolError as exc:
         #
@@ -126,6 +116,13 @@ def main(
         #
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+
+    try:
+        limit = _limit(request.parameters)
+        selected = _node(request.parameters)
+    except HelperProtocolError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return write_bad_input(writer, OPERATION, request, str(exc))
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -161,7 +158,6 @@ def main(
             exit_codes.REFUSED,
         )
 
-    selected = _node(request.parameters)
     nodes = tuple(node for node in cluster.nodes if selected is None or node.name == selected)
     if not nodes:
         #
@@ -186,9 +182,7 @@ def main(
         )
 
     try:
-        result, readings = backup_list_result(
-            policy.backup_root, nodes, limit=_limit(request.parameters)
-        )
+        result, readings = backup_list_result(policy.backup_root, nodes, limit=limit)
         #
         # Read here rather than by the caller, and reported with the listing
         # rather than on its own: "these archives exist" and "something is still

@@ -286,8 +286,9 @@ class HelperTests(unittest.TestCase):
         for value in ("../etc", "Node-A", 7, ""):
             with self.subTest(value=value):
                 document, code = self._run(Path("/nonexistent"), {"node": value})
-                self.assertEqual(code, 64)
-                self.assertEqual(document, {})
+                self.assertEqual(code, exit_codes.USAGE)
+                self.assertEqual(document["error"]["code"], "bad_input")
+                _validator().validate(document)
 
     def test_one_named_node_reads_only_that_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -304,8 +305,10 @@ class HelperTests(unittest.TestCase):
         for value in ("10", 0, -1, True, 10_001):
             with self.subTest(value=value):
                 document, code = self._run(Path("/nonexistent"), {"limit": value})
-                self.assertEqual(code, 65)
-                self.assertEqual(document, {})
+                # Review 26-10-24, 06-10: the request is read, so the refusal is bound to it.
+                self.assertEqual(code, exit_codes.USAGE)
+                self.assertEqual(document["error"]["code"], "bad_input")
+                _validator().validate(document)
 
 
 class CommandTests(unittest.TestCase):

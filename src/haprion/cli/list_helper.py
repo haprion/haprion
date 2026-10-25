@@ -29,6 +29,7 @@ from haprion.helper_protocol import (
     config_error_code,
     read_helper_request,
     require_no_arguments,
+    write_bad_input,
     write_document,
     write_failure,
 )
@@ -58,8 +59,7 @@ def parse_limit(raw: object) -> int:
         return LIST_LIMIT
     if isinstance(raw, bool) or not isinstance(raw, int) or not 1 <= raw <= MAX_LIST_LIMIT:
         raise HelperProtocolError(
-            f"parameters.limit must be a whole number from 1 to {MAX_LIST_LIMIT}",
-            exit_code=exit_codes.REFUSED,
+            f"parameters.limit must be a whole number from 1 to {MAX_LIST_LIMIT}"
         )
     return raw
 
@@ -73,8 +73,7 @@ def parse_diffs(raw: object) -> tuple[str, ...]:
         or not all(isinstance(item, str) and COMMIT.fullmatch(item) for item in raw)
     ):
         raise HelperProtocolError(
-            f"parameters.diffs must be a list of at most {MAX_DIFFS} full commit hashes",
-            exit_code=exit_codes.REFUSED,
+            f"parameters.diffs must be a list of at most {MAX_DIFFS} full commit hashes"
         )
     return tuple(dict.fromkeys(raw))
 
@@ -104,8 +103,6 @@ def main(
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
         )
-        limit = parse_limit(request.parameters.get("limit"))
-        wanted = parse_diffs(request.parameters.get("diffs"))
     except HelperProtocolError as exc:
         #
         # Deliberately stderr only. The cluster and the request ID an envelope
@@ -115,6 +112,13 @@ def main(
         #
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+
+    try:
+        limit = parse_limit(request.parameters.get("limit"))
+        wanted = parse_diffs(request.parameters.get("diffs"))
+    except HelperProtocolError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return write_bad_input(writer, OPERATION, request, str(exc))
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)

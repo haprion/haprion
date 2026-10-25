@@ -6,7 +6,6 @@ import os
 import time
 import unittest
 import unittest.mock
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +14,6 @@ from haprion.helper_protocol import (
     MAX_NESTING,
     HelperProtocolError,
     HelperRequest,
-    JsonValue,
     read_helper_request,
     require_no_arguments,
 )
@@ -148,22 +146,15 @@ class HelperProtocolTests(unittest.TestCase):
             ):
                 self.read(raw)
 
-    def test_parameters_are_exact_and_support_operation_validation(self) -> None:
+    def test_parameters_are_exact_and_their_values_are_the_helper_s(self) -> None:
         with self.assertRaisesRegex(HelperProtocolError, "unknown field"):
             self.read(request_bytes(parameters={"path": "/tmp/candidate"}))
 
-        seen: list[object] = []
-
-        def validate(parameters: Mapping[str, JsonValue]) -> None:
-            seen.append(parameters["target"])
-
         result = self.read(
-            request_bytes(parameters={"target": "node-a"}),
+            request_bytes(parameters={"target": ["not", "a", "name"]}),
             allowed_parameter_keys=frozenset({"target"}),
-            validate_parameters=validate,
         )
-        self.assertEqual(result.parameters, {"target": "node-a"})
-        self.assertEqual(seen, ["node-a"])
+        self.assertEqual(result.parameters, {"target": ["not", "a", "name"]})
 
 
 if __name__ == "__main__":

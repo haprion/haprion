@@ -43,7 +43,6 @@ from haprion.envelope import Message, envelope, failure
 from haprion.helper_protocol import (
     HelperProtocolError,
     JsonValue,
-    ParameterValidator,
     config_error_code,
     read_helper_request,
     read_raw_request,
@@ -225,16 +224,6 @@ def _raw(stream: BinaryIO) -> tuple[bytes, str]:
     return raw, str(operation)
 
 
-def _checked(operation: str) -> ParameterValidator:
-    def check(parameters: Mapping[str, JsonValue]) -> None:
-        try:
-            validate(operation, parameters)
-        except ParameterProblem as exc:
-            raise HelperProtocolError(f"parameters: {exc}", exit_code=exit_codes.REFUSED) from exc
-
-    return check
-
-
 def main(
     argv: list[str] | None = None,
     *,
@@ -301,7 +290,6 @@ def _answer(
             io.BytesIO(raw),
             expected_operation=operation,
             allowed_parameter_keys=KEYS[operation] | OPTIONAL[operation],
-            validate_parameters=_checked(operation),
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
@@ -322,6 +310,11 @@ def _answer(
             ),
             exit_code,
         )
+
+    try:
+        validate(operation, parameters)
+    except ParameterProblem as exc:
+        return refuse("bad_input", f"parameters: {exc}", exit_codes.USAGE)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)

@@ -31,6 +31,7 @@ from haprion.helper_protocol import (
     config_error_code,
     read_helper_request,
     require_no_arguments,
+    write_bad_input,
     write_document,
     write_failure,
 )
@@ -78,12 +79,6 @@ def main(
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
         )
-        known = request.parameters.get("unchanged_since")
-        if known is not None and (not isinstance(known, str) or not FINGERPRINT.fullmatch(known)):
-            raise HelperProtocolError(
-                "parameters.unchanged_since must be a listing fingerprint",
-                exit_code=exit_codes.REFUSED,
-            )
     except HelperProtocolError as exc:
         #
         # Deliberately stderr only, for the reason the inventory helper gives:
@@ -91,6 +86,12 @@ def main(
         #
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+
+    known = request.parameters.get("unchanged_since")
+    if known is not None and (not isinstance(known, str) or not FINGERPRINT.fullmatch(known)):
+        message = "parameters.unchanged_since must be a listing fingerprint"
+        errors.write(f"ERROR: {message}\n")
+        return write_bad_input(writer, OPERATION, request, message)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)

@@ -20,6 +20,7 @@ from haprion.helper_protocol import (
     config_error_code,
     read_helper_request,
     read_raw_request,
+    write_bad_input,
     write_document,
 )
 
@@ -113,16 +114,10 @@ def _schedule(parameters: Mapping[str, JsonValue]) -> tuple[Schedule, bool]:
     try:
         requested = backup_schedule_write.schedule(parameters)
     except backup_schedule_write.ScheduleWriteError as exc:
-        raise HelperProtocolError(f"parameters: {exc}", exit_code=exit_codes.REFUSED) from exc
+        raise HelperProtocolError(f"parameters: {exc}") from exc
     if type(enabled) is not bool:
-        raise HelperProtocolError(
-            "parameters.enabled must be true or false", exit_code=exit_codes.REFUSED
-        )
+        raise HelperProtocolError("parameters.enabled must be true or false")
     return requested, enabled
-
-
-def _validate_schedule(parameters: Mapping[str, JsonValue]) -> None:
-    _schedule(parameters)
 
 
 def _refuse(
@@ -176,11 +171,17 @@ def main(
             io.BytesIO(raw),
             expected_operation=operation,
             allowed_parameter_keys=(frozenset() if operation == RUN else SCHEDULE_KEYS),
-            validate_parameters=None if operation == RUN else _validate_schedule,
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+
+    if operation == SCHEDULE:
+        try:
+            requested, enabled = _schedule(request.parameters)
+        except HelperProtocolError as exc:
+            errors.write(f"ERROR: {exc}\n")
+            return write_bad_input(writer, operation, request, str(exc))
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -199,7 +200,6 @@ def main(
         )
 
     if operation == SCHEDULE:
-        requested, enabled = _schedule(request.parameters)
         try:
             result = backup_schedule_write.apply(request.cluster, requested, enabled)
         except backup_schedule_write.ScheduleWriteError as exc:

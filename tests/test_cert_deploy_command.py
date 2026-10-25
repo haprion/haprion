@@ -46,7 +46,7 @@ def pem() -> str:
     )
 
 
-def request(cluster: str = "alpha", **parameters: bool) -> bytes:
+def request(cluster: str = "alpha", **parameters: bool | str) -> bytes:
     return json.dumps(
         {
             "schema_version": 1,
@@ -331,6 +331,20 @@ class RefusalContractTests(HelperFixture):
         self.assertEqual(document["request_id"], REQUEST_ID)
         self.assertEqual(document["error"]["code"], "dependency_unavailable")
         self.assertEqual(self.requests, [])
+
+    def test_a_refused_option_is_answered_with_a_document(self) -> None:
+        # Review 26-10-24, 06-10: the request is read, so the refusal is bound to it.
+        code, out, err = self.run_helper(request(allow_vip_unknown="yes", json=True))
+
+        self.assertEqual(code, exit_codes.USAGE)
+        self.assertIn("allow_vip_unknown must be a boolean", err)
+        document = assert_contract("haprion-cert-deploy", out)
+        self.assertEqual(document["request_id"], REQUEST_ID)
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertEqual(self.requests, [])
+
+        code, out, _ = self.run_helper(request(json="yes"))
+        self.assertEqual((code, out), (exit_codes.USAGE, ""), "JSON mode was not asked for")
 
     def test_a_referenced_certificate_that_is_absent_names_its_stable_code(self) -> None:
         policy = self.runtime(certificates=False)

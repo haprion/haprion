@@ -335,10 +335,10 @@ the name metrics use. *Servers* is one server per line, with weights and backup 
 back. Write one per line:
 
 - `Name: value` sets a header, replacing any with that name.
-- `+Name: value` adds another header with the same name.
+- `+Name: value` adds one more header with that name, beside any the traffic already carries.
 - `-Name` removes every header with that name.
 
-One name cannot appear in two of these three forms. A value is at most 200 characters, without a single
+One name cannot appear in two of these three forms, or twice in one of them. A value is at most 200 characters, without a single
 quote. `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` belong to the cluster, which writes
 them from what the connection actually was. They are refused here.
 

@@ -393,6 +393,19 @@ class HeaderEditsAreWrittenAsLines(unittest.TestCase):
 
         self.assertIn("http-response del-header Server", result.files["1001-app.cfg"])
 
+    def test_a_name_written_twice_for_one_action_is_refused_with_both_lines(self) -> None:
+        """Review 26-10-24, 15-09: the last of the two won, and nothing was said."""
+
+        for written, lines in (
+            ("+Set-Cookie: a=1\n+set-cookie: b=2", "1 and 2"),
+            ("X-A: 1\n\nX-A: 2", "1 and 3"),
+            ("-X-Debug\n-x-debug", "1 and 2"),
+        ):
+            with self.subTest(written):
+                result = check(form(request_headers=written))
+                self.assertIn(f"lines {lines}", result.problem or "")
+                self.assertTrue(result.about_the_object)
+
     def test_a_line_that_is_not_an_edit_is_named_before_the_engine_sees_it(self) -> None:
         result = check(form(request_headers="X-Tenant acme"))
 

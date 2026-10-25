@@ -354,7 +354,7 @@
 
     {% call group(groups.headers, when('protocol', 'http https')) %}
     <div class="form-grid">
-      <label><span class="field-title">Request headers <span class="optional">(optional)</span></span><textarea name="request_headers" rows="3" placeholder="X-Tenant: acme&#10;+X-Trace: 1&#10;-X-Debug">{{ form.request_headers }}</textarea><small>One per line. <code>Name: value</code> sets, <code>+Name: value</code> adds, <code>-Name</code> removes.</small></label>
+      <label><span class="field-title">Request headers <span class="optional">(optional)</span></span><textarea name="request_headers" rows="3" placeholder="X-Tenant: acme&#10;+X-Trace: 1&#10;-X-Debug">{{ form.request_headers }}</textarea><small>One per line. <code>Name: value</code> sets, <code>+Name: value</code> adds one more, <code>-Name</code> removes.</small></label>
       <label><span class="field-title">Response headers <span class="optional">(optional)</span></span><textarea name="response_headers" rows="3" placeholder="X-Frame-Options: DENY&#10;-Server">{{ form.response_headers }}</textarea><small>Same three shapes, on the way back out.</small></label>
     </div>
     {% endcall %}

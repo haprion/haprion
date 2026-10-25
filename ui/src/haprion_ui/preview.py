@@ -1161,32 +1161,47 @@ def _routes(
 def _header_edits(written: str, phase: str) -> dict[str, object]:
     """One line per edit, which is how somebody writes these by hand.
 
-    `Name: value` sets, `+Name: value` adds another field with the same name,
-    and `-Name` removes every one. Three shapes rather than three text boxes,
-    because the edits belong together and reading them in one place is how a
-    contradiction becomes visible.
+    `Name: value` sets, `+Name: value` adds one more field beside any the
+    traffic already carries, and `-Name` removes every one. Three shapes rather
+    than three text boxes, because the edits belong together and reading them
+    in one place is how a contradiction becomes visible.
 
-    Nothing here decides whether a name or a value is usable - the engine does,
-    and it is the same refusal a hand-written object gets.
+    A name written twice for the same action is refused with both lines,
+    ignoring case: the object holds one value per name and action, and the
+    last line used to win without a word (review 26-10-24, 15-09).
+
+    Nothing else here decides whether a name or a value is usable - the engine
+    does, and it is the same refusal a hand-written object gets.
     """
 
     assigned: dict[str, str] = {}
     added: dict[str, str] = {}
     removed: list[str] = []
-    for line in written.splitlines():
+    seen: dict[tuple[str, str], int] = {}
+    for number, line in enumerate(written.splitlines(), 1):
         entry = line.strip()
         if not entry:
             continue
         if entry.startswith("-"):
-            removed.append(entry[1:].strip())
-            continue
-        target = added if entry.startswith("+") else assigned
-        name, separator, value = entry.lstrip("+").partition(":")
-        if not separator:
+            action, name, value = "delete", entry[1:].strip(), ""
+        else:
+            action = "add" if entry.startswith("+") else "set"
+            name, separator, value = entry.lstrip("+").partition(":")
+            if not separator:
+                raise ValueError(
+                    f"every {phase} header line must be Name: value, +Name: value or -Name"
+                )
+            name, value = name.strip(), value.strip()
+        first = seen.setdefault((action, name.lower()), number)
+        if first != number:
             raise ValueError(
-                f"every {phase} header line must be Name: value, +Name: value or -Name"
+                f"{phase} header lines {first} and {number} both name {name};"
+                " write each name once per action"
             )
-        target[name.strip()] = value.strip()
+        if action == "delete":
+            removed.append(name)
+        else:
+            (added if action == "add" else assigned)[name] = value
 
     edits: dict[str, object] = {}
     if assigned:

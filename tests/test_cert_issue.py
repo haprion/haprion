@@ -20,6 +20,7 @@ import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -925,3 +926,31 @@ class RenewingALineage(IssueFixture):
         self.assertEqual(len(certbot.calls), 1)
         self.assertIn("--force-renewal", certbot.calls[0])
         self.assertEqual(code, 0, err.getvalue())
+
+    def test_the_forced_renewal_says_the_publish_s_warnings(self) -> None:
+        """Review 26-10-25, 13-06: the JSON answer carried them; the text said nothing."""
+
+        renewed = SimpleNamespace(
+            certbot_seconds=3.0,
+            publish=SimpleNamespace(
+                certificates=("example.net",),
+                failed=(),
+                warnings=(("pending_unrecorded", "could not update the pending list"),),
+            ),
+        )
+        err = io.StringIO()
+        with (
+            mock.patch("haprion.cli.cert_renew.os.geteuid", return_value=0),
+            mock.patch("haprion.cli.cert_renew.cert_issue.renew", return_value=renewed),
+            mock.patch("haprion.cli.cert_renew.load_policy"),
+            mock.patch("haprion.cli.cert_renew.load_runtime_config"),
+            mock.patch("haprion.cli.cert_renew.renew_ndes", return_value=False),
+            mock.patch("sys.stderr", err),
+        ):
+            code = cert_renew.main(["--acme-now", "example.net"])
+
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertIn(
+            "WARNING: [pending_unrecorded] example.net: could not update the pending list",
+            err.getvalue(),
+        )

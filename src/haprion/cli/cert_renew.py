@@ -323,6 +323,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"failed {len(result.publish.failed)}",
                 file=sys.stderr,
             )
+            # As the JSON answer carries them (review 26-10-25, 13-06).
+            for code, message in result.publish.warnings:
+                print(f"WARNING: [{code}] {certificate_id}: {message}", file=sys.stderr)
             failed = failed or bool(result.publish.failed)
     #
     # After certbot, not instead of it: a failure in one pass does not spare

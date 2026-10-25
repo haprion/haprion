@@ -962,8 +962,8 @@ def join(
         raise EnrollmentError(
             "node_join_failed",
             f"{node.mgmt_host} did not join (exit {response.exit_code}){': ' + said if said else ''}. "
-            "Nothing was changed here; a block not yet used works again, a used one is made "
-            "anew on the node with  sudo haprion-node-key --again",
+            "Nothing was changed here. A block is valid for 24 hours and once; make a new one "
+            "on the node with  sudo haprion-node-key --again",
             exit_codes.BLOCKED,
         )
 

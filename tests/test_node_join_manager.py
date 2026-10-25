@@ -255,6 +255,12 @@ class JoiningOnAdd(unittest.TestCase):
         self.assertEqual(caught.exception.code, "node_join_failed")
         self.assertIn("step 4 stopped (exit 1)", str(caught.exception))
         self.assertIn("haprion-node-key --again", str(caught.exception))
+        # Review 26-10-24, 12-10: an expired block does not work again, and
+        # the hours are the ones the node's key script gives a block.
+        script = (Path(__file__).resolve().parents[1] / "install/node/haprion-node-key").read_text()
+        [hours] = re.findall(r"^VALID_HOURS=(\d+)$", script, re.MULTILINE)
+        self.assertIn(f"valid for {hours} hours and once", str(caught.exception))
+        self.assertNotIn("works again", str(caught.exception))
         self.assertEqual(self.calls, ["join"])
         self.assertEqual(self.site.snapshot(), before)
 

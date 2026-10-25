@@ -81,7 +81,7 @@ sudo apt install haprion-node
 ```
 
 The node package prepares the machine and prints an **enrollment block**: a line starting with
-`haprion-node-v2:`. Keep it at hand; the manager joins the node with it. The node package can also
+`haprion-node-v2:`. Keep it at hand; the manager joins the node with it, once, within 24 hours. The node package can also
 be downloaded from the manager, on the page the next step opens.
 
 ## 3. Set up the first cluster

@@ -64,6 +64,15 @@ WORKER_WAITING = timedelta(minutes=10)
 MAINTENANCE_AHEAD = {"traffic_log": 31, "metric_frontend": 60}
 
 
+def card_link(cluster: str) -> str:
+    """The cluster's own card on the dashboard (`index.html`), not the top of it (04-03).
+
+    A cluster ID is a valid fragment as it is (`CLUSTER_ID`: letters, digits, hyphens).
+    """
+
+    return f"/#cluster-{cluster}"
+
+
 @dataclass(frozen=True, slots=True)
 class Item:
     kind: str
@@ -77,6 +86,19 @@ class Item:
     @property
     def page(self) -> str:
         return PAGES[self.kind]
+
+    @property
+    def needs_writes(self) -> bool:
+        """Whether the row's page is one only management writes open.
+
+        Every page under /settings is behind the write gate and answers 404
+        without it, so in read-only mode such a row is text, not a link
+        (review 26-10-24, 04-02).
+        """
+
+        return self.link == "/settings" or self.link.startswith(
+            ("/settings/", "/settings#", "/settings?")
+        )
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -288,7 +310,7 @@ def from_dashboard(
                     #
                     message="status last read",
                     since=cluster.observed_at,
-                    link="/",
+                    link=card_link(cluster.cluster),
                 )
             )
             continue
@@ -314,7 +336,7 @@ def from_dashboard(
                     subject=cluster.cluster,
                     message=f"{cluster.label} · {cluster.detail}",
                     since=None,
-                    link="/",
+                    link=card_link(cluster.cluster),
                 )
             )
         for node in cluster.nodes:
@@ -329,7 +351,7 @@ def from_dashboard(
                     subject=node.name,
                     message=f"{node.label}" + (f" · {node.detail}" if node.detail else ""),
                     since=None,
-                    link="/",
+                    link=card_link(cluster.cluster),
                 )
             )
     return items
@@ -660,9 +682,9 @@ def from_manager(
                 severity="critical",
                 cluster=None,
                 subject="poller",
-                message="the poller has not read the clusters since"
+                message="the poller (haprion-poller) has not read the clusters since"
                 if cluster_list_at
-                else "the poller has never read the clusters",
+                else "the poller (haprion-poller) has never read the clusters",
                 since=cluster_list_at,
                 link="/",
             )

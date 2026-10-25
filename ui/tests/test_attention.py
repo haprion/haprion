@@ -147,8 +147,8 @@ class EachKindComesAndGoes(unittest.TestCase):
         )
 
         self.assertEqual(
-            [(item.kind, item.subject) for item in items],
-            [("node", "node-a"), ("reading", "beta")],
+            [(item.kind, item.subject, item.link) for item in items],
+            [("node", "node-a", "/#cluster-alpha"), ("reading", "beta", "/#cluster-beta")],
         )
 
     def test_a_node_waiting_for_its_deploy_is_not_listed(self) -> None:
@@ -695,6 +695,7 @@ class TheManagersOwnServices(unittest.TestCase):
                 self.assertEqual(
                     (item.kind, item.subject, item.severity), ("manager", "poller", "critical")
                 )
+                self.assertIn("(haprion-poller)", item.message)
 
     def test_a_job_waiting_ten_minutes_with_nothing_running_is_the_worker(self) -> None:
         waiting = replace(job(state="pending"), created_at=NOW - timedelta(minutes=11))
@@ -791,6 +792,50 @@ class TheDashboardBox(LoginTestCase):
         self.assertIn("Deploy failed", drawn)
         self.assertNotIn("Needs attention", empty)
 
+    def test_a_settings_row_is_text_while_management_writes_are_off(self) -> None:
+        """Review 26-10-24, 04-02: the link answered "Not found" in read-only mode."""
+
+        item = attention.Item(
+            "forwarding",
+            "warning",
+            "alpha",
+            "receiver",
+            "lines dropped",
+            None,
+            "/settings/clusters/alpha#delivery",
+        )
+        some = attention.build_attention([item], status_age={}, stale_after_seconds=40, now=NOW)
+        for writes, linked in ((False, False), (True, True)):
+            with self.subTest(writes=writes):
+                client = self.client(replace(configuration(), management_writes=writes))
+                self.sign_in(client)
+                with mock.patch("haprion_ui.pages.dashboard._attention", return_value=some):
+                    drawn = client.get("/").text
+                self.assertIn("lines dropped", drawn)
+                self.assertEqual('href="/settings/clusters/alpha#delivery"' in drawn, linked)
+
+    def test_every_settings_link_is_one_that_needs_writes(self) -> None:
+        for link, needs in (
+            ("/settings", True),
+            ("/settings#external-monitoring", True),
+            ("/settings/clusters/alpha#delivery", True),
+            ("/settingsx", False),
+            ("/certificates", False),
+            ("/#cluster-alpha", False),
+        ):
+            with self.subTest(link):
+                item = attention.Item("logs", "warning", None, "x", "y", None, link)
+                self.assertEqual(item.needs_writes, needs)
+
+    def test_a_cluster_s_row_leads_to_its_card(self) -> None:
+        """Review 26-10-24, 04-03: the row reloaded the top of the page it was on."""
+
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        page = client.get("/").text
+        self.assertIn('id="cluster-edge-demo"', page)
+        self.assertEqual(attention.card_link("edge-demo"), "/#cluster-edge-demo")
+
 
 class AFixWaitingInTheRepository(unittest.TestCase):
     """0088, B357: one row per package, the waiting version in the row's own name."""
@@ -820,10 +865,6 @@ class AFixWaitingInTheRepository(unittest.TestCase):
         ):
             with self.subTest(full):
                 self.assertEqual(attention.short_version(full), shown)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TheAcknowledgement(LoginTestCase):
@@ -914,3 +955,7 @@ class TheAcknowledgement(LoginTestCase):
 
         self.assertEqual(shown, [])
         self.assertEqual(forgotten, {gone})
+
+
+if __name__ == "__main__":
+    unittest.main()

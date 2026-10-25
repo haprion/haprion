@@ -46,7 +46,8 @@
 {#
   What needs doing (B274): under the four cards, only when there is
   something, worst first. Each row goes where the fix is; a reader is told
-  and not sent to a page that only writes. What somebody chose - a drain, a
+  and not sent to a page that only writes, nor is an admin while management
+  writes are off (`needs_writes`). What somebody chose - a drain, a
   maintenance page, a block - is on the cluster's Operations line instead.
 #}
 {% if attention and attention.items %}
@@ -55,7 +56,7 @@
   <ul class="attention-list">
     {% for item in attention.items %}
     {% set text %}<span class="status-dot status-{{ item.severity }}" aria-hidden="true"></span><span class="attention-text">{% if item.cluster %}<strong>{{ item.cluster }}</strong>: {% endif %}{% if item.subject and item.subject != item.cluster %}{{ item.subject }} · {% endif %}{{ item.message }}{% if item.since %} <time datetime="{{ item.since.isoformat() }}">{{ item.since | shown_at }}</time>{% endif %}</span><span class="attention-go">{{ item.page }}</span>{% endset %}
-    <li>{% if role == 'admin' %}<a class="attention-row" href="{{ item.link }}">{{ text }}</a>{% else %}<div class="attention-row">{{ text }}</div>{% endif %}{% if management_writes and role == 'admin' %}<form method="post" action="/attention/acknowledge" class="attention-ack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="kind" value="{{ item.kind }}"><input type="hidden" name="cluster" value="{{ item.cluster or '' }}"><input type="hidden" name="subject" value="{{ item.subject }}"><button class="secondary-button" type="submit">Acknowledge</button></form>{% endif %}</li>
+    <li>{% if role == 'admin' and (management_writes or not item.needs_writes) %}<a class="attention-row" href="{{ item.link }}">{{ text }}</a>{% else %}<div class="attention-row">{{ text }}</div>{% endif %}{% if management_writes and role == 'admin' %}<form method="post" action="/attention/acknowledge" class="attention-ack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="kind" value="{{ item.kind }}"><input type="hidden" name="cluster" value="{{ item.cluster or '' }}"><input type="hidden" name="subject" value="{{ item.subject }}"><button class="secondary-button" type="submit">Acknowledge</button></form>{% endif %}</li>
     {% endfor %}
   </ul>
 </section>
@@ -85,7 +86,7 @@
 
 <div class="cluster-list">
   {% for cluster in dashboard.clusters %}
-  <article class="cluster-card {{ cluster.accent | accent_class }}">
+  <article class="cluster-card {{ cluster.accent | accent_class }}" id="cluster-{{ cluster.cluster }}">
     <header class="cluster-header">
       <div class="cluster-identity">
         <span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span>

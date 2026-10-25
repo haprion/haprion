@@ -7,29 +7,44 @@ the test was nowhere: the guard the comment promised did not exist.
 from __future__ import annotations
 
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = (ROOT / "src", ROOT / "install", ROOT / "tools", ROOT / "ui" / "src")
+SOURCES = ("src/", "install/", "tools/", "ui/src/")
 TESTS = (ROOT / "tests", ROOT / "ui" / "tests")
 NAMED_TEST = re.compile(r"\btest_[a-z0-9_]+\.py\b")
+
+
+def tracked(*prefixes: str) -> list[tuple[str, str]]:
+    """The repository's own text files under `prefixes`, with their text.
+
+    Not whatever a checkout holds beside them: an ignored build directory
+    named tests long gone.
+    """
+
+    listed = subprocess.run(  # fixed program, the repository's own file list
+        ["/usr/bin/git", "-C", str(ROOT), "ls-files", "-z", *prefixes],
+        capture_output=True,
+        check=True,
+    ).stdout.decode()
+    files = []
+    for name in filter(None, listed.split("\0")):
+        try:
+            files.append((name, (ROOT / name).read_text(encoding="utf-8")))
+        except (UnicodeDecodeError, FileNotFoundError):
+            continue
+    return files
 
 
 class EveryNamedTestExists(unittest.TestCase):
     def test_a_test_the_source_names_is_one_the_suites_have(self) -> None:
         missing = set()
-        for root in SOURCES:
-            for path in root.rglob("*"):
-                if not path.is_file() or "__pycache__" in path.parts:
-                    continue
-                try:
-                    text = path.read_text(encoding="utf-8")
-                except UnicodeDecodeError:
-                    continue
-                for name in NAMED_TEST.findall(text):
-                    if not any((tests / name).is_file() for tests in TESTS):
-                        missing.add(f"{path.relative_to(ROOT)}: {name}")
+        for name, text in tracked(*SOURCES):
+            for test in NAMED_TEST.findall(text):
+                if not any((tests / test).is_file() for tests in TESTS):
+                    missing.add(f"{name}: {test}")
         self.assertEqual(sorted(missing), [])
 
 
@@ -48,19 +63,11 @@ class NoInstallationsClusterNames(unittest.TestCase):
     )
 
     def test_no_example_or_fixture_names_them(self) -> None:
-        found = []
-        for root in (*SOURCES, *TESTS, ROOT / "fixtures", ROOT / "docs"):
-            for path in root.rglob("*"):
-                if not path.is_file() or "__pycache__" in path.parts:
-                    continue
-                try:
-                    text = path.read_text(encoding="utf-8")
-                except UnicodeDecodeError:
-                    continue
-                found += [
-                    f"{path.relative_to(ROOT)}: {match.group()}"
-                    for match in self.REAL.finditer(text)
-                ]
+        found = [
+            f"{name}: {match.group()}"
+            for name, text in tracked(*SOURCES, "tests/", "ui/tests/", "fixtures/", "docs/")
+            for match in self.REAL.finditer(text)
+        ]
         self.assertEqual(found, [])
 
 

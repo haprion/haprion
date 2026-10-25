@@ -1163,6 +1163,9 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
     _, certificate_rows = read_source(
         request, config, CERTIFICATE_SOURCE, cluster=cluster, clusters=clusters
     )
+    _, inventory_rows = read_source(
+        request, config, INVENTORY_SOURCE, cluster=cluster, clusters=clusters
+    )
     held = next(
         (
             view
@@ -1197,7 +1200,21 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
         commit=commit if isinstance(commit, str) and commit else None,
         base_version=released.number if released else None,
         stored=objects.cluster_object_views(reading),
-        choices=editor_module.editor_cluster(cluster, described, held),
+        choices=editor_module.editor_cluster(
+            cluster,
+            described,
+            held,
+            editor_module.reservations_from_inventory(
+                next(
+                    (
+                        row.result
+                        for row in inventory_rows
+                        if row.cluster == cluster and row.outcome == "done"
+                    ),
+                    None,
+                )
+            ),
+        ),
         available=reading is not None and reading.outcome == "done" and not reading.poll_error,
     )
 

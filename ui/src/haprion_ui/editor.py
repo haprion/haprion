@@ -27,8 +27,10 @@ from typing import Annotated
 
 from haprion import address_ranges
 from haprion.config import AbuseProtection, UnknownHost, Vip
+from haprion.digits import is_digits
 from haprion.generate import GeneratorError, generate
 from haprion.proxy_model import HTTP_METHODS, WAF_ENGINE_ERROR_DEFAULT, ModelError, load_proxy
+from haprion.reservations import NOTHING_RESERVED, Reservations
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from haprion_ui.advanced_dialog import MAX_TEXT
@@ -88,12 +90,49 @@ class EditorCluster:
     # The CA certificates a pool on this cluster may be verified against (B276).
     #
     authority_ids: tuple[str, ...] = ()
+    #
+    # What the handwritten layer keeps for itself (manual/reservations.yaml),
+    # as the inventory last read it. A name or a port claimed there was valid
+    # here and refused by the publish, holding back the cluster's whole list
+    # (review 26-10-24, 15-07).
+    #
+    reservations: Reservations = NOTHING_RESERVED
+
+
+def reservations_from_inventory(result: Mapping[str, object] | None) -> Reservations:
+    """The inventory's `reservations`, back in the engine's own shape; none when unread."""
+
+    listed = (result or {}).get("reservations")
+    if not isinstance(listed, Mapping):
+        return NOTHING_RESERVED
+    hostnames = listed.get("hostnames")
+    ports = listed.get("tcp_ports")
+    listeners = listed.get("tcp_listeners")
+    pairs: set[tuple[str, int]] = set()
+    for entry in listeners if isinstance(listeners, list) else ():
+        address, _, port = str(entry).rpartition(":")
+        if address and is_digits(port):
+            pairs.add((address, int(port)))
+    return Reservations(
+        hostnames=frozenset(
+            name
+            for name in (hostnames if isinstance(hostnames, list) else ())
+            if isinstance(name, str)
+        ),
+        tcp_ports=frozenset(
+            port
+            for port in (ports if isinstance(ports, list) else ())
+            if isinstance(port, int) and not isinstance(port, bool)
+        ),
+        tcp_listeners=frozenset(pairs),
+    )
 
 
 def editor_cluster(
     cluster: str,
     network: NetworkClusterView | None,
     certificates: CertificateClusterView | None,
+    reservations: Reservations = NOTHING_RESERVED,
 ) -> EditorCluster:
     """Assemble one cluster's real choices out of the cached readings."""
 
@@ -121,6 +160,7 @@ def editor_cluster(
         certificate_sans={view.identifier: tuple(view.sans) for view in usable},
         complete=bool(vips) and network is not None and not network.stale,
         authority_ids=tuple(sorted(certificates.authorities)) if certificates else (),
+        reservations=reservations,
     )
 
 
@@ -207,6 +247,7 @@ def check(
             abuse_protection=VALIDATION_ABUSE_PROTECTION,
             certificate_sans=cluster.certificate_sans,
             countries=unchecked_countries([edited, *neighbours]),
+            reservations=cluster.reservations,
         ).configuration
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))

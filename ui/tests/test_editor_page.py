@@ -25,6 +25,7 @@ from haprion_ui import auth, db, health, objects, views
 from haprion_ui import editor as editor_module
 from haprion_ui import probe as probe_module
 from haprion_ui.db import (
+    ClusterInventory,
     ClusterNetwork,
     ClusterObjects,
     ClusterSettingsRow,
@@ -362,6 +363,35 @@ class SavingADraft(EditorTestCase):
 
         self.assertEqual(answer.status_code, 200)
         self.assertEqual(self.saved, [])
+
+    def test_a_name_the_cluster_reserves_is_refused_by_the_check(self) -> None:
+        """Review 26-10-24, 15-07: the publish refused it after the check passed."""
+
+        inventory = ClusterInventory(
+            cluster="alpha",
+            observed_at=OBSERVED,
+            outcome="done",
+            result={
+                "reservations": {
+                    "hostnames": ["shop.example.com"],
+                    "tcp_ports": [],
+                    "tcp_listeners": [],
+                }
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        client = self.editor()
+        fresh = replace(NETWORK, observed_at=datetime.now(UTC))
+        with (
+            mock.patch("haprion_ui.db.cluster_networks", return_value=[fresh]),
+            mock.patch("haprion_ui.db.cluster_inventories", return_value=[inventory]),
+        ):
+            answer = self.submit(client, "/proxies/alpha/shop/edit", action="check")
+
+        self.assertIn("reserved in manual/reservations.yaml", answer.text)
+        self.assertNotIn("<strong>Valid", answer.text)
 
     def test_a_document_that_is_not_an_object_is_not_saved(self) -> None:
         """The refusal is about the object, so there is nothing to keep yet."""

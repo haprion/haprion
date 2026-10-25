@@ -11,10 +11,12 @@ interface formed on its own.
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
+from haprion.reservations import Reservations
 
 from haprion_ui import editor
 from haprion_ui.preview import (
@@ -1173,3 +1175,35 @@ class ATcpPoolToldTheClientsAddress(unittest.TestCase):
         document = build_document(form(protocol="https", proxy_protocol="on"))
 
         self.assertNotIn("proxy_protocol", document)
+
+
+class TheReservationsAreTheEngines(unittest.TestCase):
+    """Review 26-10-24, 15-07: a reserved name was valid here and refused by the publish."""
+
+    INVENTORY: ClassVar[dict[str, object]] = {
+        "reservations": {
+            "hostnames": ["app.example.com"],
+            "tcp_ports": [9000],
+            "tcp_listeners": ["192.0.2.20:5432", "2001:db8::1:6379"],
+        }
+    }
+
+    def test_the_inventory_s_document_is_read_back(self) -> None:
+        reserved = editor.reservations_from_inventory(self.INVENTORY)
+
+        self.assertEqual(reserved.hostnames, frozenset({"app.example.com"}))
+        self.assertEqual(reserved.tcp_ports, frozenset({9000}))
+        self.assertEqual(
+            reserved.tcp_listeners, frozenset({("192.0.2.20", 5432), ("2001:db8::1", 6379)})
+        )
+        self.assertEqual(editor.reservations_from_inventory(None), Reservations())
+
+    def test_a_reserved_name_is_refused_in_the_publish_s_words(self) -> None:
+        cluster = replace(
+            PREVIEW_EDITOR, reservations=editor.reservations_from_inventory(self.INVENTORY)
+        )
+
+        result = editor.check(form(), cluster)
+
+        self.assertIn("reserved in manual/reservations.yaml", result.problem or "")
+        self.assertIsNone(check(form()).problem)

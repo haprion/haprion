@@ -206,6 +206,12 @@
         <div class="publish-dialog-body">
           <h3>Publish &amp; deploy {{ cluster.cluster }}</h3>
           <ul class="publish-list">
+            {#
+              A deploy rolls out the cluster's newest published version, so a
+              version published and not yet deployed goes out with these
+              changes; the list says so (review 26-10-24, 12-06).
+            #}
+            {% if cluster.release_state == 'Behind' and cluster.target_version %}<li><strong>{{ cluster.version }}</strong><span>Published, not deployed yet</span></li>{% endif %}
             {% for row in package.rows %}<li><a class="proxy-link" href="{{ row.link }}"><strong>{{ row.name }}</strong></a><span>{{ row.what }}</span></li>{% for change in row.details %}<li class="publish-detail">{{ network_change(change, cluster.cluster) }}</li>{% endfor %}{% endfor %}
           </ul>
           <form method="post" action="/history/{{ cluster.cluster }}/publish" class="form-grid" data-keep="publish-{{ cluster.cluster }}">

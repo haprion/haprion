@@ -430,6 +430,30 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         )
         self.assertNotIn(">Deploy configuration</button>", waiting)
 
+    def test_the_dialog_names_a_published_version_the_deploy_takes_along(self) -> None:
+        # A deploy rolls out the newest published version, so one published and
+        # not deployed goes out with the saved changes (review 26-10-24, 12-06).
+        from haprion_ui import demo
+
+        def dialog(status: Any) -> str:
+            client = self.editor()
+            self.rows = [row()]
+            with mock.patch("haprion_ui.db.cluster_statuses", return_value=[status]):
+                page = str(client.get("/").text)
+            body = page.split('<dialog class="publish-dialog" id="publish-alpha"', 1)[1]
+            return body.split("</dialog>", 1)[0]
+
+        rows = {row.result["summary"]["release_state"]: row for row in demo.status_rows()}
+        behind = replace(rows["behind"], cluster="alpha")
+        converged = replace(rows["converged"], cluster="alpha")
+        version = behind.result["summary"]["target"]["version"]
+
+        self.assertIn(
+            f"<li><strong>v{version}</strong><span>Published, not deployed yet</span></li>",
+            dialog(behind),
+        )
+        self.assertNotIn("Published, not deployed yet", dialog(converged))
+
     def test_the_dialog_lists_what_goes_out_and_takes_the_comment(self) -> None:
         _empty, waiting = self.dashboard()
         dialog = waiting.split('<dialog class="publish-dialog" id="publish-alpha"', 1)[1]

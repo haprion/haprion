@@ -19,8 +19,8 @@ and the tool that applies it, and the platform's own installation:
     /usr/share/haprion-ui/install/  the platform steps (install/platform with
                                     lib.sh, accounts.sh and defaults.sh), and beside it the
                                     tools and certbot lock the optional steps use
-    /usr/sbin/haprion-<command>     backup, drain, profiles, retention, rollback,
-                                    settings, tls, user, web
+    /usr/sbin/haprion-<command>     backup, drain, export, profiles, retention,
+                                    rollback, settings, setup, tls, user, web
 
 `postinst` unpacks the release after checking the archive's digest. On an
 installation that already has a `current`, it then runs the whole

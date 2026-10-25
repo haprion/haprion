@@ -3,16 +3,18 @@
 
 The package is transport for the release installer, not the release itself:
 
-    /usr/lib/haprion/cli/          the wheel, the node package the release
-                                   carries (B180), tools/install-release.py
-                                   and PAYLOAD, which names both with digests
+    /usr/lib/haprion/cli/          the wheel, the node package, the WAF engine
+                                   package and the repository key package the
+                                   release carries (B180),
+                                   tools/install-release.py and PAYLOAD, which
+                                   names all four with digests
     /usr/bin/haprion-<command>     one line per operator command, into
                                    /opt/haprion/current/bin - on sudo's path,
                                    which current/bin is not
     /etc/sudoers.d/haprion         the operators' rules (install/sudoers/haprion)
 
 `postinst` runs the installer with what PAYLOAD names, which verifies the wheel
-and the node package, makes a release under /opt/haprion/releases and switches
+and the three packages, makes a release under /opt/haprion/releases and switches
 `current` - the versioned releases, rollback and INSTALLATION.json stay what
 they were. Root helpers get no command in /usr/bin: they are run through their
 exact sudo rule by a calling half, and neither are the worker's `-ask`

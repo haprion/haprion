@@ -34,10 +34,9 @@ from haprion.release_layout import (
 )
 
 #
-# The same constant lives in `haproxy-publish-core` and in
-# `private/tools/configs-tighten/configs-tighten`. That the copies do not drift
-# apart is guarded by tests, not by hope - see test_release_install.py here and
-# test_published_permissions.py in the regression suite.
+# The group the nodes' fetch account reads a release through.
+# test_release_install.py holds it to `_haprion-pull`, the account the nodes
+# are installed to fetch as.
 #
 PUBLISH_GROUP = accounts.PULL
 

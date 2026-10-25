@@ -729,6 +729,16 @@ class AnUnknownOutcomeSaysWhatToCheck(unittest.TestCase):
             jobs.unknown_note(self.job("cert_issue")) or "",
         )
 
+    def test_a_profile_is_looked_for_where_its_page_is(self) -> None:
+        """Review 26-10-24, 16-05: the note sent the reader to Settings, which has no profiles."""
+
+        for operation, page in (
+            ("dns_profile_apply", "Certificates → DNS profiles"),
+            ("ndes_profile_apply", "Certificates → NDES providers"),
+        ):
+            with self.subTest(operation):
+                self.assertIn(page, jobs.unknown_note(self.job(operation)) or "")
+
     def test_a_publish_that_also_deploys_points_at_the_step_that_did_not_answer(self) -> None:
         """1B-2: a publish that never answered sent the reader to the nodes."""
 

@@ -62,8 +62,7 @@ step "Runtime directory"
 # /run/haprion, at every boot: the worker's sandbox names it before any helper
 # has created it (install/tmpfiles/haprion.conf says why).
 #
-install_file /etc/tmpfiles.d/haprion.conf root:root 644 "$(cat tmpfiles/haprion.conf)"
-systemd-tmpfiles --create /etc/tmpfiles.d/haprion.conf
+apply_tmpfiles tmpfiles/haprion.conf
 log "  ok       /run/haprion"
 
 step "Directory trees"

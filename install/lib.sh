@@ -131,6 +131,71 @@ apply_sysusers() {
 }
 
 #
+# A tmpfiles fragment from install/tmpfiles/, installed where systemd reads it
+# at boot and applied now. TMPFILES_DIR is for tests.
+#
+apply_tmpfiles() {
+    local fragment="$1" target
+    target="${TMPFILES_DIR:-/etc/tmpfiles.d}/$(basename "$fragment")"
+    [[ -f "$fragment" ]] || die "missing ${fragment}"
+    install_file "$target" root:root 644 "$(cat "$fragment")"
+    systemd-tmpfiles --create "$target" || die "systemd-tmpfiles could not apply ${target}"
+    log "  applied  ${target}"
+}
+
+#
+# The directories the worker's sandbox opens, made by step 07 and again by
+# every update before it installs the worker's unit: a release whose unit opens
+# one more would otherwise stop at a directory only the step makes (review
+# 26-10-24, 14-02). `ReadWritePaths` names them without the leading dash on
+# purpose (see the unit), so a path that does not exist stops the unit from
+# starting at all rather than being skipped in silence. The import store is
+# defined by the registry (user-manual.md, 'The certificate registry') and
+# stays empty until the import helper exists; the deletion helper removes from
+# it, so the unit opens it, and it has to be here before the unit is.
+# Root-only, like the profile directory. The distribution root is checked by
+# step 14.
+#
+ensure_worker_directories() {
+    ensure_dir /etc/haprion/certificates root:root 700
+    ensure_dir /etc/haprion/ndes-profiles root:root 700
+    ensure_dir /etc/haprion/ndes-requests root:root 700
+    # Step 15's, as it makes it; that step is optional and may come later.
+    ensure_dir /etc/haprion/dns-profiles root:root 700
+    #
+    # Certbot's own three, made with the owner and mode certbot gives them when
+    # they are missing - on a new machine no certbot has run yet, and the worker
+    # would not start (26-10-13). Never corrected when they exist: they are
+    # certbot's, and step 14 checks them.
+    #
+    local path
+    for path in /etc/letsencrypt:755 /var/lib/letsencrypt:755 /var/log/letsencrypt:700; do
+        if [[ -d "${path%:*}" ]]; then
+            log "  ok       ${path%:*}"
+        else
+            install -d -o root -g root -m "${path##*:}" "${path%:*}"
+            log "  created  ${path%:*}"
+        fi
+    done
+}
+
+#
+# The identity directories of the optional steps 13 and 17, where that step
+# ran: root's, open to the one account that reads them. An account that owned
+# its directory could put a link where a step then changes owner and mode
+# (review 2026-10-22, 5-14); an installation made before that is given the
+# same by its next update (review 26-10-24, 14-02).
+#
+ensure_identity_directories() {
+    if [[ -d /etc/haprion/traffic-collector ]]; then
+        ensure_dir /etc/haprion/traffic-collector "root:${COLLECTOR_USER}" 550
+    fi
+    if [[ -d /etc/haprion/oidc ]]; then
+        ensure_dir /etc/haprion/oidc "root:${OIDC_USER}" 550
+    fi
+}
+
+#
 # The answers file is optional (B302): without one the defaults in defaults.sh
 # are the answers, and with one they fill in only what it leaves unset.
 #

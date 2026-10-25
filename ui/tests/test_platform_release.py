@@ -99,6 +99,24 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertLess(database, candidate)
         self.assertLess(candidate, activate)
 
+    def test_accounts_and_directories_are_made_again_before_the_units(self) -> None:
+        """Review 26-10-24, 14-02: only the first installation's steps made them."""
+
+        refresh = self.update.index('./refresh-platform-files "$release_id" "$kept"')
+        for line in (
+            "apply_sysusers ../sysusers/haprion.conf",
+            "apply_tmpfiles ../tmpfiles/haprion.conf",
+            "ensure_worker_directories",
+            "ensure_identity_directories",
+        ):
+            with self.subTest(line=line):
+                self.assertLess(self.update.index(f"\n{line}\n"), refresh)
+        step = (ROOT / "install/platform/07-platform-services").read_text()
+        self.assertIn("\nensure_worker_directories\n", step)
+        first = (ROOT / "install/01-manager-prepare").read_text()
+        self.assertIn("\napply_sysusers sysusers/haprion.conf\n", first)
+        self.assertIn("\napply_tmpfiles tmpfiles/haprion.conf\n", first)
+
     def test_a_schema_change_is_dumped_after_the_checks_and_before_the_migration(self) -> None:
         """Logic review 26-10-22, F1: the newest dump was up to a day old."""
 

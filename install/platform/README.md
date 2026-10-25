@@ -96,8 +96,9 @@ sudo apt upgrade
 sudo ./update-platform-release <release-id>
 ```
 
-It reads no answers file. Before it checks anything it installs again, from the
-package, the files the numbered steps installed: the web's, the worker's and the
+It reads no answers file. Before it checks anything it makes the accounts and the
+directories the numbered steps made, and installs again, from the package, the
+files those steps installed: the web's, the worker's and the
 poller's units, their sudo rules, the helper sockets, the timers, the nginx site
 (from the three values step 05 keeps in `/etc/haprion/ui-tls.conf`), and certbot's
 deploy hook. A file whose step was never run - an optional socket or timer - stays

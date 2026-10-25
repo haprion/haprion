@@ -431,6 +431,81 @@ class TheListsAreTheSteps(unittest.TestCase):
             with self.subTest(step=name, target=target):
                 self.assertIn(word, refresh)
 
+    #
+    # Each directory a platform step makes, with the owner and mode it gives it:
+    # made again by every update (the line lib.sh's functions hold for it), or
+    # why only the step makes it. Review 26-10-24, 14-02: steps 13 and 17 made
+    # their identity directories root's, and no installation made before then
+    # was given that.
+    #
+    AS_FIRST_MADE = "unchanged since the first installation; a change must reach the update too"
+    MADE_BY_THE_UPDATE = {
+        ("13-platform-traffic-collector", '"$IDENTITY_DIR" "root:${COLLECTOR_USER}" 550'): (
+            'ensure_dir /etc/haprion/traffic-collector "root:${COLLECTOR_USER}" 550'
+        ),
+        ("15-platform-dns-keys", '"$PROFILE_DIR" root:root 700'): (
+            "ensure_dir /etc/haprion/dns-profiles root:root 700"
+        ),
+        ("16-platform-scep", "/etc/haprion/ndes-profiles root:root 700"): (
+            "ensure_dir /etc/haprion/ndes-profiles root:root 700"
+        ),
+        ("16-platform-scep", "/etc/haprion/ndes-requests root:root 700"): (
+            "ensure_dir /etc/haprion/ndes-requests root:root 700"
+        ),
+    }
+    MADE_ONCE = {
+        ("01-platform-prepare", '"$UI_ROOT" root:root 755'): AS_FIRST_MADE,
+        ("01-platform-prepare", '"${UI_ROOT}/releases" root:root 755'): AS_FIRST_MADE,
+        ("01-platform-prepare", '"$(dirname "$UI_CONFIG")" root:root 755'): AS_FIRST_MADE,
+        ("01-platform-prepare", '"$UI_SECRETS" root:root 700'): AS_FIRST_MADE,
+        ("01-platform-prepare", '"$UI_DATA" root:root 755'): AS_FIRST_MADE,
+        ("01-platform-prepare", '"${UI_DATA}/dumps" root:root 700'): AS_FIRST_MADE,
+        ("02-platform-database", "/etc/haprion root:root 755"): AS_FIRST_MADE,
+        ("05-platform-nginx", "/etc/haprion root:root 755"): AS_FIRST_MADE,
+        ("05-platform-nginx", '"$(dirname "$TLS_CERT")" root:root 700'): "from the answers",
+        ("05-platform-nginx", '"$(dirname "$TLS_KEY")" root:root 700'): "from the answers",
+        ("05-platform-nginx", "/etc/nginx/snippets root:root 755"): AS_FIRST_MADE,
+        ("06-platform-backup", '"$DUMP_DIR" root:root 700'): AS_FIRST_MADE,
+        ("13-platform-traffic-collector", '"$LOG_ROOT" root:root 755'): AS_FIRST_MADE,
+        ("13-platform-traffic-collector", '"$MIRROR" "${COLLECTOR_USER}:${WEB_USER}" 2750'): (
+            AS_FIRST_MADE
+        ),
+        ("13-platform-traffic-collector", '"$STAGING" "${COLLECTOR_USER}:${COLLECTOR_USER}" 700'): (
+            AS_FIRST_MADE
+        ),
+        ("14-platform-certbot", "/etc/letsencrypt/renewal-hooks root:root 755"): AS_FIRST_MADE,
+        ("14-platform-certbot", '"$HOOK_DIR" root:root 755'): AS_FIRST_MADE,
+        ("15-platform-dns-keys", '"$PRIVATE_DIR" root:root 700'): AS_FIRST_MADE,
+        ("15-platform-dns-keys", '"$PUBLIC_DIR" "root:${PLATFORM_GROUP}" 750'): AS_FIRST_MADE,
+        ("17-platform-oidc", '"$PUBLIC_DIR" "root:${PLATFORM_GROUP}" 750'): AS_FIRST_MADE,
+        ("17-platform-oidc", '-o root -g root -m 700 "$KEY_DIR"'): (
+            "closed while the key pair is written; the update gives it the step's final owner"
+        ),
+    }
+
+    def test_every_directory_a_step_makes_is_made_by_the_update_or_said_why_not(self) -> None:
+        lib = (ROOT / "install/lib.sh").read_text()
+        made = re.compile(r"^\s*(?:ensure_dir|install -d) (.*)$", re.MULTILINE)
+        found: set[tuple[str, str]] = set()
+        for step in sorted(PLATFORM.glob("[01][0-9]-platform-*")):
+            for match in made.finditer(step.read_text()):
+                found.add((step.name, " ".join(match.group(1).split())))
+        listed = set(self.MADE_BY_THE_UPDATE) | set(self.MADE_ONCE)
+        self.assertEqual(sorted(found - listed), [])
+        self.assertEqual(sorted(listed - found), [])
+        for (name, line), made_by in self.MADE_BY_THE_UPDATE.items():
+            with self.subTest(step=name, line=line):
+                self.assertRegex(lib, rf"(?m)^\s+{re.escape(made_by)}$")
+
+    def test_the_update_gives_the_identity_directories_what_their_steps_do(self) -> None:
+        lib = (ROOT / "install/lib.sh").read_text()
+        collector = (PLATFORM / "13-platform-traffic-collector").read_text()
+        self.assertIn('\nIDENTITY_DIR="/etc/haprion/traffic-collector"\n', collector)
+        oidc = (PLATFORM / "17-platform-oidc").read_text()
+        self.assertIn('\nKEY_DIR="/etc/haprion/oidc"\n', oidc)
+        self.assertIn('\nchown "root:${OIDC_USER}" "$KEY_DIR"\nchmod 550 "$KEY_DIR"\n', oidc)
+        self.assertIn('\n        ensure_dir /etc/haprion/oidc "root:${OIDC_USER}" 550\n', lib)
+
     def test_every_sudo_boundary_check_asks_the_rules_and_runs_nothing(self) -> None:
         """Review 26-10-24, 08-01: without -l a check could never fail."""
 

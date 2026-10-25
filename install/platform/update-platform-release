@@ -40,6 +40,21 @@ step "Preparing ${release_id}"
 ./install-ui-release --prepare "$release_id"
 
 #
+# What the first installation's steps lay out besides files - the accounts,
+# the run-time directory and the directories the worker's sandbox opens - made
+# again from this package before its units are installed. A release that needs
+# one more then fails no update for want of a step run by hand, and the
+# optional steps' identity directories get the owner and mode their step gives
+# them now (review 26-10-24, 14-02). Each makes what is missing and changes
+# only what differs.
+#
+step "Accounts and directories"
+apply_sysusers ../sysusers/haprion.conf
+apply_tmpfiles ../tmpfiles/haprion.conf
+ensure_worker_directories
+ensure_identity_directories
+
+#
 # The units, sudo rules, sockets, timers and site the numbered steps
 # installed, from this package (review 2026-10-22, 6-5) - before the first
 # check, which holds them to the candidate. What they replace is kept, and put

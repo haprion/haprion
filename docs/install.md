@@ -368,9 +368,9 @@ was no terminal, create it afterwards:
 sudo haprion-user init-admin
 ```
 
-Later versions of the package update the running interface by themselves. They read no answers file, reinstall the
-units, sudo rules, sockets, timers and nginx site the steps installed, and leave the previous release running if
-anything fails. No step needs to be run again by hand after `apt upgrade`.
+Later versions of the package update the running interface by themselves. They read no answers file, make the
+accounts and directories the steps made, reinstall the units, sudo rules, sockets, timers, nginx site and certbot
+deploy hook the steps installed, and leave the previous release running if anything fails. No step needs to be run again by hand after `apt upgrade`.
 
 ## Building the packages
 

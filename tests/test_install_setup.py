@@ -937,23 +937,30 @@ class WhatLibShReadsShipsWithIt(unittest.TestCase):
 
 
 class TheWorkersSandboxOpensWhatExists(unittest.TestCase):
-    """Every fixed path the worker unit opens is made by step 07, before the unit.
+    """Every fixed path the worker unit opens is made before the unit: by step 07,
+    and by every update (`ensure_worker_directories`, review 26-10-24, 14-02).
 
     systemd refuses to start a unit whose ReadWritePaths names a missing path;
     the first new machine stopped on /etc/letsencrypt (26-10-13).
     """
 
     # Made elsewhere, before step 07 can run.
-    ELSEWHERE = {"/run/haprion": "install/tmpfiles/haprion.conf, applied by step 1"}
+    ELSEWHERE = {"/run/haprion": "install/tmpfiles/haprion.conf, applied by step 1 and each update"}
 
     def test_each_one_is_created_by_step_07(self) -> None:
         unit = (INSTALL / "platform/examples/haprion-worker.service.example").read_text()
         line = re.search(r"^ReadWritePaths=(.*)$", unit, re.MULTILINE)
         assert line is not None
         fixed = [path for path in line.group(1).split() if not path.startswith("@")]
-        step = (INSTALL / "platform/07-platform-services").read_text()
-        made = set(re.findall(r"^ensure_dir (\S+) ", step, re.MULTILINE))
-        loop = re.search(r"^for path in ((?:/[^\s:]+:\d+ ?)+); do", step, re.MULTILINE)
+        self.assertIn(
+            "\nensure_worker_directories\n",
+            (INSTALL / "platform/07-platform-services").read_text(),
+        )
+        lib = (INSTALL / "lib.sh").read_text()
+        start = lib.index("ensure_worker_directories() {")
+        step = lib[start : lib.index("\n}\n", start)]
+        made = set(re.findall(r"^\s+ensure_dir (\S+) ", step, re.MULTILINE))
+        loop = re.search(r"^\s+for path in ((?:/[^\s:]+:\d+ ?)+); do", step, re.MULTILINE)
         assert loop is not None
         made |= {entry.split(":")[0] for entry in loop.group(1).split()}
         self.assertEqual(set(fixed) - made, set(self.ELSEWHERE))

@@ -95,16 +95,24 @@ def refusal(
     return exit_code
 
 
-def database_refusal(args: argparse.Namespace, operation: str | None, error: psycopg.Error) -> int:
-    """A database that could not be reached, or one whose own rule refused the change.
+def database_failure(error: psycopg.Error) -> tuple[str, int]:
+    """The contract's code and exit for a database error.
 
-    Both were exit 74, a file that could not be written. The database
-    refusing to delete the last active admin is the request refused (65); a
-    server that does not answer is the installation's (68).
+    The database's own rules refusing the change - a constraint, or a
+    trigger's raise such as the one that keeps the last active admin - are the
+    request refused (65). Anything else is the installation's (68): a server
+    that does not answer, and a column or a grant an incomplete upgrade left
+    out, which said `bad_input` as though the file were wrong (review
+    26-10-24, 07-07).
     """
 
-    if isinstance(error, psycopg.OperationalError):
-        return refusal(
-            args, operation, "dependency_unavailable", f"database: {error}", exit_codes.UNAVAILABLE
-        )
-    return refusal(args, operation, "bad_input", f"database: {error}", exit_codes.REFUSED)
+    if isinstance(error, (psycopg.IntegrityError, psycopg.errors.RaiseException)):
+        return "bad_input", exit_codes.REFUSED
+    return "dependency_unavailable", exit_codes.UNAVAILABLE
+
+
+def database_refusal(args: argparse.Namespace, operation: str | None, error: psycopg.Error) -> int:
+    """A database that could not be used, or one whose own rule refused the change."""
+
+    code, exit_code = database_failure(error)
+    return refusal(args, operation, code, f"database: {error}", exit_code)

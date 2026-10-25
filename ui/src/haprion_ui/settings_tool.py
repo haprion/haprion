@@ -132,10 +132,19 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
             # not finish. That is what happened, not a refusal of the file
             # (review 2026-10-22, 1B-3).
             #
-            return _saved_then_stopped(args, outcome, exc)
+            return _saved_then_stopped(args, outcome, exc.code, str(exc))
         return tool_answer.refusal(
             args, settings_apply.OPERATION, exc.code, str(exc), exc.exit_code
         )
+    except psycopg.Error as exc:
+        if saved:
+            #
+            # Committed before the database went: the settings stand, as they
+            # do when a schedule job does not finish (review 26-10-24, 07-07).
+            #
+            code, _exit = tool_answer.database_failure(exc)
+            return _saved_then_stopped(args, outcome, code, f"database: {exc}")
+        return tool_answer.database_refusal(args, settings_apply.OPERATION, exc)
     except config.ConfigError as exc:
         return tool_answer.refusal(
             args, settings_apply.OPERATION, "dependency_unavailable", str(exc), exc.exit_code
@@ -168,12 +177,12 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
 
 
 def _saved_then_stopped(
-    args: argparse.Namespace, outcome: settings_apply.Outcome, exc: settings_apply.ApplyError
+    args: argparse.Namespace, outcome: settings_apply.Outcome, code: str, message: str
 ) -> int:
     result = settings_apply.summary(outcome, check=False)
     if args.json:
-        return tool_answer.partial(settings_apply.OPERATION, result, exc.code, str(exc))
-    print(f"ERROR: the settings were saved, but {exc}", file=sys.stderr)
+        return tool_answer.partial(settings_apply.OPERATION, result, code, message)
+    print(f"ERROR: the settings were saved, but {message}", file=sys.stderr)
     return exit_codes.PARTIAL
 
 

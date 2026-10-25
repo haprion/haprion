@@ -465,6 +465,14 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
         return _stopped(args, the_plan, applied, exc.code, str(exc), exc.exit_code)
     except config.ConfigError as exc:
         return _stopped(args, the_plan, applied, "dependency_unavailable", str(exc), exc.exit_code)
+    except psycopg.Error as exc:
+        #
+        # Here and not in `main`: a database lost after the first profile was
+        # applied is a partial run, not a refusal with no result (review
+        # 26-10-24, 07-07).
+        #
+        code, exit_code = tool_answer.database_failure(exc)
+        return _stopped(args, the_plan, applied, code, f"database: {exc}", exit_code)
     result = summary(the_plan, check=args.check, applied=applied)
     if args.json:
         return tool_answer.done(OPERATION, result)

@@ -21,7 +21,12 @@ intrusion equal to worker access, which is deploy rights.
 | `_haprion-collector` | fetches the traffic log from the nodes | none | one read-only key to the nodes' logs | `app_collector` |
 | `_haprion-oidc` | talks to the sign-in provider for the web | is itself the helper behind the sign-in socket | the key that opens the stored client secret | none |
 | `_haprion-pull`, `_haprion-cert-pull` | the accounts the nodes fetch releases and certificates from | none | none (the nodes hold the keys) | none |
-| human operators | members of the group `haprion` | operator commands and `sudoedit` on declared files | their own | none |
+| human operators | members of `sudo`; the users in `CONFIG_EDITORS` | the operator helpers, through `%sudo` rules; `sudoedit` on declared files, for the users in `CONFIG_EDITORS` | their own | none |
+
+The operators' sudo rules (`/etc/sudoers.d/haprion`) are granted to `%sudo` and never to `%haprion`,
+which also holds the worker. On Ubuntu, membership of `sudo` is already full root; the rules only let
+the read helpers run without a password. Membership of `haprion` gives read access to the
+configuration repositories, the cluster file and the certificate registry.
 
 The name lookup is done by a per-request helper running as a dynamic user with network access and
 nothing else; the web process itself reaches only localhost.
@@ -139,9 +144,13 @@ A helper is a root-owned executable, not writable by group or others, that does 
 privileged action. It uses absolute paths and a fixed environment, and fails closed. No helper takes
 a path or shell text from its caller.
 
-Helpers take no arguments. Each reads one JSON request, as a single line on stdin, so a sudo rule can
-name the helper exactly with no wildcard. The helper checks the operation, cluster ID, request ID,
-expected target and every value before it looks anything up in root-owned configuration.
+Helpers take no arguments, so a sudo rule can name the helper exactly with no wildcard. Each reads
+one JSON request on stdin within a deadline: a helper that answers one operation reads a single
+line, and one that answers several on one socket or rule - the backup job, node, node restore and
+server state helpers - reads to the end of its input, which the caller closes, so it can see which
+operation is asked before it holds the request to that operation's parameters. The helper checks the
+operation, cluster ID, request ID, expected target and every value before it looks anything up in
+root-owned configuration.
 
 The common request document is exactly:
 
@@ -248,9 +257,9 @@ Where they are checked:
 
 - `install/platform/03-verify` - the database: every role's column and function grants both ways, and
   the writes each role must not make.
-- `install/platform/07-platform-services` - the sudo rules, as the real accounts: the web and worker
-  cannot run the poller's helpers, the web and poller cannot run the worker's certificate and profile
-  helpers.
+- `install/platform/07-platform-services` - the sudo rules, as the real accounts: every helper the
+  worker's and the poller's sudoers files grant is asked for with `sudo -n -l` by each of the web,
+  worker and poller accounts it is not granted to, and must be refused.
 - `install/platform/05-platform-nginx`, `06-platform-backup`, `13-platform-traffic-collector` - no
   interface account can read the interface's TLS key or the database dumps, and the collector cannot
   reach beyond its own files.

@@ -169,7 +169,7 @@
     <thead><tr><th>Status</th><th>Allowed from</th><th class="settings-actions"><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>
       <tr data-href="/settings/status-access">
-        <td data-label="Status">{% if status_access %}<span class="status-badge status-badge-healthy">Active</span>{% else %}<span class="status-badge">Off</span>{% endif %}</td>
+        <td data-label="Status"{% if not status_access %} class="table-empty"{% endif %}>{% if status_access %}<span class="status-badge status-badge-healthy">Active</span>{% else %}Off{% endif %}</td>
         <td data-label="Allowed from">{% if status_access %}{% for entry in status_access %}<code>{{ entry.network }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<span class="table-empty">No address may ask</span>{% endif %}</td>
         <td data-label="" class="settings-actions"><a class="secondary-button settings-edit" href="/settings/status-access">Edit</a></td>
       </tr>

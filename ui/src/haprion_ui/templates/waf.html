@@ -29,7 +29,7 @@
     <div class="cluster-identity"><div><h3>{{ card.name }}</h3><p>{{ card.cluster }}</p></div></div>
     <div class="cluster-state">
       {% if card.judged %}<span class="finding-verdict">{{ 'Would have blocked' if card.mode != 'block' else 'Blocked' }} <strong>{{ card.judged }} request{{ 's' if card.judged != 1 }}</strong> from <strong>{{ card.clients }} client{{ 's' if card.clients != 1 }}</strong></span>{% endif %}
-      {% if card.mode == 'block' %}<span class="status-badge status-badge-critical">Blocking</span>{% elif card.mode == 'log' %}<span class="status-badge status-badge-warning">Logging</span>{% else %}<span class="status-badge">Off</span>{% endif %}
+      {% if card.mode == 'block' %}<span class="status-badge status-badge-critical">Blocking</span>{% elif card.mode == 'log' %}<span class="status-badge status-badge-warning">Logging</span>{% else %}<span class="status-badge status-badge-unknown">Off</span>{% endif %}
       {% if can_write %}<a class="secondary-button" href="{{ card.edit_href }}">Edit proxy</a>{% endif %}
     </div>
   </header>

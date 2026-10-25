@@ -666,6 +666,16 @@ class TheSettingsCard(LoginTestCase):
         self.assertIn(">192.0.2.10/32\n</textarea>", page)
         self.assertIn('href="/settings#external-monitoring">Cancel</a>', page)
 
+    def test_off_is_written_as_the_logs_card_writes_it(self) -> None:
+        """Review 26-10-24, 04-14 (26-10-25): text, not a pill with no colour."""
+
+        client = self.client(replace(configuration(), management_writes=True))
+        self.sign_in(client)
+        with mock.patch("haprion_ui.db.status_access", return_value=[]):
+            card = client.get("/settings").text.split('id="external-monitoring"', 1)[1]
+        card = card.split("</section>", 1)[0]
+        self.assertIn('<td data-label="Status" class="table-empty">Off</td>', card)
+
 
 class TheManagersOwnServices(unittest.TestCase):
     """B333: the poller, the worker and the nightly maintenance, judged by their traces."""

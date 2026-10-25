@@ -90,5 +90,22 @@ class TheFocusRingIsSeen(unittest.TestCase):
         self.assertNotRegex(CSS, r"focus[^{]*\{[^}]*outline: 2px solid var\(--brand\)")
 
 
+class EveryBadgeHasATone(unittest.TestCase):
+    """Review 26-10-24, 04-14: "Off" was a pill with no colour, bold text in a frame
+    of nothing. A state that is neither good nor bad is the grey `unknown` tone,
+    or plain text where its neighbours are (26-10-25)."""
+
+    def test_no_template_draws_a_status_badge_without_one(self) -> None:
+        templates = STATIC_DIRECTORY.parent / "templates"
+        untoned = [
+            f"{path.name}: {match.group(0)}"
+            for path in sorted(templates.glob("*.html"))
+            for match in re.finditer(r'class="([^"]*)"', path.read_text(encoding="utf-8"))
+            if re.search(r"(^| )status-badge( |$)", match.group(1))
+            and "status-badge-" not in match.group(1)
+        ]
+        self.assertEqual(untoned, [])
+
+
 if __name__ == "__main__":
     unittest.main()

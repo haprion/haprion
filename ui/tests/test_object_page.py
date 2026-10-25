@@ -75,6 +75,14 @@ class OpeningAnObject(DraftReading):
         self.assertEqual(page.status_code, 200)
         self.assertIn("app.demo.example", page.text)
 
+    def test_the_object_is_created_by_haprion_as_in_the_list(self) -> None:
+        """Review 26-10-24, 04-04: the list said Haprion, the object's own page Application."""
+
+        page = self.demo_client().get("/proxies/edge-demo/public-web")  # type: ignore[attr-defined]
+
+        self.assertIn('ownership-managed">Haprion<', page.text)
+        self.assertNotIn(">Application<", page.text)
+
     def test_the_card_names_no_file_and_no_commit(self) -> None:
         """Review 2026-10-22, 7-20: the repository's path and hash are not the reader's;
         the publication line says the version."""

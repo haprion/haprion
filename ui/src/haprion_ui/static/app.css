@@ -1971,6 +1971,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .package-link { margin: 0; padding: 18px 20px 0; }
 .removal-consequences { margin: 12px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
 .refusal-card .editor-actions { justify-content: flex-start; padding: 16px 0 0; }
+.refusal-card .form-buttons > * { white-space: nowrap; }
 /*
  * The break between the cluster's addresses and this publish. Heavier than the
  * rules inside a table, because it separates two subjects rather than two rows.

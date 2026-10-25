@@ -284,14 +284,15 @@ def main(
         #
         # Signalled or never run (negative, 126, 127): no exit this table
         # explains, and a document with it is one no check writes (06-05).
-        failed = exit_codes.of_process(code, exit_codes.INTERNAL) or exit_codes.INTERNAL
+        failed, interrupted = exit_codes.foreign(code, "revert helper")
+        failed = failed or exit_codes.INTERNAL
+        said = (
+            "; ".join(part for part in (interrupted, err.strip()) if part)
+            or f"the revert failed with exit code {code}."
+        )
         if json_mode:
-            return refuse(
-                "helper_failed",
-                (err.strip() or f"the revert failed with exit code {code}.")[:2048],
-                failed,
-            )
-        writer.write(err or f"ERROR: the revert failed with exit code {code}.\n")
+            return refuse("helper_failed", said[:2048], failed)
+        writer.write(f"ERROR: {said}\n" if interrupted else err or f"ERROR: {said}\n")
         return failed
 
     if json_mode:

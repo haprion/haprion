@@ -21,6 +21,7 @@ from typing import Any
 
 from haprion import exit_codes
 from haprion.cli.history_reset import CONFIRMATION, OPERATION, main
+from tests.contract_schema import assert_contract
 
 HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"
 
@@ -92,6 +93,27 @@ class CommandTests(unittest.TestCase):
             config_path=lambda _cluster: draft,
         )
         return code, output.getvalue(), crossed, published
+
+    def test_a_helper_killed_by_a_signal_is_a_document_with_an_exit_the_table_has(self) -> None:
+        """Review 26-10-24, 13-05: -9 was passed on as the exit, and the document refused."""
+
+        with TemporaryDirectory() as raw:
+            draft = self.layout(Path(raw))
+            output = io.StringIO()
+            code = main(
+                ["-c", "alpha", "--confirm", CONFIRMATION, "--json"],
+                stream_in=io.StringIO(""),
+                stream_out=output,
+                run_helper=lambda _cluster, _request: (-9, "", "Killed\n"),
+                publish=lambda _cluster: 0,
+                config_path=lambda _cluster: draft,
+            )
+
+        self.assertEqual(code, exit_codes.INTERNAL)
+        document = assert_contract("haprion-history-reset", output.getvalue())
+        self.assertEqual(document["outcome"], "failed")
+        self.assertIn("stopped by signal 9", document["error"]["message"])
+        self.assertIn("it may have acted", document["error"]["message"])
 
     # ------------------------------------------------------------------ refusing
 

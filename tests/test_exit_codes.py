@@ -161,6 +161,22 @@ class OneTable(unittest.TestCase):
                     self.assertIn(f"| {value} | `{name}` |", contract)
 
 
+class AForeignExit(unittest.TestCase):
+    def test_a_code_of_the_table_is_kept_and_needs_no_sentence(self) -> None:
+        self.assertEqual(exit_codes.foreign(exit_codes.BLOCKED, "x helper"), (75, None))
+
+    def test_a_signal_or_a_stranger_is_internal_and_may_have_acted(self) -> None:
+        """Review 26-10-24, 13-05."""
+
+        for returncode, said in ((-9, "was stopped by signal 9"), (3, "ended with 3")):
+            with self.subTest(returncode=returncode):
+                code, sentence = exit_codes.foreign(returncode, "revert helper")
+                self.assertEqual(code, exit_codes.INTERNAL)
+                assert sentence is not None
+                self.assertIn(f"the revert helper {said}", sentence)
+                self.assertTrue(sentence.endswith("it may have acted"))
+
+
 class TheExitFollowsTheOutcome(unittest.TestCase):
     def document(self, outcome: str) -> dict[str, object]:
         error = Message("refused", "no") if outcome in {"failed", "blocked"} else None

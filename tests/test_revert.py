@@ -692,6 +692,8 @@ class JsonModeTests(RevertFixture):
                     document = assert_contract("haprion-revert", writer.getvalue())
                     self.assertEqual((code, document["outcome"]), (exit_codes.INTERNAL, "failed"))
                     self.assertEqual(document["error"]["code"], "helper_failed")
+                    # Review 26-10-24, 13-05: and says it may have acted.
+                    self.assertIn("it may have acted", document["error"]["message"])
 
     def test_an_unknown_cluster_is_an_envelope_too(self) -> None:
         """Review 26-10-24, 06-06: cluster-config's exit ended the command before its document."""

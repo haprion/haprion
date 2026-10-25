@@ -203,9 +203,9 @@ def main(
 
     code, out, err = run_helper(cluster_id, request)
     if code != 0:
-        return refuse(
-            "reset_failed", err.strip() or f"the reset failed with exit code {code}.", code
-        )
+        failed, stopped = exit_codes.foreign(code, "reset helper")
+        said = "; ".join(part for part in (stopped, err.strip()) if part)
+        return refuse("reset_failed", said or f"the reset failed with exit code {code}.", failed)
 
     try:
         result = json.loads(out)

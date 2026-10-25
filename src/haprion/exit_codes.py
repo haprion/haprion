@@ -127,6 +127,24 @@ def of_process(returncode: int, fallback: int) -> int:
     return returncode if returncode in MEANINGS else fallback
 
 
+def foreign(returncode: int, helper: str) -> tuple[int, str | None]:
+    """A helper's return code as this table has it, and what to say when it had none.
+
+    `of_process` with `INTERNAL`, and the sentence a front owes its reader when
+    the helper gave no exit of its own: killed by a signal, or ended with a
+    code no Haprion command gives, it may have acted before it went (review
+    26-10-24, 13-05). None when the code is one of these.
+    """
+
+    if returncode in MEANINGS:
+        return returncode, None
+    if returncode < 0:
+        said = f"the {helper} was stopped by signal {-returncode} before it answered"
+    else:
+        said = f"the {helper} ended with {returncode}, which is no Haprion exit"
+    return of_process(returncode, INTERNAL), f"{said}; it may have acted"
+
+
 def check(document_outcome: object, code: int) -> int:
     """`code`, when it agrees with the outcome a document states; ValueError when not.
 

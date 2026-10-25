@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import unittest
 from pathlib import Path
+from unittest import mock
 from uuid import UUID, uuid4
 
-from haprion import accounts, cert_issue
+from haprion import accounts, cert_issue, cert_receiver, helper_protocol, state_backup
 from haprion.cli import (
+    backup_job_helper,
     cert_receiver_helper,
     changes_publish,
     deploy,
@@ -27,7 +30,7 @@ from haprion.cli import (
 )
 from haprion.status_collect import STATUS_TIMEOUT_SECONDS
 
-from haprion_ui import operations, worker
+from haprion_ui import answers, operations, worker
 
 REQUEST = uuid4()
 
@@ -1152,6 +1155,79 @@ class EnrollingOverNdes(unittest.TestCase):
                 operations.prepare(
                     operation="cert_scep", cluster=None, request_id=uuid4(), payload=payload
                 )
+
+
+class EveryOutcomeABuilderGivesIsTaken(unittest.TestCase):
+    """Review 26-10-24, 13-07: a builder that works its outcome out wrote one nothing took.
+
+    The table above is held to the schema; this holds the builders that decide
+    their outcome from what happened to the table and the envelope at once.
+    Each outcome such a builder can give is written as the helper writes it -
+    `write_document`, strict as the suites run it - and read back as the worker
+    reads it. The backup run's partial and the receiver's partial both crashed
+    in the envelope and were stored `unknown` (13-01, 13-02).
+    """
+
+    REQUEST = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+
+    def taken(self, document: dict[str, object], exit_code: int, *, cluster: str | None) -> None:
+        written = io.StringIO()
+        with mock.patch.dict(os.environ, {helper_protocol.STRICT_VARIABLE: "1"}):
+            helper_protocol.write_document(written, document, exit_code)
+        operation = str(document["operation"])
+        self.assertIsNotNone(
+            answers.accepted(
+                written.getvalue(),
+                operation=operation,
+                cluster=cluster,
+                request_id=self.REQUEST,
+                outcomes=worker._OPERATION_OUTCOMES[operation],
+            ),
+            f"{operation} {document['outcome']} is not an answer the worker takes",
+        )
+
+    def test_a_backup_run_as_many_nodes_as_answered(self) -> None:
+        def node(name: str, outcome: str) -> state_backup.NodeResult:
+            done = outcome == "done"
+            return state_backup.NodeResult(
+                name=name,
+                outcome=outcome,
+                version="1" if done else None,
+                size_bytes=10 if done else None,
+                error=None if done else "unreachable",
+            )
+
+        seen = set()
+        for outcomes in (("done", "done"), ("done", "failed"), ("failed", "failed")):
+            report = state_backup.BackupResult(
+                cluster="alpha",
+                version="1",
+                nodes=tuple(node(f"node-{i}", o) for i, o in enumerate(outcomes)),
+            )
+            with self.subTest(report.outcome):
+                document, exit_code = backup_job_helper.run_document(
+                    report, cluster="alpha", request_id=self.REQUEST
+                )
+                self.taken(document, exit_code, cluster="alpha")
+                seen.add(report.outcome)
+        self.assertEqual(seen, {"done", "partial", "failed"})
+
+    def test_a_receiver_with_and_without_a_layer_left_behind(self) -> None:
+        seen = set()
+        for states in (("removed", "removed"), ("removed", "failed")):
+            result = cert_receiver.Result(
+                receiver_id="svc-app",
+                action="remove",
+                layers=tuple(
+                    cert_receiver.Layer(name=f"layer{i}", state=state, detail="x")
+                    for i, state in enumerate(states)
+                ),
+            )
+            document, exit_code = cert_receiver.answer(result, request_id=self.REQUEST)
+            with self.subTest(document["outcome"]):
+                self.taken(document, exit_code, cluster=None)
+                seen.add(str(document["outcome"]))
+        self.assertEqual(seen, {"done", "partial"})
 
 
 if __name__ == "__main__":

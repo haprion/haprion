@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -152,6 +153,34 @@ class ATableInUiToml(unittest.TestCase):
                 self.assertNotIn("grep -Eq '^", text)
                 self.assertIn("if ui_toml_table ", text)
                 self.assertIn("add_ui_toml_table ", text)
+
+
+class TheInterfacesHsts(unittest.TestCase):
+    """Review 26-10-24, 09-03: HSTS added to the site by hand was lost at every
+    update. It is HSTS= in ui-tls.conf, written as a snippet the site includes."""
+
+    def snippet(self, value: str) -> subprocess.CompletedProcess[str]:
+        return run_lib('hsts_snippet "$1"', value)
+
+    def test_yes_sends_the_header_and_no_or_nothing_does_not(self) -> None:
+        header = 'add_header Strict-Transport-Security "max-age=31536000" always;'
+        self.assertIn(header, self.snippet("yes").stdout)
+        for value in ("no", ""):
+            with self.subTest(value=value):
+                done = self.snippet(value)
+                self.assertEqual(done.returncode, 0)
+                self.assertNotIn("Strict-Transport-Security", done.stdout)
+        self.assertNotEqual(self.snippet("maybe").returncode, 0)
+
+    def test_haprion_tls_writes_the_same_lines(self) -> None:
+        function = re.compile(r"^hsts_snippet\(\) \{\n.*?^\}\n", re.M | re.S)
+        texts = {
+            path.name: function.search(path.read_text())
+            for path in (LIB, BASE / "install/platform/bin/haprion-tls")
+        }
+        found = {name: match.group(0) for name, match in texts.items() if match}
+        self.assertEqual(len(found), 2)
+        self.assertEqual(len(set(found.values())), 1)
 
 
 class AFileInADirectoryNotThereYet(unittest.TestCase):

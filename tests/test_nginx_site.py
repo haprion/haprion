@@ -70,9 +70,13 @@ class TheSiteParses(unittest.TestCase):
         # The paths outside the site that a check opens, moved under the
         # throwaway root: nginx -t opens every log and include it names.
         #
-        for snippet in ("haprion-real-ip.conf", "haprion-receivers.conf"):
+        for snippet in ("haprion-real-ip.conf", "haprion-receivers.conf", "haprion-hsts.conf"):
             (root / snippet).write_text("")
             site = site.replace(f"/etc/nginx/snippets/{snippet}", str(root / snippet))
+        # HSTS on, as `haprion-tls hsts on` writes it: the header parses where it is included.
+        (root / "haprion-hsts.conf").write_text(
+            'add_header Strict-Transport-Security "max-age=31536000" always;\n'
+        )
         site = site.replace("/var/log/nginx/", f"{root}/")
         #
         # nginx -t binds what it listens on, which 80 and 443 are not to an

@@ -424,6 +424,28 @@ render_site() {
 }
 
 #
+# The interface's HSTS line, from HSTS= in /etc/haprion/ui-tls.conf: yes or no,
+# no when absent (review 26-10-24, 09-03). Written by platform step 05, by every
+# update (refresh-platform-files) and by `haprion-tls hsts`; the copy in
+# lib.sh and the one in haprion-tls are held to one text by a test.
+#
+hsts_snippet() {
+    case "${1:-no}" in
+        yes)
+            printf '%s\n' "# Written from HSTS=yes in /etc/haprion/ui-tls.conf (haprion-tls hsts)." \
+                'add_header Strict-Transport-Security "max-age=31536000" always;'
+            ;;
+        no)
+            printf '%s\n' "# Written from HSTS=no in /etc/haprion/ui-tls.conf (haprion-tls hsts)."
+            ;;
+        *)
+            echo "HSTS must be yes or no, not ${1}" >&2
+            return 1
+            ;;
+    esac
+}
+
+#
 # The web's only listener (haprion-web.socket): the socket nginx proxies to and
 # the platform steps ask /healthz over, which only root and nginx's group may
 # open (review 2026-10-22, 5-8).

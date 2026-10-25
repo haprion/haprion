@@ -2768,10 +2768,17 @@ sudo haprion-tls install --cert /path/to/ui.crt --key /path/to/ui.key
 
 A management host whose interface stopped answering is a worse outcome than a refused replacement.
 
-The site configuration has HSTS present but commented out, with the reason beside it. HSTS makes a
-certificate warning impossible to click through. Enabling it while the certificate is still
-self-signed locks every operator out of the interface - including whoever would fix it. Enable it after
-installing a trusted pair.
+**HSTS is off until you turn it on**, after installing a trusted pair:
+
+```bash
+sudo haprion-tls hsts on
+sudo haprion-tls hsts off
+```
+
+HSTS makes a certificate warning impossible to click through, so `hsts on` refuses while the certificate is
+self-signed: it would lock every operator out of the interface - including whoever would fix it. The choice
+is kept as `HSTS=yes` or `HSTS=no` in `/etc/haprion/ui-tls.conf`, and every update writes the same header
+again. `show` says which it is.
 
 ### From the certificate registry
 

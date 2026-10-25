@@ -53,13 +53,14 @@ server {
     ssl_session_tickets off;
 
     #
-    # Deliberately not enabled while the certificate is self-signed. HSTS makes
-    # a certificate warning unclickable, so switching it on before a trusted
-    # certificate is installed locks every operator out of the UI - including
-    # the one who would fix it. Enable it after replacing the pair:
+    # HSTS, off until `sudo haprion-tls hsts on`, which refuses while the
+    # certificate is self-signed: HSTS makes a certificate warning unclickable,
+    # so switching it on before a trusted certificate is installed locks every
+    # operator out of the UI - including the one who would fix it. The choice
+    # is HSTS= in /etc/haprion/ui-tls.conf; step 05 and every update write this
+    # file from it.
     #
-    #   add_header Strict-Transport-Security "max-age=31536000" always;
-    #
+    include /etc/nginx/snippets/haprion-hsts.conf;
 
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;

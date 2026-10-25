@@ -53,11 +53,21 @@ step "Where the pair lives"
 ensure_dir /etc/haprion root:root 755
 ensure_dir "$(dirname "$TLS_CERT")" root:root 700
 ensure_dir "$(dirname "$TLS_KEY")" root:root 700
+#
+# HSTS is the operator's choice, made with `haprion-tls hsts`: kept as it is
+# when the step runs again, and no when it was never made.
+#
+hsts=no
+if [[ -r /etc/haprion/ui-tls.conf ]]; then
+    hsts="$(admin_value /etc/haprion/ui-tls.conf HSTS)" || die "/etc/haprion/ui-tls.conf cannot be read"
+    hsts="${hsts:-no}"
+fi
 install_file /etc/haprion/ui-tls.conf root:root 644 "$(cat <<EOF
 # Read by haprion-tls. Written by 05-platform-nginx.
 TLS_CERT=${TLS_CERT}
 TLS_KEY=${TLS_KEY}
 SERVER_NAME=${SERVER_NAME}
+HSTS=${hsts}
 EOF
 )"
 
@@ -92,6 +102,10 @@ if [[ -n "${TRUSTED_PROXIES// /}" ]]; then
 else
     log "  none; every client is known by its own address"
 fi
+
+step "HSTS"
+hsts_line="$(hsts_snippet "$hsts")" || die "HSTS in /etc/haprion/ui-tls.conf must be yes or no"
+install_file /etc/nginx/snippets/haprion-hsts.conf root:root 644 "$hsts_line"
 
 step "Site"
 rendered="$(render_site "$SERVER_NAME" "$TLS_CERT" "$TLS_KEY" examples/haprion.nginx.example)"

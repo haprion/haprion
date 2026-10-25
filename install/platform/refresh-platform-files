@@ -35,6 +35,7 @@ SUDOERS_DIR="${SUDOERS_DIR:-/etc/sudoers.d}"
 NGINX_SITE="${NGINX_SITE:-/etc/nginx/sites-available/haprion}"
 TLS_CONF="${TLS_CONF:-/etc/haprion/ui-tls.conf}"
 CERTBOT_HOOK_DIR="${CERTBOT_HOOK_DIR:-/etc/letsencrypt/renewal-hooks/deploy}"
+HSTS_SNIPPET="${HSTS_SNIPPET:-/etc/nginx/snippets/haprion-hsts.conf}"
 
 #
 # The helper sockets step 07 always installs, and those an answer or a later
@@ -216,6 +217,14 @@ if [[ -e "$NGINX_SITE" ]]; then
     site_key="$(admin_value "$TLS_CONF" TLS_KEY)"
     [[ -n "$site_host" && -n "$site_certificate" && -n "$site_key" ]] \
         || die "${TLS_CONF} does not name SERVER_NAME, TLS_CERT and TLS_KEY"
+    #
+    # HSTS as the operator chose it with haprion-tls, in a file of its own the
+    # site includes: the site is this package's, and a line added to it by
+    # hand was lost at every update (review 26-10-24, 09-03).
+    #
+    site_hsts="$(admin_value "$TLS_CONF" HSTS)"
+    site_hsts="$(hsts_snippet "$site_hsts")" || die "HSTS in ${TLS_CONF} must be yes or no"
+    put site "$HSTS_SNIPPET" 644 "$site_hsts"
     put site "$NGINX_SITE" 644 \
         "$(render_site "$site_host" "$site_certificate" "$site_key" examples/haprion.nginx.example)"
 fi

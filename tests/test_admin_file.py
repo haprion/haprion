@@ -135,7 +135,7 @@ class EveryReaderReadsTheSameFileTheSameWay(unittest.TestCase):
     def test_the_steps_write_what_the_grammar_reads(self) -> None:
         written = {
             "02-platform-database": ("DB_NAME", "DB_ROLE", "DUMP_DIR", "UI_CONFIG"),
-            "05-platform-nginx": ("TLS_CERT", "TLS_KEY", "SERVER_NAME"),
+            "05-platform-nginx": ("TLS_CERT", "TLS_KEY", "SERVER_NAME", "HSTS"),
         }
         for step, keys in written.items():
             text = (ROOT / "install" / "platform" / step).read_text()

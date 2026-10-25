@@ -93,6 +93,7 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
             self.site.parent,
             self.tls.parent,
             self.hooks,
+            self.site.parent.parent / "snippets",
         ):
             directory.mkdir(parents=True)
         self.tls.write_text(
@@ -112,6 +113,7 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
             "NGINX_SITE": str(self.site),
             "TLS_CONF": str(self.tls),
             "CERTBOT_HOOK_DIR": str(self.hooks),
+            "HSTS_SNIPPET": str(self.site.parent.parent / "snippets/haprion-hsts.conf"),
         }
         #
         # A first installation's files, as an older package wrote them: every
@@ -299,6 +301,25 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         # certbot runs every file in the directory: no copy is ever left beside it.
         self.assertEqual([path.name for path in self.hooks.iterdir()], ["50-haprion"])
 
+    def test_hsts_is_written_as_the_operator_chose_it_and_kept(self) -> None:
+        """Review 26-10-24, 09-03: a line added to the site by hand went at every update."""
+
+        snippet = Path(self.environment["HSTS_SNIPPET"])
+        self.tls.write_text(self.tls.read_text() + "HSTS=yes\n")
+        self.assertEqual(self.refresh().returncode, 0)
+        self.assertIn("Strict-Transport-Security", snippet.read_text())
+        self.assertIn("include /etc/nginx/snippets/haprion-hsts.conf;", self.site.read_text())
+        self.record.unlink()
+        again = self.run_script("r2", str(self.keep))
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertIn("Strict-Transport-Security", snippet.read_text())
+        self.assertEqual(self.recorded(), [])
+
+    def test_hsts_is_off_unless_chosen(self) -> None:
+        snippet = Path(self.environment["HSTS_SNIPPET"])
+        self.assertEqual(self.refresh().returncode, 0)
+        self.assertNotIn("Strict-Transport-Security", snippet.read_text())
+
     def test_without_step_14_there_is_no_hook(self) -> None:
         self.assertEqual(self.refresh().returncode, 0)
         self.assertEqual(list(self.hooks.iterdir()), [])
@@ -353,6 +374,7 @@ class TheListsAreTheSteps(unittest.TestCase):
         ("05-platform-nginx", "/etc/nginx/sites-available/haprion"): (
             "examples/haprion.nginx.example"
         ),
+        ("05-platform-nginx", "/etc/nginx/snippets/haprion-hsts.conf"): "HSTS_SNIPPET",
         ("06-platform-backup", '"/etc/systemd/system/${unit}.${kind}"'): (
             "haprion-backup haprion-restore-check"
         ),

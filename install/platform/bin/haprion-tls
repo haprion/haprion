@@ -6,6 +6,7 @@
 #     haprion-tls [--config /etc/haprion/ui-tls.conf] install --cert <file> --key <file>
 #     haprion-tls [--config /etc/haprion/ui-tls.conf] self-signed [--days <n>]
 #     haprion-tls [--config /etc/haprion/ui-tls.conf] publish
+#     haprion-tls hsts on|off
 #
 # This certificate is what an operator's browser meets when logging in. It is
 # not the certificate on the HAProxy pair, and it is not used between nginx and
@@ -61,7 +62,7 @@ read_admin_file() {
 }
 
 usage() {
-    sed -n '3,10p' "$0" | sed 's/^# \?//'
+    sed -n '3,11p' "$0" | sed 's/^# \?//'
     exit 64
 }
 
@@ -83,10 +84,12 @@ fi
 # command that invents its own paths is worse than one that refuses to run.
 #
 [[ -r "$CONF" ]] || { echo "ERROR: cannot read ${CONF}" >&2; exit 78; }
-read_admin_file "$CONF" TLS_CERT TLS_KEY SERVER_NAME || exit 78
+read_admin_file "$CONF" TLS_CERT TLS_KEY SERVER_NAME HSTS || exit 78
 for name in TLS_CERT TLS_KEY SERVER_NAME; do
     [[ -n "${!name:-}" ]] || die "${name} is not set in ${CONF}"
 done
+HSTS="${HSTS:-no}"
+[[ "$HSTS" == yes || "$HSTS" == no ]] || die "HSTS in ${CONF} must be yes or no"
 
 #
 # Public keys, not fingerprints of the files: a cert and a key belong together
@@ -206,6 +209,68 @@ publish_copy() {
     log "  published ${PUBLIC_COPY}  (the certificate, for receivers to trust)"
 }
 
+#
+# The interface's HSTS line, from HSTS= in /etc/haprion/ui-tls.conf: yes or no,
+# no when absent (review 26-10-24, 09-03). Written by platform step 05, by every
+# update (refresh-platform-files) and by `haprion-tls hsts`; the copy in
+# lib.sh and the one in haprion-tls are held to one text by a test.
+#
+hsts_snippet() {
+    case "${1:-no}" in
+        yes)
+            printf '%s\n' "# Written from HSTS=yes in /etc/haprion/ui-tls.conf (haprion-tls hsts)." \
+                'add_header Strict-Transport-Security "max-age=31536000" always;'
+            ;;
+        no)
+            printf '%s\n' "# Written from HSTS=no in /etc/haprion/ui-tls.conf (haprion-tls hsts)."
+            ;;
+        *)
+            echo "HSTS must be yes or no, not ${1}" >&2
+            return 1
+            ;;
+    esac
+}
+
+#
+# HSTS on the interface's own site, kept as HSTS= in the configuration so that
+# step 05 and every update write the same line again instead of a hand edit
+# being lost at the next release. Never turned on over a self-signed
+# certificate: HSTS makes a certificate warning unclickable, and every operator
+# would be locked out of the interface - the one who would fix it included.
+#
+HSTS_SNIPPET=${HSTS_SNIPPET:-/etc/nginx/snippets/haprion-hsts.conf}
+set_hsts() {
+    local want="$1" subject issuer snippet_backup="" conf_new
+    [[ "$CONF" == "$DEFAULT_CONF" ]] || die "hsts is the interface's own; --config does not apply"
+    if [[ "$want" == yes ]]; then
+        [[ -f "$TLS_CERT" ]] || die "no certificate installed at ${TLS_CERT}"
+        subject="$(openssl x509 -in "$TLS_CERT" -noout -subject | sed 's/^subject=//')"
+        issuer="$(openssl x509 -in "$TLS_CERT" -noout -issuer | sed 's/^issuer=//')"
+        [[ "$subject" != "$issuer" ]] \
+            || die "the certificate is self-signed, and HSTS would make its warning one nobody can click through; install a trusted certificate first"
+    fi
+    conf_new="$(mktemp /etc/haprion/.ui-tls.XXXXXX)"
+    { grep -v '^[[:space:]]*HSTS=' "$CONF" || true; echo "HSTS=${want}"; } > "$conf_new"
+    chown root:root "$conf_new"
+    chmod 644 "$conf_new"
+    [[ -f "$HSTS_SNIPPET" ]] && snippet_backup="$(cat "$HSTS_SNIPPET")"
+    hsts_snippet "$want" > "${HSTS_SNIPPET}.incoming"
+    chmod 644 "${HSTS_SNIPPET}.incoming"
+    mv -f "${HSTS_SNIPPET}.incoming" "$HSTS_SNIPPET"
+    if ! nginx -t 2>&1 | sed 's/^/  /'; then
+        if [[ -n "$snippet_backup" ]]; then
+            printf '%s\n' "$snippet_backup" > "$HSTS_SNIPPET"
+        else
+            rm -f "$HSTS_SNIPPET"
+        fi
+        rm -f "$conf_new"
+        die "nginx refused the change; HSTS stays as it was"
+    fi
+    mv -f "$conf_new" "$CONF"
+    systemctl try-reload-or-restart nginx
+    log "  HSTS     ${want}  (${CONF}, ${HSTS_SNIPPET}); reloaded nginx"
+}
+
 cmd="${1:-}"
 shift || true
 
@@ -214,6 +279,15 @@ case "$cmd" in
         [[ -f "$TLS_CERT" ]] || die "no certificate installed at ${TLS_CERT}"
         echo "certificate served for ${SERVER_NAME}:"
         describe "$TLS_CERT"
+        echo "  hsts         ${HSTS}"
+        ;;
+
+    hsts)
+        case "${1:-}" in
+            on) set_hsts yes ;;
+            off) set_hsts no ;;
+            *) usage ;;
+        esac
         ;;
 
     publish)

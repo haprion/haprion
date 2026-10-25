@@ -842,7 +842,7 @@ UNKNOWN_NEXT: dict[str, str] = {
     "cert_target": _CERTIFICATE,
     "cert_receiver": "It may have taken effect. Check the receiver under Certificates before trying again.",
     "dns_profile_apply": "Check the profile under Certificates → DNS profiles before applying it again.",
-    "ndes_profile_apply": "Check the profile under Certificates → NDES providers before applying it again.",
+    "ndes_profile_apply": "Check the profile under Certificates → NDES profiles before applying it again.",
     "node_restore_prepare": _RESTORE,
     "node_restore_preview": _RESTORE,
     "node_restore": _RESTORE,

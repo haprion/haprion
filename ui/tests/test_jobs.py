@@ -734,7 +734,7 @@ class AnUnknownOutcomeSaysWhatToCheck(unittest.TestCase):
 
         for operation, page in (
             ("dns_profile_apply", "Certificates → DNS profiles"),
-            ("ndes_profile_apply", "Certificates → NDES providers"),
+            ("ndes_profile_apply", "Certificates → NDES profiles"),
         ):
             with self.subTest(operation):
                 self.assertIn(page, jobs.unknown_note(self.job(operation)) or "")

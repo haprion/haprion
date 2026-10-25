@@ -59,8 +59,9 @@ engine than the one installed, and the platform's update checks the installed CL
 anything - so an interface released first stops before it changes the database.
 
 **The engine's API level is the contract between them.** `src/haprion/compatibility.json` holds
-it, with a digest of `schemas/v1`; a schema change fails the gate until someone decides whether the
-level must rise, and records the new digest. Raise it whenever an older engine could not answer what
+it, with a digest of `schemas/v1` and one of what the helpers take (their operations, parameters and
+actions); a change to either fails the gate until someone decides whether the level must rise, and
+records the new digest. Raise it whenever an older engine could not answer what
 the new interface asks. The
 interface requires the level it was built with (`ui/src/haprion_ui/compatibility.json`),
 `haprion-cli` provides `haprion-engine` at its level, and `haprion-ui` depends on

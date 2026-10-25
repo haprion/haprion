@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import threading
 import unittest
 from pathlib import Path
 from time import monotonic
@@ -61,12 +62,28 @@ class AnAnswerIsReadWithinItsBudget(unittest.TestCase):
         def full(_chunk: bytes) -> None:
             raise OSError(28, "No space left on device")
 
-        started = monotonic()
-        with self.assertRaises(OSError):
-            node_ssh.stream(
-                child("import sys\nwhile True: sys.stdout.write('x' * 65536)"), full, timeout=30
-            )
-        self.assertLess(monotonic() - started, 10)
+        raised: list[BaseException] = []
+
+        def call() -> None:
+            try:
+                node_ssh.stream(
+                    child("import sys\nwhile True: sys.stdout.write('x' * 65536)"),
+                    full,
+                    timeout=30,
+                )
+            except BaseException as exc:  # noqa: BLE001 - read below
+                raised.append(exc)
+
+        #
+        # In a thread of its own, so that the old way - waiting for the child
+        # for good - fails here instead of hanging the gate (review 26-10-25,
+        # 5-03). The child writes without end and stops only when it is killed.
+        #
+        caller = threading.Thread(target=call, daemon=True)
+        caller.start()
+        caller.join(timeout=15)
+        self.assertFalse(caller.is_alive(), "the call still waited for the child")
+        self.assertEqual([type(exc) for exc in raised], [OSError])
 
     def test_bytes_that_are_not_utf8_are_a_bad_answer_not_an_exception(self) -> None:
         completed = node_ssh.run_bounded(

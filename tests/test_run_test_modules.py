@@ -43,12 +43,12 @@ class RunTestModulesTests(unittest.TestCase):
         return tests
 
     def execute(
-        self, tests: Path, durations: Path, jobs: int = 2
+        self, tests: Path, durations: Path, jobs: int = 2, *extra: str
     ) -> subprocess.CompletedProcess[str]:
         command = f"{shlex.quote(sys.executable)} -m unittest discover -s tests -v"
         return subprocess.run(
             [sys.executable, str(RUNNER), "--durations", str(durations), "--jobs", str(jobs)]
-            + ["--suite", "demo", str(tests), command],
+            + [*extra, "--suite", "demo", str(tests), command],
             text=True,
             capture_output=True,
             check=False,
@@ -71,6 +71,26 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertIn("No module named 'no_such_module'", result.stdout)
         self.assertIn("failed: demo/test_b.py, demo/test_c.py", result.stderr)
         self.assertIn("demo: 4 tests, 1 skipped, 3 modules", result.stdout)
+
+    def test_a_module_that_does_not_finish_fails_and_is_named(self) -> None:
+        """Review 26-10-25, 5-03: a hanging test stood the gate still and named nothing."""
+
+        hanging = (
+            "import subprocess, sys, time, unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_hang(self) -> None:\n"
+            "        subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            "        time.sleep(60)\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tests = self.suite(root, {"test_a.py": PASSING, "test_hang.py": hanging})
+            durations = root / "durations.json"
+            durations.write_text(json.dumps({"demo/test_hang.py": 0.1, "demo/test_a.py": 0.1}))
+            result = self.execute(tests, durations, 2, "--floor", "2")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("stopped after 2 s: a test in it did not finish", result.stdout)
+        self.assertIn("failed: demo/test_hang.py", result.stderr)
 
     def test_a_module_that_leaves_a_temporary_file_fails_and_names_it(self) -> None:
         leaking = (

@@ -24,6 +24,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -114,7 +115,23 @@ def key(module: Module) -> str:
     return f"{module.suite}/{module.name}"
 
 
-def run(module: Module) -> Outcome:
+#
+# How long a module may take: ten times its last run, never less than FLOOR,
+# and UNTIMED for one with no timing yet. A test that hangs stood the whole gate
+# still and said nothing of which test it was (review 26-10-25, 5-03); now it is
+# a named failure.
+#
+FACTOR = 10
+FLOOR = 120.0
+UNTIMED = 900.0
+TIMED_OUT = 124
+
+
+def budget(previous: float | None, floor: float = FLOOR) -> float:
+    return UNTIMED if previous is None else max(floor, FACTOR * previous)
+
+
+def run(module: Module, limit: float = UNTIMED) -> Outcome:
     #
     # Each module gets a temporary directory of its own and fails if anything
     # is left in it. A test that forgot its cleanup used to leave it in /tmp,
@@ -124,7 +141,12 @@ def run(module: Module) -> Outcome:
     scratch = Path(tempfile.mkdtemp(prefix=f"gate-{module.suite}-{module.name}-"))
     try:
         started = time.monotonic()
-        completed = subprocess.run(  # noqa: S603 - the gate's own suite commands
+        #
+        # A session of its own, so a module that runs out of time is stopped
+        # with everything it started: a child left holding the output pipe
+        # would keep the reading below waiting as the test did.
+        #
+        process = subprocess.Popen(  # noqa: S603 - the gate's own suite commands
             [*module.command, "-p", module.name],
             cwd=module.directory.parent,
             env={**os.environ, "TMPDIR": str(scratch)},
@@ -132,9 +154,16 @@ def run(module: Module) -> Outcome:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            check=False,
+            start_new_session=True,
         )
-        returncode, output = completed.returncode, completed.stdout
+        try:
+            output, _ = process.communicate(timeout=limit)
+            returncode = process.returncode
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            output, _ = process.communicate()
+            returncode = TIMED_OUT
+            output = f"{output or ''}\nstopped after {limit:.0f} s: a test in it did not finish\n"
         left = sorted(
             entry.name
             for entry in scratch.iterdir()
@@ -160,6 +189,9 @@ def main() -> int:
     )
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--durations", type=Path, help="where the previous run's timings are kept")
+    parser.add_argument(
+        "--floor", type=float, default=FLOOR, help="the least time a module with a timing is given"
+    )
     arguments = parser.parse_args()
 
     pending = modules(arguments.suite)
@@ -170,7 +202,9 @@ def main() -> int:
     started = time.monotonic()
     outcomes: list[Outcome] = []
     with ThreadPoolExecutor(max_workers=max(1, arguments.jobs)) as pool:
-        futures = [pool.submit(run, m) for m in pending]
+        futures = [
+            pool.submit(run, m, budget(previous.get(key(m)), arguments.floor)) for m in pending
+        ]
         try:
             for future in as_completed(futures):
                 outcome = future.result()

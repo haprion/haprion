@@ -3276,6 +3276,11 @@ BACK_PLACES = {
     "jobs": ("jobs", "Events"),
     "settings": ("settings", "Settings"),
     "first-cluster": ("", "the first cluster guide"),
+    "dns-profiles": ("certificates", "DNS profiles"),
+    "ndes-profiles": ("certificates", "NDES profiles"),
+    "clusters": ("metrics", "Metrics"),
+    "account": ("", "Change password"),
+    "search": ("", "Search"),
 }
 
 

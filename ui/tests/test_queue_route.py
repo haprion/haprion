@@ -8,9 +8,11 @@ disabled installation is here.
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
@@ -355,6 +357,21 @@ class TheWayBackIsNamedAsTheMenuNamesIt(unittest.TestCase):
         self.assertEqual(views._back_place("/settings#nodes"), ("settings", "Settings"))
         self.assertEqual(views._back_place("/history"), ("history", "Versions"))
         self.assertEqual(views._back_place("/"), ("dashboard", "the dashboard"))
+
+    def test_every_page_has_a_name_to_go_back_to(self) -> None:
+        """Review 26-10-25, 12-07: four pages read as "the page", with no menu marked."""
+
+        source = Path(views.__file__).parent
+        pages = set()
+        for path in [*sorted((source / "pages").glob("*.py")), source / "views.py"]:
+            pages.update(
+                re.findall(
+                    r'@router\.get\("/([^/"?{]*)[^"]*", response_class=HTMLResponse',
+                    path.read_text(encoding="utf-8"),
+                )
+            )
+        # Signing in is before any page, so nothing goes back to it.
+        self.assertEqual(sorted(pages - set(views.BACK_PLACES) - {"login"}), [])
 
     def test_every_page_an_operation_returns_to_has_a_name(self) -> None:
         for name, path in views.RETURN_PATHS.items():

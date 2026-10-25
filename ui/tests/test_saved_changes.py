@@ -49,7 +49,7 @@ def saved(kind: str, document: str, *, cluster: str = "edge-demo", revision: int
 class TheNetworkFormSaves(QueueRouteTestCase):
     def form(self, **overrides: Any) -> dict[str, Any]:
         fields: dict[str, Any] = {
-            "operation": "network_publish",
+            "operation": "network_save",
             "cluster": "alpha",
             "expected_head": "a" * 40,
             "vip_name": ["public"],

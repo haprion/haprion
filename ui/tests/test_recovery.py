@@ -21,7 +21,7 @@ WORKER = "mgr/4242"
 
 
 def abandoned(
-    operation: str = "publish", *, attempts: int = 1, request_id: UUID = REQUEST
+    operation: str = "changes_publish", *, attempts: int = 1, request_id: UUID = REQUEST
 ) -> db.AbandonedJob:
     return db.AbandonedJob(
         id=7,
@@ -81,8 +81,20 @@ class RepeatableOperations(unittest.TestCase):
 
 
 class RecordedOperations(unittest.TestCase):
-    def test_the_managed_publishes_use_the_same_version_evidence_as_a_revert(self) -> None:
-        for operation in ("network_publish", "cluster_settings_publish", "objects_publish"):
+    def test_the_retired_publishes_are_not_named(self) -> None:
+        """Review 26-10-24, 07-09: the queue has not taken them since 0087."""
+
+        for operation in (
+            "publish",
+            "network_publish",
+            "cluster_settings_publish",
+            "objects_publish",
+        ):
+            with self.subTest(operation=operation):
+                self.assertNotIn(operation, recovery.RECORDED)
+
+    def test_a_publish_of_saved_changes_uses_the_same_version_evidence_as_a_revert(self) -> None:
+        for operation in ("changes_publish",):
             with self.subTest(operation=operation):
                 judgement = recovery.judge(
                     abandoned(operation), history(versions=[version()], published_hash="a" * 40)
@@ -121,7 +133,7 @@ class RecordedOperations(unittest.TestCase):
         retry: the later version is the configuration, and the job ends saying so.
         """
 
-        for operation in ("revert", "publish", "objects_publish"):
+        for operation in ("revert", "changes_publish"):
             with self.subTest(operation=operation):
                 judgement = recovery.judge(
                     abandoned(operation),
@@ -251,7 +263,7 @@ class Adjudicating(unittest.TestCase):
 
     def test_an_undecidable_job_is_neither_moved_nor_recorded(self) -> None:
         with (
-            mock.patch.object(db, "expired_leases", return_value=[abandoned("publish")]),
+            mock.patch.object(db, "expired_leases", return_value=[abandoned("changes_publish")]),
             mock.patch.object(db, "cluster_history", return_value=None),
             mock.patch.object(db, "requeue_expired") as requeue,
             mock.patch.object(db, "abandon_expired") as abandon,

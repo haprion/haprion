@@ -588,7 +588,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
     def test_an_editable_repository_description_gets_a_fenced_publish_form(self) -> None:
         page = self.editable_page()
 
-        self.assertIn('name="operation" value="network_publish"', page.text)
+        self.assertIn('name="operation" value="network_save"', page.text)
         self.assertIn('name="expected_head" value="' + "a" * 40 + '"', page.text)
         self.assertIn("3 proxies follow it", page.text)
         self.assertIn("keepalived", page.text)

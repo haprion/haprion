@@ -1062,19 +1062,6 @@ def build_router(config: Config) -> APIRouter:
             NODE_EVENT_TABLE.remember(response, sort, secure=config.session.cookie_secure)
         return response
 
-    #
-    # A refused form is answered in the interface rather than as a bare line of
-    # text on a white page. The message is the same; what it now carries is
-    # where it came from, that nothing was written, and that the browser's back
-    # button still holds what was typed. Only the refusals a person meets while
-    # filling in a form come here - a bad CSRF token or a role that may not ask
-    # is not a mistake to explain, and those stay plain.
-    #
-    def _refusal(
-        request: Request, session: Any, token: str, message: str, *, back: str
-    ) -> Response:
-        return _refusal_page(request, config, message, back=back)
-
     @router.post("/operations")
     def queue_operation(
         request: Request,
@@ -1200,12 +1187,12 @@ def build_router(config: Config) -> APIRouter:
                 #
                 **({"expected_head": expected_head} if expected_head else {}),
             }
-        elif operation == "network_publish":
+        elif operation == "network_save":
             revision = int(saved_revision) if is_digits(saved_revision) else None
             if network_action == "discard":
                 if revision is None:
-                    return _refusal(
-                        request, session, token, "There is nothing to discard.", back="/network"
+                    return _refusal_page(
+                        request, config, "There is nothing to discard.", back="/network"
                     )
                 with request.app.state.pool.connection() as connection:
                     try:
@@ -1214,7 +1201,7 @@ def build_router(config: Config) -> APIRouter:
                         )
                     except db.DraftConflict as conflict:
                         connection.rollback()
-                        return _refusal(request, session, token, str(conflict), back="/network")
+                        return _refusal_page(request, config, str(conflict), back="/network")
                     db.record_audit_event(
                         connection,
                         actor=session.username,
@@ -1233,10 +1220,9 @@ def build_router(config: Config) -> APIRouter:
             # when the description is saved (B257), since that is where the
             # decision is made.
             if default_vip_confirmation != "on":
-                return _refusal(
+                return _refusal_page(
                     request,
-                    session,
-                    token,
+                    config,
                     "Confirm the default VIP impact before saving.",
                     back="/network",
                 )
@@ -1267,7 +1253,7 @@ def build_router(config: Config) -> APIRouter:
             except network.FormProblem as problem:
                 # Safe to show: these messages name a row's position, never
                 # anything that was typed into it.
-                return _refusal(request, session, token, str(problem), back="/network")
+                return _refusal_page(request, config, str(problem), back="/network")
             if not COMMIT_ID.fullmatch(expected_head):
                 return PlainTextResponse("Invalid operation parameters", status_code=400)
             #
@@ -1286,7 +1272,7 @@ def build_router(config: Config) -> APIRouter:
                     )
                 except db.DraftConflict as conflict:
                     connection.rollback()
-                    return _refusal(request, session, token, str(conflict), back="/network")
+                    return _refusal_page(request, config, str(conflict), back="/network")
                 db.record_audit_event(
                     connection,
                     actor=session.username,

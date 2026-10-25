@@ -71,17 +71,11 @@ REPEATABLE = frozenset({"deploy", "cert_deploy"})
 
 #
 # Operations that record a version bound to the request that asked for it.
+# Only the ones the queue still takes (0087): a retired name kept here read as
+# an operation still in use (review 26-10-24, 07-09). Their labels stay, for
+# the history.
 #
-RECORDED = frozenset(
-    {
-        "publish",
-        "revert",
-        "network_publish",
-        "cluster_settings_publish",
-        "objects_publish",
-        "changes_publish",
-    }
-)
+RECORDED = frozenset({"revert", "changes_publish"})
 
 type Verdict = Literal["requeue", "abandon", "wait"]
 

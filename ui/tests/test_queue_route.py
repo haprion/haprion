@@ -186,7 +186,7 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         """
 
         form: dict[str, Any] = {
-            "operation": "network_publish",
+            "operation": "network_save",
             "cluster": "alpha",
             "expected_head": "a" * 40,
             "comment": "Test",
@@ -202,7 +202,7 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         form.update(overrides)
         return form
 
-    def test_a_network_publish_needs_the_default_vip_confirmation(self) -> None:
+    def test_a_network_save_needs_the_default_vip_confirmation(self) -> None:
         response = self.post(self.writing_client(), **self.network_form())
 
         self.assertEqual(response.status_code, 400)
@@ -240,6 +240,17 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
 
         self.assertEqual(response.status_code, 303)
         self.assertNotIn("vips: {}", self.saved_changes[0]["document"])
+
+    def test_the_retired_publish_name_saves_nothing(self) -> None:
+        """Review 26-10-24, 07-09: saving a network has its own name, not a retired job's."""
+
+        response = self.post(
+            self.writing_client(),
+            **self.network_form(operation="network_publish", default_vip_confirmation="on"),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual((self.queued, self.saved_changes), ([], []))
 
     def test_a_network_publish_from_the_form_is_no_action(self) -> None:
         """B257: published from Versions, with everything else saved."""

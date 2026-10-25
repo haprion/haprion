@@ -226,6 +226,69 @@ else
 fi
 
 #
+# What a role holds on a whole table rather than on its columns: DELETE,
+# TRUNCATE, TRIGGER and REFERENCES are granted per table, and the matrix above
+# reads only the column grants. A migration granting `delete on job` would
+# have passed it (review 26-10-24, 05-03). The rows a role removes are its own
+# working state; the evidence tables - job, audit_event, login_attempt,
+# login_unlock - are on no line here, and only the retention command, as the
+# migration role, removes from them.
+#
+expected_table_grants=$(cat <<'EOF'
+app_poller	node_event_state	DELETE
+app_poller	package_waiting	DELETE
+app_poller	search_entry	DELETE
+app_web	app_user	DELETE
+app_web	attention_ack	DELETE
+app_web	cluster_change	DELETE
+app_web	getting_started	DELETE
+app_web	proxy_draft	DELETE
+app_web	status_access	DELETE
+app_worker	dns_provider_profile	DELETE
+app_worker	ndes_provider_profile	DELETE
+EOF
+)
+actual_table_grants="$(run -c "
+    select grantee, table_name, privilege_type
+      from information_schema.table_privileges
+     where table_schema = 'public' and grantee like 'app\\_%'
+       and privilege_type in ('DELETE', 'TRUNCATE', 'TRIGGER', 'REFERENCES')
+     order by grantee, table_name, privilege_type")"
+if [[ "$actual_table_grants" == "$expected_table_grants" ]]; then
+    log "  ok       $(echo "$expected_table_grants" | wc -l) table grants, exactly as expected"
+else
+    fail "the table-level privileges are not what the contract says"
+    diff <(echo "$expected_table_grants") <(echo "$actual_table_grants") || true
+fi
+
+#
+# Each login role a member of its contract role and of nothing else, and the
+# migration role of none (02-platform-database). A second membership would
+# give a service everything that role was granted, and the matrices above,
+# which read the contract roles, would not show it (05-03).
+#
+expected_members="$(printf '%s\t%s\n' \
+    "$DB_MIGRATION_ROLE" "" \
+    "$COLLECTOR_USER" app_collector \
+    "$POLLER_USER" app_poller \
+    "$WEB_USER" app_web \
+    "$WORKER_USER" app_worker | sort)"
+actual_members="$(run -c "
+    select r.rolname, coalesce(string_agg(g.rolname, ',' order by g.rolname), '')
+      from pg_roles r
+      left join pg_auth_members m on m.member = r.oid
+      left join pg_roles g on g.oid = m.roleid
+     where r.rolname in ('${DB_MIGRATION_ROLE}', '${COLLECTOR_USER}', '${POLLER_USER}',
+                         '${WEB_USER}', '${WORKER_USER}')
+     group by r.rolname" | sort)"
+if [[ "$actual_members" == "$expected_members" ]]; then
+    log "  ok       each service role a member of its contract role alone"
+else
+    fail "the roles' memberships are not what 02-platform-database makes"
+    diff <(echo "$expected_members") <(echo "$actual_members") || true
+fi
+
+#
 # Functions: the ones a role may call, and none a definer function lets
 # anyone else call. A function runs with its owner's rights when it is a
 # definer's, so EXECUTE on one is a grant of what it does (0085).
@@ -285,6 +348,8 @@ refuse "$WEB_USER"    "cannot update the audit trail" \
        "update audit_event set action = 'tampered'"
 refuse "$WEB_USER"    "cannot delete from the audit trail" \
        "delete from audit_event"
+refuse "$WEB_USER"    "cannot delete a job" \
+       "delete from job"
 #
 # Since 0039 the web writes accounts - name, hash and role on a new one; role,
 # disabled and hash on an existing one - and since 0041 it may delete one and
@@ -375,9 +440,9 @@ refuse "$POLLER_USER" "cannot write a job row" \
 refuse "$POLLER_USER" "cannot read jobs" \
        "select id from job"
 #
-# The search index (0047, B222) is the one table the poller deletes from: it
-# replaces its own derived rows. The web reads it and writes nothing, and the
-# poller's delete reaches no other table.
+# The poller deletes only its own derived rows - the search index (0047,
+# B222), the node event state, the waiting packages - and the table-level
+# matrix above says which. The web reads the index and writes nothing.
 #
 refuse "$WEB_USER"    "cannot write the search index" \
        "delete from search_entry"

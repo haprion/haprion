@@ -3272,9 +3272,10 @@ until it can fetch again.
 from the leaf partitions only. It labels the counts as estimates, and lists partitions that have no
 statistics. Run `report --exact` when you need an exact log count. Neither report changes any data.
 
-**Why it is a root command.** No application role holds `delete` on any table, and none is going to.
-That is the same boundary as the audit trail and the sign-in attempts: a compromised web or worker
-process must not be able to remove the record of what it did. The database role that owns the tables
+**Why it is a root command.** No application role may delete from the jobs, the audit trail or the
+sign-in records, and none is going to: a compromised web or worker process must not be able to remove
+the record of what it did. The roles delete only their own working rows - a draft, an acknowledgement,
+the poller's derived state - and the installation check lists exactly which. The database role that owns the tables
 (the migration role) may delete from them, and only root may connect as that role. The installation
 step verifies this rather than assuming it: if an application identity could connect as the owning
 role, `delete` being withheld would mean nothing.
@@ -3308,7 +3309,7 @@ role, `delete` being withheld would mean nothing.
   `certificate_export` or `certificate_download` record. The registry row reads from that record which
   version was last taken out, so a certificate nobody fetched for two years does not start to read as
   never downloaded. This command is the only thing that removes audit records, and only by age; no
-  application role may remove anything.
+  application role may remove one.
 - **Node events older than ninety days** - what the nodes did on their own, shown under *Events →
   Nodes*: a server down or back up, the VIP moving.
 - **OIDC sign-ins in progress older than a day.** Each sign-in through the identity provider leaves one

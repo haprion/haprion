@@ -13,11 +13,14 @@
 # working copy: two years (26-10-11).
 #
 # It is a root command rather than something the interface does, because no
-# application role holds `delete` on any table and none is going to. That is the
-# same boundary as the audit trail and the login attempts: a compromised web or
+# application role may delete from the evidence tables - job, audit_event,
+# login_attempt, login_unlock - and none is going to: a compromised web or
 # worker process must not be able to remove the evidence of what it did. The
-# migration role owns the table and may therefore delete from it, and the ident
-# map lets root - and only root - be that role for this database.
+# roles delete only their own working rows (a draft, an acknowledgement, the
+# poller's derived state), which 03-verify's table-level matrix lists (review
+# 26-10-24, 05-04). The migration role owns the tables and may therefore delete
+# from them, and the ident map lets root - and only root - be that role for
+# this database.
 #
 set -Eeuo pipefail
 

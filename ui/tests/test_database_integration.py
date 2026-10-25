@@ -3282,6 +3282,29 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
         self.assertEqual(actual_tables, tables)
         self.assertEqual(actual_grants, grants)
 
+    def test_the_table_level_grants_are_the_ones_the_step_expects(self) -> None:
+        """Review 26-10-24, 05-03: `delete on job` would have passed the column matrix."""
+
+        text = self.SCRIPT.read_text()
+        listed = re.search(
+            r"^expected_table_grants=\$\(cat <<'EOF'\n(.*?)\nEOF$", text, re.MULTILINE | re.DOTALL
+        )
+        if listed is None:
+            self.fail("03-verify no longer states its table grants in the shape this reads")
+        role = os.environ["HAPRION_UI_TEST_MIGRATION_ROLE"]
+        with psycopg.connect(f"{DSN} user={role}") as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select grantee, table_name, privilege_type"
+                "  from information_schema.table_privileges"
+                " where table_schema = 'public' and grantee like 'app\\_%'"
+                "   and privilege_type in ('DELETE', 'TRUNCATE', 'TRIGGER', 'REFERENCES')"
+                " order by grantee, table_name, privilege_type"
+            )
+            actual = ["\t".join(row) for row in cursor.fetchall()]
+        self.assertEqual(actual, listed.group(1).split("\n"))
+        evidence = {"job", "audit_event", "login_attempt", "login_unlock"}
+        self.assertEqual([line for line in actual if line.split("\t")[1] in evidence], [])
+
     def test_the_functions_the_roles_may_call_are_the_ones_the_step_expects(self) -> None:
         text = self.SCRIPT.read_text()
         listed = re.search(r"^expected_routines=\$'([^']*)'$", text, re.MULTILINE)

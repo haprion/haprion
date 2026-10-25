@@ -31,6 +31,70 @@ ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "ui/src/haprion_ui/compatibility.json"
 
 
+class TheSudoRulesAfterARollback(unittest.TestCase):
+    """Review 26-10-24, 11-06: the sudo rules follow the package, not the release.
+    After a rollback on its own, the newer package's rules for a helper the older
+    release does not run are said, and are no failure; anything else still is."""
+
+    HELPERS = ("haprion-deploy-helper", "haprion-revert-helper")
+
+    def check(self, *helpers: str, mode: int = 0o440, uid: int = 0) -> tuple[int, str]:
+        rules = compatibility.expected_sudo_rules("svc-app", helpers, Path("/opt/haprion"))
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "rules").write_text("\n".join(rules) + "\n")
+            report = compatibility.Report()
+            status = SimpleNamespace(st_uid=uid, st_mode=0o100000 | mode)
+            output = io.StringIO()
+            with (
+                mock.patch.object(Path, "stat", return_value=status),
+                contextlib.redirect_stdout(output),
+            ):
+                compatibility.check_sudoers(
+                    report,
+                    root=Path(raw),
+                    name="rules",
+                    user="svc-app",
+                    helpers=self.HELPERS,
+                    cli_root=Path("/opt/haprion"),
+                    label="worker sudoers",
+                )
+        return report.failures, output.getvalue()
+
+    def test_the_exact_rules_pass(self) -> None:
+        failures, said = self.check(*self.HELPERS)
+        self.assertEqual((failures, said.split()[0]), (0, "PASS"))
+
+    def test_a_rule_for_a_helper_this_release_does_not_run_is_a_warning(self) -> None:
+        failures, said = self.check(*self.HELPERS, "haprion-newer-helper")
+        self.assertEqual((failures, said.split()[0]), (0, "WARN"))
+        self.assertIn("haprion-newer-helper", said)
+
+    def test_a_missing_rule_or_a_wrong_mode_or_owner_still_fails(self) -> None:
+        for helpers, mode, uid in (
+            (self.HELPERS[:1], 0o440, 0),
+            ((*self.HELPERS, "haprion-newer-helper"), 0o640, 0),
+            ((*self.HELPERS, "haprion-newer-helper"), 0o440, 1000),
+        ):
+            with self.subTest(helpers=helpers, mode=mode, uid=uid):
+                failures, said = self.check(*helpers, mode=mode, uid=uid)
+                self.assertEqual((failures, said.split()[0]), (1, "FAIL"))
+
+    def test_an_extra_rule_of_another_form_still_fails(self) -> None:
+        rules = compatibility.expected_sudo_rules("svc-app", self.HELPERS, Path("/opt/haprion"))
+        for extra in (
+            "svc-app ALL=(root) NOPASSWD: ALL",
+            "svc-app ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-newer-helper *",
+            'operator ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-newer-helper ""',
+            rules[0],
+        ):
+            with self.subTest(extra=extra):
+                self.assertIsNone(
+                    compatibility.extra_helper_rules(
+                        (*rules, extra), rules, "svc-app", Path("/opt/haprion")
+                    )
+                )
+
+
 class CompatibilityMetadataTests(unittest.TestCase):
     def test_the_running_ui_names_every_helper_its_services_need(self) -> None:
         requirements = compatibility.load_requirements(MANIFEST)

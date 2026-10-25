@@ -4439,6 +4439,10 @@ Afterwards it checks that the interface answers, and **rolls forward by itself i
 running this is already having a bad day; leaving them on a release that does not answer, with the
 rollback reported as done, is the worst outcome possible.
 
+The sudo rules, units and site stay as the installed package wrote them; a rollback moves only the release.
+`check-compatibility` names a sudo rule for a helper the target release does not run as a warning, not a
+failure. The package's next update writes the files again.
+
 `--list` shows the releases newest first, ordered by when each release's directory was last changed, not
 by name. A release id ends in a commit hash, which sorts alphabetically and says nothing about when it was
 built. Without `--to`, the target is the newest release that is not the current one.

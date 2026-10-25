@@ -312,6 +312,32 @@ def expected_sudo_rules(user: str, helpers: tuple[str, ...], cli_root: Path) -> 
     )
 
 
+def extra_helper_rules(
+    actual: tuple[str, ...], expected: tuple[str, ...], user: str, cli_root: Path
+) -> tuple[str, ...] | None:
+    """The helpers named by rules beyond the expected ones, when every rule expected is
+    there once and each extra one is an exact helper rule of the same form; else None.
+
+    The sudo rules follow the package and not the release: after a rollback on its
+    own, the newer package's file may name a helper the older release does not run
+    (review 26-10-24, 11-06).
+    """
+
+    if len(set(actual)) != len(actual) or not set(expected) <= set(actual):
+        return None
+    form = re.compile(
+        rf"{re.escape(user)} ALL=\(root\) NOPASSWD: "
+        rf'{re.escape(str(cli_root))}/current/bin/(haprion-[a-z0-9-]+) ""'
+    )
+    helpers = []
+    for rule in sorted(set(actual) - set(expected)):
+        found = form.fullmatch(rule)
+        if found is None:
+            return None
+        helpers.append(found.group(1))
+    return tuple(helpers) or None
+
+
 def check_sudoers(
     report: Report,
     *,
@@ -331,8 +357,16 @@ def check_sudoers(
         return
     expected = expected_sudo_rules(user, helpers, cli_root)
     secure = status.st_uid == 0 and stat.S_IMODE(status.st_mode) == 0o440
+    extra = extra_helper_rules(actual, expected, user, cli_root)
     if sorted(actual) == sorted(expected) and len(actual) == len(expected) and secure:
         report.pass_(label, labels.counted(len(expected), "exact helper rule"))
+    elif extra is not None and secure:
+        report.warn(
+            label,
+            f"{labels.counted(len(expected), 'exact helper rule')}, and {len(extra)} more "
+            f"for what this release does not run ({', '.join(extra)}); "
+            "the package's next update writes the file again",
+        )
     else:
         detail = (
             f"expected {labels.counted(len(expected), 'exact helper rule')}, found {len(actual)}"

@@ -73,6 +73,16 @@
     // would leave the reader looking at two answers at once.
     //
     if (!fresh || !here) throw new Error("shape");
+    //
+    // What the reader ticked stays ticked (review 26-10-24, 04-11): opening a
+    // row's detail to read it before deleting took every tick away.
+    //
+    const ticked = new Set(
+      Array.from(here.querySelectorAll("[data-delete-pick]:checked"), (pick) => pick.value),
+    );
+    fresh.querySelectorAll("[data-delete-pick]").forEach((pick) => {
+      if (ticked.has(pick.value)) pick.checked = true;
+    });
     here.replaceWith(fresh);
     wireDeletion();
     wireRefresh();

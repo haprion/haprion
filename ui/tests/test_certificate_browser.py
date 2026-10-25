@@ -190,6 +190,17 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             self.assertFalse(submit.is_disabled())
             self.assertEqual(page.locator("[data-delete-count]").inner_text(), "1 selected")
 
+    def test_a_tick_survives_opening_a_row_to_read_it(self) -> None:
+        """Review 26-10-24, 04-11: opening a row's detail took every tick away."""
+
+        with self.signed_in("?view=registry") as page:
+            page.locator("[data-delete-pick]").first.check()
+            page.click(".registry-row td[data-label='Valid from']")
+            page.wait_for_selector(".registry-detail")
+
+            self.assertTrue(page.locator("[data-delete-pick]").first.is_checked())
+            self.assertEqual(page.locator("[data-delete-count]").inner_text(), "1 selected")
+
     def test_export_wakes_at_one_external_row_and_no_other(self) -> None:
         from tests.test_certificates import reading, registered, with_registry
         from tests.test_external_certificates import external

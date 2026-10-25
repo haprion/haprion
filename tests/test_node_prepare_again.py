@@ -246,5 +246,61 @@ class TheRecordOfTheStep(unittest.TestCase):
         )
 
 
+STATUS_SCRIPT = BASE / "install" / "node" / "haprion-node-status"
+
+
+def status_reader(record: Path, step: Path) -> dict[str, Any]:
+    """`step_digest` and `read_preparation`, cut verbatim from the node's status script."""
+
+    text = STATUS_SCRIPT.read_text()
+    code = text[text.index("def step_digest(") : text.index("def run(")]
+    import hashlib
+
+    namespace: dict[str, Any] = {
+        "hashlib": hashlib,
+        "Path": Path,
+        "Any": Any,
+        "NODE_PREPARED": record,
+        "NODE_STEP": step,
+    }
+    exec(compile(code, str(STATUS_SCRIPT), "exec"), namespace)  # noqa: S102 - the script's own code
+    return namespace
+
+
+class TheStatusSaysIt(TheRecordOfTheStep):
+    """B363: a node upgraded unattended is read by nobody; its status says it instead."""
+
+    def test_the_node_s_digest_is_the_shell_s(self) -> None:
+        (self.step / "sysusers" / "a-b.conf").write_text("x\n")
+        (self.step / "a_b").write_text("y\n")
+        (self.step / "link").symlink_to(self.step / "a_b")
+        self.assertEqual(self.bash("record_node_prepared"), 0)
+        reader = status_reader(self.record, self.step)
+        self.assertEqual(reader["step_digest"](self.step), self.record.read_text().strip())
+
+    def test_current_after_the_step_and_not_after_a_change(self) -> None:
+        reader = status_reader(self.record, self.step)
+        self.assertEqual(reader["read_preparation"](), {"current": False})
+        self.assertEqual(self.bash("record_node_prepared"), 0)
+        self.assertEqual(reader["read_preparation"](), {"current": True})
+        (self.step / "04-node-prepare").write_text("step, changed\n")
+        self.assertEqual(reader["read_preparation"](), {"current": False})
+
+    def test_an_unreadable_step_is_null(self) -> None:
+        self.assertEqual(self.bash("record_node_prepared"), 0)
+        reader = status_reader(self.record, self.root / "missing")
+        self.assertEqual(reader["read_preparation"](), {"current": False})
+        (self.step / "04-node-prepare").chmod(0)
+        self.addCleanup((self.step / "04-node-prepare").chmod, 0o644)
+        if os.geteuid() != 0:
+            self.assertIsNone(status_reader(self.record, self.step)["read_preparation"]())
+
+    def test_the_status_carries_it_and_the_contract_names_it(self) -> None:
+        text = STATUS_SCRIPT.read_text()
+        self.assertIn('"preparation": read_preparation(),', text)
+        schema = (BASE / "schemas/v1/haprion-status.schema.json").read_text()
+        self.assertIn('"preparation": {', schema)
+
+
 if __name__ == "__main__":
     unittest.main()

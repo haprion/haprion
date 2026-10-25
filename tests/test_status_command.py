@@ -86,10 +86,12 @@ def node_status(
     dns_listener: dict[str, object] | None = None,
     ipvs: dict[str, object] | None = None,
     forward_file: dict[str, object] | None = None,
+    preparation: dict[str, object] | None = None,
 ) -> str:
     return json.dumps(
         {
             **({} if forward_file is None else {"forward_file": forward_file}),
+            **({} if preparation is None else {"preparation": preparation}),
             **({} if waf_engine is None else {"waf_engine": waf_engine}),
             **({} if dns_listener is None else {"dns_listener": dns_listener}),
             **({} if ipvs is None else {"ipvs": ipvs}),
@@ -673,6 +675,34 @@ class CallerTests(HelperFixture):
 
         self.assertEqual(out.count("Forward file:"), 1)
         self.assertIn("Forward file: BEHIND the release - run haprion-deploy", out)
+
+    def test_a_node_to_prepare_again_is_named_with_the_command(self) -> None:
+        """B363: the CLI says what the interface's Needs attention says."""
+
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a",
+                        owner=True,
+                        release_hash=TARGET_HASH,
+                        preparation={"current": True},
+                    ),
+                    "node-b": node_status(
+                        "node-b",
+                        owner=False,
+                        release_hash=TARGET_HASH,
+                        preparation={"current": False},
+                    ),
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertEqual(out.count("Preparation:"), 1)
+        self.assertIn("Preparation:  CHANGED - run  sudo haprion-node-prepare  on the node", out)
+        self.assertLess(out.index("node-b ("), out.index("Preparation:"))
 
     def test_the_ipvs_file_has_a_line_of_its_own(self) -> None:
         stale = dict(IPVS, installed_sha256="b2" * 32)

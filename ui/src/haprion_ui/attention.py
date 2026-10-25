@@ -187,6 +187,7 @@ PAGES = {
     "logs": "Traffic logs",
     "forwarding": "Logs & metrics",
     "manager": "Dashboard",
+    "preparation": "Dashboard",
 }
 KINDS = tuple(PAGES)
 
@@ -340,6 +341,23 @@ def from_dashboard(
                 )
             )
         for node in cluster.nodes:
+            #
+            # Its own row and kind, so that acknowledging a node that is down
+            # does not also hide that it needs preparing (B363).
+            #
+            if node.prepare_pending:
+                items.append(
+                    Item(
+                        kind="preparation",
+                        severity="warning",
+                        cluster=cluster.cluster,
+                        subject=node.name,
+                        message="the node package changed what its preparation sets up:"
+                        " run  sudo haprion-node-prepare  on the node",
+                        since=None,
+                        link=card_link(cluster.cluster),
+                    )
+                )
             severity = _severity(node.tone)
             if severity is None or node.label == drift_label:
                 continue

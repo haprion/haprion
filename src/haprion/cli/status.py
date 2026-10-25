@@ -292,6 +292,13 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         forwarding = log_forwarding.status_line(status.get("log_forwarding"))
         if forwarding is not None:
             writer.write(f"  Log forward:  {forwarding}\n")
+        #
+        # Said only when there is something to do, as the interface's
+        # Needs attention says it (B363).
+        #
+        preparation = status.get("preparation")
+        if isinstance(preparation, dict) and preparation.get("current") is False:
+            writer.write("  Preparation:  CHANGED - run  sudo haprion-node-prepare  on the node\n")
         writer.write("\n")
 
     writer.write(f"VIP state:      {summary.get('vip_state')}\n")

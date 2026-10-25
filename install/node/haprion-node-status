@@ -56,6 +56,12 @@ NODE_CONF = Path("/etc/haprion/node.conf")
 #
 CLUSTER_LINE = re.compile(r'^CLUSTER="([a-z][a-z0-9-]{0,62})"$')
 SBIN = Path("/usr/sbin")
+#
+# Step 4 as the package brings it, and the record of the one that last ran
+# here (`record_node_prepared` in node-installation.sh, B361).
+#
+NODE_STEP = Path("/usr/share/haprion-node/install")
+NODE_PREPARED = Path("/var/lib/haprion-node/prepared")
 MAX_INSTALLATION_BYTES = 64 * 1024
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 NODE_SCRIPTS = (
@@ -151,6 +157,38 @@ def read_installation() -> dict[str, Any]:
     except Exception:
         _, scripts = installed_scripts()
         return {"node_api": None, "scripts_current": False, "scripts": scripts}
+
+
+def step_digest(directory: Path) -> str:
+    """`step_digest` in node-installation.sh, held to it by a test: sha256sum's
+    line for every regular file under the directory, in byte order, digested."""
+
+    lines = b""
+    for path in sorted(
+        (path for path in directory.rglob("*") if path.is_file() and not path.is_symlink()),
+        key=lambda path: str(path.relative_to(directory)).encode(),
+    ):
+        name = "./" + str(path.relative_to(directory))
+        lines += f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {name}\n".encode()
+    return hashlib.sha256(lines).hexdigest()
+
+
+def read_preparation() -> dict[str, bool] | None:
+    """Whether the step this package brings is the one that last ran here (B363).
+
+    An upgrade replaces the step and runs nothing; `apt upgrade` says so, but a
+    node upgraded unattended is read by nobody. So the status says it, and
+    the manager lists the node until `haprion-node-prepare` has run. A node
+    with no record has not run this package's step. null when it cannot be read.
+    """
+
+    try:
+        recorded = (
+            NODE_PREPARED.read_text(encoding="ascii").strip() if NODE_PREPARED.exists() else None
+        )
+        return {"current": recorded is not None and recorded == step_digest(NODE_STEP)}
+    except (OSError, ValueError):
+        return None
 
 
 def run(*argv: str) -> subprocess.CompletedProcess[str]:
@@ -1958,6 +1996,7 @@ result: dict[str, Any] = {
     "certificates": certificates,
     "authorities": read_authorities(),
     "installation": read_installation(),
+    "preparation": read_preparation(),
     "architecture": os.uname().machine,
     "waf_engine": read_waf_engine(),
     "dns_listener": read_dns_listener(),
@@ -2008,6 +2047,17 @@ else:
         )
     print(f"Log forwarding:    {forward_file_summary(result['forward_file'])}")
     print(f"Every address:     {wildcard_summary(result['wildcard_listeners'])}")
+    preparation = result["preparation"]
+    print(
+        "Preparation:       "
+        + (
+            "UNKNOWN"
+            if preparation is None
+            else "CURRENT"
+            if preparation["current"]
+            else "RUN  sudo haprion-node-prepare"
+        )
+    )
     ipvs = result["ipvs"]
     print(f"Syslog IPVS:       {ipvs_summary(ipvs)}")
     for service in ipvs["services"] or []:

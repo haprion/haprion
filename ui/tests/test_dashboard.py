@@ -96,6 +96,26 @@ class HealthDerivation(unittest.TestCase):
     def dashboard(self, status: ClusterStatus) -> DashboardView:
         return build_dashboard(("alpha",), (status,), now=NOW, stale_after=timedelta(seconds=120))
 
+    def test_a_node_reports_whether_its_step_four_is_the_package_s(self) -> None:
+        """B363: `preparation` from the node's status; an older node says nothing."""
+
+        status = reading("done-single-owner.json")
+        for reported, pending in (
+            ({"current": False}, True),
+            ({"current": True}, False),
+            (None, False),
+        ):
+            with self.subTest(reported=reported):
+                result = dict(status.result)
+                nodes = [dict(node) for node in result["nodes"]]
+                nodes[0]["status"] = dict(nodes[0]["status"])
+                if reported is not None:
+                    nodes[0]["status"]["preparation"] = reported
+                result["nodes"] = nodes
+                view = self.dashboard(replace(status, result=result))
+                self.assertEqual(view.clusters[0].nodes[0].prepare_pending, pending)
+                self.assertFalse(view.clusters[0].nodes[1].prepare_pending)
+
     def test_done_and_converged_is_only_green_when_node_services_are_healthy(self) -> None:
         status = reading("done-single-owner.json")
         result = dict(status.result)

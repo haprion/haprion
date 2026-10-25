@@ -566,6 +566,13 @@
           },
           "additionalProperties": false
         },
+        "preparation": {
+          "description": "Whether the step 4 the node package brings is the one that last ran on the node (B363): false after an upgrade that changed it, until haprion-node-prepare has run. null when it could not be read; absent from nodes installed before it was reported.",
+          "type": ["object", "null"],
+          "required": ["current"],
+          "properties": { "current": { "type": "boolean" } },
+          "additionalProperties": false
+        },
         "servers": {
           "description": "One row per pool member as the runtime reports it, null when the socket could not be read, and absent from a node still running an older status script.",
           "type": ["array", "null"],

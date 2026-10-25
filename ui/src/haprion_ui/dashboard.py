@@ -49,6 +49,12 @@ class NodeView:
     # target and a file the release activates afterwards is behind.
     #
     release_behind: bool = False
+    #
+    # The node package brings another step 4 than the one that last ran on it
+    # (B363): Needs attention names the command. False for a node that does
+    # not say, which an older node is.
+    #
+    prepare_pending: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +344,7 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
         )
 
     status = _mapping(node["status"])
+    prepare_pending = _mapping(status.get("preparation")).get("current") is False
     haproxy = _mapping(status.get("haproxy"))
     keepalived = _mapping(status.get("keepalived"))
     vip = _mapping(status.get("vip"))
@@ -409,6 +416,7 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
             runtime="",
             stats="",
             current=current,
+            prepare_pending=prepare_pending,
         )
 
     return NodeView(
@@ -425,6 +433,7 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
         current=current,
         release_behind=current is False
         and behind_part(status, target_hash) in (None, BEHIND_RELEASE),
+        prepare_pending=prepare_pending,
     )
 
 

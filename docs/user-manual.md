@@ -3651,6 +3651,8 @@ box is not shown.
   reports Online, or a status reading that failed or returned no node.
 - **Nodes** that are down or have a warning - for example *Counters not shared*. A node that is only
   behind the published version is not listed: that is a publish waiting for its deploy.
+- **A node to prepare again**, as a warning, when its node package brings a changed preparation step:
+  run `sudo haprion-node-prepare` on it ([Installing and changing node scripts](#installing-and-changing-node-scripts)).
 - **Objects whose servers are not up**, as their lamp on *Proxies* says it. Critical when no node reaches
   any of them; a warning when some are down, or down on one node only. An object without a health check
   has no lamp and is not listed.
@@ -6510,7 +6512,9 @@ changes that step, the upgrade says so:
 haprion-node: this release changes what the node's preparation sets up; run  sudo haprion-node-prepare
 ```
 
-Then run it on that node:
+A node upgraded without anyone reading that line says it too: its status reports it, and the
+dashboard's *Needs attention* lists the node with the same command until it has run. Then run it on
+that node:
 
 ```bash
 sudo haprion-node-prepare

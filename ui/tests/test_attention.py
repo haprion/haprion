@@ -36,8 +36,12 @@ def cluster(name: str = "alpha", **fields: Any) -> Any:
     return SimpleNamespace(**values)
 
 
-def node(name: str, tone: str, label: str = "Down", detail: str = "") -> Any:
-    return SimpleNamespace(name=name, tone=tone, label=label, detail=detail)
+def node(
+    name: str, tone: str, label: str = "Down", detail: str = "", *, prepare_pending: bool = False
+) -> Any:
+    return SimpleNamespace(
+        name=name, tone=tone, label=label, detail=detail, prepare_pending=prepare_pending
+    )
 
 
 class EachKindComesAndGoes(unittest.TestCase):
@@ -150,6 +154,33 @@ class EachKindComesAndGoes(unittest.TestCase):
             [(item.kind, item.subject, item.link) for item in items],
             [("node", "node-a", "/#cluster-alpha"), ("reading", "beta", "/#cluster-beta")],
         )
+
+    def test_a_node_whose_step_four_changed_is_its_own_row(self) -> None:
+        """B363: a node upgraded unattended said nothing anywhere a person looks."""
+
+        items = attention.from_dashboard(
+            [
+                cluster(
+                    "alpha",
+                    nodes=(
+                        node("node-a", "healthy", "Online", prepare_pending=True),
+                        node("node-b", "critical", prepare_pending=True),
+                    ),
+                )
+            ],
+            drift_label="Behind",
+        )
+        self.assertEqual(
+            [(item.kind, item.subject, item.severity) for item in items],
+            [
+                ("preparation", "node-a", "warning"),
+                ("preparation", "node-b", "warning"),
+                ("node", "node-b", "critical"),
+            ],
+        )
+        self.assertIn("sudo haprion-node-prepare", items[0].message)
+        self.assertEqual(items[0].link, "/#cluster-alpha")
+        self.assertNotEqual(items[1].key, items[2].key)
 
     def test_a_node_waiting_for_its_deploy_is_not_listed(self) -> None:
         items = attention.from_dashboard(

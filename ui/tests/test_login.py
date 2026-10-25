@@ -642,13 +642,74 @@ class SigningIn(LoginTestCase):
         )
         with client:
             client.get("/login")
-            token = auth.csrf_token(client.cookies[auth.PRE_SESSION_COOKIE])
+            token = auth.csrf_token(client.cookies["haprion_ui_login"])
             response = client.post(
                 "/login",
                 data={"username": "operator", "password": PASSWORD, auth.CSRF_FIELD: token},
                 follow_redirects=False,
             )
         self.assertNotIn("Secure", response.headers["set-cookie"])
+        # A browser refuses a `__Host-` cookie without Secure, so here the two
+        # cookies go by their plain names on the wire (review 26-10-24, 09-06).
+        self.assertTrue(response.headers["set-cookie"].startswith("haprion_ui_session="))
+        self.assertNotIn("__Host-", response.headers["set-cookie"])
+
+    def test_over_plain_http_the_plain_named_session_is_the_session(self) -> None:
+        client = TestClient(
+            create_app(configuration(cookie_secure=False)), base_url="http://localhost"
+        )
+        with client:
+            client.get("/login")
+            token = auth.csrf_token(client.cookies["haprion_ui_login"])
+            client.post(
+                "/login",
+                data={"username": "operator", "password": PASSWORD, auth.CSRF_FIELD: token},
+                follow_redirects=False,
+            )
+            self.assertEqual(client.get("/", follow_redirects=False).status_code, 200)
+
+
+class TheCookiesCannotBePlantedFromASiblingDomain(LoginTestCase):
+    """`__Host-` names, which a browser takes only with Secure, Path=/ and no
+    Domain (review 26-10-24, 09-06). A sibling domain could set the login
+    form's cookie with `Domain=<parent>` and post a sign-in into an account of
+    its own; a plain-named cookie is now nobody's.
+    """
+
+    def test_both_cookies_carry_the_prefix_and_its_attributes(self) -> None:
+        client = self.client()
+        form = client.get("/login").headers["set-cookie"]
+        session = self.sign_in(client).headers["set-cookie"]
+        for header, name in ((form, "haprion_ui_login"), (session, "haprion_ui_session")):
+            with self.subTest(name):
+                self.assertTrue(header.startswith(f"__Host-{name}="), header)
+                self.assertIn("Path=/;", header + ";")
+                self.assertIn("Secure", header)
+                self.assertNotIn("Domain=", header)
+
+    def test_a_plain_named_session_cookie_is_not_a_session(self) -> None:
+        signed_in = self.client()
+        self.sign_in(signed_in)
+        token = signed_in.cookies[auth.SESSION_COOKIE]
+        planted = self.client()
+        planted.cookies.set("haprion_ui_session", token)
+        self.assertEqual(planted.get("/", follow_redirects=False).status_code, 303)
+
+    def test_a_plain_named_login_cookie_does_not_carry_the_form(self) -> None:
+        client = self.client()
+        planted = auth.new_session_token()
+        client.cookies.set("haprion_ui_login", planted)
+        response = client.post(
+            "/login",
+            data={
+                "username": "operator",
+                "password": PASSWORD,
+                auth.CSRF_FIELD: auth.csrf_token(planted),
+            },
+            follow_redirects=False,
+        )
+        self.assertNotEqual(response.status_code, 303)
+        self.assertNotIn(auth.SESSION_COOKIE, client.cookies)
 
 
 class RefusingToSignIn(LoginTestCase):

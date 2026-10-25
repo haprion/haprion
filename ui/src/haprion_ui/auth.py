@@ -33,16 +33,22 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 from haprion_ui.config import Session as SessionPolicy
 from haprion_ui.db import AuthenticatedSession
 
-SESSION_COOKIE = "haprion_ui_session"
+#
+# `__Host-` names: a browser takes them only with Secure, Path=/ and no Domain,
+# so a sibling domain cannot plant either (review 26-10-24, 09-06). Without
+# Secure they go by their plain names on the wire (`plain_cookies`).
+#
+SESSION_COOKIE = "__Host-haprion_ui_session"
 #
 # A second, short-lived cookie that exists only to give the login form itself a
 # CSRF token. Without it the one unprotected state-changing request in the
 # application would be the login post - the one an attacker most wants to aim a
 # forged submission at, to sign a victim in as somebody the attacker controls.
 #
-# Scoped to /login and replaced by the real session cookie on success.
+# Path=/ as the prefix demands, and replaced by the real session cookie on
+# success.
 #
-PRE_SESSION_COOKIE = "haprion_ui_login"
+PRE_SESSION_COOKIE = "__Host-haprion_ui_login"
 CSRF_FIELD = "csrf_token"
 TOKEN_BYTES = 32
 

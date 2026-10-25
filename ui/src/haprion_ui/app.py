@@ -33,6 +33,7 @@ from starlette.concurrency import run_in_threadpool
 from haprion_ui import compatibility, db, page_headers, pages, timing, views
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
+from haprion_ui.plain_cookies import PlainCookieNames
 
 CONFIG_PATH_VARIABLE = "HAPRION_UI_CONFIG"
 STATIC_DIRECTORY = Path(__file__).parent / "static"
@@ -125,6 +126,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         logger.warning(
             "session.cookie_secure is off: the session cookie will be sent over plain HTTP"
         )
+        app.add_middleware(PlainCookieNames)
 
     app.include_router(pages.build_router(settings))
 

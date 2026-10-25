@@ -67,7 +67,7 @@ def build_router(config: Config) -> APIRouter:
             httponly=True,
             secure=config.session.cookie_secure,
             samesite="lax",
-            path="/login",
+            path="/",
         )
         return response
 
@@ -250,7 +250,9 @@ def build_router(config: Config) -> APIRouter:
 
         response = RedirectResponse("/", status_code=303)
         _cookie(response, config, token, expires_at)
-        response.delete_cookie(auth.PRE_SESSION_COOKIE, path="/login")
+        response.delete_cookie(
+            auth.PRE_SESSION_COOKIE, path="/", secure=config.session.cookie_secure
+        )
         return response
 
     @router.get("/account/password", response_class=HTMLResponse)
@@ -361,7 +363,7 @@ def build_router(config: Config) -> APIRouter:
             httponly=True,
             secure=config.session.cookie_secure,
             samesite="lax",
-            path="/login",
+            path="/",
         )
         return started
 
@@ -579,7 +581,9 @@ def build_router(config: Config) -> APIRouter:
 
         response = RedirectResponse("/", status_code=303)
         _cookie(response, config, token, expires_at)
-        response.delete_cookie(auth.PRE_SESSION_COOKIE, path="/login")
+        response.delete_cookie(
+            auth.PRE_SESSION_COOKIE, path="/", secure=config.session.cookie_secure
+        )
         return response
 
     @router.post("/logout")
@@ -628,7 +632,7 @@ def build_router(config: Config) -> APIRouter:
             )
             if onward is not None:
                 response = RedirectResponse(onward, status_code=303)
-        response.delete_cookie(auth.SESSION_COOKIE, path="/")
+        response.delete_cookie(auth.SESSION_COOKIE, path="/", secure=config.session.cookie_secure)
         return response
 
     return router

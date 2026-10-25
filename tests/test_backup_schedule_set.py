@@ -12,6 +12,7 @@ import json
 import unittest
 from typing import Any
 
+from haprion import exit_codes
 from haprion.cli import backup_schedule_set
 from tests.contract_schema import assert_contract
 
@@ -66,6 +67,47 @@ class TheScheduleCommand(unittest.TestCase):
             require_root=False,
         )
         return code, out.getvalue(), asked
+
+    def test_a_service_that_went_silent_is_an_unknown_outcome_not_unavailable(self) -> None:
+        """Review 26-10-24, 06-11: the timer may have been written; a document said it failed."""
+
+        from haprion import helper_socket
+
+        def silent(_request: dict[str, Any]) -> str:
+            raise helper_socket.HelperSilent("the backup service took the request and went quiet.")
+
+        for asked in (silent, lambda _request: ""):
+            with self.subTest(asked=asked):
+                out, err = io.StringIO(), io.StringIO()
+                code = backup_schedule_set.main(
+                    ["-c", "alpha", "--time", "04:00", "--weekly", "Mon", "--json"],
+                    ask=asked,
+                    read=lambda _cluster: (TIMER, 14),
+                    stream_out=out,
+                    stream_err=err,
+                    require_root=False,
+                )
+                self.assertEqual((code, out.getvalue()), (exit_codes.FAILED, ""))
+                self.assertIn("[helper_silent]", err.getvalue())
+                self.assertIn("outcome is unknown", err.getvalue())
+                self.assertIn("haprion-backup-schedule -c alpha", err.getvalue())
+
+        def gone(_request: dict[str, Any]) -> str:
+            raise helper_socket.HelperUnavailable("the backup service is not running.")
+
+        out = io.StringIO()
+        code = backup_schedule_set.main(
+            ["-c", "alpha", "--time", "04:00", "--weekly", "Mon", "--json"],
+            ask=gone,
+            read=lambda _cluster: (TIMER, 14),
+            stream_out=out,
+            stream_err=io.StringIO(),
+            require_root=False,
+        )
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
+        self.assertEqual(
+            assert_contract("haprion-backup-schedule", out.getvalue())["outcome"], "failed"
+        )
 
     def test_as_asked_is_no_change_and_asks_nothing(self) -> None:
         code, out, asked = self.run_command(

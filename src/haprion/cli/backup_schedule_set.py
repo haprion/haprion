@@ -215,7 +215,20 @@ def main(
     )
     try:
         answer = json.loads(ask(request))
-    except (helper_socket.HelperUnavailable, json.JSONDecodeError) as exc:
+    except (helper_socket.HelperSilent, json.JSONDecodeError) as exc:
+        #
+        # Asked, then no answer: the root service may have written the timer
+        # before it went. Not `dependency_unavailable` with a document made
+        # up here - the outcome is unknown, as socket_ask says it (review
+        # 26-10-24, 06-11).
+        #
+        said = str(exc) if isinstance(exc, helper_socket.HelperSilent) else "it gave no answer."
+        errors.write(
+            f"ERROR: [helper_silent] {said} It may have changed the schedule; its outcome is "
+            f"unknown. Run haprion-backup-schedule -c {args.cluster} again to see it.\n"
+        )
+        return exit_codes.FAILED
+    except helper_socket.HelperUnavailable as exc:
         return refuse("dependency_unavailable", str(exc) or "no answer", exit_codes.UNAVAILABLE)
     if isinstance(answer.get("result"), dict):
         answer["result"]["changed"] = answer.get("ok") is True

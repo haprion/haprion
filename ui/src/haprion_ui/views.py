@@ -3216,6 +3216,35 @@ def forbidden_page(request: Request, config: Config) -> Response:
     )
 
 
+#
+# The page a refusal sends back to, by the first segment of its path: the
+# menu's own name for it, and the menu entry to mark. The button read the raw
+# path - "Open certificates?view=registry&open=x fresh" - and the menu marked
+# nothing (review 26-10-24, 12-07).
+#
+BACK_PLACES = {
+    "": ("dashboard", "the dashboard"),
+    "history": ("history", "Versions"),
+    "proxies": ("proxies", "Proxies"),
+    "certificates": ("certificates", "Certificates"),
+    "metrics": ("metrics", "Metrics"),
+    "logs": ("logs", "Traffic logs"),
+    "waf": ("waf", "WAF logs"),
+    "network": ("network", "Network"),
+    "backups": ("backups", "Node backups"),
+    "jobs": ("jobs", "Events"),
+    "settings": ("settings", "Settings"),
+    "first-cluster": ("", "the first cluster guide"),
+}
+
+
+def _back_place(back: str) -> tuple[str, str]:
+    """The menu section and the name of the page `back` leads to."""
+
+    path = back.split("?", 1)[0].split("#", 1)[0]
+    return BACK_PLACES.get(path.lstrip("/").split("/", 1)[0], ("", "the page"))
+
+
 def _refusal_page(
     request: Request,
     config: Config,
@@ -3250,6 +3279,7 @@ def _refusal_page(
     if session is None:
         return RedirectResponse("/login", status_code=303)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
+    section, back_label = _back_place(back)
     return TEMPLATES.TemplateResponse(
         request,
         "refusal.html",
@@ -3262,8 +3292,8 @@ def _refusal_page(
             "stale": stale,
             "saved": saved,
             "back": back,
-            "back_label": back.lstrip("/") or "the dashboard",
-            "section": back.lstrip("/").split("/")[0],
+            "back_label": back_label,
+            "section": section,
             "demo_fixture": config.demo_fixture,
         },
         status_code=status_code,

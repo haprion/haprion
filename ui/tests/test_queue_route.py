@@ -15,7 +15,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haprion_ui import auth, db, operations
+from haprion_ui import auth, db, operations, views
 from tests.test_login import LoginTestCase, configuration
 
 KEY = str(uuid4())
@@ -288,6 +288,9 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         self.assertIn('href="/network"', response.text)
         self.assertIn("<h1>Not done</h1>", response.text)
         self.assertIn("Nothing was written", response.text)
+        # The menu's name for the page, and the menu marks it (review 26-10-24, 12-07).
+        self.assertIn("Open Network fresh", response.text)
+        self.assertIn('href="/network" aria-current="page"', response.text)
 
     def test_a_default_pointing_at_a_row_that_lost_its_name_is_refused(self) -> None:
         #
@@ -324,6 +327,28 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         self.assertIn("<h1>Not done</h1>", response.text)
         self.assertIn("The form was not accepted. Go back and check its fields.", response.text)
         self.assertEqual(self.queued, [])
+
+
+class TheWayBackIsNamedAsTheMenuNamesIt(unittest.TestCase):
+    #
+    # The button read the raw path - "Open certificates?view=registry&open=x
+    # fresh", "Open proxies/edge/www/edit fresh" - and the menu marked nothing
+    # (review 26-10-24, 12-07).
+    #
+    def test_a_query_or_a_deeper_path_names_the_page_it_belongs_to(self) -> None:
+        self.assertEqual(
+            views._back_place("/certificates?view=registry&open=x"),
+            ("certificates", "Certificates"),
+        )
+        self.assertEqual(views._back_place("/proxies/edge/www/edit"), ("proxies", "Proxies"))
+        self.assertEqual(views._back_place("/settings#nodes"), ("settings", "Settings"))
+        self.assertEqual(views._back_place("/history"), ("history", "Versions"))
+        self.assertEqual(views._back_place("/"), ("dashboard", "the dashboard"))
+
+    def test_every_page_an_operation_returns_to_has_a_name(self) -> None:
+        for name, path in views.RETURN_PATHS.items():
+            with self.subTest(name):
+                self.assertIn(path.split("?")[0].lstrip("/").split("/")[0], views.BACK_PLACES)
 
 
 class ConflictsAreToldApart(QueueRouteTestCase):

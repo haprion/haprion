@@ -18,6 +18,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from haprion import exit_codes
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import revert, revert_helper
 from haprion.cluster_lock import hold
@@ -642,10 +643,6 @@ class ContractTests(RevertFixture):
             self.assertIsNone(request_id_of(self.repo, git(self.repo, "rev-parse", "HEAD")))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class JsonModeTests(RevertFixture):
     """`haprion-revert --json` (Fas 23): one envelope on every path, held to the contract."""
 
@@ -673,6 +670,29 @@ class JsonModeTests(RevertFixture):
             self.assertFalse(document["result"]["changed"])
             self.assertEqual(self.requests, [])
 
+    def test_a_helper_killed_by_a_signal_is_an_envelope_with_an_exit_the_table_has(self) -> None:
+        """Review 26-10-24, 06-05: -9 through sudo was passed on, and no document was written."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            self.runtime(Path(raw))
+            self.history(3)
+            for returned in (-9, 127):
+                with self.subTest(returned=returned):
+
+                    def killed(_request: bytes, value: int = returned) -> tuple[int, str, str]:
+                        return value, "", "Killed\n"
+
+                    writer = io.StringIO()
+                    code = revert.main(
+                        ["-c", "alpha", "2", "--json"],
+                        stream_out=writer,
+                        run_helper=killed,
+                        config_path=lambda _cluster: self.repo,
+                    )
+                    document = assert_contract("haprion-revert", writer.getvalue())
+                    self.assertEqual((code, document["outcome"]), (exit_codes.INTERNAL, "failed"))
+                    self.assertEqual(document["error"]["code"], "helper_failed")
+
     def test_a_refusal_before_the_helper_is_an_envelope_too(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))
@@ -683,3 +703,7 @@ class JsonModeTests(RevertFixture):
             document = assert_contract("haprion-revert", output)
             self.assertEqual((code, document["outcome"]), (65, "failed"))
             self.assertIn("does not exist", document["error"]["message"])
+
+
+if __name__ == "__main__":
+    unittest.main()

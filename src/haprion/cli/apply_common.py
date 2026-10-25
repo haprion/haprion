@@ -101,22 +101,48 @@ def envelope(operation: str, cluster: str, result: Any, error: Refused | None) -
     )
 
 
-def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Mapping[str, Any]:
-    """A helper's result, or its own refusal in its own words and exit code."""
+def _code(completed: subprocess.CompletedProcess[str], fallback: int) -> int:
+    """The helper's exit when the table explains it and it is not success, else `fallback`.
+
+    `sudo -n` passes a signal on as a negative code, and 126 or 127 mean the
+    helper never ran; neither could be written as an exit (review 26-10-24,
+    06-05).
+    """
+
+    return exit_codes.of_process(completed.returncode, fallback) or fallback
+
+
+def answer_of(
+    completed: subprocess.CompletedProcess[str], operation: str, *, changes: bool = False
+) -> Mapping[str, Any]:
+    """A helper's result, or its own refusal in its own words and exit code.
+
+    `changes` for a helper that writes: one that gave no answer may have done
+    its work before it went, so its outcome is unknown rather than failed, and
+    the cluster's versions say which (06-05).
+    """
 
     try:
         answer = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
+        if changes:
+            raise Refused(
+                "helper_silent",
+                f"the {operation} helper gave no answer, so whether it published is unknown"
+                " - see haprion-list before running it again"
+                + (f": {completed.stderr.strip()}" if completed.stderr.strip() else ""),
+                exit_codes.FAILED,
+            ) from exc
         raise Refused(
             "dependency_unavailable",
             completed.stderr.strip() or f"the {operation} helper returned no result",
-            completed.returncode or exit_codes.UNAVAILABLE,
+            _code(completed, exit_codes.UNAVAILABLE),
         ) from exc
     if not isinstance(answer, Mapping) or answer.get("operation") != operation:
         raise Refused(
             "dependency_unavailable",
             f"the {operation} helper returned an invalid result",
-            completed.returncode or exit_codes.UNAVAILABLE,
+            _code(completed, exit_codes.UNAVAILABLE),
         )
     error = answer.get("error")
     if isinstance(error, Mapping):
@@ -124,7 +150,7 @@ def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Ma
         raise Refused(
             str(error.get("code") or "refused"),
             str(error.get("message") or "refused"),
-            completed.returncode or exit_codes.REFUSED,
+            _code(completed, exit_codes.REFUSED),
             details if isinstance(details, Mapping) else None,
         )
     result = answer.get("result")
@@ -132,7 +158,7 @@ def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Ma
         raise Refused(
             "dependency_unavailable",
             f"the {operation} helper returned no result",
-            completed.returncode or exit_codes.UNAVAILABLE,
+            _code(completed, exit_codes.UNAVAILABLE),
         )
     return result
 

@@ -269,14 +269,17 @@ def main(
         # it stands rather than replaced by a friendlier sentence that would say
         # less.
         #
+        # Signalled or never run (negative, 126, 127): no exit this table
+        # explains, and a document with it is one no check writes (06-05).
+        failed = exit_codes.of_process(code, exit_codes.INTERNAL) or exit_codes.INTERNAL
         if json_mode:
             return refuse(
                 "helper_failed",
                 (err.strip() or f"the revert failed with exit code {code}.")[:2048],
-                code or exit_codes.INTERNAL,
+                failed,
             )
         writer.write(err or f"ERROR: the revert failed with exit code {code}.\n")
-        return code or exit_codes.INTERNAL
+        return failed
 
     if json_mode:
         return emit(document, code)
@@ -287,7 +290,7 @@ def main(
         if diagnostics:
             writer.write(f"{diagnostics}\n")
         writer.write(f"ERROR: {error.get('message', 'the revert did not run.')}\n")
-        return code or exit_codes.INTERNAL
+        return exit_codes.of_process(code, exit_codes.INTERNAL) or exit_codes.INTERNAL
 
     result = document.get("result") or {}
     if not result.get("changed"):

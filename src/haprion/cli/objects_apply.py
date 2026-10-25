@@ -237,7 +237,7 @@ def publish(
             allow_certificate_mismatch=allow_certificate_mismatch,
         )
         try:
-            result = answer_of(run_publish(request), changes_publish.OPERATION)
+            result = answer_of(run_publish(request), changes_publish.OPERATION, changes=True)
         except Refused as refused:
             if not answers:
                 raise

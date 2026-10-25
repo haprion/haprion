@@ -104,7 +104,7 @@ def main(
                 comment=args.comment or COMMENT,
                 settings=dump_document(wanted).decode("utf-8"),
             )
-            versions = [answer_of(run_publish(request), changes_publish.OPERATION)]
+            versions = [answer_of(run_publish(request), changes_publish.OPERATION, changes=True)]
     except Refused as refused:
         if args.json:
             write_document(writer, envelope(OPERATION, cluster, None, refused), refused.exit_code)

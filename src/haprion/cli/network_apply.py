@@ -122,7 +122,7 @@ def main(
                 network=wanted,
                 allow_certificate_mismatch=args.allow_certificate_mismatch,
             )
-            versions = [answer_of(run_publish(request), changes_publish.OPERATION)]
+            versions = [answer_of(run_publish(request), changes_publish.OPERATION, changes=True)]
     except Refused as refused:
         if args.json:
             write_document(writer, envelope(OPERATION, cluster, None, refused), refused.exit_code)

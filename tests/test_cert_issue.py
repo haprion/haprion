@@ -25,7 +25,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_issue, dns_provider_catalog
+from haprion import cert_issue, dns_provider_catalog, exit_codes
 from haprion.cert_issue import CertbotResult, IssueError, certbot_arguments, parse_domain
 from haprion.cli import cert_issue as command
 from haprion.cli import cert_issue_helper, cert_renew
@@ -584,6 +584,48 @@ class WhenCertbotSucceeds(IssueFixture):
         self.assertIn("Register the lineage by hand", document["error"]["message"])
         self.assertTrue((self.live / "www.example.com").exists())
         self.assertNotIn("www.example.com", self.registry_path.read_text())
+        self.assertEqual(deployed, [])
+
+    def test_an_entry_registered_while_certbot_ran_is_not_written_over(self) -> None:
+        """Review 26-10-24, 08-06: the ID is checked again under the registry's lock."""
+
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        self.registry_path.chmod(0o640)
+        imported = {"source": {"kind": "import"}, "clusters": ["alpha"]}
+
+        registry_path = self.registry_path
+
+        class ImportMeanwhile(FakeCertbot):
+            def __call__(
+                self, arguments: Sequence[str], environment: Mapping[str, str], timeout: int
+            ) -> CertbotResult:
+                registry = yaml.safe_load(registry_path.read_text())
+                registry["certificates"]["www.example.com"] = imported
+                registry_path.write_text(yaml.safe_dump(registry))
+                return super().__call__(arguments, environment, timeout)
+
+        code, out, err, deployed = self.run_issue(
+            policy_path,
+            "--domain",
+            "www.example.com",
+            "--method",
+            "dns-01",
+            "--cluster",
+            "alpha",
+            "--json",
+            certbot=ImportMeanwhile(self.live),
+        )
+
+        document = assert_contract("haprion-cert-issue", out)
+        self.assertEqual(document["outcome"], "failed", err)
+        self.assertEqual(document["error"]["code"], "already_exists")
+        self.assertIn("registered while certbot ran", document["error"]["message"])
+        self.assertEqual(code, exit_codes.USAGE)
+        registry = yaml.safe_load(self.registry_path.read_text())
+        self.assertEqual(registry["certificates"]["www.example.com"], imported)
         self.assertEqual(deployed, [])
 
     def test_an_existing_lineage_is_not_issued_again(self) -> None:

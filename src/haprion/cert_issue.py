@@ -625,6 +625,16 @@ def _add_entry(
 ) -> str | None:
     document = cert_registry.read_document(path)
     certificates = dict(document.get("certificates") or {})
+    if request.certificate_id in certificates:
+        #
+        # `build_request` checked a snapshot from before certbot ran. An import,
+        # a signing request or a SCEP entry may have taken the ID since, and
+        # writing over it would drop its targets (review 26-10-24, 08-06).
+        #
+        raise cert_registry.RegistryError(
+            "already_exists",
+            f"certificate {request.certificate_id!r} was registered while certbot ran.",
+        )
     entry: dict[str, Any] = {"source": {"kind": "acme"}}
     if request.dns_profile is not None:
         entry["source"]["dns_profile"] = request.dns_profile

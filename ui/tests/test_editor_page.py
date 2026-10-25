@@ -735,6 +735,15 @@ class TheShapeDecidesWhichFieldsApply(EditorTestCase):
 
         self.assertRegex(page.text, r'<option value="" hidden>Everywhere')
 
+    def test_a_range_with_host_bits_is_refused_as_written(self) -> None:
+        """Review 26-10-24, 15-06: the form is a write; the engine's words."""
+
+        page = self.submit(
+            self.editor(), "/proxies/alpha/shop/edit", action="check", allow_ranges="192.0.2.1/24"
+        )
+
+        self.assertIn("host bits must be zero", page.text)
+
     def test_nobody_leaves_the_list_once_a_denied_address_is_written(self) -> None:
         client = self.editor()
 

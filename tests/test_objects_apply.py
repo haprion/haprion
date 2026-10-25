@@ -200,6 +200,20 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertIn("shop.yaml", err)
         self.assertEqual(fakes.published, [])
 
+    def test_a_range_with_host_bits_is_refused_before_the_manager_is_asked(self) -> None:
+        """Review 26-10-24, 15-06: a file being applied is being written."""
+
+        fakes = Fakes({})
+        self.write(
+            "shop", document("shop").replace("routes:", "allow_from: [192.0.2.1/24]\nroutes:")
+        )
+
+        code, _, err = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root))
+
+        self.assertEqual(code, 65)
+        self.assertIn("host bits must be zero", err)
+        self.assertEqual(fakes.published, [])
+
     def test_more_than_one_publish_takes_is_batched_and_each_batch_fenced(self) -> None:
         count = changes_publish.MAX_OBJECTS + 6
         fakes = Fakes({})

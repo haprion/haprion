@@ -137,6 +137,22 @@ class TheNetworkFromAFile(NetworkPublishFixture):
             self.assertIn("network.yaml", err)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
 
+    def test_a_group_range_with_host_bits_is_refused(self) -> None:
+        """Review 26-10-24, 15-06: a file being applied is being written."""
+
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
+            policy = self.runtime(Path(raw))
+            self.published(policy)
+            path = Path(files, "network.yaml")
+            path.write_text(NETWORK.replace("198.51.100.0/24", "198.51.100.7/24"))
+            head = git(self.repo, "rev-parse", "HEAD")
+
+            code, _, err = self.run_apply(policy, path)
+
+            self.assertEqual(code, 65)
+            self.assertIn("host bits must be zero", err)
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+
     def test_a_derived_network_has_nothing_to_change(self) -> None:
         with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
             policy = self.runtime(Path(raw))

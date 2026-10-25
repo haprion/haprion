@@ -17,6 +17,7 @@ from unittest import mock
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from haprion import address_ranges
 
 from haprion_ui import demo
 from haprion_ui.db import Job
@@ -326,6 +327,14 @@ class TheRowsBecomeTheDocument(unittest.TestCase):
         }
         fields.update(overrides)
         return NetworkForm(**fields)  # type: ignore[arg-type]
+
+    def test_a_group_range_with_host_bits_is_refused_in_the_engine_s_words(self) -> None:
+        """Review 26-10-24, 15-06: said when the change is saved, not when it is published."""
+
+        with self.assertRaises(FormProblem) as refusal:
+            document_from_form(self.form(group_members=("198.51.100.7/24\n", "")))
+
+        self.assertEqual(str(refusal.exception), f"Group row 1: {address_ranges.HOST_BITS}.")
 
     def test_a_ticked_http3_box_is_written_on_its_row_only(self) -> None:
         """B280: by row number, like a removal; an unticked box posts nothing."""

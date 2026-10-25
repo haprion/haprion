@@ -20,7 +20,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import cluster_settings, crs, exit_codes, geo, held_ports, peers, server_names
+from haprion import (
+    address_ranges,
+    cluster_settings,
+    crs,
+    exit_codes,
+    geo,
+    held_ports,
+    peers,
+    server_names,
+)
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     SandboxValidator,
@@ -45,7 +54,14 @@ from haprion.helper_protocol import HelperProtocolError, JsonValue
 from haprion.managed_network import MAX_NETWORK_BYTES, load_document
 from haprion.managed_network import location as network_location
 from haprion.managed_publish import managed_files
-from haprion.proxy_model import MAX_MODEL_BYTES, NAME, NAME_RULE, load_proxy, name_refusal
+from haprion.proxy_model import (
+    MAX_MODEL_BYTES,
+    NAME,
+    NAME_RULE,
+    ModelError,
+    load_proxy,
+    name_refusal,
+)
 from haprion.release_install import PUBLISH_GROUP, ChangeOwner, default_change_owner
 
 OPERATION = "changes_publish"
@@ -226,7 +242,10 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                 network_document = network_of(base_files, doing="publishing saved changes")
             else:
                 try:
-                    load_document(network, ownership_vip=cluster.vip, location=network_location())
+                    with address_ranges.writing():
+                        load_document(
+                            network, ownership_vip=cluster.vip, location=network_location()
+                        )
                 except ConfigError as exc:
                     raise Refusal("network_invalid", str(exc), exit_codes.REFUSED) from exc
                 network_document = network
@@ -243,6 +262,19 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     )
                 except ConfigError as exc:
                     raise Refusal("settings_invalid", str(exc), exit_codes.REFUSED) from exc
+            #
+            # What this package writes is held to what may be written; the
+            # objects already stored are read below as they always were
+            # (review 26-10-24, 15-06).
+            #
+            for name, document in objects.items():
+                if document is None:
+                    continue
+                try:
+                    with address_ranges.writing():
+                        load_proxy(name, document)
+                except ModelError as exc:
+                    raise Refusal("changes_invalid", str(exc), exit_codes.REFUSED) from exc
             #
             # Asked when objects or the network change, as coverage is: what
             # binds on a VIP is decided there. A node that did not answer is

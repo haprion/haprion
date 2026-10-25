@@ -31,8 +31,8 @@ from typing import Any
 
 import yaml
 
+from haprion import address_ranges, geo, safe_yaml
 from haprion import advanced as advanced_config
-from haprion import geo, safe_yaml
 from haprion.config import (
     ABUSE_WINDOW,
     CERTIFICATE_ID,
@@ -2680,6 +2680,8 @@ def _sources(value: Any, location: str, verb: str) -> tuple[str, ...]:
             entries.append(f"{geo.PREFIX}{country}")
             continue
         if is_range(entry):
+            if address_ranges.refused(entry):
+                raise ModelError(f"{location} contains {entry}: {address_ranges.HOST_BITS}")
             network = ipaddress.ip_network(entry, strict=False)
             if network.prefixlen == 0:
                 #

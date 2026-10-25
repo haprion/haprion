@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import exit_codes
+from haprion import address_ranges, exit_codes
 from haprion.cli import arguments, changes_publish
 from haprion.cli.apply_common import (
     Refused,
@@ -108,7 +108,8 @@ def main(
         # before anything is asked of the manager.
         #
         try:
-            load_document(wanted.encode("utf-8"), ownership_vip=ownership, location=str(path))
+            with address_ranges.writing():
+                load_document(wanted.encode("utf-8"), ownership_vip=ownership, location=str(path))
         except ConfigError as exc:
             raise Refused("network_invalid", str(exc)) from exc
         changed = wanted != current

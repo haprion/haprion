@@ -21,6 +21,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
+from haprion import address_ranges
 from haprion.config import ConfigError
 from haprion.digits import is_digits
 from haprion.managed_network import load_document
@@ -845,6 +846,14 @@ def document_from_form(form: NetworkForm) -> str:
         removed=form.removed_group_rows,
     )
     if groups:
+        for row, _, raw in groups:
+            if any(address_ranges.has_host_bits(member) for member in _members(raw)):
+                #
+                # The engine's rule and words, said here before the change is
+                # saved rather than when it is published (review 26-10-24,
+                # 15-06). The row, not what was typed, as the messages above.
+                #
+                raise FormProblem(f"Group row {row + 1}: {address_ranges.HOST_BITS}.")
         document["networks"] = {name: _members(raw) for _, name, raw in groups}
 
     return json.dumps(document, indent=2) + "\n"

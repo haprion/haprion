@@ -20,7 +20,7 @@ from typing import Any
 
 import yaml
 
-from haprion import labels, safe_yaml
+from haprion import address_ranges, labels, safe_yaml
 from haprion.config import ConfigError
 
 LOCATION = "managed/cluster.yaml"
@@ -142,6 +142,8 @@ def _address(raw: Any, where: str) -> str:
 def _source(raw: Any, where: str) -> str:
     if not isinstance(raw, str):
         raise ConfigError(f"{where} must be an address or a network")
+    if address_ranges.has_host_bits(raw):
+        raise ConfigError(f"{where} contains {raw}: {address_ranges.HOST_BITS}")
     try:
         return str(ipaddress.ip_network(raw, strict=True))
     except ValueError as exc:

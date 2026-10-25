@@ -25,6 +25,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated
 
+from haprion import address_ranges
 from haprion.config import AbuseProtection, UnknownHost, Vip
 from haprion.generate import GeneratorError, generate
 from haprion.proxy_model import HTTP_METHODS, WAF_ENGINE_ERROR_DEFAULT, ModelError, load_proxy
@@ -170,7 +171,12 @@ def check(
 
     name = str(form.get("name", "") or "").strip()
     try:
-        edited = load_proxy(name, document.encode())
+        #
+        # What the form saves is held to what may be written; the neighbours
+        # below are read as they are stored (review 26-10-24, 15-06).
+        #
+        with address_ranges.writing():
+            edited = load_proxy(name, document.encode())
     except ModelError as exc:
         return Preview(document=document, problem=str(exc), about_the_object=True)
 

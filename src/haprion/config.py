@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from haprion import accounts, exit_codes, labels, safe_yaml
+from haprion import accounts, address_ranges, exit_codes, labels, safe_yaml
 
 DEFAULT_POLICY_PATH = Path("/etc/haprion/runtime-policy.yaml")
 MAX_CONFIG_BYTES = 1024 * 1024
@@ -852,6 +852,8 @@ def _networks(raw: Mapping[str, Any], location: str) -> Mapping[str, tuple[str, 
         for item in value:
             if not isinstance(item, str):
                 raise ConfigError(f"{where} contains a non-string")
+            if address_ranges.refused(item):
+                raise ConfigError(f"{where} contains {item}: {address_ranges.HOST_BITS}")
             try:
                 network = ipaddress.ip_network(item, strict=False)
             except ValueError as exc:
@@ -1434,12 +1436,14 @@ def check_allow_entries(entries: Sequence[str]) -> tuple[str, ...]:
 
     checked: list[str] = []
     for index, item in enumerate(entries):
+        #
+        # Strict: `192.0.2.1/24` is a typo for either the host or the
+        # network, and nginx would silently take the network - which is
+        # 255 addresses more than whoever wrote the line meant.
+        #
+        if address_ranges.has_host_bits(item):
+            raise ValueError(f"[{index}] {item!r}: {address_ranges.HOST_BITS}")
         try:
-            #
-            # Strict: `192.0.2.1/24` is a typo for either the host or the
-            # network, and nginx would silently take the network - which is
-            # 255 addresses more than whoever wrote the line meant.
-            #
             ipaddress.ip_network(item, strict=True)
         except ValueError:
             raise ValueError(f"[{index}] is not an address or network: {item!r}") from None

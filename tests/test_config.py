@@ -1117,9 +1117,11 @@ class AReceiverSaysHowItFetches(RegistryTestCase):
             self.receiver(allow=["192.0.2.10"])
 
     def test_a_whitelist_entry_must_be_an_address_or_a_network(self) -> None:
-        for bad in ("lb-01.example.net", "192.0.2.1/24", "192.0.2.300"):
+        for bad in ("lb-01.example.net", "192.0.2.300"):
             with self.assertRaisesRegex(ConfigError, "not an address or network"):
                 self.receiver(transport="https", allow=[bad])
+        with self.assertRaisesRegex(ConfigError, "host bits must be zero"):
+            self.receiver(transport="https", allow=["192.0.2.1/24"])
         with self.assertRaisesRegex(ConfigError, "allow contains duplicates"):
             self.receiver(transport="https", allow=["192.0.2.10", "192.0.2.10"])
 

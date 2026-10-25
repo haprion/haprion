@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
-from haprion import log_forwarding
+from haprion import address_ranges, log_forwarding
 
 from haprion_ui import jobs as jobs_module
 from haprion_ui import labels
@@ -215,6 +215,8 @@ def access_list(text: str) -> tuple[str, ...]:
         raise ValueError(f"At most {MAX_ACCESS_ENTRIES} addresses or networks.")
     checked: list[str] = []
     for index, entry in enumerate(entries, start=1):
+        if address_ranges.has_host_bits(entry):
+            raise ValueError(f"Line {index}: {address_ranges.HOST_BITS}.")
         try:
             network = ipaddress.ip_network(entry, strict=True)
         except ValueError:

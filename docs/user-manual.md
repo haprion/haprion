@@ -1328,6 +1328,13 @@ When the object's path rules only look, these are recorded with `:log` instead. 
 Write a rule's own path decoded: without `%`, `//`, `;`, `.` or `..`, and with no segment ending in a dot.
 Its case does not matter.
 
+**A range is written as a network or as one address.** `192.0.2.0/24` or `192.0.2.1`, never
+`192.0.2.1/24`: every list that takes ranges - *Reachable from*, *Denied*, a rule's *Source*, an
+exemption from blocking, a network group on the *Network* page, the cluster settings' sources, a
+receiver's whitelist and the `/status/` access list - refuses host bits when it is saved or applied,
+in the same words. An object or a group stored with them before keeps loading as the network it
+stands for, until it is next saved.
+
 **Countries.** Wherever a group or a range may be named - *Reachable from*, *Denied* and a rule's *Source*
 (`allow_from`, `deny_from` and `source`) - a country may be too, written `country:SE` (two letters, as ISO
 3166 spells them).

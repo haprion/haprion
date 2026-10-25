@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -10,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
+
+from haprion import address_ranges
 
 from haprion_ui import attention, auth, dashboard, health, jobs, operations
 from haprion_ui.db import StatusAccess
@@ -622,7 +625,8 @@ class TheAccessList(unittest.TestCase):
         )
 
     def test_a_network_with_host_bits_is_a_typo(self) -> None:
-        with self.assertRaises(ValueError):
+        # Refused in the engine's words, as every list of ranges (review 26-10-24, 15-06).
+        with self.assertRaisesRegex(ValueError, re.escape(address_ranges.HOST_BITS)):
             attention.access_list("192.0.2.1/24")
         with self.assertRaises(ValueError):
             attention.access_list("monitor.example.com")

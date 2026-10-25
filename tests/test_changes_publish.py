@@ -149,6 +149,40 @@ class ChangesPublishTests(ObjectsPublishFixture):
             assert_contract("haprion-changes-publish", json.dumps(document))
             self.assertEqual(document["error"]["code"], "dependency_unavailable")
 
+    def test_a_range_with_host_bits_is_refused_when_written_and_read_when_stored(self) -> None:
+        """Review 26-10-24, 15-06: what the package writes is held; what is stored is not."""
+
+        widened = proxy("shop", "shop.example.com").replace(
+            "routes:", "allow_from: [192.0.2.1/24]\nroutes:"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            code, document, _ = self.publish(policy, self.changes(objects={"shop": widened}))
+
+            self.assertEqual(code, exit_codes.REFUSED)
+            self.assertEqual(document["error"]["code"], "changes_invalid")
+            self.assertIn("host bits must be zero", document["error"]["message"])
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed(shop=widened)
+            code, document, err = self.publish(
+                policy,
+                self.changes(
+                    objects={
+                        "staging": proxy("staging", "staging.example.com")
+                        .replace("backend: web", "backend: stage")
+                        .replace("  web:", "  stage:")
+                    }
+                ),
+            )
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn(
+                "allow_from: [192.0.2.1/24]", (self.repo / "managed/proxies/shop.yaml").read_text()
+            )
+
     def test_an_object_on_a_vip_the_package_does_not_add_is_refused(self) -> None:
         """The other half of the case above: the network is read from the base."""
 

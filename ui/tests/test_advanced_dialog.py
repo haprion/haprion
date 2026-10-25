@@ -18,6 +18,7 @@ from unittest import mock
 from uuid import uuid4
 
 import yaml
+from haprion import address_ranges
 
 from haprion_ui import advanced_dialog
 from haprion_ui import editor as editor_module
@@ -123,6 +124,16 @@ class CheckSaysWhereEachLineGoes(unittest.TestCase):
 
         self.assertEqual(answer.problem, "")
         self.assertIn(("placed", "pool"), {(line.fate, line.where) for line in answer.lines})
+
+    def test_a_range_with_host_bits_is_refused_as_written(self) -> None:
+        """Review 26-10-24, 15-06: the dialog writes the object."""
+
+        document = SHOP.replace("routes:", "allow_from: [192.0.2.1/24]\nroutes:", 1)
+        self.assertNotEqual(document, SHOP)
+
+        answer = advanced_dialog.check("shop", document)
+
+        self.assertIn(address_ranges.HOST_BITS, answer.problem)
 
     def test_a_refused_line_is_shown_and_the_object_refused(self) -> None:
         document = advanced_dialog.apply("shop", SHOP, "use_backend other\n", handwritten=False)

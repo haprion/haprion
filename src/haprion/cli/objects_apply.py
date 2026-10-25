@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import exit_codes, labels, server_names
+from haprion import address_ranges, exit_codes, labels, server_names
 from haprion.cli import arguments, changes_publish
 from haprion.cli.apply_common import (
     PartlyDone,
@@ -126,7 +126,8 @@ def read_files(targets: Sequence[str]) -> dict[str, str]:
             raise Refused("too_long", f"{path}: larger than {MAX_MODEL_BYTES} bytes")
         try:
             text = data.decode("utf-8")
-            load_proxy(name, data)
+            with address_ranges.writing():
+                load_proxy(name, data)
         except (UnicodeDecodeError, ModelError) as exc:
             raise Refused("object_invalid", f"{path}: {exc}") from exc
         documents[name] = text

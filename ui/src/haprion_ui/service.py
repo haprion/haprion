@@ -59,8 +59,8 @@ def sleep_until_notified(stopping: StopRequest, listener: object, seconds: int) 
     A function rather than a method on `StopRequest`, and both arguments
     duck-typed, because this module is the one the worker and the poller share
     and it has no business knowing what a database connection is. What it needs
-    is something with `notifies`; psycopg's connection is the only thing that
-    has ever been passed.
+    is something with `notifies`; `db.Listener`, which outlives a dropped
+    connection, is what the services pass.
 
     A second at a time, for the same reason `StopRequest.sleep` is: systemd
     waits for a service to go, and one that always takes its full interval to

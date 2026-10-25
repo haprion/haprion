@@ -891,10 +891,6 @@ class TheAuditTrail(WorkerTestCase):
         self.connection.rollback.assert_called_once_with()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class FakeListener:
     """A listener that yields what it was told to, and records its waits."""
 
@@ -1228,3 +1224,70 @@ class PublishAndDeploy(WorkerTestCase):
             self.run_job(job, [self.published(job), self.deployed("failed")])
 
         record.assert_called_once()
+
+
+class FakeConnection:
+    """A listening connection that fails its waits as a restarted server does."""
+
+    def __init__(self, fails: bool) -> None:
+        self.fails = fails
+        self.closed = False
+        self.executed: list[object] = []
+
+    def execute(self, statement: object) -> None:
+        self.executed.append(statement)
+
+    def notifies(self, *, timeout: float, stop_after: int | None = None) -> Iterator[object]:
+        if self.fails:
+            raise psycopg.OperationalError("server closed the connection unexpectedly")
+        yield object()
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class AListenerOutlivesARestart(unittest.TestCase):
+    """Review 26-10-24, 07-04: a PostgreSQL restart ended the worker and the poller."""
+
+    def test_the_wait_is_slept_and_the_next_one_listens_again(self) -> None:
+        dropped, fresh = FakeConnection(fails=True), FakeConnection(fails=False)
+        database = mock.Mock(connection_string="dbname=haprion")
+        with (
+            mock.patch("haprion_ui.db.core.psycopg.connect", side_effect=[dropped, fresh]),
+            mock.patch("haprion_ui.db.core.time.sleep") as slept,
+            self.assertLogs("haprion_ui.db", "WARNING"),
+        ):
+            listener = db.listener(database)
+            worker._wait_for_work(listener, FakeStop(stop_at=1), 30)  # type: ignore[arg-type]
+            slept.assert_called_once_with(1.0)
+            self.assertTrue(dropped.closed)
+
+            self.assertEqual(len(list(listener.notifies(timeout=1.0, stop_after=1))), 1)
+        self.assertEqual(len(fresh.executed), 1)
+
+    def test_a_server_still_down_is_waited_out_and_never_raised(self) -> None:
+        database = mock.Mock(connection_string="dbname=haprion")
+        with (
+            mock.patch(
+                "haprion_ui.db.core.psycopg.connect",
+                side_effect=[FakeConnection(fails=True), psycopg.OperationalError("refused")],
+            ),
+            mock.patch("haprion_ui.db.core.time.sleep") as slept,
+            self.assertLogs("haprion_ui.db", "WARNING"),
+        ):
+            listener = db.listener(database)
+            worker._wait_for_work(listener, FakeStop(stop_at=2), 30)  # type: ignore[arg-type]
+        self.assertEqual(slept.call_count, 2)
+
+
+class TheWebPoolTriesAConnectionBeforeLendingIt(unittest.TestCase):
+    """Review 26-10-24, 07-04: after a restart the pool lent out dead connections."""
+
+    def test_the_pool_checks(self) -> None:
+        with mock.patch("haprion_ui.db.core.ConnectionPool") as made:
+            db.pool(mock.Mock(connection_string="dbname=haprion"))
+        self.assertIs(made.call_args.kwargs.get("check"), made.check_connection)
+
+
+if __name__ == "__main__":
+    unittest.main()

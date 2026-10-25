@@ -741,9 +741,7 @@ def run_one_job(
     exit_code = completed.exit_code
     stderr = completed.stderr
     if state == "done" and job.operation == "changes_publish" and job.payload.get("deploy") is True:
-        deployed = _deploy_after(
-            connection, job, cast(dict[str, Any], result), lease_is_ours, stopping
-        )
+        deployed = _deploy_after(job, cast(dict[str, Any], result), lease_is_ours, stopping)
         if deployed is None:
             return
         state, outcome, result, exit_code, stderr = deployed
@@ -803,8 +801,13 @@ def _run_after(
             operation=operation, cluster=job.cluster, request_id=request_id, payload=payload
         )
     except (operations.UnknownOperation, operations.BadPayload) as refusal:
+        #
+        # As the job's own refusal is kept: nothing ran, and why is the stderr
+        # excerpt. It was an invalid result document with the reason in the
+        # log alone (review 26-10-24, 07-05).
+        #
         logger.error("job %s: the %s after it was refused: %s", job.id, operation, refusal)
-        return "blocked", "blocked", _internal_error(), None, ""
+        return "blocked", "blocked", None, None, str(refusal)
     refused = execution.sudo_refusal(prepared.argv)
     if refused is not None:
         logger.error("job %s: sudo will not run %s: %s", job.id, prepared.argv[-1], refused)
@@ -924,7 +927,6 @@ def _node_deploy_after(
 
 
 def _deploy_after(
-    connection: Any,
     job: db.ClaimedJob,
     published: dict[str, Any],
     still_ours: Callable[[], bool],

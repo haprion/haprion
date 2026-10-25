@@ -1225,6 +1225,70 @@ class PublishAndDeploy(WorkerTestCase):
 
         record.assert_called_once()
 
+    def test_a_refused_deploy_after_it_is_said_as_the_job_s_own_refusal_is(self) -> None:
+        """Review 26-10-24, 07-05: an invalid result document, with the reason in the log only."""
+
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+        prepare = operations.prepare
+
+        def refuse_the_deploy(**fields: Any) -> operations.Prepared:
+            if fields["operation"] == "deploy":
+                raise operations.BadPayload("expected_version must be a version")
+            return prepare(**fields)
+
+        with (
+            mock.patch.object(operations, "prepare", side_effect=refuse_the_deploy),
+            self.assertLogs("haprion_ui.worker", "ERROR"),
+        ):
+            calls = self.run_job(job, [self.published(job)])
+
+        self.assertEqual(len(calls), 1)
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "blocked")
+        self.assertNotIn("error", finished["result"])
+        self.assertEqual(finished["result"]["step"], "deploy")
+        self.assertEqual(finished["stderr_excerpt"], "expected_version must be a version")
+
+    def test_a_run_after_it_is_judged_as_the_job_s_own_run_is(self) -> None:
+        """Review 26-10-24, 07-05: one table of endings, held to both paths."""
+
+        def deploy_said(outcome: str, exit_code: int) -> Any:
+            def answer_for(request: dict[str, Any]) -> execution.Completed:
+                document = {
+                    **result_document(claimed(), outcome),
+                    "request_id": request["request_id"],
+                }
+                return completed(stdout=json.dumps(document), exit_code=exit_code)
+
+            return answer_for
+
+        endings: dict[str, Any] = {
+            "done": deploy_said("done", 0),
+            "failed": deploy_said("failed", 1),
+            "done but exited 70": deploy_said("done", 70),
+            "silent": lambda _r: completed(exit_code=1),
+            "not a document": lambda _r: completed(stdout="Segmentation fault", exit_code=1),
+            "timed out": lambda _r: completed(ending="timeout", exit_code=None),
+            "not UTF-8": lambda _r: completed(stdout_error="not_utf8"),
+        }
+        for ending, answer_for in endings.items():
+            with self.subTest(ending):
+                self.finished.clear()
+                own = claimed()
+                self.run_job(own, [answer_for({"request_id": str(own.request_id)})])
+                (alone,) = self.finished
+
+                self.finished.clear()
+                job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+                self.run_job(job, [self.published(job), answer_for])
+                (after,) = self.finished
+
+                self.assertEqual(after["state"], alone["state"])
+                self.assertEqual(after["outcome"], alone["outcome"])
+                self.assertEqual(
+                    (after["result"] or {}).get("error"), (alone["result"] or {}).get("error")
+                )
+
 
 class FakeConnection:
     """A listening connection that fails its waits as a restarted server does."""

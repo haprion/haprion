@@ -2792,9 +2792,10 @@ entry not marked `interface: true`. The key never passes through the web process
 certificate, never bytes and never a path.
 
 **At the terminal** the mark is `--interface` on `haprion-cert-issue`, `haprion-cert-scep`,
-`haprion-cert-request` and `haprion-cert-import`, with no `--cluster` or `--receiver` beside it. A
-signing request, or an NDES enrollment the CA is still holding, remembers the mark until the
-certificate arrives. A rotated or renewed interface certificate keeps the mark.
+`haprion-cert-request` and `haprion-cert-import`, with no `--cluster` or `--receiver` beside it.
+Issuing, a signing request and an NDES enrollment refuse names that do not cover `SERVER_NAME`
+before a CA is asked. A signing request, or an NDES enrollment the CA is still holding, remembers
+the mark until the certificate arrives. A rotated or renewed interface certificate keeps the mark.
 
 **Moving to a new certificate.** A new certificate under another ID takes the mark over:
 

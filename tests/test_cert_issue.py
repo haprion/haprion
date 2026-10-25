@@ -25,7 +25,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_issue, cert_pending, dns_provider_catalog, exit_codes
+from haprion import cert_issue, cert_pending, dns_provider_catalog, exit_codes, ui_interface
 from haprion.cert_issue import CertbotResult, IssueError, certbot_arguments, parse_domain
 from haprion.cli import cert_issue as command
 from haprion.cli import cert_issue_helper, cert_renew
@@ -653,6 +653,36 @@ class WhenCertbotSucceeds(IssueFixture):
         registry = yaml.safe_load(self.registry_path.read_text())
         self.assertEqual(registry["certificates"]["www.example.com"], imported)
         self.assertEqual(deployed, [])
+
+    def test_an_interface_certificate_for_another_name_never_reaches_certbot(self) -> None:
+        """Review 26-10-24, 15-03: certbot issued it, then the install refused the name."""
+
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        config = self.root / "ui-tls.conf"
+        config.write_text(
+            f"TLS_CERT={self.root / 'ui.crt'}\nTLS_KEY={self.root / 'ui.key'}\n"
+            "SERVER_NAME=mgr.example.net\n"
+        )
+        certbot = FakeCertbot(self.live)
+        with mock.patch.object(ui_interface, "UI_TLS_CONFIG", config):
+            code, out, _, _ = self.run_issue(
+                policy_path,
+                "--domain",
+                "www.example.com",
+                "--method",
+                "dns-01",
+                "--interface",
+                "--json",
+                certbot=certbot,
+            )
+
+        self.assertEqual(code, exit_codes.USAGE)
+        document = assert_contract("haprion-cert-issue", out)
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertIn("mgr.example.net", document["error"]["message"])
+        self.assertEqual(certbot.calls, [])
 
     def test_an_existing_lineage_is_not_issued_again(self) -> None:
         issue(self.live / "example.com", "example.com")

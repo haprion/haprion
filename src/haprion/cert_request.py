@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import atomic_file, cert_registry, exit_codes, labels
+from haprion import atomic_file, cert_registry, exit_codes, labels, ui_interface
 from haprion.cert_inventory import (
     IMPORT_STORE,
     LETSENCRYPT_LIVE,
@@ -57,7 +57,7 @@ from haprion.cert_inventory import (
     OPENSSL_TIMEOUT,
     PRIVKEY,
 )
-from haprion.cert_publish import DEFAULT_LOCK_PATH
+from haprion.cert_publish import DEFAULT_LOCK_PATH, PublishError
 from haprion.cert_request_state import (
     CSR,
     DEFAULT_KEY_TYPE,
@@ -255,6 +255,15 @@ def make_request(
         raise RequestError(
             "bad_input", "the interface certificate has no targets; name no cluster or receiver"
         )
+    if interface:
+        try:
+            ui_interface.refuse_unserved(requested)
+        except PublishError as exc:
+            raise RequestError(
+                exc.code,
+                str(exc),
+                exit_code=exit_codes.REFUSED if exc.code == "bad_input" else exit_codes.CONFIG,
+            ) from exc
     #
     # The targets are held to the same rule an import holds them to, before
     # anything is made: a request for a receiver that does not exist would

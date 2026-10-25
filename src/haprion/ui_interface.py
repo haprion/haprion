@@ -35,7 +35,7 @@ import json
 import os
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -100,6 +100,25 @@ def covers(names: tuple[str, ...], server_name: str) -> bool:
         if name.startswith("*.") and "." in wanted and wanted.split(".", 1)[1] == name[2:]:
             return True
     return False
+
+
+def refuse_unserved(names: Sequence[str], *, config_path: Path | None = None) -> None:
+    """Raise `PublishError` unless a certificate for `names` would serve the interface.
+
+    Asked before a CA is. `install` refuses such a certificate too, but only
+    once it exists: the CA had issued it, the mark had moved to it, and the
+    certificate that served the interface was left without one (review
+    26-10-24, 15-03). `bad_input` for names that do not cover the interface's,
+    `dependency_unavailable` when the interface's name cannot be read.
+    """
+
+    config = read_config(config_path or UI_TLS_CONFIG)
+    if not covers(tuple(names), config.server_name):
+        raise PublishError(
+            "bad_input",
+            f"{', '.join(names)} does not name {config.server_name}, the name the interface is "
+            "served on",
+        )
 
 
 def served_fingerprint(config: InterfaceConfig) -> str | None:

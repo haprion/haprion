@@ -387,8 +387,8 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
 def _interface_payload(form: IssueForm, choices: IssueChoices, name: str) -> dict[str, Any]:
     """The payload for the interface's own certificate (B188): no targets, the mark set.
 
-    The name must serve the interface: the engine refuses to install one that
-    does not, but only after the CA has issued it; this says so before.
+    The name must serve the interface. The engine refuses one that does not
+    before a CA is asked too; this says so in the form, beside the field.
     """
 
     if not choices.manager:

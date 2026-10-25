@@ -10,7 +10,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import exit_codes, ndes, ndes_profiles
+from haprion import exit_codes, ndes, ndes_profiles, ui_interface
 from haprion.cli import cert_scep, cert_scep_helper
 from haprion.config import NdesPolicy, load_policy
 from haprion.dns_profile_keys import generate, render_private_key
@@ -136,6 +136,31 @@ class HelperBoundary(ScepFixture):
                     code, doc, _ = self.helper(parameters)
                     self.assertEqual(code, 65)
                     self.assertEqual(doc["outcome"], "failed")
+        engine.assert_not_called()
+
+    def test_an_interface_certificate_for_another_name_never_reaches_the_ca(self) -> None:
+        """Review 26-10-24, 15-03: the CA signed it, then the install refused the name."""
+
+        config = self.root / "ui-tls.conf"
+        config.write_text(
+            f"TLS_CERT={self.root / 'ui.crt'}\nTLS_KEY={self.root / 'ui.key'}\n"
+            "SERVER_NAME=mgr.example.net\n"
+        )
+        with (
+            mock.patch.object(ui_interface, "UI_TLS_CONFIG", config),
+            mock.patch.object(ndes, "enroll") as engine,
+        ):
+            code, doc, _ = self.helper(
+                {
+                    "id": "web.example.com",
+                    "profile": "certserver1",
+                    "domains": ["web.example.com"],
+                    "interface": True,
+                }
+            )
+        self.assertEqual((code, doc["outcome"]), (exit_codes.REFUSED, "failed"))
+        self.assertEqual(doc["error"]["code"], "bad_input")
+        self.assertIn("mgr.example.net", doc["error"]["message"])
         engine.assert_not_called()
 
     def test_a_pending_request_keeps_its_targets_beside_it_and_is_not_registered(self) -> None:

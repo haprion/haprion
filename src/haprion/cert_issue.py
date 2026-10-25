@@ -265,6 +265,15 @@ def build_request(
         )
     if not interface and not exportable and not clusters and not receivers:
         raise IssueError("bad_input", "at least one target (cluster or receiver) is required")
+    if interface:
+        try:
+            ui_interface.refuse_unserved(domains)
+        except PublishError as exc:
+            raise IssueError(
+                exc.code,
+                str(exc),
+                exit_code=exit_codes.USAGE if exc.code == "bad_input" else exit_codes.CONFIG,
+            ) from exc
 
     registry = runtime.registry
     if registry is None:

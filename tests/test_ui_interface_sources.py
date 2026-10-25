@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haprion import cert_delete, cert_registry
+from haprion import cert_delete, cert_registry, ui_interface
 from haprion.cert_delete import Guards
 from haprion.cert_import import ImportError_, import_certificate, read_material
 from haprion.cert_issue import IssueError, build_request
@@ -27,6 +27,21 @@ from haprion.config import load_policy, load_runtime_config
 from haprion.ndes_state import request_is_interface as ndes_request_is_interface
 from haprion.ndes_state import write_targets
 from tests.test_cert_import import KEEPERS, ImportFixture, Pki
+
+
+class ServedAs(ImportFixture):
+    """An interface served as `ui.example`: what a certificate for it is held to before a CA is asked."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        config = self.root / "ui-tls.conf"
+        config.write_text(
+            f"TLS_CERT={self.root / 'ui.crt'}\nTLS_KEY={self.root / 'ui.key'}\n"
+            "SERVER_NAME=ui.example\n"
+        )
+        patcher = mock.patch.object(ui_interface, "UI_TLS_CONFIG", config)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
 
 class ClaimingTheMark(unittest.TestCase):
@@ -185,7 +200,7 @@ class Importing(ImportFixture):
         self.assertNotIn("interface", self.registered()["shop.example"])
 
 
-class SigningRequests(ImportFixture):
+class SigningRequests(ServedAs):
     def test_the_request_remembers_it_is_for_the_interface(self) -> None:
         policy = load_policy(self.policy_path, require_secure=False)
         runtime = load_runtime_config(policy, require_secure=False)
@@ -206,6 +221,32 @@ class SigningRequests(ImportFixture):
         )
 
         self.assertTrue(request_is_interface(self.store, "ui.example"))
+
+    def test_a_request_for_a_name_the_interface_is_not_served_on_is_refused(self) -> None:
+        """Review 26-10-24, 15-03: refused before anything is made, not after it is signed."""
+
+        policy = load_policy(self.policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+
+        with self.assertRaises(RequestError) as caught:
+            make_request(
+                certificate_id="shop.example",
+                domains=["shop.example"],
+                key_kind="ec-p256",
+                clusters=(),
+                receivers=(),
+                formats=None,
+                policy=policy,
+                runtime=runtime,
+                live=self.live,
+                store=self.store,
+                lock_path=self.lock,
+                interface=True,
+            )
+
+        self.assertEqual(caught.exception.code, "bad_input")
+        self.assertIn("ui.example", str(caught.exception))
+        self.assertFalse(request_is_interface(self.store, "shop.example"))
 
     def test_a_request_for_the_interface_names_no_target(self) -> None:
         policy = load_policy(self.policy_path, require_secure=False)
@@ -246,7 +287,7 @@ class NdesRequests(unittest.TestCase):
                 self.assertFalse(ndes_request_is_interface(root, "ui.example"))
 
 
-class Issuing(ImportFixture):
+class Issuing(ServedAs):
     def test_the_interface_certificate_needs_no_target_and_takes_none(self) -> None:
         runtime = load_runtime_config(
             load_policy(self.policy_path, require_secure=False), require_secure=False
@@ -275,6 +316,24 @@ class Issuing(ImportFixture):
             build_request(
                 domain="ui.example", method="dns-01", clusters=(), receivers=(), runtime=runtime
             )
+
+    def test_a_name_the_interface_is_not_served_on_is_refused_before_certbot(self) -> None:
+        """Review 26-10-24, 15-03: certbot issued it, then the install refused it."""
+
+        runtime = load_runtime_config(
+            load_policy(self.policy_path, require_secure=False), require_secure=False
+        )
+        with self.assertRaises(IssueError) as caught:
+            build_request(
+                domain="shop.example",
+                method="dns-01",
+                clusters=(),
+                receivers=(),
+                runtime=runtime,
+                interface=True,
+            )
+        self.assertEqual(caught.exception.code, "bad_input")
+        self.assertIn("ui.example", str(caught.exception))
 
 
 class Deleting(ImportFixture):

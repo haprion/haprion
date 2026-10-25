@@ -11,7 +11,7 @@ from typing import Any, TextIO
 
 from haprion import cert_import, exit_codes, ndes, ndes_profiles, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
+from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer, PublishError
 from haprion.cli import arguments, cert_job
 from haprion.cli.cert_import import result_envelope
 from haprion.cli.cert_publish import default_deployer
@@ -137,6 +137,15 @@ def enroll(
                 "bad_input", "a format names a receiver that is not targeted", exit_codes.REFUSED
             )
         requested = ndes.names(domains)
+        if interface and not resume:
+            try:
+                ui_interface.refuse_unserved(requested)
+            except PublishError as exc:
+                raise ScepRefusal(
+                    exc.code,
+                    str(exc),
+                    exit_codes.REFUSED if exc.code == "bad_input" else exit_codes.CONFIG,
+                ) from exc
         runtime = load_runtime_config(policy, require_secure=require_secure)
         if any(name not in runtime.clusters for name in clusters):
             raise ScepRefusal("bad_input", "unknown target cluster", exit_codes.REFUSED)

@@ -43,13 +43,18 @@ from haprion.debian_package import package, write  # the path above comes first
 # Each package counts its own revision: it moves when our part of the package
 # changes (the unit, the build), not when the other package does.
 #
-CORAZA_REVISION = "1"
+CORAZA_REVISION = "2"
 CRS_REVISION = "1"
 GO_VERSION = "go1.27.3"
 GOVULNCHECK_VERSION = "v1.9.0"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 DIGEST = re.compile(r"[0-9a-f]{64}")
 UNIT = "coraza-spoa.service"
+#
+# What the unit's start check runs besides Essential tools (WAIT_LISTENING);
+# systemd, which runs the unit, is on every machine the package is for.
+#
+DEPENDS = "mawk | awk"
 LIBEXEC = "usr/lib/haprion-coraza-spoa"
 #
 # The engine logs one JSON line per matched rule, and a line carries the
@@ -472,6 +477,7 @@ def build_coraza(
                 "Package": "haprion-coraza-spoa",
                 "Version": f"{source.version}-{CORAZA_REVISION}",
                 "Architecture": "amd64",
+                "Depends": DEPENDS,
                 "Section": "net",
                 "Priority": "optional",
                 "Homepage": "https://github.com/corazawaf/coraza-spoa",

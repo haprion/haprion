@@ -39,6 +39,7 @@ def load(name: str, relative: str) -> Any:
 COMMANDS = load("package_commands", "tools/package_commands.py")
 CLI = load("build_cli_package_commands", "tools/build-cli-package.py")
 UI = load("build_ui_package_commands", "tools/build-ui-package.py")
+CORAZA = load("build_coraza_package_commands", "tools/build-coraza-package.py")
 from haprion import node_package  # noqa: E402 - after the tools, which set sys.path
 
 #
@@ -71,6 +72,7 @@ ESSENTIAL = frozenset(
         "hostname",
         "id",
         "install",
+        "ldd",
         "ln",
         "mkdir",
         "mktemp",
@@ -233,6 +235,16 @@ def manager_scripts() -> list[Path]:
     return steps
 
 
+def tool_commands() -> set[str]:
+    """What the tools the interface's package carries for its steps run."""
+
+    found: set[str] = set()
+    for tool in UI.TOOLS:
+        if tool.endswith(".py"):
+            found |= COMMANDS.python_commands((BASE / tool).read_text())
+    return found
+
+
 def engine_commands() -> set[str]:
     found: set[str] = set()
     for path in (BASE / "src/haprion").rglob("*.py"):
@@ -263,10 +275,21 @@ class EveryCommandIsDeclared(unittest.TestCase):
     def test_the_manager_s_packages(self) -> None:
         # The steps run on a manager with both packages, and the engine is the
         # CLI package's; optional features may be satisfied by Recommends.
-        used = commands_of(manager_scripts()) | engine_commands()
+        used = commands_of(manager_scripts()) | engine_commands() | tool_commands()
         declared = names(CLI.DEPENDS) | names(UI.UI_DEPENDS) | names(CLI.RECOMMENDS)
         self.assertIn("psql", used)
         self.assert_declared(used, declared, "haprion-cli and haprion-ui")
+
+    def test_the_waf_engine_package(self) -> None:
+        """Review 26-10-24, 14-04: the unit's start check runs awk, and the package
+        named nothing; it came in only through haprion-node's own Depends."""
+
+        used = set(COMMANDS.shell_commands(CORAZA.WAIT_LISTENING, ()))
+        self.assertIn("awk", used)
+        self.assert_declared(used, names(CORAZA.DEPENDS), "haprion-coraza-spoa")
+
+    def test_the_tools_the_steps_run_are_read(self) -> None:
+        self.assertIn("ldd", tool_commands())
 
     def test_the_engine_s_commands_are_the_cli_package_s_own(self) -> None:
         used = engine_commands() - ESSENTIAL - set(INSTALLED_BY_THE_PRODUCT)

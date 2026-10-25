@@ -20,6 +20,11 @@
   // A page that comes back in another shape - a redirect, a session that
   // expired into the login form - is not patched up. That page is reloaded.
   //
+  // The rule for every page script (review 26-10-24, 04-07, 04-11): what it
+  // wires on the page it wires again on REDRAWN, since everything in <main>
+  // is new after it; and a script that swaps a region itself carries over what
+  // the reader chose in it, as `carry` below does here.
+  //
   const REDRAWN = "haprion:redrawn";
   const FIELDS = "input:not([type=hidden]), textarea, select";
   const WAIT = 1000;

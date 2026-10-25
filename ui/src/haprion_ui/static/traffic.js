@@ -24,6 +24,12 @@
 
   const wire = (root) => {
     for (const card of root.querySelectorAll(".traffic-card")) {
+      //
+      // Once per card: the page's own swap and live.js's redraw both bring
+      // new cards, and a card wired twice would answer each hover twice.
+      //
+      if (card.dataset.wired) continue;
+      card.dataset.wired = "true";
       const svg = card.querySelector("svg");
       const row = card.querySelector(".traffic-figures");
       const label = card.querySelector(".traffic-scope-label");
@@ -204,6 +210,13 @@
   window.addEventListener("popstate", () => {
     swap(window.location.href, false).catch(() => window.location.reload());
   });
+
+  //
+  // live.js redraws <main> in place, cards and all (review 26-10-24, 04-07):
+  // without this the hover stopped writing into the row and the browser's own
+  // tooltips came back.
+  //
+  document.addEventListener("haprion:redrawn", () => wire(document));
 
   wire(document);
 })();

@@ -267,6 +267,22 @@ class WhatAHoverAnswers(TheChartInABrowser):
                 arg=window,
             )
 
+    def test_a_page_redrawn_in_place_still_answers_a_hover(self) -> None:
+        """Review 26-10-24, 04-07: after live.js redrew <main> the hover wrote
+        nothing and the browser's own tooltips were back."""
+
+        with self.signed_in() as page:
+            page.evaluate("window.haproxyUi.redraw().then(() => true)")
+            self.assertEqual(page.eval_on_selector_all(".traffic-pick title", "t => t.length"), 0)
+            window = self.scope(page)
+            self.card(page).query_selector_all(".traffic-pick")[3].hover()
+            page.wait_for_function(
+                "label => document.querySelector('.traffic-card .traffic-scope-label')"
+                ".textContent.trim() !== label",
+                arg=window,
+                timeout=3000,
+            )
+
     def test_a_bucket_inside_the_mark_keeps_the_range_the_reader_asked_about(self) -> None:
         """The reader marked a stretch to ask about the stretch."""
 

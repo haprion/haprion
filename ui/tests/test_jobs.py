@@ -30,6 +30,7 @@ from haprion import node_enrollment
 from haprion_ui import attention, db, jobs, operations
 from haprion_ui.db import Job
 from tests.test_queue_route import queued
+from tests.test_worker import claimed, result_document
 
 TOKEN = uuid4()
 
@@ -821,10 +822,14 @@ class AJobInTwoStepsIsToldOneWay(unittest.TestCase):
 
     def test_a_job_finished_before_the_worker_named_the_step_is_read_by_its_answer(self) -> None:
         older = self.added("cert_deploy")
-        result = dict(older.result or {})
-        del result["step"]
-        result["operation"] = "cert_deploy_cluster"
-
+        #
+        # Stored as the worker stored it then: the certificate deploy's own
+        # envelope, which names `cert_deploy` and never the request's
+        # `cert_deploy_cluster`, with the node change beside it and no step
+        # (review 26-10-24, 07-06).
+        #
+        envelope = result_document(claimed(operation="cert_deploy"), "failed")
+        result = {**envelope, "node": (older.result or {})["node"]}
         self.assertEqual(jobs.ending_step(replace(older, result=result)), "cert_deploy")
 
     def test_a_later_deploy_that_worked_ends_the_attention_row(self) -> None:

@@ -256,7 +256,9 @@ def ending_step(job: Job) -> str:
     Every page that names a job's failure or groups it asks this, so the
     dashboard, Needs attention and the jobs page cannot tell one job three ways
     (review 2026-10-22, 1B-2). The worker names the later step under `step`;
-    a job finished before it did is read by the helper's operation.
+    a job finished before it did is read by its answer's operation: the
+    envelope's own `cert_deploy`, never the request's `cert_deploy_cluster`
+    (review 26-10-24, 07-06).
     """
 
     result = job.result if isinstance(job.result, dict) else {}
@@ -267,7 +269,7 @@ def ending_step(job: Job) -> str:
     step = result.get("step")
     if step in _LATER_STEPS:
         return str(step)
-    return "cert_deploy" if result.get("operation") == "cert_deploy_cluster" else "deploy"
+    return "cert_deploy" if result.get("operation") == "cert_deploy" else "deploy"
 
 
 #

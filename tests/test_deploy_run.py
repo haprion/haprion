@@ -1047,6 +1047,27 @@ class TheFirstDeployWaitsForTheVip(unittest.TestCase):
         codes = [warning.code for warning in LAST_REPORT[0].warnings]
         self.assertIn("vip_not_owned", codes)
 
+    def test_a_node_that_falls_back_while_waiting_is_not_converged(self) -> None:
+        """Review 26-10-24, 13-03: the outcome is judged on the reading the wait ended with."""
+
+        cluster = self.nobody()
+        paused: list[float] = []
+
+        def pause(seconds: float) -> None:
+            paused.append(seconds)
+            if len(paused) == 2:
+                cluster.node("node-b").release_hash = OLD_HASH
+                cluster.move_vip("node-a")
+
+        code, shown = deploy(cluster, expected_hash=TARGET_HASH, pause=pause)
+
+        self.assertEqual(code, exit_codes.PARTIAL, shown)
+        document = LAST_REPORT[0].as_envelope("alpha")
+        self.assertEqual(document["outcome"], "partial")
+        self.assertFalse(document["result"]["converged"])
+        rows = {row["name"]: row for row in document["result"]["nodes"]}
+        self.assertEqual(rows["node-b"]["error"]["code"], "target_not_reached")
+
     def test_nothing_deployed_is_not_waited_for(self) -> None:
         cluster = self.nobody()
         for node in cluster.nodes:

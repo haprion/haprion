@@ -388,6 +388,20 @@ def run(
                     report.error = Message(code="status_unavailable", message=str(exc))
                     _settle(status, report, target)
                     return DeployRun(exc.exit_code, report)
+                #
+                # Judged again on the reading the wait ended with: a node that
+                # went back to its old release meanwhile is not converged
+                # (review 26-10-24, 13-03). The VIP's own state is said by the
+                # final status, as the wait's docstring has it, not judged here.
+                #
+                again = next_step(
+                    status.observation(),
+                    progress,
+                    target=target,
+                    allow_vip_unknown=allow_vip_unknown,
+                )
+                if again.action is Action.FINISHED:
+                    step = again
             _settle(status, report, target)
             return DeployRun(_report(writer, status, step, report), report)
 

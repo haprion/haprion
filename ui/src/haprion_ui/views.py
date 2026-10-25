@@ -925,7 +925,7 @@ def _queue_node_job(
             #
             if db.job_for_key(connection, key, operation=operation, cluster=cluster) is None:
                 if isinstance(refused, db.RequestConflict):
-                    return PlainTextResponse("That request key asked for something else", 409)
+                    raise refused
                 return again(
                     "A job is already running for this cluster. Try again when it has finished."
                 )

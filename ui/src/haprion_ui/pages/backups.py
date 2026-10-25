@@ -236,7 +236,7 @@ def build_router(config: Config) -> APIRouter:
                 earlier = db.job_for_key(connection, key, operation=operation, cluster=cluster)
                 if earlier is None:
                     if isinstance(refused, db.RequestConflict):
-                        return PlainTextResponse("That request key asked for something else", 409)
+                        raise refused
                     return again(
                         f"A job is already running for {cluster}. Wait for it to finish, then ask again."
                     )

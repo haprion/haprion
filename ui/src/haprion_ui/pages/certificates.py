@@ -751,7 +751,7 @@ def build_router(config: Config) -> APIRouter:
                 #
                 if db.job_for_key(connection, key, operation="cert_import", cluster=None) is None:
                     if isinstance(refused, db.RequestConflict):
-                        return PlainTextResponse("That request key asked for something else", 409)
+                        raise refused
                     busy = "A certificate job is already running. Wait for it to finish, then try again."
                     if form is not None:
                         return _certificate_import_page(request, config, form, problem=busy)

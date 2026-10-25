@@ -81,6 +81,13 @@ class OneAnswer(unittest.TestCase):
     def test_only_the_named_routes_catch_a_refusal_themselves(self) -> None:
         self.assertEqual(caught(), set(CAUGHT))
 
+    def test_a_route_that_catches_one_answers_a_conflict_with_the_page(self) -> None:
+        """Review 26-10-25, 2-04: three second-click branches still answered in bare text."""
+
+        for path in [*sorted((PACKAGE / "pages").glob("*.py")), PACKAGE / "views.py"]:
+            with self.subTest(path=path.name):
+                self.assertNotIn("asked for something else", path.read_text(encoding="utf-8"))
+
     def test_a_script_is_answered_in_text_with_the_same_sentence(self) -> None:
         answer = views.conflict_page(request("application/json"), configuration(), db.ClusterBusy())
 

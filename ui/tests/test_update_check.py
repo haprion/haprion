@@ -222,7 +222,7 @@ class WhatThePagesSay(LoginTestCase):
         text = self.admin().get("/").text
         self.assertIn(
             '<a class="update-available" href="https://github.com/haprion/haprion/releases/tag/'
-            'v99.0.0" target="_blank" rel="noopener noreferrer">· v99.0.0 available</a>',
+            'v99.0.0" target="_blank" rel="noopener noreferrer"><small>· v99.0.0 available</small></a>',
             text,
         )
 

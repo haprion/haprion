@@ -232,7 +232,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .brand strong, .login-brand strong { color: var(--text-strong); font-weight: 700; }
 .brand-version { margin-left: 4px; color: var(--muted); font-size: 12px; font-weight: 500; letter-spacing: 0; }
 .brand + .update-available { margin: 0 24px 0 -20px; }
-.update-available { color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; text-decoration: none; }
+/* The brand's line box, so the note stands on the version's baseline: a 12px
+   flex item of its own sat 1.25px higher (measured 26-10-26). */
+.update-available { color: var(--accent); font-size: 17px; white-space: nowrap; text-decoration: none; }
+.update-available small { font-size: 12px; font-weight: 600; }
 .update-available:hover { text-decoration: underline; }
 
 /*

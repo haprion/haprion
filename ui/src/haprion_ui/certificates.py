@@ -592,7 +592,9 @@ def _order(certificate: CertificateView) -> tuple[int, str]:
     return (0 if certificate.referenced else 1, certificate.identifier)
 
 
-def _empty(cluster: str, *, configured: bool) -> CertificateClusterView:
+def _empty(
+    cluster: str, *, configured: bool, authorities: tuple[str, ...] = ()
+) -> CertificateClusterView:
     return CertificateClusterView(
         cluster=cluster,
         accent=accent_index(cluster),
@@ -607,6 +609,7 @@ def _empty(cluster: str, *, configured: bool) -> CertificateClusterView:
         referenced_count=0,
         available_count=0,
         certificates=(),
+        authorities=authorities,
     )
 
 
@@ -1410,7 +1413,7 @@ def build_certificate_overview(
     for cluster in tuple(configured_clusters):
         reading = rows.pop(cluster, None)
         clusters.append(
-            _empty(cluster, configured=True)
+            _empty(cluster, configured=True, authorities=authorities(cluster))
             if reading is None
             else _cluster_view(
                 reading,

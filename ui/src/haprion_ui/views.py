@@ -1175,6 +1175,11 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
                 (cluster,),
                 certificate_rows,
                 stale_after=stale_after,
+                #
+                # The CA certificates a pool may verify against are the
+                # registry's, which is the manager's own reading (B304).
+                #
+                manager=read_manager_certificates(request, config),
             ).clusters
             if view.cluster == cluster
         ),

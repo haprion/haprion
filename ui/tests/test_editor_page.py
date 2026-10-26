@@ -290,8 +290,48 @@ class ReachingTheEditor(EditorTestCase):
         self.assertEqual([obj.name for obj in state.stored], ["shop"])
         self.assertEqual(listed.call_count, 1)
         for reader in (objects_read, networks_read, certificates_read, histories_read):
-            self.assertEqual(reader.call_count, 1)
-            self.assertEqual(reader.call_args.kwargs, {"cluster": "alpha"})
+            # The fixture's manager reading is drawn from every cluster's listing.
+            per_cluster = [call.kwargs for call in reader.call_args_list if call.kwargs]
+            self.assertEqual(per_cluster, [{"cluster": "alpha"}])
+
+    def test_the_ca_certificates_of_the_cluster_are_offered(self) -> None:
+        # The registry is the manager's reading (B304); without it no CA could be chosen.
+        request = mock.Mock()
+        request.app.state.pool = self.pool
+        registry = {
+            "certificates": [
+                {
+                    "id": "corp-root",
+                    "source": {"kind": "authority"},
+                    "readable": True,
+                    "targets": {"clusters": ["alpha"]},
+                },
+                {
+                    "id": "other-root",
+                    "source": {"kind": "authority"},
+                    "readable": True,
+                    "targets": {"clusters": ["beta"]},
+                },
+            ]
+        }
+        reading = db.ManagerCertificates(
+            observed_at=datetime.now(UTC),
+            outcome="done",
+            result={"interface_served": None, "registry": registry},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        with (
+            mock.patch("haprion_ui.db.cluster_list", return_value=("alpha", "beta")),
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[OBJECTS]),
+            mock.patch("haprion_ui.db.cluster_networks", return_value=[NETWORK]),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_histories", return_value=[]),
+            mock.patch("haprion_ui.db.manager_certificates", return_value=reading),
+        ):
+            state = views._editor_state(request, writing_configuration(), "alpha")
+        self.assertEqual(state.choices.authority_ids, ("corp-root",))
 
     def test_removed_cluster_is_refused_before_its_cached_objects_are_read(self) -> None:
         client = self.editor()

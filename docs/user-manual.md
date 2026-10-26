@@ -7663,9 +7663,9 @@ runs can gain privilege.
 terminal and a `%sudo` rule. Both build the request with the same function, so the two paths cannot
 come to describe the same probe differently.
 
-**The probe socket reaches the real nodes**, so it is off unless you ask for it: `PROBE_SOCKET=no`
-in the answers file is the default. The interface then says the probe is unavailable rather than
-showing an empty result.
+**The probe socket is installed by default**: it is what the form's *Test health check* asks.
+`PROBE_SOCKET=no` in the answers file leaves it out, and the interface then says the probe is
+unavailable rather than showing an empty result.
 
 ##### The worker's way to the receiver helper
 

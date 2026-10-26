@@ -390,10 +390,10 @@ class Run:
         if url is not None:
             self.key_belongs_to_the_package("mgr")
         #
-        # The probe's socket on, which the defaults leave off: the probe helper's
-        # unit is asked through it below, on a real manager (5-15).
+        # The defaults alone, as install.md has it: the probe's socket among them,
+        # asked through below on a real manager (5-15, lab 26-10-26).
         #
-        _, output = self.on("mgr", "PROBE_SOCKET=yes haprion-setup")
+        _, output = self.on("mgr", "haprion-setup")
         if "The manager is installed" not in output:
             raise Failed(f"haprion-setup ended without saying the manager is installed:\n{output}")
 

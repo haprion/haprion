@@ -62,5 +62,5 @@ apply_default_answers() {
     # The web platform.
     : "${SERVER_NAME=${name}}"
     : "${TRUSTED_PROXIES=}"
-    : "${PROBE_SOCKET=no}"
+    : "${PROBE_SOCKET=yes}"
 }

@@ -143,6 +143,10 @@ class TheAnswersFileIsOptional(unittest.TestCase):
         self.assertEqual(values["CERTIFICATE_REGISTRY"], "/etc/haprion/registry/certificates.yaml")
         self.assertEqual(values["SERVER_NAME"], socket.getfqdn() or values["SERVER_NAME"])
 
+    def test_the_form_s_health_check_works_with_the_defaults(self) -> None:
+        # Off by default, Test health check failed on every installation (lab 26-10-26).
+        self.assertEqual(answers_value(["PROBE_SOCKET"]), {"PROBE_SOCKET": "yes"})
+
     def test_a_dash_is_no_file(self) -> None:
         self.assertEqual(answers_value(["CONFIG_ROOT"], "-"), answers_value(["CONFIG_ROOT"]))
 

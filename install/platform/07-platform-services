@@ -72,8 +72,8 @@ step "The web service's way to the probe"
 # group this account, answered by a short-lived instance of the helper that
 # takes no arguments and does one thing.
 #
-# Off unless the answers file asks for it: the socket gives the web account a
-# way to the real nodes.
+# On unless the answers file says no: the form's health check is the web
+# account's one way to the real nodes, and it asks only what this helper does.
 #
 if [[ "${PROBE_SOCKET:-no}" == "yes" ]]; then
     install_file "/etc/systemd/system/haprion-probe-helper@.service" root:root 644 \

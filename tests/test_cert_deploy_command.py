@@ -306,6 +306,43 @@ class TriggerTests(unittest.TestCase):
 
         self.assertEqual(sent[0][-1], "cert-pull example-net example-com")
 
+    def test_a_cluster_with_only_a_ca_is_asked_for_the_ca_alone(self) -> None:
+        # The wrapper answers a cert-pull without IDs with exit 64, and the rollout stops.
+        from haprion.deploy_plan import CertificateRef, CertificateTarget
+
+        target = CertificateTarget(
+            certificates=(), authorities=(CertificateRef(id="corp-root", fingerprint="c" * 64),)
+        )
+        sent: list[list[str]] = []
+
+        class FakeCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(argv: list[str], **_: object) -> FakeCompleted:
+            sent.append(argv)
+            return FakeCompleted()
+
+        with mock.patch.object(node_ssh, "run_bounded", fake_run):
+            code = cert_deploy_helper.trigger_node(
+                NodeStatus(
+                    name="node-a",
+                    mgmt_host="node-a.example.com",
+                    reachable=True,
+                    status_ok=True,
+                    owns_vip=True,
+                    release_hash=None,
+                    error_code=None,
+                ),
+                DeployIdentity(user="svc-app", key=Path("/root/.ssh/id_ed25519")),
+                target,
+                io.StringIO(),
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual([argv[-1] for argv in sent], ["ca-pull corp-root"])
+
 
 class RefusalContractTests(HelperFixture):
     """A certificate run that stops early still owes its caller a result.

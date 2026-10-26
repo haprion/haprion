@@ -102,7 +102,12 @@ def trigger_node(
     #
     if target.authorities:
         requests.append(" ".join([AUTHORITY_VERB, *(ref.id for ref in target.authorities)]))
-    requests.append(" ".join([REQUEST_VERB, *(ref.id for ref in target.certificates)]))
+    #
+    # A cluster whose only referenced file is a CA has no certificate to ask
+    # for, and the node's wrapper refuses a request without IDs (lab 26-10-26).
+    #
+    if target.certificates:
+        requests.append(" ".join([REQUEST_VERB, *(ref.id for ref in target.certificates)]))
     for request in requests:
         code = run_trigger(
             node_ssh.ssh_argv(identity.key, identity.user, node.mgmt_host, request),

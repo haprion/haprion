@@ -58,7 +58,7 @@ class EveryExampleClusterIsMadeUp(unittest.TestCase):
 
     MADE_UP = frozenset({"alpha", "beta", "gamma", "edge-a", "edge-demo", "service-demo", "verify"})
     NAMED = re.compile(
-        r"haprion-[a-z-]+(?: [a-z][a-z-]*)?(?: --?[a-z-]+)* (?:-c|--cluster)[ =](?P<command>[a-z][a-z0-9-]*)\b"
+        r"haprion-[a-z-]+(?: [a-z][a-z-]*)?(?: --?[a-z][a-z-]*)* (?:-c|--cluster)[ =](?P<command>[a-z][a-z0-9-]*)\b"
         r'|"cluster": ?"(?P<document>[a-z][a-z0-9-]*)"'
         r"|@(?P<unit>[a-z][a-z0-9-]*)\.(?:timer|service)\b"
         r"|^\s*-?\s*cluster: (?P<yaml>[a-z][a-z0-9-]*)\s*$",

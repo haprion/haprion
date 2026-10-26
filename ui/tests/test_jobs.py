@@ -380,7 +380,7 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
         busy = jobs.in_flight(
             [
                 self.job("alpha", "deploy", "running"),
-                self.job("beta", "objects_publish", "pending"),
+                self.job("beta", "changes_publish", "pending"),
             ]
         )
 
@@ -493,7 +493,7 @@ class WhatTheLastJobLeftBehind(unittest.TestCase):
     def test_another_cluster_s_failure_stays_with_that_cluster(self) -> None:
         verdicts = jobs.last_failure(
             [
-                self.job("beta", "network_publish", "blocked", "network_invalid"),
+                self.job("beta", "changes_publish", "blocked", "network_invalid"),
                 self.job("alpha", "deploy", "done"),
             ]
         )

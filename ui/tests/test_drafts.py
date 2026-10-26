@@ -12,6 +12,7 @@ overwriting another's, and nothing about that looks wrong in a diff.
 
 from __future__ import annotations
 
+import re
 import unittest
 from contextlib import nullcontext
 from datetime import UTC, datetime
@@ -297,10 +298,16 @@ class TheTableAgreesWithTheEngine(unittest.TestCase):
     """
 
     def migration(self) -> str:
-        path = (
-            Path(__file__).resolve().parents[1] / "migrations" / "versions" / "0013_proxy_drafts.py"
-        )
-        return path.read_text(encoding="utf-8")
+        """The last migration that bounds the document's size."""
+
+        versions = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+        speaking = [
+            path
+            for path in sorted(versions.glob("[0-9]*.py"))
+            if "proxy_draft_yaml_size" in path.read_text(encoding="utf-8")
+        ]
+        self.assertTrue(speaking, "no migration bounds the document")
+        return speaking[-1].read_text(encoding="utf-8")
 
     def latest_shape(self) -> str:
         """The last migration that has an opinion about the object name.
@@ -323,14 +330,12 @@ class TheTableAgreesWithTheEngine(unittest.TestCase):
     def test_the_object_name_constraint_is_the_model_s_own_pattern(self) -> None:
         pattern = proxy_model.NAME.pattern
 
-        self.assertIn(f"check (object_id ~ '{pattern}')", self.latest_shape())
+        self.assertIn(f"object_id ~ '{pattern}'", self.latest_shape())
 
     def test_the_document_limit_is_the_model_s_own_limit(self) -> None:
         """A draft the model would refuse to read has no business being stored."""
 
-        self.assertIn(
-            f"check (octet_length(yaml) <= {proxy_model.MAX_MODEL_BYTES})", self.migration()
-        )
+        self.assertIn(f"octet_length(yaml) <= {proxy_model.MAX_MODEL_BYTES}", self.migration())
 
 
 class TheIdentityIsTheDatabases(unittest.TestCase):
@@ -348,10 +353,11 @@ class TheIdentityIsTheDatabases(unittest.TestCase):
         speaking = [
             path
             for path in sorted(versions.glob("[0-9]*.py"))
-            if "add column id uuid" in path.read_text(encoding="utf-8")
+            if re.search(r"(?i)\bid uuid default gen_random_uuid\(\)", path.read_text())
+            and "proxy_draft" in path.read_text(encoding="utf-8")
         ]
         self.assertTrue(speaking, "no migration gives a draft an identity")
-        return speaking[-1].read_text(encoding="utf-8")
+        return speaking[-1].read_text(encoding="utf-8").lower()
 
     def test_the_database_fills_it_in(self) -> None:
         self.assertIn("default gen_random_uuid()", self.migration())
@@ -359,9 +365,9 @@ class TheIdentityIsTheDatabases(unittest.TestCase):
     def test_the_web_role_may_read_it_and_not_write_it(self) -> None:
         text = self.migration()
 
-        self.assertIn("grant select (id) on proxy_draft to app_web", text)
-        self.assertNotIn("grant insert (id)", text)
-        self.assertNotIn("grant update (id)", text)
+        on = r"[^;\n]* on (?:table )?(?:public\.)?proxy_draft to app_web"
+        self.assertRegex(text, r"grant select ?\(id\)" + on)
+        self.assertNotRegex(text, r"(?:insert|update) ?\(id\)" + on)
 
 
 if __name__ == "__main__":

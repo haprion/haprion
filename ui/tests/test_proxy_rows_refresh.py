@@ -188,7 +188,7 @@ class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
         return Job(
             id=9,
             request_id=uuid4(),
-            operation="objects_publish",
+            operation="changes_publish",
             cluster="alpha",
             payload={
                 "objects": {name: document},
@@ -306,7 +306,7 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
         removal = Job(
             id=9,
             request_id=uuid4(),
-            operation="objects_publish",
+            operation="changes_publish",
             cluster="alpha",
             payload={"objects": {"gone": None}, "removed_backends": {"gone": ["gone-web"]}},
             state="done",
@@ -478,7 +478,7 @@ class WhichObjectsAPendingDeployCarries(unittest.TestCase):
 
     def test_the_releases_decide_when_they_can(self) -> None:
         states = {"shop": "changed", "intranet": "current"}
-        jobs = [self.job("objects_publish", "intranet")]
+        jobs = [self.job("changes_publish", "intranet")]
 
         self.assertEqual(objects.awaiting_deploy(states, jobs), frozenset({"shop"}))
 
@@ -489,7 +489,7 @@ class WhichObjectsAPendingDeployCarries(unittest.TestCase):
         """The case the whole fallback exists for: no manifest on the nodes."""
 
         states = {"shop": "unknown", "intranet": "unknown", "wiki": "unknown"}
-        jobs = [self.job("objects_publish", "shop")]
+        jobs = [self.job("changes_publish", "shop")]
 
         self.assertEqual(objects.awaiting_deploy(states, jobs), frozenset({"shop"}))
 
@@ -499,14 +499,14 @@ class WhichObjectsAPendingDeployCarries(unittest.TestCase):
         self.assertEqual(objects.awaiting_deploy(states, []), frozenset())
 
     def test_a_job_older_than_the_last_deploy_is_not_carried(self) -> None:
-        jobs = [self.job("deploy"), self.job("objects_publish", "shop")]
+        jobs = [self.job("deploy"), self.job("changes_publish", "shop")]
 
         self.assertEqual(objects.awaiting_deploy({"shop": "unknown"}, jobs), frozenset())
 
     def test_the_jobs_never_overrule_a_release_that_answered(self) -> None:
         """Absence from a bounded window is not a claim that anything is in step."""
 
-        jobs = [self.job("objects_publish", "shop")]
+        jobs = [self.job("changes_publish", "shop")]
 
         self.assertEqual(objects.awaiting_deploy({"shop": "current"}, jobs), frozenset())
 

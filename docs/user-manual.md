@@ -6925,7 +6925,8 @@ drop a table you do not own. Running a migration is a deliberate root action, ma
 `pg_ident.conf`.
 
 **Grants are per column and live with the table.** The grants for a table are in the migration that
-creates it, so a column's permissions are versioned with the column. They name contract roles -
+creates it - the baseline, `0100`, for every table there is today - so a column's permissions are
+versioned with the column. They name contract roles -
 `app_web`, `app_worker`, `app_poller`, `app_collector` - never an account; the installation
 connects the accounts to those roles. Columns are listed one at a time, because a grant written for
 a whole table widens itself the next time somebody adds a column.
@@ -7070,10 +7071,16 @@ sudo ./update-platform-release <release-id>
 The CLI and the node scripts stay separate installations. The command checks them and stops before
 the migration when either is too old.
 
+**The schema starts at a baseline.** Haprion 0.99 has one migration, `0100`, which makes the whole
+schema. A database from an earlier release is not migrated: the check refuses it before anything
+runs, and Haprion is installed afresh ([Removing](install.md#removing)). A schema is never taken
+back either. No migration has a downgrade, and `migrate downgrade` is refused; the way back from an
+update is [Rolling a release back](#rolling-a-release-back) or the dump taken before it.
+
 **The old UI must keep working on the new database.** The command also requires that the currently
 running UI keeps working on the candidate's database schema - while the migration runs under it,
-and afterwards as the rollback target. Every migration from `0065` on says whether it is safe in
-that sense:
+and afterwards as the rollback target. Every migration after the baseline says whether it is safe
+in that sense:
 
 ```python
 ROLLBACK_SAFE = True

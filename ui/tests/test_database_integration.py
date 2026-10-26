@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -13,7 +12,6 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -41,6 +39,7 @@ from psycopg.types.json import Jsonb
 
 from haprion_ui import attention, auth, db, metrics, search_index, timing, traffic_logs
 from haprion_ui import jobs as jobs_module
+from haprion_ui.metrics import METRIC_COUNTERS
 
 DSN = os.environ.get("HAPRION_UI_TEST_DATABASE_DSN", "")
 
@@ -945,24 +944,23 @@ class ARealDatabase(unittest.TestCase):
             )
             kept = str(_first(cursor))
             named = {}
-            with _retired_operations(cursor):
-                # The last is the step's newest, which Needs attention reads (05-01).
-                for name, draft in (
-                    ("kept", kept),
-                    ("gone", str(uuid4())),
-                    ("newest", str(uuid4())),
-                ):
-                    cursor.execute(
-                        "insert into job (operation, cluster, payload, idempotency_key, state, "
-                        "started_at, finished_at) values ('objects_publish', 'alpha', %(payload)s, "
-                        "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
-                        "returning id",
-                        {
-                            "payload": json.dumps({"draft": {"id": draft, "revision": 1}}),
-                            "key": uuid4(),
-                        },
-                    )
-                    named[_first(cursor)] = name
+            # The last is the step's newest, which Needs attention reads (05-01).
+            for name, draft in (
+                ("kept", kept),
+                ("gone", str(uuid4())),
+                ("newest", str(uuid4())),
+            ):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values ('changes_publish', 'alpha', %(payload)s, "
+                    "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
+                    "returning id",
+                    {
+                        "payload": json.dumps({"drafts": [{"id": draft, "revision": 1}]}),
+                        "key": uuid4(),
+                    },
+                )
+                named[_first(cursor)] = name
             cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
             removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
             self.assertEqual(removable, {"gone"})
@@ -1048,29 +1046,28 @@ class ARealDatabase(unittest.TestCase):
             )
             kept = str(_first(cursor))
             named = {}
-            with _retired_operations(cursor):
-                # The last is the step's newest, which Needs attention reads (05-01).
-                for name, change in (
-                    ("kept", kept),
-                    ("gone", str(uuid4())),
-                    ("newest", str(uuid4())),
-                ):
-                    cursor.execute(
-                        "insert into job (operation, cluster, payload, idempotency_key, state, "
-                        "started_at, finished_at) values ('network_publish', 'alpha', %(payload)s, "
-                        "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
-                        "returning id",
-                        {
-                            "payload": json.dumps({"change": {"id": change, "revision": 1}}),
-                            "key": uuid4(),
-                        },
-                    )
-                    named[_first(cursor)] = name
+            # The last is the step's newest, which Needs attention reads (05-01).
+            for name, change in (
+                ("kept", kept),
+                ("gone", str(uuid4())),
+                ("newest", str(uuid4())),
+            ):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values ('changes_publish', 'alpha', %(payload)s, "
+                    "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
+                    "returning id",
+                    {
+                        "payload": json.dumps({"changes": [{"id": change, "revision": 1}]}),
+                        "key": uuid4(),
+                    },
+                )
+                named[_first(cursor)] = name
             cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
             removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
             self.assertEqual(removable, {"gone"})
             found = db.change_publishes(connection, cluster="alpha", change_ids={kept})
-            self.assertEqual([job.payload["change"]["id"] for job in found], [kept])
+            self.assertEqual([job.payload["changes"][0]["id"] for job in found], [kept])
             connection.rollback()
 
     def test_a_package_s_publish_is_the_evidence_for_each_row_it_carried(self) -> None:
@@ -1150,27 +1147,26 @@ class ARealDatabase(unittest.TestCase):
 
         with self.connect() as connection, connection.cursor() as cursor:
             mine, other = str(uuid4()), str(uuid4())
-            with _retired_operations(cursor):
-                for draft, state in ((mine, "done"), (mine, "failed"), (other, "done")):
-                    cursor.execute(
-                        "insert into job (operation, cluster, payload, idempotency_key, state, "
-                        "started_at, finished_at) values ('objects_publish', 'alpha', %(payload)s, "
-                        "%(key)s, %(state)s, now(), now())",
-                        {
-                            "payload": json.dumps({"draft": {"id": draft, "revision": 1}}),
-                            "key": uuid4(),
-                            "state": state,
-                        },
-                    )
+            for draft, state in ((mine, "done"), (mine, "failed"), (other, "done")):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values ('changes_publish', 'alpha', %(payload)s, "
+                    "%(key)s, %(state)s, now(), now())",
+                    {
+                        "payload": json.dumps({"drafts": [{"id": draft, "revision": 1}]}),
+                        "key": uuid4(),
+                        "state": state,
+                    },
+                )
             connection.commit()
         try:
             with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
                 found = db.draft_publishes(connection, cluster="alpha", draft_ids={mine})
-            self.assertEqual([job.payload["draft"]["id"] for job in found], [mine])
+            self.assertEqual([job.payload["drafts"][0]["id"] for job in found], [mine])
         finally:
             with self.connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
-                    "delete from job where payload->'draft'->>'id' = any(%s)", ([mine, other],)
+                    "delete from job where payload->'drafts'->0->>'id' = any(%s)", ([mine, other],)
                 )
                 connection.commit()
 
@@ -1929,23 +1925,30 @@ class ARealDatabase(unittest.TestCase):
             connection.execute(statement, values)
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute(
-                "select host, path, status from traffic_log "
+                "select host, path, status from traffic_log_read "
                 "where cluster = 'alpha' and host = 'service.example.com'"
             )
             self.assertEqual(cursor.fetchall(), [("service.example.com", "/health", 200)])
             # A collector that knows nothing of `rule` still writes "no rule" (0050).
-            cursor.execute("select rule from traffic_log where host = 'service.example.com'")
+            cursor.execute("select rule from traffic_log_read where host = 'service.example.com'")
             self.assertEqual(cursor.fetchall(), [("",)])
             # ... and "nothing found" for the engine's fields (0051).
             cursor.execute(
-                "select waf_rules, waf_score from traffic_log where host = 'service.example.com'"
+                "select waf_rules, waf_score from traffic_log_read where host = 'service.example.com'"
             )
             self.assertEqual(cursor.fetchall(), [("", 0)])
             # ... and no engine transaction (0052).
-            cursor.execute("select waf_id from traffic_log where host = 'service.example.com'")
+            cursor.execute("select waf_id from traffic_log_read where host = 'service.example.com'")
             self.assertEqual(cursor.fetchall(), [("",)])
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 cursor.execute(statement, values)
+        # The web reads the view and nothing of the table itself (the baseline, B369).
+        with (
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+            connection.cursor() as cursor,
+            self.assertRaises(psycopg.errors.InsufficientPrivilege),
+        ):
+            cursor.execute("select host from traffic_log limit 0")
         with (
             self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection,
             connection.cursor() as cursor,
@@ -1968,8 +1971,10 @@ class ARealDatabase(unittest.TestCase):
         # A small cluster beside a large one, in the page's order (0083).
         self.assertIn(f"traffic_log_{suffix}_cluster", indexes)
 
-    def test_the_web_reads_the_traffic_log_through_a_view_with_its_granted_columns(self) -> None:
-        """The view names what the web was granted on the table, no more and no less (0083)."""
+    def test_the_web_reads_the_traffic_log_through_a_view_and_holds_nothing_on_the_table(
+        self,
+    ) -> None:
+        """The view shows every column but the collector's bookkeeping (0083; the baseline, B369)."""
 
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -1978,28 +1983,25 @@ class ARealDatabase(unittest.TestCase):
             )
             shown = [row[0] for row in cursor.fetchall()]
             cursor.execute(
-                "select column_name from information_schema.column_privileges"
-                " where table_name = 'traffic_log' and grantee = 'app_web'"
-                "   and privilege_type = 'SELECT' order by 1"
+                "select attname from pg_attribute where attrelid = 'traffic_log'::regclass"
+                " and attnum > 0 and not attisdropped order by 1"
             )
-            granted = [row[0] for row in cursor.fetchall()]
-        self.assertTrue(shown)
-        self.assertEqual(shown, granted)
-        suffix = f"{datetime.now(UTC):%Y%m%d}"
-        with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("select traffic_log_partition(current_date)")
-            migration = _migration("0083_traffic_log_read.py", cursor)
-            migration.downgrade()
-            cursor.execute("select to_regclass('public.traffic_log_read')")
-            self.assertEqual(cursor.fetchone(), (None,))
-            cursor.execute("select to_regclass(%s)", (f"public.traffic_log_{suffix}_cluster",))
-            self.assertEqual(cursor.fetchone(), (None,))
-            migration.upgrade()
+            columns = [row[0] for row in cursor.fetchall()]
             cursor.execute(
-                "select to_regclass(%s)::text", (f"public.traffic_log_{suffix}_cluster",)
+                "select count(*) from information_schema.column_privileges"
+                " where table_name = 'traffic_log' and grantee = 'app_web'"
             )
-            self.assertEqual(cursor.fetchone(), (f"traffic_log_{suffix}_cluster",))
+            granted = _first(cursor)
+            cursor.execute("select traffic_log_partition(current_date)")
+            cursor.execute(
+                "select to_regclass(%s)::text",
+                (f"public.traffic_log_{datetime.now(UTC):%Y%m%d}_cluster",),
+            )
+            indexed = _first(cursor)
             connection.rollback()
+        self.assertEqual(shown, sorted(set(columns) - {"event_id", "inserted_at"}))
+        self.assertEqual(granted, 0)
+        self.assertEqual(indexed, f"traffic_log_{datetime.now(UTC):%Y%m%d}_cluster")
 
     def test_the_planner_sees_the_search_index_statistics_for_the_web(self) -> None:
         """Through the view, the web's estimate of a search is the owner's (0083, D1).
@@ -2109,7 +2111,7 @@ class ARealDatabase(unittest.TestCase):
         self.assertGreaterEqual(waited, 4.5)
         self.assertLess(waited, 15)
 
-    def test_traffic_rule_is_bounded_and_downgrades_and_upgrades_cleanly(self) -> None:
+    def test_traffic_rule_is_bounded_and_each_day_indexes_it(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)
         suffix = f"{now:%Y%m%d}"
         with self.connect() as connection:
@@ -2137,7 +2139,7 @@ class ARealDatabase(unittest.TestCase):
                 (b"q" * 32, now),
             )
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
-            cursor.execute("select rule from traffic_log where host = 'rule.example.com'")
+            cursor.execute("select rule from traffic_log_read where host = 'rule.example.com'")
             self.assertEqual(cursor.fetchall(), [("block-admin:deny",)])
         #
         # The WAF page's question and the traffic page's filter (Fas 21).
@@ -2208,25 +2210,14 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(nothing.entries, ())
         self.assertTrue(all(entry.rule for entry in hits.entries))
         self.assertTrue(all(not entry.rule for entry in none.entries))
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                _migration("0083_traffic_log_read.py", cursor).downgrade()
-                migration = _migration("0050_traffic_rule.py", cursor)
-                migration.downgrade()
-                cursor.execute(
-                    "select count(*) from information_schema.columns "
-                    "where table_name = 'traffic_log' and column_name = 'rule'"
-                )
-                self.assertEqual(cursor.fetchone(), (0,))
-                migration.upgrade()
-                cursor.execute(
-                    "select count(*) from pg_indexes where indexname = %s",
-                    (f"traffic_log_{suffix}_rule",),
-                )
-                self.assertEqual(cursor.fetchone(), (1,))
-            connection.rollback()
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select count(*) from pg_indexes where indexname = %s",
+                (f"traffic_log_{suffix}_rule",),
+            )
+            self.assertEqual(cursor.fetchone(), (1,))
 
-    def test_waf_findings_are_bounded_and_downgrade_and_upgrade_cleanly(self) -> None:
+    def test_waf_findings_are_bounded(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)
         insert = (
             "insert into traffic_log (event_id, cluster, node, occurred_at, "
@@ -2257,68 +2248,11 @@ class ARealDatabase(unittest.TestCase):
             connection.execute(insert, (b"v" * 32, now, "waf.example.com", "930120,932160", 43))
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute(
-                "select waf_rules, waf_score from traffic_log where host = 'waf.example.com'"
+                "select waf_rules, waf_score from traffic_log_read where host = 'waf.example.com'"
             )
             self.assertEqual(cursor.fetchall(), [("930120,932160", 43)])
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                _migration("0083_traffic_log_read.py", cursor).downgrade()
-                _migration("0081_update_check.py", cursor).downgrade()
-                migration = _migration("0051_waf_engine.py", cursor)
-                migration.downgrade()
-                cursor.execute(
-                    "select count(*) from information_schema.columns "
-                    "where table_name = 'traffic_log' and column_name in ('waf_rules', 'waf_score')"
-                )
-                self.assertEqual(cursor.fetchone(), (0,))
-                migration.upgrade()
-                cursor.execute(
-                    "select waf_rules, waf_score from traffic_log where host = 'waf.example.com'"
-                )
-                self.assertEqual(cursor.fetchall(), [("", 0)])
-            connection.rollback()
 
-    def test_0053_widens_the_id_shapes_a_database_kept_from_the_first_0052(self) -> None:
-        # Production was migrated with 0052 before it was edited, kept the narrow
-        # shapes and refused every engine ID with the object's name (26-10-03).
-        now = datetime.now(UTC).replace(microsecond=0)
-        dotted = "web-app.0b5e3c1a-7d42-4f0e-9c1b-2a6d8e4f7a90"
-        insert = (
-            "insert into waf_match (event_id, cluster, node, occurred_at, request_id, object, "
-            "rule_id, field, matched, path, client) values "
-            "(%s, 'alpha', 'node-a', %s, %s, 'web-app', 942100, '', 'x', '/', '192.0.2.10')"
-        )
-        with self.connect() as connection:
-            connection.execute("select waf_match_partition(%s::date)", (now.date(),))
-            connection.commit()
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "alter table waf_match drop constraint waf_match_request_id_shape, "
-                    "add constraint waf_match_request_id_shape "
-                    "check (request_id ~ '^[A-Za-z0-9_-]{1,64}$')"
-                )
-                cursor.execute(
-                    "alter table traffic_log drop constraint traffic_log_waf_id_shape, "
-                    "add constraint traffic_log_waf_id_shape "
-                    "check (waf_id ~ '^([A-Za-z0-9_-]{1,64})?$')"
-                )
-                cursor.execute("savepoint narrow")
-                with self.assertRaises(psycopg.errors.CheckViolation):
-                    cursor.execute(insert, (b"n" * 32, now, dotted))
-                cursor.execute("rollback to savepoint narrow")
-
-                _migration("0053_waf_id_shape.py", cursor).upgrade()
-
-                cursor.execute(insert, (b"n" * 32, now, dotted))
-                cursor.execute(
-                    "select pg_get_constraintdef(oid) from pg_constraint "
-                    "where conname = 'traffic_log_waf_id_shape' "
-                    "and conrelid = 'traffic_log'::regclass"
-                )
-                self.assertIn("_.-]{1,96}", _first(cursor))
-            connection.rollback()
-
-    def test_waf_matches_are_bounded_joined_and_downgrade_and_upgrade_cleanly(self) -> None:
+    def test_waf_matches_are_bounded_and_joined(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)
         insert = (
             "insert into waf_match (event_id, cluster, node, occurred_at, request_id, object, "
@@ -2401,22 +2335,6 @@ class ARealDatabase(unittest.TestCase):
             expired = [row[0] for row in cursor.fetchall()]
             self.assertIn(f"waf_match_{old:%Y%m%d}", expired)
             self.assertNotIn(f"waf_match_{now:%Y%m%d}", expired)
-            connection.rollback()
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                _migration("0083_traffic_log_read.py", cursor).downgrade()
-                migration = _migration("0052_waf_match.py", cursor)
-                migration.downgrade()
-                cursor.execute("select to_regclass('public.waf_match')")
-                self.assertEqual(cursor.fetchone(), (None,))
-                cursor.execute(
-                    "select count(*) from information_schema.columns "
-                    "where table_name = 'traffic_log' and column_name = 'waf_id'"
-                )
-                self.assertEqual(cursor.fetchone(), (0,))
-                migration.upgrade()
-                cursor.execute("select waf_id from traffic_log where host = 'match.example.com'")
-                self.assertEqual(cursor.fetchall(), [("",)])
             connection.rollback()
 
     # The WAF page's question as it was asked of the matches themselves until
@@ -2513,23 +2431,6 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(by_rule[(942100, "ARGS:q")][4:6], (3, 2))
         self.assertEqual(by_rule[(942100, "ARGS:q")][7], "newest")
         self.assertEqual(by_rule[(920350, "")][5], 1)  # an empty client is no client
-
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                #
-                # 0069 changed the client rollup after it, so it goes first
-                # and comes back last, leaving the schema at head.
-                #
-                later = _migration("0069_waf_counter_client_path.py", cursor)
-                later.downgrade()
-                migration = _migration("0054_waf_finding_rollup.py", cursor)
-                migration.downgrade()
-                cursor.execute("select to_regclass('public.waf_finding_path')")
-                self.assertEqual(cursor.fetchone(), (None,))
-                migration.upgrade()
-                later.upgrade()
-            connection.commit()
-        self.assertEqual(self.waf_findings_both_ways(since), (counted, counted))
 
         script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         expired = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
@@ -2693,7 +2594,7 @@ class ARealDatabase(unittest.TestCase):
                 _ingest_part(config, connection, target, part)
             self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
-            cursor.execute("select count(*) from traffic_log where host = 'copy.example.com'")
+            cursor.execute("select count(*) from traffic_log_read where host = 'copy.example.com'")
             self.assertEqual(cursor.fetchone(), (1,))
 
     def test_the_waf_engine_s_matches_are_stored_once_and_the_cursor_follows(self) -> None:
@@ -2826,7 +2727,7 @@ class ARealDatabase(unittest.TestCase):
                 self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
                 connection.cursor() as cursor,
             ):
-                cursor.execute("select count(*) from traffic_log where host = %s", (host,))
+                cursor.execute("select count(*) from traffic_log_read where host = %s", (host,))
                 row = cursor.fetchone()
                 return -1 if row is None else int(row[0])
 
@@ -2933,7 +2834,9 @@ class ARealDatabase(unittest.TestCase):
             checkpoint = root / f".{part.name}.database-offset"
             self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
-            cursor.execute("select count(*) from traffic_log where host = 'skipped.example.com'")
+            cursor.execute(
+                "select count(*) from traffic_log_read where host = 'skipped.example.com'"
+            )
             self.assertEqual(cursor.fetchone(), (1,))
 
     def test_a_record_still_being_written_is_left_for_the_next_run(self) -> None:
@@ -2981,7 +2884,9 @@ class ARealDatabase(unittest.TestCase):
                 self.assertEqual(_ingest_part(config, connection, target, part), 0)
             self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
-            cursor.execute("select count(*) from traffic_log where host = 'partial.example.com'")
+            cursor.execute(
+                "select count(*) from traffic_log_read where host = 'partial.example.com'"
+            )
             self.assertEqual(cursor.fetchone(), (1,))
 
     def test_the_database_names_the_days_it_can_still_store(self) -> None:
@@ -2997,30 +2902,28 @@ class ARealDatabase(unittest.TestCase):
         self.assertIn(f"{datetime.now(UTC):%Y%m%d}", days)
         self.assertNotIn("19990101", days)
 
-    def test_the_queue_refuses_a_retired_operation_and_keeps_its_history(self) -> None:
-        """0087 (review 2026-10-22, 6-6): what the worker cannot prepare cannot be queued."""
+    def test_the_queue_refuses_an_operation_the_worker_cannot_prepare(self) -> None:
+        """0087 (review 2026-10-22, 6-6), for every row since the baseline (B369)."""
 
         insert = (
             "insert into job (operation, cluster, payload, idempotency_key, state) "
             "values (%s, %s, '{}', %s, 'pending')"
         )
         with self.connect() as connection, connection.cursor() as cursor:
-            with _retired_operations(cursor):
-                cursor.execute(insert, ("network_publish", "alpha", uuid4()))
-            cursor.execute("savepoint refused")
-            with self.assertRaises(psycopg.errors.CheckViolation):
-                cursor.execute(insert, ("objects_publish", "beta", uuid4()))
-            cursor.execute("rollback to savepoint refused")
-            cursor.execute("select count(*) from job where operation = 'network_publish'")
-            self.assertGreaterEqual(_first(cursor), 1)
+            for retired in ("network_publish", "objects_publish", "cluster_settings_publish"):
+                with self.subTest(operation=retired):
+                    cursor.execute("savepoint refused")
+                    with self.assertRaises(psycopg.errors.CheckViolation):
+                        cursor.execute(insert, (retired, "beta", uuid4()))
+                    cursor.execute("rollback to savepoint refused")
             cursor.execute(insert, ("dynamic_unblock", "gamma", uuid4()))
             connection.rollback()
 
-    def test_what_nothing_reads_is_gone_and_comes_back_with_a_downgrade(self) -> None:
-        """0086 (review 2026-10-22, 3-6, 3-7): the 0023 views, the matches' request index
-        and the web's grant on them - and a downgrade that gives all three back."""
+    def test_what_nothing_reads_is_not_there(self) -> None:
+        """0086 (review 2026-10-22, 3-6, 3-7): no 0023 views, no request index on the
+        matches, and no web grant on them."""
 
-        def state(cursor: psycopg.Cursor) -> tuple[Any, ...]:
+        with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select to_regclass('public.metric_listener') is not null")
             views = _first(cursor)
             cursor.execute(
@@ -3030,20 +2933,11 @@ class ARealDatabase(unittest.TestCase):
             indexes = int(_first(cursor))
             cursor.execute("select has_table_privilege('app_web', 'waf_match', 'select')")
             web = _first(cursor)
-            return views, indexes > 0, web
-
-        with self.connect() as connection, connection.cursor() as cursor:
-            self.assertEqual(state(cursor), (False, False, False))
-            migration = _migration("0086_drop_unread.py", cursor)
-            migration.downgrade()
-            self.assertEqual(state(cursor), (True, True, False))
             cursor.execute(
                 "select has_column_privilege('app_web', 'waf_match', 'matched', 'select')"
             )
-            self.assertTrue(_first(cursor))
-            migration.upgrade()
-            self.assertEqual(state(cursor), (False, False, False))
-            connection.rollback()
+            matched = _first(cursor)
+        self.assertEqual((views, indexes > 0, web, matched), (False, False, False, False))
 
     def test_the_partitions_bounds_are_read_whatever_the_server_s_zone(self) -> None:
         """Review 2026-10-22, 3-4: west of UTC a day partition starts at 05:00Z, and the
@@ -3556,126 +3450,6 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
                 self.assertEqual(refused, kind == "refuse")
 
 
-@unittest.skipUnless(DSN, "run through ui/tools/test-database")
-class TheMetricTablesUnderTheirNewNames(unittest.TestCase):
-    """Migration 0023 renamed the metric tables and left the old names as views.
-
-    The views are what let the UI release before the rename accept this
-    revision: it reads and writes `metric_listener` during the minutes between
-    migration and activation, and again if the rename is rolled back. So the
-    old names must carry exactly the old grants, and a row written through one
-    name must be the row read through the other.
-    """
-
-    MIGRATION = (
-        Path(__file__).resolve().parents[1]
-        / "migrations"
-        / "versions"
-        / "0023_metric_table_names.py"
-    )
-
-    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
-        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
-
-    def test_the_old_names_are_views_over_the_new_tables(self) -> None:
-        with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                "select relname, relkind from pg_class where relname in "
-                "('metric_frontend', 'metric_backend_member', 'metric_backend_hour', "
-                " 'metric_listener', 'metric_pool_member', 'metric_pool_hour') order by 1"
-            )
-            self.assertEqual(
-                cursor.fetchall(),
-                [
-                    ("metric_backend_hour", "p"),
-                    ("metric_backend_member", "p"),
-                    ("metric_frontend", "p"),
-                    ("metric_listener", "v"),
-                    ("metric_pool_hour", "v"),
-                    ("metric_pool_member", "v"),
-                ],
-            )
-
-    def test_the_poller_writes_the_old_name_and_the_web_reads_the_new(self) -> None:
-        day = datetime.now(UTC).date()
-        with self.connect() as connection, connection.cursor() as cursor:
-            #
-            # Asked for under the old name, as the retention command installed
-            # beside the previous release still does; made under the new one.
-            #
-            cursor.execute("select metric_partition('metric_listener', %s::date)", (day,))
-            self.assertEqual(cursor.fetchone(), (f"metric_frontend_{day:%Y%m%d}",))
-        with (
-            self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
-            connection.cursor() as cursor,
-        ):
-            cursor.execute(
-                "insert into metric_listener "
-                "(cluster, node, frontend, owns_vip, uptime_sec, req_tot) "
-                "values ('bridge', 'node-a', 'mgd-old-name', true, 60, 7)"
-            )
-        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
-            cursor.execute(
-                "select req_tot, observed_at is not null from metric_frontend "
-                "where cluster = 'bridge' and frontend = 'mgd-old-name'"
-            )
-            self.assertEqual(cursor.fetchall(), [(7, True)])
-
-    def test_the_rollup_boundary_moved_with_the_table(self) -> None:
-        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
-            cursor.execute("select rollup_name from metric_rollup_state order by 1")
-            self.assertEqual(cursor.fetchall(), [("backend_hour",)])
-
-    def test_partitions_and_their_indexes_are_renamed_with_the_parent(self) -> None:
-        """The rename loop, exercised against a partition it has to carry along.
-
-        The harness migrates an empty database, so no partition existed when
-        0023 ran. This makes one, runs the migration's own downgrade and upgrade
-        through the same statements alembic would, and checks the partition, its
-        primary key, the read index and the check constraint changed prefix each
-        way - because the retention command finds partitions by prefix, and one
-        left behind would never be dropped.
-        """
-
-        day = datetime.now(UTC).date() + timedelta(days=200)
-        suffix = f"{day:%Y%m%d}"
-        migration = self.load_migration()
-
-        def names(cursor: psycopg.Cursor, prefix: str) -> set[str]:
-            cursor.execute(
-                "select relname from pg_class where relname like %s "
-                "union select conname from pg_constraint where conname like %s",
-                (prefix + "%", prefix + "%"),
-            )
-            return {row[0] for row in cursor.fetchall()}
-
-        with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("select metric_partition('metric_frontend', %s::date)", (day,))
-            migration.op = _Executes(cursor)
-            migration.downgrade()
-            old = names(cursor, "metric_listener")
-            self.assertIn(f"metric_listener_{suffix}", old)
-            self.assertIn(f"metric_listener_{suffix}_pkey", old)
-            self.assertIn("metric_listener_read", old)
-            self.assertIn("metric_listener_cluster_shape", old)
-            self.assertFalse(names(cursor, "metric_frontend"))
-            migration.upgrade()
-            new = names(cursor, "metric_frontend")
-            self.assertIn(f"metric_frontend_{suffix}", new)
-            self.assertIn(f"metric_frontend_{suffix}_pkey", new)
-            self.assertIn("metric_frontend_read", new)
-            self.assertIn("metric_frontend_cluster_shape", new)
-            self.assertEqual(names(cursor, "metric_listener"), {"metric_listener"})
-
-    def load_migration(self) -> Any:
-        spec = importlib.util.spec_from_file_location("migration_0023", self.MIGRATION)
-        if spec is None or spec.loader is None:
-            self.fail(f"cannot load {self.MIGRATION}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
-
 def _contains(expression: Any, text: str) -> bool:
     """What a search means, said plainly, for the database's answer to be held to."""
 
@@ -3688,16 +3462,6 @@ def _contains(expression: Any, text: str) -> bool:
     return _contains(expression.left, text) or _contains(expression.right, text)
 
 
-class _Executes:
-    """What the migration needs of alembic's `op`: `execute`, on our cursor."""
-
-    def __init__(self, cursor: psycopg.Cursor) -> None:
-        self.cursor = cursor
-
-    def execute(self, sql: str) -> None:
-        self.cursor.execute(sql)
-
-
 def _first(cursor: psycopg.Cursor) -> Any:
     """The first column of the row the last statement returned, which it must have."""
 
@@ -3707,31 +3471,149 @@ def _first(cursor: psycopg.Cursor) -> Any:
     return row[0]
 
 
-@contextlib.contextmanager
-def _retired_operations(cursor: psycopg.Cursor) -> Iterator[None]:
-    """Rows of the operations 0087 retired, as an installation from before it holds them.
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheMetricTablesKeepWhatTheReaderReads(unittest.TestCase):
+    """The metric tables as migrated, held to the lists the node, reader and rollup use.
 
-    The constraint is `not valid` for them: written while it permitted them,
-    kept after (review 2026-10-22, 6-6).
+    Read from the catalogue rather than from a migration's text, so a later
+    migration that adds or drops a counter is held here too (the baseline, B369).
     """
 
-    retired = _migration("0087_job_operations_retired.py", cursor)
-    retired.downgrade()
-    yield
-    retired.upgrade()
+    def connect(self) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}")
 
+    def columns(self, table: str) -> list[tuple[str, str, str, str | None]]:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select column_name, data_type, is_nullable, column_default"
+                "  from information_schema.columns where table_name = %s order by ordinal_position",
+                (table,),
+            )
+            return [(name, kind, nullable, default) for name, kind, nullable, default in cursor]
 
-def _migration(filename: str, cursor: psycopg.Cursor) -> Any:
-    """One migration module, loaded by file, with `op` bound to this cursor."""
+    def counters(self, table: str) -> list[str]:
+        """The cumulative counters: bigint, and none of uptime, deltas or another source's."""
 
-    path = Path(__file__).resolve().parents[1] / "migrations" / "versions" / filename
-    spec = importlib.util.spec_from_file_location(f"migration_{filename[:4]}", path)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {path}")
-    module: Any = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    module.op = _Executes(cursor)
-    return module
+        other = {"uptime_sec", "floor_uptime_sec", *metrics.DNS_COUNTERS, *metrics.SYSLOG_COUNTERS}
+        return [
+            name
+            for name, kind, _nullable, _default in self.columns(table)
+            if kind == "bigint" and not name.startswith("delta_") and name not in other
+        ]
+
+    def deltas(self, table: str) -> tuple[str, ...]:
+        return tuple(
+            name.removeprefix("delta_")
+            for name, *_ in self.columns(table)
+            if name.startswith("delta_")
+        )
+
+    def test_the_tables_store_exactly_what_the_reader_keeps(self) -> None:
+        for table in ("metric_frontend", "metric_backend_member", "metric_backend_hour"):
+            with self.subTest(table=table):
+                self.assertEqual(tuple(self.counters(table)), METRIC_COUNTERS)
+        names = [name for name, *_ in self.columns("metric_backend_member")]
+        self.assertEqual(tuple(n for n in names if n in metrics.DNS_COUNTERS), metrics.DNS_COUNTERS)
+        self.assertEqual(
+            tuple(n for n in names if n in metrics.SYSLOG_COUNTERS), metrics.SYSLOG_COUNTERS
+        )
+        self.assertNotIn("dns_latency_us", names)
+
+    def test_the_differences_stored_are_the_ones_the_readers_sum(self) -> None:
+        self.assertEqual(self.deltas("metric_frontend"), db.STORED_DELTAS)
+        self.assertEqual(self.deltas("metric_frontend_hour_delta"), db.STORED_DELTAS)
+        self.assertEqual(self.deltas("metric_backend_member"), db.BACKEND_DELTAS)
+        self.assertEqual(self.deltas("metric_backend_hour_delta"), db.BACKEND_DELTAS)
+        self.assertEqual(
+            (*db.STORED_DELTAS, *metrics.DNS_COUNTERS, *metrics.SYSLOG_COUNTERS), db.BACKEND_DELTAS
+        )
+        with self.connect() as connection, connection.cursor() as cursor:
+            for function, deltas in (
+                ("metric_frontend_delta", db.STORED_DELTAS),
+                ("metric_backend_member_delta", db.BACKEND_DELTAS),
+            ):
+                cursor.execute("select pg_get_functiondef(%s::regproc)", (function,))
+                body = _first(cursor)
+                for counter in deltas:
+                    with self.subTest(function=function, counter=counter):
+                        self.assertIn(f"delta_{counter}", body)
+
+    def test_every_counter_is_nullable_and_has_no_default(self) -> None:
+        """Null is "not applicable"; zero is a measurement. See the node script."""
+
+        for table in ("metric_frontend", "metric_backend_member"):
+            for name, kind, nullable, default in self.columns(table):
+                if kind == "bigint":
+                    with self.subTest(table=table, column=name):
+                        self.assertEqual((nullable, default), ("YES", None))
+
+    def test_the_samples_are_partitioned_by_day_with_no_default_partition(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            for table, key in (
+                ("metric_frontend", "RANGE (observed_at)"),
+                ("metric_backend_member", "RANGE (observed_at)"),
+                ("metric_backend_hour", "RANGE (bucket_at)"),
+            ):
+                cursor.execute("select pg_get_partkeydef(%s::regclass)", (table,))
+                self.assertEqual(_first(cursor), key)
+                cursor.execute(
+                    "select count(*) from pg_inherits i join pg_class c on c.oid = i.inhrelid"
+                    " where i.inhparent = %s::regclass"
+                    "   and pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT'",
+                    (table,),
+                )
+                self.assertEqual(_first(cursor), 0)
+            with self.assertRaisesRegex(psycopg.errors.RaiseException, "not a metric table"):
+                cursor.execute("select metric_partition('job', current_date)")
+
+    def test_one_poll_is_one_instant_and_a_cache_keeps_the_statement_clock(self) -> None:
+        """`executemany` sends a statement per row; the rows of one poll are one reading."""
+
+        observed = {
+            table: next(d for name, _k, _n, d in self.columns(table) if name == "observed_at")
+            for table in ("metric_frontend", "metric_backend_member", "cluster_status")
+        }
+        self.assertEqual(observed["metric_frontend"], "transaction_timestamp()")
+        self.assertEqual(observed["metric_backend_member"], "transaction_timestamp()")
+        self.assertNotEqual(observed["cluster_status"], "transaction_timestamp()")
+
+    def test_the_poller_writes_samples_and_never_their_time_and_nobody_changes_one(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select table_name, column_name, grantee, privilege_type"
+                "  from information_schema.column_privileges"
+                " where table_name in ('metric_frontend', 'metric_backend_member',"
+                "                      'metric_backend_hour', 'metric_rollup_state')"
+                "   and grantee like 'app\\_%%'"
+            )
+            granted = set(cursor.fetchall())
+            cursor.execute(
+                "select table_name, privilege_type from information_schema.table_privileges"
+                " where table_name like 'metric\\_%%' and grantee like 'app\\_%%'"
+                "   and privilege_type in ('DELETE', 'UPDATE', 'TRUNCATE')"
+            )
+            changed = cursor.fetchall()
+        self.assertEqual(changed, [])
+        writes = {(t, c, g, k) for t, c, g, k in granted if k != "SELECT"}
+        self.assertTrue(writes)
+        self.assertEqual({(g, k) for _t, _c, g, k in writes}, {("app_poller", "INSERT")})
+        self.assertEqual({t for t, *_ in writes}, {"metric_frontend", "metric_backend_member"})
+        self.assertNotIn("observed_at", {c for _t, c, *_ in writes})
+        self.assertEqual(
+            {(c, g) for t, c, g, _k in granted if t == "metric_rollup_state"},
+            {("rollup_name", "app_web"), ("complete_before", "app_web")},
+        )
+
+    def test_a_rollup_row_is_an_hour_with_its_reading_and_its_floor(self) -> None:
+        names = {name for name, *_ in self.columns("metric_backend_hour")}
+        self.assertLessEqual({"uptime_sec", "floor_uptime_sec", "bucket_at"}, names)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select pg_get_constraintdef(oid) from pg_constraint"
+                " where conrelid = 'metric_backend_hour'::regclass and contype = 'c'"
+            )
+            checks = " ".join(row[0] for row in cursor.fetchall())
+        self.assertIn("date_trunc('hour'::text, bucket_at)", checks)
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
@@ -4133,37 +4015,6 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
                     idempotency_key=uuid4(),
                 )
 
-    def test_the_migration_downgrades_and_upgrades_cleanly_on_an_empty_queue(self) -> None:
-        """The whitelist narrows and widens with the table, both ways, in one transaction."""
-
-        migration_path = (
-            Path(__file__).resolve().parents[1]
-            / "migrations"
-            / "versions"
-            / "0025_dns_provider_profiles.py"
-        )
-        spec = importlib.util.spec_from_file_location("migration_0025", migration_path)
-        if spec is None or spec.loader is None:
-            self.fail(f"cannot load {migration_path}")
-        migration: Any = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(migration)
-
-        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
-            with connection.cursor() as cursor:
-                migration.op = _Executes(cursor)
-                migration.downgrade()
-                cursor.execute("select to_regclass('dns_provider_profile')")
-                self.assertEqual(cursor.fetchone(), (None,))
-                cursor.execute(
-                    "select pg_get_constraintdef(oid) from pg_constraint "
-                    "where conname = 'job_operation_allowed'"
-                )
-                self.assertNotIn("dns_profile_apply", _first(cursor))
-                migration.upgrade()
-                cursor.execute("select to_regclass('dns_provider_profile')")
-                self.assertEqual(cursor.fetchone(), ("dns_provider_profile",))
-            connection.rollback()
-
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class CertificateDeletion(unittest.TestCase):
@@ -4246,33 +4097,6 @@ class CertificateDeletion(unittest.TestCase):
             db.live_drafts(connection, ["alpha"])
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             self.assertEqual(db.live_drafts(connection, ["alpha"]), [])
-
-    def test_the_migration_downgrades_and_upgrades_cleanly_on_an_empty_queue(self) -> None:
-        migration_path = (
-            Path(__file__).resolve().parents[1] / "migrations" / "versions" / "0026_cert_delete.py"
-        )
-        spec = importlib.util.spec_from_file_location("migration_0026", migration_path)
-        if spec is None or spec.loader is None:
-            self.fail(f"cannot load {migration_path}")
-        migration: Any = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(migration)
-
-        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
-            with connection.cursor() as cursor:
-                migration.op = _Executes(cursor)
-                migration.downgrade()
-                cursor.execute(
-                    "select pg_get_constraintdef(oid) from pg_constraint "
-                    "where conname = 'job_operation_allowed'"
-                )
-                self.assertNotIn("cert_delete", _first(cursor))
-                migration.upgrade()
-                cursor.execute(
-                    "select pg_get_constraintdef(oid) from pg_constraint "
-                    "where conname = 'job_operation_allowed'"
-                )
-                self.assertIn("cert_delete", _first(cursor))
-            connection.rollback()
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
@@ -4873,35 +4697,6 @@ class AccountsFromTheWeb(unittest.TestCase):
             ):
                 self.web(statement)
 
-    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
-        migration_path = (
-            Path(__file__).resolve().parents[1]
-            / "migrations"
-            / "versions"
-            / "0039_accounts_from_the_web.py"
-        )
-        spec = importlib.util.spec_from_file_location("migration_0039", migration_path)
-        if spec is None or spec.loader is None:
-            self.fail(f"cannot load {migration_path}")
-        migration: Any = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(migration)
-
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                # 0041 builds on 0039's guard, so it steps back first and
-                # forward last, as a real downgrade to 0038 would.
-                later = _migration("0041_oidc_accounts.py", cursor)
-                later.downgrade()
-                migration.op = _Executes(cursor)
-                migration.downgrade()
-                cursor.execute("select to_regclass('login_unlock')")
-                self.assertEqual(cursor.fetchone(), (None,))
-                migration.upgrade()
-                cursor.execute("select to_regclass('login_unlock')")
-                self.assertEqual(cursor.fetchone(), ("login_unlock",))
-                later.upgrade()
-            connection.rollback()
-
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class FeatureSwitchesFromTheWeb(unittest.TestCase):
@@ -4933,79 +4728,6 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                 "update_check": False,
             },
         )
-
-    def test_the_waf_engine_switch_downgrades_and_upgrades_cleanly(self) -> None:
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                _migration("0083_traffic_log_read.py", cursor).downgrade()
-                _migration("0081_update_check.py", cursor).downgrade()
-                migration = _migration("0051_waf_engine.py", cursor)
-                migration.downgrade()
-                with self.assertRaises(psycopg.errors.CheckViolation):
-                    cursor.execute("insert into feature_switch (name) values ('waf_engine')")
-            connection.rollback()
-            with connection.cursor() as cursor:
-                _migration("0083_traffic_log_read.py", cursor).downgrade()
-                _migration("0081_update_check.py", cursor).downgrade()
-                migration = _migration("0051_waf_engine.py", cursor)
-                migration.downgrade()
-                migration.upgrade()
-                cursor.execute("select enabled from feature_switch where name = 'waf_engine'")
-                self.assertEqual(cursor.fetchone(), (False,))
-            connection.rollback()
-
-    def test_the_advanced_config_switch_downgrades_and_upgrades_cleanly(self) -> None:
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                _migration("0083_traffic_log_read.py", cursor).downgrade()
-                _migration("0081_update_check.py", cursor).downgrade()
-                _migration("0051_waf_engine.py", cursor).downgrade()
-                migration = _migration("0049_advanced_config_switch.py", cursor)
-                migration.downgrade()
-                cursor.execute("select name from feature_switch order by name")
-                self.assertEqual(
-                    cursor.fetchall(),
-                    [("cert_receivers",), ("cluster_colours",), ("node_backups",)],
-                )
-                with self.assertRaises(psycopg.errors.CheckViolation):
-                    cursor.execute("insert into feature_switch (name) values ('advanced_config')")
-            connection.rollback()
-            with connection.cursor() as cursor:
-                _migration("0083_traffic_log_read.py", cursor).downgrade()
-                _migration("0081_update_check.py", cursor).downgrade()
-                _migration("0051_waf_engine.py", cursor).downgrade()
-                migration = _migration("0049_advanced_config_switch.py", cursor)
-                migration.downgrade()
-                migration.upgrade()
-                cursor.execute("select enabled from feature_switch where name = 'advanced_config'")
-                self.assertEqual(cursor.fetchone(), (False,))
-            connection.rollback()
-
-    def test_the_colours_switch_downgrades_and_upgrades_cleanly(self) -> None:
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                _migration("0083_traffic_log_read.py", cursor).downgrade()
-                _migration("0081_update_check.py", cursor).downgrade()
-                _migration("0051_waf_engine.py", cursor).downgrade()
-                _migration("0049_advanced_config_switch.py", cursor).downgrade()
-                migration = _migration("0042_cluster_colours_switch.py", cursor)
-                migration.downgrade()
-                cursor.execute("select name from feature_switch order by name")
-                self.assertEqual(cursor.fetchall(), [("cert_receivers",), ("node_backups",)])
-                with self.assertRaises(psycopg.errors.CheckViolation):
-                    cursor.execute("insert into feature_switch (name) values ('cluster_colours')")
-            connection.rollback()
-            with connection.cursor() as cursor:
-                _migration("0083_traffic_log_read.py", cursor).downgrade()
-                _migration("0081_update_check.py", cursor).downgrade()
-                _migration("0051_waf_engine.py", cursor).downgrade()
-                _migration("0049_advanced_config_switch.py", cursor).downgrade()
-                migration = _migration("0042_cluster_colours_switch.py", cursor)
-                migration.downgrade()
-                migration.upgrade()
-                cursor.execute("select enabled from feature_switch where name = 'cluster_colours'")
-                self.assertEqual(cursor.fetchone(), (True,))
-            connection.rollback()
 
     def test_the_web_flips_a_switch_once_and_remembers_what_it_is_given(self) -> None:
         with self.connect() as connection:
@@ -5290,30 +5012,6 @@ class OidcAccounts(unittest.TestCase):
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),
             ):
                 self.web(statement)
-
-    def test_the_downgrade_refuses_while_a_provider_account_exists(self) -> None:
-        self.web("insert into app_user (username, role, source) values ('dave', 'reader', 'oidc')")
-        with self.connect() as connection:
-            with connection.cursor() as cursor, self.assertRaises(psycopg.errors.RaiseException):
-                _migration("0041_oidc_accounts.py", cursor).downgrade()
-            connection.rollback()
-
-    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                migration = _migration("0041_oidc_accounts.py", cursor)
-                migration.downgrade()
-                cursor.execute("select to_regclass('oidc_provider'), to_regclass('oidc_login')")
-                self.assertEqual(cursor.fetchone(), (None, None))
-                cursor.execute(
-                    "select count(*) from information_schema.columns "
-                    "where table_name = 'app_user' and column_name = 'source'"
-                )
-                self.assertEqual(cursor.fetchone(), (0,))
-                migration.upgrade()
-                cursor.execute("select count(*) from oidc_provider")
-                self.assertEqual(cursor.fetchone(), (1,))
-            connection.rollback()
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
@@ -5684,28 +5382,6 @@ class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
             (found.username, found.source, found.password_hash), ("alice", "oidc", None)
         )
 
-    def test_0072_removes_unbound_provider_accounts_and_keeps_sign_in_verified(self) -> None:
-        """B297: what an admin prepared goes, what signed in stays, `auto_create` is on."""
-
-        with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                "insert into app_user (username, role, source) values ('bob', 'reader', 'oidc')"
-            )
-            cursor.execute(
-                "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
-                "values ('carol', 'reader', 'oidc', 'https://id.example/', 's1')"
-            )
-            # The schema before 0079, where the column 0072 turns on still is.
-            _migration("0079_accounts_binding_gone.py", cursor).downgrade()
-            cursor.execute("update oidc_provider set auto_create = false")
-            cursor.execute("update oidc_provider set verified_revision = revision")
-            _migration("0072_accounts_from_the_groups.py", cursor).upgrade()
-            cursor.execute("select username from app_user where source = 'oidc' order by 1")
-            self.assertEqual(cursor.fetchall(), [("carol",)])
-            cursor.execute("select auto_create, verified_revision = revision from oidc_provider")
-            self.assertEqual(cursor.fetchone(), (True, True))
-            connection.rollback()
-
     def test_0079_takes_the_setting_and_the_binding_away(self) -> None:
         """B297: no `auto_create`, no binding by the web; the revision still moves."""
 
@@ -5733,22 +5409,6 @@ class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
                 connection.execute(
                     "update app_user set oidc_subject = 's2' where username = 'carol'"
                 )
-
-    def test_0079_downgrade_puts_both_back(self) -> None:
-        with self.connect() as connection, connection.cursor() as cursor:
-            _migration("0079_accounts_binding_gone.py", cursor).downgrade()
-            cursor.execute("select auto_create, revision from oidc_provider")
-            on, before = cursor.fetchone() or (None, None)
-            self.assertIs(on, True)
-            cursor.execute("update oidc_provider set auto_create = false")
-            cursor.execute("select revision from oidc_provider")
-            self.assertEqual(_first(cursor), before + 1)
-            cursor.execute(
-                "select has_column_privilege(%s, 'app_user', 'oidc_subject', 'update')",
-                (os.environ["HAPRION_UI_TEST_WEB_ROLE"],),
-            )
-            self.assertIs(_first(cursor), True)
-            connection.rollback()
 
     def test_a_sign_in_in_progress_is_used_once_and_expires(self) -> None:
         pre = auth.token_hash("pre")
@@ -6200,9 +5860,6 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
     since then, against the same reference (`TheHourlySumsAnswerAsTheReadersDid`).
     """
 
-    MIGRATION = (
-        Path(__file__).resolve().parents[1] / "migrations" / "versions" / "0048_metric_deltas.py"
-    )
     CLUSTER = "deltas"
     BACKEND = "mgd-shop-web"
     FRONTEND = "mgd-main-https"
@@ -6427,42 +6084,6 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
                         ).fetchone(),
                     )
 
-    def test_the_rows_filled_in_by_the_migration_are_the_rows_the_trigger_writes(self) -> None:
-        specification = importlib.util.spec_from_file_location("metric_deltas", self.MIGRATION)
-        if specification is None or specification.loader is None:
-            self.fail("migration 0048 could not be loaded")
-        migration = importlib.util.module_from_spec(specification)
-        specification.loader.exec_module(migration)
-        names = ["previous_at", "restarted", *(f"delta_{name}" for name in migration.COUNTERS)]
-        stored = psycopg.sql.SQL(", ").join(psycopg.sql.Identifier(name) for name in names)
-        with self.connect() as connection:
-            for table, series, held in (
-                ("metric_backend_member", "cluster, node, backend, member", "true"),
-                ("metric_frontend", "cluster, node, frontend", "owns_vip"),
-            ):
-                with self.subTest(table=table):
-                    keys = psycopg.sql.SQL(", ").join(
-                        psycopg.sql.Identifier(name.strip()) for name in series.split(",")
-                    )
-                    order = psycopg.sql.SQL(
-                        "select {stored} from {table} where cluster = %s order by {keys}, observed_at"
-                    ).format(stored=stored, table=psycopg.sql.Identifier(table), keys=keys)
-                    written = connection.execute(order, (self.CLUSTER,)).fetchall()
-                    connection.execute(
-                        psycopg.sql.SQL("update {table} set {cleared} where cluster = %s").format(
-                            table=psycopg.sql.Identifier(table),
-                            cleared=psycopg.sql.SQL(", ").join(
-                                psycopg.sql.SQL("{} = null").format(psycopg.sql.Identifier(name))
-                                for name in names
-                            ),
-                        ),
-                        (self.CLUSTER,),
-                    )
-                    connection.execute(migration._backfill(table, series, held))
-                    self.assertEqual(connection.execute(order, (self.CLUSTER,)).fetchall(), written)
-                    self.assertTrue(any(row[0] is not None for row in written))
-            connection.rollback()
-
     def test_the_poller_writes_a_sample_and_may_not_write_what_is_derived_from_it(self) -> None:
         with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             connection.execute(
@@ -6490,30 +6111,16 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
 class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
     """Migration 0055: long windows read hourly sums, against the reads they replaced.
 
-    33 days of samples every 20 minutes on two nodes, in two histories:
-
-    - `CARRIED`, a backend as production holds it when 0055 runs: the hourly
-      rollup for every hour, raw rows from a midnight about a week back, older
-      ones pruned. The migration's own fill builds its sums, and the facit is
-      the reader before 0055 (`metric_totals_reference`), rollup half included,
-      with its boundary where the raw rows begin.
-    - `GROWN`, a backend and a frontend whose every sample arrived after 0055:
-      the trigger built their sums and every raw row is kept, so the facit is
-      the raw readers themselves.
+    33 days of samples every 20 minutes on two nodes: a backend and a frontend
+    whose every sample the trigger summed, with every raw row kept, so the facit
+    is the raw readers themselves.
 
     Each carries a restart, a counter that goes backwards without one, an
     unknown counter and three hours with no sample, once in the older half and
     once in the last week; the frontend's address moves every three hours.
     """
 
-    MIGRATION = (
-        Path(__file__).resolve().parents[1]
-        / "migrations"
-        / "versions"
-        / "0055_metric_hour_delta.py"
-    )
     CLUSTER = "hours"
-    CARRIED = "mgd-carried-web"
     GROWN = "mgd-grown-web"
     FRONTEND = "mgd-grown-https"
     COLUMNS = (
@@ -6533,7 +6140,6 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
     GAPS = (range(1500, 1509), range(2250, 2259))
     now: datetime
     start: datetime
-    pruned_before: datetime
     migration: Any
 
     @classmethod
@@ -6542,20 +6148,8 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        specification = importlib.util.spec_from_file_location("metric_hour_delta", cls.MIGRATION)
-        if specification is None or specification.loader is None:
-            raise AssertionError("migration 0055 could not be loaded")
-        cls.migration = importlib.util.module_from_spec(specification)
-        specification.loader.exec_module(cls.migration)
-
         cls.now = datetime.now(UTC).replace(microsecond=0)
         cls.start = cls.now - timedelta(days=33)
-        #
-        # Retention drops whole days; the raw rows begin at a midnight.
-        #
-        cls.pruned_before = datetime.combine(
-            (cls.now - timedelta(days=7)).date(), datetime.min.time(), UTC
-        )
         with cls.connect() as connection:
             cursor = connection.cursor()
             day = cls.start.date() - timedelta(days=1)
@@ -6566,37 +6160,9 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                     "select metric_month_partition('metric_backend_hour', %s::date)", (day,)
                 )
                 day += timedelta(days=1)
-            for backend in (cls.CARRIED, cls.GROWN):
-                cls._backend(cursor, backend)
+            cls._backend(cursor, cls.GROWN)
             cls._frontend(cursor)
-            cls._roll_up(cursor)
             connection.commit()
-            #
-            # What production holds when 0055 runs: a week of raw rows, the
-            # rollup, and the migration's fill - not the trigger's sums.
-            #
-            cursor.execute(
-                "delete from metric_backend_member "
-                "where cluster = %s and backend = %s and observed_at < %s",
-                (cls.CLUSTER, cls.CARRIED, cls.pruned_before),
-            )
-            cursor.execute(
-                "delete from metric_backend_hour_delta where cluster = %s and backend = %s",
-                (cls.CLUSTER, cls.CARRIED),
-            )
-            keys = cls.migration.SERIES["metric_backend_hour_delta"][1]
-            scope = f"and cluster = '{cls.CLUSTER}' and backend = '{cls.CARRIED}'"
-            cursor.execute(
-                cls.migration._summed(
-                    "metric_backend_hour_delta", "metric_backend_member", keys, scope
-                )
-                + cls.migration._merge("metric_backend_hour_delta", keys)
-            )
-            cursor.execute(
-                cls.migration._from_rollup(
-                    f"and rolled.cluster = '{cls.CLUSTER}' and rolled.backend = '{cls.CARRIED}'"
-                )
-            )
 
     @classmethod
     def _readings(cls, node: str) -> list[tuple[datetime, int, dict[str, int | None]]]:
@@ -6676,27 +6242,6 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                 ],
             )
 
-    @classmethod
-    def _roll_up(cls, cursor: psycopg.Cursor[Any]) -> None:
-        """The carried backend's rollup, as retention writes it: each hour's last reading."""
-
-        columns = ", ".join(cls.COLUMNS)
-        cursor.execute(
-            f"""
-            insert into metric_backend_hour (cluster, node, backend, member, bucket_at,
-                   observed_at, uptime_sec, floor_uptime_sec, {columns})
-            select distinct on (node, date_trunc('hour', observed_at))
-                   cluster, node, backend, member, date_trunc('hour', observed_at),
-                   observed_at, uptime_sec,
-                   min(uptime_sec) over (partition by node, date_trunc('hour', observed_at)),
-                   {columns}
-              from metric_backend_member
-             where cluster = %s and backend = %s
-             order by node, date_trunc('hour', observed_at), observed_at desc
-            """,  # noqa: S608 - the interpolated names are this class's constants
-            (cls.CLUSTER, cls.CARRIED),
-        )
-
     def ranges(self) -> list[tuple[str, datetime, datetime]]:
         """Figures' ranges: the two long windows, and marks mid-hour across every case."""
 
@@ -6741,27 +6286,6 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
             db.BACKEND_HOUR_SCOPE,
             db.BACKEND_SCOPE,
         )
-
-    def test_the_carried_backend_s_figures_are_the_reader_s_before_0055(self) -> None:
-        from tests import metric_totals_reference as reference
-
-        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
-            for name, since, until in self.ranges():
-                arguments = {
-                    "cluster": self.CLUSTER,
-                    "backend": self.CARRIED,
-                    **db._history(self.CARRIED, ()),
-                    "member": "BACKEND",
-                    "since": since,
-                    "after": since,
-                    "until": until,
-                    "raw_from": self.pruned_before,
-                }
-                with self.subTest(range=name):
-                    expected = connection.execute(reference.backend_totals(), arguments).fetchone()
-                    actual = connection.execute(self.backend_hours(), arguments).fetchone()
-                    self.assertEqual(actual, expected)
-                    self.assertGreater(expected[0] if expected else 0, 0)
 
     def test_the_grown_series_figures_are_the_raw_readers(self) -> None:
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
@@ -6857,170 +6381,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                         expected,
                     )
 
-    def test_the_carried_backend_s_drawing_groups_the_old_pairing_as_the_raw_reader_groups(
-        self,
-    ) -> None:
-        """Every pair the reader before 0055 made, grouped the way `_bucketed_changes` groups.
-
-        The hourly half is paired from the rollup by `metrics.intervals`, one
-        node at a time, and the raw half is read sample by sample. Grouped per
-        node, bucket and whether the pair lies in an earlier bucket - summing
-        as SQL sums, where an unknown counter is skipped - that is the drawing
-        the raw rows would give if they had been kept.
-        """
-
-        from tests import metric_totals_reference as reference
-
-        names = ("req_tot", "hrsp_2xx", "hrsp_3xx", "hrsp_4xx", "hrsp_5xx", "econ", "wretr")
-        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
-            for since, width in self.windows():
-                with self.subTest(width=width):
-                    pairs: list[tuple[str, metrics.Interval]] = []
-                    for node in ("a", "b"):
-                        rows = connection.execute(
-                            reference._rolled_up(),
-                            {
-                                "cluster": self.CLUSTER,
-                                "backend": self.CARRIED,
-                                **db._history(self.CARRIED, ()),
-                                "member": "BACKEND",
-                                "since": since,
-                                "raw_from": self.pruned_before,
-                                "until": self.now,
-                            },
-                        ).fetchall()
-                        pairs.extend(
-                            (node, interval)
-                            for interval in metrics.intervals(
-                                [
-                                    metrics.Sample(
-                                        observed_at=row[1],
-                                        member="BACKEND",
-                                        uptime_sec=row[2],
-                                        floor_uptime_sec=row[3],
-                                        node=row[4],
-                                        counters=dict(
-                                            zip(metrics.METRIC_COUNTERS, row[5:], strict=True)
-                                        ),
-                                    )
-                                    for row in rows
-                                    if row[4] == node
-                                ]
-                            )
-                        )
-                    columns = ", ".join(f"delta_{name}" for name in names)
-                    for row in connection.execute(
-                        f"select node, previous_at, observed_at, restarted, {columns} "  # noqa: S608 - constants
-                        "  from metric_backend_member "
-                        " where cluster = %s and backend = %s and member = 'BACKEND' "
-                        "   and previous_at >= %s and observed_at <= %s",
-                        (self.CLUSTER, self.CARRIED, since, self.now),
-                    ).fetchall():
-                        pairs.append(
-                            (
-                                row[0],
-                                metrics.Interval(
-                                    started_at=row[1],
-                                    ended_at=row[2],
-                                    counters=dict(zip(names, row[4:], strict=True)),
-                                    restarted=row[3],
-                                ),
-                            )
-                        )
-
-                    groups: dict[tuple[str, int, bool], list[metrics.Interval]] = {}
-                    for node, interval in pairs:
-                        index = metrics._bucket_of(interval.ended_at, width)
-                        crossing = interval.started_at < metrics.BUCKET_EPOCH + width * index
-                        groups.setdefault((node, index, crossing), []).append(interval)
-                    expected = sorted(
-                        (
-                            min(interval.started_at for interval in group),
-                            max(interval.ended_at for interval in group),
-                            any(interval.restarted for interval in group),
-                            tuple(
-                                None
-                                if all(interval.counters.get(name) is None for interval in group)
-                                else sum(interval.counters.get(name) or 0 for interval in group)
-                                for name in names
-                            ),
-                        )
-                        for group in groups.values()
-                    )
-                    actual = sorted(
-                        (
-                            interval.started_at,
-                            interval.ended_at,
-                            interval.restarted,
-                            tuple(interval.counters.get(name) for name in names),
-                        )
-                        for interval in db.read_backend_series(
-                            connection,
-                            cluster=self.CLUSTER,
-                            backend=self.CARRIED,
-                            since=since,
-                            until=self.now,
-                            width=width,
-                        )
-                    )
-                    self.assertTrue(expected)
-                    self.assertEqual(actual, expected)
-
-    def test_the_fill_writes_what_the_trigger_writes(self) -> None:
-        with self.connect() as connection:
-            for table, (source, keys) in self.migration.SERIES.items():
-                series = "backend" if "backend" in keys else "frontend"
-                name = self.GROWN if series == "backend" else self.FRONTEND
-                with self.subTest(table=table):
-                    order = psycopg.sql.SQL(
-                        "select * from {table} where cluster = %s and {series} = %s "
-                        "order by node, hour, crossing"
-                    ).format(
-                        table=psycopg.sql.Identifier(table),
-                        series=psycopg.sql.Identifier(series),
-                    )
-                    written = connection.execute(order, (self.CLUSTER, name)).fetchall()
-                    #
-                    # Both nodes write every hour of a backend; a frontend's hour
-                    # only on the node holding the address, which alternates every
-                    # three hours. Its count lands around 2 x 33 x 24 and below it
-                    # depending on the minute the test starts (1571, 26-10-06 15:01).
-                    #
-                    self.assertGreater(len(written), (2 if series == "backend" else 1) * 33 * 24)
-                    connection.execute(
-                        psycopg.sql.SQL(
-                            "delete from {table} where cluster = %s and {series} = %s"
-                        ).format(
-                            table=psycopg.sql.Identifier(table),
-                            series=psycopg.sql.Identifier(series),
-                        ),
-                        (self.CLUSTER, name),
-                    )
-                    connection.execute(
-                        self.migration._summed(
-                            table,
-                            source,
-                            keys,
-                            f"and cluster = '{self.CLUSTER}' and {series} = '{name}'",
-                        )
-                        + self.migration._merge(table, keys)
-                    )
-                    self.assertEqual(
-                        connection.execute(order, (self.CLUSTER, name)).fetchall(), written
-                    )
-            connection.rollback()
-
-    def test_the_fill_keeps_no_rollup_hour_retention_would_delete(self) -> None:
-        with self.connect() as connection:
-            oldest = connection.execute(
-                "select min(hour) from metric_backend_hour_delta where cluster = %s and backend = %s",
-                (self.CLUSTER, self.CARRIED),
-            ).fetchone()
-        self.assertIsNotNone(oldest)
-        self.assertGreaterEqual(oldest[0], self.now - timedelta(days=31, hours=1))  # type: ignore[index]
-        self.assertLess(oldest[0], self.now - timedelta(days=30))  # type: ignore[index]
-
-    def test_retention_deletes_the_hours_the_fill_would_not_take(self) -> None:
+    def test_retention_deletes_the_hours_past_the_longest_window(self) -> None:
         script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         expired = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
@@ -7034,7 +6395,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
             text=True,
             check=True,
         ).stdout
-        self.assertIn(self.migration.KEPT, expired)
+        self.assertIn("interval '31 days'", expired)  # the longest window a card draws, and a day
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 psycopg.sql.SQL(
@@ -7094,21 +6455,6 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                 "order by node, hour, crossing"
             )
             written = connection.execute(order, (self.CLUSTER, backend)).fetchall()
-            connection.execute(
-                "delete from metric_backend_hour_delta where cluster = %s and backend = %s",
-                (self.CLUSTER, backend),
-            )
-            keys = self.migration.SERIES["metric_backend_hour_delta"][1]
-            connection.execute(
-                self.migration._summed(
-                    "metric_backend_hour_delta",
-                    "metric_backend_member",
-                    keys,
-                    f"and cluster = '{self.CLUSTER}' and backend = '{backend}'",
-                )
-                + self.migration._merge("metric_backend_hour_delta", keys)
-            )
-            self.assertEqual(connection.execute(order, (self.CLUSTER, backend)).fetchall(), written)
             self.assertEqual(sum(row[9] for row in written), 8)
             connection.rollback()
 
@@ -7436,23 +6782,6 @@ class TheLatencyIsGoneAndTheWorkerAloneRecordsRenames(unittest.TestCase):
                     connection, cluster="web-tries", renamed={"a": "b"}, introduced=[]
                 )
 
-    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                migration = _migration("0059_drop_dns_latency.py", cursor)
-                migration.downgrade()
-                self.assertEqual(
-                    self.latency_columns(cursor),
-                    {
-                        ("metric_backend_member", "dns_latency_us"),
-                        ("metric_backend_hour_delta", "dns_latency_us_sum"),
-                        ("metric_backend_hour_delta", "dns_latency_us_samples"),
-                    },
-                )
-                migration.upgrade()
-                self.assertEqual(self.latency_columns(cursor), set())
-            connection.rollback()
-
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
@@ -7677,47 +7006,6 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
             # and since 0059 there is no column to keep it in.
             #
             self.assertEqual(cursor.fetchall(), [("BACKEND", 15, 13, None), ("s1", 15, 13, "UP")])
-
-    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
-        def columns(cursor: psycopg.Cursor, table: str) -> set[str]:
-            cursor.execute(
-                "select column_name from information_schema.columns "
-                "where table_name = %s and column_name like %s",
-                (table, "%dns%"),
-            )
-            return {row[0] for row in cursor.fetchall()}
-
-        now = datetime.now(UTC).replace(microsecond=0)
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                migration = _migration("0057_metric_dns_counters.py", cursor)
-                migration.downgrade()
-                self.assertEqual(columns(cursor, "metric_backend_member"), set())
-                self.assertEqual(columns(cursor, "metric_backend_hour_delta"), set())
-                #
-                # HAProxy's rows still pair and sum under 0048's and 0055's functions.
-                #
-                for minutes, total in ((20, 5), (10, 12)):
-                    cursor.execute(
-                        "insert into metric_backend_member (cluster, node, backend, member, "
-                        "observed_at, uptime_sec, req_tot) "
-                        "values ('down', 'a', 'web', 'BACKEND', %s, %s, %s)",
-                        (now - timedelta(minutes=minutes), 100 - minutes, total),
-                    )
-                cursor.execute(
-                    "select sum(delta_req_tot) from metric_backend_hour_delta where cluster = 'down'"
-                )
-                self.assertEqual(cursor.fetchone(), (7,))
-                migration.upgrade()
-                self.assertEqual(
-                    columns(cursor, "metric_backend_member"),
-                    {
-                        *metrics.DNS_COUNTERS,
-                        LATENCY_0057,
-                        *(f"delta_{name}" for name in metrics.DNS_COUNTERS),
-                    },
-                )
-            connection.rollback()
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
@@ -7945,51 +7233,6 @@ class ASyslogPoolIsCountedAsABackendIs(unittest.TestCase):
                 [("BACKEND", 15, 1500, None), ("s1", 15, 1500, "UP"), ("s2", None, None, "DOWN")],
             )
 
-    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
-        def columns(cursor: psycopg.Cursor, table: str) -> set[str]:
-            cursor.execute(
-                "select column_name from information_schema.columns "
-                "where table_name = %s and column_name like %s",
-                (table, "%syslog%"),
-            )
-            return {row[0] for row in cursor.fetchall()}
-
-        now = datetime.now(UTC).replace(microsecond=0)
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                migration = _migration("0061_metric_syslog_counters.py", cursor)
-                migration.downgrade()
-                self.assertEqual(columns(cursor, "metric_backend_member"), set())
-                self.assertEqual(columns(cursor, "metric_backend_hour_delta"), set())
-                #
-                # dnsdist's rows still pair and sum under 0057's functions.
-                #
-                for minutes, total in ((20, 5), (10, 12)):
-                    cursor.execute(
-                        "insert into metric_backend_member (cluster, node, backend, member, "
-                        "observed_at, uptime_sec, dns_queries) "
-                        "values ('down', 'a', 'resolver', 'BACKEND', %s, %s, %s)",
-                        (now - timedelta(minutes=minutes), 100 - minutes, total),
-                    )
-                cursor.execute(
-                    "select sum(delta_dns_queries) from metric_backend_hour_delta "
-                    " where cluster = 'down'"
-                )
-                self.assertEqual(cursor.fetchone(), (7,))
-                migration.upgrade()
-                self.assertEqual(
-                    columns(cursor, "metric_backend_member"),
-                    {*metrics.SYSLOG_COUNTERS, *(f"delta_{n}" for n in metrics.SYSLOG_COUNTERS)},
-                )
-                self.assertEqual(
-                    columns(cursor, "metric_backend_hour_delta"),
-                    {
-                        *(f"delta_{n}" for n in metrics.SYSLOG_COUNTERS),
-                        *(f"span_{n}_sec" for n in metrics.SYSLOG_COUNTERS),
-                    },
-                )
-            connection.rollback()
-
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class AReloadThatKeepsTheCountersIsNoRestart(unittest.TestCase):
@@ -8134,39 +7377,6 @@ class AReloadThatKeepsTheCountersIsNoRestart(unittest.TestCase):
                 "uptime_sec, counters_kept, req_tot) values (%s, 'p', 'fe', true, 1, true, 1)",
                 (self.CLUSTER,),
             )
-
-    def test_downgrade_restores_the_old_rule_and_upgrade_the_new(self) -> None:
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                migration = _migration("0065_metric_counters_kept.py", cursor)
-                migration.downgrade()
-                for minutes, uptime, count in ((2, 100, 50), (3, 5, 60)):
-                    cursor.execute(
-                        "insert into metric_backend_member (cluster, node, backend, member, "
-                        "observed_at, uptime_sec, req_tot) "
-                        "values (%s, 'b', 'web', 's1', %s, %s, %s)",
-                        (self.CLUSTER, self.start + timedelta(minutes=minutes), uptime, count),
-                    )
-                cursor.execute(
-                    "select restarted, delta_req_tot from metric_backend_member "
-                    "where cluster = %s and node = 'b' order by observed_at desc limit 1",
-                    (self.CLUSTER,),
-                )
-                self.assertEqual(cursor.fetchone(), (True, 60))
-                migration.upgrade()
-                cursor.execute(
-                    "insert into metric_backend_member (cluster, node, backend, member, "
-                    "observed_at, uptime_sec, counters_kept, req_tot) "
-                    "values (%s, 'b', 'web', 's1', %s, 2, true, 64)",
-                    (self.CLUSTER, self.start + timedelta(minutes=4)),
-                )
-                cursor.execute(
-                    "select restarted, delta_req_tot from metric_backend_member "
-                    "where cluster = %s and node = 'b' order by observed_at desc limit 1",
-                    (self.CLUSTER,),
-                )
-                self.assertEqual(cursor.fetchone(), (False, 4))
-            connection.rollback()
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

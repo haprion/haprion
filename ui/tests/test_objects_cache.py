@@ -10,6 +10,7 @@ trust what it is showing.
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 from typing import Any
@@ -84,28 +85,32 @@ class TheTableIsTheOneTheRecorderWritesTo(unittest.TestCase):
     """Migration and recorder are one shape written twice, held together here."""
 
     def migration(self) -> str:
-        path = (
-            Path(__file__).resolve().parents[1]
-            / "migrations"
-            / "versions"
-            / "0014_objects_cache.py"
-        )
-        return path.read_text(encoding="utf-8")
+        """The last migration to speak of the table, in lower case."""
+
+        versions = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+        speaking = [
+            path
+            for path in sorted(versions.glob("[0-9]*.py"))
+            if "cluster_objects" in path.read_text(encoding="utf-8")
+        ]
+        self.assertTrue(speaking, "no migration makes the objects cache")
+        return speaking[-1].read_text(encoding="utf-8").lower()
 
     def test_the_web_role_may_read_and_never_write(self) -> None:
         """The cache is the poller's answer. A page that could write it could
         hide a failed reading behind an invented one."""
 
         migration = self.migration()
+        on = r"[^;\n]* on (?:table )?(?:public\.)?cluster_objects to "
 
-        self.assertIn("on cluster_objects to app_poller, app_web", migration)
-        self.assertNotIn("to app_web, app_poller", migration)
-        for grant in ("grant insert", "grant update"):
-            statement = migration.split(grant, 1)[1].split(";", 1)[0]
-            self.assertNotIn("app_web", statement)
+        self.assertRegex(migration, r"select ?\(outcome\)" + on + "app_web")
+        self.assertRegex(migration, r"insert ?\(outcome\)" + on + "app_poller")
+        self.assertNotRegex(migration, r"(?:insert|update|delete)" + on + "app_web")
 
     def test_the_outcome_values_are_the_ones_the_poller_writes(self) -> None:
-        self.assertIn("check (outcome in ('done', 'failed', 'unavailable'))", self.migration())
+        text = self.migration()
+        check = text[text.index("cluster_objects_outcome_allowed") :].split("\n", 1)[0]
+        self.assertEqual(set(re.findall(r"'([a-z_]+)'", check)), {"done", "failed", "unavailable"})
 
 
 if __name__ == "__main__":

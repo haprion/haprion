@@ -542,7 +542,7 @@ class ADraftOnItsWay(DraftReading):
         return Job(
             id=1,
             request_id=uuid4(),
-            operation="objects_publish",
+            operation="changes_publish",
             cluster="edge-demo",
             payload={"objects": {name: "schema: 1"}},
             state=state,
@@ -631,10 +631,10 @@ def publishes(jobs: list[Job]) -> Any:
         return [
             job
             for job in jobs
-            if job.operation == "objects_publish"
+            if job.operation == "changes_publish"
             and job.state == "done"
             and job.cluster == cluster
-            and (job.payload.get("draft") or {}).get("id") in draft_ids
+            and any(entry.get("id") in draft_ids for entry in job.payload.get("drafts", ()))
         ]
 
     return read
@@ -687,13 +687,13 @@ class ADraftThatWasPublished(DraftReading):
         #
         payload = {
             "objects": {name: "schema: 1"},
-            "draft": {"id": str(self.DRAFT_ID), "revision": revision},
+            "drafts": [{"id": str(self.DRAFT_ID), "revision": revision}],
             "expected_head": base,
         }
         return Job(
             id=1,
             request_id=uuid4(),
-            operation="objects_publish",
+            operation="changes_publish",
             cluster="edge-demo",
             payload=payload,
             state=state,
@@ -705,7 +705,7 @@ class ADraftThatWasPublished(DraftReading):
             result=None,
             stderr_excerpt=None,
             idempotency_key=_publish_key(
-                "edge-demo", "objects_publish", payload, drawn=UUID(int=1)
+                "edge-demo", "changes_publish", payload, drawn=UUID(int=1)
             ),
             attempts=0,
         )

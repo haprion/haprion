@@ -69,6 +69,14 @@ class Requirements:
     # UI to accept its head, as every release did then (the bridge).
     #
     rollback_safe_from: str | None = None
+    #
+    # The revision this release's migrations begin at (B369): every migration
+    # before it was folded into it. A database older than it is from an
+    # installation from before the baseline, which is installed afresh rather
+    # than migrated - there is nothing here that would carry it across. None in
+    # metadata from before the baseline.
+    #
+    database_baseline: str | None = None
 
 
 class Report:
@@ -137,6 +145,13 @@ def load_requirements(path: Path) -> Requirements:
         or rollback_safe_from > database_head
     ):
         raise CompatibilityError("rollback_safe_from must be a revision no later than the head")
+    database_baseline = required.get("database_baseline")
+    if database_baseline is not None and (
+        not isinstance(database_baseline, str)
+        or not is_digits(database_baseline)
+        or database_baseline > database_head
+    ):
+        raise CompatibilityError("database_baseline must be a revision no later than the head")
 
     return Requirements(
         engine_api=_positive_int(required.get("engine_api"), "engine_api"),
@@ -147,6 +162,7 @@ def load_requirements(path: Path) -> Requirements:
         poller_helpers=strings("poller_helpers"),
         socket_helpers=sockets("socket_helpers"),
         rollback_safe_from=rollback_safe_from,
+        database_baseline=database_baseline,
     )
 
 
@@ -240,6 +256,19 @@ def installed_entry_points(document: Mapping[str, Any]) -> set[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         return set()
     return set(value)
+
+
+def before_baseline(requirements: Requirements, revision: str) -> str | None:
+    """Why a database at `revision` cannot be taken to this release at all, or None (B369)."""
+
+    baseline = requirements.database_baseline
+    if baseline is None or not is_digits(revision) or revision >= baseline:
+        return None
+    return (
+        f"{revision} is from before this release's baseline {baseline}. Haprion 0.99 and later "
+        "are installed afresh, not upgraded from an earlier release: see docs/install.md, "
+        "'Removing'"
+    )
 
 
 def schema_upgrade_failures(
@@ -701,6 +730,42 @@ def first_install_error(args: argparse.Namespace) -> str | None:
     return None
 
 
+def check_schema_transition(
+    report: Report, platform_root: Path, requirements: Requirements, revision: str
+) -> None:
+    """The running UI over the schema now, and over this release's head after migrating."""
+
+    try:
+        active_release = current_release(platform_root, "UI")
+        active_requirements = ui_requirements(active_release)
+    except CompatibilityError as exc:
+        report.fail("schema transition", str(exc))
+        return
+    transition_failures = schema_upgrade_failures(active_requirements, requirements, revision)
+    if not any("current revision" in failure for failure in transition_failures):
+        report.pass_("running schema", f"{revision}, accepted by {active_release.name}")
+    else:
+        report.fail(
+            "running schema",
+            f"{revision}; running {active_release.name} does not accept it",
+        )
+    if not any("candidate head" in failure for failure in transition_failures):
+        report.pass_(
+            "rollback schema",
+            f"{requirements.database_head}, accepted by {active_release.name}"
+            if requirements.database_head in active_requirements.database_revisions
+            else f"{requirements.database_head}, rollback-safe from "
+            f"{requirements.rollback_safe_from} by its migrations; "
+            f"{active_release.name} stands at {active_requirements.database_head}",
+        )
+    else:
+        report.fail(
+            "rollback schema",
+            f"candidate head {requirements.database_head}; running "
+            f"{active_release.name} does not accept it",
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if os.geteuid() != 0:
@@ -773,44 +838,14 @@ def main(argv: list[str] | None = None) -> int:
         except CompatibilityError as exc:
             report.fail("schema revision", str(exc))
         else:
-            if args.upgrade_from_current:
-                try:
-                    active_release = current_release(args.platform_root, "UI")
-                    active_requirements = ui_requirements(active_release)
-                except CompatibilityError as exc:
-                    report.fail("schema transition", str(exc))
-                else:
-                    transition_failures = schema_upgrade_failures(
-                        active_requirements, requirements, revision
-                    )
-                    if not any("current revision" in failure for failure in transition_failures):
-                        report.pass_(
-                            "running schema", f"{revision}, accepted by {active_release.name}"
-                        )
-                    else:
-                        report.fail(
-                            "running schema",
-                            f"{revision}; running {active_release.name} does not accept it",
-                        )
-                    if not any("candidate head" in failure for failure in transition_failures):
-                        report.pass_(
-                            "rollback schema",
-                            f"{requirements.database_head}, accepted by {active_release.name}"
-                            if requirements.database_head in active_requirements.database_revisions
-                            else f"{requirements.database_head}, rollback-safe from "
-                            f"{requirements.rollback_safe_from} by its migrations; "
-                            f"{active_release.name} stands at {active_requirements.database_head}",
-                        )
-                    else:
-                        report.fail(
-                            "rollback schema",
-                            f"candidate head {requirements.database_head}; running "
-                            f"{active_release.name} does not accept it",
-                        )
-                revision = ""
-            if revision in requirements.database_revisions:
+            refusal = before_baseline(requirements, revision)
+            if refusal is not None:
+                report.fail("schema revision", refusal)
+            elif args.upgrade_from_current:
+                check_schema_transition(report, args.platform_root, requirements, revision)
+            elif revision in requirements.database_revisions:
                 report.pass_("schema revision", revision)
-            elif not args.upgrade_from_current:
+            else:
                 report.fail(
                     "schema revision",
                     f"{revision}; accepts {', '.join(requirements.database_revisions)}",

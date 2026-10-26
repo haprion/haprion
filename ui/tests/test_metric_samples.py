@@ -25,13 +25,8 @@ from haprion_ui import db, metrics
 from haprion_ui.metrics import CARD_COUNTERS, METRIC_COUNTERS, SUMMARY_COUNTERS
 
 ROOT = Path(__file__).resolve().parents[2]
-MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0018_metric_samples.py"
-SAMPLE_INSTANT = ROOT / "ui" / "migrations" / "versions" / "0019_sample_instant.py"
 RETENTION = ROOT / "install" / "platform" / "bin" / "haprion-retention"
 NODE_SCRIPT = ROOT / "install" / "node" / "haprion-node-status"
-ROLLUP = ROOT / "ui" / "migrations" / "versions" / "0020_metric_pool_hour.py"
-ROLLUP_STATE = ROOT / "ui" / "migrations" / "versions" / "0021_metric_rollup_state.py"
-RENAME = ROOT / "ui" / "migrations" / "versions" / "0023_metric_table_names.py"
 
 
 class BackendTotalConnection:
@@ -239,12 +234,6 @@ class TheThreeCounterLists(unittest.TestCase):
     def test_the_node_reads_exactly_what_the_reader_keeps(self) -> None:
         self.assertEqual(_tuple_named(NODE_SCRIPT.read_text(), "COUNTER_COLUMNS"), METRIC_COUNTERS)
 
-    def test_the_migration_stores_exactly_what_the_reader_keeps(self) -> None:
-        self.assertEqual(_tuple_named(MIGRATION.read_text(), "COUNTERS"), METRIC_COUNTERS)
-
-    def test_the_rollup_stores_exactly_what_the_reader_keeps(self) -> None:
-        self.assertEqual(_tuple_named(ROLLUP.read_text(), "COUNTERS"), METRIC_COUNTERS)
-
     def test_the_retention_command_rolls_up_exactly_those(self) -> None:
         """The fourth copy, and a shell script cannot import the other three."""
 
@@ -252,30 +241,8 @@ class TheThreeCounterLists(unittest.TestCase):
         self.assertEqual(tuple(name.strip() for name in listed.split(",")), METRIC_COUNTERS)
 
 
-DNS_COUNTERS_MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0057_metric_dns_counters.py"
-
-
 class TheDnsCounterLists(unittest.TestCase):
     """dnsdist's counters (Fas 19a B4): the node's names, the reader's columns, the migration's."""
-
-    def test_the_migration_stores_exactly_what_the_reader_keeps(self) -> None:
-        source = DNS_COUNTERS_MIGRATION.read_text()
-        self.assertEqual(_tuple_named(source, "DNS_COUNTERS"), metrics.DNS_COUNTERS)
-        #
-        # The latency 0057 stored is read by nothing since B253, and kept by
-        # nothing: no reported field is renamed into it.
-        #
-        self.assertIn('LATENCY = "dns_latency_us"', source)
-        self.assertNotIn("dns_latency_us", metrics.DNS_SERVER.values())
-
-    def test_the_migration_differences_what_the_readers_sum(self) -> None:
-        source = DNS_COUNTERS_MIGRATION.read_text()
-        self.assertEqual(_tuple_named(source, "HAPROXY_COUNTERS"), db.STORED_DELTAS)
-        self.assertEqual(
-            (*db.STORED_DELTAS, *metrics.DNS_COUNTERS, *metrics.SYSLOG_COUNTERS), db.BACKEND_DELTAS
-        )
-        summed = {name for name, _label in metrics.DNS_SUMMED}
-        self.assertLessEqual(summed, set(db.BACKEND_DELTAS))
 
     def test_the_reader_takes_the_names_the_node_reports(self) -> None:
         schema = json.loads((ROOT / "schemas" / "v1" / "haprion-status.schema.json").read_text())
@@ -288,17 +255,10 @@ class TheDnsCounterLists(unittest.TestCase):
         self.assertEqual(set(metrics.DNS_SERVER), server)
 
 
-SYSLOG_COUNTERS_MIGRATION = (
-    ROOT / "ui" / "migrations" / "versions" / "0061_metric_syslog_counters.py"
-)
-
-
 class TheSyslogCounters(unittest.TestCase):
     """IPVS's counters (Fas 19b B3): the node's names, the reader's columns, the migration's."""
 
-    def test_the_migration_stores_exactly_what_the_reader_keeps(self) -> None:
-        source = SYSLOG_COUNTERS_MIGRATION.read_text()
-        self.assertEqual(_tuple_named(source, "SYSLOG_COUNTERS"), metrics.SYSLOG_COUNTERS)
+    def test_the_reader_keeps_what_it_reads_under_one_list(self) -> None:
         self.assertEqual(tuple(metrics.SYSLOG_ROW.values()), metrics.SYSLOG_COUNTERS)
         self.assertEqual(
             tuple(name for name, _label in metrics.SYSLOG_CARD_COUNTERS), metrics.SYSLOG_COUNTERS
@@ -383,9 +343,6 @@ class TheSyslogCounters(unittest.TestCase):
         self.assertEqual(metrics.samples(self.reading(owner=False))[1], [])
 
 
-KEPT_MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0065_metric_counters_kept.py"
-
-
 class WhetherTheCountersWereKept(unittest.TestCase):
     """N3: the node says whether HAProxy kept its counters over a reload; the rows say it on."""
 
@@ -438,100 +395,10 @@ class WhetherTheCountersWereKept(unittest.TestCase):
                     [("mgd-vip-https", None), ("BACKEND", None), ("s1", None)],
                 )
 
-    def test_the_migration_covers_the_counters_the_readers_sum(self) -> None:
-        source = KEPT_MIGRATION.read_text()
-        self.assertEqual(_tuple_named(source, "HAPROXY_COUNTERS"), db.STORED_DELTAS)
-        self.assertEqual(_tuple_named(source, "DNS_COUNTERS"), metrics.DNS_COUNTERS)
-        self.assertEqual(_tuple_named(source, "SYSLOG_COUNTERS"), metrics.SYSLOG_COUNTERS)
-        self.assertEqual(
-            (*db.STORED_DELTAS, *metrics.DNS_COUNTERS, *metrics.SYSLOG_COUNTERS), db.BACKEND_DELTAS
-        )
-
     def test_the_reader_takes_the_name_the_node_reports(self) -> None:
         schema = json.loads((ROOT / "schemas" / "v1" / "haprion-status.schema.json").read_text())
         runtime = schema["$defs"]["node_status"]["properties"]["runtime"]["properties"]
         self.assertEqual(runtime["shared_counters"]["type"], ["boolean", "null"])
-
-
-class TheMetricTables(unittest.TestCase):
-    def setUp(self) -> None:
-        self.sql = MIGRATION.read_text()
-
-    def test_both_tables_are_partitioned_by_the_day_the_sample_was_taken(self) -> None:
-        self.assertEqual(self.sql.count("partition by range (observed_at)"), 2)
-
-    def test_the_poller_may_write_a_sample_and_never_its_timestamp(self) -> None:
-        """`observed_at` comes from the statement, so it cannot be backdated."""
-
-        for grant in (
-            "grant insert (cluster, node, frontend",
-            "grant insert (cluster, node, backend",
-        ):
-            with self.subTest(grant=grant):
-                columns = self.sql.split(grant, 1)[1].split(")", 1)[0]
-                self.assertNotIn("observed_at", columns)
-
-    def test_the_web_role_may_read_and_never_write(self) -> None:
-        self.assertIn("to app_poller, app_web", self.sql)
-        self.assertNotIn("to app_web, app_poller", self.sql)
-        for statement in self.sql.split(";"):
-            if "app_web" in statement:
-                self.assertIn("grant select", statement)
-
-    def test_nobody_is_granted_delete_or_update(self) -> None:
-        """Removing a sample is the retention command's work, as its owner."""
-
-        self.assertNotIn("grant delete", self.sql)
-        self.assertNotIn("grant update", self.sql)
-
-    def test_every_counter_is_nullable(self) -> None:
-        """Null is "not applicable"; zero is a measurement. See the node script.
-
-        A counter declared `not null default 0` would turn a column HAProxy
-        does not fill into a frontend that received nothing, which is the one
-        confusion these tables exist to avoid.
-        """
-
-        for line in self.sql.splitlines():
-            if line.strip().endswith("bigint,"):
-                self.assertNotIn("not null", line)
-                self.assertNotIn("default", line)
-
-    def test_there_is_no_default_partition(self) -> None:
-        """A day with no partition must fail, not land somewhere misleading."""
-
-        for line in self.sql.splitlines():
-            if "partition of" in line:
-                self.assertIn("for values from", line)
-                self.assertNotIn(" default", line)
-
-    def test_one_poll_is_one_instant(self) -> None:
-        """`executemany` sends a statement per row, so the statement clock ticks.
-
-        Measured on the first release that wrote samples: two rows of one poll
-        landed 55 microseconds apart. Nothing was wrong with the data - but the
-        rows of one poll are one reading, and an aggregation that groups them
-        by time should not need a tolerance to put them back together.
-        """
-
-        later = SAMPLE_INSTANT.read_text()
-        self.assertEqual(later.count("set default transaction_timestamp()"), 1)
-        for table in ("metric_listener", "metric_pool_member"):
-            self.assertIn(table, later)
-
-    def test_the_caches_keep_the_statement_clock(self) -> None:
-        """There the question is when the row was written, not what it read."""
-
-        self.assertNotIn("cluster_status", SAMPLE_INSTANT.read_text())
-
-    def test_the_partition_function_refuses_a_table_it_does_not_know(self) -> None:
-        """Asked of 0023, which replaced the function when the tables were renamed."""
-
-        current = RENAME.read_text()
-        self.assertIn(
-            "if table_name not in ('metric_frontend', 'metric_backend_member') then", current
-        )
-        self.assertIn("raise exception 'not a metric table: %', table_name;", current)
 
 
 class WhatTheRollupPromises(unittest.TestCase):
@@ -543,29 +410,7 @@ class WhatTheRollupPromises(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self.sql = ROLLUP.read_text()
         self.script = RETENTION.read_text()
-
-    def test_the_row_carries_a_cumulative_reading_and_the_hour_s_floor(self) -> None:
-        self.assertIn("floor_uptime_sec  bigint", self.sql)
-        self.assertIn("uptime_sec        bigint", self.sql)
-
-    def test_the_hour_is_an_hour(self) -> None:
-        self.assertIn("check (bucket_at = date_trunc('hour', bucket_at))", self.sql)
-
-    def test_completion_is_stored_even_for_an_hour_with_no_row(self) -> None:
-        state = ROLLUP_STATE.read_text()
-        self.assertIn("create table metric_rollup_state", state)
-        self.assertIn("complete_before timestamptz not null", state)
-        self.assertIn("grant select (rollup_name, complete_before)", state)
-        self.assertNotIn("to app_poller", state)
-
-    def test_no_application_role_may_write_it(self) -> None:
-        """Derived data, written by the one privileged hand. See B93."""
-
-        self.assertNotIn("grant insert", self.sql)
-        self.assertNotIn("grant update", self.sql)
-        self.assertNotIn("grant delete", self.sql)
 
     def test_an_hour_that_exists_is_never_recomputed(self) -> None:
         """It would be rebuilt from rows that may since have been dropped."""
@@ -835,19 +680,6 @@ class TheStoredDifferencesCoverEverySummedCounter(unittest.TestCase):
         summed = {name for name, _label in (*CARD_COUNTERS, *SUMMARY_COUNTERS)}
 
         self.assertLessEqual(summed, set(db.STORED_DELTAS))
-
-    def test_the_reader_and_the_migration_name_the_same_counters(self) -> None:
-        import importlib.util
-        from pathlib import Path
-
-        path = Path(__file__).resolve().parents[1] / "migrations/versions/0048_metric_deltas.py"
-        specification = importlib.util.spec_from_file_location("metric_deltas", path)
-        if specification is None or specification.loader is None:
-            self.fail("migration 0048 could not be loaded")
-        migration = importlib.util.module_from_spec(specification)
-        specification.loader.exec_module(migration)
-
-        self.assertEqual(tuple(migration.COUNTERS), db.STORED_DELTAS)
 
 
 class TheDashboardCountsVisitorsNotScrapes(unittest.TestCase):

@@ -22,13 +22,13 @@ class TheKeyIsTheRequest(unittest.TestCase):
             "objects": {"shop": "schema: 1\n"},
             "expected_head": "a" * 40,
             "comment": "Publish shop",
-            "draft": {"id": "11111111-2222-3333-4444-555555555555", "revision": 1},
+            "drafts": [{"id": "11111111-2222-3333-4444-555555555555", "revision": 1}],
         }
         body.update(overrides)
         return body
 
     def key(self, **overrides: object) -> object:
-        return _publish_key("alpha", "objects_publish", self.payload(**overrides), drawn=DRAWN)
+        return _publish_key("alpha", "changes_publish", self.payload(**overrides), drawn=DRAWN)
 
     def test_the_same_request_asked_twice_is_one_key(self) -> None:
         self.assertEqual(self.key(), self.key())
@@ -56,12 +56,12 @@ class TheKeyIsTheRequest(unittest.TestCase):
         body = self.payload()
 
         self.assertNotEqual(
-            _publish_key("alpha", "objects_publish", body, drawn=DRAWN),
-            _publish_key("beta", "objects_publish", body, drawn=DRAWN),
+            _publish_key("alpha", "changes_publish", body, drawn=DRAWN),
+            _publish_key("beta", "changes_publish", body, drawn=DRAWN),
         )
         self.assertNotEqual(
-            _publish_key("alpha", "objects_publish", body, drawn=DRAWN),
-            _publish_key("alpha", "network_publish", body, drawn=DRAWN),
+            _publish_key("alpha", "changes_publish", body, drawn=DRAWN),
+            _publish_key("alpha", "revert", body, drawn=DRAWN),
         )
 
     def test_a_form_drawn_again_is_a_new_request(self) -> None:
@@ -81,8 +81,8 @@ class TheKeyIsTheRequest(unittest.TestCase):
         backwards = {key: forwards[key] for key in reversed(list(forwards))}
 
         self.assertEqual(
-            _publish_key("alpha", "objects_publish", forwards, drawn=DRAWN),
-            _publish_key("alpha", "objects_publish", backwards, drawn=DRAWN),
+            _publish_key("alpha", "changes_publish", forwards, drawn=DRAWN),
+            _publish_key("alpha", "changes_publish", backwards, drawn=DRAWN),
         )
 
 

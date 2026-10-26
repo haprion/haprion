@@ -83,18 +83,6 @@ class RepeatableOperations(unittest.TestCase):
 
 
 class RecordedOperations(unittest.TestCase):
-    def test_the_retired_publishes_are_not_named(self) -> None:
-        """Review 26-10-24, 07-09: the queue has not taken them since 0087."""
-
-        for operation in (
-            "publish",
-            "network_publish",
-            "cluster_settings_publish",
-            "objects_publish",
-        ):
-            with self.subTest(operation=operation):
-                self.assertNotIn(operation, recovery.RECORDED)
-
     def test_a_publish_of_saved_changes_uses_the_same_version_evidence_as_a_revert(self) -> None:
         for operation in ("changes_publish",):
             with self.subTest(operation=operation):

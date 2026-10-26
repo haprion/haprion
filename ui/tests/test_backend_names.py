@@ -44,7 +44,7 @@ def publish_job(payload: dict[str, Any]) -> Job:
     return Job(
         id=1,
         request_id=UUID("3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f"),
-        operation="objects_publish",
+        operation="changes_publish",
         cluster="alpha",
         payload=payload,
         state="done",

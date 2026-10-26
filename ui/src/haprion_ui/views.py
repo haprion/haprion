@@ -2683,7 +2683,7 @@ def _published_drafts(
         if not isinstance(base, str) or not base:
             continue
         changed = _publish_changed(job.result)
-        for identity, revision in _carried(payload, "draft", "drafts"):
+        for identity, revision in _carried(payload, "drafts"):
             settled.setdefault(
                 (identity, revision),
                 DraftPublish(base, changed if isinstance(changed, bool) else None),
@@ -2707,13 +2707,11 @@ def _publish_changed(result: Any) -> bool | None:
     return changed if isinstance(changed, bool) else None
 
 
-def _carried(payload: Mapping[str, Any], one: str, many: str) -> list[tuple[str, int]]:
-    """The saved rows a publish carried: one object's `draft`, or a package's `drafts` (B257)."""
+def _carried(payload: Mapping[str, Any], key: str) -> list[tuple[str, int]]:
+    """The saved rows a publish of saved changes carried, under `drafts` or `changes` (B257)."""
 
-    entries = [payload.get(one)]
-    listed = payload.get(many)
-    if isinstance(listed, list):
-        entries.extend(listed)
+    listed = payload.get(key)
+    entries = listed if isinstance(listed, list) else []
     return [
         (entry["id"], entry["revision"])
         for entry in entries
@@ -2896,7 +2894,7 @@ def _settled_changes(
         answer = _publish_recorded(job.result)
         if answer is None:
             continue
-        for identity, revision in _carried(payload, "change", "changes"):
+        for identity, revision in _carried(payload, "changes"):
             recorded.setdefault((identity, revision), answer)
     versions: dict[str, int] | None = None
     kept = dict(changes)

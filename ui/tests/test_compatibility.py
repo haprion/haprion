@@ -236,6 +236,81 @@ class CompatibilityMetadataTests(unittest.TestCase):
         self.assertEqual(int(node_api.group(1)), requirements.node_api)
 
 
+class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
+    """B369: 0.99 is installed afresh; a 0.9 database is refused in so many words.
+
+    An `apt upgrade` from 0.9.2 reaches this through update-platform-release's
+    `check-compatibility --before-migration`, before anything is migrated.
+    """
+
+    def test_a_revision_before_the_baseline_is_refused_and_says_what_to_do(self) -> None:
+        requirements = compatibility.load_requirements(MANIFEST)
+        said = compatibility.before_baseline(requirements, "0091")
+        if said is None:
+            self.fail("a database at 0091 was not refused")
+        self.assertIn("0091 is from before this release's baseline 0100", said)
+        self.assertIn("installed afresh", said)
+        self.assertIsNone(compatibility.before_baseline(requirements, "0100"))
+        self.assertIsNone(
+            compatibility.before_baseline(replace(requirements, database_baseline=None), "0091")
+        )
+
+    def test_a_baseline_past_the_head_is_refused(self) -> None:
+        for baseline in ("0101", "x1"):
+            with self.subTest(baseline=baseline), tempfile.TemporaryDirectory() as raw:
+                path = Path(raw) / "compatibility.json"
+                document = json.loads(MANIFEST.read_text())
+                document["requires"]["database_baseline"] = baseline
+                path.write_text(json.dumps(document))
+                with self.assertRaisesRegex(compatibility.CompatibilityError, "database_baseline"):
+                    compatibility.load_requirements(path)
+
+    def test_the_check_fails_on_it_before_any_transition_is_weighed(self) -> None:
+        requirements = compatibility.load_requirements(MANIFEST)
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            bin_dir = root / "cli/releases/r1/bin"
+            bin_dir.mkdir(parents=True)
+            helpers = (
+                requirements.worker_helpers
+                + requirements.poller_helpers
+                + tuple(requirements.socket_helpers)
+            )
+            for helper in helpers:
+                (bin_dir / helper).write_text("")
+                (bin_dir / helper).chmod(0o755)
+            (root / "ui/releases/new").mkdir(parents=True)
+            with (
+                mock.patch("os.geteuid", return_value=0),
+                mock.patch.object(compatibility, "ui_requirements", return_value=requirements),
+                mock.patch.object(compatibility, "current_release", return_value=bin_dir.parent),
+                mock.patch.object(compatibility, "cli_metadata", return_value={}),
+                mock.patch.object(compatibility, "engine_api", return_value=999),
+                mock.patch.object(
+                    compatibility, "installed_entry_points", return_value=set(helpers)
+                ),
+                mock.patch.object(compatibility, "database_revision", return_value="0091"),
+                mock.patch.object(compatibility, "schema_upgrade_failures") as weighed,
+                contextlib.redirect_stdout(io.StringIO()) as printed,
+            ):
+                code = compatibility.main(
+                    [
+                        "--platform-root", str(root / "ui"),
+                        "--cli-root", str(root / "cli"),
+                        "--database", "haprion",
+                        "--database-role", "migrate",
+                        "--clusters",
+                        "--ui-release", "new",
+                        "--upgrade-from-current",
+                        "--skip-services",
+                    ]
+                )  # fmt: skip
+        self.assertNotEqual(code, 0)
+        self.assertIn("FAIL  schema revision", printed.getvalue())
+        self.assertIn("from before this release's baseline 0100", printed.getvalue())
+        weighed.assert_not_called()
+
+
 class ReleasePackageTests(unittest.TestCase):
     """A release is read under whatever its distribution calls its package."""
 
@@ -388,6 +463,8 @@ class RollbackSchemaCommandTests(unittest.TestCase):
     def release(self, root: Path, name: str, head: str, safe_from: str) -> None:
         document = json.loads(MANIFEST.read_text())
         revisions = document["requires"]["database_revisions"]
+        # Releases with these numbers came before the baseline and named none.
+        document["requires"].pop("database_baseline")
         document["requires"].update(
             database_head=head,
             rollback_safe_from=safe_from,
@@ -769,6 +846,10 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
     def declared(self) -> dict[str, object]:
         requires: dict[str, object] = json.loads(self.DECLARED.read_text())["requires"]
         return requires
+
+    def test_the_declared_baseline_is_where_the_migrations_begin(self) -> None:
+        roots = [revision for revision, down in self.revisions().items() if down is None]
+        self.assertEqual(roots, [self.declared()["database_baseline"]])
 
     def test_the_declaration_names_the_head_the_migrations_reach(self) -> None:
         self.assertEqual(self.declared()["database_head"], self.head())

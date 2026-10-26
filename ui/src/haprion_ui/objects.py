@@ -505,10 +505,10 @@ def stored_only(
 
 
 #
-# The publishes whose payload names objects under `objects`: one object's, and
-# the saved changes published together (B257).
+# The publishes whose payload names objects under `objects`: the saved changes
+# published together (B257).
 #
-OBJECT_PUBLISHES = frozenset({"objects_publish", "changes_publish"})
+OBJECT_PUBLISHES = frozenset({"changes_publish"})
 
 
 def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:

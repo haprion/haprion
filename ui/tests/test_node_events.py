@@ -214,9 +214,8 @@ class TheSentences(unittest.TestCase):
         )
 
     def test_every_event_the_table_allows_has_a_sentence(self) -> None:
-        migration = (
-            Path(__file__).resolve().parents[1] / "migrations/versions/0071_node_event.py"
-        ).read_text()
+        versions = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+        migration = "\n".join(path.read_text() for path in sorted(versions.glob("[0-9]*.py")))
         for event in node_events.EVENTS:
             with self.subTest(event):
                 self.assertIn(f"'{event}'", migration)

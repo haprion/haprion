@@ -11,8 +11,10 @@ newest may still change until a release carries it or the next one is added.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -54,3 +56,42 @@ class RunMigrationsStayAsTheyRan(unittest.TestCase):
             [],
             "add these to migrations/frozen.sha256 - an older migration than the newest has shipped",
         )
+
+
+class NoMigrationGoesBack(unittest.TestCase):
+    """A schema is never downgraded (B360, B369): no migration carries the way back."""
+
+    def test_no_migration_defines_a_downgrade(self) -> None:
+        found = sorted(
+            path.name
+            for path in (MIGRATIONS / "versions").glob("[0-9]*.py")
+            for node in ast.parse(path.read_text()).body
+            if isinstance(node, ast.FunctionDef) and node.name == "downgrade"
+        )
+        self.assertTrue(list((MIGRATIONS / "versions").glob("[0-9]*.py")))
+        self.assertEqual(found, [])
+
+    def test_the_migrate_command_refuses_a_downgrade_before_reaching_alembic(self) -> None:
+        text = (MIGRATIONS.parents[1] / "install/platform/migrate").read_text()
+        start = text.index('[[ "$1" != downgrade ]]')
+        refusal = text[start : text.index("\n\n", start)]
+        self.assertLess(start, text.index("-m alembic"))
+        for arguments, refused in ((["downgrade", "-1"], True), (["upgrade", "head"], False)):
+            with self.subTest(arguments=arguments):
+                done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own line
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f'die() {{ echo "$*" >&2; exit 1; }}\n{refusal}\necho passed',
+                        "migrate",
+                        *arguments,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(done.returncode, 1 if refused else 0, done.stderr)
+                if refused:
+                    self.assertIn("never downgraded", done.stderr)
+                else:
+                    self.assertEqual(done.stdout, "passed\n")

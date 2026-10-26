@@ -1230,12 +1230,12 @@ class ThePublishedDraftWaitsForTheCache(EditorTestCase):
         return Job(
             id=1,
             request_id=uuid4(),
-            operation="objects_publish",
+            operation="changes_publish",
             cluster="alpha",
             payload={
                 "objects": {"shop": SHOP_9090},
                 "expected_head": COMMIT,
-                "draft": {"id": str(DRAFT_ID), "revision": revision},
+                "drafts": [{"id": str(DRAFT_ID), "revision": revision}],
             },
             state="done",
             created_at=OBSERVED,
@@ -1589,7 +1589,7 @@ class RemovingAnObject(EditorTestCase):
             return Job(
                 id=7,
                 request_id=uuid4(),
-                operation="objects_publish",
+                operation="changes_publish",
                 cluster="alpha",
                 payload=values["payload"],
                 state="pending",

@@ -69,6 +69,13 @@ done
 if [[ $# -eq 0 ]]; then
     set -- upgrade head
 fi
+#
+# A schema is never taken back (B360): no migration carries a downgrade, and
+# the way back from an update is haprion-rollback or the dump taken before it.
+#
+[[ "$1" != downgrade ]] \
+    || die "a schema is never downgraded; roll the release back with haprion-rollback,
+  or restore the dump taken before the update (docs/user-manual.md, 'Rolling a release back')"
 
 step "Migrating ${DB_NAME} as ${DB_MIGRATION_ROLE}"
 log "  release  $(basename "$(readlink -f "$release")")"

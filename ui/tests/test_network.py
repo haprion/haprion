@@ -140,6 +140,9 @@ class PublishedIsNotDeployed(unittest.TestCase):
     of being a follow-up row rather than by design.
     """
 
+    # A publish of saved changes that carried the network description (B257).
+    NETWORK: dict[str, Any] = {"network": "vips: {}\n"}
+
     def job(
         self,
         operation: str,
@@ -167,7 +170,7 @@ class PublishedIsNotDeployed(unittest.TestCase):
         )
 
     def test_a_publish_with_no_deploy_after_it_is_waiting(self) -> None:
-        waiting = awaiting_deploy([self.job("network_publish", "alpha")])
+        waiting = awaiting_deploy([self.job("changes_publish", "alpha", payload=self.NETWORK)])
 
         self.assertEqual(waiting, frozenset({"alpha"}))
 
@@ -175,7 +178,10 @@ class PublishedIsNotDeployed(unittest.TestCase):
         """Jobs arrive newest first, so the deploy is the first row here."""
 
         waiting = awaiting_deploy(
-            [self.job("deploy", "alpha"), self.job("network_publish", "alpha")]
+            [
+                self.job("deploy", "alpha"),
+                self.job("changes_publish", "alpha", payload=self.NETWORK),
+            ]
         )
 
         self.assertEqual(waiting, frozenset())
@@ -184,7 +190,7 @@ class PublishedIsNotDeployed(unittest.TestCase):
         """A deploy is per cluster, and so is what it settles."""
 
         waiting = awaiting_deploy(
-            [self.job("deploy", "beta"), self.job("network_publish", "alpha")]
+            [self.job("deploy", "beta"), self.job("changes_publish", "alpha", payload=self.NETWORK)]
         )
 
         self.assertEqual(waiting, frozenset({"alpha"}))
@@ -192,7 +198,9 @@ class PublishedIsNotDeployed(unittest.TestCase):
     def test_a_publish_that_has_not_finished_is_not_waiting_for_a_deploy(self) -> None:
         """It is waiting for itself, and the running badge says so instead."""
 
-        waiting = awaiting_deploy([self.job("network_publish", "alpha", state="running")])
+        waiting = awaiting_deploy(
+            [self.job("changes_publish", "alpha", state="running", payload=self.NETWORK)]
+        )
 
         self.assertEqual(waiting, frozenset())
 

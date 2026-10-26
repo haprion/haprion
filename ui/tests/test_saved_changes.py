@@ -181,7 +181,7 @@ class ASavedChangeIsClearedByItsPublish(unittest.TestCase):
         answer["result"] = {**answer["result"], "hash": commit, "version": version}
         return mock.Mock(
             payload={
-                "change": {"id": str(SAVED_ID), "revision": revision},
+                "changes": [{"id": str(SAVED_ID), "revision": revision}],
                 "expected_head": "a" * 40,
             },
             result=answer,

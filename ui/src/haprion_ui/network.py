@@ -129,13 +129,6 @@ class NetworkClusterView:
     groups: tuple[GroupView, ...]
 
 
-#
-# Each part's publish before saved changes were published together (B257).
-# Their jobs stay in the window until it ages past them.
-#
-_ONE_PART = {"network": "network_publish", "settings": "cluster_settings_publish"}
-
-
 def awaiting_deploy(jobs: Iterable[Job], part: str = "network") -> frozenset[str]:
     """Clusters whose network description was published since the last deploy.
 
@@ -171,9 +164,7 @@ def awaiting_deploy(jobs: Iterable[Job], part: str = "network") -> frozenset[str
             deployed.add(job.cluster)
             continue
         payload = job.payload if isinstance(job.payload, Mapping) else {}
-        carried = job.operation == _ONE_PART[part] or (
-            job.operation == "changes_publish" and part in payload
-        )
+        carried = job.operation == "changes_publish" and part in payload
         if carried and published(job):
             waiting.add(job.cluster)
     return frozenset(waiting)

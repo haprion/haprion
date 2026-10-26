@@ -243,12 +243,12 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         self.assertEqual(response.status_code, 303)
         self.assertNotIn("vips: {}", self.saved_changes[0]["document"])
 
-    def test_the_retired_publish_name_saves_nothing(self) -> None:
-        """Review 26-10-24, 07-09: saving a network has its own name, not a retired job's."""
+    def test_an_operation_the_form_does_not_name_saves_nothing(self) -> None:
+        """Review 26-10-24, 07-09: saving a network has its own name, not a job's."""
 
         response = self.post(
             self.writing_client(),
-            **self.network_form(operation="network_publish", default_vip_confirmation="on"),
+            **self.network_form(operation="publish", default_vip_confirmation="on"),
         )
 
         self.assertEqual(response.status_code, 400)

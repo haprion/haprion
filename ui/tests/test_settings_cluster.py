@@ -48,19 +48,25 @@ class TheCard(QueueRouteTestCase):
 class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
     """Active only when what is shown is what the nodes run (review 2026-09-29 F1)."""
 
-    def job(self, operation: str, cluster: str, state: str = "done") -> Any:
+    def job(self, part: str, cluster: str, state: str = "done") -> Any:
+        """A publish of saved changes that carried `part`, or a job of that operation."""
+
         from tests.test_queue_route import queued
 
-        return queued(operation=operation, cluster=cluster, state=state)
+        if part not in ("network", "settings"):
+            return queued(operation=part, cluster=cluster, state=state)
+        return queued(
+            operation="changes_publish", cluster=cluster, state=state, payload={part: "x: 1\n"}
+        )
 
     def test_a_settings_publish_since_the_last_deploy_is_waiting_for_one(self) -> None:
         from haprion_ui import network
 
         newest_first = [
-            self.job("cluster_settings_publish", "edge-demo"),
+            self.job("settings", "edge-demo"),
             self.job("deploy", "service-demo"),
-            self.job("cluster_settings_publish", "service-demo"),
-            self.job("network_publish", "edge-demo"),
+            self.job("settings", "service-demo"),
+            self.job("network", "edge-demo"),
         ]
         self.assertEqual(
             network.awaiting_deploy(newest_first, part="settings"),
@@ -86,7 +92,7 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         self.addCleanup(patch.stop)
         recent = mock.patch(
             "haprion_ui.db.recent_jobs",
-            return_value=[self.job("cluster_settings_publish", "edge-demo")],
+            return_value=[self.job("settings", "edge-demo")],
         )
         recent.start()
         self.addCleanup(recent.stop)
@@ -109,7 +115,7 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         self.addCleanup(patch.stop)
         recent = mock.patch(
             "haprion_ui.db.recent_jobs",
-            return_value=[self.job("cluster_settings_publish", "edge-demo", state="pending")],
+            return_value=[self.job("settings", "edge-demo", state="pending")],
         )
         recent.start()
         self.addCleanup(recent.stop)
@@ -122,7 +128,7 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         card = page.split('id="logs-metrics"')[1].split("</section>")[0]
         edge = next(row for row in card.split("<tr")[1:] if "/settings/clusters/edge-demo" in row)
         self.assertIn('data-busy="edge-demo"', edge)
-        self.assertIn("Publishing settings", edge)
+        self.assertIn(">Publishing<", edge)
         self.assertNotIn(">Active<", edge)
         self.assertNotIn("deploy to activate", edge)
         self.assertIn("/static/waiting.js", page)

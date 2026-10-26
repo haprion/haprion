@@ -187,6 +187,11 @@ Run it after the package has unpacked a release, and only then.
 `--release` it reads those of the release `current` points at, so the schema
 always comes from a named delivery.
 
+**The schema starts at a baseline**, `0100`, one migration that makes all of
+it. A database from before the baseline is refused by `check-compatibility`
+rather than migrated; that installation is made afresh. No migration has a
+downgrade, and `./migrate downgrade` is refused: a schema only goes forward.
+
 **Alembic travels with the release, outside the services' environment.** It is
 installed under `migration/lib` beside the migrations it applies, from the same
 lock, and run by the release's own interpreter. The services' venv has no

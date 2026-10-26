@@ -528,9 +528,9 @@ def change_publishes(
 ) -> list[Job]:
     """The finished publishes of these saved documents, asked by their ids.
 
-    The same evidence `draft_publishes` reads for a proxy object, under the
-    payload's `change` - or in the `changes` of a publish of saved changes.
-    Retention keeps these rows while their change exists.
+    The same evidence `draft_publishes` reads for a proxy object, in the
+    `changes` of a publish of saved changes. Retention keeps these rows while
+    their change exists.
     """
 
     if not change_ids:
@@ -543,12 +543,10 @@ def change_publishes(
             "  from job "
             " where (state = 'done' or result->'publish'->>'outcome' = 'done') "
             "   and cluster = %(cluster)s "
-            "   and ((operation in ('network_publish', 'cluster_settings_publish') "
-            "         and payload->'change'->>'id' = any(%(ids)s)) "
-            "        or (operation = 'changes_publish' "
-            "            and exists (select 1 "
-            "                          from jsonb_array_elements(payload->'changes') as entry "
-            "                         where entry->>'id' = any(%(ids)s)))) "
+            "   and operation = 'changes_publish' "
+            "   and exists (select 1 "
+            "                 from jsonb_array_elements(payload->'changes') as entry "
+            "                where entry->>'id' = any(%(ids)s)) "
             " order by created_at desc, id desc",
             {"cluster": cluster, "ids": sorted(change_ids)},
         )

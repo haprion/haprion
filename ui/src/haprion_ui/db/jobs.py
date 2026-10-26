@@ -205,12 +205,10 @@ def draft_publishes(
             "  from job "
             " where (state = 'done' or result->'publish'->>'outcome' = 'done') "
             "   and cluster = %(cluster)s "
-            "   and ((operation = 'objects_publish' "
-            "         and payload->'draft'->>'id' = any(%(ids)s)) "
-            "        or (operation = 'changes_publish' "
-            "            and exists (select 1 "
-            "                          from jsonb_array_elements(payload->'drafts') as entry "
-            "                         where entry->>'id' = any(%(ids)s)))) "
+            "   and operation = 'changes_publish' "
+            "   and exists (select 1 "
+            "                 from jsonb_array_elements(payload->'drafts') as entry "
+            "                where entry->>'id' = any(%(ids)s)) "
             " order by created_at desc, id desc",
             {"cluster": cluster, "ids": sorted(draft_ids)},
         )

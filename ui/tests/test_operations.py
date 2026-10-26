@@ -1004,7 +1004,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
                     self.fail(f"{operation} is in OPERATIONS and prepare does not know it")
                 except operations.BadPayload:
                     pass
-        for retired in ("objects_publish", "network_publish", "cluster_settings_publish", "x"):
+        for retired in ("publish", "x"):
             with self.subTest(operation=retired), self.assertRaises(operations.UnknownOperation):
                 operations.prepare(
                     operation=retired, cluster="alpha", request_id=uuid4(), payload={}
@@ -1014,6 +1014,13 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         self.assertLessEqual(named, operations.OPERATIONS)
 
     def constraint(self) -> str:
+        """The operations `job_operation_allowed` names, as the newest migration to speak says it.
+
+        From the constraint's name to the end of its definition: the baseline
+        writes it inside `create table` as pg_dump does, a later migration as
+        an `alter table ... add constraint` of its own.
+        """
+
         versions = Path(__file__).resolve().parents[1] / "migrations" / "versions"
         speaking = [
             path
@@ -1021,12 +1028,10 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             if "job_operation_allowed" in path.read_text(encoding="utf-8")
         ]
         self.assertTrue(speaking, "no migration constrains the job operation")
-        #
-        # The last migration to speak, and its `upgrade` half only: the
-        # downgrade below it names the previous, narrower set.
-        #
         text = speaking[-1].read_text(encoding="utf-8")
-        return text[: text.index("def downgrade")]
+        start = text.rindex("job_operation_allowed")
+        ends = [end for end in (text.find(";", start), text.find("CONSTRAINT", start)) if end > 0]
+        return text[start : min(ends)]
 
     def test_every_operation_has_an_answer_the_worker_will_accept(self) -> None:
         """Otherwise the operation runs, takes effect, and is recorded as unknown.
@@ -1100,9 +1105,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
     def test_the_queue_permits_nothing_the_code_does_not_prepare(self) -> None:
         """A job row is what the worker runs as root; three retired operations stayed permitted."""
 
-        text = self.constraint()
-        current = text[text.index("CURRENT = (") : text.index("RETIRED = ")]
-        self.assertEqual(set(re.findall(r"'([a-z_]+)'", current)), operations.OPERATIONS)
+        self.assertEqual(set(re.findall(r"'([a-z_]+)'", self.constraint())), operations.OPERATIONS)
 
 
 class EnrollingOverNdes(unittest.TestCase):

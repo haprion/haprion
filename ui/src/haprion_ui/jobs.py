@@ -169,18 +169,14 @@ def _state(state: str) -> tuple[str, Tone]:
 
 
 #
-# Every operation the worker runs has a name here, and so do the three retired
-# ones the jobs page still lists from history; the fallback turned the rest
-# into "Cert scep" and "Dns profile apply" (review 2026-10-22, 2-2). A test
-# holds this to `operations.OPERATIONS`.
+# Every operation the worker runs has a name here; the fallback turned the
+# rest into "Cert scep" and "Dns profile apply" (review 2026-10-22, 2-2). A
+# test holds this to `operations.OPERATIONS`.
 #
 OPERATION_LABELS = {
     "deploy": "Deploy configuration",
     "cert_deploy": "Deploy certificates",
     "revert": "Publish reverted version",
-    "network_publish": "Publish network description",
-    "cluster_settings_publish": "Publish cluster settings",
-    "objects_publish": "Publish proxies",
     "changes_publish": "Publish saved changes",
     "cert_issue": "Issue certificate",
     "cert_scep": "Enroll certificate",
@@ -1274,9 +1270,6 @@ RUNNING_LABELS = {
     "deploy": "Deploying",
     "cert_deploy": "Deploying certificates",
     "revert": "Reverting",
-    "network_publish": "Publishing addresses",
-    "cluster_settings_publish": "Publishing settings",
-    "objects_publish": "Publishing",
     "changes_publish": "Publishing",
     "cert_issue": "Issuing certificate",
     "cert_import": "Importing certificate",
@@ -1327,13 +1320,10 @@ FAILURE_LABELS = {
     "deploy": "Deploy failed",
     "cert_deploy": "Certificate deploy failed",
     "revert": "Revert failed",
-    "network_publish": "Publish failed",
-    "cluster_settings_publish": "Publish failed",
     "cluster_node": "Node change failed",
     "cluster_define": "Cluster change failed",
     "server_state": "Server state change failed",
     "dynamic_unblock": "Unblock failed",
-    "objects_publish": "Publish failed",
     "changes_publish": "Publish failed",
     "cert_issue": "Certificate issue failed",
     "cert_import": "Certificate import failed",

@@ -4,8 +4,9 @@ A list on the dashboard, for an admin, until somebody hides it for the whole
 installation. Every tick is read from what the installation is - a cluster
 serving, a certificate that is not self-signed, a schedule on every cluster -
 never from somebody having pressed the item, so the list cannot say done for
-something that is not. What a person uses the installation for, such as a
-first site, is not on it: a list that waits for that is never finished.
+something that is not. The first proxy is on it, ticked by the first one there
+is (B374, revising B316's addendum): it is what the installation is for, and
+the dashboard had no way to it.
 """
 
 from __future__ import annotations
@@ -50,6 +51,8 @@ class ClusterFacts:
     backups_scheduled: bool
     # The published version; None when nothing is published (Fas 18, finding 60).
     target_version: int | None = None
+    # The proxies its configuration holds, published or not (B374).
+    proxies: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +168,18 @@ def _tls_item(clusters: tuple[ClusterFacts, ...]) -> Item:
     return Item("TLS and source address", done, f"{tls} · {source}", "Network", "/network")
 
 
+def _proxy_item(clusters: tuple[ClusterFacts, ...]) -> Item:
+    proxies = sum(cluster.proxies for cluster in clusters)
+    return Item(
+        "Create your first proxy",
+        proxies > 0,
+        labels.counted(proxies, "proxy", "proxies") if proxies else "None yet",
+        "New proxy",
+        f"/proxies/{clusters[0].name}/new" if clusters else "/proxies",
+        optional=True,
+    )
+
+
 def checklist(facts: Facts) -> Checklist:
     clusters = facts.clusters
     logs = sum(cluster.logs_forwarded for cluster in clusters)
@@ -203,6 +218,7 @@ def checklist(facts: Facts) -> Checklist:
             "Certificates",
             "/certificates",
         ),
+        _proxy_item(clusters),
         Item(
             "Enable the features you want to use",
             facts.features_changed,

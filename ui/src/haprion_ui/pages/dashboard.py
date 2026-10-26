@@ -408,6 +408,10 @@ def build_router(config: Config) -> APIRouter:
         )
         registry = _registry_overview(config, request)
         served = certificates.interface_served(read_manager_certificates(request, config))
+        _, object_rows = read_source(request, config, OBJECTS_SOURCE)
+        proxies = {
+            reading.cluster: len(objects.cluster_object_views(reading)) for reading in object_rows
+        }
         facts = getting_started.Facts(
             clusters=tuple(
                 getting_started.ClusterFacts(
@@ -421,6 +425,7 @@ def build_router(config: Config) -> APIRouter:
                     logs_forwarded=getattr(settings_views.get(view.cluster), "logs_set", False),
                     backups_scheduled=view.cluster in scheduled,
                     target_version=view.target_version,
+                    proxies=proxies.get(view.cluster, 0),
                 )
                 for view in dashboard_view.clusters
                 if view.configured

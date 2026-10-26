@@ -58,6 +58,7 @@ class TheTicks(unittest.TestCase):
         self.assertEqual(
             [entry.title for entry in listed.items if entry.optional],
             [
+                "Create your first proxy",
                 "Enable the features you want to use",
                 "Node backups",
                 "Traffic log off the nodes",
@@ -65,8 +66,8 @@ class TheTicks(unittest.TestCase):
             ],
         )
         #
-        # The optional rows last, Features first of them: it turns backups on
-        # (finding 83, 26-10-18).
+        # The optional rows last, the first proxy first of them (B374), then
+        # Features: it turns backups on (finding 83, 26-10-18).
         #
         self.assertTrue(all(entry.optional for entry in listed.items[5:]))
         self.assertFalse(any(entry.optional for entry in listed.items[:5]))
@@ -113,7 +114,7 @@ class TheTicks(unittest.TestCase):
 
     def test_the_rest_follow_what_is_installed(self) -> None:
         set_up = facts(
-            clusters=(cluster(),),
+            clusters=(cluster(proxies=1),),
             interface_self_signed=False,
             accounts=3,
             site_certificates=2,
@@ -125,6 +126,19 @@ class TheTicks(unittest.TestCase):
         self.assertEqual(item(set_up, "Users and sign-in").state, "3 accounts")
         self.assertTrue(item(facts(sso=True), "Users and sign-in").done)
         self.assertFalse(item(facts(interface_self_signed=None), "Interface certificate").done)
+
+    def test_the_first_proxy_is_ticked_by_the_first_there_is(self) -> None:
+        # B374: the dashboard's way to New proxy, done once any cluster holds one.
+        none = item(facts(clusters=(cluster(),)), "Create your first proxy")
+        self.assertFalse(none.done)
+        self.assertEqual(
+            (none.state, none.action, none.href), ("None yet", "New proxy", "/proxies/alpha/new")
+        )
+        self.assertEqual(item(facts(), "Create your first proxy").href, "/proxies")
+        two = (cluster(), cluster(name="beta", proxies=2))
+        some = item(facts(clusters=two), "Create your first proxy")
+        self.assertTrue(some.done)
+        self.assertEqual(some.state, "2 proxies")
 
     def test_every_cluster_must_forward_and_back_up(self) -> None:
         two = (cluster(), cluster(name="beta", logs_forwarded=False, backups_scheduled=False))

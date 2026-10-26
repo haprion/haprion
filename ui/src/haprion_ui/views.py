@@ -3093,6 +3093,49 @@ def _hashed(password: str) -> str | None:
         auth.HASHING.release()
 
 
+def _sign_in_throttled(connection: Any, config: Config, *, username: str, address: str) -> bool:
+    """Whether `username` may not be tried from `address` now.
+
+    Two budgets: the name and address together, and the name from anywhere
+    (B305). The sign-in and the check of one's own password read the same two.
+    """
+
+    window = config.throttle.window_minutes
+    return db.failures_since_last_success(
+        connection, username=username, client_ip=address, window_minutes=window
+    ) >= config.throttle.max_failures or (
+        db.account_failures_since_last_success(connection, username=username, window_minutes=window)
+        >= config.throttle.max_failures * auth.ACCOUNT_FAILURE_FACTOR
+    )
+
+
+def _count_attempt(pool: Any, config: Config, *, username: str, address: str) -> bool:
+    """Write this password attempt down as a failure, before its hash; True if throttled.
+
+    Counted before the hash, not after it, and one attempt at a time per name.
+    A count read before the hash and a row written after it were seconds apart,
+    and every attempt sent at once read the same count - so a burst passed the
+    budget by as many as could hash in it (review 2026-10-22, 3-3). Under a
+    lock on the name the count is read again and this attempt is written down;
+    a success written after the hash is what clears it, as any success does.
+
+    A throttled attempt is not written at all - the caller's audit row says it
+    happened. Written, it counted towards the account's own budget, and one
+    address kept the right password out from every other (review 26-10-24,
+    09-01; the own-password check, review 26-10-25, 2-03).
+    """
+
+    with pool.connection() as connection:
+        db.lock_sign_in(connection, username=username)
+        throttled = _sign_in_throttled(connection, config, username=username, address=address)
+        if not throttled:
+            db.record_login_attempt(
+                connection, username=username or "?", client_ip=address, succeeded=False
+            )
+        connection.commit()
+    return throttled
+
+
 def _prove_password(
     pool: Any,
     config: Config,
@@ -3106,9 +3149,10 @@ def _prove_password(
 ) -> str:
     """'' when `password` is the signed-in account's own; else why not, recorded.
 
-    A wrong one is a failed sign-in for this name and address - the same row
-    the sign-in writes and the same throttle it reads - so a session somebody
-    else is holding cannot be used to guess the password behind it.
+    Tried as a sign-in is, for this name and address: the same budgets, the
+    same failure written before the hash, and the right password written as a
+    success - so a session somebody else is holding cannot be used to guess
+    the password behind it, nor to lock the account for everyone else.
 
     The hash runs holding no connection and under the sign-in's limit, and a
     throttled attempt is not hashed at all (review 26-10-24, 09-02). A full
@@ -3116,19 +3160,18 @@ def _prove_password(
     """
 
     with pool.connection() as connection:
-        failures = db.failures_since_last_success(
-            connection,
-            username=session.username,
-            client_ip=address,
-            window_minutes=config.throttle.window_minutes,
+        throttled = _sign_in_throttled(
+            connection, config, username=session.username, address=address
         )
-        throttled = failures >= config.throttle.max_failures
         account = None if throttled else db.account_by_username(connection, session.username)
     if not throttled:
         if not auth.HASHING.acquire(timeout=auth.HASHING_WAIT_SECONDS):
             return HASHING_BUSY
         try:
-            if account is None or account.disabled or account.password_hash is None:
+            throttled = _count_attempt(pool, config, username=session.username, address=address)
+            if throttled:
+                accepted = False
+            elif account is None or account.disabled or account.password_hash is None:
                 auth.burn_absent_user_time(password)
                 accepted = False
             else:
@@ -3136,11 +3179,13 @@ def _prove_password(
         finally:
             auth.HASHING.release()
         if accepted:
+            with pool.connection() as connection:
+                db.record_login_attempt(
+                    connection, username=session.username, client_ip=address, succeeded=True
+                )
+                connection.commit()
             return ""
     with pool.connection() as connection:
-        db.record_login_attempt(
-            connection, username=session.username, client_ip=address, succeeded=False
-        )
         db.record_audit_event(
             connection,
             actor=session.username,

@@ -102,13 +102,14 @@ class ChangingOnesOwnPassword(OwnPasswordTestCase):
 
     def test_a_throttled_name_is_not_tried_even_with_the_right_password(self) -> None:
         client = self.signed_in()
+        attempts = len(self.attempts)
         self.failures = 99
 
         response = self.submit(client)
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("Too many failed attempts.", response.text)
-        self.assertFalse(self.attempts[-1][2])
+        self.assertEqual(len(self.attempts), attempts)
         self.assertEqual(self.changed, [])
 
     def test_a_bad_new_password_is_refused_before_the_current_one_is_tried(self) -> None:
@@ -156,6 +157,61 @@ class ChangingOnesOwnPassword(OwnPasswordTestCase):
             client.post("/account/password", data={}, follow_redirects=False),
         ):
             self.assertEqual(response.headers["location"], "/login")
+
+
+class TriedAsASignInIs(OwnPasswordTestCase):
+    """Review 26-10-25, 2-03: the check wrote throttled attempts and read no account budget."""
+
+    def test_a_throttled_attempt_adds_nothing_to_the_account_s_budget(self) -> None:
+        client = self.signed_in()
+        attempts = len(self.attempts)
+        self.failures = 99
+
+        for _ in range(50):
+            self.submit(client, current="not the password at all")
+
+        self.assertEqual(len(self.attempts), attempts)
+        self.assertEqual(self.audit.count("password_change_failed"), 50)
+
+    def test_the_account_s_budget_stops_the_check_from_any_address(self) -> None:
+        client = self.signed_in()
+        self.account_failures = 3 * auth.ACCOUNT_FAILURE_FACTOR
+
+        with mock.patch.object(auth, "verify_password") as verify:
+            response = self.submit(client)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Too many failed attempts.", response.text)
+        verify.assert_not_called()
+        self.assertEqual(self.changed, [])
+
+    def test_the_failure_is_written_under_the_name_s_lock_before_the_hash(self) -> None:
+        client = self.signed_in()
+        attempts = len(self.attempts)
+        locked: list[str] = []
+        real_verify = auth.verify_password
+
+        def verify(password_hash: str, password: str) -> bool:
+            self.assertEqual(locked, ["operator"])
+            self.assertEqual(
+                [attempt[2] for attempt in self.attempts[attempts:]],
+                [False],
+                "the attempt was not counted before its hash",
+            )
+            return real_verify(password_hash, password)
+
+        with (
+            mock.patch(
+                "haprion_ui.db.lock_sign_in",
+                side_effect=lambda _c, *, username: locked.append(username),
+            ),
+            mock.patch.object(auth, "verify_password", verify),
+        ):
+            response = self.submit(client)
+
+        self.assertEqual(response.status_code, 303)
+        # The right password is a success, which clears the failure before it.
+        self.assertEqual([attempt[2] for attempt in self.attempts[attempts:]], [False, True])
 
 
 class ThePasswordHashesHoldNoConnection(OwnPasswordTestCase):

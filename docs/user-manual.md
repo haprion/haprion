@@ -818,9 +818,10 @@ sudo haprion-user apply accounts.yaml --json
 
 **Changing your own password.** Anyone signed in with a password, reader or admin, can change it from the
 account menu (**Change password**). The entry is not shown to an account that signs in through an OIDC
-provider, since such an account has no password here. The form asks for the current password. A wrong one
-counts as a failed sign-in for that name and address, under the same throttle, so a session someone else
-is holding cannot be used to guess it. The change ends the account's other sessions and keeps the one it
+provider, since such an account has no password here. The form asks for the current password. It is
+tried as a sign-in is, under the same throttle: a wrong one counts as a failed sign-in for that name and
+address, and the right one as a sign-in. A session someone else is holding can therefore not be used to
+guess the password, nor to lock the account for everyone else. The change ends the account's other sessions and keeps the one it
 was made from. It is recorded as `password_changed` with `via: web`.
 
 **Managing accounts in the interface.** An admin manages the other accounts under **Settings → Users**, on

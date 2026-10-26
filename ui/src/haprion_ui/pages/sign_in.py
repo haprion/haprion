@@ -27,6 +27,7 @@ from haprion_ui.views import (
     UNAVAILABLE_PROVIDER,
     _admin_write_gate,
     _cookie,
+    _count_attempt,
     _hashed,
     _login_again,
     _new_password_problem,
@@ -36,6 +37,7 @@ from haprion_ui.views import (
     _oidc_redirect,
     _password_page,
     _prove_password,
+    _sign_in_throttled,
     _sso_button,
     _start_oidc,
     client_address,
@@ -90,17 +92,8 @@ def build_router(config: Config) -> APIRouter:
             return _login_again(request, config)
 
         address = client_address(request)
-        window = config.throttle.window_minutes
         with request.app.state.pool.connection() as connection:
-            failures = db.failures_since_last_success(
-                connection, username=username, client_ip=address, window_minutes=window
-            )
-            throttled = failures >= config.throttle.max_failures or (
-                db.account_failures_since_last_success(
-                    connection, username=username, window_minutes=window
-                )
-                >= config.throttle.max_failures * auth.ACCOUNT_FAILURE_FACTOR
-            )
+            throttled = _sign_in_throttled(connection, config, username=username, address=address)
             account = None if throttled else db.account_by_username(connection, username)
             provider = db.oidc_provider(connection)
         #
@@ -130,34 +123,10 @@ def build_router(config: Config) -> APIRouter:
         elif not auth.HASHING.acquire(timeout=auth.HASHING_WAIT_SECONDS):
             accepted, busy = False, True
         else:
-            #
-            # Counted before the hash, not after it, and one attempt at a time
-            # per name. The count above and the row below were seconds apart,
-            # and every attempt sent at once read the same count - so a burst
-            # passed the budget by as many as could hash in it (review
-            # 2026-10-22, 3-3). Under a lock on the name the count is read
-            # again and this attempt is written down as a failure; a success
-            # written after the hash is what clears it, as any success does.
-            #
             try:
-                with request.app.state.pool.connection() as connection:
-                    db.lock_sign_in(connection, username=username)
-                    throttled = db.failures_since_last_success(
-                        connection, username=username, client_ip=address, window_minutes=window
-                    ) >= config.throttle.max_failures or (
-                        db.account_failures_since_last_success(
-                            connection, username=username, window_minutes=window
-                        )
-                        >= config.throttle.max_failures * auth.ACCOUNT_FAILURE_FACTOR
-                    )
-                    if not throttled:
-                        db.record_login_attempt(
-                            connection,
-                            username=username or "?",
-                            client_ip=address,
-                            succeeded=False,
-                        )
-                    connection.commit()
+                throttled = _count_attempt(
+                    request.app.state.pool, config, username=username, address=address
+                )
             except BaseException:
                 auth.HASHING.release()
                 raise

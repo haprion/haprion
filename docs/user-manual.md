@@ -3151,8 +3151,8 @@ preview saw. So what was approved is what is written.
 3. **On the node's own address, with the archive's host key:**
    - the timer is cancelled;
    - HAProxy starts on a placeholder release whose only listener is a root-only unix socket;
-   - the node's `haprion-cert-pull` fetches the cluster's certificates, and its `haprion-pull-deploy`
-     the published configuration - the same scripts a deploy triggers;
+   - the node's `haprion-cert-pull` fetches the cluster's CA files and then its certificates, and its
+     `haprion-pull-deploy` the published configuration - the same scripts a deploy triggers;
    - keepalived starts as `BACKUP`;
    - **last**, root's `authorized_keys` is replaced by the archive's, which removes the one-time key.
 
@@ -6367,7 +6367,7 @@ not group-writable:
 | Script | What it does |
 |---|---|
 | `haprion-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
-| `haprion-cert-trigger` | unprivileged wrapper: validates the verb (`cert-pull` or `cert-remove`) and the certificate IDs, then escalates |
+| `haprion-cert-trigger` | unprivileged wrapper: validates the verb (`cert-pull`, `cert-remove`, `ca-pull` or `ca-remove`) and the IDs, then escalates |
 | `haprion-cert-pull` | fetches the requested certificates, validates and installs them, and swaps them into the running HAProxy, without a reload where it can (below) |
 | `haprion-cert-remove` | removes the requested certificates from `/etc/haproxy/certs`, refusing any the installed configuration still names; no reload |
 | `haprion-node-status` | reports version, health, carried certificates, keepalived state and the address list |
@@ -6419,7 +6419,8 @@ twice: unprivileged in the wrapper, and again in the root helper. The wrapper es
 `sudo -n` and an exact `NOPASSWD` rule, so a policy mismatch fails at once instead of falling back
 to an interactive password prompt. The wrapper knows two verbs, `cert-pull` and `cert-remove`
 ([Deleting a certificate](#deleting-a-certificate)), each with its own root helper and its own
-sudoers rule.
+sudoers rule, and the same two for CA files, `ca-pull` and `ca-remove`, which call those helpers
+with `--authority`.
 
 **`haprion-health-probe` uses the same lowest TLS version as the configuration.** A pool's object
 can name a backend TLS policy, which sets the lowest TLS version HAProxy accepts from the pool

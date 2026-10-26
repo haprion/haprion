@@ -40,6 +40,7 @@ CLUSTER = SimpleNamespace(
     cluster_id="alpha",
     nodes=(Node("node-a", "192.0.2.21"), Node("node-b", "192.0.2.22")),
     certificate_ids=("cert-a",),
+    authority_ids=("corp-root",),
 )
 PROFILE = TestProfile(
     hostname="node-test",
@@ -407,6 +408,8 @@ class Run(RestoreTest):
         self.assertEqual(members(FakeSession.calls[2][2]), ["/etc/netplan/50-cloud-init.yaml"])
         self.assertEqual(members(FakeSession.calls[3][2]), ["/root/.ssh/authorized_keys"])
         self.assertEqual(FakeSession.calls[3][1]["certificates"], ["cert-a"])
+        # The CA files its pools verify against go with it (lab 26-10-26).
+        self.assertEqual(FakeSession.calls[3][1]["authorities"], ["corp-root"])
         self.assertEqual(FakeSession.calls[3][1]["keepalived"], "mask")
 
     def test_a_cluster_busy_with_another_operation_is_refused_before_anything_is_written(

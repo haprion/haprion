@@ -760,6 +760,7 @@ class Finish(AgentTest):
             "op": "finish",
             "run": RUN,
             "certificates": ["cert-a", "cert-b"],
+            "authorities": ["corp-root"],
             "keepalived": keepalived,
         }
 
@@ -775,11 +776,22 @@ class Finish(AgentTest):
             [
                 ["systemctl", "stop", f"haprion-restore-rollback-{RUN}.timer"],
                 ["systemctl", "start", "haproxy"],
+                ["/usr/sbin/haprion-cert-pull", "--authority", "corp-root"],
                 ["/usr/sbin/haprion-cert-pull", "cert-a", "cert-b"],
                 ["/usr/sbin/haprion-pull-deploy"],
             ],
         )
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "operator key\n")
+
+    def test_an_unusable_id_is_refused_before_anything_runs(self) -> None:
+        self.host.active.update({f"haprion-restore-rollback-{RUN}.timer": "active"})
+        for key, value in (("certificates", ["../x"]), ("authorities", ["../x"])):
+            with self.subTest(key=key):
+                header = {**self.header(), key: value}
+                result = self.serve(header, payload(self.KEYS))
+                self.assertFalse(result["ok"])
+                self.assertIn("not usable", result["error"])
+        self.assertEqual(self.host.commands, [])
 
     def test_a_fired_rollback_timer_stops_finish(self) -> None:
         result = self.serve(self.header(), payload(self.KEYS))

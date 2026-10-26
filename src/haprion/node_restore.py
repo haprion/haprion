@@ -1396,6 +1396,7 @@ def _finish(
             "op": "finish",
             "run": directory.name,
             "certificates": list(cluster.certificate_ids),
+            "authorities": list(cluster.authority_ids),
             "keepalived": plan.keepalived,
             "overwrite": plan.mode == "overwrite",
             "network": network,

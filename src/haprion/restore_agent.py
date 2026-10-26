@@ -1481,6 +1481,16 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
     certificates = header.get("certificates", [])
     if any(not CERTIFICATE_ID.fullmatch(str(value)) for value in certificates):
         raise Refused("a certificate ID is not usable")
+    #
+    # The CA files the cluster's pools verify against (B276), by the same IDs:
+    # without them a pool's `ca-file` is missing and the configuration does not
+    # validate (lab 26-10-26).
+    #
+    authorities = header.get("authorities", [])
+    if not isinstance(authorities, list) or any(
+        not CERTIFICATE_ID.fullmatch(str(value)) for value in authorities
+    ):
+        raise Refused("a CA ID is not usable")
     if header["keepalived"] not in {"start", "mask"}:
         raise Refused("keepalived must be started or masked")
     run = header["run"]
@@ -1498,10 +1508,10 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
         report.step("rollback-cancelled", timer=timer)
 
     if not header.get("overwrite"):
-        _start(host, header, certificates, report)
+        _start(host, header, certificates, authorities, report)
     else:
         try:
-            _start(host, header, certificates, report)
+            _start(host, header, certificates, authorities, report)
         except OVERWRITE_FAILURES as exc:
             raise _rolled_back(host, run, report, exc) from exc
 
@@ -1515,6 +1525,7 @@ def _start(
     host: Host,
     header: dict[str, Any],
     certificates: list[str],
+    authorities: list[str],
     report: Report,
     *,
     sleep: Callable[[float], None] = time.sleep,
@@ -1522,7 +1533,11 @@ def _start(
     # Certificates before configuration: the published configuration names
     # them by path and does not validate without them. Both scripts reload,
     # so HAProxy runs on the bootstrap release first (see BOOTSTRAP_CONFIG).
+    # The CA files first of all, as the certificate deploy sends them.
     host.run(["systemctl", "start", "haproxy"])
+    if authorities:
+        host.run(["/usr/sbin/haprion-cert-pull", "--authority", *authorities])
+        report.step("authorities", pulled=list(authorities))
     if certificates:
         host.run(["/usr/sbin/haprion-cert-pull", *certificates])
     report.step("certificates", pulled=list(certificates))

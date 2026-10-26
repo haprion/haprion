@@ -231,6 +231,28 @@ class BothNodesReadableTests(unittest.TestCase):
         self.assertIs(outcome, Outcome.DONE)
         self.assertIn("no node currently owns the VIP; it is down", warnings_for(state))
 
+    def test_the_first_deploy_says_nothing_about_the_vip_it_brings_up(self) -> None:
+        state = pair(
+            VipState.NO_OWNER,
+            node("node-a", owner=False, hash_=None),
+            node("node-b", owner=False, hash_=None),
+        )
+
+        trace, outcome, _ = drive([state, state, state])
+
+        self.assertEqual(trace, ["deploy:node-a", "deploy:node-b"])
+        self.assertIs(outcome, Outcome.DONE)
+        self.assertEqual(warnings_for(state), ())
+
+    def test_a_node_with_a_release_and_no_owner_still_warns(self) -> None:
+        state = pair(
+            VipState.NO_OWNER,
+            node("node-a", owner=False, hash_=None),
+            node("node-b", owner=False),
+        )
+
+        self.assertIn("no node currently owns the VIP; it is down", warnings_for(state))
+
     def test_two_owners_block_and_cannot_be_overridden(self) -> None:
         state = pair(
             VipState.SPLIT_BRAIN,

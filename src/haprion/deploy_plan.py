@@ -472,9 +472,15 @@ def warnings_for(
     about a node. The plan requires two of them by name: zero owners always
     warns that the VIP is down, and an accepted override always says that it was
     accepted, so the audit trail shows a human chose to proceed.
+
+    Except on the first deploy: with no release on any node nothing has served
+    yet, the VIP comes up with this run, and "it is down" read as a fault in
+    the job's log (lab 26-10-26).
     """
 
     if observation.vip_state is VipState.NO_OWNER:
+        if all(node.release_hash is None for node in observation.nodes):
+            return ()
         return (
             "no node currently owns the VIP; it is down",
             "deploying in configured cluster order",

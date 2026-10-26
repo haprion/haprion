@@ -5363,7 +5363,9 @@ same job or the next) takes it to the nodes as a reload, so the address stays wh
 deployed after the node that owns the address, so it starts as a standby.
 
 Until its first deploy, a node has no `keepalived.conf`. The dashboard says *Keepalived not configured*,
-and since no node carries the address, the deploy goes ahead with *no node currently owns the VIP*.
+and no node carries the address. The first deploy goes to the nodes in the cluster's order and brings the
+address up. It does not warn that the VIP is down: nothing has served yet. Later deploys do warn when no node
+owns the address.
 
 **A cluster whose `keepalived.conf` a person wrote** keeps it. The application writes the address list and
 nothing else. `priority`, `virtual_router_id`, `authentication`, `unicast_src_ip`, `unicast_peer` and the

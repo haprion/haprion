@@ -146,6 +146,11 @@ PACKAGES = (
     "haprion-archive-keyring",
 )
 SOURCES = ("/etc/apt/sources.list.d/haprion.sources",)
+#
+# The trees the packages' own purge removes (their postrm), listed by neither
+# step: the policy names the certbot under one of them.
+#
+PURGED_TREES = ("/opt/haprion", "/opt/haprion-ui", "/opt/haprion-certbot")
 SHARED_PACKAGES = ("postgresql", "nginx", "haproxy", "dnsdist")
 SHARED_SOURCES = (
     "/etc/apt/sources.list.d/pdns.list",
@@ -571,7 +576,44 @@ def plan(host: Host, stamp: str) -> list[Step]:
         steps.append(files)
     if accounts.found:
         steps.append(accounts)
+    #
+    # Files the policy names that the steps did not make - credentials and CA
+    # certificates put in place by hand - stay, and are said.
+    #
+    kept = Step("kept: named by the runtime policy, not made by Haprion")
+    purged = [host.path(t) for t in PURGED_TREES]
+    kept.found = [
+        str(host.path(name))
+        for name in referenced(policy)
+        if host.path(name).exists()
+        and host.path(name) not in key_paths
+        and not any(host.path(name).is_relative_to(p) for p in [*paths, *purged])
+    ]
+    if kept.found:
+        steps.append(kept)
     return steps
+
+
+def referenced(policy: Any) -> list[str]:
+    """Every absolute path a value of the policy names, below its first level."""
+
+    found: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for inner in value.values():
+                walk(inner)
+        elif isinstance(value, list):
+            for inner in value:
+                walk(inner)
+        elif isinstance(value, str) and value.startswith("/") and value not in found:
+            found.append(value)
+
+    if isinstance(policy, dict):
+        for value in policy.values():
+            if isinstance(value, (dict, list)):
+                walk(value)
+    return found
 
 
 def closing(host: Host) -> list[str]:

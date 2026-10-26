@@ -130,14 +130,17 @@ def sysusers(host: Host) -> tuple[list[str], list[str]]:
     return users, groups
 
 
-def manager_host(host: Host) -> str | None:
+def node_conf(host: Host) -> dict[str, str]:
+    """node.conf's values: the manager it was joined to and the keys it fetches with."""
+
     path = host.path(NODE_CONF)
-    if not path.is_file():
-        return None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("MANAGER="):
-            return line.split("=", 1)[1].strip().strip('"') or None
-    return None
+    values: dict[str, str] = {}
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            name, equals, value = line.partition("=")
+            if equals and name.isidentifier():
+                values[name] = value.strip().strip('"')
+    return values
 
 
 def plan(host: Host) -> list[Step]:
@@ -219,17 +222,32 @@ def plan(host: Host) -> list[Step]:
     ]  # fmt: skip
     paths += links
     keepalived = host.path("/etc/keepalived/keepalived.conf")
+    kept = Step("kept: written by hand, not by Haprion")
     if keepalived.is_file():
         first = keepalived.read_text(encoding="utf-8").split("\n", 1)[0]
         if first == KEEPALIVED_MARK:
             paths += with_copies(host, "/etc/keepalived/keepalived.conf")
+        else:
+            kept.found.append(
+                f"{keepalived}: its first line is not Haprion's; a new installation leaves it alone"
+            )
     for name in ("keepalived.conf", "addresses.conf", "ipvs.conf"):
         paths += sorted(host.path("/etc/keepalived").glob(f"{name}.rollback"))
+    conf = node_conf(host)
+    #
+    # The fetch keys by the names node.conf gives them: a node prepared before
+    # the packages has keys of other names (FIXED_PATHS has today's).
+    #
+    for key in (conf.get("CONFIG_PULL_KEY", ""), conf.get("CERT_PULL_KEY", "")):
+        if key.startswith("/root/.ssh/"):
+            paths += [
+                p for p in (host.path(key), host.path(key + ".pub")) if p.exists() and p not in paths
+            ]  # fmt: skip
     files.found = [f"{p}{size_of(p)}" for p in paths]
     packaged = host.path("/etc/haproxy/haproxy.cfg.packaged")
     if packaged.is_file():
         files.found.append(f"{packaged}: put back as /etc/haproxy/haproxy.cfg")
-    manager = manager_host(host)
+    manager = conf.get("MANAGER") or None
     known_hosts = host.path("/root/.ssh/known_hosts")
     if manager and known_hosts.is_file():
         files.found.append(f"{known_hosts}: the line for {manager}")
@@ -280,6 +298,8 @@ def plan(host: Host) -> list[Step]:
         steps.append(files)
     if accounts.found:
         steps.append(accounts)
+    if kept.found:
+        steps.append(kept)
     return steps
 
 

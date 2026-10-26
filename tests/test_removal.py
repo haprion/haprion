@@ -120,7 +120,8 @@ class AManager(unittest.TestCase):
             "certificate_registry: /etc/haprion/registry/certificates.yaml\n"
             'deploy_identity:\n  key: "/root/.ssh/id_ed25519_deploy"\n'
             'status_identity:\n  key: "/root/.ssh/id_ed25519_status"\n'
-            "acme:\n  certbot: /opt/haprion-certbot/current/venv/bin/certbot\n",
+            "acme:\n  certbot: /opt/haprion-certbot/current/venv/bin/certbot\n"
+            "  dns_cloudflare_credentials: /etc/letsencrypt/cloudflare/example.ini\n",
         )
         machine.write(
             "/etc/haprion/registry/clusters.yaml",
@@ -159,6 +160,7 @@ class AManager(unittest.TestCase):
             "/srv/certdist/own.pem",
             "/etc/sudoers.d/svc-other",
             "/root/.ssh/id_ed25519",
+            "/etc/letsencrypt/cloudflare/example.ini",
         ):
             machine.write(name)
         machine.path("/etc/nginx/sites-enabled").mkdir(parents=True)
@@ -225,6 +227,8 @@ class AManager(unittest.TestCase):
             "lb-01.example.com: the public key",
             "shop.example.com",
             "Nothing was changed",
+            "kept: named by the runtime policy",
+            "/etc/letsencrypt/cloudflare/example.ini",
             "sudo apt purge haprion-ui",
         ):
             with self.subTest(named=named):
@@ -232,6 +236,11 @@ class AManager(unittest.TestCase):
         self.assertNotIn("imported.example.com", said)
         # A cluster's directory goes with its root, and is said once.
         self.assertNotIn("/configs/haproxy/alpha", said)
+        # Kept is only what stays: not a key the removal takes, nor a package's tree.
+        kept = said.split("== kept: named by the runtime policy", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("/etc/letsencrypt/cloudflare/example.ini", kept)
+        self.assertNotIn("id_ed25519_deploy", kept)
+        self.assertNotIn("/opt/haprion-certbot", kept)
         self.assertNotIn("role someone", said)
         changing = [argv for argv in self.machine.ran if argv[1:2] in (["stop"], ["disable"])]
         self.assertEqual(changing, [])
@@ -411,7 +420,13 @@ class ANode(unittest.TestCase):
             "/home/_haprion-trigger/.ssh/authorized_keys",
         ):
             machine.write(name)
-        machine.write("/etc/haprion/node.conf", 'CLUSTER="alpha"\nMANAGER="mgr.example.com"\n')
+        machine.write(
+            "/etc/haprion/node.conf",
+            'CLUSTER="alpha"\nMANAGER="mgr.example.com"\n'
+            'CONFIG_PULL_KEY="/root/.ssh/id_ed25519_older_pull"\n',
+        )
+        machine.write("/root/.ssh/id_ed25519_older_pull")
+        machine.write("/root/.ssh/id_ed25519_older_pull.pub")
         machine.write(
             "/etc/keepalived/keepalived.conf", NODE.KEEPALIVED_MARK + "\nglobal_defs {}\n"
         )
@@ -476,6 +491,8 @@ class ANode(unittest.TestCase):
             "/var/log/journal/0123456789abcdef.haprion-waf",
             "/var/spool/rsyslog/haprion-graylog.00000001",
             "/root/.ssh/id_ed25519_config_pull",
+            "/root/.ssh/id_ed25519_older_pull",
+            "/root/.ssh/id_ed25519_older_pull.pub",
             "/home/_haprion-trigger",
             "/etc/sysusers.d/haprion-node.conf",
         ):
@@ -505,8 +522,10 @@ class ANode(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(any(command in line for line in ran), ran)
 
-    def test_a_keepalived_conf_written_by_hand_stays(self) -> None:
+    def test_a_keepalived_conf_written_by_hand_stays_and_is_said(self) -> None:
         self.machine.write("/etc/keepalived/keepalived.conf", "global_defs {}\n")
+        _, said = self.main()
+        self.assertIn("keepalived.conf: its first line is not Haprion's", said)
         self.main("--yes")
         self.assertTrue(self.machine.path("/etc/keepalived/keepalived.conf").is_file())
 

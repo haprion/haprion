@@ -300,6 +300,8 @@ class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
                         "--database", "haprion",
                         "--database-role", "migrate",
                         "--clusters",
+                        "--sudoers-root", str(root / "sudoers.d"),
+                        "--systemd-root", str(root / "systemd"),
                         "--ui-release", "new",
                         "--upgrade-from-current",
                         "--skip-services",

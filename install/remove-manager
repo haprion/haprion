@@ -516,10 +516,14 @@ def plan(host: Host, stamp: str) -> list[Step]:
     if masked:
         files.found.append(f"{dnsdist}: the mask the steps set, undone; dnsdist left disabled")
     default = host.path("/etc/nginx/sites-enabled/default")
+    #
+    # The enabled sites are links: whether one is there is the link's own
+    # question, not its target's (a dangling one is still there).
+    #
     restore_default = (
         host.path("/etc/nginx/sites-available/default").is_file()
-        and not default.exists()
-        and host.path("/etc/nginx/sites-enabled/haprion").exists()
+        and not os.path.lexists(default)
+        and os.path.lexists(host.path("/etc/nginx/sites-enabled/haprion"))
     )
     if restore_default:
         files.found.append(f"{default}: put back, as the steps found it")

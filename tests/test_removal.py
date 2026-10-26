@@ -320,6 +320,17 @@ class AManager(unittest.TestCase):
             stops.index(next(s for s in stops if "service" in s)),
         )
 
+    def test_the_default_site_comes_back_whatever_the_link_points_at(self) -> None:
+        # A link is asked about itself: its target is on the machine, not under this root.
+        enabled = self.machine.path("/etc/nginx/sites-enabled/haprion")
+        enabled.unlink()
+        enabled.symlink_to("/nonexistent/sites-available/haprion")
+        code, said = self.main("--yes")
+
+        self.assertEqual(code, 0, said)
+        default = self.machine.path("/etc/nginx/sites-enabled/default")
+        self.assertEqual(os.readlink(default), "/etc/nginx/sites-available/default")
+
     def test_a_receiver_s_key_and_the_registry_are_kept_for_registering_it_again(self) -> None:
         self.main("--yes")
 

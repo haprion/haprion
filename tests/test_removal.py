@@ -124,7 +124,7 @@ class AManager(unittest.TestCase):
         )
         machine.write(
             "/etc/haprion/registry/clusters.yaml",
-            "schema_version: 1\nclusters:\n  alpha:\n    nodes:\n"
+            "schema_version: 1\nclusters:\n  alpha:\n    config_path: /configs/haproxy/alpha\n    nodes:\n"
             "    - name: node-a\n      mgmt_host: node-a.example.com\n",
         )
         machine.write(
@@ -230,6 +230,8 @@ class AManager(unittest.TestCase):
             with self.subTest(named=named):
                 self.assertIn(named, said)
         self.assertNotIn("imported.example.com", said)
+        # A cluster's directory goes with its root, and is said once.
+        self.assertNotIn("/configs/haproxy/alpha", said)
         self.assertNotIn("role someone", said)
         changing = [argv for argv in self.machine.ran if argv[1:2] in (["stop"], ["disable"])]
         self.assertEqual(changing, [])

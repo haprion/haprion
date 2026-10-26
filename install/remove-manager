@@ -42,7 +42,7 @@ from typing import Any
 #
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from removal import (
+from removal import (  # noqa: E402 - after the path and the bytecode switch above
     Host,
     Step,
     public_key,
@@ -476,6 +476,8 @@ def plan(host: Host, stamp: str) -> list[Step]:
     paths: list[Path] = []
     for name in [*places, *FIXED_PATHS]:
         paths += [p for p in with_copies(host, name) if p not in paths]
+    # A cluster's directory under a root already listed goes with the root.
+    paths = [p for p in paths if not any(p != q and p.is_relative_to(q) for q in paths)]
     data = host.path(DATA)
     emptied = data.is_dir() and host.is_mount(data)
     if data.is_dir() and not emptied:
@@ -507,7 +509,7 @@ def plan(host: Host, stamp: str) -> list[Step]:
     dnsdist = host.path(f"{SYSTEMD}/dnsdist.service")
     masked = dnsdist.is_symlink() and os.readlink(dnsdist) == "/dev/null"
     if masked:
-        files.found.append(f"{dnsdist}: the mask the steps set")
+        files.found.append(f"{dnsdist}: the mask the steps set, undone; dnsdist left disabled")
     default = host.path("/etc/nginx/sites-enabled/default")
     restore_default = (
         host.path("/etc/nginx/sites-available/default").is_file()
@@ -539,7 +541,12 @@ def plan(host: Host, stamp: str) -> list[Step]:
                  f"^{re.escape(line)}$"]
             )  # fmt: skip
         if masked:
+            #
+            # Unmasked only to be disabled: the manager never ran dnsdist, and its
+            # package's default is a DNS server started at boot.
+            #
             host.run(["/usr/bin/systemctl", "unmask", "dnsdist.service"])
+            host.run(["/usr/bin/systemctl", "disable", "--now", "dnsdist.service"])
         if restore_default:
             default.symlink_to("/etc/nginx/sites-available/default")
         #

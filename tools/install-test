@@ -96,6 +96,59 @@ backends:
 """
 BACKEND_BODY = "install-test backend"
 #
+# What a machine holds, for the removal's comparison (B372): the files where an
+# installation puts things, the accounts, and the packages installed. apt's and
+# dpkg's own state, the journal and what the test itself copied in are left out.
+#
+FOOTPRINT = r"""
+find /etc /srv /opt /home /root /usr/local /var/lib /var/log /var/spool /usr/sbin /usr/bin \
+     /usr/lib/systemd /usr/share/haprion-ui /usr/share/haprion-node /usr/lib/haprion -xdev \
+     \( -path /var/lib/apt -o -path /var/lib/dpkg -o -path /var/cache -o -path /var/log/journal \
+        -o -path /root/install -o -path /srv/haprion-repo \) -prune -o -print 2>/dev/null | sort
+echo '### users'; getent passwd | cut -d: -f1 | sort
+echo '### groups'; getent group | cut -d: -f1 | sort
+echo '### packages'; dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' | awk '$1 == "ii" {print $2}' | sort
+true
+"""
+#
+# The comparison is made once every package the installation brought is purged
+# as well - the shared ones stay on a real machine (B372), and are purged here
+# only so that the machine can be compared with what it was. What a purge
+# leaves by design is listed here: data, logs and keys a service made while it
+# ran. A path here is not Haprion's.
+#
+LEFT_BY_SHARED_PACKAGES = (
+    r"^/etc/postgresql(/|$)",
+    r"^/var/lib/postgresql(/|$)",
+    r"^/var/log/postgresql(/|$)",
+    r"^/var/lib/nginx(/|$)",
+    r"^/var/log/nginx/(access|error)\.log",
+    r"^/var/lib/haproxy(/|$)",
+    r"^/var/lib/keepalived(/|$)",
+    r"^/etc/ssl/",
+    r"^/etc/alternatives/",
+    r"^/etc/systemd/system/[^/]+\.(wants|requires)/(?!haprion)",
+    r"^/var/lib/systemd/",
+    r"^/var/lib/(ucf|python|polkit-1|private|sgml-base|xml-core|pam|dbus|logrotate|sudo|man-db|ca-certificates|shells\.state|update-rc\.d|dhcp|letsencrypt)(/|$)",
+    r"^/var/log/(apt|dpkg\.log|alternatives\.log|btmp|wtmp|lastlog|faillog|letsencrypt)(/|$)",
+    # rsyslog's logs, the haproxy package's among them, which its purge keeps.
+    r"^/var/log/(syslog|auth\.log|user\.log|kern\.log|messages|dmesg|haproxy\.log)(\.[0-9]+)?$",
+    # keepalived's routing protocol name, written by its package's script.
+    r"^/etc/iproute2(/rt_addrprotos\.d(/keepalived\.conf)?)?$",
+    r"^/etc/(passwd|group|shadow|gshadow|subuid|subgid)-?$",
+    r"^/etc/(ld\.so\.cache|machine-id|\.pwd\.lock|mailcap|mime\.types)$",
+    r"^/etc/apt/sources\.list\.d/(pdns\.list|haproxy-[0-9.]+\.sources|pgdg\.sources)$",
+    r"^/etc/apt/preferences\.d/(dnsdist-21|haproxy-[0-9.]+\.pref)$",
+    r"^/etc/apt/keyrings/(dnsdist-21-pub\.asc|haproxy-[a-z-]+\.asc)$",
+    r"^/etc/apt/apt\.conf\.d/52haprion-postgresql$",
+    r"^/etc/letsencrypt(/|$)",
+    r"^/root/\.(bash_history|lesshst|psql_history|cache|wget-hsts)",
+    # Kept by the removal on purpose: the receivers' keys and the registry (B370).
+    r"^/root/haprion-removed-[0-9-]+(/|$)",
+    # The test's own backend, which it serves the object from.
+    r"^/srv/install-test(/|$)",
+)
+#
 # Two units a container cannot run, and the kernel filesystems it cannot
 # mount: masked, so that a failed unit after boot is the product's.
 #
@@ -631,6 +684,45 @@ class Run:
         if silent or len(nodes) != len(NODES):
             raise Failed(f"no statistics from {silent or 'the missing nodes'}")
 
+    def footprint(self, role: str) -> dict[str, set[str]]:
+        _, output = self.on(role, FOOTPRINT)
+        parts = {"paths": set[str]()}
+        current = parts["paths"]
+        for line in output.splitlines():
+            if line.startswith("### "):
+                current = parts.setdefault(line[4:], set())
+            elif line.startswith("/") or not line.startswith("#"):
+                current.add(line)
+        return parts
+
+    def left_behind(self, role: str, before: dict[str, set[str]]) -> list[str]:
+        """What is on the machine now that was not before the installation, and is nobody's."""
+
+        brought = sorted(self.footprint(role)["packages"] - before["packages"])
+        if brought:
+            self.on(
+                role,
+                #
+                # Some came in as dependencies and are essential to the
+                # distribution; the machine is thrown away after this.
+                #
+                "export DEBIAN_FRONTEND=noninteractive SUDO_FORCE_REMOVE=yes && "
+                f"apt-get purge -y -q --allow-remove-essential {' '.join(brought)}",
+            )
+        after = self.footprint(role)
+        found = [
+            path
+            for path in sorted(after["paths"] - before["paths"])
+            if not any(re.search(pattern, path) for pattern in LEFT_BY_SHARED_PACKAGES)
+        ]
+        for kind in ("users", "groups"):
+            found += [
+                f"{kind[:-1]} {name}"
+                for name in sorted(after.get(kind, set()) - before.get(kind, set()))
+                if "haprion" in name or name.startswith("crx-")
+            ]
+        return found
+
     def save_logs(self) -> None:
         for role in ("mgr", *NODES):
             self.on(role, "journalctl -b --no-pager -p warning", check=False)
@@ -682,6 +774,10 @@ def run_one(
     try:
         image = step("an empty server image", run.image)
         step("a manager and two nodes booted", lambda: run.start(image))
+        before = step(
+            "what the machines hold before the installation",
+            lambda: {role: run.footprint(role) for role in ("mgr", *NODES)},
+        )
         step(
             "the manager: packages, haprion-setup",
             lambda: run.install_manager(manager_files, site, url),
@@ -829,6 +925,44 @@ def run_one(
         step(
             "haprion-node add --deploy: certificates and configuration, the node a standby",
             added_back_and_deployed,
+        )
+
+        def removed_as_before() -> None:
+            """B372: listed, removed, the packages purged - and nothing of Haprion left."""
+
+            for role, command in (
+                *((node, "haprion-node-prepare --remove") for node in NODES),
+                ("mgr", "haprion-setup --remove"),
+            ):
+                _, listed = run.on(role, command)
+                if "Nothing was changed" not in listed:
+                    raise Failed(f"{role}: `{command}` without --yes did not say so:\n{listed}")
+                _, removed = run.on(role, f"{command} --yes")
+                purge = re.search(r"sudo apt purge ([a-z0-9 .-]+)$", removed, re.MULTILINE)
+                if purge is None:
+                    raise Failed(f"{role}: the removal named no packages to purge:\n{removed}")
+                run.on(
+                    role,
+                    "export DEBIAN_FRONTEND=noninteractive && "
+                    f"apt-get purge -y -q {purge.group(1)} "
+                    f"&& rm -f /etc/apt/sources.list.d/haprion.sources {KEYRING}",
+                )
+                if role == "mgr":
+                    _, names = run.on(
+                        "mgr",
+                        "runuser -u postgres -- psql -qtAX -c "
+                        '"select datname from pg_database union all select rolname from pg_roles"',
+                    )
+                    kept = [n for n in names.split() if "haprion" in n or n.startswith("app_")]
+                    if kept:
+                        raise Failed(f"the database still holds {kept}")
+                left = run.left_behind(role, before[role])
+                if left:
+                    raise Failed(f"{role}: Haprion left these behind:\n  " + "\n  ".join(left))
+
+        step(
+            "haprion-setup --remove and haprion-node-prepare --remove: as before the installation",
+            removed_as_before,
         )
     except Failed as failure:
         print("FAILED")

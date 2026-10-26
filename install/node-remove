@@ -1,0 +1,324 @@
+#!/usr/bin/python3
+"""What Haprion made on this node, listed - and with --yes, removed (B372).
+
+    sudo haprion-node-prepare --remove          what is here; nothing changes
+    sudo haprion-node-prepare --remove --yes    remove it
+
+The node package has no maintainer scripts of its own that clean up, and step 4,
+the join and every deploy leave far more than the package's files: accounts and
+their keys, sudo rules, unit drop-ins, rsyslog rules, sshd's listen address,
+HAProxy's release layout, keepalived's configuration. This takes all of it
+away. Take the node out of its cluster in the interface first; afterwards the
+node serves nothing.
+
+HAProxy, keepalived, dnsdist and the WAF engine are stopped and disabled, since
+their configuration was Haprion's; the packages and their apt sources stay. The
+last lines say how to remove them and Haprion's own packages.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+#
+# No bytecode beside it: a __pycache__ under the package's directory is a file
+# dpkg does not own, and would stay after the purge.
+#
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from removal import (  # noqa: E402 - after the path and the bytecode switch above
+    Host,
+    Step,
+    ran,
+    remove,
+    report,
+    size_of,
+    tidy_empty,
+    tidy_root_ssh,
+    with_copies,
+)
+
+SYSUSERS = "/etc/sysusers.d/haprion-node.conf"
+SYSTEMD = "/etc/systemd/system"
+NODE_CONF = "/etc/haprion/node.conf"
+#
+# keepalived.conf is the product's only when its first line says so
+# (keepalived_conf.py); one written by hand is left alone.
+#
+KEEPALIVED_MARK = "# Written by Haprion - a deploy replaces this file."
+FIXED_PATHS = (
+    "/etc/tmpfiles.d/haprion-waf.conf",
+    "/etc/tmpfiles.d/haprion-waf-engine.conf",
+    "/etc/tmpfiles.d/haprion-dns.conf",
+    f"{SYSTEMD}/coraza-spoa.service.d/haprion.conf",
+    f"{SYSTEMD}/dnsdist.service.d/haprion.conf",
+    f"{SYSTEMD}/haproxy.service.d/haprion-server-state.conf",
+    "/etc/sudoers.d/haprion-node",
+    "/etc/sudoers.d/haprion-node-join",
+    "/etc/ssh/sshd_config.d/05-haprion-listen.conf",
+    "/etc/sysctl.d/60-haproxy.conf",
+    "/etc/rsyslog.d/47-haprion-forward.conf",
+    "/etc/rsyslog.d/48-haprion-traffic.conf",
+    "/etc/rsyslog.d/haprion",
+    "/etc/apparmor.d/rsyslog.d/haprion-traffic",
+    "/etc/logrotate.d/haprion-rsyslog-stats",
+    SYSUSERS,
+    "/etc/haprion",
+    "/var/lib/haprion-node",
+    "/var/lib/haprion",
+    "/var/lib/haprion-restore",
+    "/var/log/haprion",
+    "/var/log/haprion-node",
+    "/root/.ssh/id_ed25519_config_pull",
+    "/root/.ssh/id_ed25519_config_pull.pub",
+    "/root/.ssh/id_ed25519_cert_pull",
+    "/root/.ssh/id_ed25519_cert_pull.pub",
+    "/etc/haproxy/releases",
+    "/etc/haproxy/certs",
+    "/etc/haproxy/current",
+    "/etc/keepalived/addresses.conf",
+    "/etc/keepalived/ipvs.conf",
+)
+#
+# Found by pattern: the WAF engine's journal namespace, rsyslog's disk queues
+# for external receivers (named haprion-<receiver>, under its work directory).
+#
+PATTERNS = (
+    "/var/log/journal/*.haprion-waf",
+    "/var/spool/rsyslog/haprion-*",
+    "/var/lib/rsyslog/haprion-*",
+)
+#
+# Step 4 points these at the release; with the release gone they point nowhere.
+#
+RELEASE_LINKS = ("haproxy.cfg", "conf.d", "maps", "waf", "dns")
+SERVICES = ("keepalived.service", "haproxy.service", "dnsdist.service", "coraza-spoa.service")
+#
+# Masks the steps or a test-mode restore set; each is undone only if it is one.
+#
+MASKS = ("ipvsadm.service", "keepalived.service")
+DROPIN_DIRS = ("coraza-spoa.service.d", "dnsdist.service.d", "haproxy.service.d")
+PACKAGES = ("haprion-node", "haprion-coraza-spoa", "haprion-archive-keyring")
+SOURCES = ("/etc/apt/sources.list.d/haprion.sources",)
+SHARED_PACKAGES = ("haproxy", "keepalived", "dnsdist", "ipvsadm")
+SHARED_SOURCES = (
+    "/etc/apt/sources.list.d/haproxy-3.4.sources",
+    "/etc/apt/preferences.d/haproxy-3.4.pref",
+    "/etc/apt/keyrings/haproxy-ubuntu-ppa.asc",
+    "/etc/apt/keyrings/haproxy-debian-net.asc",
+    "/etc/apt/sources.list.d/pdns.list",
+    "/etc/apt/preferences.d/dnsdist-21",
+    "/etc/apt/keyrings/dnsdist-21-pub.asc",
+)
+
+
+def sysusers(host: Host) -> tuple[list[str], list[str]]:
+    """The fragment's users and groups, and the groups `m` lines name."""
+
+    path = host.path(SYSUSERS)
+    users: list[str] = []
+    groups: list[str] = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if len(fields) >= 2 and fields[0] == "u":
+                users.append(fields[1])
+            elif len(fields) >= 2 and fields[0] == "g":
+                groups.append(fields[1])
+    return users, groups
+
+
+def manager_host(host: Host) -> str | None:
+    path = host.path(NODE_CONF)
+    if not path.is_file():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("MANAGER="):
+            return line.split("=", 1)[1].strip().strip('"') or None
+    return None
+
+
+def plan(host: Host) -> list[Step]:
+    steps: list[Step] = []
+    services = Step("services Haprion configured, stopped and disabled; its units removed")
+    unit_files = sorted(host.path(SYSTEMD).glob("haprion-*"))
+    wanted = sorted(host.path(SYSTEMD).glob("*.wants/haprion-*"))
+    services.found = [str(p) for p in unit_files + wanted]
+    running = [
+        unit for unit in SERVICES
+        if host.run(["/usr/bin/systemctl", "is-enabled", "--quiet", unit]).returncode == 0
+        or host.run(["/usr/bin/systemctl", "is-active", "--quiet", unit]).returncode == 0
+    ]  # fmt: skip
+    services.found += [f"{unit}: stopped and disabled" for unit in running]
+    masks = [
+        name for name in MASKS
+        if host.path(f"{SYSTEMD}/{name}").is_symlink()
+        and os.readlink(host.path(f"{SYSTEMD}/{name}")) == "/dev/null"
+    ]  # fmt: skip
+    services.found += [f"{name}: the mask Haprion set, undone" for name in masks]
+
+    def stop() -> list[str]:
+        failed: list[str] = []
+        listed = host.run(
+            ["/usr/bin/systemctl", "list-units", "--all", "--plain", "--no-legend", "haprion-*"]
+        ).stdout.split("\n")
+        loaded = [line.split()[0] for line in listed if line.strip()]
+        for unit in sorted(loaded, key=lambda u: (not u.endswith((".timer", ".socket")), u)):
+            ran(host, ["/usr/bin/systemctl", "stop", unit], f"stopping {unit}", failed)
+        for unit in running:
+            ran(host, ["/usr/bin/systemctl", "disable", "--now", unit], f"stopping {unit}", failed)
+        named = [p.name for p in unit_files if p.is_file() and ".replaced-" not in p.name]
+        if named:
+            host.run(["/usr/bin/systemctl", "disable", *named])
+        failed += remove(unit_files + wanted)
+        for name in masks:
+            ran(host, ["/usr/bin/systemctl", "unmask", name], f"unmasking {name}", failed)
+        return failed
+
+    services.action = stop
+    if services.found:
+        steps.append(services)
+
+    users, groups = sysusers(host)
+    known = {u.pw_name: u for u in host.users()}
+    accounts = Step("accounts and groups")
+    accounts.found = [f"user {name}" for name in users if name in known]
+    accounts.found += [f"group {name}" for name in groups if host.group_exists(name)]
+    homes = [
+        host.path(known[name].pw_dir) for name in users
+        if name in known and known[name].pw_dir.startswith("/home/")
+    ]  # fmt: skip
+    accounts.found += [str(home) for home in homes if home.is_dir()]
+
+    def remove_accounts() -> list[str]:
+        failed: list[str] = []
+        for name in [n for n in users if n in known]:
+            ran(host, ["/usr/sbin/userdel", name], f"user {name}", failed)
+        for name in users + groups:
+            if host.group_exists(name):
+                ran(host, ["/usr/sbin/groupdel", name], f"group {name}", failed)
+        failed += remove(homes)
+        return failed
+
+    accounts.action = remove_accounts
+
+    files = Step("files and directories")
+    paths: list[Path] = []
+    for name in FIXED_PATHS:
+        paths += [p for p in with_copies(host, name) if p not in paths]
+    for pattern in PATTERNS:
+        parent = host.path(str(Path(pattern).parent))
+        if parent.is_dir():
+            paths += sorted(parent.glob(Path(pattern).name))
+    links = [
+        host.path(f"/etc/haproxy/{name}") for name in RELEASE_LINKS
+        if host.path(f"/etc/haproxy/{name}").is_symlink()
+        and os.readlink(host.path(f"/etc/haproxy/{name}")).startswith("current/")
+    ]  # fmt: skip
+    paths += links
+    keepalived = host.path("/etc/keepalived/keepalived.conf")
+    if keepalived.is_file():
+        first = keepalived.read_text(encoding="utf-8").split("\n", 1)[0]
+        if first == KEEPALIVED_MARK:
+            paths += with_copies(host, "/etc/keepalived/keepalived.conf")
+    for name in ("keepalived.conf", "addresses.conf", "ipvs.conf"):
+        paths += sorted(host.path("/etc/keepalived").glob(f"{name}.rollback"))
+    files.found = [f"{p}{size_of(p)}" for p in paths]
+    packaged = host.path("/etc/haproxy/haproxy.cfg.packaged")
+    if packaged.is_file():
+        files.found.append(f"{packaged}: put back as /etc/haproxy/haproxy.cfg")
+    manager = manager_host(host)
+    known_hosts = host.path("/root/.ssh/known_hosts")
+    if manager and known_hosts.is_file():
+        files.found.append(f"{known_hosts}: the line for {manager}")
+
+    def remove_files() -> list[str]:
+        failed = remove(paths)
+        if packaged.is_file() and not host.path("/etc/haproxy/haproxy.cfg").exists():
+            packaged.rename(host.path("/etc/haproxy/haproxy.cfg"))
+        #
+        # The haproxy.debian.net package's own empty conf.d, which step 4 took
+        # away, comes back if dpkg says it is the package's.
+        #
+        conf_d = host.path("/etc/haproxy/conf.d")
+        owned = host.run(["/usr/bin/dpkg-query", "-S", "/etc/haproxy/conf.d"]).returncode == 0
+        if owned and not conf_d.exists():
+            conf_d.mkdir(mode=0o755)
+        for name in DROPIN_DIRS:
+            path = host.path(f"{SYSTEMD}/{name}")
+            if path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
+        if manager and known_hosts.is_file():
+            host.run(["/usr/bin/ssh-keygen", "-R", manager, "-f", str(known_hosts)])
+            old = known_hosts.with_name("known_hosts.old")
+            if old.is_file():
+                old.unlink()
+        tidy_root_ssh(host)
+        tidy_empty(host)
+        host.run(["/usr/bin/systemctl", "daemon-reload"])
+        host.run(["/usr/bin/systemctl", "reset-failed"])
+        #
+        # rsyslog without Haprion's rules takes its own HAProxy socket back;
+        # sshd without the listen file answers on every address again, which
+        # keeps the session this runs in reachable.
+        #
+        if host.run(["/usr/bin/systemctl", "is-active", "--quiet", "rsyslog"]).returncode == 0:
+            ran(host, ["/usr/bin/systemctl", "restart", "rsyslog"], "restarting rsyslog", failed)
+        if (
+            host.path("/usr/sbin/sshd").is_file()
+            and host.run(["/usr/sbin/sshd", "-t"]).returncode == 0
+        ):
+            socket = host.run(["/usr/bin/systemctl", "is-active", "--quiet", "ssh.socket"])
+            unit = "ssh.socket" if socket.returncode == 0 else "ssh.service"
+            ran(host, ["/usr/bin/systemctl", "restart", unit], f"restarting {unit}", failed)
+        return failed
+
+    files.action = remove_files
+    if files.found:
+        steps.append(files)
+    if accounts.found:
+        steps.append(accounts)
+    return steps
+
+
+def closing(host: Host) -> list[str]:
+    installed = [
+        name for name in PACKAGES
+        if host.run(["/usr/bin/dpkg-query", "-W", "-f=${Status}", name]).stdout.endswith(" installed")
+    ]  # fmt: skip
+    lines = []
+    if installed:
+        lines.append("Haprion's packages:  sudo apt purge " + " ".join(installed))
+    lines += [f"  and its apt source:  sudo rm {p}" for p in SOURCES if host.path(p).exists()]
+    shared = [p for p in SHARED_SOURCES if host.path(p).exists()]
+    lines.append(
+        "Kept, stopped and disabled: " + ", ".join(SHARED_PACKAGES)
+        + ". To remove them as well:  sudo apt purge " + " ".join(SHARED_PACKAGES)
+        + (f", and their apt files: sudo rm {' '.join(shared)}" if shared else "")
+    )  # fmt: skip
+    lines.append("sysctl's values stay in force until the next boot.")
+    return lines
+
+
+def main(argv: list[str] | None = None, host: Host | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv not in ([], ["--yes"]):
+        print("usage: haprion-node-prepare --remove [--yes]", file=sys.stderr)
+        return 64
+    host = host or Host()
+    if host.root == Path("/") and os.geteuid() != 0:
+        print("haprion-node-prepare --remove: run it with sudo", file=sys.stderr)
+        return 77
+    return report(
+        plan(host),
+        closing(host),
+        yes=argv == ["--yes"],
+        subject="node",
+        command="haprion-node-prepare --remove",
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -330,6 +330,6 @@ def python_commands(text: str) -> set[str]:
 def script_commands(path: Path, defined: Iterable[str] = ()) -> set[str]:
     text = path.read_text()
     first = text.split("\n", 1)[0]
-    if "python" in first:
+    if "python" in first or path.suffix == ".py":
         return python_commands(text)
     return shell_commands(text, defined)

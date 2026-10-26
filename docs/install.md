@@ -114,20 +114,42 @@ Do not add the repository to unattended-upgrades. An update is something you cho
 
 ### Removing
 
-Removing `haprion-certbot` (and `haprion-ui`, which needs it) turns off Haprion's renewal timer and removes its unit
-files and its certbot deploy hook, and turns the distribution's `certbot.timer` back on if step 14 had masked it. After
-a reinstall, `haprion-setup` sets the renewal up again.
+Removing the packages is not enough. The installation made accounts, a database, services, an nginx site and
+directories that `apt purge` does not touch. A command removes them first. Run it on each node, then on the manager.
 
-The other units, sockets and timers the steps installed stay enabled. Turn them off before you remove the packages:
+First see what it would remove. This changes nothing:
 
 ```bash
-systemctl list-unit-files 'haprion-*' --state=enabled
-sudo systemctl disable --now <each unit it lists>
-sudo apt purge haprion-ui haprion-certbot haprion-cli
+sudo haprion-node-prepare --remove    # on a node
+sudo haprion-setup --remove           # on the manager
 ```
 
-Purging removes the releases under `/opt`. The configuration under `/etc/haprion`, the data under
-`/var/lib/haprion-ui`, the database, and the unit files, sudo rules and nginx site the steps wrote stay.
+Then remove it, and purge the packages the last lines name:
+
+```bash
+sudo haprion-node-prepare --remove --yes
+sudo apt purge haprion-node haprion-coraza-spoa haprion-archive-keyring
+```
+
+```bash
+sudo haprion-setup --remove --yes
+sudo apt purge haprion-ui haprion-certbot haprion-cli haprion-coraza-spoa haprion-crs haprion-archive-keyring
+```
+
+Remove the repository's source as well: the file `haprion.sources` under `/etc/apt/sources.list.d/`.
+
+On the manager it removes the services, the database and its roles, the nginx site, the accounts, the keys, the
+Let's Encrypt certificates Haprion issued, and every directory the runtime policy names – including the
+configuration repositories and the node backups. On a node it removes the accounts and their keys, the sudo rules,
+HAProxy's releases and certificates, keepalived's configuration, the rsyslog rules and sshd's listen address, and it
+stops HAProxy, keepalived and dnsdist.
+
+It keeps PostgreSQL, nginx, HAProxy, keepalived and dnsdist and their apt sources, since something else may use
+them. The last lines say how to remove those as well.
+
+Before it removes anything, it saves the certificate receivers' public keys and the certificate registry under
+`/root/haprion-removed-<time>/`. Register a receiver again with its saved key, and it fetches as before without
+anything done on the receiver.
 
 ## 1. Choose the answers, or keep the defaults
 

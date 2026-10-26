@@ -3,6 +3,7 @@
 
     sudo haprion-node-prepare
     sudo haprion-node-prepare --manager <new name or address>
+    sudo haprion-node-prepare --remove [--yes]
 
 Step 4 (04-node-prepare) sets up what the node scripts need beside them: the
 accounts and their sudo rules, the release layout, dnsdist, HAProxy's log
@@ -25,6 +26,9 @@ key did not change, only where it is (review 26-10-25, 3-01).
 
 The package's postinst says when to run this: when the step it brings is not
 the one that last ran here.
+
+`--remove` lists what Haprion made on this node, and with `--yes` removes it
+(B372; node-remove beside the step says what and in which order).
 """
 
 from __future__ import annotations
@@ -58,7 +62,8 @@ NODE_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # A name or an IPv4 address, as step 4's MANAGER_HOST is.
 HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 HOST_KEY = re.compile(r"^ssh-ed25519 [A-Za-z0-9+/]+=*$")
-USAGE = "usage: sudo haprion-node-prepare [--manager <new name or address>]"
+USAGE = "usage: sudo haprion-node-prepare [--manager <new name or address>] | --remove [--yes]"
+REMOVE = INSTALL.parent / "node-remove"
 REQUIRED = (
     "CLUSTER",
     "MANAGER",
@@ -172,6 +177,8 @@ def carried_host_key(old: str) -> str | None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["--remove"]:
+        os.execv("/usr/bin/python3", ["/usr/bin/python3", "-I", str(REMOVE), *argv[1:]])  # noqa: S606 - this package's own removal, by its full path
     manager: str | None = None
     if argv:
         if len(argv) != 2 or argv[0] != "--manager" or not HOST.fullmatch(argv[1]):

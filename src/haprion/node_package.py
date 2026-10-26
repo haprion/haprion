@@ -37,6 +37,7 @@ PACKAGE = "haprion-node"
 ARCHITECTURE = "all"
 SBIN = "/usr/sbin"
 INSTALL_DIR = "/usr/share/haprion-node/install"
+REMOVE_DIR = "/usr/share/haprion-node"
 #
 # Beside the step, not under /usr/share/doc: a machine may tell dpkg not to
 # install documentation (Ubuntu's minimal images do), and the commit it names
@@ -100,6 +101,13 @@ CONTENTS: dict[str, tuple[str, int]] = {
         for name in (*NODE_SCRIPTS, *JOIN_SCRIPTS, *PREPARE_SCRIPTS)
     },
     f"{INSTALL_DIR[1:]}/04-node-prepare": ("install/04-node-prepare", 0o755),
+    #
+    # The removal (B372), beside the step rather than in its directory: the
+    # step's digest (B361) covers that directory, and a change to the removal
+    # asks no node to prepare again.
+    #
+    f"{REMOVE_DIR[1:]}/node-remove": ("install/node-remove", 0o755),
+    f"{REMOVE_DIR[1:]}/removal.py": ("install/removal.py", 0o644),
     f"{INSTALL_DIR[1:]}/node-lib.sh": ("install/node-lib.sh", 0o644),
     f"{INSTALL_DIR[1:]}/node-installation.sh": ("install/node-installation.sh", 0o644),
     f"{INSTALL_DIR[1:]}/accounts.sh": ("install/accounts.sh", 0o644),

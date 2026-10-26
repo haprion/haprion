@@ -1,0 +1,611 @@
+#!/usr/bin/python3
+"""What a Haprion manager installation made, listed - and with --yes, removed (B372).
+
+    sudo haprion-setup --remove          what is here, and what would go; nothing changes
+    sudo haprion-setup --remove --yes    remove it
+
+`apt purge` takes away the packages' own files and little else: the steps made
+the accounts, the database, the units, the nginx site and the directories, and
+the running product made more. This removes all of that, in an order that
+stops the services before their files go. It reads where things are from the
+installation itself - the runtime policy, the cluster file, the sysusers
+fragment - so a manager installed with answers of its own is removed as it was
+installed.
+
+What stays: PostgreSQL, nginx, HAProxy and dnsdist, and their apt sources -
+packages the steps installed or used, which something else on the machine may
+use too. The last lines say how to remove them and Haprion's own packages.
+
+Before anything goes, the certificate receivers' public keys and the registry
+are kept under /root/haprion-removed-<time>/: a receiver registered again with
+its own key fetches as before, without anything done on the receiver (B370).
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+#
+# The parts both removals share, beside this file in each package. Isolated
+# mode (python3 -I) leaves the script's own directory off the path.
+#
+#
+# No bytecode beside it: a __pycache__ under the package's directory is a file
+# dpkg does not own, and would stay after the purge.
+#
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from removal import (
+    Host,
+    Step,
+    public_key,
+    ran,
+    remove,
+    report,
+    size_of,
+    tidy_empty,
+    tidy_root_ssh,
+    with_copies,
+)
+
+#
+# The fixed names (install/accounts.sh, B266). A test holds these to it.
+#
+DB_NAME = "haprion"
+DB_ROLES = (
+    "_haprion-migrate",
+    "_haprion-web",
+    "_haprion-worker",
+    "_haprion-poller",
+    "_haprion-collector",
+    "app_web",
+    "app_worker",
+    "app_poller",
+    "app_collector",
+)
+RESTORE_CHECK_DB = f"{DB_NAME}_restorecheck"
+RECEIVER_PREFIX = "crx-"
+#
+# What step 2 of the platform adds to PostgreSQL's two files, word for word
+# (02-platform-database): the marker and the rule, after a blank line at the
+# end of pg_ident.conf, and before one at the top of pg_hba.conf.
+#
+PG_MARK = "# haprion platform"
+PG_RULES = {
+    "ident_file": "haprion_migration   root   _haprion-migrate",
+    "hba_file": "local   haprion   _haprion-migrate   peer   map=haprion_migration",
+}
+
+POLICY = "/etc/haprion/runtime-policy.yaml"
+SYSUSERS = "/etc/sysusers.d/haprion.conf"
+SYSTEMD = "/etc/systemd/system"
+#
+# Where the steps put things when the answers name no other place
+# (install/defaults.sh), for an installation whose policy is gone.
+#
+DEFAULT_ROOTS = (
+    "/srv/haprion/config",
+    "/srv/haprion/published",
+    "/srv/haprion/validation",
+    "/srv/haprion/state-backups",
+    "/srv/certdist/haproxy",
+    "/srv/certdist/receivers",
+)
+#
+# Made by the steps and the product, wherever the answers put the rest.
+#
+FIXED_PATHS = (
+    "/etc/haprion",
+    "/var/lib/haprion",
+    "/var/log/haprion",
+    "/opt/haprion-scep",
+    "/srv/certdist/manager-ui.pem",
+    "/etc/sudoers.d/haprion-worker",
+    "/etc/sudoers.d/haprion-poller",
+    "/etc/sudoers.d/haprion-config-edit",
+    "/etc/tmpfiles.d/haprion.conf",
+    SYSUSERS,
+    "/etc/nginx/sites-enabled/haprion",
+    "/etc/nginx/sites-available/haprion",
+    "/etc/nginx/snippets/haprion-receivers.conf",
+    "/etc/nginx/snippets/haprion-real-ip.conf",
+    "/etc/nginx/snippets/haprion-hsts.conf",
+    "/etc/nginx/haprion-receivers",
+    "/var/log/nginx/haprion.access.log",
+    "/var/log/nginx/haprion.error.log",
+    "/etc/ssh/sshd_config.d/haprion-receivers.conf",
+    "/etc/letsencrypt/renewal-hooks/deploy/50-haprion",
+)
+#
+# A mount point is emptied rather than removed: the mount is the machine's.
+#
+DATA = "/var/lib/haprion-ui"
+#
+# Directories that may be left empty once Haprion's parts are gone, and are
+# removed only then: the operator may keep something of their own there.
+#
+PARENTS = ("/srv/haprion", "/srv/certdist")
+SAVED = "/root/haprion-removed-{stamp}"
+#
+# Haprion's own packages, and what the steps installed or configured beside
+# them, for the closing lines.
+#
+PACKAGES = (
+    "haprion-ui",
+    "haprion-certbot",
+    "haprion-cli",
+    "haprion-coraza-spoa",
+    "haprion-crs",
+    "haprion-archive-keyring",
+)
+SOURCES = ("/etc/apt/sources.list.d/haprion.sources",)
+SHARED_PACKAGES = ("postgresql", "nginx", "haproxy", "dnsdist")
+SHARED_SOURCES = (
+    "/etc/apt/sources.list.d/pdns.list",
+    "/etc/apt/preferences.d/dnsdist-21",
+    "/etc/apt/keyrings/dnsdist-21-pub.asc",
+    "/etc/apt/sources.list.d/haproxy-3.4.sources",
+    "/etc/apt/preferences.d/haproxy-3.4.pref",
+    "/etc/apt/keyrings/haproxy-ubuntu-ppa.asc",
+    "/etc/apt/keyrings/haproxy-debian-net.asc",
+    "/etc/apt/apt.conf.d/52haprion-postgresql",
+    "/etc/apt/sources.list.d/pgdg.sources",
+)
+
+
+#
+# The engine's own YAML reader, from the CLI release the way its commands load
+# it: a document with a key given twice is refused rather than read as its last
+# (review 26-10-24, 15-02) - here, a policy naming two roots must not lose one.
+#
+CLI_LIB = "/opt/haprion/current/lib"
+
+
+class Unreadable(Exception):
+    """A document the removal must read to know what to remove, and cannot."""
+
+
+def read_yaml(host: Host, name: str) -> Any:
+    path = host.path(name)
+    if not path.is_file():
+        return None
+    if CLI_LIB not in sys.path:
+        sys.path.insert(1, CLI_LIB)
+    try:
+        import haprion.safe_yaml as safe_yaml  # the CLI release's, or the source tree's in a test
+    except ImportError as exc:
+        raise Unreadable(
+            f"{name} needs the engine to be read, and it is not installed ({exc}); "
+            "install haprion-cli again, then run this again"
+        ) from exc
+    try:
+        return safe_yaml.load(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise Unreadable(f"{name} cannot be read: {exc}") from exc
+
+
+def sysusers(host: Host) -> tuple[list[str], list[str]]:
+    """The users and groups the fragment made, in its order."""
+
+    path = host.path(SYSUSERS)
+    if not path.is_file():
+        return [], []
+    users: list[str] = []
+    groups: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] in ("u", "g"):
+            (users if fields[0] == "u" else groups).append(fields[1])
+    return users, groups
+
+
+def _policy_keys(policy: Any) -> list[str]:
+    """Every `key:` under an identity: the manager's private keys (step 3)."""
+
+    found: list[str] = []
+    if isinstance(policy, dict):
+        for value in policy.values():
+            if isinstance(value, dict) and isinstance(value.get("key"), str):
+                found.append(value["key"])
+    return found
+
+
+def roots(policy: Any, clusters: Any) -> list[str]:
+    """The places the policy and the cluster file say Haprion keeps things."""
+
+    found: list[str] = []
+    if isinstance(policy, dict):
+        for name in (
+            "config_root",
+            "publish_root",
+            "validation_certs_root",
+            "backup_root",
+            "certificate_root",
+            "receiver_root",
+        ):
+            if isinstance(policy.get(name), str):
+                found.append(policy[name])
+    else:
+        found += DEFAULT_ROOTS
+    for cluster in _clusters(clusters).values():
+        for name in ("config_path", "publish_path", "validation_certs"):
+            if isinstance(cluster.get(name), str):
+                found.append(cluster[name])
+    unique: list[str] = []
+    for path in found:
+        if path not in unique and path.startswith("/") and path not in ("/", "/srv", "/etc"):
+            unique.append(path)
+    return unique
+
+
+def _clusters(document: Any) -> dict[str, dict[str, Any]]:
+    clusters = document.get("clusters") if isinstance(document, dict) else None
+    return {k: v for k, v in (clusters or {}).items() if isinstance(v, dict)}
+
+
+def node_hosts(clusters: Any) -> list[str]:
+    found = []
+    for cluster in _clusters(clusters).values():
+        for node in cluster.get("nodes") or []:
+            if isinstance(node, dict) and isinstance(node.get("mgmt_host"), str):
+                found.append(node["mgmt_host"])
+    return found
+
+
+def acme_lineages(registry: Any) -> list[str]:
+    """The Let's Encrypt lineages Haprion issued (the registry's `acme` certificates)."""
+
+    certificates = registry.get("certificates") if isinstance(registry, dict) else None
+    found = []
+    for name, entry in (certificates or {}).items():
+        source = entry.get("source") if isinstance(entry, dict) else None
+        if isinstance(source, dict) and source.get("kind") == "acme":
+            found.append(str(source.get("lineage") or name))
+    return found
+
+
+def without_rule(text: str, rule: str) -> str:
+    """The file as it was before step 2 added `rule` under the marker."""
+
+    lines = text.split("\n")
+    kept: list[str] = []
+    index = 0
+    while index < len(lines):
+        if lines[index] == PG_MARK and lines[index + 1 : index + 2] == [rule]:
+            if kept and kept[-1] == "":
+                kept.pop()  # pg_ident.conf: the blank line before the marker
+            elif not kept and lines[index + 2 : index + 3] == [""]:
+                index += 1  # pg_hba.conf: the blank line after the rule
+            index += 2
+            continue
+        if lines[index] != rule:
+            kept.append(lines[index])
+        index += 1
+    return "\n".join(kept)
+
+
+def _psql(host: Host, sql: str, database: str = "postgres") -> subprocess.CompletedProcess[str]:
+    return host.run(
+        ["/usr/sbin/runuser", "-u", "postgres", "--", "psql", "-X", "-qtAX", "-v", "ON_ERROR_STOP=1",
+         "-d", database, "-c", sql]
+    )  # fmt: skip
+
+
+def plan(host: Host, stamp: str) -> list[Step]:
+    policy = read_yaml(host, POLICY)
+    clusters = read_yaml(
+        host, (policy or {}).get("cluster_file") or "/etc/haprion/registry/clusters.yaml"
+    )
+    registry_name = (policy or {}).get(
+        "certificate_registry"
+    ) or "/etc/haprion/registry/certificates.yaml"
+    registry = read_yaml(host, registry_name)
+    users, groups = sysusers(host)
+    receivers = [u for u in host.users() if u.pw_name.startswith(RECEIVER_PREFIX)]
+    steps: list[Step] = []
+
+    saved = host.path(SAVED.format(stamp=stamp))
+    keep = Step("kept for later, under " + str(saved))
+    receiver_ids = {
+        str(entry.get("owner")): rid
+        for rid, entry in ((registry or {}).get("receivers") or {}).items()
+        if isinstance(entry, dict)
+    }
+    for account in receivers:
+        keys = Path(account.pw_dir) / ".ssh" / "authorized_keys"
+        keep.found.append(
+            f"{receiver_ids.get(account.pw_name, account.pw_name)}: the public key in {keys}"
+        )
+    registry_dir = host.path(registry_name).parent
+    if registry_dir.is_dir():
+        keep.found.append(f"the registry, {registry_dir}")
+
+    def save() -> list[str]:
+        failed: list[str] = []
+        try:
+            (saved / "receivers").mkdir(parents=True, mode=0o700)
+            if registry_dir.is_dir():
+                shutil.copytree(registry_dir, saved / "registry")
+            for account in receivers:
+                keys = host.path(account.pw_dir) / ".ssh" / "authorized_keys"
+                lines = keys.read_text(encoding="utf-8").splitlines() if keys.is_file() else []
+                public = [key for key in map(public_key, lines) if key]
+                name = receiver_ids.get(account.pw_name, account.pw_name)
+                (saved / "receivers" / f"{name}.pub").write_text("\n".join(public) + "\n")
+        except OSError as exc:
+            failed.append(f"{saved}: {exc}")
+        return failed
+
+    keep.action = save
+    if keep.found:
+        steps.append(keep)
+
+    unit_files = sorted(host.path(SYSTEMD).glob("haprion-*"))
+    wanted = sorted(host.path(SYSTEMD).glob("*.wants/haprion-*"))
+    services = Step("services, sockets and timers, stopped and their unit files removed")
+    services.found = [str(p) for p in unit_files + wanted]
+
+    def stop_units() -> list[str]:
+        failed: list[str] = []
+        listed = host.run(
+            ["/usr/bin/systemctl", "list-units", "--all", "--plain", "--no-legend", "haprion-*"]
+        ).stdout.split("\n")
+        loaded = [line.split()[0] for line in listed if line.strip()]
+        order = sorted(loaded, key=lambda unit: (not unit.endswith((".timer", ".socket")), unit))
+        for unit in order:
+            ran(host, ["/usr/bin/systemctl", "stop", unit], f"stopping {unit}", failed)
+        enabled = [
+            p.name for p in unit_files
+            if p.is_file() and "@." not in p.name and ".replaced-" not in p.name
+        ]  # fmt: skip
+        if enabled:
+            host.run(["/usr/bin/systemctl", "disable", *enabled])
+        failed += remove(unit_files + wanted)
+        host.run(["/usr/bin/systemctl", "daemon-reload"])
+        host.run(["/usr/bin/systemctl", "reset-failed"])
+        return failed
+
+    services.action = stop_units
+    if services.found:
+        steps.append(services)
+
+    lineages = acme_lineages(registry)
+    certbot = (policy or {}).get("acme", {}).get("certbot") if isinstance(policy, dict) else None
+    letsencrypt = Step("Let's Encrypt lineages Haprion issued, deleted with certbot")
+    letsencrypt.found = [
+        name for name in lineages if host.path(f"/etc/letsencrypt/renewal/{name}.conf").is_file()
+    ]
+
+    def delete_lineages() -> list[str]:
+        failed: list[str] = []
+        for name in letsencrypt.found:
+            if certbot and host.path(certbot).is_file():
+                ran(
+                    host,
+                    [certbot, "delete", "--non-interactive", "--cert-name", name],
+                    name,
+                    failed,
+                )
+            else:
+                failed += remove(
+                    [host.path(f"/etc/letsencrypt/{part}/{name}") for part in ("live", "archive")]
+                    + [host.path(f"/etc/letsencrypt/renewal/{name}.conf")]
+                )
+        return failed
+
+    letsencrypt.action = delete_lineages
+    if letsencrypt.found:
+        steps.append(letsencrypt)
+
+    database = Step(
+        f"the database {DB_NAME}, its roles and its lines in pg_hba.conf and pg_ident.conf"
+    )
+    #
+    # Every name is read and Haprion's are picked here, so no statement is built.
+    #
+    databases = _psql(host, "select datname from pg_database")
+    present_roles = _psql(host, "select rolname from pg_roles")
+    drop_databases = [n for n in databases.stdout.split() if n in (DB_NAME, RESTORE_CHECK_DB)]
+    drop_roles = [n for n in DB_ROLES if n in present_roles.stdout.split()]
+    pg_files: dict[str, str] = {}
+    for setting in PG_RULES:
+        shown = _psql(host, f"show {setting}")
+        if shown.returncode == 0 and shown.stdout.strip():
+            pg_files[setting] = shown.stdout.strip()
+    database.found += [f"database {name}" for name in drop_databases]
+    database.found += [f"role {name}" for name in drop_roles]
+    for setting, name in pg_files.items():
+        path = host.path(name)
+        if path.is_file() and PG_RULES[setting] in path.read_text(encoding="utf-8"):
+            database.found.append(f"the rule step 2 added to {name}")
+        database.found += [str(p) for p in sorted(path.parent.glob(path.name + ".pre-haprion-*"))]
+
+    def drop_database() -> list[str]:
+        failed: list[str] = []
+        for name in drop_databases:
+            done = _psql(host, f'drop database if exists "{name}" with (force)')
+            if done.returncode != 0:
+                failed.append(f"database {name}: {done.stderr.strip()}")
+        for name in drop_roles:
+            done = _psql(host, f'drop role if exists "{name}"')
+            if done.returncode != 0:
+                failed.append(f"role {name}: {done.stderr.strip()}")
+        for setting, name in pg_files.items():
+            path = host.path(name)
+            if path.is_file():
+                text = path.read_text(encoding="utf-8")
+                path.write_text(without_rule(text, PG_RULES[setting]), encoding="utf-8")
+            failed += remove(sorted(path.parent.glob(path.name + ".pre-haprion-*")))
+        _psql(host, "select pg_reload_conf()")
+        return failed
+
+    database.action = drop_database
+    if database.found:
+        steps.append(database)
+
+    accounts = Step("accounts and groups")
+    accounts.found = [f"user {u.pw_name}" for u in receivers]
+    known_users = {u.pw_name: u for u in host.users()}
+    accounts.found += [f"user {name}" for name in users if name in known_users]
+    accounts.found += [f"group {name}" for name in groups if host.group_exists(name)]
+    homes = [Path(known_users[name].pw_dir) for name in users if name in known_users]
+    homes = [home for home in homes if str(home).startswith("/home/")]
+    accounts.found += [str(home) for home in homes if host.path(str(home)).is_dir()]
+
+    def remove_accounts() -> list[str]:
+        failed: list[str] = []
+        for name in [u.pw_name for u in receivers] + [n for n in users if n in known_users]:
+            ran(host, ["/usr/sbin/userdel", name], f"user {name}", failed)
+        for name in [u.pw_name for u in receivers] + users + groups:
+            if host.group_exists(name):
+                ran(host, ["/usr/sbin/groupdel", name], f"group {name}", failed)
+        failed += remove(host.path(str(home)) for home in homes)
+        return failed
+
+    accounts.action = remove_accounts
+
+    places = roots(policy, clusters)
+    files = Step("files and directories")
+    paths: list[Path] = []
+    for name in [*places, *FIXED_PATHS]:
+        paths += [p for p in with_copies(host, name) if p not in paths]
+    data = host.path(DATA)
+    emptied = data.is_dir() and host.is_mount(data)
+    if data.is_dir() and not emptied:
+        paths.append(data)
+    files.found = [f"{p}{size_of(p)}" for p in paths]
+    if emptied and any(data.iterdir()):
+        files.found.append(f"{data}/*{size_of(data)}  (a mount point: emptied, kept)")
+
+    identities = _policy_keys(policy)
+    key_paths = [
+        p for k in identities for p in (host.path(k), host.path(k + ".pub")) if p.exists()
+    ]  # fmt: skip
+    files.found += [str(p) for p in key_paths]
+    hosts = node_hosts(clusters)
+    known = host.path("/root/.ssh/known_hosts")
+    if hosts and known.is_file():
+        files.found.append(f"{known}: the lines for {', '.join(hosts)}")
+    config_root = (policy or {}).get("config_root") if isinstance(policy, dict) else None
+    gitconfig = host.path("/root/.gitconfig")
+    trusted = host.run(
+        ["/usr/bin/git", "config", "--file", str(gitconfig), "--get-all", "safe.directory"]
+    )
+    safe = [
+        line for line in trusted.stdout.splitlines()
+        if config_root and line.startswith(str(config_root))
+    ]  # fmt: skip
+    if safe:
+        files.found.append(f"/root/.gitconfig: safe.directory for {len(safe)} repositories")
+    dnsdist = host.path(f"{SYSTEMD}/dnsdist.service")
+    masked = dnsdist.is_symlink() and os.readlink(dnsdist) == "/dev/null"
+    if masked:
+        files.found.append(f"{dnsdist}: the mask the steps set")
+    default = host.path("/etc/nginx/sites-enabled/default")
+    restore_default = (
+        host.path("/etc/nginx/sites-available/default").is_file()
+        and not default.exists()
+        and host.path("/etc/nginx/sites-enabled/haprion").exists()
+    )
+    if restore_default:
+        files.found.append(f"{default}: put back, as the steps found it")
+
+    def remove_files() -> list[str]:
+        failed = remove(paths + key_paths)
+        if emptied:
+            failed += remove(list(data.iterdir()))
+        for parent in PARENTS:
+            path = host.path(parent)
+            if path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
+        for name in hosts:
+            if known.is_file():
+                host.run(["/usr/bin/ssh-keygen", "-R", name, "-f", str(known)])
+        old = known.with_name("known_hosts.old")
+        if hosts and old.is_file():
+            old.unlink()
+        tidy_root_ssh(host)
+        tidy_empty(host)
+        for line in safe:
+            host.run(
+                ["/usr/bin/git", "config", "--file", str(gitconfig), "--unset-all", "safe.directory",
+                 f"^{re.escape(line)}$"]
+            )  # fmt: skip
+        if masked:
+            host.run(["/usr/bin/systemctl", "unmask", "dnsdist.service"])
+        if restore_default:
+            default.symlink_to("/etc/nginx/sites-available/default")
+        #
+        # nginx and sshd read again what is left - each only when its own check
+        # passes, so a removal never leaves either refusing to start.
+        #
+        for check, unit in (
+            (["/usr/sbin/nginx", "-t"], "nginx"),
+            (["/usr/sbin/sshd", "-t"], "ssh"),
+        ):
+            active = host.run(["/usr/bin/systemctl", "is-active", "--quiet", unit]).returncode == 0
+            if not active or not host.path(check[0]).is_file():
+                continue
+            if host.run(check).returncode == 0:
+                ran(host, ["/usr/bin/systemctl", "reload", unit], f"reloading {unit}", failed)
+            else:
+                failed.append(f"{unit}: its own check refused what is left; it was not reloaded")
+        return failed
+
+    files.action = remove_files
+    if files.found:
+        steps.append(files)
+    if accounts.found:
+        steps.append(accounts)
+    return steps
+
+
+def closing(host: Host) -> list[str]:
+    """How to take away the packages, now that their state is gone."""
+
+    installed = [
+        name for name in PACKAGES
+        if host.run(["/usr/bin/dpkg-query", "-W", "-f=${Status}", name]).stdout.endswith(" installed")
+    ]  # fmt: skip
+    lines = []
+    if installed:
+        lines.append("Haprion's packages:  sudo apt purge " + " ".join(installed))
+    lines += [f"  and its apt source:  sudo rm {p}" for p in SOURCES if host.path(p).exists()]
+    shared = [p for p in SHARED_SOURCES if host.path(p).exists()]
+    lines.append(
+        "Kept, since something else may use them: " + ", ".join(SHARED_PACKAGES)
+        + ". To remove them as well:  sudo apt purge <package>"
+        + (f", and their apt files: sudo rm {' '.join(shared)}" if shared else "")
+    )  # fmt: skip
+    return lines
+
+
+def main(argv: list[str] | None = None, host: Host | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv not in ([], ["--yes"]):
+        print("usage: haprion-setup --remove [--yes]", file=sys.stderr)
+        return 64
+    host = host or Host()
+    if host.root == Path("/") and os.geteuid() != 0:
+        print("haprion-setup --remove: run it with sudo", file=sys.stderr)
+        return 77
+    try:
+        steps = plan(host, time.strftime("%Y%m%d-%H%M%S"))
+    except Unreadable as exc:
+        print(f"haprion-setup --remove: {exc}", file=sys.stderr)
+        return 1
+    yes = argv == ["--yes"]
+    return report(
+        steps, closing(host), yes=yes, subject="manager", command="haprion-setup --remove"
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

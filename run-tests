@@ -84,10 +84,12 @@ mypy
 # The same scripts' types: mypy's `files` takes only .py, and each script
 # without one is its own `__main__`, so they are checked one at a time. Until
 # 2026-10-18 none was, and 270 findings sat in them - one a request field that
-# crashed the health probe instead of being refused.
+# crashed the health probe instead of being refused. Each is checked with its
+# own directory on the path, so a script that imports a module beside it
+# (install/removal.py, B372) finds it as the script itself does.
 #
 for script in $python_scripts; do
-    mypy --no-incremental "$script"
+    MYPYPATH="$(dirname -- "$script")" mypy --no-incremental "$script"
 done
 (cd "$base/ui" && "$(dirname -- "$HAPRION_UI_PYTHON")/mypy")
 python3 "$base/contract-tests/validate_contracts.py"

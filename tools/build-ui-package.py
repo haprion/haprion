@@ -150,6 +150,8 @@ SHARED = (
     "install/defaults.sh",
     "install/setup.sh",
     "install/haprion-setup",
+    "install/remove-manager",
+    "install/removal.py",
     "install/01-manager-prepare",
     "install/02-manager-config",
     "install/03-manager-keys",

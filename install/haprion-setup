@@ -3,6 +3,7 @@
 # The whole manager installation, in one command (B302).
 #
 #     sudo haprion-setup [--answers <file>] [--release <release-id>]
+#     sudo haprion-setup --remove [--yes]
 #
 # Runs the installation steps in order, with the defaults in defaults.sh for
 # everything an answers file does not set - and without one, with the
@@ -17,9 +18,16 @@
 # and names every problem it found at once. A step that fails is reported in
 # words: what went wrong, why, what to do, and where its whole output is.
 #
+# --remove lists what an installation made, and with --yes removes it, before
+# the packages are purged (B372; remove-manager says what and in which order).
+#
 set -Eeuo pipefail
 here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 cd "$here"
+if [[ "${1:-}" == --remove ]]; then
+    shift
+    exec /usr/bin/python3 -I "${here}/remove-manager" "$@"
+fi
 # shellcheck source=lib.sh
 source ./lib.sh
 # shellcheck source=setup.sh
@@ -39,7 +47,7 @@ while (( $# > 0 )); do
             [[ -n "${2:-}" ]] || die "--release needs a release id"
             release_id="$2"
             shift 2 ;;
-        *) die "usage: haprion-setup [--answers <file>] [--release <release-id>]" ;;
+        *) die "usage: haprion-setup [--answers <file>] [--release <release-id>] | --remove [--yes]" ;;
     esac
 done
 

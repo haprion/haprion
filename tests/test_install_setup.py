@@ -704,10 +704,17 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
         self.assertIn("the name mgr.invalid does not resolve", done.stdout)
         self.assertIn("SERVER_NAME=<name>", done.stdout)
 
-    def server_name(self, name: str, addresses: str) -> subprocess.CompletedProcess[str]:
+    def server_name(
+        self, name: str, addresses: str, dns: str = ""
+    ) -> subprocess.CompletedProcess[str]:
+        # `getent -s dns` is DNS's answer alone; without it, /etc/hosts' first.
         with tempfile.TemporaryDirectory() as raw:
             stub = Path(raw) / "getent"
-            stub.write_text(f"#!/bin/sh\nprintf '%s' '{addresses}'\n")
+            stub.write_text(
+                "#!/bin/sh\n"
+                f"if [ \"$1\" = -s ]; then printf '%s' '{dns}'; [ -n '{dns}' ] || exit 2; exit 0; fi\n"
+                f"printf '%s' '{addresses}'\n"
+            )
             stub.chmod(0o755)
             return bash(
                 STRICT + 'PATH="$3:$PATH"; setup_check_server_name "$2"; setup_report_problems; '
@@ -730,6 +737,15 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("resolves only to this machine's loopback address", done.stdout)
         self.assertIn("Its certificate is made for that name", done.stdout)
+
+    def test_a_name_on_loopback_here_and_in_dns_elsewhere_says_nothing(self) -> None:
+        # Debian's /etc/hosts line for the machine itself, and DNS's own address.
+        done = self.server_name(
+            "mgr.example.com",
+            "127.0.1.1       STREAM mgr.example.com\n",
+            dns="192.0.2.10      STREAM mgr.example.com\n",
+        )
+        self.assertEqual((done.returncode, done.stdout), (0, "\n"))
 
     def test_a_name_with_another_address_says_nothing(self) -> None:
         done = self.server_name(

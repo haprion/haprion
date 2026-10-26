@@ -116,7 +116,16 @@ setup_check_server_name() {
     if [[ "$name" != *.* ]]; then
         setup_note "the web interface will answer to ${name}, a name without a domain; ${advice}"
     elif ! awk '{ print $1 }' <<<"$addresses" | grep -qvE '^(127\.|::1$)'; then
-        setup_note "the name ${name} resolves only to this machine's loopback address; other machines cannot reach the web interface at it. ${advice^}"
+        #
+        # Loopback alone here may be /etc/hosts' own line for this machine -
+        # Debian's installer writes 127.0.1.1 for it - while DNS gives the other
+        # machines its address (lab 26-10-26). DNS is asked alone before the note.
+        #
+        local dns
+        dns="$(getent -s dns ahosts "$name" 2>/dev/null || true)"
+        if [[ -z "$dns" ]] || ! awk '{ print $1 }' <<<"$dns" | grep -qvE '^(127\.|::1$)'; then
+            setup_note "the name ${name} resolves only to this machine's loopback address; other machines cannot reach the web interface at it. ${advice^}"
+        fi
     fi
 }
 

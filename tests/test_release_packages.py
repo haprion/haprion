@@ -243,12 +243,12 @@ class TheRepository(unittest.TestCase):
         old, new = self.work / f"{self.id()}-old", self.work / f"{self.id()}-new"
         for directory in (old, new):
             directory.mkdir()
-        fake_deb(old, "haprion-node", "0.8.0+git1.a")
-        fake_deb(old, "haprion-ui", "0.8.0+git1.a~deb13", "amd64")
-        fake_deb(old, "haprion-ui", "0.8.0+git1.a~ubuntu26.04", "amd64")
-        fake_deb(new, "haprion-node", "0.9.0+git2.b")
-        fake_deb(new, "haprion-node", "0.10.0+git3.c")
-        fake_deb(new, "haprion-ui", "0.9.0+git2.b~deb13", "amd64")
+        fake_deb(old, "haprion-node", "0.99.0+git1.a")
+        fake_deb(old, "haprion-ui", "0.99.0+git1.a~deb13", "amd64")
+        fake_deb(old, "haprion-ui", "0.99.0+git1.a~ubuntu26.04", "amd64")
+        fake_deb(new, "haprion-node", "0.99.1+git2.b")
+        fake_deb(new, "haprion-node", "0.100.0+git3.c")
+        fake_deb(new, "haprion-ui", "0.99.1+git2.b~deb13", "amd64")
         return [old, new]
 
     def site(self, keep: int = 2) -> Path:
@@ -273,16 +273,34 @@ class TheRepository(unittest.TestCase):
     def test_a_suffix_is_one_suite_and_none_is_both(self) -> None:
         site = self.site()
         self.assertIn(
-            ("haprion-ui", "0.8.0+git1.a~ubuntu26.04"), self.packages(site, "ubuntu26.04")
+            ("haprion-ui", "0.99.0+git1.a~ubuntu26.04"), self.packages(site, "ubuntu26.04")
         )
-        self.assertNotIn(("haprion-ui", "0.8.0+git1.a~ubuntu26.04"), self.packages(site, "deb13"))
+        self.assertNotIn(("haprion-ui", "0.99.0+git1.a~ubuntu26.04"), self.packages(site, "deb13"))
         for suite in REPO.SUITES:
-            self.assertIn(("haprion-node", "0.10.0+git3.c"), self.packages(site, suite))
+            self.assertIn(("haprion-node", "0.100.0+git3.c"), self.packages(site, suite))
 
     def test_the_newest_versions_stay_as_dpkg_orders_them(self) -> None:
-        # 0.10 is newer than 0.9 to dpkg, older to a string comparison.
+        # 0.100 is newer than 0.99 to dpkg, older to a string comparison.
         nodes = [v for p, v in self.packages(self.site(keep=2), "deb13") if p == "haprion-node"]
-        self.assertEqual(nodes, ["0.9.0+git2.b", "0.10.0+git3.c"])
+        self.assertEqual(nodes, ["0.99.1+git2.b", "0.100.0+git3.c"])
+
+    def test_haprion_s_own_packages_below_the_floor_are_not_served(self) -> None:
+        # 0.9.2 needs a clean installation (B369, B370); a package of its own version stays.
+        older = self.work / f"{self.id()}-older"
+        older.mkdir()
+        fake_deb(older, "haprion-cli", "0.9.2+git0.z")
+        fake_deb(older, "haprion-ui", "0.9.2+git0.z~deb13", "amd64")
+        fake_deb(older, "haprion-coraza-spoa", "0.9.1-2", "amd64")
+        site = self.work / f"{self.id()}-site"
+        REPO.build(
+            [older, *self.releases()], site, self.signing_key, self.public, 2,
+            REPO.datetime.now(REPO.UTC),
+        )  # fmt: skip
+        served = self.packages(site, "deb13")
+        self.assertNotIn(("haprion-cli", "0.9.2+git0.z"), served)
+        self.assertNotIn(("haprion-ui", "0.9.2+git0.z~deb13"), served)
+        self.assertIn(("haprion-coraza-spoa", "0.9.1-2"), served)
+        self.assertIn(("haprion-ui", "0.99.1+git2.b~deb13"), served)
 
     def test_release_is_signed_and_names_the_indexes(self) -> None:
         site = self.site()
@@ -356,7 +374,7 @@ class TheRepository(unittest.TestCase):
         )
         names = self.packages(again, "deb13")
         self.assertIn(("haprion-coraza-spoa", "0.9.0-9"), names)
-        self.assertIn(("haprion-node", "0.10.0+git3.c"), names)
+        self.assertIn(("haprion-node", "0.100.0+git3.c"), names)
 
     def test_an_empty_site_gives_nothing(self) -> None:
         empty = self.work / f"{self.id()}-empty"

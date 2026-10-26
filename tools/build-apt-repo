@@ -15,7 +15,8 @@ A package with a suffix (`~deb13`, `~ubuntu26.04`) is in its distribution's
 suite only; one without (`_all`, the engine's `_amd64`) is in both. Of each
 package the newest `--keep` versions stay, ordered as dpkg orders them, so a
 manager can go back one version with `apt install <package>=<version>`
-while the site stays far below its size limit.
+while the site stays far below its size limit. Haprion's own packages older
+than `FLOOR` are not served at all, wherever they come from.
 
 `Release` lists each index with its size and SHA-256, and is signed twice
 with the key given: inline as `InRelease`, which apt reads first, and
@@ -58,6 +59,13 @@ ARCHITECTURE = "amd64"
 COMPONENT = "main"
 SUFFIX = re.compile(r"~(deb13|ubuntu26\.04)$")
 KEY_FILE = "keys/haprion-archive.asc"
+#
+# The packages that carry Haprion's version, and the oldest of each the site
+# serves: from an older one a clean installation is needed, and none can be
+# gone back to - the database baseline refuses an older schema (B369, B370).
+# The other packages have versions of their own.
+#
+FLOOR = {"haprion-cli": "0.99.0", "haprion-node": "0.99.0", "haprion-ui": "0.99.0"}
 SITE_KEY = "haprion-archive-keyring.asc"
 CONTROL_FIELDS = (
     "Package",
@@ -146,6 +154,9 @@ def chosen(debs: list[Deb], keep: int) -> dict[str, list[Deb]]:
     """Per suite, the newest `keep` versions of each package, sorted by name and version."""
     by_suite: dict[str, dict[str, dict[str, Deb]]] = {suite: {} for suite in SUITES}
     for deb in debs:
+        floor = FLOOR.get(deb.package)
+        if floor is not None and compare(deb.version, floor) < 0:
+            continue
         for suite in deb.suites:
             versions = by_suite[suite].setdefault(deb.package, {})
             same = versions.get(deb.version)

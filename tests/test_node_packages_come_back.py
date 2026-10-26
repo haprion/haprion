@@ -52,7 +52,7 @@ def restored() -> set[str]:
     """What a restore to a new VM puts on it."""
 
     prepared = set()
-    for script in ("install/04-node-prepare", "install/lib.sh"):
+    for script in ("install/04-node-prepare", "install/node-lib.sh"):
         prepared |= set(INSTALLED.findall((ROOT / script).read_text(encoding="utf-8")))
     depends = {part.strip().split()[0] for part in node_package.DEPENDS.split(",")}
     return set(restore_plan.PRODUCT_PACKAGES) | carried() | depends | prepared

@@ -64,7 +64,7 @@ done
     || fail "answers must be an absolute regular non-symlink file"
 [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || fail "SHA-256 must be 64 lowercase hexadecimal characters"
 [[ "$node" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || fail "invalid node hostname"
-# The engine's pattern (`valid_id` in install/lib.sh), held to it by a test.
+# The engine's pattern (`valid_id` in install/node-lib.sh), held to it by a test.
 [[ "$cluster" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || fail "invalid cluster id"
 bash -n "$answers" || fail "answers file is not valid shell"
 

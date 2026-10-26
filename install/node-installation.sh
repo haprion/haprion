@@ -44,7 +44,7 @@ NODE_INSTALLATION="${NODE_INSTALLATION:-/etc/haprion/node-installation.json}"
 # shortcuts: requiring every harmless edit to be deployed everywhere, or trusting
 # a version marker beside scripts somebody later changed by hand.
 #
-# Written from the scripts in `$1` as they are on disk now. Needs lib.sh's
+# Written from the scripts in `$1` as they are on disk now. Needs node-lib.sh's
 # install_file and log.
 #
 record_node_installation() {

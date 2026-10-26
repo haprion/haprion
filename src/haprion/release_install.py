@@ -101,7 +101,7 @@ def _own(path: Path, gid: int, *, mode: int, change_owner: ChangeOwner) -> None:
 
 
 #
-# A node asks for `<cluster>/current/<node path>/` (install/lib.sh), a path
+# A node asks for `<cluster>/current/<node path>/` (install/node-lib.sh), a path
 # under the publish root. Its fetch key reads its own cluster's directory alone
 # (B358), and this link makes the same path name the same files under that
 # narrower root: `<cluster>` inside the cluster's directory is the directory

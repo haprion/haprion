@@ -137,7 +137,7 @@ PACKAGE_OF = {
 # Run, and not through a package's Depends, with why.
 #
 INSTALLED_BY_THE_PRODUCT = {
-    "dnsdist": "lib.sh's ensure_dnsdist installs it from PowerDNS's repository",
+    "dnsdist": "node-lib.sh's ensure_dnsdist installs it from PowerDNS's repository",
     "certbot": "the haprion-certbot package carries its environment; step 14 makes it current",
     "pg_dump": "ensure-postgresql installs the server, and its client with it",
     "pg_restore": "ensure-postgresql installs the server, and its client with it",
@@ -187,7 +187,14 @@ def names(field: str) -> set[str]:
 
 def library_functions() -> set[str]:
     found: set[str] = set()
-    for name in ("lib.sh", "accounts.sh", "defaults.sh", "setup.sh", "node-installation.sh"):
+    for name in (
+        "lib.sh",
+        "node-lib.sh",
+        "accounts.sh",
+        "defaults.sh",
+        "setup.sh",
+        "node-installation.sh",
+    ):
         found |= COMMANDS.shell_functions((INSTALL / name).read_text())
     return found
 
@@ -228,6 +235,7 @@ def manager_scripts() -> list[Path]:
             "haprion-setup",
             "setup.sh",
             "lib.sh",
+            "node-lib.sh",
             "accounts.sh",
             "defaults.sh",
         )

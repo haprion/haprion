@@ -24,7 +24,7 @@ from typing import Any
 from haprion import restore_agent
 
 ROOT = Path(__file__).resolve().parents[1]
-LIB = ROOT / "install" / "lib.sh"
+LIB = ROOT / "install" / "node-lib.sh"
 SHELL = (LIB, ROOT / "install" / "04-node-prepare")
 LOCKED = "E: Could not get lock /var/lib/apt/lists/lock. It is held by process 812 (apt-get)"
 #
@@ -75,7 +75,7 @@ class EveryAptGetWaits(unittest.TestCase):
 
 
 class TheShellUpdateWaitsForTheListsLock(unittest.TestCase):
-    """`apt_update` from `install/lib.sh`, with an apt-get that is locked out at first."""
+    """`apt_update` from `install/node-lib.sh`, with an apt-get that is locked out at first."""
 
     def setUp(self) -> None:
         self.work = Path(tempfile.mkdtemp())

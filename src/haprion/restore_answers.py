@@ -7,7 +7,7 @@ operator's own is on another machine and may have moved on; the node's truth is
 the ``node.conf`` the archive carries, which ``04-node-prepare`` rendered from
 the answers it was given. This module reads those answers back out.
 
-The mapping is the template in ``install/lib.sh`` (``render_node_conf``) read
+The mapping is the template in ``install/node-lib.sh`` (``render_node_conf``) read
 backwards, and a test renders the derived file through that template and
 expects the archived bytes - so the two cannot drift apart unnoticed.
 
@@ -127,7 +127,7 @@ def derive(source: RestoreSource, cluster: str, publish_root: Path) -> str:
         #
         # 04-node-prepare looks the node's path up as NODE_PATH_<cluster> with
         # each hyphen an underscore, since no shell variable name holds one
-        # (`cluster_value` in install/lib.sh).
+        # (`cluster_value` in install/node-lib.sh).
         #
         f'NODE_PATH_{cluster.replace("-", "_")}="{node_path}"',
         f'OPERATOR_ACCOUNTS="{" ".join(listed[4:])}"',

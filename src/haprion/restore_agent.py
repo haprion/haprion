@@ -84,7 +84,7 @@ POLICY_RC = "/usr/sbin/policy-rc.d"
 # Wait for the package lock rather than fail on it: a freshly installed VM runs
 # Ubuntu's unattended upgrades on its first boot, which hold the lock for
 # minutes, and a node preparation stopped on it once (26-10-08). apt 3.2's
-# `DPkg::Lock::Timeout`, ten minutes, as `install/lib.sh` has it - for
+# `DPkg::Lock::Timeout`, ten minutes, as `install/node-lib.sh` has it - for
 # `apt-get install`. `apt-get update` takes the lists lock, which that option
 # does not cover (measured 26-10-08), and waits in `_apt_update` instead.
 #

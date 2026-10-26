@@ -135,7 +135,7 @@ def answers(
         "# Read back out of node.conf by haprion-node-prepare; not an operator's answers file.",
         f'MANAGER_HOST="{manager or values["MANAGER"]}"',
         f'NODE_CONFIG_PULL_KEY="{values["CONFIG_PULL_KEY"]}"',
-        # NODE_PATH_<cluster>, each hyphen an underscore (`cluster_value` in lib.sh).
+        # NODE_PATH_<cluster>, each hyphen an underscore (`cluster_value` in node-lib.sh).
         f'NODE_PATH_{cluster.replace("-", "_")}="{node_path}"',
         f'OPERATOR_ACCOUNTS="{" ".join(listed[4:])}"',
         f'EXTRA_BACKUP_GROUPS="{" ".join(groups[1:])}"',

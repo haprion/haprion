@@ -3256,7 +3256,7 @@ keeps the original's.
 Anything not named `<file>.replaced-<yyyymmdd-hhmmss>`, and any directory under
 `/var/lib/haprion-restore` that is not a run ID, is left alone.
 
-*Details:* the periods are `REPLACED_KEEP_DAYS` in `install/lib.sh`, `KEEP_RELEASES` in
+*Details:* the periods are `REPLACED_KEEP_DAYS` in `install/node-lib.sh`, `KEEP_RELEASES` in
 `haprion-pull-deploy`, and `RUN_KEPT_DAYS` in `haprion/restore_agent.py`. Each removal is printed:
 `pruned <path>` in the installer's and the deploy's output, and an `old-runs` step in the restore's
 `apply` session.

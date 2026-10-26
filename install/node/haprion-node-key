@@ -20,8 +20,8 @@
 #
 set -Eeuo pipefail
 cd "${HAPRION_NODE_INSTALL:-/usr/share/haprion-node/install}"
-# shellcheck source=../lib.sh
-source ./lib.sh
+# shellcheck source=../node-lib.sh
+source ./node-lib.sh
 
 need_root
 MODE="${1:-}"

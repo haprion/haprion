@@ -285,6 +285,7 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         shutil.copy2(ROOT / "install/platform/check-compatibility", work / "platform")
         self.root = work / "root"
         (work / "lib.sh").write_text((ROOT / "install/lib.sh").read_text() + "need_root() { :; }\n")
+        shutil.copy2(ROOT / "install/node-lib.sh", work / "node-lib.sh")
         shutil.copy2(ROOT / "install/defaults.sh", work / "defaults.sh")
         (work / "accounts.sh").write_text(
             (ROOT / "install/accounts.sh")

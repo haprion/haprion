@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 #
 # Haprion's fixed account, group and database names and places (B266), for the
-# installation steps. Sourced by lib.sh. The same names are in
+# installation steps. Sourced by node-lib.sh. The same names are in
 # src/haprion/accounts.py and install/sysusers/; a test keeps the three in
 # step.
 #

@@ -31,8 +31,8 @@ class StateExportContractTests(unittest.TestCase):
         self.assertLessEqual(expected, REQUIRED_PATHS)
 
     def test_only_forced_command_accounts_are_required_to_have_authorized_keys(self) -> None:
-        # node.conf's template, used by 04-node-prepare, lives in lib.sh.
-        template = (BASE / "install/lib.sh").read_text(encoding="utf-8")
+        # node.conf's template, used by 04-node-prepare, lives in node-lib.sh.
+        template = (BASE / "install/node-lib.sh").read_text(encoding="utf-8")
         exporter = (BASE / "install/node/haprion-state-export").read_text(encoding="utf-8")
         self.assertIn('BACKUP_SERVICE_ACCOUNTS=\\"${TRIGGER_USER}', template)
         required_keys = exporter.split("# The manifest is the archive's content contract.", 1)[0]
@@ -172,7 +172,7 @@ class TheOperatorsOwnPaths(unittest.TestCase):
 
         self.assertEqual(pattern(installer), pattern(self.exporter))
         self.assertIn("render_node_conf", installer)
-        template = (BASE / "install/lib.sh").read_text(encoding="utf-8")
+        template = (BASE / "install/node-lib.sh").read_text(encoding="utf-8")
         self.assertIn('EXTRA_BACKUP_PATHS=\\"${EXTRA_BACKUP_PATHS:-}\\"', template)
 
 

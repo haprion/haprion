@@ -171,7 +171,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          branch=$(sed -n 's/^HAPROXY_BRANCH="\([0-9.]*\)"$/\1/p' install/lib.sh)
+          branch=$(sed -n 's/^HAPROXY_BRANCH="\([0-9.]*\)"$/\1/p' install/node-lib.sh)
           codename=$(. /etc/os-release && echo "${VERSION_CODENAME}")
           sudo install -m 0644 src/haprion/apt-keys/haproxy-ubuntu-ppa.asc /etc/apt/keyrings/haproxy.asc
           echo "deb [signed-by=/etc/apt/keyrings/haproxy.asc] https://ppa.launchpadcontent.net/vbernat/haproxy-${branch}/ubuntu ${codename} main" \

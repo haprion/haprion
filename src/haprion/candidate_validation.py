@@ -567,7 +567,7 @@ def sandbox_command(
 
 #
 # The oldest HAProxy the generated configuration is written for. It must
-# match `HAPROXY_BRANCH` in install/lib.sh, which installs it; a test holds
+# match `HAPROXY_BRANCH` in install/node-lib.sh, which installs it; a test holds
 # the two together.
 #
 REQUIRED_BRANCH = (3, 4)

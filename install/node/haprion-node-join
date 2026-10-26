@@ -47,7 +47,7 @@ NODE_PATH = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 PUBKEY = re.compile(r"^ssh-ed25519 [A-Za-z0-9+/]{68}$")
 #
 # The manager's purposes and step 4's answer for each; what each key may run
-# is the table in lib.sh, on this node. Deploy and status are what a node
+# is the table in node-lib.sh, on this node. Deploy and status are what a node
 # cannot be managed without.
 #
 PURPOSES = {

@@ -63,6 +63,7 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         shutil.copy2(PLATFORM / "refresh-platform-files", work / "platform")
         shutil.copy2(ROOT / "install/certbot-deploy-hook", work / "certbot-deploy-hook")
         (work / "lib.sh").write_text((ROOT / "install/lib.sh").read_text() + "need_root() { :; }\n")
+        shutil.copy2(ROOT / "install/node-lib.sh", work / "node-lib.sh")
         shutil.copy2(ROOT / "install/defaults.sh", work / "defaults.sh")
         (work / "accounts.sh").write_text(
             (ROOT / "install/accounts.sh")

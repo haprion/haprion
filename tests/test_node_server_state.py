@@ -648,10 +648,10 @@ FROM = 'from="mgr.example.com,192.0.2.10",'
 
 class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
     """Step 4 writes each of the manager's keys from the answers, by the table in
-    lib.sh (B263 for the server state key, B317 for the rest), on scratch files."""
+    node-lib.sh (B263 for the server state key, B317 for the rest), on scratch files."""
 
     def setUp(self) -> None:
-        # The step's own call, run with lib.sh's function.
+        # The step's own call, run with node-lib.sh's function.
         self.assertIn("\nwrite_manager_keys\n", INSTALLER.read_text())
         self.loop = "write_manager_keys\n"
         self.root = Path(tempfile.mkdtemp(prefix="srvkeys-"))
@@ -667,7 +667,7 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
         answers = {"MANAGER_SOURCES": "mgr.example.com,192.0.2.10", **answers}
         assigned = "".join(f'{name}="{value}"\n' for name, value in answers.items())
         script = (
-            f'source "{BASE / "install" / "lib.sh"}"\nKEYS_HOME="{self.root}"\n'
+            f'source "{BASE / "install" / "node-lib.sh"}"\nKEYS_HOME="{self.root}"\n'
             f"{assigned}{self.loop}"
         )
         return subprocess.run(  # the loop under test
@@ -751,7 +751,7 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
     def test_the_manager_s_host_is_bound_to_its_addresses(self) -> None:
         def sources(host: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run(  # the function under test
-                ["/bin/bash", "-c", f'source "{BASE / "install" / "lib.sh"}"; manager_sources "$1"',
+                ["/bin/bash", "-c", f'source "{BASE / "install" / "node-lib.sh"}"; manager_sources "$1"',
                  "-", host],
                 capture_output=True, text=True, check=False,
             )  # fmt: skip
@@ -800,7 +800,7 @@ class TheLinesStep3PrintsAreAnswers(unittest.TestCase):
         self.assertEqual((done.returncode, done.stdout), (0, KEY_A), done.stderr)
 
     def test_the_join_hands_over_the_purposes_the_table_writes(self) -> None:
-        lib = (BASE / "install" / "lib.sh").read_text()
+        lib = (BASE / "install" / "node-lib.sh").read_text()
         table = re.search(r"^NODE_KEY_PURPOSES=\((.*?)^\)", lib, re.MULTILINE | re.DOTALL)
         assert table
         purposes = {line.split()[0] for line in re.findall(r'"([^"]+)"', table.group(1))}

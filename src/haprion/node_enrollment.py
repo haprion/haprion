@@ -95,7 +95,7 @@ PRIVATE_KEY = re.compile(
     r"-----END OPENSSH PRIVATE KEY-----\n?$"
 )
 #
-# The manager's identities by the purpose the node knows them as (lib.sh's
+# The manager's identities by the purpose the node knows them as (node-lib.sh's
 # NODE_KEY_PURPOSES, haprion-node-join's PURPOSES; a test holds the three).
 #
 JOIN_PURPOSES = {

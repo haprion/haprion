@@ -89,7 +89,7 @@ class NodePackageBuildTests(unittest.TestCase):
             self.assertEqual(rows[f"usr/sbin/{name}"], "-rwxr-xr-x root/root")
         install = "usr/share/haprion-node/install"
         self.assertEqual(rows[f"{install}/04-node-prepare"], "-rwxr-xr-x root/root")
-        self.assertEqual(rows[f"{install}/lib.sh"], "-rw-r--r-- root/root")
+        self.assertEqual(rows[f"{install}/node-lib.sh"], "-rw-r--r-- root/root")
         self.assertEqual(field(deb, "Architecture"), "all")
         self.assertIn("python3", field(deb, "Depends"))
         # The product writes keepalived.conf on the nodes it set up (B313).
@@ -102,14 +102,14 @@ class NodePackageBuildTests(unittest.TestCase):
         self.assertEqual(first.read_bytes(), second.read_bytes())
 
     def test_a_release_is_a_clean_commit(self) -> None:
-        (self.source / "install/lib.sh").write_text("changed\n")
+        (self.source / "install/node-lib.sh").write_text("changed\n")
 
         with self.assertRaisesRegex(node_package.PackageError, "uncommitted"):
             self.build()
 
     def test_a_payload_file_with_the_wrong_mode_is_refused(self) -> None:
-        (self.source / "install/lib.sh").chmod(0o755)
-        self.git("add", "install/lib.sh")
+        (self.source / "install/node-lib.sh").chmod(0o755)
+        self.git("add", "install/node-lib.sh")
         self.git("commit", "-q", "-m", "mode")
 
         with self.assertRaisesRegex(node_package.PackageError, "Git mode"):
@@ -201,7 +201,7 @@ class NodeCommandPathTests(unittest.TestCase):
         "install/03-manager-keys",
         "install/04-node-prepare",
         # The table of the manager's keys and their forced commands (B317).
-        "install/lib.sh",
+        "install/node-lib.sh",
         "install/platform/13-platform-traffic-collector",
         "install/examples/keepalived.conf.example",
     )
@@ -304,7 +304,7 @@ class AnUpgradeRecordsTheScriptsItInstalled(unittest.TestCase):
                 [
                     "/bin/bash",
                     "-c",
-                    f'. "{install}/lib.sh" && . "{install}/node-installation.sh" '
+                    f'. "{install}/node-lib.sh" && . "{install}/node-installation.sh" '
                     '&& chown() { :; } && record_node_installation "$1"',
                     "record",
                     str(sbin),

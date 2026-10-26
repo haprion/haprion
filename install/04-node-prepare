@@ -13,8 +13,8 @@
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
-# shellcheck source=lib.sh
-source ./lib.sh
+# shellcheck source=node-lib.sh
+source ./node-lib.sh
 
 need_root
 load_answers "${1:-}"
@@ -87,7 +87,7 @@ apply_sysusers sysusers/haprion-node.conf
 # Where sudo is needed, its rules name exact absolute commands; the traffic-log
 # reader needs and receives no sudo rule. None of the accounts has a password.
 #
-# The account owns nothing in its own home (`ensure_forced_home` in lib.sh says
+# The account owns nothing in its own home (`ensure_forced_home` in node-lib.sh says
 # why). No dotfiles are created, and any left by an earlier installation become
 # root's.
 #
@@ -145,7 +145,7 @@ log "  member    ${LOGREAD_USER} -> ${LOGS_GROUP}"
 # runs only under the node's own root - the operator's sudo, or the join the
 # node's one-time key allowed - so the manager gains no way to write here. Each
 # with `from=` the manager's addresses, `restrict` and the forced command the
-# table in lib.sh gives its purpose.
+# table in node-lib.sh gives its purpose.
 #
 MANAGER_SOURCES="$(manager_sources "$MANAGER_HOST")" || exit 1
 write_manager_keys

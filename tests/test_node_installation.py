@@ -141,7 +141,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
     def test_the_service_accounts_own_nothing_in_their_homes(self) -> None:
         """B131: a key file or dotfile the account could write is its way out of the forced command."""
 
-        library = (INSTALLER.parent / "lib.sh").read_text()
+        library = (INSTALLER.parent / "node-lib.sh").read_text()
         account = library[
             library.index("ensure_forced_home() {") : library.index(
                 "\n}\n", library.index("ensure_forced_home() {")
@@ -167,7 +167,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
     def test_a_link_in_an_account_s_home_stops_the_step(self) -> None:
         """Review 26-10-24, 10-01/10-02: root followed it and changed what it pointed at."""
 
-        library = (INSTALLER.parent / "lib.sh").read_text()
+        library = (INSTALLER.parent / "node-lib.sh").read_text()
         start = library.index("ensure_forced_home() {")
         body = library[start : library.index("\n}\n", start) + 3]
         refuse = library[library.index("refuse_link() {") :]

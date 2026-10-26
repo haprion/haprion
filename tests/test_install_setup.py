@@ -899,29 +899,36 @@ class ARerunAfterActivationSkipsTheCheckBeforeIt(unittest.TestCase):
 
 
 class WhatLibShReadsShipsWithIt(unittest.TestCase):
-    """Every file lib.sh sources is in each package that carries lib.sh.
+    """Every file lib.sh sources, and what those source, is in each package that
+    carries lib.sh; and everything node-lib.sh sources is in the node package.
 
     defaults.sh was not, at first (B302): every platform step and the node's
     04-node-prepare would have stopped on a missing file.
     """
 
-    def sourced(self) -> set[str]:
-        return set(
+    @staticmethod
+    def sourced(name: str) -> set[str]:
+        found = set(
             re.findall(
-                r'^source "\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/([\w.]+)"',
-                LIB.read_text(),
+                r'^source "\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/([\w.-]+)"',
+                (INSTALL / name).read_text(),
                 re.MULTILINE,
             )
         )
+        return found | {
+            further for each in found for further in WhatLibShReadsShipsWithIt.sourced(each)
+        }
 
-    def test_lib_sh_reads_the_accounts_and_the_defaults(self) -> None:
-        self.assertEqual(self.sourced(), {"accounts.sh", "defaults.sh"})
+    def test_lib_sh_reads_the_node_s_library_the_accounts_and_the_defaults(self) -> None:
+        self.assertEqual(self.sourced("lib.sh"), {"node-lib.sh", "accounts.sh", "defaults.sh"})
+        self.assertEqual(self.sourced("node-lib.sh"), {"accounts.sh", "defaults.sh"})
 
     def test_the_node_package_carries_them(self) -> None:
         from haprion import node_package
 
         shipped = {source for source, _ in node_package.CONTENTS.values()}
-        self.assertEqual({f"install/{name}" for name in self.sourced()} - shipped, set())
+        wanted = {"node-lib.sh", *self.sourced("node-lib.sh")}
+        self.assertEqual({f"install/{name}" for name in wanted} - shipped, set())
 
     def test_the_ui_package_carries_them(self) -> None:
         spec = importlib.util.spec_from_file_location(
@@ -932,7 +939,90 @@ class WhatLibShReadsShipsWithIt(unittest.TestCase):
         sys.modules[spec.name] = tool
         spec.loader.exec_module(tool)
         listed = {relative for relative, _ in tool.shared_files(INSTALL.parent)}
-        self.assertEqual({f"install/{name}" for name in self.sourced()} - listed, set())
+        self.assertEqual({f"install/{name}" for name in self.sourced("lib.sh")} - listed, set())
+
+
+class TheNodesLibraryIsTheNodesAlone(unittest.TestCase):
+    """node-lib.sh holds what the node's callers reach, and lib.sh nothing they call.
+
+    The step's digest covers every file the node package puts beside step 4
+    (B361), and the package carried all of lib.sh: a change made for the
+    manager asked every node to run haprion-node-prepare (review 26-10-25,
+    decision point 3). The callers are what runs on a node: step 4, the join's
+    key command, the package's record of its scripts, and the library's own
+    error trap.
+    """
+
+    CALLERS = ("04-node-prepare", "node-installation.sh", "node/haprion-node-key")
+
+    @staticmethod
+    def functions(*sourced: str) -> dict[str, str]:
+        """Each function the files define, by name, as bash prints it (no comments)."""
+
+        listing = subprocess.run(  # fixed interpreter, the repository's own files
+            [
+                "/bin/bash",
+                "-c",
+                'for f in "$@"; do source "$f"; done; trap -p ERR; '
+                'for name in $(compgen -A function); do printf "\\0%s\\0" "$name"; '
+                'declare -f "$name"; done',
+                "list",
+                *(str(INSTALL / name) for name in sourced),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout
+        trap, *parts = listing.split("\0")
+        found = dict(zip(parts[0::2], parts[1::2], strict=True))
+        found[""] = trap
+        return found
+
+    @staticmethod
+    def called(text: str, names: set[str]) -> set[str]:
+        code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+        return {
+            name for name in names if re.search(rf"(?<![\w./-]){re.escape(name)}(?![\w-])", code)
+        }
+
+    def reached(self, defined: dict[str, str]) -> set[str]:
+        names = set(defined) - {""}
+        todo = [
+            *self.called(defined[""], names),
+            *(
+                name
+                for caller in self.CALLERS
+                for name in self.called((INSTALL / caller).read_text(), names)
+            ),
+        ]
+        seen: set[str] = set()
+        while todo:
+            name = todo.pop()
+            if name not in seen:
+                seen.add(name)
+                todo.extend(self.called(defined[name], names) - seen)
+        return seen
+
+    def test_every_function_the_node_s_library_defines_is_one_a_node_runs(self) -> None:
+        node = self.functions("node-lib.sh", "node-installation.sh")
+        shared = set(self.functions("accounts.sh", "defaults.sh")) - {""}
+        own = set(node) - shared - {""} - set(self.functions("node-installation.sh"))
+        self.assertTrue(own)
+        self.assertEqual(own - self.reached(node), set())
+
+    def test_nothing_a_node_runs_is_defined_by_lib_sh_alone(self) -> None:
+        everything = self.functions("lib.sh", "node-installation.sh")
+        node = set(self.functions("node-lib.sh", "node-installation.sh"))
+        self.assertGreater(len(set(everything) - node), 0)
+        self.assertEqual(self.reached(everything) - node, set())
+
+    def test_the_node_package_does_not_carry_lib_sh(self) -> None:
+        from haprion import node_package
+
+        shipped = {source for source, _ in node_package.CONTENTS.values()}
+        self.assertIn("install/node-lib.sh", shipped)
+        self.assertNotIn("install/lib.sh", shipped)
 
 
 class TheWorkersSandboxOpensWhatExists(unittest.TestCase):
@@ -1049,7 +1139,7 @@ class AClusterTheInterfaceMayCreateTheStepsAccept(unittest.TestCase):
     def test_valid_id_is_the_engine_s_pattern(self) -> None:
         from haprion.config import CLUSTER_ID
 
-        lib = (INSTALL / "lib.sh").read_text()
+        lib = (INSTALL / "node-lib.sh").read_text()
         found = re.search(r'^valid_id\(\) \{\n    \[\[ "\$1" =~ (.*) \]\]\n\}', lib, re.MULTILINE)
         assert found
         self.assertEqual(found.group(1), CLUSTER_ID.pattern)

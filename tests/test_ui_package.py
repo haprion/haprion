@@ -166,6 +166,7 @@ class TheTree(unittest.TestCase):
             )
             share = root / "usr/share/haprion-ui"
             self.assertTrue((share / "install/lib.sh").is_file())
+            self.assertTrue((share / "install/node-lib.sh").is_file())
             self.assertTrue((share / "install/platform/file").is_file())
             self.assertTrue((share / "tools/dns-profile-keys.py").is_file())
             for command in TOOL.COMMANDS:
@@ -243,9 +244,9 @@ class TheTree(unittest.TestCase):
     # every script the packages carry and to paths of more than one part.
     #
     NOT_CARRIED = {
-        ("install/lib.sh", "../src/haprion/apt-keys/"): (
+        ("install/node-lib.sh", "../src/haprion/apt-keys/"): (
             "a source tree's HAProxy keys; the package carries them in install/apt-keys/, "
-            "where lib.sh looks first"
+            "where node-lib.sh looks first"
         ),
         ("install/platform/05-platform-nginx", "../sites-available/haprion"): (
             "the target of a link, which nginx resolves in /etc/nginx/sites-enabled"

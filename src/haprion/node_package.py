@@ -88,9 +88,11 @@ JOIN_SCRIPTS = ("haprion-node-key", "haprion-node-join")
 PREPARE_SCRIPTS = ("haprion-node-prepare",)
 #
 # Path in the package -> (path in the commit, mode). Data rather than programs
-# is 0644: the shell library the step sources, the fixed account names and the
-# defaults it reads (B266, B302), the node's sysusers fragment, and the repository key `lib.sh`
-# installs dnsdist with (B249).
+# is 0644: the shell library the step sources - node-lib.sh, the node's part of
+# install/lib.sh, so that the step's digest (B361) moves only with the node's
+# own part - the fixed account names and the defaults it reads (B266, B302), the
+# node's sysusers fragment, and the repository key the library installs dnsdist
+# with (B249).
 #
 CONTENTS: dict[str, tuple[str, int]] = {
     **{
@@ -98,7 +100,7 @@ CONTENTS: dict[str, tuple[str, int]] = {
         for name in (*NODE_SCRIPTS, *JOIN_SCRIPTS, *PREPARE_SCRIPTS)
     },
     f"{INSTALL_DIR[1:]}/04-node-prepare": ("install/04-node-prepare", 0o755),
-    f"{INSTALL_DIR[1:]}/lib.sh": ("install/lib.sh", 0o644),
+    f"{INSTALL_DIR[1:]}/node-lib.sh": ("install/node-lib.sh", 0o644),
     f"{INSTALL_DIR[1:]}/node-installation.sh": ("install/node-installation.sh", 0o644),
     f"{INSTALL_DIR[1:]}/accounts.sh": ("install/accounts.sh", 0o644),
     f"{INSTALL_DIR[1:]}/defaults.sh": ("install/defaults.sh", 0o644),
@@ -163,10 +165,10 @@ POSTINST = f"""\
 set -e
 if [ "$1" = configure ]; then
     if [ -f /etc/haprion/node.conf ]; then
-        bash -c '. {INSTALL_DIR}/lib.sh && . {INSTALL_DIR}/node-installation.sh \\
+        bash -c '. {INSTALL_DIR}/node-lib.sh && . {INSTALL_DIR}/node-installation.sh \\
             && record_node_installation {SBIN}' \\
             || echo "{PACKAGE}: the record of its scripts was not written; run  sudo dpkg-reconfigure {PACKAGE}" >&2
-        bash -c '. {INSTALL_DIR}/lib.sh && . {INSTALL_DIR}/node-installation.sh \\
+        bash -c '. {INSTALL_DIR}/node-lib.sh && . {INSTALL_DIR}/node-installation.sh \\
             && node_prepared_by {INSTALL_DIR}' \\
             || echo "{PACKAGE}: this release changes what the node's preparation sets up; run  sudo haprion-node-prepare" >&2
     fi

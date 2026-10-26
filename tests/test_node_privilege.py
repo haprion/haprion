@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 INSTALL = Path(__file__).resolve().parents[1] / "install"
-# lib.sh's table of the manager's keys: purpose, key, account, forced command (B317).
+# node-lib.sh's table of the manager's keys: purpose, key, account, forced command (B317).
 FORCED = re.compile(r'^    "[A-Z_]+ \S+ (\S+) (sudo -n )?/usr/sbin/(haprion-[a-z-]+)', re.MULTILINE)
 ASSIGNED = re.compile(r'^([A-Z_]+)="([^"$]+)"$', re.MULTILINE)
 ENSURED = re.compile(r"^\s*ensure_dir\s+(\S+)\s+(\S+)\s+([0-7]{3,4})\s*$", re.MULTILINE)
@@ -28,7 +28,7 @@ JOINED = re.compile(r'^usermod -a -G "\$([A-Z_]+)" "\$([A-Z_]+)"$', re.MULTILINE
 def run_without_sudo() -> dict[str, str]:
     """Each script a key runs without sudo, and the account variable it runs as."""
 
-    found = FORCED.findall((INSTALL / "lib.sh").read_text())
+    found = FORCED.findall((INSTALL / "node-lib.sh").read_text())
     return {script: account for account, sudo, script in found if not sudo}
 
 

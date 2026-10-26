@@ -11,7 +11,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "install/node/haprion-node-status"
 # The table of the manager's keys and their forced commands (B317).
-KEYS = ROOT / "install/lib.sh"
+KEYS = ROOT / "install/node-lib.sh"
 PREPARE = ROOT / "install/04-node-prepare"
 READING = re.compile(r"^def read_cluster\(.*?(?=^parser = )", re.DOTALL | re.MULTILINE)
 CLUSTER_LINE = re.compile(r"^CLUSTER_LINE = (.*)$", re.MULTILINE)

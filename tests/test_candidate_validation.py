@@ -460,9 +460,9 @@ class AValidatorOlderThanTheConfiguration(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_the_branch_is_the_one_the_installation_installs(self) -> None:
-        lib = (Path(__file__).resolve().parents[1] / "install" / "lib.sh").read_text()
+        lib = (Path(__file__).resolve().parents[1] / "install" / "node-lib.sh").read_text()
         found = re.search(r'^HAPROXY_BRANCH="(\d+)\.(\d+)"$', lib, re.MULTILINE)
-        assert found, "install/lib.sh no longer names HAPROXY_BRANCH"
+        assert found, "install/node-lib.sh no longer names HAPROXY_BRANCH"
         self.assertEqual(
             (int(found.group(1)), int(found.group(2))), candidate_validation.REQUIRED_BRANCH
         )

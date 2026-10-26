@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 #
-# What an installation uses for every answer it is not given (B302). Sourced
-# by lib.sh's load_answers, after the answers file when there is one.
+# What an installation uses for every answer it is not given (B302). Applied
+# by node-lib.sh's load_answers, after the answers file when there is one.
 #
 # The manager's answers only. What 04-node-prepare reads on a node - the
 # manager's name, the node's own keys - has no default here: a value guessed

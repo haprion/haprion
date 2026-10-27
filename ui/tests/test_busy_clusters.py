@@ -95,23 +95,32 @@ class EveryPageThatDeploysSaysTheClusterIsBusy(BusyPagesTestCase):
                 self.assertIn("Deploying", page.text)
                 self.assertIn('href="/jobs"', page.text)
 
-    def test_the_versions_page_hides_its_publish_buttons_too(self) -> None:
+    def test_the_versions_page_greys_its_publish_buttons_out(self) -> None:
         #
-        # One per row rather than one per page, and the same refusal underneath:
-        # a revert is a job, and the queue takes one per cluster. The footer
-        # above already names what is running, so the cells say nothing more
-        # than that they are not offering anything.
+        # One per row, and the same refusal underneath: a revert is a job, and
+        # the queue takes one per cluster. The button stays where it is, greyed
+        # out, with why on it: replaced by a dash, the rows jumped and the
+        # action was gone without a word (R2 26-10-26, F14).
         #
         idle = self.page("/history", "haprion_ui.db.cluster_histories", [])
-        self.assertIn("Publish this version", idle.text)
+        self.assertIn(
+            '<button class="secondary-button" type="submit">Publish this version', idle.text
+        )
 
         busy = self.page(
             "/history",
             "haprion_ui.db.cluster_histories",
             [job(state="running", operation="revert", cluster="alpha")],
         )
-        self.assertNotIn("Publish this version", busy.text)
-        self.assertIn("one job per cluster runs at a time", busy.text)
+        self.assertIn(
+            '<button class="secondary-button" type="button" disabled'
+            ' title="Reverting — one job per cluster runs at a time">Publish this version</button>',
+            busy.text,
+        )
+        self.assertNotIn(
+            '<button class="secondary-button" type="submit">Publish this version', busy.text
+        )
+        self.assertNotIn('class="table-empty"', busy.text)
 
     def test_a_job_on_another_cluster_leaves_this_one_alone(self) -> None:
         elsewhere = [job(state="running", operation="deploy", cluster="beta")]

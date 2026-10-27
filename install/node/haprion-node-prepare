@@ -191,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     if not NODE_CONF.is_file():
         print(
             f"haprion-node-prepare: {NODE_CONF} is missing, so this node was never prepared."
-            " Join it to a manager (sudo haprion-node-key) or prepare it with step 4.",
+            " Join it to a manager (sudo haprion-node-key) or prepare it by hand as install/README.md says.",
             file=sys.stderr,
         )
         return 64

@@ -245,7 +245,7 @@ class TheJoin(unittest.TestCase):
         code, out, err = self.run_join(3)
         self.assertEqual(code, 75)
         self.assertEqual(out, "")
-        self.assertIn("step 4 stopped (exit 3)", err)
+        self.assertIn("preparing this node stopped (exit 3)", err)
         self.assertIn("haprion-node-join", self.keys.read_text())
         self.assertTrue((self.join_dir / "join_key").exists())
 

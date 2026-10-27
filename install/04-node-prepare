@@ -839,12 +839,12 @@ record_node_prepared "$PWD"
 #
 if [[ "${JOINED_BY_MANAGER:-}" == yes ]]; then
     echo
-    log "step 4 done on this node: joined to cluster ${CLUSTER}"
+    log "This node is joined to cluster ${CLUSTER}."
     exit 0
 fi
 if [[ "${PREPARED_AGAIN:-}" == yes ]]; then
     echo
-    log "step 4 done on this node: prepared again for cluster ${CLUSTER}"
+    log "This node is prepared for cluster ${CLUSTER}."
     exit 0
 fi
 
@@ -890,7 +890,7 @@ PY
 )"
 
 echo
-log "step 4 done on this node"
+log "This node is prepared."
 
 if [[ -z "${DEPLOY_PUBKEY:-}" ]]; then
     cat <<'PASTE'

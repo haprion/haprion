@@ -1148,10 +1148,6 @@ class NoClusterYetForTheCollector(unittest.TestCase):
         self.assertEqual(config.nodes, ())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AClusterTheInterfaceMayCreateTheStepsAccept(unittest.TestCase):
     """Fas 18 finding 55: valid_id took 32 characters and underscores, the engine 63
     and no underscore; and an ID with a hyphen made no shell variable name."""
@@ -1185,3 +1181,21 @@ class AClusterTheInterfaceMayCreateTheStepsAccept(unittest.TestCase):
             check=False,
         )
         self.assertEqual(done.stdout.split(), ["192.0.2.10", "refused"], done.stderr)
+
+
+class TheNodeSaysWhatHappened(unittest.TestCase):
+    """R2 26-10-27 (F11): *step 4 done on this node: prepared again for cluster lab*."""
+
+    def test_no_internal_step_number_in_what_a_node_operator_reads(self) -> None:
+        for name in ("04-node-prepare", "node/haprion-node-prepare", "node/haprion-node-join"):
+            text = (INSTALL / name).read_text(encoding="utf-8")
+            with self.subTest(name=name):
+                self.assertNotRegex(text, r'log "step \d')
+                self.assertNotRegex(text, r'"[^"#\n]*\bstep 4 (done|stopped)')
+                self.assertNotIn("prepare it with step 4", text)
+        prepare = (INSTALL / "04-node-prepare").read_text(encoding="utf-8")
+        self.assertIn('log "This node is prepared for cluster ${CLUSTER}."', prepare)
+
+
+if __name__ == "__main__":
+    unittest.main()

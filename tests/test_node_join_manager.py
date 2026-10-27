@@ -251,9 +251,9 @@ class JoiningOnAdd(unittest.TestCase):
     def test_a_join_that_fails_puts_every_file_back(self) -> None:
         before = self.site.snapshot()
         with self.assertRaises(EnrollmentError) as caught:
-            self.add(v2(), self.joining(75, "line one\nstep 4 stopped (exit 1)"))
+            self.add(v2(), self.joining(75, "line one\npreparing this node stopped (exit 1)"))
         self.assertEqual(caught.exception.code, "node_join_failed")
-        self.assertIn("step 4 stopped (exit 1)", str(caught.exception))
+        self.assertIn("preparing this node stopped (exit 1)", str(caught.exception))
         self.assertIn("haprion-node-key --again", str(caught.exception))
         # Review 26-10-24, 12-10: an expired block does not work again, and
         # the hours are the ones the node's key script gives a block.

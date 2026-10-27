@@ -171,7 +171,8 @@ def main() -> int:
         tail = LOG.read_text(errors="replace").splitlines()[-30:]
         print("\n".join(tail), file=sys.stderr)
         print(
-            f"haprion-node-join: step 4 stopped (exit {code}); {LOG} has all of it", file=sys.stderr
+            f"haprion-node-join: preparing this node stopped (exit {code}); {LOG} has all of it",
+            file=sys.stderr,
         )
         return 75
     #

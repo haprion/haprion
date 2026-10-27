@@ -295,5 +295,107 @@ class ADumpBeforeAMigration(unittest.TestCase):
         self.assertIn("takes two schema revisions", done.stderr)
 
 
+class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
+    """B376 (R2 26-10-27, F21): `haprion-backup restore <dump>`, with the machine stubbed.
+
+    By hand it took seven steps and two traps: the web's socket started the web
+    again, and `pg_restore --clean` failed on the partitions.
+    """
+
+    def restore(
+        self, *, active: str, connections: str = "0", restored: bool = True
+    ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        source = SCRIPT.read_text()
+        units = re.search(r"^RESTORE_UNITS=\(\n.*?^\)\n", source, re.MULTILINE | re.DOTALL)
+        if units is None:
+            self.fail("haprion-backup has no RESTORE_UNITS")
+        with tempfile.TemporaryDirectory() as raw:
+            here = Path(raw)
+            dump = here / "haprion-20261027.dump"
+            dump.write_text("dump")
+            steps = here / "steps"
+            steps.mkdir()
+            (steps / "03-verify").write_text('#!/bin/sh\necho "03-verify" >> "$CALLS"\n')
+            (steps / "03-verify").chmod(0o755)
+            config = here / "traffic-collector.json"
+            config.write_text("{}")
+            collector = here / "collector"
+            collector.write_text("#!/bin/sh\n")
+            collector.chmod(0o755)
+            calls = here / "calls"
+            program = (
+                "set -Eeuo pipefail\n"
+                'log() { :; }; warn() { echo "WARNING: $*" >&2; }; step_log() { :; }\n'
+                'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+                'record() { echo "$*" >> "$CALLS"; }\n'
+                f'systemctl() {{ case "$1" in is-active) [[ " {active} " == *" $3 "* ]] ;;'
+                ' show) echo _haprion-collector ;; *) record "systemctl $*" ;; esac; }\n'
+                f"psql_scratch() {{ echo {connections}; }}\n"
+                f'sudo() {{ record "$* <$(cat)"; {"true" if restored else "false"}; }}\n'
+                "pg_restore() { :; }\n"
+                'runuser() { record "runuser $*"; }\n'
+                'do_after_restore() { record "after-restore"; }\n'
+                "DB_NAME=haprion\n"
+                + re.search(r"^counted\(\) .*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
+                + units.group(0)
+                + f'PLATFORM_STEPS="{steps}"\nCOLLECTOR_CONFIG="{config}"\n'
+                f'COLLECTOR_COMMAND="{collector}"\n'
+                + function("do_restore", source)
+                + function("start_units", source)
+                + 'do_restore "$1"\n'
+            )
+            done = subprocess.run(  # noqa: S603 - fixed program
+                ["/bin/bash", "-c", program, "bash", str(dump)],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={**os.environ, "CALLS": str(calls)},
+            )
+            said = calls.read_text().splitlines() if calls.exists() else []
+        return done, [line.replace(str(here), "<here>") for line in said]
+
+    ACTIVE = "haprion-traffic-collector.timer haprion-web.socket haprion-worker.service"
+
+    def test_it_stops_restores_proves_holds_and_starts_in_that_order(self) -> None:
+        done, said = self.restore(active=self.ACTIVE)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(
+            said,
+            [
+                "systemctl stop haprion-traffic-collector.timer",
+                "systemctl stop haprion-web.socket",
+                "systemctl stop haprion-worker.service",
+                "-u postgres pg_restore -d postgres --clean --create --if-exists --exit-on-error"
+                " <dump",
+                "03-verify",
+                "after-restore",
+                "systemctl start haprion-worker.service",
+                "systemctl start haprion-web.socket",
+                "systemctl start haprion-traffic-collector.timer",
+                "runuser -u _haprion-collector -- <here>/collector --replay-database"
+                " <here>/traffic-collector.json",
+            ],
+        )
+
+    def test_a_connection_left_restores_nothing_and_starts_what_it_stopped(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, connections="1")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("1 connection to haprion still open; nothing was restored", done.stderr)
+        self.assertFalse(any("pg_restore" in line for line in said))
+        self.assertEqual(said[-1], "systemctl start haprion-traffic-collector.timer")
+
+    def test_a_failed_restore_leaves_the_services_stopped(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, restored=False)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("the services stay stopped", done.stderr)
+        self.assertFalse(any(line.startswith("systemctl start") for line in said))
+        self.assertNotIn("after-restore", said)
+
+    def test_the_command_is_offered(self) -> None:
+        source = SCRIPT.read_text()
+        self.assertIn("#     haprion-backup restore <dump>", source)
+        self.assertIn('restore)        take_lock; do_restore "$1" ;;', source)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -927,6 +927,47 @@ def run_one(
             added_back_and_deployed,
         )
 
+        def the_database_comes_back_from_a_dump() -> None:
+            """B376 (R2 26-10-27, F21): one command reads a dump back into the running manager."""
+
+            psql = "runuser -u postgres -- psql -d haprion -qtAX -c "
+            run.on("mgr", "haprion-backup dump")
+            _, listed = run.on("mgr", "haprion-backup list")
+            # Newest first: the dump just taken.
+            dump = listed.splitlines()[0].split()[-1] if listed.strip() else ""
+            if not dump.endswith(".dump"):
+                raise Failed(f"haprion-backup list named no dump:\n{listed}")
+            run.on(
+                "mgr",
+                psql
+                + shlex.quote(
+                    "insert into audit_event (actor, action, detail)"
+                    " values ('install-test', 'after_the_dump', '{}')"
+                ),
+            )
+            _, restored = run.on("mgr", f"haprion-backup restore /var/lib/haprion-ui/dumps/{dump}")
+            if "restored from" not in restored:
+                raise Failed(f"haprion-backup restore did not say it restored:\n{restored}")
+            _, after = run.on(
+                "mgr",
+                psql
+                + shlex.quote("select count(*) from audit_event where action = 'after_the_dump'"),
+            )
+            if after.strip() != "0":
+                raise Failed("the row written after the dump is still there after the restore")
+            for unit in ("haprion-web.socket", "haprion-worker", "haprion-poller"):
+                run.on("mgr", f"systemctl is-active --quiet {unit}")
+            _, answer = run.on(
+                "mgr", "curl -fsS --unix-socket /run/haprion-web.sock http://localhost/healthz"
+            )
+            if '"ok":true' not in answer.replace(" ", ""):
+                raise Failed(f"the web does not answer after the restore:\n{answer}")
+
+        step(
+            "haprion-backup restore: a dump read back into the running manager",
+            the_database_comes_back_from_a_dump,
+        )
+
         def removed_as_before() -> None:
             """B372: listed, removed, the packages purged - and nothing of Haprion left."""
 

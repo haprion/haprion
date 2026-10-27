@@ -2925,18 +2925,22 @@ carries on from the moment of the snapshot, as from a pause. Nothing is held the
 were waiting run. The clock is behind as well. Restart the manager straight after such a restore - the
 worker then holds what was waiting, and the clock is set. Take snapshots for restoring without memory.
 
-A database restored into a running host, without a restart, is not seen by the worker. Stop the worker,
-restore, and then run:
+**Restoring only the database** from one of its dumps is one command. `haprion-backup list` shows the
+dumps; give the one to restore:
 
+```bash
+sudo haprion-backup restore /var/lib/haprion-ui/dumps/<dump>
 ```
-sudo systemctl stop haprion-worker
-# restore the dump
-sudo haprion-backup after-restore
-sudo systemctl start haprion-worker
-```
+
+It stops everything that writes the database - the web and its socket, the worker, the poller, the
+traffic collector and the timers - and refuses while a connection to the database remains. It then
+makes the database again from the dump, checks its privileges with `03-verify`, holds the waiting jobs
+and ends the sessions (`after-restore`), starts what it stopped, and replays the traffic log (below).
+If the restore itself fails, the services stay stopped and the command says so.
 
 `after-restore` holds every waiting or running job in the same way, and ends every session: the
-restored sessions include ones that were signed out or revoked since. Both actions are in the audit
+restored sessions include ones that were signed out or revoked since. Run on its own, with the worker
+stopped, it does the same for a database restored some other way. Both actions are in the audit
 record. After a host restore, end the sessions yourself: *Settings → Users*, the account,
 **End sessions**.
 
@@ -2954,7 +2958,8 @@ Restoring **only the database** from a dump is different. For each day file in s
 remembers how far it has imported, and that position is newer than the dump. Its next run would go on
 from there, and every request between the dump and the restore would be missing from the log page,
 although the records are still in staging ([Mirroring node traffic logs](#mirroring-node-traffic-logs)).
-After such a restore, run this once, as the collector account (`COLLECTOR_USER`):
+`haprion-backup restore` replays it for you. After a database restored another way, run this once, as
+the collector account (`COLLECTOR_USER`):
 
 ```bash
 sudo -u <collector> /opt/haprion/current/bin/haprion-traffic-collector \

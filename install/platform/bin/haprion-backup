@@ -7,6 +7,7 @@
 #     haprion-backup verify-restore
 #     haprion-backup list
 #     haprion-backup after-restore
+#     haprion-backup restore <dump>
 #
 # A dump nobody has restored is a belief, not a backup. `dump` therefore reads
 # every dump back with `pg_restore --list` before keeping it, and
@@ -76,6 +77,8 @@ command="${1:-}"
 shift || true
 if [[ "$command" == dump-before-migration ]]; then
     [[ $# -eq 2 ]] || usage
+elif [[ "$command" == restore ]]; then
+    [[ $# -eq 1 ]] || usage
 else
     [[ $# -eq 0 ]] || usage
 fi
@@ -392,6 +395,103 @@ SQL
 step_log() { echo; echo "== $*"; }
 
 #
+# A dump read back into the running installation, the whole way (B376). By
+# hand it took seven steps in an order with two traps (R2 26-10-27, F21): the
+# web's socket starts the web again unless it is stopped too, and
+# `pg_restore --clean` into the existing database fails on the partitions'
+# inherited constraints. The database is made again from the dump instead
+# (`--create`, through the postgres superuser), which keeps its owner, its
+# grants and the roles' settings in it.
+#
+# Everything that writes the database, or starts something that does, in the
+# order it is stopped; started again in the opposite order, the worker after
+# `after-restore` has held what was waiting.
+#
+RESTORE_UNITS=(
+    haprion-traffic-collector.timer
+    haprion-retention.timer
+    haprion-retention-budget.timer
+    haprion-backup.timer
+    haprion-restore-check.timer
+    haprion-traffic-collector.service
+    haprion-web.socket
+    haprion-web.service
+    haprion-worker.service
+    haprion-poller.service
+)
+PLATFORM_STEPS="${HAPRION_PLATFORM_STEPS:-/usr/share/haprion-ui/install/platform}"
+COLLECTOR_CONFIG=/etc/haprion/traffic-collector.json
+COLLECTOR_COMMAND=/opt/haprion/current/bin/haprion-traffic-collector
+
+do_restore() {
+    local dump="$1" unit connections collector
+    local -a stopped=()
+    [[ -f "$dump" && -r "$dump" ]] || die "cannot read the dump ${dump}"
+    pg_restore --list "$dump" >/dev/null 2>&1 || die "${dump} is not a dump pg_restore can read"
+    [[ -x "${PLATFORM_STEPS}/03-verify" ]] || die "${PLATFORM_STEPS}/03-verify is missing"
+
+    step_log "Stopping what writes the database"
+    for unit in "${RESTORE_UNITS[@]}"; do
+        if systemctl is-active --quiet "$unit"; then
+            systemctl stop "$unit"
+            stopped+=("$unit")
+            log "  stopped  ${unit}"
+        fi
+    done
+    connections="$(psql_scratch -d postgres -c \
+        "select count(*) from pg_stat_activity where datname = '${DB_NAME}'")"
+    if [[ "$connections" != 0 ]]; then
+        start_units "${stopped[@]}"
+        die "$(counted "$connections" connection) to ${DB_NAME} still open; nothing was restored.
+  See them with: sudo -u postgres psql -c \"select pid, usename, application_name from pg_stat_activity where datname = '${DB_NAME}'\""
+    fi
+
+    step_log "Restoring ${dump}"
+    #
+    # Root opens the dump, which no other account may read, and postgres reads
+    # it on stdin. From here a failure leaves the services stopped: the
+    # database may be half made, and nothing should write to it.
+    #
+    # shellcheck disable=SC2024 # root opening the file is the point: postgres may not read it
+    if ! sudo -u postgres pg_restore -d postgres --clean --create --if-exists \
+            --exit-on-error < "$dump"; then
+        die "the restore stopped; the services stay stopped: ${stopped[*]:-none}.
+  Correct what pg_restore names and run this again."
+    fi
+    log "  restored ${DB_NAME} from $(basename "$dump")"
+
+    step_log "Proving the database's privileges"
+    (cd "$PLATFORM_STEPS" && ./03-verify) \
+        || die "the restored database does not grant what the contract says; the services stay stopped: ${stopped[*]:-none}"
+
+    step_log "Holding waiting jobs and ending sessions"
+    do_after_restore
+
+    step_log "Starting what was stopped"
+    start_units "${stopped[@]}"
+
+    collector="$(systemctl show -p User --value haprion-traffic-collector.service 2>/dev/null || true)"
+    if [[ -n "$collector" && -r "$COLLECTOR_CONFIG" && -x "$COLLECTOR_COMMAND" ]]; then
+        step_log "Replaying the traffic log"
+        runuser -u "$collector" -- "$COLLECTOR_COMMAND" --replay-database "$COLLECTOR_CONFIG" \
+            || warn "the traffic log was not replayed; run: sudo -u ${collector} ${COLLECTOR_COMMAND} --replay-database ${COLLECTOR_CONFIG}"
+    fi
+    echo
+    log "restored from $(basename "$dump"); waiting jobs are held for an admin on Jobs"
+}
+
+start_units() {
+    local index
+    for (( index = $# ; index > 0 ; index-- )); do
+        if systemctl start "${!index}"; then
+            log "  started  ${!index}"
+        else
+            warn "${!index} did not start"
+        fi
+    done
+}
+
+#
 # One dump or restore check at a time (review 2026-10-20, R3). Two share the
 # day's file name, its `.partial` and the scratch database's name, so a run by
 # hand beside the timer's could remove the other's file or drop its database
@@ -414,6 +514,7 @@ case "$command" in
     dump)           take_lock; do_dump ;;
     dump-before-migration) take_lock; do_dump_before_migration "$@" ;;
     after-restore)  do_after_restore ;;
+    restore)        take_lock; do_restore "$1" ;;
     verify-restore) take_lock; do_verify_restore ;;
     list)
         [[ -d "$DUMP_DIR" ]] || die "no dump directory: ${DUMP_DIR}"

@@ -130,4 +130,11 @@ def ask(
     finally:
         connection.close()
 
+    #
+    # Every helper answers with a document. One that read the request and then
+    # closed without a byte was killed or crashed while it worked (R2, F15): the
+    # same as silence, and said, rather than an empty answer with no reason.
+    #
+    if not chunks:
+        raise HelperSilent(f"{lead} ended without answering.")
     return b"".join(chunks).decode("utf-8", "replace")

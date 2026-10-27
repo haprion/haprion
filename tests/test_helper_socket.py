@@ -80,3 +80,12 @@ class TheAnswerIsBounded(unittest.TestCase):
         self.assertEqual(
             helper_socket.ask({}, path=self.path, timeout=5, what="the helper"), '{"ok":true}'
         )
+
+    def test_a_helper_that_closes_without_a_byte_is_silent(self) -> None:
+        """R2 26-10-27 (F15): a killed helper gave an empty answer and a reason with no sentence."""
+
+        self.serve([])
+        with self.assertRaisesRegex(
+            helper_socket.HelperSilent, "The helper ended without answering"
+        ):
+            helper_socket.ask({}, path=self.path, timeout=5, what="the helper")

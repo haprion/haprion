@@ -166,7 +166,10 @@ DEPENDS = (
 # does not leave the package half installed: the message says what to run.
 # Step 4 is not run from here - it installs packages, and dpkg holds the lock -
 # but when the package brings another step than the one that last ran, it says
-# so (B361).
+# so (B361). Asked inside `if`: as the last command of the `&&` list, a step
+# that differs - the answer, not a failure - set off node-lib.sh's trap for a
+# failed command, and the upgrade printed an ERROR line above the advice (lab
+# 26-10-27, 0.99.1 -> 0.99.2).
 #
 POSTINST = f"""\
 #!/bin/sh
@@ -177,7 +180,7 @@ if [ "$1" = configure ]; then
             && record_node_installation {SBIN}' \\
             || echo "{PACKAGE}: the record of its scripts was not written; run  sudo dpkg-reconfigure {PACKAGE}" >&2
         bash -c '. {INSTALL_DIR}/node-lib.sh && . {INSTALL_DIR}/node-installation.sh \\
-            && node_prepared_by {INSTALL_DIR}' \\
+            && if node_prepared_by {INSTALL_DIR}; then exit 0; else exit 1; fi' \\
             || echo "{PACKAGE}: this release changes what the node's preparation sets up; run  sudo haprion-node-prepare" >&2
     fi
     {SBIN}/haprion-node-key --package \\

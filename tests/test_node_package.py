@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -329,6 +330,53 @@ class AnUpgradeRecordsTheScriptsItInstalled(unittest.TestCase):
         self.assertLess(guard, script.index("record_node_installation /usr/sbin"))
         self.assertIn(f"{node_package.INSTALL_DIR}/node-installation.sh", script)
         self.assertIn("usr/share/haprion-node/install/node-installation.sh", node_package.CONTENTS)
+
+
+class ThePostinstAsksWhetherTheStepRan(unittest.TestCase):
+    """0.99.1 -> 0.99.2 in the lab: a step that differs printed an ERROR line from
+    node-lib.sh's trap above the advice, for what is the answer and not a failure."""
+
+    def asked(self, *, current: bool) -> subprocess.CompletedProcess[str]:
+        command = re.search(r"bash -c '([^']*node_prepared_by[^']*)'", node_package.POSTINST)
+        if command is None:
+            self.fail("the postinst no longer asks node_prepared_by")
+        install = Path(__file__).resolve().parents[1] / "install"
+        with tempfile.TemporaryDirectory() as raw:
+            step = Path(raw) / "install"
+            step.mkdir()
+            for name in ("node-lib.sh", "node-installation.sh", "accounts.sh"):
+                shutil.copy(install / name, step / name)
+            prepared = Path(raw) / "prepared"
+            environment = {**os.environ, "NODE_PREPARED": str(prepared)}
+            if current:
+                subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f". {step}/node-lib.sh && . {step}/node-installation.sh"
+                        f" && record_node_prepared {step}",
+                    ],
+                    capture_output=True,
+                    check=True,
+                    env=environment,
+                )
+            else:
+                prepared.write_text("another step\n")
+            return subprocess.run(
+                ["/bin/bash", "-c", command[1].replace(node_package.INSTALL_DIR, str(step))],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
+
+    def test_a_step_that_differs_is_an_answer_not_an_error(self) -> None:
+        done = self.asked(current=False)
+        self.assertEqual((done.returncode, done.stderr), (1, ""))
+
+    def test_the_step_that_ran_is_current(self) -> None:
+        done = self.asked(current=True)
+        self.assertEqual((done.returncode, done.stderr), (0, ""))
 
 
 if __name__ == "__main__":

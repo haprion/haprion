@@ -137,6 +137,20 @@ class ThePublishRefusesAnObjectOnAHeldPort(unittest.TestCase):
         for words in ("agent", "main port 6556/tcp", "cmk-agent-ctl", "node-a", "cannot bind"):
             self.assertIn(words, message)
 
+    def test_the_advice_is_one_the_program_can_follow(self) -> None:
+        """R2 26-10-27 (F23): the Checkmk agent and resolved's LLMNR take no address."""
+
+        with self.assertRaises(GeneratorError) as raised:
+            generate([tcp_object(6556)], vips=VIPS, default_vip="main", held_ports=CMK)
+        self.assertIn("move it to another port with pull_port", str(raised.exception))
+        self.assertNotIn("listen on the node's own address", str(raised.exception))
+        held = {("tcp", 5355): (("node-a", "systemd-resolve"),)}
+        with self.assertRaisesRegex(GeneratorError, "Turn off its LLMNR: LLMNR=no"):
+            generate([tcp_object(5355)], vips=VIPS, default_vip="main", held_ports=held)
+        held = {("tcp", 2222): (("node-a", "sshd"),)}
+        with self.assertRaisesRegex(GeneratorError, "Have sshd listen on the node's own address"):
+            generate([tcp_object(2222)], vips=VIPS, default_vip="main", held_ports=held)
+
     def test_a_dns_object_is_asked_on_udp_and_tcp(self) -> None:
         held = {("udp", 53): (("node-b", "named"),)}
         with self.assertRaisesRegex(GeneratorError, "53/udp, which named holds"):

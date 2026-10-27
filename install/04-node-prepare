@@ -636,10 +636,22 @@ else
     wildcard_report="$(wildcard_listeners <<<"$listening")"
     [[ -n "$wildcard_report" ]] || log "  ok       nothing but HAProxy listens on every address"
 fi
+#
+# What to do about it. The usual answer is the program's own address; these
+# cannot take one (R2 26-10-27, F23). The same words as generate.py's
+# HELD_PORT_ADVICE, held together by a test.
+#
+wildcard_advice() {
+    case "$1" in
+        systemd-resolve) echo "Turn off its LLMNR: LLMNR=no in a file under /etc/systemd/resolved.conf.d/, then systemctl restart systemd-resolved." ;;
+        cmk-agent-ctl) echo "The Checkmk agent cannot be given an address: move it to another port with pull_port in /var/lib/cmk-agent/cmk-agent-ctl.toml." ;;
+        *) echo "Have it listen on this node's own address." ;;
+    esac
+}
 while read -r port program; do
     [[ -n "$port" ]] || continue
     warn "port ${port} is held on every address by ${program}: an object on that port"
-    warn "  cannot bind the virtual address. Have it listen on this node's own address."
+    warn "  cannot bind the virtual address. $(wildcard_advice "$program")"
 done <<<"$wildcard_report"
 
 #

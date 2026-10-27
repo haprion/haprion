@@ -306,5 +306,34 @@ class DocumentationDpkgLeftOutIsNoChange(unittest.TestCase):
         self.assertEqual(self.changes(report), report)
 
 
+class TheAdviceIsOneThatCanBeFollowed(unittest.TestCase):
+    """R2 26-10-27 (F23): *Have it listen on this node's own address* for
+    systemd-resolved and the Checkmk agent, which cannot take one."""
+
+    @staticmethod
+    def advice(program: str) -> str:
+        script = NODE_PREPARE.read_text()
+        found = re.search(r"^wildcard_advice\(\) \{\n.*?^\}\n", script, re.MULTILINE | re.DOTALL)
+        assert found is not None, "04-node-prepare has no wildcard_advice"
+        return subprocess.run(  # fixed binary, the function from the script
+            ["/bin/bash", "-c", f'{found.group(0)}wildcard_advice "$1"', "-", program],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    def test_the_node_step_says_what_the_engine_says(self) -> None:
+        from haprion import generate
+
+        for program, advice in generate.HELD_PORT_ADVICE.items():
+            with self.subTest(program=program):
+                self.assertEqual(self.advice(program), f"{advice}.")
+        self.assertEqual(self.advice("sshd"), "Have it listen on this node's own address.")
+
+    def test_resolved_is_told_to_turn_off_llmnr(self) -> None:
+        self.assertIn("LLMNR=no", self.advice("systemd-resolve"))
+        self.assertIn("pull_port", self.advice("cmk-agent-ctl"))
+
+
 if __name__ == "__main__":
     unittest.main()

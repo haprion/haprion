@@ -1373,6 +1373,34 @@ def _serves_shared(proxy: Proxy, protocol: str) -> bool:
     return protocol == "http" and proxy.listen.redirect_http
 
 
+#
+# What to do about a program that holds a port on every address when the usual
+# answer - give it the node's own address - is not one it can take (R2
+# 26-10-27, F23). Keyed by the name `ss` gives it. systemd-resolved's LLMNR on
+# Debian (Ubuntu ships it off); the Checkmk agent takes a port, not an address.
+# The same words in 04-node-prepare's wildcard_advice, held together by a test.
+#
+HELD_PORT_ADVICE = {
+    "systemd-resolve": (
+        "Turn off its LLMNR: LLMNR=no in a file under /etc/systemd/resolved.conf.d/,"
+        " then systemctl restart systemd-resolved"
+    ),
+    "cmk-agent-ctl": (
+        "The Checkmk agent cannot be given an address: move it to another port with"
+        " pull_port in /var/lib/cmk-agent/cmk-agent-ctl.toml"
+    ),
+}
+
+
+def held_port_advice(program: str | None) -> str:
+    """What to do about `program` on every address of a node."""
+
+    known = HELD_PORT_ADVICE.get(program or "")
+    if known is not None:
+        return known
+    return f"Have {program or 'another program'} listen on the node's own address"
+
+
 def _refuse_held_ports(
     placed: Sequence[tuple[Vip, Proxy]],
     held: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]],
@@ -1408,8 +1436,8 @@ def _refuse_held_ports(
             who = program or "another program"
             raise GeneratorError(
                 f"{proxy.name} listens on {vip.name} port {key[1]}/{key[0]}, which {who} holds on "
-                f"every address of {node}, so it cannot bind there. Have {who} listen on the "
-                "node's own address, or choose another port"
+                f"every address of {node}, so it cannot bind there. {held_port_advice(program)},"
+                " or choose another port"
             )
 
 

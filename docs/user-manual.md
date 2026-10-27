@@ -591,7 +591,14 @@ loopback) never take a VIP's port.
 The last row of the table comes from the nodes themselves. A publish that changes objects or the network
 reads each node's status. The refusal names the program and the node - *agent listens on main port
 6556/tcp, which cmk-agent-ctl holds on every address of lb-01*. Have the program listen on the node's own
-address, or choose another port.
+address, or choose another port. Two programs cannot take an address, and the refusal says what to do
+instead:
+
+- the Checkmk agent (`cmk-agent-ctl`) can only move to another port: `pull_port` in
+  `/var/lib/cmk-agent/cmk-agent-ctl.toml`;
+- `systemd-resolved` holds 5355 for LLMNR, a local name lookup. Debian turns LLMNR on, Ubuntu does not.
+  Turn it off with `LLMNR=no` in a file under `/etc/systemd/resolved.conf.d/`, then restart
+  `systemd-resolved`.
 
 A node that does not answer does not stop the publish. The result names it under `ports_unchecked`, and
 the deploy still rolls back if the port is taken there. `haprion-node-status` on a node shows the same

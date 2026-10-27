@@ -32,7 +32,8 @@ CONFIG_DIRECTORY="${HAPRION_UI_DRAIN_CONFIG:-/etc/haprion}"
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 warn() { echo "WARNING: $*" >&2; }
-die()  { echo "ERROR: $*" >&2; exit "${2:-1}"; }
+# The message is the first argument; the second is the exit code (R2, F9: it was printed too).
+die()  { echo "ERROR: $1" >&2; exit "${2:-1}"; }
 
 #
 # A root-owned KEY=value file a platform step wrote (ui-admin.conf, ui-tls.conf),

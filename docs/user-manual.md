@@ -2919,6 +2919,11 @@ and the worker holds every such job:
 - An answer holds until the next start. A job answered **Run** that was still waiting or running when
   the host was backed up is held again when that backup is restored, and asked about again.
 
+A snapshot taken **with the host's memory** does not start again when it is put back: the manager
+carries on from the moment of the snapshot, as from a pause. Nothing is held then, and the jobs that
+were waiting run. The clock is behind as well. Restart the manager straight after such a restore - the
+worker then holds what was waiting, and the clock is set. Take snapshots for restoring without memory.
+
 A database restored into a running host, without a restart, is not seen by the worker. Stop the worker,
 restore, and then run:
 
@@ -4534,6 +4539,10 @@ in the section linked.
   new version changed is read under *Versions* before it is deployed
   ([Configuration and deployment](#configuration-and-deployment)). *Publish & deploy* on the dashboard
   does both at once, without that look.
+- **A restore that includes the host's memory is not recognised.** The manager cannot tell a snapshot
+  put back with its memory from a pause, so jobs that were waiting run without being held. Restart the
+  manager after such a restore
+  ([After restoring the database or the host](#after-restoring-the-database-or-the-host-waiting-jobs-and-sessions)).
 - **The VIP is not moved from the interface.** Patching a pair means restarting the standby, then the node
   holding the VIP and letting the VIP move. That needs nothing from the manager. A button that stopped
   keepalived on a node would be the first management action able to move traffic

@@ -1,0 +1,291 @@
+#!/bin/bash
+#
+# privilege-probe - prove on a manager that each account can do what the
+# privilege contract grants it and nothing more (docs/PRIVILEGE.md).
+#
+#     sudo tools/privilege-probe
+#
+# Reads only. sudo is asked with -l, and a rule that must be refused is tried
+# for real as the account, so the refusal is sudo's own. Sockets are connected
+# to only by accounts that must be refused, and files are only opened for
+# reading. PASS, FAIL and REVIEW lines; REVIEW is something not present here
+# to probe. Exits 1 on any FAIL.
+#
+# The expectations are the contract's: the helpers in the sudoers examples,
+# the socket units' groups and the sysusers fragment, held to those files by
+# tests/test_privilege_probe.py. The installation test runs it on its manager
+# (R2 26-10-27, moment 4, which found F17 with it).
+#
+set -u
+[[ $EUID -eq 0 ]] || { echo "run as root: sudo $0" >&2; exit 2; }
+
+BIN=/opt/haprion/current/bin
+POLICY=/etc/haprion/runtime-policy.yaml
+PY=/usr/bin/python3
+[[ -x $PY ]] || PY=/opt/haprion-ui/current/venv/bin/python
+pass=0 fail=0 review=0
+ok()   { printf 'PASS   %s\n' "$*"; pass=$((pass + 1)); }
+bad()  { printf 'FAIL   %s\n' "$*"; fail=$((fail + 1)); }
+look() { printf 'REVIEW %s\n' "$*"; review=$((review + 1)); }
+section() { printf '\n== %s\n' "$*"; }
+
+ACCOUNTS=(_haprion-web _haprion-worker _haprion-poller _haprion-collector _haprion-oidc
+    _haprion-pull _haprion-cert-pull www-data)
+
+declare -A GROUPS_EXPECTED=(
+    [_haprion-web]="_haprion-ui _haprion-web"
+    [_haprion-worker]="_haprion-ui _haprion-worker haprion"
+    [_haprion-poller]="_haprion-poller _haprion-ui"
+    [_haprion-collector]="_haprion-collector"
+    [_haprion-oidc]="_haprion-oidc"
+    [_haprion-pull]="_haprion-pull"
+    [_haprion-cert-pull]="_haprion-cert-pull"
+    [www-data]="www-data"
+)
+
+WORKER_HELPERS="deploy cert-deploy revert changes-publish cert-issue cert-publish cert-target
+    dns-profile-apply cert-delete ndes-profile-apply cert-scep cert-import cert-request server-state"
+POLLER_HELPERS="status inventory readings cluster-list"
+
+declare -A SOCKET_GROUP=(
+    [/run/haprion/backup-job.sock]=_haprion-worker
+    [/run/haprion/cert-receiver.sock]=_haprion-worker
+    [/run/haprion/cluster-node.sock]=_haprion-worker
+    [/run/haprion/node-restore.sock]=_haprion-worker
+    [/run/haprion/ui-tls.sock]=_haprion-worker
+    [/run/haprion/cert-export.sock]=_haprion-web
+    [/run/haprion/oidc.sock]=_haprion-web
+    [/run/haprion/probe.sock]=_haprion-web
+    [/run/haprion/resolve.sock]=_haprion-web
+    [/run/haprion-web.sock]=www-data
+)
+
+present=()
+for account in "${ACCOUNTS[@]}"; do
+    if id -u "$account" >/dev/null 2>&1; then
+        present+=("$account")
+    else
+        look "account $account does not exist here; not probed"
+    fi
+done
+
+allowed_helper() {
+    local account="$1" name="$2"
+    case "$account" in
+        _haprion-worker) [[ " ${WORKER_HELPERS//$'\n'/ } " == *" ${name} "* ]] ;;
+        _haprion-poller) [[ " ${POLLER_HELPERS} " == *" ${name} "* ]] ;;
+        *) return 1 ;;
+    esac
+}
+
+in_group() { id -nG "$1" | tr ' ' '\n' | grep -qxF "$2"; }
+
+# ---------------------------------------------------------------------------
+section "groups"
+for account in "${present[@]}"; do
+    actual=$(id -nG "$account" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+    if [[ "$actual" == "${GROUPS_EXPECTED[$account]}" ]]; then
+        ok "$account groups: $actual"
+    else
+        bad "$account groups: $actual (expected ${GROUPS_EXPECTED[$account]})"
+    fi
+    for powerful in sudo adm root shadow disk systemd-journal docker lxd; do
+        if in_group "$account" "$powerful"; then bad "$account is in $powerful"; fi
+    done
+done
+
+# ---------------------------------------------------------------------------
+section "sudo: every helper, every account"
+helpers=()
+for path in "$BIN"/*-helper; do
+    [[ -e $path ]] && helpers+=("$path")
+done
+[[ ${#helpers[@]} -gt 0 ]] || bad "no helpers under $BIN"
+printf 'helpers found: %d\n' "${#helpers[@]}"
+
+for account in "${present[@]}"; do
+    allowed_seen=0 refused_seen=0
+    for path in "${helpers[@]}"; do
+        name=$(basename "$path"); name=${name#haprion-}; name=${name%-helper}
+        if sudo -n -l -U "$account" "$path" >/dev/null 2>&1; then
+            if allowed_helper "$account" "$name"; then
+                allowed_seen=$((allowed_seen + 1))
+                if sudo -n -l -U "$account" "$path" x >/dev/null 2>&1; then
+                    bad "$account may run $name WITH an argument"
+                fi
+            else
+                bad "$account may run $name through sudo; the contract does not grant it"
+            fi
+        else
+            if allowed_helper "$account" "$name"; then
+                bad "$account may not run $name; the contract grants it"
+                continue
+            fi
+            refused_seen=$((refused_seen + 1))
+            # The refusal itself, as the account: sudo must say no before the helper starts.
+            said=$(runuser -u "$account" -- sudo -n "$path" </dev/null 2>&1 >/dev/null)
+            code=$?
+            if [[ $code -eq 1 && "$said" == sudo:* ]]; then
+                :
+            else
+                bad "$account running $name: exit $code, not sudo's refusal: ${said:0:160}"
+            fi
+        fi
+    done
+    for other in /bin/sh /usr/bin/env /usr/bin/systemctl /usr/bin/cat; do
+        if sudo -n -l -U "$account" "$other" >/dev/null 2>&1; then
+            bad "$account may run $other through sudo"
+        fi
+    done
+    ok "$account: $allowed_seen helpers granted as the contract says, $refused_seen refused by sudo"
+done
+
+# ---------------------------------------------------------------------------
+section "sockets: mode, group, and a connection from every account that must be refused"
+shopt -s nullglob
+sockets=(/run/haprion/*.sock /run/haprion-web.sock)
+shopt -u nullglob
+for socket in "${sockets[@]}"; do
+    [[ -S $socket ]] || { look "$socket is not a socket"; continue; }
+    expected=${SOCKET_GROUP[$socket]:-}
+    if [[ -z $expected ]]; then
+        look "$socket is not in the expectation table: $(stat -c '%A %U:%G' "$socket")"
+        continue
+    fi
+    shape=$(stat -c '%a %U %G' "$socket")
+    if [[ "$shape" == "660 root $expected" ]]; then
+        ok "$socket 660 root:$expected"
+    else
+        bad "$socket is $shape (expected 660 root $expected)"
+    fi
+    refused=0
+    for account in "${present[@]}"; do
+        in_group "$account" "$expected" && continue
+        said=$(runuser -u "$account" -- "$PY" -I -c '
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    s.connect(sys.argv[1])
+except PermissionError:
+    print("EACCES"); sys.exit(0)
+except OSError as e:
+    print("OTHER " + repr(e)); sys.exit(0)
+s.close(); print("CONNECTED")
+' "$socket" 2>&1)
+        case "$said" in
+            EACCES) refused=$((refused + 1)) ;;
+            CONNECTED) bad "$account connected to $socket" ;;
+            *) look "$account on $socket: $said" ;;
+        esac
+    done
+    ok "$socket: $refused accounts refused by the kernel"
+done
+for socket in "${!SOCKET_GROUP[@]}"; do
+    [[ -e $socket ]] || look "$socket from the table is not present"
+done
+
+# ---------------------------------------------------------------------------
+section "files: everything each account can read under the secret places"
+policy_value() { sed -n "s/^$1:[[:space:]]*//p" "$POLICY" 2>/dev/null | tr -d '"' | head -1; }
+certificate_root=$(policy_value certificate_root)
+receiver_root=$(policy_value receiver_root)
+backup_root=$(policy_value backup_root)
+
+# root<TAB>who may read it (space separated, empty: nobody)
+roots=(
+    "/root	"
+    "/etc/haprion/ui-secrets	"
+    "/etc/haprion/ndes-profiles	"
+    "/etc/haprion/ndes-requests	"
+    "/etc/haprion/oidc	_haprion-oidc"
+    "/etc/haprion/traffic-collector/id_ed25519	_haprion-collector"
+    "/etc/haprion/tls	"
+    "/var/lib/haprion-ui/dumps	"
+    "/var/lib/haprion/answers	_haprion-worker"
+    "/etc/letsencrypt/archive	"
+    "/etc/letsencrypt/live	"
+    "/etc/letsencrypt/accounts	"
+    "/etc/letsencrypt/keys	"
+    "/etc/letsencrypt/csr	"
+    "/var/lib/letsencrypt	"
+    "${certificate_root:-/nonexistent-certificate_root}	_haprion-cert-pull"
+    "${receiver_root:-/nonexistent-receiver_root}	"
+    "${backup_root:-/nonexistent-backup_root}	"
+)
+for key in /etc/ssh/ssh_host_*_key; do roots+=("$key	"); done
+while IFS= read -r key; do
+    [[ -n $key ]] && roots+=("$key	")
+done < <(sed -n 's/^[[:space:]]*key:[[:space:]]*//p' "$POLICY" 2>/dev/null | tr -d '"')
+
+paths=()
+for entry in "${roots[@]}"; do
+    path=${entry%%$'\t'*}
+    if [[ -e $path ]]; then
+        paths+=("$path")
+    else
+        look "not present, so not probed: $path"
+    fi
+done
+printf 'secret places probed: %d\n' "${#paths[@]}"
+
+for account in "${present[@]}"; do
+    readable=$(runuser -u "$account" -- "$PY" -I -c '
+import os, sys
+for root in sys.argv[1:]:
+    if os.path.isfile(root):
+        try:
+            open(root, "rb").close(); print(root)
+        except OSError:
+            pass
+        continue
+    for here, dirs, files in os.walk(root, onerror=lambda e: None):
+        for name in files:
+            path = os.path.join(here, name)
+            try:
+                open(path, "rb").close(); print(path)
+            except OSError:
+                pass
+' "${paths[@]}" 2>&1)
+    leaks=0
+    while IFS= read -r path; do
+        [[ -n $path ]] || continue
+        may=""
+        for entry in "${roots[@]}"; do
+            root=${entry%%$'\t'*}
+            if [[ $path == "$root" || $path == "$root"/* ]]; then may=${entry#*$'\t'}; break; fi
+        done
+        if [[ " $may " == *" $account "* ]]; then continue; fi
+        leaks=$((leaks + 1))
+        [[ $leaks -le 20 ]] && bad "$account can read $path"
+    done <<<"$readable"
+    if [[ $leaks -eq 0 ]]; then
+        ok "$account reads nothing it should not under ${#paths[@]} secret places"
+    elif [[ $leaks -gt 20 ]]; then
+        bad "$account: $((leaks - 20)) more readable files not listed"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+section "receipts: the worker reads what the socket helpers keep (B367, F17)"
+shopt -s nullglob
+receipts=(/var/lib/haprion/answers/*.json)
+shopt -u nullglob
+if [[ ${#receipts[@]} -eq 0 ]]; then
+    look "no receipt in /var/lib/haprion/answers to read"
+else
+    unreadable=0
+    for receipt in "${receipts[@]}"; do
+        if ! runuser -u _haprion-worker -- "$PY" -I -c 'open(__import__("sys").argv[1], "rb").close()' "$receipt" 2>/dev/null; then
+            unreadable=$((unreadable + 1))
+            [[ $unreadable -le 3 ]] && bad "_haprion-worker cannot read $receipt ($(stat -c '%a %U:%G' "$receipt"))"
+        fi
+    done
+    if [[ $unreadable -eq 0 ]]; then
+        ok "_haprion-worker reads all ${#receipts[@]} receipts"
+    else
+        bad "_haprion-worker cannot read $unreadable of ${#receipts[@]} receipts"
+    fi
+fi
+
+printf '\nRESULT: %d PASS, %d FAIL, %d REVIEW\n' "$pass" "$fail" "$review"
+[[ $fail -eq 0 ]]

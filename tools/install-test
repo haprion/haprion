@@ -927,6 +927,20 @@ def run_one(
             added_back_and_deployed,
         )
 
+        def every_account_holds_what_the_contract_grants() -> None:
+            """R2 moment 4: sudo, sockets, groups and secrets, for every account on the manager."""
+
+            probe = run.copy("mgr", Path(__file__).resolve().parent / "privilege-probe")
+            code, output = run.on("mgr", f"bash {probe}", check=False)
+            if code != 0 or "RESULT:" not in output:
+                failed = [line for line in output.splitlines() if line.startswith("FAIL")]
+                raise Failed("the privilege probe failed:\n" + "\n".join(failed or [output]))
+
+        step(
+            "privilege-probe: every account can do what the contract grants and nothing more",
+            every_account_holds_what_the_contract_grants,
+        )
+
         def the_database_comes_back_from_a_dump() -> None:
             """B376 (R2 26-10-27, F21): one command reads a dump back into the running manager."""
 

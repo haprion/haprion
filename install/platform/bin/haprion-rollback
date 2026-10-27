@@ -270,12 +270,12 @@ if [[ -z "$answered" ]]; then
     # reported as done - is the worst possible outcome of a command whose entire
     # purpose is to get back to something that works.
     #
-    warn "the interface did not answer on ${target}; rolling forward to ${current}"
+    warn "the interface did not answer on ${target}; switching back to ${current}"
     ln -sfn "${releases}/${current}" "${link}.new"
     mv -T "${link}.new" "$link"
     systemctl restart "${SERVICES[@]}" || true
     journalctl -u haprion-web.service --no-pager --lines=15 || true
-    die "rolled forward to ${current}; ${target} did not answer"
+    die "back on ${current}; ${target} did not answer"
 fi
 
 log "  ok       ${answered}"
@@ -288,5 +288,6 @@ for service in "${SERVICES[@]}"; do
 done
 
 echo
-log "rolled back to ${target}"
-log "Roll forward with: haprion-rollback --to ${current}"
+# The same words either way: --to may name a newer release as well as an older one (R2, F13).
+log "switched to ${target}"
+log "To go back: haprion-rollback --to ${current}"

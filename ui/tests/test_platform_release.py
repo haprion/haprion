@@ -145,6 +145,15 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertLess(rollback.index("pause --wait"), rollback.index('step "Switching"'))
         self.assertNotIn("Checking that no node restore or backup is running", self.update)
 
+    def test_the_rollback_says_the_same_in_either_direction(self) -> None:
+        """R2 26-10-27 (F13): *rolled back to* and *Roll forward with* after a step forward."""
+
+        rollback = (ROOT / "install/platform/bin/haprion-rollback").read_text()
+        self.assertIn('log "switched to ${target}"', rollback)
+        self.assertIn('log "To go back: haprion-rollback --to ${current}"', rollback)
+        for said in ("rolled back to", "Roll forward with", "rolling forward to", "rolled forward"):
+            self.assertNotIn(said, rollback)
+
     def test_both_post_switch_failures_restore_the_previous_release(self) -> None:
         self.assertEqual(self.update.count("restore_previous\n"), 2)
         self.assertIn('"$rollback" --to "$previous_id"', self.update)

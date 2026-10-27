@@ -560,6 +560,23 @@ class JobsHeldSinceTheBoot(WorkerTestCase):
         self.assertEqual(audit.call_args.kwargs["action"], "jobs_held")
         self.assertEqual(audit.call_args.kwargs["detail"]["jobs"], [4, 7])
 
+    def test_the_held_jobs_line_agrees_with_its_count(self) -> None:
+        """R2 26-10-27 (F20): *1 job ... are held*."""
+
+        boot = datetime(2026, 10, 20, tzinfo=UTC)
+        for held, line in (
+            ([54], "1 job queued before the manager started is held for an admin: 54"),
+            ([4, 7], "2 jobs queued before the manager started are held for an admin: 4, 7"),
+        ):
+            with (
+                self.subTest(held=held),
+                mock.patch.object(db, "hold_jobs_queued_before", return_value=held),
+                mock.patch.object(db, "record_audit_event"),
+                self.assertLogs(worker.logger, "WARNING") as logged,
+            ):
+                worker.hold_from_before_boot(self.connection, worker=WORKER, boot=boot)
+            self.assertEqual(logged.records[0].getMessage(), line)
+
 
 class LosingTheLease(WorkerTestCase):
     def test_a_lost_lease_writes_nothing_at_all(self) -> None:

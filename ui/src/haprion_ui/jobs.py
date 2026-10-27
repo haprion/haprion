@@ -1252,11 +1252,17 @@ def failure_label(job: Job, operation: str | None = None, state: str | None = No
     """
 
     operation = operation or ending_step(job)
+    state = state or job.state
     if operation == job.operation and (named := action_names(job)):
-        return named[2]
-    if (state or job.state) == "partial" and operation in PARTIAL_LABELS:
+        label = named[2]
+    elif state == "partial" and operation in PARTIAL_LABELS:
         return PARTIAL_LABELS[operation]
-    return FAILURE_LABELS.get(operation, operation)
+    else:
+        label = FAILURE_LABELS.get(operation, operation)
+    # Not failed: it may have worked (R2, F19 - a backup that was taken read *Backup failed*).
+    if state == "unknown" and label.endswith(" failed"):
+        return f"{label.removesuffix(' failed')}: outcome unknown"
+    return label
 
 
 RUNNING_LABELS = {

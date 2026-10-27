@@ -606,6 +606,17 @@ class TheErrorCodeReachesThePage(LoginTestCase):
             attention.from_jobs([partial])[0].message, "Deploy reached only some nodes"
         )
 
+    def test_an_unknown_outcome_is_not_called_failed(self) -> None:
+        """R2 26-10-27 (F19): *Backup failed* for a backup that had been taken."""
+
+        unknown = job(state="unknown", outcome="unknown", operation="backup_run")
+        self.assertEqual(jobs.failure_label(unknown), "Backup: outcome unknown")
+        self.assertEqual(attention.from_jobs([unknown])[0].message, "Backup: outcome unknown")
+        self.assertEqual(
+            jobs.failure_label(job(state="failed", outcome="failed", operation="backup_run")),
+            "Backup failed",
+        )
+
     def test_a_result_that_is_not_the_expected_shape_is_survived(self) -> None:
         """The document is a privileged helper's, stored as it arrived."""
 

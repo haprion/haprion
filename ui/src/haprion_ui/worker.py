@@ -1097,8 +1097,9 @@ def hold_from_before_boot(connection: Any, *, worker: str, boot: datetime | None
             detail={"jobs": held, "reason": "queued before the manager started"},
         )
         logger.warning(
-            "%s queued before the manager started are held for an admin: %s",
+            "%s queued before the manager started %s held for an admin: %s",
             labels.counted(len(held), "job"),
+            "is" if len(held) == 1 else "are",
             ", ".join(str(job) for job in held),
         )
     connection.commit()

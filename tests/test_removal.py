@@ -567,6 +567,7 @@ NODE_ACCOUNTED = {
     "/etc/hosts": "read by the state export",
     "/etc/keepalived/keepalived.conf": "removed when its first line is Haprion's (KEEPALIVED_MARK)",
     "/etc/machine-id": "read",
+    "/etc/systemd/resolved.conf.d": "named in advice to the operator, never written (F23)",
     "/etc/netplan": "read by the state export",
     "/etc/os-release": "read",
     "/etc/rsyslog.conf": "read",
@@ -585,6 +586,7 @@ NODE_ACCOUNTED = {
     "/etc/sysusers.d": "systemd's directory; Haprion's fragment is listed",
     "/root/.ssh": "root's; Haprion's keys in it are listed",
     "/root/.ssh/known_hosts": "the manager's line, removed with ssh-keygen -R",
+    "/var/lib/cmk-agent/cmk-agent-ctl.toml": "named in advice to the operator, never written (F23)",
     "/var/lib/haproxy/dev/log": "rsyslog's socket, taken back when rsyslog restarts",
     "/var/log/journal": "journald's directory; the haprion-waf namespace is listed (PATTERNS)",
 }

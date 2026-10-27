@@ -28,6 +28,8 @@ from haprion import haproxy_versions, log_forwarding, node_resources
 from haprion.cli.caller import usage, without_answer
 from haprion.cluster_status import (
     StatusError,
+    ahead_of,
+    ahead_words,
     forwarding_current,
     keepalived_state,
     parse_status,
@@ -97,7 +99,7 @@ def _parse(argv: list[str]) -> tuple[str, bool]:
     return argv[1], len(argv) == 3
 
 
-def _release_line(node: dict[str, Any]) -> str:
+def _release_line(node: dict[str, Any], published: object = None) -> str:
     """The node's own answer about which release it runs, and whether it matches.
 
     `current` is three-valued and each value is printed differently on purpose.
@@ -113,6 +115,8 @@ def _release_line(node: dict[str, Any]) -> str:
     current = node.get("current")
     if current is True:
         return f"{shown}   (published)"
+    if current is False and (ahead := ahead_of(status, published)) is not None:
+        return f"{shown}   AHEAD - {ahead_words(*ahead)}"
     if current is False:
         return f"{shown}   BEHIND - run haprion-deploy"
     return f"{shown}   (not compared)"
@@ -269,7 +273,7 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         running = (status.get("runtime") or {}).get("version") or "unknown"
         note = behind.get(str(node["name"]))
         writer.write(f"  HAProxy ver:  {running}{f'  ({note})' if note else ''}\n")
-        writer.write(f"  Version:      {_release_line(node)}\n")
+        writer.write(f"  Version:      {_release_line(node, (target or {}).get('version'))}\n")
         addresses = _addresses_line(status)
         if addresses is not None:
             writer.write(f"  Addresses:    {addresses}\n")

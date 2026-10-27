@@ -804,6 +804,30 @@ class CallerTests(HelperFixture):
         self.assertIn("BEHIND - run haprion-deploy", out)
         self.assertIn("at least one node is not running the published version", out)
 
+    def test_a_node_past_the_published_version_is_not_called_behind(self) -> None:
+        """R2 26-10-27 (F18): BEHIND - run haprion-deploy, for nodes on 13 with 12 published.
+
+        The deploy it advised would have put the older version on them.
+        """
+
+        ahead = json.loads(node_status("node-b", owner=False, release_hash="d" * 40))
+        ahead["release"]["version"] = "9"
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET_HASH),
+                    "node-b": json.dumps(ahead),
+                }
+            )
+        )
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+        self.assertIn(
+            "9   AHEAD - runs version 9, which this manager has no record of, as after a restore"
+            " of the manager from older state. A deploy puts version 8 on it",
+            out,
+        )
+        self.assertNotIn("BEHIND - run haprion-deploy", out)
+
     def test_a_node_on_an_older_haproxy_is_named_and_so_is_the_validator(self) -> None:
         """Fas 16 punkt 3b: the dashboard's rule, in the terminal's words."""
 

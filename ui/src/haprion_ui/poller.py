@@ -512,8 +512,8 @@ def poll_once(
     fails halfway then leaves what it did read updated, rather than discarding
     good readings because a later one went wrong.
 
-    The count returned is the status source only. It is what "fully current"
-    means to an operator watching the log; a cluster whose nodes are healthy
+    The count returned is the status source only. It is what "read" means to
+    an operator watching the log; a cluster whose nodes are healthy
     while its listing could not be read is a smaller problem, and it is logged
     as its own line rather than folded into that number.
     """
@@ -877,7 +877,11 @@ def main(argv: list[str] | None = None) -> int:
                 healthy = poll_once(pool, config, clusters=known)
                 if known:
                     logger.info(
-                        "%d/%s fully current", healthy, labels.counted(len(known), "cluster")
+                        # Read, not in step with what is published (R2 F18): a node
+                        # past the published version answers as well as one on it.
+                        "%d/%s read",
+                        healthy,
+                        labels.counted(len(known), "cluster"),
                     )
                 else:
                     logger.info("no cluster yet; Settings - Create cluster makes the first")

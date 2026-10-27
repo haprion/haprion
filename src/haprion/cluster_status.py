@@ -514,6 +514,32 @@ def _count(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def ahead_of(status: Mapping[str, Any], published: object) -> tuple[int, int] | None:
+    """The node's version and the published one when the node is past it (R2 26-10-27, F18).
+
+    A revert publishes a new, higher version, so no deploy from this manager
+    leaves a node past what it published. A node that is ahead runs a version
+    this manager has no record of - the manager was put back from older state -
+    and a deploy would replace its configuration with the older one. Called
+    *behind*, it was offered exactly that deploy.
+    """
+
+    version = _count(_mapping(status.get("release")).get("version"))
+    published_version = _count(published)
+    if version is None or published_version is None or version <= published_version:
+        return None
+    return version, published_version
+
+
+def ahead_words(version: int, published: int) -> str:
+    """What `haprion-status` and the interface say about a node `ahead_of` names."""
+
+    return (
+        f"runs version {version}, which this manager has no record of, as after a restore of the"
+        f" manager from older state. A deploy puts version {published} on it"
+    )
+
+
 def _peers(status: Mapping[str, Any]) -> tuple[tuple[str, bool], ...] | None:
     reported = status.get("peers")
     if not isinstance(reported, list):

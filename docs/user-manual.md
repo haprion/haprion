@@ -206,6 +206,7 @@ One word per thing, the same on every page:
 | saved | a change stored here and not yet published | *Versions*, the proxy list (*· not published*) |
 | version | a numbered, unchangeable configuration made by a publish | *Versions*, the dashboard's *Published version* |
 | Behind | a cluster or node that does not run the published version; *Deploy configuration* is green there | the dashboard, *Network* |
+| Unknown version | a node on a version past the published one, which this manager has no record of - as after the manager was restored from older state. A deploy puts the published, older version on it; `haprion-status` says *AHEAD* | the dashboard, *Needs attention* |
 | Older package | a node whose packages are older than another node's | the dashboard's *Runtime* cell |
 | Reconfigured · deploy to activate | a published change to a proxy the nodes do not serve yet | *Proxies*, *Network* |
 | Waiting for deploy | how far a proxy's newest version has come | the proxy's page |

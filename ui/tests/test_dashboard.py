@@ -461,6 +461,35 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(behind.detail, "Node is not on the published version")
         self.assertTrue(behind.release_behind)
 
+    def test_a_node_past_the_published_version_needs_attention(self) -> None:
+        """R2 26-10-27 (F18): *Behind* for nodes on a version the manager had no record of."""
+
+        node = {
+            "name": "node-b",
+            "mgmt_host": "node-b.example.com",
+            "reachable": True,
+            "status_ok": True,
+            "current": False,
+            "status": {
+                "haproxy": {"active": True},
+                "keepalived": {"active": True, "state": "BACKUP"},
+                "vip": {"owner": False},
+                "release": {"version": 13, "hash": "d4" * 20},
+                "runtime": {"version": "3.4.6", "uptime_sec": 10},
+                "config_validation": {"valid": True},
+                "stats_ok": True,
+            },
+        }
+        ahead = dashboard._node_view(node, "c3" * 20, 12)
+        self.assertEqual((ahead.label, ahead.tone), ("Unknown version", "critical"))
+        self.assertEqual(
+            ahead.detail,
+            "Runs version 13, which this manager has no record of, as after a restore of the"
+            " manager from older state. A deploy puts version 12 on it",
+        )
+        behind = dashboard._node_view(node, "c3" * 20, 14)
+        self.assertEqual(behind.label, "Behind")
+
     def test_old_data_cannot_remain_green(self) -> None:
         cluster = self.dashboard(reading("done-single-owner.json", age_seconds=121)).clusters[0]
         self.assertTrue(cluster.stale)

@@ -14,7 +14,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import haproxy_versions, node_resources
-from haprion.cluster_status import BEHIND_RELEASE, behind_part, keepalived_state
+from haprion.cluster_status import (
+    BEHIND_RELEASE,
+    ahead_of,
+    ahead_words,
+    behind_part,
+    keepalived_state,
+)
 
 from haprion_ui import labels
 from haprion_ui.cluster_identity import accent_index
@@ -194,6 +200,10 @@ BEHIND = labels.BEHIND
 #
 VERSION_DRIFT = labels.BEHIND
 #
+# A node past the published version: this manager has no record of what it runs.
+#
+UNKNOWN_VERSION = "Unknown version"
+#
 # A node, or a whole cluster, that has never had a release: nothing has failed,
 # there is nothing yet (Fas 18 finding 52). Before the first deploy a new
 # cluster's nodes read keepalived not configured, no statistics and no VIP
@@ -289,7 +299,9 @@ def observation_label(observed_at: datetime, now: datetime) -> str:
     return f"Observed {relative_age(observed_at, now).lower()}"
 
 
-def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
+def _node_view(
+    value: Any, target_hash: str | None = None, target_version: object = None
+) -> NodeView:
     node = _mapping(value)
     name = _text(node.get("name"), "Unnamed node")
     management_host = _text(node.get("mgmt_host"), "—")
@@ -387,6 +399,15 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
         label, tone, detail = "Runtime unavailable", "warning", "Runtime details are incomplete"
     elif validation.get("valid") is False:
         label, tone, detail = "Invalid config", "warning", "Last configuration check failed"
+    elif current is False and (ahead := ahead_of(status, target_version)) is not None:
+        #
+        # Not behind: past what this manager published, which only a restore
+        # of the manager leaves. The deploy offered for *Behind* would put the
+        # older version on it (R2 26-10-27, F18).
+        #
+        label, tone = UNKNOWN_VERSION, "critical"
+        detail = ahead_words(*ahead)
+        detail = detail[:1].upper() + detail[1:]
     elif current is False:
         part = behind_part(status, target_hash)
         label, tone = VERSION_DRIFT, "warning"
@@ -587,9 +608,10 @@ def _cluster_view(
     summary = _mapping(result.get("summary"))
     node_values = result.get("nodes")
     target_hash = _mapping(summary.get("target")).get("hash")
+    target_version = _mapping(summary.get("target")).get("version")
     nodes = (
         tuple(
-            _node_view(value, target_hash if isinstance(target_hash, str) else None)
+            _node_view(value, target_hash if isinstance(target_hash, str) else None, target_version)
             for value in node_values
         )
         if isinstance(node_values, list)

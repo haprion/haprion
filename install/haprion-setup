@@ -249,4 +249,5 @@ if [[ "$accounts" == "0" && -t 0 ]]; then
     /usr/sbin/haprion-user init-admin || true
     accounts="$(count_accounts)"
 fi
-setup_closing_words "$SERVER_NAME" "$accounts"
+clusters="$("$CLUSTER_CONFIG" --list 2>/dev/null | grep -c . || true)"
+setup_closing_words "$SERVER_NAME" "$accounts" "$clusters"

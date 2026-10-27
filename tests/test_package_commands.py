@@ -149,6 +149,17 @@ INSTALLED_BY_THE_PRODUCT = {
     "policy-rc.d": "a file the restore agent writes on a node, never run here",
 }
 #
+# Run only where it is already there, and never depended on, with why and the
+# guard that makes it so.
+#
+ONLY_WHERE_PRESENT = {
+    "resolvectl": (
+        "setup.sh asks it only while systemd-resolved, its package, runs (R2 F2)",
+        "install/setup.sh",
+        "if command -v resolvectl >/dev/null && systemctl is-active --quiet systemd-resolved",
+    ),
+}
+#
 # Run by another command rather than by the scripts themselves.
 #
 INDIRECT = {
@@ -266,7 +277,13 @@ def engine_commands() -> set[str]:
 
 class EveryCommandIsDeclared(unittest.TestCase):
     def assert_declared(self, used: set[str], declared: set[str], package: str) -> None:
-        unknown = sorted(used - ESSENTIAL - set(PACKAGE_OF) - set(INSTALLED_BY_THE_PRODUCT))
+        unknown = sorted(
+            used
+            - ESSENTIAL
+            - set(PACKAGE_OF)
+            - set(INSTALLED_BY_THE_PRODUCT)
+            - set(ONLY_WHERE_PRESENT)
+        )
         self.assertEqual(
             unknown,
             [],
@@ -278,6 +295,11 @@ class EveryCommandIsDeclared(unittest.TestCase):
             if command in PACKAGE_OF and PACKAGE_OF[command] not in declared
         )
         self.assertEqual(missing, [], f"{package} runs these without depending on their package")
+
+    def test_what_runs_only_where_present_is_guarded(self) -> None:
+        for command, (_why, path, guard) in ONLY_WHERE_PRESENT.items():
+            with self.subTest(command=command):
+                self.assertIn(guard, (BASE / path).read_text(encoding="utf-8"))
 
     def test_the_node_package(self) -> None:
         used = commands_of(node_scripts()) | INDIRECT["node"]

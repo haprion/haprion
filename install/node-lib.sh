@@ -16,8 +16,6 @@ set -Eeuo pipefail
 
 # shellcheck source=accounts.sh
 source "$(dirname "${BASH_SOURCE[0]}")/accounts.sh"
-# shellcheck source=defaults.sh
-source "$(dirname "${BASH_SOURCE[0]}")/defaults.sh"
 
 #
 # What the script is doing right now, in words, for an error that has no words
@@ -106,7 +104,7 @@ load_answers() {
     local file="${1:-}" name
     # "-" stands for no file, for the steps that take a second argument.
     if [[ -z "$file" || "$file" == - ]]; then
-        apply_default_answers
+        default_answers
         return
     fi
     file="$(caller_path "$file")"
@@ -126,7 +124,19 @@ load_answers() {
       source "$file" ) >/dev/null 2>&1 || die "answers file is not valid shell: $file"
     # shellcheck disable=SC1090
     source "$file"
-    apply_default_answers
+    default_answers
+}
+
+#
+# The manager's defaults (defaults.sh), which lib.sh sources. A node has none:
+# what its step reads it reads with a fallback of its own, and the node
+# package does not carry the file - a change to a manager default asked every
+# node to prepare again (R2 26-10-26, F10).
+#
+default_answers() {
+    if declare -F apply_default_answers >/dev/null; then
+        apply_default_answers
+    fi
 }
 
 require_vars() {

@@ -17,6 +17,8 @@
 
 # shellcheck source=node-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/node-lib.sh"
+# shellcheck source=defaults.sh
+source "$(dirname "${BASH_SOURCE[0]}")/defaults.sh"
 
 counted() { if [[ "$1" == 1 ]]; then echo "1 $2"; else echo "$1 ${3:-$2s}"; fi; }  # "1 row", "2 rows"
 

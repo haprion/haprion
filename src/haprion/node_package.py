@@ -91,7 +91,8 @@ PREPARE_SCRIPTS = ("haprion-node-prepare",)
 # Path in the package -> (path in the commit, mode). Data rather than programs
 # is 0644: the shell library the step sources - node-lib.sh, the node's part of
 # install/lib.sh, so that the step's digest (B361) moves only with the node's
-# own part - the fixed account names and the defaults it reads (B266, B302), the
+# own part - the fixed account names (B266; the manager's defaults, B302, stay
+# out: a change to one asked every node to prepare again, R2 F10), the
 # node's sysusers fragment, and the repository key the library installs dnsdist
 # with (B249).
 #
@@ -111,7 +112,6 @@ CONTENTS: dict[str, tuple[str, int]] = {
     f"{INSTALL_DIR[1:]}/node-lib.sh": ("install/node-lib.sh", 0o644),
     f"{INSTALL_DIR[1:]}/node-installation.sh": ("install/node-installation.sh", 0o644),
     f"{INSTALL_DIR[1:]}/accounts.sh": ("install/accounts.sh", 0o644),
-    f"{INSTALL_DIR[1:]}/defaults.sh": ("install/defaults.sh", 0o644),
     f"{INSTALL_DIR[1:]}/sysusers/haprion-node.conf": (
         "install/sysusers/haprion-node.conf",
         0o644,

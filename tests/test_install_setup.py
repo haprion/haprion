@@ -22,6 +22,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 from haprion import traffic_collector
 from haprion.cli.cluster_config import main as cluster_config_main
@@ -709,17 +710,23 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
         self.assertIn("SERVER_NAME=<name>", done.stdout)
 
     def server_name(
-        self, name: str, addresses: str, dns: str = ""
+        self, name: str, addresses: str, dns: str = "", resolved: str | None = None
     ) -> subprocess.CompletedProcess[str]:
         # `getent -s dns` is DNS's answer alone; without it, /etc/hosts' first.
+        # `resolved` is what resolvectl answers with systemd-resolved running;
+        # None: resolved is not running, as systemctl here says.
         with tempfile.TemporaryDirectory() as raw:
-            stub = Path(raw) / "getent"
-            stub.write_text(
-                "#!/bin/sh\n"
+            stubs = {
+                "getent": "#!/bin/sh\n"
                 f"if [ \"$1\" = -s ]; then printf '%s' '{dns}'; [ -n '{dns}' ] || exit 2; exit 0; fi\n"
-                f"printf '%s' '{addresses}'\n"
-            )
-            stub.chmod(0o755)
+                f"printf '%s' '{addresses}'\n",
+                "systemctl": f"#!/bin/sh\nexit {0 if resolved is not None else 3}\n",
+                "resolvectl": f"#!/bin/sh\nprintf '%s' '{resolved or ''}'\n",
+            }
+            for command, text in stubs.items():
+                stub = Path(raw) / command
+                stub.write_text(text)
+                stub.chmod(0o755)
             return bash(
                 STRICT + 'PATH="$3:$PATH"; setup_check_server_name "$2"; setup_report_problems; '
                 'printf "%s\\n" "${SETUP_NOTES[@]}"',
@@ -739,8 +746,8 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
             "mgr.example.com", "127.0.1.1       STREAM mgr.example.com\n::1 STREAM\n"
         )
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertIn("resolves only to this machine's loopback address", done.stdout)
-        self.assertIn("Its certificate is made for that name", done.stdout)
+        self.assertIn("mgr.example.com leads only back to this machine", done.stdout)
+        self.assertIn("Add it to DNS, or choose another name: SERVER_NAME=<name>", done.stdout)
 
     def test_a_name_on_loopback_here_and_in_dns_elsewhere_says_nothing(self) -> None:
         # Debian's /etc/hosts line for the machine itself, and DNS's own address.
@@ -750,6 +757,20 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
             dns="192.0.2.10      STREAM mgr.example.com\n",
         )
         self.assertEqual((done.returncode, done.stdout), (0, "\n"))
+
+    def test_with_resolved_dns_is_asked_past_its_stub(self) -> None:
+        """R2 26-10-26 (F2): resolved's stub answered `getent -s dns` from /etc/hosts."""
+
+        hosts = "127.0.1.1       STREAM mgr.example.com\n"
+        done = self.server_name(
+            "mgr.example.com",
+            hosts,
+            dns=hosts,
+            resolved="mgr.example.com: 192.0.2.10                            -- link: eth0\n",
+        )
+        self.assertEqual((done.returncode, done.stdout), (0, "\n"))
+        done = self.server_name("mgr.example.com", hosts, dns=hosts, resolved="")
+        self.assertIn("leads only back to this machine", done.stdout)
 
     def test_a_name_with_another_address_says_nothing(self) -> None:
         done = self.server_name(
@@ -772,9 +793,13 @@ class TheFirstAccountComesLast(unittest.TestCase):
     """The password was asked for in the middle of the run and the closing
     words asked for the account again (26-10-14): setup asks once, last."""
 
-    def closing_words(self, accounts: str) -> str:
+    def closing_words(self, accounts: str, clusters: str = "") -> str:
         done = bash(
-            STRICT + 'setup_closing_words "$2" "$3"', str(SETUP), "mgr.example.com", accounts
+            STRICT + 'setup_closing_words "$2" "$3" "$4"',
+            str(SETUP),
+            "mgr.example.com",
+            accounts,
+            clusters,
         )
         self.assertEqual(done.returncode, 0, done.stderr)
         return done.stdout
@@ -789,6 +814,28 @@ class TheFirstAccountComesLast(unittest.TestCase):
         for accounts in ("0", ""):
             with self.subTest(accounts=accounts):
                 self.assertIn("sudo haprion-user init-admin", self.closing_words(accounts))
+
+    def test_run_again_with_clusters_they_say_nothing_of_a_first_cluster(self) -> None:
+        """R2 26-10-26 (F12): the first run's words on an installation that has clusters."""
+
+        for clusters in ("0", ""):
+            with self.subTest(clusters=clusters):
+                shown = self.closing_words("1", clusters)
+                self.assertIn("the first cluster", shown)
+                self.assertIn("self-signed", shown)
+        shown = self.closing_words("1", "2")
+        self.assertIn("https://mgr.example.com/", shown)
+        self.assertNotIn("first cluster", shown)
+        self.assertNotIn("self-signed", shown)
+        shown = self.closing_words("0", "2")
+        self.assertIn("sudo haprion-user init-admin", shown)
+        self.assertIn("Then sign in.", shown)
+        self.assertNotIn("first cluster", shown)
+
+    def test_setup_passes_the_count_of_clusters(self) -> None:
+        driver = DRIVER.read_text()
+        self.assertIn('setup_closing_words "$SERVER_NAME" "$accounts" "$clusters"', driver)
+        self.assertIn('clusters="$("$CLUSTER_CONFIG" --list', driver)
 
     def test_setup_activates_without_asking_and_asks_after_the_last_step(self) -> None:
         driver = DRIVER.read_text()
@@ -941,7 +988,7 @@ class WhatLibShReadsShipsWithIt(unittest.TestCase):
 
     def test_lib_sh_reads_the_node_s_library_the_accounts_and_the_defaults(self) -> None:
         self.assertEqual(self.sourced("lib.sh"), {"node-lib.sh", "accounts.sh", "defaults.sh"})
-        self.assertEqual(self.sourced("node-lib.sh"), {"accounts.sh", "defaults.sh"})
+        self.assertEqual(self.sourced("node-lib.sh"), {"accounts.sh"})
 
     def test_the_node_package_carries_them(self) -> None:
         from haprion import node_package
@@ -1031,11 +1078,18 @@ class TheNodesLibraryIsTheNodesAlone(unittest.TestCase):
         self.assertTrue(own)
         self.assertEqual(own - self.reached(node), set())
 
+    # Called by node-lib.sh's default_answers only when `declare -F` finds it:
+    # the manager's defaults, which a node does not carry (R2 F10).
+    MANAGER_ONLY: ClassVar[set[str]] = {"apply_default_answers"}
+
     def test_nothing_a_node_runs_is_defined_by_lib_sh_alone(self) -> None:
         everything = self.functions("lib.sh", "node-installation.sh")
         node = set(self.functions("node-lib.sh", "node-installation.sh"))
         self.assertGreater(len(set(everything) - node), 0)
-        self.assertEqual(self.reached(everything) - node, set())
+        self.assertEqual(self.reached(everything) - node, self.MANAGER_ONLY)
+        library = (INSTALL / "node-lib.sh").read_text()
+        for name in self.MANAGER_ONLY:
+            self.assertIn(f"if declare -F {name} >/dev/null; then", library)
 
     def test_the_node_package_does_not_carry_lib_sh(self) -> None:
         from haprion import node_package
@@ -1195,6 +1249,58 @@ class TheNodeSaysWhatHappened(unittest.TestCase):
                 self.assertNotIn("prepare it with step 4", text)
         prepare = (INSTALL / "04-node-prepare").read_text(encoding="utf-8")
         self.assertIn('log "This node is prepared for cluster ${CLUSTER}."', prepare)
+
+
+class TheNodeHasNoManagerDefaults(unittest.TestCase):
+    """R2 26-10-26 (F10): a manager-only default changed the node step's digest,
+    and every node was told to run haprion-node-prepare."""
+
+    NODE_FILES = ("04-node-prepare", "node-lib.sh", "node-installation.sh", "accounts.sh")
+
+    def test_the_node_package_does_not_carry_defaults_sh(self) -> None:
+        from haprion import node_package
+
+        shipped = {source for source, _ in node_package.CONTENTS.values()}
+        self.assertNotIn("install/defaults.sh", shipped)
+
+    def test_what_a_node_reads_of_the_defaults_it_reads_without_them(self) -> None:
+        defaulted = set(re.findall(r"\$\{([A-Z_]+)=", (INSTALL / "defaults.sh").read_text()))
+        unsafe = []
+        for name in self.NODE_FILES:
+            code = "\n".join(
+                line
+                for line in (INSTALL / name).read_text().splitlines()
+                if not line.lstrip().startswith("#")
+            )
+            for variable in defaulted:
+                # `${X:+ ${X}}` reads X only when it is set and not empty.
+                guarded = re.sub(rf"\$\{{{variable}:\+[^}}]*\$\{{{variable}\}}\}}", "", code)
+                for match in re.finditer(
+                    rf"\$\{{{variable}(?P<after>[^A-Z_])|\${variable}\b", guarded
+                ):
+                    if not (match["after"] or "").startswith((":", "}")) or (match["after"] == "}"):
+                        unsafe.append(f"{name}: {match.group(0)}")
+        self.assertEqual(unsafe, [])
+
+    def test_answers_load_without_defaults_sh(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            for name in ("node-lib.sh", "accounts.sh"):
+                shutil.copy(INSTALL / name, Path(raw) / name)
+            done = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    'set -Eeuo pipefail; source "$1/node-lib.sh"; load_answers -; '
+                    'printf "[%s]" "${EXTRA_BACKUP_PATHS:-}"',
+                    "-",
+                    raw,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        self.assertEqual((done.returncode, done.stdout), (0, "[]"), done.stderr)
 
 
 if __name__ == "__main__":

@@ -104,6 +104,22 @@ setup_check_database() {
 # address the nodes resolve are then made for it (26-10-18). It may work on a
 # network whose DNS adds the domain, so it is a note, not a problem.
 #
+#
+# DNS's own addresses for a name, past this machine's /etc/hosts. With
+# systemd-resolved running, `getent -s dns` asks its stub, which answers from
+# /etc/hosts too - Debian's 127.0.1.1 line for the machine (lab 26-10-26, F2) -
+# so resolved is asked with what it makes up itself turned off.
+#
+setup_dns_addresses() {
+    local name="$1"
+    if command -v resolvectl >/dev/null && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+        resolvectl query --synthesize=no --cache=no --legend=no -- "$name" 2>/dev/null \
+            | sed -E 's/^[^[:space:]]+:[[:space:]]+//' | awk 'NF { print $1 }' || true
+    else
+        getent -s dns ahosts "$name" 2>/dev/null | awk '{ print $1 }' || true
+    fi
+}
+
 setup_check_server_name() {
     local name="$1" addresses
     if ! addresses="$(getent ahosts "$name" 2>/dev/null)"; then
@@ -122,9 +138,9 @@ setup_check_server_name() {
         # machines its address (lab 26-10-26). DNS is asked alone before the note.
         #
         local dns
-        dns="$(getent -s dns ahosts "$name" 2>/dev/null || true)"
-        if [[ -z "$dns" ]] || ! awk '{ print $1 }' <<<"$dns" | grep -qvE '^(127\.|::1$)'; then
-            setup_note "the name ${name} resolves only to this machine's loopback address; other machines cannot reach the web interface at it. ${advice^}"
+        dns="$(setup_dns_addresses "$name")"
+        if [[ -z "$dns" ]] || ! grep -qvE '^(127\.|::1$)' <<<"$dns"; then
+            setup_note "${name} leads only back to this machine, so other machines cannot reach the web interface by it. Add it to DNS, or choose another name: SERVER_NAME=<name> in a file given with haprion-setup --answers <file>"
         fi
     fi
 }
@@ -312,24 +328,41 @@ setup_report_failure() {
 # words asked for an account the run had just made).
 #
 setup_closing_words() {
-    local server_name="$1" accounts="$2"
-    cat <<DONE
-
+    local server_name="$1" accounts="$2" clusters="${3:-}" first=yes
+    #
+    # The first cluster and the self-signed certificate are the first run's
+    # news only. Run again on an installation with clusters, they were not
+    # true (R2 26-10-26, F12). A count that could not be read is a first run.
+    #
+    [[ ! "$clusters" =~ ^[1-9][0-9]*$ ]] || first=no
+    echo
+    if [[ "$first" == yes ]]; then
+        cat <<DONE
 The manager is installed. The web interface is at https://${server_name}/
 with a self-signed certificate until a real one is chosen under Settings, and
 the commands (haprion-status, haprion-deploy, haprion-cluster ...) are ready
 in /usr/bin.
-
 DONE
+    else
+        cat <<DONE
+The manager is installed. The web interface is at https://${server_name}/, and
+the commands (haprion-status, haprion-deploy, haprion-cluster ...) are in /usr/bin.
+DONE
+    fi
+    echo
     if [[ "$accounts" =~ ^[1-9][0-9]*$ ]]; then
-        echo "Sign in: the Dashboard sets up the first cluster."
+        [[ "$first" == no ]] || echo "Sign in: the Dashboard sets up the first cluster."
     else
         cat <<'DONE'
 There is no account to sign in with yet. Make the first administrator:
 
     sudo haprion-user init-admin
 
-Then sign in: the Dashboard sets up the first cluster.
 DONE
+        if [[ "$first" == yes ]]; then
+            echo "Then sign in: the Dashboard sets up the first cluster."
+        else
+            echo "Then sign in."
+        fi
     fi
 }

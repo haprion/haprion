@@ -25,6 +25,7 @@ nothing is kept - an installation with no interface has no worker to read it.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import fcntl
 import functools
@@ -103,6 +104,7 @@ class Kept(io.TextIOBase):
         self._directory = directory
         self._text = io.StringIO()
         self._fd: int | None = None
+        self._gone = False
         self.warning: str | None = None
 
     def writable(self) -> bool:
@@ -110,10 +112,38 @@ class Kept(io.TextIOBase):
 
     def write(self, text: str) -> int:
         self._text.write(text)
-        return self._connection.write(text)
+        if self._gone:
+            return len(text)
+        try:
+            return self._connection.write(text)
+        except (BrokenPipeError, ConnectionResetError):
+            self._client_gone()
+            return len(text)
 
     def flush(self) -> None:
-        self._connection.flush()
+        if self._gone:
+            return
+        try:
+            self._connection.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            self._client_gone()
+
+    def _client_gone(self) -> None:
+        """The client stopped waiting; the receipt carries the answer (R2, F16).
+
+        What is still buffered for the connection would fail again when Python
+        flushes it on the way out - a traceback and exit 120 for a helper that did
+        its work. The descriptor is pointed at /dev/null, as Python's own
+        documentation does for a closed pipe, and the helper exits with its code.
+        """
+
+        self._gone = True
+        with contextlib.suppress(OSError, ValueError, io.UnsupportedOperation):
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, self._connection.fileno())
+            finally:
+                os.close(devnull)
 
     def begin(self, request_id: str) -> None:
         if self._directory is None or self._fd is not None or not self._directory.is_dir():
@@ -131,6 +161,9 @@ class Kept(io.TextIOBase):
             self.warning = f"the answer cannot be kept for recovery: {exc}"
             return
         try:
+            # The mode open() asks for is cut by the umask, and the helpers' units run
+            # with UMask=0077: the worker could not read a single receipt (R2, F17).
+            os.fchmod(fd, 0o640)
             fcntl.flock(fd, fcntl.LOCK_EX)
             os.fchown(fd, -1, os.stat(self._directory).st_gid)
             atomic_file.move(staging, self._directory / name)

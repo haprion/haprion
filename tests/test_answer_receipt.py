@@ -6,6 +6,8 @@ import fcntl
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -122,8 +124,14 @@ class AReceipt(unittest.TestCase):
             self.assertEqual(os.listdir(raw), [])
 
     def test_is_the_directory_s_group_and_not_world_readable(self) -> None:
+        """Under the helpers' UMask=0077, as installed (R2, F17): the test ran with 022 and passed."""
+
         with receipts() as directory:
-            helper(output_stream=io.StringIO())
+            previous = os.umask(0o077)
+            try:
+                helper(output_stream=io.StringIO())
+            finally:
+                os.umask(previous)
 
             metadata = (directory / f"{REQUEST_ID}.json").stat()
             group = directory.stat().st_gid
@@ -199,6 +207,54 @@ class EverySocketHelperKeepsItsAnswer(unittest.TestCase):
             {"action": "remove", "receiver": "fs-a"},
             cluster=None,
         )
+
+
+# A helper as the socket runs it: stdout is the connection. Its client has gone.
+_GONE_CLIENT = """
+import sys
+from pathlib import Path
+from unittest import mock
+from haprion import answer_receipt
+
+@answer_receipt.keeps_answer
+def helper(*, output_stream=None, error_stream=None):
+    answer_receipt.begin(output_stream, sys.argv[2])
+    output_stream.write("x" * 200000 + "\\n")
+    output_stream.flush()
+    output_stream.write('{"outcome": "done"}\\n')
+    return 0
+
+with mock.patch.object(answer_receipt, "root", return_value=Path(sys.argv[1])):
+    sys.exit(helper())
+"""
+
+
+class AClientThatLeft(unittest.TestCase):
+    def test_the_helper_exits_with_its_own_code_and_keeps_the_answer(self) -> None:
+        """R2 26-10-27 (F16): a traceback and exit 120 once the client had stopped waiting."""
+
+        with receipts() as directory:
+            reader, writer = os.pipe()
+            os.close(reader)
+            try:
+                done = subprocess.run(
+                    [sys.executable, "-c", _GONE_CLIENT, str(directory), REQUEST_ID],
+                    stdout=writer,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                    env={**os.environ, "PYTHONPATH": str(Path(answer_receipt.__file__).parents[1])},
+                    timeout=60,
+                )
+            finally:
+                os.close(writer)
+            receipt = answer_receipt.read(REQUEST_ID, directory)
+
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stderr, "")
+        self.assertEqual(receipt.state, "answered")
+        self.assertEqual(receipt.exit_code, 0)
+        self.assertIn('{"outcome": "done"}', receipt.stdout)
 
 
 if __name__ == "__main__":

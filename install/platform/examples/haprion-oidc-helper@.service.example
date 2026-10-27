@@ -12,6 +12,10 @@
 [Unit]
 Description=Ask the Haprion OIDC provider one thing
 Documentation=file:///opt/haprion/current
+# One instance per connection. Its answer went to the caller and its log to the
+# journal; one that answered with a refusal or a failure is collected rather
+# than left behind as a failed unit for monitoring to alarm on (26-10-27).
+CollectMode=inactive-or-failed
 
 [Service]
 Type=exec

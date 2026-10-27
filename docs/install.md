@@ -17,9 +17,10 @@ Only these two distributions are supported; `haprion-setup` refuses any other. Y
 anything else first. The packages and the setup bring the rest: Python, nginx, PostgreSQL, HAProxy, keepalived
 and dnsdist.
 
-- **Internet access while installing.** The machines fetch packages from Haprion's repository, from HAProxy's
-  (its 3.4 branch, newer than the distributions'), from PowerDNS's (dnsdist) and, on Debian 13, from the
-  PostgreSQL project's.
+- **Internet access while installing and upgrading.** The machines fetch packages from Haprion's repository, from
+  HAProxy's (its 3.4 branch, newer than the distributions'), from PowerDNS's (dnsdist) and, on Debian 13, from the
+  PostgreSQL project's. Which addresses that is, and what the manager reaches while it runs, is under
+  [What the machines must reach](#what-the-machines-must-reach).
 - **The manager** needs a DNS name that points to it, and ports 80 and 443 free for nginx.
 - **The nodes of a cluster** must share one network segment. keepalived moves the virtual address (the VIP)
   between them with VRRP. The manager reaches each node over SSH.
@@ -28,6 +29,29 @@ and dnsdist.
   it first, so a second version is never installed beside it.
 - How much traffic one vCPU handles, with and without the WAF, is under *Size* in
   [the manual's part on the nodes](user-manual.md#part-2--the-nodes).
+
+### What the machines must reach
+
+Behind a firewall that lets out only what it names, open these. All of them are HTTPS on port 443, except SSH.
+
+| From | To | When |
+|---|---|---|
+| manager and nodes | `haprion.github.io` | installing and upgrading: Haprion's packages |
+| manager and nodes | the distribution's own mirrors | installing and upgrading |
+| manager and nodes | `ppa.launchpadcontent.net` on Ubuntu, `haproxy.debian.net` on Debian | installing and upgrading: HAProxy 3.4 |
+| manager and nodes | `repo.powerdns.com` | installing and upgrading: dnsdist |
+| manager on Debian 13 | `apt.postgresql.org` | installing and upgrading: PostgreSQL 18 |
+| manager | each node, SSH | always: the manager asks for deploys, reads status and logs, and takes backups |
+| nodes | the manager, SSH | always: each node fetches its releases and certificates |
+| manager | `acme-v02.api.letsencrypt.org` | issuing and renewing ACME certificates |
+| manager | the DNS provider's API, such as `api.cloudflare.com` | issuing and renewing ACME certificates |
+| manager | `location.ipfire.org` | once a day, for countries in access rules; without it the database ages but keeps working |
+| manager | `api.github.com` | once a day, only when *Update check* is on |
+| manager | your NDES server, identity provider and certificate receivers | when you use them |
+| nodes | your log receivers | when you send the traffic log or syslog on |
+
+Haprion itself reaches nothing else; the system's own DNS and time servers are not listed. Without the repositories, install from a release's files instead, as under
+[The packages](#the-packages); upgrades then come the same way.
 
 **Disk space on the nodes.** The traffic log is what fills a node's disk. Each request takes about 800 bytes, and
 a node keeps 14 days. Each external log receiver can also queue up to `disk_mib` on disk (1 GiB by default, at

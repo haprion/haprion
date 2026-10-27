@@ -1185,8 +1185,9 @@ the *WAF* group on objects that do not use the engine. It cannot be turned off w
 engine, in any mode but `off`: a WAF the interface no longer shows would still filter traffic. The refusal
 names the objects.
 
-**Update check.** This is the one thing the manager fetches from the internet while it runs, so it is off
-from the start on every installation.
+**Update check.** It is off from the start on every installation, so the manager never contacts GitHub
+unless you ask it to. Everything the manager and the nodes reach is listed under
+[What the machines must reach](install.md#what-the-machines-must-reach).
 
 - On, the poller asks GitHub once a day for the project's latest release. When that release is newer than
   the one running, the header says `· v0.9.3 available` beside the version, with a link to its release

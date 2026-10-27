@@ -46,6 +46,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import ipaddress
 import json
 import os
 import re
@@ -70,6 +71,16 @@ STATE = "/var/lib/haprion-restore"
 NOT_EMPTY_IF_INSTALLED = ("haproxy", "keepalived")
 NETPLAN = "/etc/netplan"
 ROOT_KEYS = "/root/.ssh/authorized_keys"
+#
+# The archive's sshd drop-in has sshd listen on the node's own address
+# (B310). On a target reached at another address - a new VM, a test - sshd
+# would stop answering there the moment apply reloads it, and the network
+# session after it could never connect (R2, 26-10-27). So sshd listens on the
+# temporary address as well until finish, which comes in on the final one.
+# It sorts before the product's own drop-in, and ListenAddress adds up.
+#
+SSHD_TEMPORARY = "/etc/ssh/sshd_config.d/04-haprion-restore-listen.conf"
+SSHD_LISTEN_WAIT = 5.0
 #
 # What keepalived's notify script writes on each state it enters. 04-node-prepare
 # warns when it is missing - which it always is when the preparation runs inside
@@ -846,6 +857,14 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
         raise Refused("keepalived must be started or masked")
     if not HOSTNAME.fullmatch(header["hostname"]):
         raise Refused("the hostname is not usable")
+    temporary = header.get("temporary_address")
+    if temporary is not None:
+        try:
+            if not isinstance(temporary, str):
+                raise ValueError(temporary)
+            ipaddress.IPv4Address(temporary)
+        except ValueError:
+            raise Refused("the temporary address is not usable") from None
     if header.get("overwrite"):
         # B183: the node's software is its own.
         if header["keepalived"] != "start":
@@ -1299,9 +1318,54 @@ def _services(host: Host, header: dict[str, Any], report: Report) -> None:
     host.run(["hostnamectl", "set-hostname", header["hostname"]])
     report.step("hostname", hostname=header["hostname"])
 
+    temporary = header.get("temporary_address")
+    if temporary:
+        host.path(SSHD_TEMPORARY).parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        host.path(SSHD_TEMPORARY).write_text(
+            "# Written by a node restore. Removed when the restore finishes.\n"
+            f"ListenAddress {temporary}\n",
+            encoding="utf-8",
+        )
+        host.path(SSHD_TEMPORARY).chmod(0o644)
     host.run(["sshd", "-t"])
-    host.run(["systemctl", "reload-or-restart", "ssh.service"])
-    report.step("sshd", reloaded=True)
+    _sshd_restart(host)
+    _sshd_listening(host)
+    if temporary:
+        report.step("sshd", reloaded=True, temporary_address=temporary)
+    else:
+        report.step("sshd", reloaded=True)
+
+
+def _sshd_restart(host: Host) -> None:
+    """As install/04-node-prepare restarts it: on Ubuntu the socket holds the listen addresses."""
+
+    host.run(["systemctl", "daemon-reload"])
+    socket = host.run(["systemctl", "is-active", "ssh.socket"], check=False).stdout.strip()
+    host.run(["systemctl", "restart", "ssh.socket" if socket == "active" else "ssh.service"])
+
+
+def _sshd_listening(host: Host, *, sleep: Callable[[float], None] = time.sleep) -> None:
+    """sshd answers on every address its configuration names, or the step fails."""
+
+    wanted = {
+        line.split()[1]
+        for line in host.run(["sshd", "-T"]).stdout.splitlines()
+        if line.startswith("listenaddress ") and not line.split()[1].startswith(("0.0.0.0:", "["))
+    }
+    waited = 0.0
+    while True:
+        listening = {
+            fields[3]
+            for fields in map(str.split, host.run(["ss", "-Hltn"]).stdout.splitlines())
+            if len(fields) > 3
+        }
+        missing = sorted(wanted - listening)
+        if not missing:
+            return
+        if waited >= SSHD_LISTEN_WAIT:
+            raise Failed(f"sshd does not listen on {', '.join(missing)}")
+        sleep(0.5)
+        waited += 0.5
 
 
 def prune_runs(host: Host, current: str, now: float, report: Report) -> None:
@@ -1506,6 +1570,14 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
             )
         host.run(["systemctl", "stop", timer])
         report.step("rollback-cancelled", timer=timer)
+
+    # The network is final now: sshd keeps only the archive's own address.
+    if host.path(SSHD_TEMPORARY).exists():
+        host.path(SSHD_TEMPORARY).unlink()
+        host.run(["sshd", "-t"])
+        _sshd_restart(host)
+        _sshd_listening(host)
+        report.step("sshd", temporary_address="removed")
 
     if not header.get("overwrite"):
         _start(host, header, certificates, authorities, report)

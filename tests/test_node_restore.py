@@ -472,6 +472,17 @@ class Run(RestoreTest):
         self.assertIn(f"192.0.2.120 {TARGET_KEY}", FakeSession.trusted["network"])
         self.assertIn("192.0.2.120 ssh-ed25519 AAAA", FakeSession.trusted["network"])
 
+    def test_apply_keeps_sshd_on_the_temporary_address(self) -> None:
+        """R2 26-10-27 (F22): the network session reaches the target where apply found it."""
+
+        for test in (False, True):
+            with self.subTest(test=test):
+                FakeSession.calls.clear()
+                run = self.previewed(test=test)
+                self.carry_out(run, confirm="node-test" if test else "node-a")
+                apply = next(c for c in FakeSession.calls if c[1]["op"] == "apply")
+                self.assertEqual(apply[1]["temporary_address"], "192.0.2.120")
+
     def test_a_test_node_keeps_its_own_key_and_is_trusted_with_that_alone(self) -> None:
         run = self.previewed()
         self.carry_out(run)
@@ -706,6 +717,8 @@ class Overwrite(RestoreTest):
         )
         apply, finish = FakeSession.calls[1][1], FakeSession.calls[2][1]
         self.assertTrue(apply["overwrite"])
+        # Reached at its own address, sshd has nothing temporary to keep.
+        self.assertIsNone(apply["temporary_address"])
         self.assertEqual(apply["packages"], [])
         self.assertIn("/etc/haprion/node-installation.json", apply["keep"])
         self.assertEqual((finish["overwrite"], finish["network"]), (True, False))

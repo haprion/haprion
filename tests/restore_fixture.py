@@ -131,6 +131,10 @@ FILES: dict[str, tuple[str, int]] = {
     "/etc/sudoers.d/90-cloud-init-users": ("# image\n", 0o440),
     "/etc/sysctl.d/99-cloudimg-ipv6.conf": ("net.ipv6.conf.all.use_tempaddr = 0\n", 0o644),
     "/etc/ssh/sshd_config.d/60-cloudimg-settings.conf": ("PasswordAuthentication no\n", 0o644),
+    "/etc/ssh/sshd_config.d/05-haprion-listen.conf": (
+        "# Installed by install/04-node-prepare (B310).\nListenAddress 192.0.2.21\n",
+        0o644,
+    ),
     "/etc/haprion/node.conf": (NODE_CONF, 0o600),
     "/etc/haprion/node-installation.json": ('{"node_api": 1}\n', 0o644),
     "/etc/haprion/keys/config-pull": ("private\n", 0o600),

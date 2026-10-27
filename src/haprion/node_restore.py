@@ -1205,6 +1205,8 @@ def _run(
         "run": run_id,
         "hostname": plan.hostname,
         "keepalived": plan.keepalived,
+        # sshd keeps answering where the network session will find the target.
+        "temporary_address": (None if request.target == str(plan.address.ip) else request.target),
         "packages": list(plan.packages),
         "equal_directories": list(plan.equal_directories),
         "overwrite": overwrite,

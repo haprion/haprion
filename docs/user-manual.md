@@ -3135,7 +3135,11 @@ preview saw. So what was approved is what is written.
      `sshd_config.d`, only the product's `05-haprion-listen.conf` comes back, and `sshd_config` itself
      stays the VM's own. An operator's own file in these directories comes back when the node names it
      in `EXTRA_BACKUP_PATHS`.
-   - then the HAProxy release layout, the services and the host name, and sshd is reloaded.
+   - then the HAProxy release layout, the services and the host name, and sshd is restarted. The
+     archive's `05-haprion-listen.conf` has sshd listen on the node's own address. Until step 3, a
+     second drop-in, `04-haprion-restore-listen.conf`, keeps it listening on the temporary address as
+     well, so the next session can still reach the VM. The step checks that sshd answers on every
+     address it names.
    - when the archive shows the node ran the WAF engine, the engine package that the manager's own CLI
      release carries is installed next. It is in no repository, and the node's deploy refuses a release
      with WAF rules without it.
@@ -3150,6 +3154,8 @@ preview saw. So what was approved is what is written.
    session ends. A timer puts the VM's own Netplan back after 180 seconds unless step 3 cancels it.
 3. **On the node's own address, with the archive's host key:**
    - the timer is cancelled;
+   - the temporary drop-in is removed and sshd restarted, so sshd listens on the node's own address
+     only;
    - HAProxy starts on a placeholder release whose only listener is a root-only unix socket;
    - the node's `haprion-cert-pull` fetches the cluster's CA files and then its certificates, and its
      `haprion-pull-deploy` the published configuration - the same scripts a deploy triggers;
@@ -3171,6 +3177,7 @@ above, except that:
 - the host name, the node address in Netplan, keepalived's own address and its virtual addresses are
   rewritten to the test values, and the preview lists every one;
 - the `include` of the published address list is removed;
+- sshd's `ListenAddress` is rewritten to the test address;
 - keepalived is masked, so it can never join the production pair's VRRP;
 - the VM keeps its own SSH host keys.
 

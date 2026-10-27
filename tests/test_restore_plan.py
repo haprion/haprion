@@ -303,8 +303,31 @@ class TestMode(Planning):
                 ("/etc/keepalived/keepalived.conf", "virtual_ipaddress"),
                 ("/etc/keepalived/keepalived.conf", "include"),
                 ("/etc/keepalived/addresses.conf", "addresses"),
+                ("/etc/ssh/sshd_config.d/05-haprion-listen.conf", "ListenAddress"),
             },
         )
+
+    def test_sshd_listens_on_the_test_address_not_the_nodes(self) -> None:
+        """R2 26-10-27 (F22): verbatim, the drop-in bound sshd to the production address."""
+
+        plan = self.plan()
+        listen = self.data(plan, "/etc/ssh/sshd_config.d/05-haprion-listen.conf")
+        self.assertIn("ListenAddress 192.0.2.29\n", listen)
+        self.assertNotIn("192.0.2.21", listen)
+        rewrite = next(r for r in plan.rewrites if r.field == "ListenAddress")
+        self.assertEqual((rewrite.old, rewrite.new), ("192.0.2.21", "192.0.2.29"))
+
+    def test_a_listen_port_is_kept(self) -> None:
+        files = {
+            **FILES,
+            "/etc/ssh/sshd_config.d/05-haprion-listen.conf": (
+                "listenaddress 192.0.2.21:2222\n",
+                0o644,
+            ),
+        }
+        plan = restore_plan.build(self.source(files), "test", TARGET, PROFILE)
+        listen = self.data(plan, "/etc/ssh/sshd_config.d/05-haprion-listen.conf")
+        self.assertEqual(listen, "listenaddress 192.0.2.29:2222\n")
 
     def test_the_old_address_list_is_shown_without_its_comments(self) -> None:
         rewrite = next(r for r in self.plan().rewrites if r.path.endswith("addresses.conf"))

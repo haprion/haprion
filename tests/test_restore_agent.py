@@ -39,6 +39,8 @@ class FakeHost(Host):
         # Whether starting keepalived writes its state file, as the notify script does.
         self.notifies = True
         self.rendered_node_conf: str | None = None
+        # Whether sshd fails to bind what its configuration names.
+        self.sshd_deaf = False
         for name, text in {
             "/etc/passwd": "root:x:0:0:root:/root:/bin/bash\n"
             "syslog:x:104:110::/nonexistent:/usr/sbin/nologin\n"
@@ -74,6 +76,19 @@ class FakeHost(Host):
 
     def chown(self, path: Path, uid: int, gid: int) -> None:
         self.owners["/" + str(path.relative_to(self.root))] = (uid, gid)
+
+    def sshd_listens(self) -> list[str]:
+        """sshd's listen addresses from its drop-ins, as `sshd -T` reads them: every one adds up."""
+
+        drop_ins = self.path("/etc/ssh/sshd_config.d")
+        found = [
+            line.split()[1]
+            for conf in (sorted(drop_ins.glob("*.conf")) if drop_ins.is_dir() else [])
+            for line in conf.read_text().splitlines()
+            if line.lower().startswith("listenaddress ")
+        ]
+        # Without any, sshd listens on every address; one of the two stands for both.
+        return found or ["[::]"]
 
     def _free(self, name: str, *, system: bool) -> str:
         """As useradd/groupadd choose: system IDs from 999 down, others from 1000 up."""
@@ -130,6 +145,10 @@ class FakeHost(Host):
             self.path("/etc/shadow").write_text("\n".join(lines) + "\n")
         elif argv[:2] == ["systemctl", "is-active"]:
             out = self.active.get(argv[2], "inactive") + "\n"
+        elif argv == ["sshd", "-T"]:
+            out = "port 22\n" + "".join(f"listenaddress {a}:22\n" for a in self.sshd_listens())
+        elif argv == ["ss", "-Hltn"] and not self.sshd_deaf:
+            out = "".join(f"LISTEN 0 128 {a}:22 0.0.0.0:*\n" for a in self.sshd_listens())
         elif argv == ["systemctl", "start", "keepalived"] and self.notifies:
             # keepalived's notify script, as it runs on the state it enters.
             state = self.path("/run/haproxy/keepalived.state")
@@ -456,8 +475,66 @@ class Apply(AgentTest):
         self.assertIn(["hostnamectl", "set-hostname", "node-test"], self.host.commands)
         sshd = self.host.commands.index(["sshd", "-t"])
         self.assertEqual(
-            self.host.commands[sshd + 1], ["systemctl", "reload-or-restart", "ssh.service"]
+            self.host.commands[sshd + 1 : sshd + 4],
+            [
+                ["systemctl", "daemon-reload"],
+                ["systemctl", "is-active", "ssh.socket"],
+                ["systemctl", "restart", "ssh.service"],
+            ],
         )
+        self.assertFalse(self.host.path(restore_agent.SSHD_TEMPORARY).exists())
+
+    def test_on_ubuntu_sshd_s_socket_is_restarted(self) -> None:
+        """Socket activated, the socket holds the listen addresses, as in 04-node-prepare."""
+
+        self.host.active["ssh.socket"] = "active"
+        self.assertTrue(self.apply()["ok"])
+        self.assertIn(["systemctl", "restart", "ssh.socket"], self.host.commands)
+        self.assertNotIn(["systemctl", "restart", "ssh.service"], self.host.commands)
+
+    def test_sshd_keeps_answering_on_the_temporary_address(self) -> None:
+        """R2 26-10-27 (F22): the archive's drop-in alone left sshd on the node's address only.
+
+        The network session then met a closed port on the temporary address and the restore
+        stopped with the VM half written.
+        """
+
+        listen = (
+            "/etc/ssh/sshd_config.d/05-haprion-listen.conf",
+            "file",
+            0o644,
+            0,
+            0,
+            "ListenAddress 192.0.2.21\n",
+        )
+        header = {**APPLY_HEADER, "temporary_address": "192.0.2.120"}
+        result = self.serve(header, payload([*APPLY_FILES, listen]))
+        self.assertTrue(result["ok"], result)
+        temporary = self.host.path(restore_agent.SSHD_TEMPORARY)
+        self.assertIn("ListenAddress 192.0.2.120\n", temporary.read_text())
+        self.assertEqual(temporary.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(self.host.sshd_listens(), ["192.0.2.120", "192.0.2.21"])
+        self.assertIn(
+            {"step": "sshd", "reloaded": True, "temporary_address": "192.0.2.120"},
+            result["steps"],
+        )
+
+    def test_an_unusable_temporary_address_is_refused(self) -> None:
+        for value in ("192.0.2.300", "eth0", 5, "192.0.2.1\nListenAddress 0.0.0.0"):
+            with self.subTest(value=value):
+                result = self.serve(
+                    {**APPLY_HEADER, "temporary_address": value}, payload(APPLY_FILES)
+                )
+                self.assertFalse(result["ok"])
+                self.assertIn("temporary address", result["error"])
+
+    def test_sshd_that_does_not_listen_fails_the_step(self) -> None:
+        self.host.sshd_deaf = True
+        header = {**APPLY_HEADER, "temporary_address": "192.0.2.120"}
+        with mock.patch.object(restore_agent, "SSHD_LISTEN_WAIT", 0.0):
+            result = self.serve(header, payload(APPLY_FILES))
+        self.assertFalse(result["ok"])
+        self.assertIn("sshd does not listen on 192.0.2.120:22", result["error"])
 
     def prepared(self) -> list[str]:
         return next(argv for argv in self.host.commands if argv[0] == "bash")
@@ -782,6 +859,23 @@ class Finish(AgentTest):
             ],
         )
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "operator key\n")
+
+    def test_the_temporary_listen_address_goes_once_the_network_is_final(self) -> None:
+        temporary = self.host.path(restore_agent.SSHD_TEMPORARY)
+        temporary.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text("ListenAddress 192.0.2.120\n")
+        self.host.active.update(
+            {f"haprion-restore-rollback-{RUN}.timer": "active", "haproxy": "active"}
+        )
+        result = self.serve(self.header(), payload(self.KEYS))
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(temporary.exists())
+        commands = self.host.commands
+        stopped = commands.index(["systemctl", "stop", f"haprion-restore-rollback-{RUN}.timer"])
+        restarted = commands.index(["systemctl", "restart", "ssh.service"])
+        self.assertLess(stopped, restarted)
+        self.assertLess(restarted, commands.index(["systemctl", "start", "haproxy"]))
+        self.assertIn({"step": "sshd", "temporary_address": "removed"}, result["steps"])
 
     def test_an_unusable_id_is_refused_before_anything_runs(self) -> None:
         self.host.active.update({f"haprion-restore-rollback-{RUN}.timer": "active"})

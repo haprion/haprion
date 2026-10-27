@@ -93,6 +93,7 @@ SHARED_DIRECTORIES = {
     #
     "/etc/ssh/sshd_config.d": frozenset({"/etc/ssh/sshd_config.d/05-haprion-listen.conf"}),
 }
+SSHD_LISTEN = "/etc/ssh/sshd_config.d/05-haprion-listen.conf"
 # The product sets nothing in the SSH server's own file; the target's stays.
 TARGET_FILES = frozenset({"/etc/ssh/sshd_config"})
 #
@@ -406,6 +407,25 @@ def _hosts(text: str, old: str, new: str) -> str:
     return "".join(lines)
 
 
+def _listen_test(text: str, address: str) -> tuple[str, list[str]]:
+    """sshd's ListenAddress lines on the test address, each with its own port if it had one."""
+
+    olds: list[str] = []
+
+    def listen(matched: re.Match[str]) -> str:
+        olds.append(matched.group(2))
+        port = matched.group(3) or ""
+        return f"{matched.group(1)}{address}{port}"
+
+    text = re.sub(
+        r"^([ \t]*ListenAddress[ \t]+)([0-9.]+)(:\d+)?(?=[ \t]*$)",
+        listen,
+        text,
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
+    return text, olds
+
+
 def _keepalived_test(text: str, address: str, vip: str) -> tuple[str, list[tuple[str, str]]]:
     changes: list[tuple[str, str]] = []
 
@@ -499,6 +519,14 @@ def build(
             elif entry.path == "/etc/hosts":
                 data = _hosts(_text(source, entry), source.hostname, hostname).encode()
                 rewrites.append(Rewrite(entry.path, "hostname", source.hostname, hostname))
+            elif entry.path == SSHD_LISTEN:
+                # A test node's sshd on its test address, never the node's own.
+                text, olds = _listen_test(_text(source, entry), str(profile.address.ip))
+                data = text.encode()
+                for old in olds:
+                    rewrites.append(
+                        Rewrite(entry.path, "ListenAddress", old, str(profile.address.ip))
+                    )
             elif entry.path == KEEPALIVED_CONF:
                 text, changes = _keepalived_test(
                     _text(source, entry), str(profile.address.ip), str(profile.vip)

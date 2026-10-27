@@ -79,11 +79,45 @@ settle_files() {
 # (review 26-10-24, 03-02).
 #
 on_exit() {
-    if [[ "$files_settled" != yes ]] && declare -F restore_previous >/dev/null; then
+    local status=$?
+    if [[ "$files_settled" != yes ]] && declare -F restore_previous >/dev/null && candidate_current; then
         restore_previous || warn "the previous release could not be restored; run ${rollback} --to ${previous_id}"
     fi
     settle_files
     rm -rf -- "$kept"
+    (( status == 0 )) || where_it_stands
+}
+
+#
+# The last words of an update that did not complete (R2, F7): under apt they
+# are all there is. Which release runs, where the database stands when a
+# migration ran, and what to do next - for dpkg, `dpkg --configure -a`.
+#
+schema_now=""
+where_it_stands() {
+    local running schema dump="" dump_dir
+    running="$(basename "$(readlink -f "$current" 2>/dev/null || echo unknown)")"
+    {
+        echo
+        echo "The update to ${release_id} did not complete. ${running} is running."
+        if [[ -n "$schema_now" ]]; then
+            schema="$(./migrate --release "$running" current 2>/dev/null \
+                      | { grep -Eo '^[0-9A-Za-z_]+' || true; } | tail -1)"
+            if [[ -n "$schema" && "$schema" != "$schema_now" ]]; then
+                dump_dir="$(admin_value /etc/haprion/ui-admin.conf DUMP_DIR 2>/dev/null || true)"
+                [[ -z "$dump_dir" ]] || dump="$(find "${dump_dir}/before-migration" -maxdepth 1 \
+                        -name "*-${schema_now}-to-*.dump" -printf '%T@ %p\n' 2>/dev/null \
+                        | sort -rn | head -1 | cut -d' ' -f2-)"
+                echo "The database moved from schema ${schema_now} to ${schema}, which ${running} runs on."
+                [[ -z "$dump" ]] || echo "The dump taken before the migration: ${dump}"
+            fi
+        fi
+        if [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]]; then
+            echo "Correct what the lines above name, then: sudo dpkg --configure -a"
+        else
+            echo "Correct what the lines above name, then run the update again."
+        fi
+    } >&2
 }
 trap on_exit EXIT
 ./refresh-platform-files "$release_id" "$kept"
@@ -132,13 +166,16 @@ fi
 step "Checking the complete candidate before activation"
 ./check-compatibility --release "$release_id"
 
+#
+# Whether the switch happened. A failure before it leaves the previous release
+# running with nothing to put back, and says so once (R2, F8: "was restored"
+# and "no UI rollback is needed" twice, for an update that never switched).
+#
+candidate_current() {
+    [[ "$(readlink -f "$current" 2>/dev/null || true)" == "${UI_ROOT}/releases/${release_id}" ]]
+}
+
 restore_previous() {
-    local active
-    active="$(readlink -f "$current" 2>/dev/null || true)"
-    if [[ "$active" != "${UI_ROOT}/releases/${release_id}" ]]; then
-        warn "the candidate is not current; no UI rollback is needed"
-        return 0
-    fi
     settle_files
     warn "restoring UI release ${previous_id}"
     "$rollback" --to "$previous_id"
@@ -148,8 +185,11 @@ restore_previous() {
 
 step "Activating ${release_id}"
 if ! ./install-ui-release "$release_id"; then
-    restore_previous
-    die "activation failed; UI release ${previous_id} was restored"
+    if candidate_current; then
+        restore_previous
+        die "activation failed; UI release ${previous_id} was restored"
+    fi
+    die "activation stopped before the switch; ${previous_id} kept running"
 fi
 #
 # The site refresh-platform-files proved, now that the web listens where it

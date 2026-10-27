@@ -67,7 +67,6 @@ on_command_failed() {
     local status="$1" command="$2"
     [[ "$BASHPID" == "$$" ]] || return 0
     echo "ERROR: the command '${command}' stopped with exit code ${status}${CURRENT_STEP:+ while doing: ${CURRENT_STEP}}" >&2
-    echo "TODO: the lines above it in this output are that command's own words" >&2
 }
 trap 'on_command_failed "$?" "$BASH_COMMAND"' ERR
 

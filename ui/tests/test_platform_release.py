@@ -165,14 +165,20 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertIn("trap on_exit EXIT", self.update)
         start = self.update.index("on_exit() {")
         body = self.update[start : self.update.index("\n}\n", start) + 3]
-        for settled, expected in (("no", ["restore", "settle"]), ("yes", ["settle"])):
-            with self.subTest(settled=settled):
+        for settled, switched, expected in (
+            ("no", "true", ["restore", "settle"]),
+            ("yes", "true", ["settle"]),
+            # R2 26-10-27 (F8): never switched, nothing to put back.
+            ("no", "false", ["settle"]),
+        ):
+            with self.subTest(settled=settled, switched=switched):
                 done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
                     [
                         "/bin/bash",
                         "-c",
                         f"files_settled={settled}; kept=/nonexistent; "
                         "warn() { :; }; restore_previous() { echo restore; }; "
+                        f"candidate_current() {{ {switched}; }}; where_it_stands() {{ echo said; }}; "
                         f"settle_files() {{ echo settle; }}; {body}on_exit",
                     ],
                     capture_output=True,
@@ -180,6 +186,65 @@ class CoordinatedUpdateTests(unittest.TestCase):
                     check=True,
                 )
                 self.assertEqual(done.stdout.split(), expected)
+
+    def test_an_activation_that_never_switched_says_so_once(self) -> None:
+        """R2 26-10-27 (F8): *was restored* and *no UI rollback is needed* twice."""
+
+        self.assertNotIn('warn "the candidate is not current', self.update)
+        activation = self.update[
+            self.update.index('if ! ./install-ui-release "$release_id"; then') :
+        ]
+        activation = activation[: activation.index("\nfi\n")]
+        self.assertLess(activation.index("candidate_current"), activation.index("restore_previous"))
+        self.assertIn(
+            "activation stopped before the switch; ${previous_id} kept running", activation
+        )
+
+    def where_it_stands(self, *, dpkg: bool) -> str:
+        start = self.update.index("where_it_stands() {")
+        body = self.update[start : self.update.index("\n}\n", start) + 3]
+        with tempfile.TemporaryDirectory() as raw:
+            here = Path(raw)
+            (here / "releases" / "0.99.1-aaaa").mkdir(parents=True)
+            (here / "current").symlink_to(here / "releases" / "0.99.1-aaaa")
+            (here / "migrate").write_text("#!/bin/sh\necho '0101 (head)'\n")
+            (here / "migrate").chmod(0o755)
+            dumps = here / "dumps" / "before-migration"
+            dumps.mkdir(parents=True)
+            (dumps / "haprion-0100-to-0101-20261026-162200.dump").write_text("")
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                [
+                    "/bin/bash",
+                    "-c",
+                    f'root="$1"; current="$1/current"; release_id=0.99.2-bbbb; schema_now=0100; '
+                    f'admin_value() {{ echo "$root/dumps"; }}; {body}where_it_stands',
+                    "-",
+                    raw,
+                ],
+                cwd=raw,
+                capture_output=True,
+                text=True,
+                check=True,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    **({"DPKG_MAINTSCRIPT_PACKAGE": "haprion-ui"} if dpkg else {}),
+                },
+            )
+        return done.stderr.replace(raw, "<root>")
+
+    def test_an_update_that_did_not_complete_says_where_it_stands(self) -> None:
+        """R2 26-10-27 (F7): under apt the last lines were a TODO and nothing about what runs."""
+
+        said = self.where_it_stands(dpkg=True)
+        self.assertIn("The update to 0.99.2-bbbb did not complete. 0.99.1-aaaa is running.", said)
+        self.assertIn(
+            "The database moved from schema 0100 to 0101, which 0.99.1-aaaa runs on.", said
+        )
+        self.assertIn(
+            "<root>/dumps/before-migration/haprion-0100-to-0101-20261026-162200.dump", said
+        )
+        self.assertIn("then: sudo dpkg --configure -a", said)
+        self.assertIn("then run the update again", self.where_it_stands(dpkg=False))
 
     def test_a_failed_nginx_reload_does_not_end_the_update_unproved(self) -> None:
         self.assertIn("if systemctl reload nginx; then", self.update)

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion_ui import views
+from haprion_ui import pending
 from haprion_ui.network import NetworkChange, Usage, changes
 from haprion_ui.templates import TEMPLATES
 
@@ -160,8 +160,8 @@ class TheUsersAreThoseThePublishLeaves(unittest.TestCase):
         state: Any = SimpleNamespace(
             stored=[SimpleNamespace(name="admin", document=OBJECT.format(name="admin", vip="old"))]
         )
-        with mock.patch.object(views, "read_source", return_value=((), [reading])):
-            found = views._network_changes(
+        with mock.patch.object(pending, "read_source", return_value=((), [reading])):
+            found = pending._network_changes(
                 mock.Mock(), mock.Mock(), "alpha", self.SAVED_NETWORK, state, saved_objects
             )
         return {change.label: change for change in found}

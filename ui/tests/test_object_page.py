@@ -679,7 +679,7 @@ class ADraftThatWasPublished(DraftReading):
         name: str = "half-done",
         base: str = f"{24:040d}",
     ) -> Job:
-        from haprion_ui.views import _publish_key
+        from haprion_ui.pending import publish_key
 
         #
         # Made against the commit the fixture's cache still shows, unless a
@@ -704,9 +704,7 @@ class ADraftThatWasPublished(DraftReading):
             outcome=None,
             result=None,
             stderr_excerpt=None,
-            idempotency_key=_publish_key(
-                "edge-demo", "changes_publish", payload, drawn=UUID(int=1)
-            ),
+            idempotency_key=publish_key("edge-demo", "changes_publish", payload, drawn=UUID(int=1)),
             attempts=0,
         )
 

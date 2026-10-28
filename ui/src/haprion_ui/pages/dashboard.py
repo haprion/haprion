@@ -45,6 +45,7 @@ from haprion_ui import version_changes as version_changes_view
 from haprion_ui.access import admin_write_gate, client_address, current_session, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.pending import held_server_counts, pending_count, pending_package, publish_key
 from haprion_ui.reading import (
     HISTORY_SOURCE,
     NETWORK_SOURCE,
@@ -70,12 +71,8 @@ from haprion_ui.views import (
     _attention,
     _backup_overview,
     _first_cluster,
-    _held_servers,
     _log_time_filter,
     _network_page,
-    _package,
-    _pending_count,
-    _publish_key,
     _registry_overview,
     _return_path,
 )
@@ -166,9 +163,9 @@ def build_router(config: Config) -> APIRouter:
         #
         pending = (
             {
-                cluster: _package(request, config, cluster)
+                cluster: pending_package(request, config, cluster)
                 for cluster in listed_clusters(request, config)
-                if _pending_count(request, config, cluster)
+                if pending_count(request, config, cluster)
             }
             if config.management_writes and session.role == "admin"
             else {}
@@ -227,7 +224,7 @@ def build_router(config: Config) -> APIRouter:
                 # Servers somebody took out of service, per cluster and object
                 # (26-10-10): said beside the blocks, linked for an admin.
                 #
-                "held_servers": _held_servers(request, config, clusters, status_rows),
+                "held_servers": held_server_counts(request, config, clusters, status_rows),
                 "section": "dashboard",
                 "demo_fixture": config.demo_fixture,
                 #
@@ -563,7 +560,7 @@ def build_router(config: Config) -> APIRouter:
         #
         pending = (
             {
-                view.cluster: _package(request, config, view.cluster)
+                view.cluster: pending_package(request, config, view.cluster)
                 for view in overview.clusters
                 if view.configured
             }
@@ -629,7 +626,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         deploy = then == "deploy"
         back = "/" if deploy else "/history"
-        package = _package(request, config, cluster)
+        package = pending_package(request, config, cluster)
         if package.problem:
             return refusal_page(request, config, package.problem, back=back)
         if not package.rows:
@@ -675,7 +672,7 @@ def build_router(config: Config) -> APIRouter:
             drawn = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        key = _publish_key(cluster, "changes_publish", payload, drawn=drawn)
+        key = publish_key(cluster, "changes_publish", payload, drawn=drawn)
         try:
             operations.prepare(
                 operation="changes_publish", cluster=cluster, request_id=uuid4(), payload=payload

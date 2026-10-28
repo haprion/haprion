@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haprion_ui import demo, held_servers, views
+from haprion_ui import demo, held_servers, pending
 from haprion_ui.db import ClusterStatus
 from tests.test_login import configuration
 from tests.test_object_page import DraftReading
@@ -158,8 +158,8 @@ class TheDashboard(DraftReading):
         self.assertNotIn("public-web#servers", page)
 
     def test_the_objects_are_not_read_where_nothing_is_held(self) -> None:
-        with mock.patch("haprion_ui.views.read_source") as read:
-            found = views._held_servers(
+        with mock.patch("haprion_ui.pending.read_source") as read:
+            found = pending.held_server_counts(
                 mock.Mock(), configuration(), ["alpha"], [reading([server("web", "s1")])]
             )
 

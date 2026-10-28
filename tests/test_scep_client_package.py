@@ -13,6 +13,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 
@@ -167,6 +168,59 @@ class BundleInspection(unittest.TestCase):
         self.path.write_bytes(buffer.getvalue())
         with self.assertRaises(self.installer.InstallError):
             self.installer.inspect_bundle(self.path, hashlib.sha256(buffer.getvalue()).hexdigest())
+
+    def installed(self, *, satisfy: bool) -> list[list[str]]:
+        """The commands an install ran, with root, the machine and the programs imitated."""
+
+        digest = self.archive()
+        ran: list[list[str]] = []
+
+        def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            ran.append(command)
+            answer = "amd64\n" if command[-1] == "--print-architecture" else ""
+            return subprocess.CompletedProcess(command, 0, answer, "")
+
+        read_text = Path.read_text
+
+        def os_release(path: Path, *arguments: Any, **keywords: Any) -> str:
+            if str(path) == "/etc/os-release":
+                return 'ID=ubuntu\nVERSION_ID="26.04"\n'
+            return read_text(path, *arguments, **keywords)
+
+        target = Path(self.temporary.name) / "scep"
+        with (
+            mock.patch.object(self.installer.os, "geteuid", return_value=0),
+            mock.patch.object(self.installer, "protected_target"),
+            mock.patch.object(self.installer.subprocess, "run", side_effect=run),
+            mock.patch.object(Path, "read_text", os_release),
+        ):
+            self.installer.install(self.path, digest, target, satisfy=satisfy)
+        self.assertTrue((target / "current").is_symlink())
+        for directory in [target, *target.rglob("*")]:
+            if directory.is_dir() and not directory.is_symlink():
+                directory.chmod(0o700)
+        return ran
+
+    def test_the_package_s_install_never_runs_apt_and_still_checks_the_libraries(self) -> None:
+        """B383: inside haprion-scep's postinst dpkg holds apt's lock; the package's
+        own dependencies are the bundle's, so nothing is left to satisfy."""
+
+        ran = self.installed(satisfy=False)
+        self.assertFalse([command for command in ran if command[0] == "/usr/bin/apt-get"])
+        self.assertEqual(sum(command[0] == "/usr/bin/ldd" for command in ran), 3)
+
+    def test_a_bundle_installed_by_hand_satisfies_its_dependencies_first(self) -> None:
+        ran = self.installed(satisfy=True)
+        self.assertIn(
+            [
+                "/usr/bin/apt-get",
+                "--assume-yes",
+                "--no-install-recommends",
+                "satisfy",
+                "libc6 (>= 2.38)",
+            ],
+            ran,
+        )
 
 
 @unittest.skipUnless(shutil.which("dpkg-deb"), "requires distribution package tools")

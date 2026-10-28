@@ -52,6 +52,7 @@ git show --stat <commit>
 | `ui/`, the manager's installation steps (`install/platform/`, `install/0[1235]-*`, `install/*.sh`) | the `haprion-ui` package; installing it runs `update-platform-release` on an installation that already has a current release |
 | `install/sudoers/` | the `haprion-cli` package |
 | `certbot/` | the `haprion-certbot` package; installing it runs platform step 14 on a manager where step 14 has run |
+| `tools/build-scep-package.py`, `tools/build-scep-client.py`, `tools/install-scep-client.py` | the `haprion-scep` package; installing it runs platform step 16 on a manager where the client is installed |
 | `install/node/`, `install/04-node-prepare` | the `haprion-node` package on every node |
 
 **The CLI package goes first when both move.** apt will not install an interface that needs a newer

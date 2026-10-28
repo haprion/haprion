@@ -15,6 +15,7 @@ that differs, wherever it ran, publishes nothing. The order is the one
     haprion-cli                         tools/build-cli-package.py
     haprion-node                        tools/node-package.py
     haprion-ui, haprion-certbot         per distribution, in podman
+    haprion-scep                        per distribution, from pinned archive files
 
 Every input that is not in the tree is fetched into the cache and checked
 against a digest before it is used: the Coraza and CRS archives against the
@@ -232,6 +233,16 @@ def build(
                 "--podman",
                 podman,
             )
+        step(
+            python,
+            tools / "build-scep-package.py",
+            "--source",
+            source,
+            "--output-dir",
+            output_dir,
+            "--distribution",
+            distribution,
+        )
     return write_sums(output_dir)
 
 

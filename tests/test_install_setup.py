@@ -867,7 +867,6 @@ class TheSetupRunsEveryStep(unittest.TestCase):
     LEFT_OUT = {
         "04-node-prepare": "runs on a node, not the manager",
         "05-verify": "runs as an operator, not root; check-compatibility is the setup's own check",
-        "platform/16-platform-scep": "needs the operator's SCEP bundle and its digest",
     }
 
     def steps(self) -> list[str]:
@@ -893,6 +892,8 @@ class TheSetupRunsEveryStep(unittest.TestCase):
             ("02-manager-config", "platform/02-platform-database"),
             ("platform/migrate", "platform/install-ui-release"),
             ("platform/07-platform-services", "platform/14-platform-certbot"),
+            # the SCEP client is installed beside the release its worker runs (B383)
+            ("platform/install-ui-release", "platform/16-platform-scep"),
         ):
             with self.subTest(before=before, after=after):
                 self.assertLess(order.index(before), order.index(after))

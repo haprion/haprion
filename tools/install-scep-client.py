@@ -147,7 +147,7 @@ def activate(target: Path, final: Path) -> None:
         temporary_link.unlink(missing_ok=True)
 
 
-def install(path: Path, digest: str, target: Path) -> Path:
+def install(path: Path, digest: str, target: Path, *, satisfy: bool = True) -> Path:
     if os.geteuid() != 0:
         raise InstallError("SCEP installation must run as root")
     manifest, files = inspect_bundle(path, digest)
@@ -199,16 +199,22 @@ def install(path: Path, digest: str, target: Path) -> Path:
             destination.chmod(0o555 if name in BINARIES else 0o444)
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         (staging / "manifest.json").chmod(0o444)
-        subprocess.run(  # noqa: S603 - dependency relations in approved bundle
-            [
-                "/usr/bin/apt-get",
-                "--assume-yes",
-                "--no-install-recommends",
-                "satisfy",
-                manifest["dependencies"],
-            ],
-            check=True,
-        )  # relations from the explicitly approved, verified bundle
+        #
+        # The haprion-scep package depends on the same relations, so apt has
+        # installed them before its postinst runs - where apt cannot be run
+        # again, dpkg holding its lock (B383). `ldd` below still proves them.
+        #
+        if satisfy:
+            subprocess.run(  # noqa: S603 - dependency relations in approved bundle
+                [
+                    "/usr/bin/apt-get",
+                    "--assume-yes",
+                    "--no-install-recommends",
+                    "satisfy",
+                    manifest["dependencies"],
+                ],
+                check=True,
+            )  # relations from the explicitly approved, verified bundle
         for name in BINARIES:
             result = subprocess.run(  # noqa: S603 - root-only hash-approved ELF
                 ["/usr/bin/ldd", str(staging / name)], check=False, capture_output=True, text=True
@@ -233,9 +239,14 @@ def main() -> int:
     parser.add_argument("--bundle", required=True, type=Path)
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--target", type=Path, default=Path("/opt/haprion-scep"))
+    parser.add_argument(
+        "--no-satisfy",
+        action="store_true",
+        help="the dependencies are installed already (the haprion-scep package's)",
+    )
     args = parser.parse_args()
     try:
-        print(install(args.bundle, args.sha256, args.target))
+        print(install(args.bundle, args.sha256, args.target, satisfy=not args.no_satisfy))
     except (InstallError, OSError, subprocess.SubprocessError) as exc:
         parser.exit(1, f"SCEP installation failed: {exc}\n")
     return 0

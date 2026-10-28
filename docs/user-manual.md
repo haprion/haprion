@@ -5880,28 +5880,21 @@ ndes:
 The two `/etc/haprion` directories are root-owned with mode `0700`; the records and keys in them have mode
 `0600`.
 
-**Building the client bundle.** Build it with `tools/build-scep-client.py`. Give it:
+**The client comes in the `haprion-scep` package.** `haprion-ui` depends on it, so it is installed with the
+manager, and `haprion-setup` installs the client. The package carries Certmonger's own programs from the
+distribution's certmonger package, with that package, its complete source and its license. The client is
+installed under `/opt/haprion-scep` without a standing Certmonger service. Its libraries are the
+distribution's: the package depends on what certmonger depends on, and they follow the distribution's updates.
+An update of the package installs its new client, and the previous one stays current if that fails.
 
-- `--package` and its independently verified `--package-sha256`
-- the matching signed `--source-description` and its verified `--source-sha256`
-- `--distribution`, `--distribution-release` and `--output`
+The release build takes the certmonger package and source the build tool pins by digest, so every build of a
+release is the same. Before it writes the client, it looks the version up in the OSV vulnerability database
+under the distribution's release, and refuses the build if any advisory affects it.
 
-Keep both source archives beside the source description. The bundle keeps the package, the complete
-matching source, the license and rebuild instructions; a bit-for-bit rebuild has not been demonstrated.
-Only matching Debian-family distribution packages are supported.
-
-Before writing the bundle, the tool looks the package version up in the OSV vulnerability database, under
-the distribution's release (`Debian:<release>` or `Ubuntu:<release>`). It refuses the build if any
-advisory affects the version, or if the database holds nothing for that release. The lookup needs network
-access to `api.osv.dev` and is only true for the day it runs, so rebuild to check again. The bundle freezes
-Certmonger's own programs only; the libraries they load are the distribution's and follow its updates.
-
-**Installing it.** As root, run
-`install/platform/16-platform-scep <bundle.zip> <verified-bundle-sha256>`. The installer checks the
-hashes, the paths in the archive, the OS release and the architecture. It installs the runtime libraries
-the client needs and activates the three client programs as a release that does not change afterwards. It
-does not install a standing Certmonger service. It also creates `/etc/haprion/ndes-profiles` and
-`/etc/haprion/ndes-requests`.
+**By hand.** As root, `install/platform/16-platform-scep <bundle.zip> <sha256>` installs a bundle that
+`tools/build-scep-client.py` built. The installer checks the hashes, the paths in the archive, the OS release
+and the architecture, and asks apt for the libraries the client needs. It also creates
+`/etc/haprion/ndes-profiles` and `/etc/haprion/ndes-requests`.
 
 ##### Preparing the Microsoft side
 

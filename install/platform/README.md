@@ -572,12 +572,17 @@ DNS profiles - and restarts the web service to read it.
 The account is fixed and made by `01-manager-prepare`, which applies the sysusers
 fragment. The CLI release must carry `haprion-oidc-helper`.
 
-### Optional SCEP client bundle
+### The SCEP client
 
-`16-platform-scep <bundle.zip> <verified-sha256>` installs a reviewed native Certmonger
-bundle and its distribution runtime libraries as root. Build the bundle with
-`tools/build-scep-client.py`; retain the matching package, complete source, license
-and build instructions. The installer refuses a different OS release or architecture
-and activates only three client programs, without installing a Certmonger service.
+`16-platform-scep <bundle.zip> <sha256> [--no-satisfy]` installs a Certmonger bundle under
+`/opt/haprion-scep` as root and activates only its three client programs, without a Certmonger
+service. The `haprion-scep` package carries the bundle and names it with its digest in
+`/usr/lib/haprion/scep/PAYLOAD`; `haprion-setup` runs this step with it, and the package's
+`postinst` runs it again on an update where the client is installed. `--no-satisfy` is for
+that bundle: the package already depends on what Certmonger depends on, and apt cannot run
+inside a package's script. Without it the installer asks apt for those libraries first.
+`tools/build-scep-package.py` builds the bundle from the distribution's certmonger package
+and its complete source, pinned by digest. The installer refuses a different OS release or
+architecture.
 See user-manual.md, *Preparing Microsoft AD CS / NDES for CSR enrollment*, for the policy and the provider's
 configuration.

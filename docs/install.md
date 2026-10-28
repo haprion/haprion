@@ -123,6 +123,7 @@ ending in `ubuntu26.04_amd64.deb` or `deb13_amd64.deb`. To build the packages yo
 | `haprion-ui` | the manager | the web interface, `haprion-setup` and the installation steps; it pulls in the manager's other packages |
 | `haprion-cli` | the manager | the command-line engine, the commands and their sudo rules, and a copy of the node package |
 | `haprion-certbot` | the manager | certbot and the DNS plugins the interface offers |
+| `haprion-scep` | the manager | the SCEP client for certificates from Microsoft AD CS over NDES: Certmonger's programs and their source, from the distribution's own package |
 | `haprion-crs` | the manager | the WAF rules; each release carries them on to the nodes |
 | `haprion-node` | each node | the node's scripts and its preparation step |
 | `haprion-coraza-spoa` | the manager and the nodes | the WAF engine; the CLI release carries a copy, so a node restored onto a new VM gets it back |
@@ -161,7 +162,7 @@ sudo apt purge haprion-node haprion-coraza-spoa haprion-archive-keyring
 
 ```bash
 sudo haprion-setup --remove --yes
-sudo apt purge haprion-ui haprion-certbot haprion-cli haprion-coraza-spoa haprion-crs haprion-archive-keyring
+sudo apt purge haprion-ui haprion-certbot haprion-scep haprion-cli haprion-coraza-spoa haprion-crs haprion-archive-keyring
 ```
 
 Remove the repository's source as well: the file `haprion.sources` under `/etc/apt/sources.list.d/`.
@@ -274,10 +275,12 @@ source tree, give it `/usr/share/haprion-ui`.
 Step 14 uses the release the `haprion-certbot` package carries. With `UV_BIN=/path/to/uv` it builds one from the
 lock file instead.
 
-The SCEP client, for certificates from Microsoft AD CS over NDES, is a separately built and verified bundle:
+Step 16 installs the SCEP client the `haprion-scep` package carries, for certificates from Microsoft AD CS over
+NDES. The setup runs it with the bundle and digest the package names in `/usr/lib/haprion/scep/PAYLOAD`:
 
 ```bash
-sudo ./16-platform-scep /path/to/bundle.zip <verified-bundle-sha256>
+. /usr/lib/haprion/scep/PAYLOAD
+sudo ./16-platform-scep "/usr/lib/haprion/scep/$BUNDLE" "$BUNDLE_SHA256" --no-satisfy
 ```
 
 [install/platform/README.md](../install/platform/README.md) describes each step's inputs and what to set up
@@ -382,7 +385,8 @@ same steps, in this order:
 5. `platform/04-platform-service`, `05-platform-nginx`, `07-platform-services`
 6. `platform/06-platform-backup`, `11-platform-retention`, `13-platform-traffic-collector`, `17-platform-oidc`
 7. `platform/14-platform-certbot`, when the `haprion-certbot` package is installed
-8. `platform/check-compatibility`
+8. `platform/16-platform-scep`, when the `haprion-scep` package is installed
+9. `platform/check-compatibility`
 
 Step 15 comes before `02-manager-config` so that the policy step 2 writes can name the keys step 15 made.
 
@@ -464,7 +468,9 @@ tools/build-release-packages --source "$(pwd)" --output-dir <out> --uv /path/to/
 
 It fetches the pinned Go toolchain, govulncheck and the WAF engine's sources into a cache, checks each against its
 checksum, and writes `SHA256SUMS` beside the packages. The web interface and certbot are built inside a container
-of the distribution they are for, with rootless podman (`ubuntu26.04` or `debian13`).
+of the distribution they are for, with rootless podman (`ubuntu26.04` or `debian13`). The SCEP client is built
+from each distribution's certmonger package and its source, fetched from the distribution's archive and checked
+against the digests `tools/build-scep-package.py` pins.
 
 The WAF engine (Coraza SPOA with the OWASP Core Rule Set) is built from pinned upstream sources, and building the
 same version twice gives the same bytes. Before the build, govulncheck checks the source with the pinned Go: the

@@ -27,7 +27,7 @@ have fails here, not on a person's first node:
 
 The packages are the ones a release ships. With `--packages`, the files in one
 directory, as a person installs them from a release: `haprion-cli`, each
-distribution's `haprion-ui` and `haprion-certbot`, the WAF engine's
+distribution's `haprion-ui`, `haprion-certbot` and `haprion-scep`, the WAF engine's
 `haprion-coraza-spoa` and `haprion-crs` and `haprion-archive-keyring` on the
 manager, and the node package with the engine and the key on each node. With
 `--apt-repo`, a site `tools/build-apt-repo` assembled, as the public
@@ -644,6 +644,11 @@ class Run:
             ),
             ("certbot", "/opt/haprion-certbot/current/venv/bin/certbot --version"),
             (
+                "the SCEP client and the libraries it loads (B383)",
+                "for p in certmonger getcert scep-submit; do f=/opt/haprion-scep/current/bin/$p; "
+                "test -x $f && ! ldd $f | grep -q 'not found' || exit 1; done",
+            ),
+            (
                 "the hook that publishes a renewed certificate",
                 "test -x /etc/letsencrypt/renewal-hooks/deploy/50-haprion",
             ),
@@ -744,8 +749,17 @@ def package(directory: Path, pattern: str) -> Path:
     return found[0]
 
 
-def release_files(packages: Path, distribution: Distribution) -> tuple[list[Path], list[Path]]:
-    """A release's files for the manager, and for a node."""
+def release_files(
+    packages: Path, distribution: Distribution, *, previous: bool = False
+) -> tuple[list[Path], list[Path]]:
+    """A release's files for the manager, and for a node.
+
+    haprion-scep came after 0.99.4 (B383): a previous release may be without it,
+    the release under test may not.
+    """
+
+    scep = f"haprion-scep_*{distribution.ui_suffix}_amd64.deb"
+    with_scep = not previous or any(packages.glob(scep))
 
     key = package(packages, "haprion-archive-keyring_*_all.deb")
     engine = package(packages, "haprion-coraza-spoa_*_amd64.deb")
@@ -753,6 +767,7 @@ def release_files(packages: Path, distribution: Distribution) -> tuple[list[Path
         package(packages, "haprion-cli_*_all.deb"),
         package(packages, f"haprion-ui_*{distribution.ui_suffix}_amd64.deb"),
         package(packages, f"haprion-certbot_*{distribution.ui_suffix}_amd64.deb"),
+        *([package(packages, scep)] if with_scep else []),
         engine,
         package(packages, "haprion-crs_*_all.deb"),
         key,
@@ -1060,7 +1075,7 @@ def run_upgrade(
     `apt upgrade`. Only an update from the release before shows that.
     """
 
-    old_manager, old_node = release_files(previous, distribution)
+    old_manager, old_node = release_files(previous, distribution, previous=True)
     new_manager, new_node = release_files(packages, distribution)
     logs.mkdir(parents=True, exist_ok=True)
     run = Run(distribution, logs)

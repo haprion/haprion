@@ -146,6 +146,7 @@ SAVED = "/root/haprion-removed-{stamp}"
 PACKAGES = (
     "haprion-ui",
     "haprion-certbot",
+    "haprion-scep",
     "haprion-cli",
     "haprion-coraza-spoa",
     "haprion-crs",
@@ -156,7 +157,7 @@ SOURCES = ("/etc/apt/sources.list.d/haprion.sources",)
 # The trees the packages' own purge removes (their postrm), listed by neither
 # step: the policy names the certbot under one of them.
 #
-PURGED_TREES = ("/opt/haprion", "/opt/haprion-ui", "/opt/haprion-certbot")
+PURGED_TREES = ("/opt/haprion", "/opt/haprion-ui", "/opt/haprion-certbot", "/opt/haprion-scep")
 SHARED_PACKAGES = ("postgresql", "nginx", "haproxy", "dnsdist")
 SHARED_SOURCES = (
     "/etc/apt/sources.list.d/pdns.list",

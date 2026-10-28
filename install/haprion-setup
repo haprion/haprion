@@ -193,6 +193,19 @@ if [[ -n "${UV_BIN:-}" || -r "$CERTBOT_PAYLOAD" ]]; then
         "read the log: a failed dry run names the lineage; with UV_BIN a download error means this machine does not reach pypi.org" \
         "./platform/14-platform-certbot ${ans} ${source_tree}"
 fi
+#
+# The SCEP client for NDES comes in the haprion-scep package (B381, B383): its
+# bundle and digest are named in PAYLOAD, and its dependencies are the
+# package's, so apt is not asked again.
+#
+SCEP_PAYLOAD="/usr/lib/haprion/scep/PAYLOAD"
+if [[ -r "$SCEP_PAYLOAD" ]]; then
+    scep_bundle="$(sed -n 's/^BUNDLE=//p' "$SCEP_PAYLOAD")"
+    scep_sha256="$(sed -n 's/^BUNDLE_SHA256=//p' "$SCEP_PAYLOAD")"
+    add_step "the SCEP client, for NDES" \
+        "read the log: the installer names the file or library it refused" \
+        "./platform/16-platform-scep /usr/lib/haprion/scep/${scep_bundle} ${scep_sha256} --no-satisfy"
+fi
 add_step "the whole installation" \
     "read the log; it names each part that does not match" \
     "./platform/check-compatibility"

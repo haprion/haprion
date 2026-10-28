@@ -410,7 +410,7 @@ def depends(python: str, engine_api: int) -> str:
     major, minor = (int(part) for part in python.split("."))
     return (
         f"python3 (>= {major}.{minor}), python3 (<< {major}.{minor + 1}), haprion-cli, "
-        f"haprion-engine (>= {engine_api}), haprion-certbot, {UI_DEPENDS}"
+        f"haprion-engine (>= {engine_api}), haprion-certbot, haprion-scep, {UI_DEPENDS}"
     )
 
 

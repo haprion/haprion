@@ -925,7 +925,9 @@ class RegistryCommandTests(unittest.TestCase):
         rendered, _, code = self._run(["--registry"], document)
 
         self.assertEqual(code, 0)
-        row = next(line for line in rendered.splitlines() if line.startswith("mgr.example.com"))
+        row = next(
+            line for line in rendered.splitlines() if line.split()[:1] == ["mgr.example.com"]
+        )
         self.assertTrue(row.rstrip().endswith("the interface"), row)
         self.assertNotIn("nowhere", row)
 

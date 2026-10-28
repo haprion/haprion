@@ -21,7 +21,7 @@ from uuid import uuid4
 
 import yaml
 
-from haprion_ui import auth, db, health, objects, views
+from haprion_ui import auth, db, editor_flow, health, objects
 from haprion_ui import editor as editor_module
 from haprion_ui import probe as probe_module
 from haprion_ui.db import (
@@ -285,7 +285,7 @@ class ReachingTheEditor(EditorTestCase):
             mock.patch("haprion_ui.db.cluster_certificates", return_value=[]) as certificates_read,
             mock.patch("haprion_ui.db.cluster_histories", return_value=[]) as histories_read,
         ):
-            state = views._editor_state(request, writing_configuration(), "alpha")
+            state = editor_flow.editor_state(request, writing_configuration(), "alpha")
         self.assertEqual(state.commit, COMMIT)
         self.assertEqual([obj.name for obj in state.stored], ["shop"])
         self.assertEqual(listed.call_count, 1)
@@ -330,7 +330,7 @@ class ReachingTheEditor(EditorTestCase):
             mock.patch("haprion_ui.db.cluster_histories", return_value=[]),
             mock.patch("haprion_ui.db.manager_certificates", return_value=reading),
         ):
-            state = views._editor_state(request, writing_configuration(), "alpha")
+            state = editor_flow.editor_state(request, writing_configuration(), "alpha")
         self.assertEqual(state.choices.authority_ids, ("corp-root",))
 
     def test_removed_cluster_is_refused_before_its_cached_objects_are_read(self) -> None:
@@ -1409,8 +1409,8 @@ class WhichNodeReportsOnThePool(EditorTestCase):
         """Review 26-10-24, 02-10: the card compares the form's servers with these."""
 
         stored = objects.object_view({"name": "shop", "document": SHOP, "readable": True})
-        self.assertEqual(views._published_servers(stored, ()), ["192.0.2.10:8080"])
-        self.assertEqual(views._published_servers(None, ()), [])
+        self.assertEqual(editor_flow._published_servers(stored, ()), ["192.0.2.10:8080"])
+        self.assertEqual(editor_flow._published_servers(None, ()), [])
 
     def test_a_node_without_the_address_is_left_off(self) -> None:
         card = self.card(

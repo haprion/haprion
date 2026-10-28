@@ -46,6 +46,17 @@ from haprion_ui import editor as editor_module
 from haprion_ui.access import admin_write_gate, current_session, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.editor_flow import (
+    SAVED_NOTICE,
+    advanced_submit,
+    earlier_names,
+    editor_page,
+    editor_state,
+    editor_submit,
+    lookup_again,
+    moved_dns_servers,
+    removal_submit,
+)
 from haprion_ui.reading import (
     HISTORY_SOURCE,
     INVENTORY_SOURCE,
@@ -62,18 +73,9 @@ from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     BLOCKED_NOTICES,
     OBJECT_FIGURES,
-    SAVED_NOTICE,
     SERVER_NOTICES,
-    _advanced_submit,
-    _earlier_names,
-    _editor_page,
-    _editor_state,
-    _editor_submit,
-    _lookup_again,
     _posted,
-    _removal_submit,
     _traffic_marks,
-    moved_dns_servers,
 )
 
 
@@ -480,7 +482,7 @@ def build_router(config: Config) -> APIRouter:
     #
     @router.get("/proxies/{cluster}/new", response_class=HTMLResponse)
     def new_object_form(request: Request, cluster: str) -> Response:
-        return _editor_page(request, config, cluster, "", None)
+        return editor_page(request, config, cluster, "", None)
 
     @router.post("/proxies/{cluster}/new", response_class=HTMLResponse)
     def new_object_submit(
@@ -488,12 +490,12 @@ def build_router(config: Config) -> APIRouter:
         cluster: str,
         form: Annotated[editor_module.ObjectForm, Form()],
     ) -> Response:
-        return _editor_submit(request, config, cluster, "", form)
+        return editor_submit(request, config, cluster, "", form)
 
     @router.get("/proxies/{cluster}/{name}/edit", response_class=HTMLResponse)
     def edit_object_form(request: Request, cluster: str, name: str) -> Response:
         saved = request.query_params.get("saved") == "1"
-        return _editor_page(
+        return editor_page(
             request,
             config,
             cluster,
@@ -513,7 +515,7 @@ def build_router(config: Config) -> APIRouter:
         name: str,
         form: Annotated[editor_module.ObjectForm, Form()],
     ) -> Response:
-        return _editor_submit(request, config, cluster, name, form)
+        return editor_submit(request, config, cluster, name, form)
 
     #
     # *Publish again* beside the warning that a dns server's name has moved
@@ -527,7 +529,7 @@ def build_router(config: Config) -> APIRouter:
         name: str,
         csrf_token: Annotated[str, Form()] = "",
     ) -> Response:
-        return _lookup_again(request, config, cluster, name, csrf_token)
+        return lookup_again(request, config, cluster, name, csrf_token)
 
     #
     # Removing an object. Declared before `/proxies/{cluster}/{name}` for the
@@ -554,7 +556,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         if session.role != "admin":
             return forbidden_page(request, config)
-        state = _editor_state(request, config, cluster)
+        state = editor_state(request, config, cluster)
         stored = next((view for view in state.stored if view.name == name), None)
         if stored is None:
             return refusal_page(
@@ -587,7 +589,7 @@ def build_router(config: Config) -> APIRouter:
         name: str,
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        return _removal_submit(request, config, cluster, name, csrf_token)
+        return removal_submit(request, config, cluster, name, csrf_token)
 
     #
     # The advanced config dialog's *Check* and *Save* (Fas 17, B223). Answered
@@ -607,7 +609,7 @@ def build_router(config: Config) -> APIRouter:
         object_fingerprint: Annotated[str, Form(max_length=64)] = "",
         csrf_token: Annotated[str, Form(max_length=128, alias=auth.CSRF_FIELD)] = "",
     ) -> Response:
-        return _advanced_submit(
+        return advanced_submit(
             request,
             config,
             cluster,
@@ -1100,7 +1102,7 @@ def build_router(config: Config) -> APIRouter:
                     since=since,
                     until=now,
                     width=chosen.bucket,
-                    earlier=_earlier_names(backend, targets, aliases),
+                    earlier=earlier_names(backend, targets, aliases),
                 )
 
             def totals(backend: str) -> Callable[[Any], metrics.BackendMeasurement]:
@@ -1111,7 +1113,7 @@ def build_router(config: Config) -> APIRouter:
                         backend=backend,
                         since=counted_since,
                         until=counted_until,
-                        earlier=_earlier_names(backend, targets, aliases),
+                        earlier=earlier_names(backend, targets, aliases),
                         counters=metrics.summed(figures),
                     )
                     return metrics.measured(figures, found)

@@ -19,7 +19,7 @@ import yaml
 from haprion import status_collect
 from haprion.proxy_model import load_proxy
 
-from haprion_ui import auth, form_groups, health, objects, views
+from haprion_ui import auth, editor_flow, form_groups, health, objects
 from haprion_ui.db import ClusterStatus
 from haprion_ui.preview import DEFAULTS, build_document, form_from_document
 from tests.test_editor_page import EditorTestCase
@@ -308,7 +308,9 @@ class TheListingShowsTheObjectsPort(unittest.TestCase):
     def test_the_cell_reads_like_a_site_s_servers_then_port(self) -> None:
         """`domaincontroller1.example.com, domaincontroller2.example.com · 53`, as a site is `shop.example.com · 443`."""
 
-        template = (Path(views.__file__).parent / "templates" / "_proxy-rows.html").read_text()
+        template = (
+            Path(editor_flow.__file__).parent / "templates" / "_proxy-rows.html"
+        ).read_text()
         self.assertIn(
             "{{ object.servers | join(', ') }} · {% endif %}{{ object.ports | join(', ')", template
         )
@@ -333,7 +335,7 @@ class AMovedServerIsSaidOnItsObjectsPage(unittest.TestCase):
             "message": status_collect.moved_message(name, "now resolves to 198.51.100.9"),
         }
         row = moved(status(node("node-a")), warning)
-        return views.moved_dns_servers([row], cluster="alpha", pools=["dns"])
+        return editor_flow.moved_dns_servers([row], cluster="alpha", pools=["dns"])
 
     def test_its_own_pool_is_said(self) -> None:
         self.assertEqual(len(self.found("dns")), 1)
@@ -343,7 +345,7 @@ class AMovedServerIsSaidOnItsObjectsPage(unittest.TestCase):
         self.assertEqual(self.found("other"), [])
 
     def test_the_page_shows_what_it_is_given(self) -> None:
-        template = (Path(views.__file__).parent / "templates" / "object.html").read_text()
+        template = (Path(editor_flow.__file__).parent / "templates" / "object.html").read_text()
         self.assertIn("{% for message in dns_moved %}", template)
 
 

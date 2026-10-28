@@ -35,6 +35,7 @@ from haprion_ui import (
 from haprion_ui.access import current_session, forbidden_page
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.config import Config
+from haprion_ui.editor_flow import earlier_names
 from haprion_ui.reading import (
     OBJECTS_SOURCE,
     STATUS_SOURCE,
@@ -45,7 +46,6 @@ from haprion_ui.reading import (
 )
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
-    _earlier_names,
     _freshness_warnings,
     _log_time_filter,
     _posted,
@@ -272,7 +272,7 @@ def build_router(config: Config) -> APIRouter:
         def backend_reads(
             cluster: str, name: str
         ) -> tuple[Callable[[Any], list[metrics.Interval]], Callable[[Any], Any]]:
-            earlier = _earlier_names(name, targets_of[cluster], aliases[cluster])
+            earlier = earlier_names(name, targets_of[cluster], aliases[cluster])
 
             def samples(connection: Any) -> list[metrics.Interval]:
                 return db.read_backend_series(
@@ -302,7 +302,7 @@ def build_router(config: Config) -> APIRouter:
         ) -> tuple[Callable[[Any], Any], ...]:
             """A dns or syslog pool's readings: the backend's line, its own figures."""
 
-            earlier = _earlier_names(name, targets_of[cluster], aliases[cluster])
+            earlier = earlier_names(name, targets_of[cluster], aliases[cluster])
             samples, _totals = backend_reads(cluster, name)
 
             def totals(connection: Any) -> metrics.BackendMeasurement:

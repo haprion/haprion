@@ -45,17 +45,22 @@ from haprion_ui import (
 from haprion_ui import editor as editor_module
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
-from haprion_ui.templates import TEMPLATES
-from haprion_ui.views import (
-    BLOCKED_NOTICES,
+from haprion_ui.reading import (
     HISTORY_SOURCE,
     INVENTORY_SOURCE,
     NETWORK_SOURCE,
-    OBJECT_FIGURES,
     OBJECTS_SOURCE,
+    STATUS_SOURCE,
+    listed_clusters,
+    read_concurrently,
+    read_source,
+)
+from haprion_ui.templates import TEMPLATES
+from haprion_ui.views import (
+    BLOCKED_NOTICES,
+    OBJECT_FIGURES,
     SAVED_NOTICE,
     SERVER_NOTICES,
-    STATUS_SOURCE,
     _admin_write_gate,
     _advanced_submit,
     _earlier_names,
@@ -65,7 +70,6 @@ from haprion_ui.views import (
     _lookup_again,
     _objects_reading,
     _posted,
-    _read_concurrently,
     _refusal_page,
     _removal_submit,
     _settled_draft,
@@ -74,9 +78,7 @@ from haprion_ui.views import (
     _traffic_marks,
     current_session,
     forbidden_page,
-    listed_clusters,
     moved_dns_servers,
-    read_source,
 )
 
 
@@ -1124,7 +1126,7 @@ def build_router(config: Config) -> APIRouter:
             reads: list[Callable[[Any], Any]] = [
                 read for backend in served for read in (samples(backend), totals(backend))
             ]
-            answers = _read_concurrently(request.app.state.pool, reads)
+            answers = read_concurrently(request.app.state.pool, reads)
             traffic = [
                 metrics.backend_traffic(
                     metrics.backend_label(backend, targets),

@@ -23,10 +23,9 @@ from haprion_ui import (
 )
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.reading import NETWORK_SOURCE, STATUS_SOURCE, listed_clusters, read_source
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
-    NETWORK_SOURCE,
-    STATUS_SOURCE,
     _admin_write_gate,
     _dns_public_key,
     _first_cluster,
@@ -35,8 +34,6 @@ from haprion_ui.views import (
     _status_row,
     current_session,
     forbidden_page,
-    listed_clusters,
-    read_source,
 )
 
 

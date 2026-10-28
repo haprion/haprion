@@ -28,6 +28,7 @@ from haprion_ui import (
 )
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.reading import read_manager_certificates
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     DNS_PROFILE_APPLY_WAIT,
@@ -35,7 +36,6 @@ from haprion_ui.views import (
     _posted,
     current_session,
     forbidden_page,
-    read_manager_certificates,
 )
 
 

@@ -638,7 +638,7 @@ class TheClusterList(unittest.TestCase):
     def test_the_pages_take_an_empty_list_for_what_it_says(self) -> None:
         """Not ui.toml's list instead: that would show a removed cluster on every page."""
 
-        from haprion_ui import settings_tool, views
+        from haprion_ui import reading, settings_tool
 
         settings = unittest.mock.Mock(clusters=("alpha",))
         pool = unittest.mock.MagicMock()
@@ -650,7 +650,7 @@ class TheClusterList(unittest.TestCase):
                 unittest.mock.patch.object(db, "cluster_list", return_value=recorded),
             ):
                 self.assertEqual(settings_tool.known_clusters(object(), settings), expected)
-                self.assertEqual(views._cluster_list(request, settings), expected)
+                self.assertEqual(reading._cluster_list(request, settings), expected)
 
     def test_a_pass_goes_over_the_listed_clusters_not_the_configured_ones(self) -> None:
         asked: list[str] = []

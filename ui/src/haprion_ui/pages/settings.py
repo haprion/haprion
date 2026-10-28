@@ -43,19 +43,24 @@ from haprion_ui import (
 )
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.reading import (
+    OBJECTS_SOURCE,
+    SETTINGS_SOURCE,
+    STATUS_SOURCE,
+    cluster_creations,
+    listed_clusters,
+    read_manager_certificates,
+    read_source,
+)
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     COMMIT_ID,
     HASHING_BUSY,
-    OBJECTS_SOURCE,
-    SETTINGS_SOURCE,
-    STATUS_SOURCE,
     SWITCHED,
     UNAVAILABLE_PROVIDER,
     _account_rows,
     _admin_write_gate,
     _backup_overview,
-    _creations,
     _dns_public_key,
     _hashed,
     _new_password_problem,
@@ -70,9 +75,6 @@ from haprion_ui.views import (
     _start_oidc,
     _status_row,
     forbidden_page,
-    listed_clusters,
-    read_manager_certificates,
-    read_source,
 )
 
 
@@ -194,7 +196,7 @@ def build_router(config: Config) -> APIRouter:
             recent = db.recent_jobs(connection)
             status_access = db.status_access(connection)
             update_row = db.update_check(connection)
-        creation_rows = _creations(request, recent)
+        creation_rows = cluster_creations(request, recent)
         response = TEMPLATES.TemplateResponse(
             request,
             "settings.html",
@@ -1019,7 +1021,7 @@ def build_router(config: Config) -> APIRouter:
             with request.app.state.pool.connection() as connection:
                 recent = db.recent_jobs(connection)
             shown = next(
-                (row for row in _creations(request, recent) if row.cluster == creating), None
+                (row for row in cluster_creations(request, recent) if row.cluster == creating), None
             )
             if shown is not None:
                 return _new_cluster_page(request, gate, creating=shown)

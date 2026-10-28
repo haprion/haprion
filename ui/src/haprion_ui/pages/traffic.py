@@ -34,16 +34,20 @@ from haprion_ui import (
 )
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.config import Config
-from haprion_ui.templates import TEMPLATES
-from haprion_ui.views import (
+from haprion_ui.reading import (
     OBJECTS_SOURCE,
     STATUS_SOURCE,
-    _creations,
+    cluster_creations,
+    listed_clusters,
+    read_concurrently,
+    read_source,
+)
+from haprion_ui.templates import TEMPLATES
+from haprion_ui.views import (
     _earlier_names,
     _freshness_warnings,
     _log_time_filter,
     _posted,
-    _read_concurrently,
     _traffic_marks,
     _waf_allow,
     _waf_overview,
@@ -51,8 +55,6 @@ from haprion_ui.views import (
     _waf_work_page,
     current_session,
     forbidden_page,
-    listed_clusters,
-    read_source,
 )
 
 
@@ -95,7 +97,7 @@ def build_router(config: Config) -> APIRouter:
         # page showing its spinner waits for the list rather than redrawing
         # without it (finding 51).
         #
-        for entry in _creations(request, recent):
+        for entry in cluster_creations(request, recent):
             if entry.running:
                 busy.setdefault(entry.cluster, entry.running)
         return JSONResponse({"busy": busy, "catching_up": catching_up})
@@ -340,7 +342,7 @@ def build_router(config: Config) -> APIRouter:
                 keys.append((cluster, "backend", pool_name))
                 reads.extend(pool_reads(cluster, pool_name, figures))
                 spans.append(2)
-        answers = _read_concurrently(pool, reads)
+        answers = read_concurrently(pool, reads)
         read_back: dict[tuple[str, str, str], tuple[Any, ...]] = {}
         at = 0
         for key, span in zip(keys, spans, strict=True):

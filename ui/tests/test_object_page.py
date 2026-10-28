@@ -679,9 +679,7 @@ class ADraftThatWasPublished(DraftReading):
         name: str = "half-done",
         base: str = f"{24:040d}",
     ) -> Job:
-        from haprion_ui.views import (
-            _publish_key,
-        )
+        from haprion_ui.views import _publish_key
 
         #
         # Made against the commit the fixture's cache still shows, unless a

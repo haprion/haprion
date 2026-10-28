@@ -1161,6 +1161,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 /* The row's renewal upload (B165): a file, a button and one sentence, on
    one line where the row is wide enough and folded where it is not. */
 .registry-detail-upload { grid-column: 1 / -1; }
+.ndes-authority { padding: 14px 20px; border-top: 1px solid var(--line); }
 /* The Export… page (B255, two zips 2026-10-07): file, contents, button. Its
    own column widths - `.node-table` is fixed-layout and would lend its own. */
 .certificate-export-table th:nth-child(1) { width: 34%; }

@@ -38,18 +38,13 @@
   <input type="hidden" name="sha256" value="{{ authorities[0].sha256 }}">
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The CA the server gives</h3><p>Compare with the CA's certificate before you confirm.</p></div></div></header>
-    <div class="table-scroll"><table class="node-table ndes-authority-table">
-      <thead><tr><th scope="col">Certificate</th><th scope="col">SHA-256</th><th scope="col">Thumbprint (SHA-1)</th></tr></thead>
-      <tbody>
-      {% for authority in authorities %}
-      <tr>
-        <td data-label="Certificate">{{ authority.subject }}{% if authority.issues_ra %} <span class="optional">· issues for NDES</span>{% endif %}</td>
-        <td data-label="SHA-256"><code class="fingerprint">{{ authority.sha256 }}</code></td>
-        <td data-label="Thumbprint (SHA-1)"><code class="fingerprint">{{ authority.sha1 }}</code></td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table></div>
+    {% for authority in authorities %}
+    <div class="registry-detail-grid ndes-authority">
+      <div class="registry-detail-wide"><strong>Certificate</strong><span>{{ authority.subject }}{% if authority.issues_ra %} · issues for NDES{% endif %}</span></div>
+      <div class="registry-detail-wide"><strong>SHA-256</strong><span class="certificate-fingerprint">{{ authority.sha256 }}</span></div>
+      <div class="registry-detail-wide"><strong>Thumbprint (SHA-1)</strong><span class="certificate-fingerprint">{{ authority.sha1 }}</span></div>
+    </div>
+    {% endfor %}
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/ndes-profiles">Cancel</a><button type="submit" class="secondary-button deploy-button">Confirm this CA</button></div>
     </div>

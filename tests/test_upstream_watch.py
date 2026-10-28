@@ -950,3 +950,26 @@ class DependabotUpdates(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheScepClientsPins(unittest.TestCase):
+    """B383: the pinned certmonger against OSV each night, as the package's build asks."""
+
+    def osv(self, affected: str) -> Any:
+        def query(body: dict[str, Any]) -> dict[str, Any]:
+            package = body["package"]
+            if package["name"] == "openssl":
+                ecosystem = package["ecosystem"]
+                return {"vulns": [{"affected": [{"package": {"ecosystem": ecosystem}}]}]}
+            if package["ecosystem"] == affected:
+                return {"vulns": [{"id": "EXAMPLE-2026-1"}]}
+            return {}
+
+        return query
+
+    def test_a_pin_with_an_advisory_is_said_and_the_others_are_not(self) -> None:
+        found = WATCH.scep_advisories(BASE, self.osv("Debian:13"))
+        self.assertEqual(len(found), 1)
+        self.assertIn("haprion-scep debian13", found[0])
+        self.assertIn("EXAMPLE-2026-1", found[0])
+        self.assertEqual(WATCH.scep_advisories(BASE, self.osv("Example:1")), [])

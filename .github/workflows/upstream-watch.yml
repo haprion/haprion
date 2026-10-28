@@ -2,7 +2,7 @@ name: upstream watch
 
 # The WAF packages' upstream sources, watched every night (B323, B337):
 #
-#   vulnerabilities  govulncheck on the pinned engine against today's database;
+#   vulnerabilities  govulncheck on the pinned engine, and the SCEP client's pins in OSV, against today's database;
 #                    a finding opens an issue and makes the next proposal a
 #                    security one (the engine side only, two days' wait)
 #   propose          tools/upstream-watch rewrites the pins on the branch
@@ -35,7 +35,7 @@ concurrency:
 
 env:
   BRANCH: upstream-watch
-  VULNERABLE_TITLE: "The pinned WAF engine reaches a known vulnerability"
+  VULNERABLE_TITLE: "A pinned upstream component has a known vulnerability"
   MAJOR_TITLE: "Major upstream updates of the WAF packages need a decision"
   LOCKS_BRANCH: dependency-watch
   HELD_TITLE: "A locked dependency has a known vulnerability no upgrade clears"

@@ -32,7 +32,7 @@ concurrency:
 env:
   BRANCH: upstream-watch
   LOCKS_BRANCH: dependency-watch
-  VULNERABLE_TITLE: "The pinned WAF engine reaches a known vulnerability"
+  VULNERABLE_TITLE: "A pinned upstream component has a known vulnerability"
 
 jobs:
   merge:

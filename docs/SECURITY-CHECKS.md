@@ -223,7 +223,9 @@ The WAF packages are built from four pins in `tools/build-coraza-package.py` and
 release), the Go that compiles the engine and the govulncheck that reads it. Every night
 `.github/workflows/upstream-watch.yml`:
 
-1. runs govulncheck on the pinned engine (`tools/upstream-watch vuln`); a finding opens an issue
+1. runs govulncheck on the pinned engine and asks OSV about the SCEP client's pinned certmonger
+   (`tools/upstream-watch vuln`); a finding opens an issue. A certmonger pin is moved by hand, taken
+   where apt checked the distribution's signed index (`tools/build-scep-package.py`)
 2. asks upstream what is newer (`tools/upstream-watch check`), verifies it - the rule set's signature
    against `keys/upstream/coreruleset.asc`, the Go archive against go.dev's digest, the engine by the
    commit its release tag names - and rewrites the pins on the branch `upstream-watch`, with one pull

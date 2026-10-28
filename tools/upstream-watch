@@ -21,8 +21,9 @@ upstream release is two days old (seven until 26-10-23, B354); a major one never
 is - it is reported for a person and left out of the tree. `due` reads the change between two trees
 fresh from upstream and answers whether the newer one may be merged now; with
 `--vulnerable` (the pinned engine reaches a known vulnerability today) the wait
-is two days. `vuln` runs govulncheck on the pinned engine as the build does,
-and exits 3 when it finds something. `ran` asks whether the nightly run still
+is two days. `vuln` runs govulncheck on the pinned engine as the build does, and asks OSV
+about the SCEP client's pinned certmonger as its build does (B383); it exits 3
+when either finds something. `ran` asks whether the nightly run still
 happens: GitHub's schedule is best effort and drops a run without a trace, so a
 watch that has stopped would otherwise say nothing at all.
 
@@ -68,6 +69,7 @@ from types import ModuleType
 from typing import Any
 
 ENGINE_TOOL = "tools/build-coraza-package.py"
+SCEP_TOOL = "tools/build-scep-package.py"
 RELEASE_TOOL = "tools/build-release-packages"
 CRS_KEY = "keys/upstream/coreruleset.asc"
 CORAZA_REPOSITORY = "corazawaf/coraza-spoa"
@@ -783,8 +785,36 @@ def scratch(cache: Path) -> Iterator[Path]:
         remove(work)
 
 
+def scep_advisories(
+    tree: Path, query: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+) -> list[str]:
+    """Each pinned certmonger against OSV, as the SCEP package's build asks (B383).
+
+    The pins move only when a person moves them: a distribution's security
+    update reaches the package at the next release, whose build refuses an
+    affected version - and this says so the same night, not then.
+    """
+
+    scep = load(tree / SCEP_TOOL, "upstream_watch_scep")
+    found = []
+    for name, pin in sorted(scep.PINS.items()):
+        try:
+            print(
+                scep.client.advisories(
+                    pin.version, pin.distribution, pin.release, query or scep.client.osv_query
+                )
+            )
+        except ValueError as exc:
+            found.append(f"haprion-scep {name}: {exc}")
+    return found
+
+
 def vuln(tree: Path, cache: Path) -> int:
-    """govulncheck on the pinned engine, as the build runs it; 3 on findings."""
+    """govulncheck on the pinned engine, as the build runs it, and the SCEP client's pins
+    against OSV; 3 on findings."""
+    affected = scep_advisories(tree)
+    for line in affected:
+        print(line)
     cache = cache.resolve()
     cache.mkdir(parents=True, exist_ok=True)
     release = load(tree / RELEASE_TOOL, "upstream_watch_release")
@@ -816,7 +846,7 @@ def vuln(tree: Path, cache: Path) -> int:
         except ValueError as exc:
             print(exc)
             return 3 if "reaches known vulnerabilities" in str(exc) else 1
-    return 0
+    return 3 if affected else 0
 
 
 def main() -> int:

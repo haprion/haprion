@@ -103,7 +103,9 @@ def fetch(installed: str, *, url: str = URL) -> bytes:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310 - fixed https address
             body = _read_by(response, deadline)
     except urllib.error.HTTPError as exc:
-        raise NoAnswer(f"GitHub answered {exc.code}") from exc
+        # The error is the response too, and is closed (review 2026-10-28, F04).
+        with exc:
+            raise NoAnswer(f"GitHub answered {exc.code}") from exc
     except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
         #
         # A broken answer - cut short, or no status line - is no answer too.

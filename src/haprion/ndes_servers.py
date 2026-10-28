@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import urllib.error
 import urllib.request
 from base64 import b64decode
 from collections.abc import Callable, Iterator, Sequence
@@ -105,6 +106,12 @@ def get_ca_cert(endpoint: str) -> bytes:
     try:
         with urllib.request.urlopen(url, timeout=TIMEOUT) as response:  # noqa: S310 - checked https
             data: bytes = response.read(MAX_ANSWER + 1)
+    except urllib.error.HTTPError as exc:
+        # The error is the response too, and is closed (review 2026-10-28, F04).
+        with exc:
+            raise NdesServerError(
+                "unreachable", f"{endpoint} answered HTTP {exc.code}", exit_codes.UNAVAILABLE
+            ) from None
     except OSError as exc:
         raise NdesServerError(
             "unreachable", f"{endpoint} did not answer: {exc}", exit_codes.UNAVAILABLE

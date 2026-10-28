@@ -11,7 +11,9 @@ import os
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 import uuid
+from email.message import Message
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -97,6 +99,20 @@ class TheAuthorities(unittest.TestCase):
         self.assertEqual(found[0].sha256, issuing)
         self.assertEqual(found[0].sha1, thumbprint)
         self.assertEqual(answer.asked, [ENDPOINT])
+
+    def test_an_error_answer_is_said_and_closed(self) -> None:
+        """Review 2026-10-28, F04: an HTTP error is a response, and was left open."""
+
+        stream = io.BytesIO(b"not here")
+        error = urllib.error.HTTPError(ENDPOINT, 404, "", Message(), stream)
+        with (
+            mock.patch("urllib.request.urlopen", side_effect=error),
+            self.assertRaises(ndes_servers.NdesServerError) as caught,
+        ):
+            ndes_servers.get_ca_cert(ENDPOINT)
+        self.assertEqual(caught.exception.code, "unreachable")
+        self.assertIn("HTTP 404", str(caught.exception))
+        self.assertTrue(stream.closed)
 
     def test_an_address_that_is_not_https_is_refused_before_anything_is_asked(self) -> None:
         asked: list[str] = []

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import http.client
 import http.server
+import io
 import json
 import threading
 import time
 import unittest
+import urllib.error
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from email.message import Message
 from typing import Any
 from unittest import mock
 
@@ -62,6 +65,20 @@ class TheAnswer(unittest.TestCase):
         self.assertFalse(update_check.newer("0.10.0", "v0.9.9"))
         # A package's local version after the release's.
         self.assertFalse(update_check.newer("0.9.2+git20261020.abc", "v0.9.2"))
+
+
+class AnErrorAnswer(unittest.TestCase):
+    """Review 2026-10-28, F04: an HTTP error is a response, and was left open."""
+
+    def test_it_is_closed(self) -> None:
+        stream = io.BytesIO(b"rate limited")
+        error = urllib.error.HTTPError(update_check.URL, 403, "", Message(), stream)
+        with (
+            mock.patch("urllib.request.urlopen", side_effect=error),
+            self.assertRaises(update_check.NoAnswer),
+        ):
+            update_check.fetch("0.99.5")
+        self.assertTrue(stream.closed)
 
 
 class WhenItAsks(unittest.TestCase):

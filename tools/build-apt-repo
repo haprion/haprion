@@ -280,9 +280,11 @@ def fetch_site(url: str, public_key: Path, into: Path) -> int:
         try:
             signed = _get(f"{base}/dists/{suite}/InRelease")
         except urllib.error.HTTPError as exc:
-            if exc.code == 404 and number == 0:
-                return 0
-            raise RepoError(f"{suite}: InRelease: HTTP {exc.code}") from exc
+            # The error is the response too, closed however this ends (26-10-28).
+            with exc:
+                if exc.code == 404 and number == 0:
+                    return 0
+                raise RepoError(f"{suite}: InRelease: HTTP {exc.code}") from exc
         release = verified_release(signed, public_key)
         name = f"{COMPONENT}/binary-{ARCHITECTURE}/Packages"
         digest, size = listed(release, name)

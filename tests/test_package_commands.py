@@ -118,6 +118,7 @@ PACKAGE_OF = {
     "rrsync": "rsync",
     "rsync": "rsync",
     "rsyslogd": "rsyslog",
+    "pkill": "procps",
     "ss": "iproute2",
     "ssh": "openssh-client",
     "ssh-keygen": "openssh-client",

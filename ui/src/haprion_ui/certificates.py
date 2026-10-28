@@ -499,8 +499,16 @@ def with_deletion_states(
             state_active=states[entry.identifier].active,
         )
         if entry.identifier in states
-        and not states[entry.identifier].placeholder_only
-        and not caught_up(entry, states[entry.identifier])
+        and (
+            #
+            # A finished request fills the gap until the poll, before the
+            # registry lists it and while the material a reading taken
+            # mid-job could not read is still unread (F32).
+            #
+            not entry.readable
+            if states[entry.identifier].placeholder_only
+            else not caught_up(entry, states[entry.identifier])
+        )
         else entry
         for entry in overview.registry.certificates
     )

@@ -181,6 +181,20 @@ def _enrollment_state_of(job: Job, now: datetime) -> DeletionState | None:
         # that from the manager, and the job has nothing to add.
         #
         return None
+    if job.state == "done":
+        #
+        # As a finished ACME request does: the gap until the poller reads the
+        # material, which a reading taken mid-job showed as "Unreadable" in
+        # red for a few seconds (prod 26-10-28, F32).
+        #
+        return DeletionState(
+            "Enrolled",
+            "Enrolled; the listing reads it at the next poll",
+            "info",
+            True,
+            placeholder,
+            placeholder_only=True,
+        )
     return _verdict(job, "Enrollment", "The enrollment job failed", placeholder)
 
 

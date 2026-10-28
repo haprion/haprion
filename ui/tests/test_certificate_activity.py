@@ -9,6 +9,7 @@ from typing import Any
 from unittest import mock
 
 from haprion_ui import auth, certificate_activity, certificates
+from haprion_ui.certificates import CertificateOverview
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import node, overview, registered, registry_of, status, with_registry
 from tests.test_certificates import reading as certificate_reading
@@ -555,6 +556,62 @@ class AFinishedPublishGivesWayToTheRegistry(unittest.TestCase):
         )
         updated = certificates.with_deletion_states(current, {"example.com": self.state()})
         self.assertEqual(registry_of(updated).certificates[0].state_label, "On nodes & published")
+
+
+class AJustFinishedEnrollmentIsNotUnreadable(unittest.TestCase):
+    """The poller read the registry mid-job: the entry was there, the material not yet.
+
+    The row read "Unreadable" in red until the next reading, a few seconds
+    later (prod 26-10-28 07:52:59, F32). A request that has just finished
+    fills that gap as it fills the one before the registry lists it.
+    """
+
+    def unreadable(self) -> CertificateOverview:
+        return overview(
+            with_registry(
+                certificate_reading(), registered("web.example.com", kind="import", readable=False)
+            )
+        )
+
+    def test_a_finished_enrollment_says_enrolled_until_the_material_is_read(self) -> None:
+        job = queued(
+            operation="cert_scep",
+            cluster=None,
+            state="done",
+            payload={"id": "web.example.com", "profile": "ca", "domains": ["web.example.com"]},
+            finished_at=NOW - timedelta(seconds=2),
+        )
+        states = certificate_activity.deletion_states([job], now=NOW)
+
+        updated = certificates.with_deletion_states(self.unreadable(), states)
+
+        row = registry_of(updated).certificates[0]
+        self.assertEqual((row.state_label, row.state_tone), ("Enrolled", "info"))
+
+    def test_a_finished_request_does_the_same(self) -> None:
+        states = certificate_activity.deletion_states(
+            [issue_job("done", "web.example.com")], now=NOW
+        )
+
+        updated = certificates.with_deletion_states(self.unreadable(), states)
+
+        self.assertEqual(registry_of(updated).certificates[0].state_label, "Issued")
+
+    def test_once_the_material_is_read_the_row_is_the_registry_s(self) -> None:
+        job = queued(
+            operation="cert_scep",
+            cluster=None,
+            state="done",
+            payload={"id": "web.example.com", "profile": "ca", "domains": ["web.example.com"]},
+            finished_at=NOW - timedelta(seconds=2),
+        )
+        read = overview(with_registry(certificate_reading(), registered("web.example.com")))
+
+        updated = certificates.with_deletion_states(
+            read, certificate_activity.deletion_states([job], now=NOW)
+        )
+
+        self.assertNotEqual(registry_of(updated).certificates[0].state_label, "Enrolled")
 
 
 class AFinishedTargetChangeGivesWayToTheRegistry(unittest.TestCase):

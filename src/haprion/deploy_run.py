@@ -48,6 +48,7 @@ from haprion.deploy_plan import (
     certificate_gaps,
     next_step,
     record,
+    served_nothing,
     unverified_certificates,
     warnings_for,
 )
@@ -303,6 +304,7 @@ def run(
 
     progress = NOTHING_DONE
     announced: tuple[str, ...] = ()
+    first_deploy = served_nothing(status.observation())
     certificates_checked = preflight is None
 
     while True:
@@ -324,7 +326,11 @@ def run(
         # that becomes worse mid-run must say so; one that stays the same must
         # not repeat itself into noise.
         #
-        warnings = warnings_for(status.observation(), allow_vip_unknown=allow_vip_unknown)
+        warnings = warnings_for(
+            status.observation(),
+            allow_vip_unknown=allow_vip_unknown,
+            nothing_served=first_deploy,
+        )
         if warnings != announced:
             writer.write("\n")
             for warning in warnings:

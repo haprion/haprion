@@ -463,8 +463,17 @@ def _blocking_reason(
 NOTHING_DONE = Progress()
 
 
+def served_nothing(observation: ClusterObservation) -> bool:
+    """No node has a release: this is the cluster's first deploy."""
+
+    return all(node.release_hash is None for node in observation.nodes)
+
+
 def warnings_for(
-    observation: ClusterObservation, *, allow_vip_unknown: bool = False
+    observation: ClusterObservation,
+    *,
+    allow_vip_unknown: bool = False,
+    nothing_served: bool | None = None,
 ) -> tuple[str, ...]:
     """What the run should say about this observation, once, before acting.
 
@@ -475,11 +484,16 @@ def warnings_for(
 
     Except on the first deploy: with no release on any node nothing has served
     yet, the VIP comes up with this run, and "it is down" read as a fault in
-    the job's log (lab 26-10-26).
+    the job's log (lab 26-10-26). A run decides that on its first reading and
+    passes it as `nothing_served`: after the first node has the release the
+    address may still be coming up, and judging it on that reading warned
+    after all (prod 26-10-27, F29). Without it, this observation decides.
     """
 
     if observation.vip_state is VipState.NO_OWNER:
-        if all(node.release_hash is None for node in observation.nodes):
+        if nothing_served is None:
+            nothing_served = served_nothing(observation)
+        if nothing_served:
             return ()
         return (
             "no node currently owns the VIP; it is down",

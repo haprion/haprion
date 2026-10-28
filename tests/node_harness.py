@@ -61,7 +61,7 @@ class FakeNode:
     name: str
     mgmt_host: str
     owns_vip: bool | None = False
-    release_hash: str = OLD_HASH
+    release_hash: str | None = OLD_HASH
     reachable: bool = True
     #
     # The node answers, but with something that is not a usable status. Kept

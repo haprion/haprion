@@ -205,6 +205,43 @@ class OrderingTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
+class TheFirstDeployTests(unittest.TestCase):
+    def test_the_first_deploy_stays_quiet_after_its_first_node_has_the_release(self) -> None:
+        #
+        # Nothing served before the run, so the VIP being down is not news. Once
+        # the first node has the release the address may still be coming up;
+        # judging "first" on that reading warned in prod (26-10-27, F29).
+        #
+        cluster = FakeCluster(
+            nodes=[
+                FakeNode(name="node-a", mgmt_host="node-a.example.com", release_hash=None),
+                FakeNode(name="node-b", mgmt_host="node-b.example.com", release_hash=None),
+            ]
+        )
+
+        code, shown = deploy(cluster)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(cluster.triggered), 2)
+        self.assertNotIn("it is down", shown)
+        self.assertNotIn(
+            "no node currently owns the VIP; it is down",
+            [warning.message for warning in LAST_REPORT[0].warnings],
+        )
+
+    def test_a_later_deploy_with_the_vip_down_still_warns(self) -> None:
+        cluster = FakeCluster(
+            nodes=[
+                FakeNode(name="node-a", mgmt_host="node-a.example.com"),
+                FakeNode(name="node-b", mgmt_host="node-b.example.com"),
+            ]
+        )
+
+        _, shown = deploy(cluster)
+
+        self.assertIn("no node currently owns the VIP; it is down", shown)
+
+
 class SharedCountersTests(unittest.TestCase):
     """A reloaded node is given time to reach its peers before the next (B270)."""
 

@@ -190,11 +190,14 @@ class Client:
                 return Answer(response.status, self._read(response))
         except urllib.error.HTTPError as exc:
             # A 4xx from the token endpoint is how OAuth says no; its body says why.
-            if 300 <= exc.code < 400:
-                raise OidcError(
-                    "redirected", f"{url} answered with a redirect, which is not followed"
-                ) from exc
-            return Answer(exc.code, self._read(exc))
+            # The error is the response too, and is closed as one however it ends
+            # (review 2026-10-28, F04).
+            with exc:
+                if 300 <= exc.code < 400:
+                    raise OidcError(
+                        "redirected", f"{url} answered with a redirect, which is not followed"
+                    ) from exc
+                return Answer(exc.code, self._read(exc))
         except ssl.SSLError as exc:
             raise OidcError("tls", f"{url}: TLS failed: {exc.reason or exc}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:

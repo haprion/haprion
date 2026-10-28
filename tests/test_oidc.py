@@ -23,9 +23,11 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -514,6 +516,31 @@ class TheClientCheck(ProviderTestCase):
         accepted, message = self.check()
         self.assertFalse(accepted)
         self.assertIn("Client authentication failed", message)
+
+
+class AnErrorAnswer(unittest.TestCase):
+    """Review 2026-10-28, F04: an HTTP error is a response, and was left open."""
+
+    def answer(self, code: int, body: bytes) -> tuple[io.BytesIO, Any]:
+        stream = io.BytesIO(body)
+        error = urllib.error.HTTPError("https://idp.example.com/token", code, "", Message(), stream)
+        client = oidc.Client(max_bytes=64)
+        with mock.patch.object(client._opener, "open", side_effect=error):
+            try:
+                return stream, client.request("https://idp.example.com/token")
+            except oidc.OidcError as exc:
+                return stream, exc
+
+    def test_every_ending_closes_it(self) -> None:
+        for code, body, ended in (
+            (400, b'{"error": "invalid_grant"}', oidc.Answer),
+            (302, b"", oidc.OidcError),
+            (400, b"x" * 65, oidc.OidcError),
+        ):
+            with self.subTest(code=code, size=len(body)):
+                stream, result = self.answer(code, body)
+                self.assertIsInstance(result, ended)
+                self.assertTrue(stream.closed)
 
 
 class TheSealedSecret(unittest.TestCase):

@@ -213,6 +213,13 @@ installation that stopped.
 Last, it creates the first administrator, `admin`, and asks for its password. Without a terminal it ends with the
 command to run instead.
 
+The commands at the terminal read the cluster configuration as the account that runs them, and the configuration
+group, `haprion`, reads it. Add your own account to the group once; it takes effect at your next login:
+
+```bash
+sudo usermod -a -G haprion <your account>
+```
+
 ## 3. Install the nodes
 
 On each node, with the repository added:

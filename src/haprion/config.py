@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import grp
 import ipaddress
+import os
 import re
 import stat
 import types
@@ -640,9 +642,38 @@ def _required_string(value: Mapping[str, Any], key: str, location: str) -> str:
     return result
 
 
+def _who_may_read(path: Path) -> str:
+    """For a refusal: the group that owns the nearest directory, and how to join it.
+
+    The registry directory is the config group's. An administrator in %sudo
+    but not in that group got "Permission denied" and nothing more (prod
+    26-10-28, F35); the manual's answer is to join the group.
+    """
+
+    for directory in (path, *path.parents):
+        try:
+            gid = directory.stat().st_gid
+        except OSError:
+            continue
+        try:
+            group = grp.getgrgid(gid).gr_name
+        except KeyError:
+            return ""
+        account = os.environ.get("SUDO_USER") or os.environ.get("USER") or "<your account>"
+        return (
+            f"; the group {group} reads it: sudo usermod -a -G {group} {account}, then log in again"
+        )
+    return ""
+
+
 def _secure_yaml(path: Path, *, require_secure: bool) -> dict[str, Any]:
     try:
         metadata = path.lstat()
+    except PermissionError as exc:
+        raise ConfigError(
+            f"cannot stat configuration file: {exc}{_who_may_read(path.parent)}",
+            exit_code=exit_codes.UNAVAILABLE,
+        ) from exc
     except OSError as exc:
         raise ConfigError(
             f"cannot stat configuration file: {exc}", exit_code=exit_codes.UNAVAILABLE

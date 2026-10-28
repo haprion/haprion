@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import grp
 import io
+import os
 import tempfile
 import unittest
 from collections.abc import Callable, Iterator
@@ -23,6 +25,7 @@ from haprion.config import (
     RuntimeConfig,
     load_network,
     load_policy,
+    load_registry,
     load_runtime_config,
     receiver_id_names_a_host,
 )
@@ -239,6 +242,37 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AFileTheCallerMayNotRead(unittest.TestCase):
+    @unittest.skipIf(os.geteuid() == 0, "root reads every file")
+    def test_the_refusal_says_which_group_reads_it(self) -> None:
+        #
+        # The registry directory is the config group's. An administrator in
+        # %sudo but not in that group got "Permission denied" and nothing
+        # more (prod 26-10-28, F35).
+        #
+        with tempfile.TemporaryDirectory() as directory:
+            closed = Path(directory) / "registry"
+            closed.mkdir()
+            (closed / "clusters.yaml").write_text("schema_version: 1\n")
+            #
+            # Another of the caller's groups than its parent's, so the answer
+            # cannot come from the wrong directory by coincidence.
+            #
+            others = [gid for gid in os.getgroups() if gid != Path(directory).stat().st_gid]
+            if not others:
+                self.skipTest("the caller has only one group")
+            os.chown(closed, -1, others[0])
+            group = grp.getgrgid(others[0]).gr_name
+            closed.chmod(0)
+            try:
+                with self.assertRaises(ConfigError) as caught:
+                    load_registry(closed / "clusters.yaml", require_secure=False)
+            finally:
+                closed.chmod(0o700)
+
+        self.assertIn(f"sudo usermod -a -G {group} ", str(caught.exception))
 
 
 class DeployIdentityTests(unittest.TestCase):

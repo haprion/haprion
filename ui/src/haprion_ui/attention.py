@@ -731,11 +731,7 @@ def from_manager(
     # A held job waits for an admin, not for the worker (0082): it is its own
     # row, and never the worker's silence.
     #
-    held = [
-        job
-        for job in rows
-        if job.state == "pending" and job.held_since is not None and job.held_decision is None
-    ]
+    held = [job for job in rows if job.waits_for_decision]
     if held:
         items.append(
             Item(
@@ -748,12 +744,8 @@ def from_manager(
                 link="/jobs",
             )
         )
-    waiting = [
-        job
-        for job in rows
-        if job.state == "pending" and (job.held_since is None or job.held_decision is not None)
-    ]
-    running = any(job.state == "running" for job in rows)
+    waiting = [job for job in rows if job.state == "pending" and not job.waits_for_decision]
+    running = any(job.state == "running" and not job.waits_for_decision for job in rows)
     if writes and waiting and not running:
         oldest = min(job.created_at for job in waiting)
         if now - oldest > WORKER_WAITING:

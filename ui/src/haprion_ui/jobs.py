@@ -1004,7 +1004,7 @@ def _view(
     diagnostics: bool,
 ) -> JobView:
     label, tone = _state(job.state)
-    held = job.state == "pending" and job.held_since is not None and job.held_decision is None
+    held = job.waits_for_decision
     if held:
         label, tone = "Held", "warning"
     ended_badly = job.state in ATTENTION
@@ -1458,7 +1458,7 @@ def running_label(job: Job) -> str:
     spinner for as long as nobody answered (review 2026-10-22, 1B-4).
     """
 
-    if job.state == "pending" and job.held_since is not None and job.held_decision is None:
+    if job.waits_for_decision:
         return HELD
     if job.operation == "changes_publish" and deploys(job):
         return PUBLISH_AND_DEPLOY

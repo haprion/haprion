@@ -1104,6 +1104,30 @@ class NodeChangeAndDeploy(WorkerTestCase):
         self.assertEqual(finished["result"]["step"], "deploy")
         self.assertEqual(finished["result"]["node"]["result"]["action"], "removed")
 
+    def test_a_held_job_discarded_ends_on_its_kept_answer_and_deploys_nothing(self) -> None:
+        """Review 2026-10-28, F01: what the helper did stands; what follows is not run."""
+
+        job = replace(self.job("remove"), held_decision="discard", held_decided_by="admin")
+        kept = answer_receipt.Receipt("answered", stdout=self.changed(job)({}).stdout, exit_code=0)
+
+        calls = self.run_job(job, [], kept=kept)
+
+        self.assertEqual(calls, [])
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "done")
+        self.assertEqual(finished["result"]["result"]["action"], "removed")
+        self.assertNotIn("step", finished["result"])
+
+    def test_a_held_job_answered_run_goes_on_with_its_deploy(self) -> None:
+        job = replace(self.job("remove"), held_decision="run", held_decided_by="admin")
+        kept = answer_receipt.Receipt("answered", stdout=self.changed(job)({}).stdout, exit_code=0)
+
+        calls = self.run_job(job, [self.ran("deploy")], kept=kept)
+
+        self.assertEqual([call["operation"] for call in calls], ["deploy_cluster"])
+        (finished,) = self.finished
+        self.assertEqual(finished["result"]["step"], "deploy")
+
     def test_a_kept_answer_that_says_the_change_failed_ends_the_job_on_it(self) -> None:
         job = self.job("remove")
         refused = result_document(job, "failed")

@@ -91,13 +91,13 @@ class ARealDatabase(unittest.TestCase):
             },
         )
 
-    def running(self, operation: str, lease: str) -> int:
+    def running(self, operation: str, lease: str, cluster: str = "alpha") -> int:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "insert into job (operation, cluster, payload, idempotency_key, state, "
-                "claim_token, worker_id, lease_until, started_at) values (%s, 'alpha', '{}', "
+                "claim_token, worker_id, lease_until, started_at) values (%s, %s, '{}', "
                 "%s, 'running', %s, 'w', now() + %s::interval, now()) returning id",
-                (operation, uuid4(), uuid4(), lease),
+                (operation, cluster, uuid4(), uuid4(), lease),
             )
             job = _first(cursor)
             connection.commit()
@@ -207,6 +207,98 @@ class ARealDatabase(unittest.TestCase):
 
         self.assertEqual(pausing.returncode, 75, stderr)
         self.assertIn(f"backup_run (job {pending})", stderr)
+
+    def adopt(self, job: int) -> db.ClaimedJob | None:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
+            attempts = worker.execute("select attempts from job where id = %s", (job,)).fetchone()
+            adopted = db.adopt_expired(
+                worker,
+                job_id=job,
+                attempts=int(attempts[0]) if attempts else -1,
+                worker_id="w2",
+                lease_seconds=60,
+            )
+            worker.commit()
+        return adopted
+
+    def test_a_held_job_is_adopted_only_after_an_admin_s_answer(self) -> None:
+        """Review 2026-10-28, F01: recovery took a held job over on its kept answer
+        and ran the deploy after it, with no admin's Run."""
+
+        free = self.running("cluster_node", "-1 minute")
+        run = self.running("cluster_node", "-1 minute", cluster="beta")
+        discard = self.running("cluster_node", "-1 minute", cluster="gamma")
+        with self.connect() as connection:
+            connection.execute(
+                "update job set held_since = now() where id = any(%s)", ([run, discard],)
+            )
+            connection.commit()
+
+        adopted = self.adopt(free)
+        self.assertIsNotNone(adopted)
+        self.assertIsNone(self.adopt(free), "a second worker adopted the same job")
+        self.assertIsNone(self.adopt(run))
+        self.assertIsNone(self.adopt(discard))
+
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertTrue(
+                db.decide_held_job(connection, job_id=run, decision="run", actor="admin")
+            )
+            self.assertTrue(
+                db.decide_held_job(connection, job_id=discard, decision="discard", actor="admin")
+            )
+            connection.commit()
+        answered = {job: self.adopt(job) for job in (run, discard)}
+        self.assertEqual(
+            {job: claimed.held_decision if claimed else None for job, claimed in answered.items()},
+            {run: "run", discard: "discard"},
+        )
+
+    def test_an_adoption_waits_while_a_release_has_paused_claims(self) -> None:
+        """Review 2026-10-28, F03: the pause stopped a claim and not an adoption."""
+
+        job = self.running("cluster_node", "-1 minute")
+        self.assertEqual(self.drain("pause", "--wait", "3").returncode, 0)
+        self.assertIsNone(self.adopt(job))
+        self.assertEqual(self.drain("resume").returncode, 0)
+        self.assertIsNotNone(self.adopt(job))
+
+    def test_an_adoption_in_flight_is_either_finished_before_the_pause_or_waited_for(
+        self,
+    ) -> None:
+        """Review 2026-10-28, F03: as a claim in flight is, by the same SHARE lock."""
+
+        job = self.running("cluster_node", "-1 minute")
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-drain"
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
+            adopted = db.adopt_expired(
+                worker, job_id=job, attempts=0, worker_id="w2", lease_seconds=60
+            )
+            self.assertIsNotNone(adopted)
+            directory = Path(tempfile.mkdtemp(prefix="drain-"))
+            self.addCleanup(shutil.rmtree, directory)
+            (directory / "ui-admin.conf").write_text(
+                f"DB_NAME={os.environ['HAPRION_UI_TEST_DATABASE_NAME']}\n"
+                f"DB_ROLE={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}\n"
+            )
+            pausing = subprocess.Popen(  # noqa: S603 - fixed interpreter, the repository's script
+                ["/bin/bash", str(script), "pause", "--wait", "3"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env={
+                    **os.environ,
+                    "HAPRION_UI_DRAIN_CONFIG": str(directory),
+                    "PGHOST": os.environ["HAPRION_UI_TEST_DATABASE_SOCKET"],
+                },
+            )
+            with self.assertRaises(subprocess.TimeoutExpired):
+                pausing.wait(timeout=1.5)
+            worker.commit()
+        _, stderr = pausing.communicate(timeout=30)
+
+        self.assertEqual(pausing.returncode, 75, stderr)
+        self.assertIn(f"cluster_node (job {job})", stderr)
 
     def test_a_nul_in_what_a_helper_said_is_stored_shown_rather_than_refused(self) -> None:
         """Review 26-10-24, 05-08: PostgreSQL refused the NUL, and the worker died on it."""

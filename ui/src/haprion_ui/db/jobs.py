@@ -41,6 +41,20 @@ class Job:
     held_decision: str | None = None
     held_decided_by: str | None = None
 
+    @property
+    def waits_for_decision(self) -> bool:
+        """Held and not yet answered: waiting for an admin, not for the worker.
+
+        A running one too (review 2026-10-28, F01): its helper may have kept an
+        answer, and what follows it in the job waits for Run as a queued job does.
+        """
+
+        return (
+            self.state in ("pending", "running")
+            and self.held_since is not None
+            and self.held_decision is None
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class AbandonedJob:
@@ -60,6 +74,12 @@ class AbandonedJob:
     state: str
     attempts: int
     lease_until: datetime
+    #
+    # Held since the manager last started, and the admin's answer if any: an
+    # adoption waits for it (review 2026-10-28, F01).
+    #
+    held_since: datetime | None = None
+    held_decision: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,13 +556,15 @@ def decide_held_job(connection: Connection[Any], *, job_id: int, decision: str, 
     """An admin's answer for a held job: `run` or `discard`. False when it is not held and waiting.
 
     Only the answer is written; the worker takes the job and runs or ends it,
-    as it changes every job's state.
+    as it changes every job's state. A running one is answered too: recovery
+    adopts it on its helper's kept answer only once it is (review 2026-10-28,
+    F01), and `discard` then ends it on that answer without what follows.
     """
 
     with connection.cursor() as cursor:
         cursor.execute(
             "update job set held_decision = %(decision)s, held_decided_by = %(actor)s "
-            " where id = %(id)s and state = 'pending' "
+            " where id = %(id)s and state in ('pending', 'running') "
             "   and held_since is not null and held_decision is null",
             {"id": job_id, "decision": decision, "actor": actor},
         )
@@ -679,7 +701,8 @@ def expired_leases(connection: Connection[Any]) -> list[AbandonedJob]:
 
     with connection.cursor(row_factory=class_row(AbandonedJob)) as cursor:
         cursor.execute(
-            "select id, request_id, operation, cluster, state, attempts, lease_until "
+            "select id, request_id, operation, cluster, state, attempts, lease_until, "
+            "       held_since, held_decision "
             "  from job "
             " where state = 'running' and lease_until < statement_timestamp() "
             " order by lease_until"
@@ -734,7 +757,13 @@ def adopt_expired(
     attempt, so a job whose ending keeps stopping its worker is not adopted
     without end.
 
-    Guarded as `requeue_expired` is; None means the world moved.
+    Guarded as `requeue_expired` is; None means the world moved. And as a
+    claim is (review 2026-10-28, F01, F03): nothing held and unanswered is
+    adopted - what follows the kept answer is new work an admin has not
+    allowed - and nothing while a release has paused claims. The pause holds
+    the lock on this table every adoption needs, as `claim_job` says, so an
+    adoption either finished before it, and is a running job the release
+    waits for, or reads it.
     """
 
     with connection.cursor(row_factory=class_row(ClaimedJob)) as cursor:
@@ -749,6 +778,10 @@ def adopt_expired(
             "   and state = 'running' "
             "   and lease_until < statement_timestamp() "
             "   and attempts = %(attempts)s "
+            "   and (held_since is null or held_decision is not null) "
+            "   and not exists ( "
+            "       select 1 from job_claim_gate "
+            "        where paused_until > statement_timestamp()) "
             "returning id, request_id, operation, cluster, payload, state, created_at, "
             "          started_at, finished_at, exit_code, outcome, result, "
             "          stderr_excerpt, idempotency_key, attempts, claim_token, "

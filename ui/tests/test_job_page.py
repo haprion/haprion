@@ -977,6 +977,16 @@ class AHeldJob(LoginTestCase):
         self.assertIn('name="decision" value="discard">Discard</button>', page)
         self.assertNotIn('action="/jobs/19/held"', self.admin(writes=False).get("/jobs").text)
 
+    def test_a_running_one_is_held_too_and_offered_the_same_answers(self) -> None:
+        """Review 2026-10-28, F01: its helper's answer waits with it for Run or Discard."""
+
+        running = replace(job(state="running"), held_since=datetime.now(UTC))
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[running]):
+            page = self.admin().get("/jobs").text
+        self.assertIn(">Held</span>", page)
+        self.assertIn("Running when the manager last started.", page)
+        self.assertIn('name="decision" value="discard">Discard</button>', page)
+
     def test_the_answer_is_recorded_and_anything_else_refused(self) -> None:
         client = self.admin()
         page = client.get("/jobs").text

@@ -8,6 +8,7 @@ is never "did the update run" but "was this decision allowed to be made".
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
@@ -371,6 +372,41 @@ class AdoptingAJob(unittest.TestCase):
         )
         self.assertEqual(order, ["commit", "resume"])
         self.assertEqual(self.audited[0]["action"], "job_adopted")
+
+    def test_a_held_job_s_kept_answer_waits_for_an_admin(self) -> None:
+        """Review 2026-10-28, F01: adopted at boot, its deploy ran with no Run."""
+
+        held = replace(abandoned("cluster_node"), held_since=EXPIRED)
+        resume = mock.Mock()
+        with (
+            mock.patch.object(db, "expired_leases", return_value=[held]),
+            mock.patch.object(db, "adopt_expired") as adopt,
+        ):
+            moved = recovery.adjudicate(
+                self.connection,
+                worker=WORKER,
+                resume=resume,
+                receipts=lambda _request_id: self.answered,
+            )
+
+        self.assertEqual(moved, 0)
+        adopt.assert_not_called()
+        resume.assert_not_called()
+        self.assertEqual(self.audited, [])
+
+        answered = replace(held, held_decision="discard")
+        with (
+            mock.patch.object(db, "expired_leases", return_value=[answered]),
+            mock.patch.object(db, "adopt_expired", return_value=mock.sentinel.claimed),
+        ):
+            moved = recovery.adjudicate(
+                self.connection,
+                worker=WORKER,
+                resume=resume,
+                receipts=lambda _request_id: self.answered,
+            )
+        self.assertEqual(moved, 1)
+        resume.assert_called_once()
 
     def test_without_a_worker_to_end_it_the_job_is_left_alone(self) -> None:
         with (

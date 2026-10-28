@@ -134,12 +134,13 @@
       {#
         Queued before the manager last started (0082): after a restore it may
         have run already, at the backup's moment. Nothing runs it until an
-        admin says so.
+        admin says so. A running one had its helper's answer kept; Run goes on
+        with what follows it, Discard ends it on that answer (review 2026-10-28, F01).
       #}
       <tr class="job-follow-up">
         <td colspan="8">
           <div class="follow-up-line">
-            <span><span class="status-dot status-warning" aria-hidden="true"></span>Queued before the manager last started. It may have run before a restore.</span>
+            <span><span class="status-dot status-warning" aria-hidden="true"></span>{% if job.state == 'running' %}Running when the manager last started. Discard keeps what it did and runs nothing more.{% else %}Queued before the manager last started. It may have run before a restore.{% endif %}</span>
             {% if management_writes and role == 'admin' %}<form method="post" action="/jobs/{{ job.id }}/held" class="held-decision"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary-button" type="submit" name="decision" value="run">Run</button><button class="secondary-button" type="submit" name="decision" value="discard">Discard</button></form>{% endif %}
           </div>
         </td>

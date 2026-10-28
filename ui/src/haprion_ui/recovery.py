@@ -297,6 +297,21 @@ def adjudicate(
             connection.rollback()
             continue
 
+        if (
+            judgement.verdict == "adopt"
+            and job.held_since is not None
+            and job.held_decision is None
+        ):
+            #
+            # Its helper's answer is kept and waits with it: what follows in
+            # the job - a node change's deploy - is new work, and a job held
+            # since the manager started runs nothing new before an admin's
+            # Run (review 2026-10-28, F01). Discard ends it on that answer.
+            #
+            logger.info("job %s is held: its kept answer waits for Run or Discard", job.id)
+            connection.rollback()
+            continue
+
         if judgement.verdict == "wait":
             logger.info("job %s is not yet decidable: %s", job.id, judgement.reason)
             connection.rollback()
@@ -330,9 +345,13 @@ def adjudicate(
             #
             # Another worker claimed the row between the reading and the write,
             # or another adjudicator got there first. Either way this decision
-            # was made about a world that no longer exists.
+            # was made about a world that no longer exists. An adoption also
+            # waits while a release has paused claims (review 2026-10-28, F03).
             #
-            logger.info("job %s moved while it was being judged; leaving it alone", job.id)
+            logger.info(
+                "job %s moved while it was being judged, or claims are paused; leaving it alone",
+                job.id,
+            )
             connection.rollback()
             continue
 

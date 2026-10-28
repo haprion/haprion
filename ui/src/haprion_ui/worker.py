@@ -814,7 +814,20 @@ def _conclude(
 
     exit_code = completed.exit_code
     stderr = completed.stderr
-    if state == "done" and job.operation == "changes_publish" and job.payload.get("deploy") is True:
+    if job.held_decision == "discard":
+        #
+        # Adopted on its helper's kept answer after an admin's Discard (review
+        # 2026-10-28, F01): what the helper did stands and is written; what
+        # would have followed it is not run.
+        #
+        logger.warning(
+            "job %s ends on its helper's answer; %s discarded what follows",
+            job.id,
+            job.held_decided_by,
+        )
+    elif (
+        state == "done" and job.operation == "changes_publish" and job.payload.get("deploy") is True
+    ):
         deployed = _deploy_after(job, cast(dict[str, Any], result), lease.ours, stopping)
         if deployed is None:
             return

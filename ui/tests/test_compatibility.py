@@ -484,13 +484,22 @@ class RollbackSchemaCommandTests(unittest.TestCase):
             "[console_scripts]\nhaprion-worker = haprion_ui.worker:_entry\n"
         )
 
-    def ask(self, root: Path, target: str, revision: str) -> tuple[int, str]:
+    def ask(self, root: Path, target: str, revision: str, packaged: str = "new") -> tuple[int, str]:
         from haprion_ui import rollback_schema
 
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = rollback_schema.main(
-                ["--platform-root", str(root), "--target", target, "--revision", revision]
+                [
+                    "--platform-root",
+                    str(root),
+                    "--target",
+                    target,
+                    "--revision",
+                    revision,
+                    "--packaged",
+                    packaged,
+                ]
             )
         return code, out.getvalue() + err.getvalue()
 
@@ -507,6 +516,30 @@ class RollbackSchemaCommandTests(unittest.TestCase):
             self.assertIn("safe for a UI from 0072 on", said)
             self.assertEqual(self.ask(root, "broken", "9999")[0], 1)
             self.assertEqual(self.ask(root, "../new", "9999")[0], 1)
+
+    def test_the_installed_release_s_declaration_outweighs_an_older_carrier_s(self) -> None:
+        """26-10-28: 0.99.3 declared 0101 unsafe, 0.99.4 corrected it to safe from 0100.
+
+        Both on disk, the rollback to 0.99.2 was refused on 0.99.3's word: the
+        first carrier by name decided. The release the package installed knows
+        the newest migrations; without it carrying the schema, the newest
+        version does - by number, so 0.99.10 is after 0.99.9.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.release(root, "0.99.2-aaaa", "0072", "0064")
+            self.release(root, "0.99.3-bbbb", "0078", "0078")
+            self.release(root, "0.99.4-cccc", "0078", "0072")
+            self.assertEqual(self.ask(root, "0.99.2-aaaa", "0078", "0.99.4-cccc")[0], 0)
+            self.assertEqual(self.ask(root, "0.99.2-aaaa", "0078", "0.99.2-aaaa")[0], 0)
+            code, said = self.ask(root, "0.99.2-aaaa", "0078", "0.99.3-bbbb")
+            self.assertEqual(code, 1)
+            self.assertIn("safe for a UI from 0078 on", said)
+
+            self.release(root, "0.99.9-dddd", "0079", "0079")
+            self.release(root, "0.99.10-eeee", "0079", "0078")
+            self.assertEqual(self.ask(root, "0.99.4-cccc", "0079", "0.99.2-aaaa")[0], 0)
 
 
 class UpgradeFailureTests(unittest.TestCase):

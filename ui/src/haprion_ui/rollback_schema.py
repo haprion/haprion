@@ -1,19 +1,22 @@
 """Whether a UI release on disk can run on the database's schema (26-10-20).
 
     python -m haprion_ui.rollback_schema --platform-root <dir> --target <release-id>
-                                         --revision <revision>
+                                         --revision <revision> --packaged <release-id>
 
 Asked by `haprion-rollback` before it switches, with the interpreter of the
 release the package installed - the one that knows the newest migrations -
 and never the target's: a release from before this question existed has no
 answer to it. Every release's requirements are read from its own
-`compatibility.json`.
+`compatibility.json`. Where two carry the schema, the release the package
+installed is asked first and then the newest: a later release may correct an
+earlier one's declaration, as 0.99.4 did 0.99.3's (26-10-28).
 Exit 0 when the target runs on the schema, 1 with the reason when it does not.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -26,9 +29,17 @@ from .compatibility import (
 )
 
 
-def owners(root: Path) -> list[Requirements]:
+def newest_first(name: str) -> tuple[int, ...]:
+    """`0.99.10-<hash>` after `0.99.9-<hash>`; a name without a version last."""
+
+    version = re.match(r"\d+(?:\.\d+)*", name)
+    return tuple(int(part) for part in version.group().split(".")) if version else ()
+
+
+def owners(root: Path, packaged: str) -> list[Requirements]:
     found = []
-    for release in sorted((root / "releases").iterdir()):
+    releases = sorted((root / "releases").iterdir(), key=lambda path: newest_first(path.name))
+    for release in sorted(releases[::-1], key=lambda path: path.name != packaged):
         try:
             found.append(ui_requirements(release))
         except CompatibilityError:
@@ -41,13 +52,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--platform-root", required=True, type=Path)
     parser.add_argument("--target", required=True)
     parser.add_argument("--revision", required=True)
+    parser.add_argument("--packaged", required=True)
     args = parser.parse_args(argv)
     try:
         target = ui_requirements(named_release(args.platform_root, args.target, "UI"))
     except CompatibilityError as exc:
         print(f"the target says nothing about its schema: {exc}", file=sys.stderr)
         return 1
-    problem = rollback_schema_problem(target, owners(args.platform_root), args.revision)
+    problem = rollback_schema_problem(
+        target, owners(args.platform_root, args.packaged), args.revision
+    )
     if problem is not None:
         print(problem, file=sys.stderr)
         return 1

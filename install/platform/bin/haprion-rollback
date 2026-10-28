@@ -220,7 +220,8 @@ packaged="$(sed -n 's/^RELEASE_ID=//p' "$payload" 2>/dev/null)"
     || die "the release this package installed (${payload}) is not on disk"
 packaged_python="${releases}/${packaged}/venv/bin/python"
 if ! "$packaged_python" -I -m "$(release_module "$packaged_python").rollback_schema" \
-        --platform-root "$platform_root" --target "$target" --revision "$revision" 2>&1 \
+        --platform-root "$platform_root" --target "$target" --revision "$revision" \
+        --packaged "$packaged" 2>&1 \
         | sed 's/^/  /'; then
     die "${target} cannot run on the database's schema ${revision}.
   Roll back to a release at or after the one the schema is declared safe from,

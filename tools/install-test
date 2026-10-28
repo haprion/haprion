@@ -1098,14 +1098,21 @@ def run_upgrade(
                     f"{role}: {fields['Package']} is {have.strip()}, not {fields['Version']}"
                 )
 
-    def the_manager_serves_after_it() -> None:
+    def the_web_answers(after: str) -> None:
         for unit in ("haprion-web.socket", "haprion-worker", "haprion-poller"):
             run.on("mgr", f"systemctl is-active --quiet {unit}")
         _, answer = run.on(
             "mgr", "curl -fsS --unix-socket /run/haprion-web.sock http://localhost/healthz"
         )
         if '"ok":true' not in answer.replace(" ", ""):
-            raise Failed(f"the web does not answer after the update:\n{answer}")
+            raise Failed(f"the web does not answer after {after}:\n{answer}")
+
+    def current_ui_release() -> str:
+        _, link = run.on("mgr", "readlink /opt/haprion-ui/current")
+        return link.strip().rsplit("/", 1)[-1]
+
+    def the_manager_serves_after_it() -> None:
+        the_web_answers("the update")
         output = run.deploy()
         if "RESULT: OK" not in output:
             raise Failed(f"a deploy after the update did not succeed:\n{output}")
@@ -1115,6 +1122,22 @@ def run_upgrade(
     def published_and_deployed() -> None:
         run.publish()
         run.deploy()
+
+    released: list[str] = []
+
+    def rolled_back_and_forward() -> None:
+        """What the update prints as its way back, taken, and then the way forward again.
+
+        26-10-28: the rollback to 0.99.2 was refused on the word of a release
+        it no longer ran on; nothing had rolled back after an update before.
+        """
+
+        updated = current_ui_release()
+        for to in (released[0], updated):
+            run.on("mgr", f"/usr/sbin/haprion-rollback --to {shlex.quote(to)}")
+            if current_ui_release() != to:
+                raise Failed(f"haprion-rollback --to {to} left {current_ui_release()} current")
+            the_web_answers(f"the rollback to {to}")
 
     try:
         image = step("an empty server image", run.image)
@@ -1134,6 +1157,7 @@ def run_upgrade(
         step("the first deploy rolls out version 1", run.first_deploy_is_version_one)
         step(f"{NODES[1]} added", lambda: run.add_node(NODES[1], blocks[1]))
         step("an object published and deployed", published_and_deployed)
+        released.append(current_ui_release())
         step("the manager updated to this release with apt", lambda: upgraded("mgr", new_manager))
         for role in NODES:
             step(
@@ -1141,6 +1165,7 @@ def run_upgrade(
                 functools.partial(upgraded, role, new_node),
             )
         step("the manager serves, deploys, and the object answers", the_manager_serves_after_it)
+        step(f"haprion-rollback to {before}'s interface and forward again", rolled_back_and_forward)
     except Failed as failure:
         print("FAILED")
         print()

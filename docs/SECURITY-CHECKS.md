@@ -152,7 +152,8 @@ the logs directory. `--keep` leaves the machines running for a look inside.
 `--upgrade-from` tests the update as well. The previous release's packages are installed on a
 second set of machines, with a cluster and an object deployed, and then updated to the new ones with
 apt. The run then requires every package configured at its new version, the web answering, a deploy
-that succeeds and the object answering. A release that cannot be installed over the one before
+that succeeds and the object answering, and `haprion-rollback` to the previous release and back with
+the web answering after each. A release that cannot be installed over the one before
 fails here, not on the operator's manager. `--no-upgrade` tests a new installation only, and has to
 be given on purpose.
 

@@ -4076,6 +4076,7 @@ are audited and versioned the same way.
 | *Settings → Nodes & clusters*: nodes and clusters | `haprion-node`, `haprion-cluster` |
 | *Certificates*: issue, import, request, NDES, publish | `haprion-cert-issue`, `-import`, `-request`, `-scep`, `-publish`, `-deploy` |
 | *Certificates*: renew | certbot's: `haprion-cert-issue --domain <id> --renew`; NDES: `haprion-cert-scep --id <id> …` |
+| A certbot lineage from before the installation, registered | `haprion-cert-issue --domain <lineage> --adopt` |
 | *Certificates*: publish to, remove from, delete | `haprion-cert-target`, `haprion-cert-delete` |
 | *Certificates*: DNS profiles and NDES profiles | `haprion-profiles` |
 | External certificate receivers | `haprion-cert-receiver` |
@@ -5538,6 +5539,17 @@ Each entry under `certificates` takes these fields:
 - **`source.lineage`** (`acme` only) is the certbot lineage name. Left out, it is the certificate ID, which
   is what a certificate issued from the interface gets. Set it only where an existing lineage has another
   name - renaming a lineage moves certbot's archive, and is not worth it.
+
+  **A lineage certbot already has** - one the manager renewed for other machines before this installation,
+  say - is not issued again: that would make a second lineage under another name. It is registered as it is,
+  with its targets, and published:
+
+  ```bash
+  sudo haprion-cert-issue --domain <lineage> --adopt --receiver <id>
+  ```
+
+  It keeps renewing with its own renewal configuration in `/etc/letsencrypt/renewal/`, and from then on the
+  deploy hook publishes each renewal.
 - **`source.dns_profile`** (`acme` only) names the DNS profile the certificate was issued with. Renewal
   uses it where the plugin keeps no credentials setting of its own (see
   [The certbot environment](#the-certbot-environment)).

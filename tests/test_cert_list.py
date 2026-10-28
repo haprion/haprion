@@ -904,6 +904,30 @@ class RegistryCommandTests(unittest.TestCase):
         #
         self.assertIn("lb-01.example.net", rendered)
 
+    def test_the_interface_certificate_is_used_by_the_interface_not_nowhere(self) -> None:
+        #
+        # It has no targets by construction (B188) and nginx serves it, so
+        # "nowhere" read as an orphan (prod 26-10-28, F33).
+        #
+        document = self._document(
+            {
+                "certificates": [
+                    self._entry(
+                        id="mgr.example.com",
+                        targets={"clusters": [], "receivers": []},
+                        interface=True,
+                        distribution=None,
+                    )
+                ]
+            }
+        )
+        rendered, _, code = self._run(["--registry"], document)
+
+        self.assertEqual(code, 0)
+        row = next(line for line in rendered.splitlines() if line.startswith("mgr.example.com"))
+        self.assertTrue(row.rstrip().endswith("the interface"), row)
+        self.assertNotIn("nowhere", row)
+
     def test_it_never_claims_a_receiver_installed_anything(self) -> None:
         document = self._document({"certificates": [self._entry()], "receivers": []})
         rendered, _, _ = self._run(["--registry"], document)

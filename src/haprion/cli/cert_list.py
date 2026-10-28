@@ -105,9 +105,13 @@ def _targets(entry: Mapping[str, Any]) -> str:
     """Where one certificate goes, clusters and receivers in one column.
 
     Receivers are marked so the two kinds are not read as one list: a cluster
-    is rolled out by this manager, and a receiver fetches on its own.
+    is rolled out by this manager, and a receiver fetches on its own. The
+    interface certificate has no targets by construction (B188); nginx
+    serves it, so "nowhere" would read as an orphan.
     """
 
+    if entry.get("interface") is True:
+        return "the interface"
     targets = entry.get("targets")
     if not isinstance(targets, Mapping):
         return "-"

@@ -4565,6 +4565,10 @@ in the section linked.
 - **No ACME client of its own.** Renewal reuses certbot and the NDES enrollment client: the manager runs
   them twice a day from `haprion-certbot-renew.timer` and publishes what they renew
   ([Certificates](#certificates)).
+- **A certbot lineage from before the installation is not taken over.** Issuing a name certbot already
+  has is refused, because issuing it again would make a second lineage. A lineage kept from an earlier
+  setup is added to the registry by hand, with its targets
+  ([The certificate registry](#the-certificate-registry)).
 - **The database dump and its restore check are not watched by the interface.** Backing up the management
   host is the backup; the dump is for putting one table back. Whoever relies on it should let their own
   monitoring follow `haprion-backup.service` and `haprion-restore-check.service`

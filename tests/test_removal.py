@@ -51,10 +51,13 @@ class Machine(MANAGER.Host):  # type: ignore[misc, name-defined]
         self.groups: set[str] = set()
         self.mounts: set[Path] = set()
         self.answers: dict[str, str] = {}
+        self.fails: set[str] = set()
 
     def run(self, argv: list[str], *, input_text: str | None = None) -> Any:
         self.ran.append(argv)
         joined = " ".join(argv)
+        if any(failing in joined for failing in self.fails):
+            return subprocess.CompletedProcess(argv, 1, "", "currently used by process 4242")
         for asked, answer in self.answers.items():
             if asked in joined:
                 return subprocess.CompletedProcess(argv, 0, answer, "")
@@ -453,6 +456,7 @@ class ANode(unittest.TestCase):
             "/root/.ssh/known_hosts",
             "/root/.ssh/authorized_keys",
             "/home/_haprion-trigger/.ssh/authorized_keys",
+            "/var/lib/systemd/timers/stamp-haprion-traffic-log-prune.timer",
         ):
             machine.write(name)
         machine.write(
@@ -489,6 +493,49 @@ class ANode(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             code = NODE.main(list(argv), host=self.machine)
         return code, out.getvalue()
+
+    def test_an_account_still_in_use_is_closed_and_its_sessions_ended_before_userdel(self) -> None:
+        #
+        # The manager's poller and collector hold sessions as these accounts;
+        # userdel refused them in prod (26-10-27, F24). Locked first, so the
+        # manager's next connection is refused rather than racing the removal.
+        #
+        code, said = self.main("--yes")
+
+        self.assertEqual(code, 0, said)
+        commands = [" ".join(argv) for argv in self.machine.ran]
+        lock = commands.index("/usr/sbin/usermod --lock --expiredate 1 _haprion-trigger")
+        end = commands.index("/usr/bin/pkill --signal KILL --uid _haprion-trigger")
+        delete = commands.index("/usr/sbin/userdel _haprion-trigger")
+        self.assertLess(lock, end)
+        self.assertLess(end, delete)
+
+    def test_a_run_that_could_not_remove_an_account_can_be_run_again(self) -> None:
+        #
+        # The fragment is what a run reads the accounts from. Removed with the
+        # other files, a second run no longer knew the account the first one
+        # left (F24).
+        #
+        self.machine.fails = {"userdel _haprion-trigger"}
+        code, said = self.main("--yes")
+        self.assertNotEqual(code, 0, said)
+        self.assertTrue(self.machine.path("/etc/sysusers.d/haprion-node.conf").is_file())
+
+        self.machine.fails = set()
+        code, said = self.main("--yes")
+
+        self.assertEqual(code, 0, said)
+        self.assertIn(["/usr/sbin/userdel", "_haprion-trigger"], self.machine.ran)
+        self.assertFalse(self.machine.path("/etc/sysusers.d/haprion-node.conf").exists())
+
+    def test_the_node_s_timer_stamps_go_with_its_timers(self) -> None:
+        self.main("--yes")
+
+        self.assertFalse(
+            self.machine.path(
+                "/var/lib/systemd/timers/stamp-haprion-traffic-log-prune.timer"
+            ).exists()
+        )
 
     def test_without_yes_nothing_changes(self) -> None:
         before = sorted(str(p) for p in self.machine.root.rglob("*"))

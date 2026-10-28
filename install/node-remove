@@ -42,6 +42,7 @@ from removal import (  # noqa: E402 - after the path and the bytecode switch abo
 
 SYSUSERS = "/etc/sysusers.d/haprion-node.conf"
 SYSTEMD = "/etc/systemd/system"
+TIMER_STAMPS = "/var/lib/systemd/timers"
 NODE_CONF = "/etc/haprion/node.conf"
 #
 # keepalived.conf is the product's only when its first line says so
@@ -64,7 +65,6 @@ FIXED_PATHS = (
     "/etc/rsyslog.d/haprion",
     "/etc/apparmor.d/rsyslog.d/haprion-traffic",
     "/etc/logrotate.d/haprion-rsyslog-stats",
-    SYSUSERS,
     "/etc/haprion",
     "/var/lib/haprion-node",
     "/var/lib/haprion",
@@ -148,7 +148,12 @@ def plan(host: Host) -> list[Step]:
     services = Step("services Haprion configured, stopped and disabled; its units removed")
     unit_files = sorted(host.path(SYSTEMD).glob("haprion-*"))
     wanted = sorted(host.path(SYSTEMD).glob("*.wants/haprion-*"))
-    services.found = [str(p) for p in unit_files + wanted]
+    #
+    # A Persistent timer's stamp outlives its unit and reads, to a new timer of
+    # the same name, as the last run (prod 26-10-27, F27).
+    #
+    stamps = sorted(host.path(TIMER_STAMPS).glob("stamp-haprion-*"))
+    services.found = [str(p) for p in unit_files + wanted + stamps]
     running = [
         unit for unit in SERVICES
         if host.run(["/usr/bin/systemctl", "is-enabled", "--quiet", unit]).returncode == 0
@@ -175,7 +180,7 @@ def plan(host: Host) -> list[Step]:
         named = [p.name for p in unit_files if p.is_file() and ".replaced-" not in p.name]
         if named:
             host.run(["/usr/bin/systemctl", "disable", *named])
-        failed += remove(unit_files + wanted)
+        failed += remove(unit_files + wanted + stamps)
         for name in masks:
             ran(host, ["/usr/bin/systemctl", "unmask", name], f"unmasking {name}", failed)
         return failed
@@ -194,15 +199,38 @@ def plan(host: Host) -> list[Step]:
         if name in known and known[name].pw_dir.startswith("/home/")
     ]  # fmt: skip
     accounts.found += [str(home) for home in homes if home.is_dir()]
+    fragment = host.path(SYSUSERS)
+    if fragment.is_file():
+        accounts.found.append(str(fragment))
 
     def remove_accounts() -> list[str]:
         failed: list[str] = []
         for name in [n for n in users if n in known]:
+            #
+            # The manager's poller and collector hold sessions as these
+            # accounts, and userdel refuses an account a process runs as
+            # (prod 26-10-27, F24). Locked and expired first, so the manager's
+            # next connection is refused instead of racing the removal; then
+            # its processes are ended. pkill answers 1 when there were none.
+            #
+            ran(
+                host,
+                ["/usr/sbin/usermod", "--lock", "--expiredate", "1", name],
+                f"locking {name}",
+                failed,
+            )
+            host.run(["/usr/bin/pkill", "--signal", "KILL", "--uid", name])
             ran(host, ["/usr/sbin/userdel", name], f"user {name}", failed)
         for name in users + groups:
             if host.group_exists(name):
                 ran(host, ["/usr/sbin/groupdel", name], f"group {name}", failed)
         failed += remove(homes)
+        #
+        # The fragment is what a run reads the accounts from, so it goes last
+        # and only when they did: a run that left one can be run again (F24).
+        #
+        if not failed:
+            failed += remove([fragment])
         return failed
 
     accounts.action = remove_accounts

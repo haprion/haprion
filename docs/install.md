@@ -171,9 +171,9 @@ stops HAProxy, keepalived and dnsdist.
 It keeps PostgreSQL, nginx, HAProxy, keepalived and dnsdist and their apt sources, since something else may use
 them. The last lines say how to remove those as well.
 
-Before it removes anything, it saves the certificate receivers' public keys and the certificate registry under
-`/root/haprion-removed-<time>/`. Register a receiver again with its saved key, and it fetches as before without
-anything done on the receiver.
+Before it removes anything, it saves the certificate receivers' public keys, the certificate registry and the
+runtime policy under `/root/haprion-removed-<time>/`. Register a receiver again with its saved key, and it fetches
+as before without anything done on the receiver. The policy is there to read what you set by hand, such as NDES.
 
 ## 1. Choose the answers, or keep the defaults
 

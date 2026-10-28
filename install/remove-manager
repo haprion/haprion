@@ -87,6 +87,12 @@ POLICY = "/etc/haprion/runtime-policy.yaml"
 SYSUSERS = "/etc/sysusers.d/haprion.conf"
 SYSTEMD = "/etc/systemd/system"
 #
+# A Persistent timer's stamp outlives its unit and reads, to a new timer of the
+# same name, as the last run: a reinstall ran both node backups at once, on the
+# old installation's times (prod 26-10-27, F27).
+#
+TIMER_STAMPS = "/var/lib/systemd/timers"
+#
 # Where the steps put things when the answers name no other place
 # (install/defaults.sh), for an installation whose policy is gone.
 #
@@ -331,6 +337,13 @@ def plan(host: Host, stamp: str) -> list[Step]:
     registry_dir = host.path(registry_name).parent
     if registry_dir.is_dir():
         keep.found.append(f"the registry, {registry_dir}")
+    #
+    # The policy holds what no answer renders - the ndes block, an operator's
+    # own edits - and after prod's reinstall only a snapshot had it (F30).
+    #
+    policy_file = host.path(POLICY)
+    if policy_file.is_file():
+        keep.found.append(f"the runtime policy, {POLICY}")
 
     def save() -> list[str]:
         failed: list[str] = []
@@ -338,6 +351,8 @@ def plan(host: Host, stamp: str) -> list[Step]:
             (saved / "receivers").mkdir(parents=True, mode=0o700)
             if registry_dir.is_dir():
                 shutil.copytree(registry_dir, saved / "registry")
+            if policy_file.is_file():
+                shutil.copy2(policy_file, saved / "runtime-policy.yaml")
             for account in receivers:
                 keys = host.path(account.pw_dir) / ".ssh" / "authorized_keys"
                 lines = keys.read_text(encoding="utf-8").splitlines() if keys.is_file() else []
@@ -354,8 +369,11 @@ def plan(host: Host, stamp: str) -> list[Step]:
 
     unit_files = sorted(host.path(SYSTEMD).glob("haprion-*"))
     wanted = sorted(host.path(SYSTEMD).glob("*.wants/haprion-*"))
-    services = Step("services, sockets and timers, stopped and their unit files removed")
-    services.found = [str(p) for p in unit_files + wanted]
+    stamps = sorted(host.path(TIMER_STAMPS).glob("stamp-haprion-*"))
+    services = Step(
+        "services, sockets and timers, stopped and their unit files and timer stamps removed"
+    )
+    services.found = [str(p) for p in unit_files + wanted + stamps]
 
     def stop_units() -> list[str]:
         failed: list[str] = []
@@ -372,7 +390,7 @@ def plan(host: Host, stamp: str) -> list[Step]:
         ]  # fmt: skip
         if enabled:
             host.run(["/usr/bin/systemctl", "disable", *enabled])
-        failed += remove(unit_files + wanted)
+        failed += remove(unit_files + wanted + stamps)
         host.run(["/usr/bin/systemctl", "daemon-reload"])
         host.run(["/usr/bin/systemctl", "reset-failed"])
         return failed

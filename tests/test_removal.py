@@ -148,6 +148,8 @@ class AManager(unittest.TestCase):
             "/etc/systemd/system/haprion-web.service",
             "/etc/systemd/system/haprion-web.service.replaced-20261001-101010",
             "/etc/systemd/system/sockets.target.wants/haprion-web.socket",
+            "/var/lib/systemd/timers/stamp-haprion-backup.timer",
+            "/var/lib/systemd/timers/stamp-haprion-state-backup@alpha.timer",
             "/etc/sudoers.d/haprion-worker",
             "/etc/nginx/sites-available/haprion",
             "/etc/nginx/sites-available/default",
@@ -161,6 +163,7 @@ class AManager(unittest.TestCase):
             "/etc/sudoers.d/svc-other",
             "/root/.ssh/id_ed25519",
             "/etc/letsencrypt/cloudflare/example.ini",
+            "/var/lib/systemd/timers/stamp-apt-daily.timer",
         ):
             machine.write(name)
         machine.path("/etc/nginx/sites-enabled").mkdir(parents=True)
@@ -339,6 +342,27 @@ class AManager(unittest.TestCase):
             (saved / "receivers" / "lb-01.example.com.pub").read_text(), "ssh-ed25519 AAAAkey\n"
         )
         self.assertTrue((saved / "registry" / "certificates.yaml").is_file())
+
+    def test_the_runtime_policy_is_kept_with_the_registry(self) -> None:
+        #
+        # It holds what no answer renders - the ndes block, an operator's own
+        # edits - and only a snapshot had it after prod's reinstall (F30).
+        #
+        policy = self.machine.path("/etc/haprion/runtime-policy.yaml").read_text()
+        self.main("--yes")
+
+        saved = next(self.machine.path("/root").glob("haprion-removed-*"))
+        self.assertEqual((saved / "runtime-policy.yaml").read_text(), policy)
+
+    def test_the_removed_timers_leave_no_stamp_for_a_new_installation_to_inherit(self) -> None:
+        #
+        # A Persistent timer reads its stamp as the last run: a reinstall ran
+        # both node backups at once, on the old installation's times (F27).
+        #
+        self.main("--yes")
+
+        timers = self.machine.path("/var/lib/systemd/timers")
+        self.assertEqual(sorted(p.name for p in timers.iterdir()), ["stamp-apt-daily.timer"])
 
     def test_an_empty_parent_goes_and_one_with_the_operator_s_files_stays(self) -> None:
         self.machine.path("/srv/certdist/own.pem").unlink()

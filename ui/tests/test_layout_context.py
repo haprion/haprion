@@ -12,20 +12,20 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 
-from haprion_ui import views
+from haprion_ui import templates
 from tests.test_login import configuration
 
 
 def _request(*, writes: bool) -> Request:
     app = FastAPI()
-    app.mount("/static", StaticFiles(directory=views.STATIC_DIRECTORY), name="static")
+    app.mount("/static", StaticFiles(directory=templates.STATIC_DIRECTORY), name="static")
     app.state.config = replace(configuration(), management_writes=writes)
     return Request({"type": "http", "method": "GET", "path": "/", "headers": [], "app": app})
 
 
 class TheMenuDoesNotDependOnThePage(unittest.TestCase):
     def render(self, *, writes: bool) -> str:
-        response = views.TEMPLATES.TemplateResponse(
+        response = templates.TEMPLATES.TemplateResponse(
             _request(writes=writes),
             "layout.html",
             {"username": "admin", "role": "admin", "section": "history"},

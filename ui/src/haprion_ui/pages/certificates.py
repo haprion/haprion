@@ -42,10 +42,10 @@ from haprion_ui import (
 )
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     CERTIFICATE_SOURCE,
     STATUS_SOURCE,
-    TEMPLATES,
     UPLOADED_FILE,
     _admin_write_gate,
     _dns_public_key,

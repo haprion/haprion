@@ -19,11 +19,11 @@ from haprion_ui import (
 )
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     HASHING_BUSY,
     SIGN_IN_BUSY,
     SIGN_IN_FAILED,
-    TEMPLATES,
     UNAVAILABLE_PROVIDER,
     _admin_write_gate,
     _cookie,

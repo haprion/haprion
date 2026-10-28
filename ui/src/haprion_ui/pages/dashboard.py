@@ -44,6 +44,7 @@ from haprion_ui import (
 from haprion_ui import version_changes as version_changes_view
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     AUDIT_KEEP_DAYS,
     AUDIT_PAGE,
@@ -58,7 +59,6 @@ from haprion_ui.views import (
     SEARCHED_SOURCES,
     SETTINGS_SOURCE,
     STATUS_SOURCE,
-    TEMPLATES,
     _account_rows,
     _admin_write_gate,
     _attention,

@@ -17,6 +17,7 @@ from haprion.proxy_model import load_proxy
 from haprion_ui import metrics, traffic_logs
 from haprion_ui.config import TrafficLogs
 from haprion_ui.db import ClusterObjects
+from haprion_ui.templates import ZONE_COOKIE
 from haprion_ui.traffic_logs import (
     MAX_RECORD_BYTES,
     Freshness,
@@ -27,7 +28,6 @@ from haprion_ui.traffic_logs import (
     read_freshness,
     resolve_server_addresses,
 )
-from haprion_ui.views import ZONE_COOKIE
 from tests.test_login import LoginTestCase, configuration
 
 NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)

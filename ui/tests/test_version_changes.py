@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 from unittest import mock
 
 from haprion_ui import version_changes
-from haprion_ui.views import STATIC_DIRECTORY
+from haprion_ui.templates import STATIC_DIRECTORY
 from tests.test_history import reading
 from tests.test_login import LoginTestCase, configuration
 

@@ -14,7 +14,7 @@ from dataclasses import replace
 from typing import Any
 from unittest import mock
 
-from haprion_ui.views import STATIC_DIRECTORY
+from haprion_ui.templates import STATIC_DIRECTORY
 from tests.test_login import LoginTestCase, configuration
 
 if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):

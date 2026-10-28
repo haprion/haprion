@@ -23,10 +23,10 @@ from haprion_ui import (
 )
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     NETWORK_SOURCE,
     STATUS_SOURCE,
-    TEMPLATES,
     _admin_write_gate,
     _dns_public_key,
     _first_cluster,

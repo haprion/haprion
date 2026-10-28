@@ -377,7 +377,9 @@ class AMissingIncludeIsSaidInTheListing(unittest.TestCase):
     """Review 26-10-08 F1: not *deploy to add*, which a deploy cannot fix, but what is missing where."""
 
     def row(self, unforwarded: tuple[str, ...]) -> str:
-        from haprion_ui.views import TEMPLATES
+        from haprion_ui.templates import (
+            TEMPLATES,
+        )
 
         listed = objects.ListedObject(
             name="logs",

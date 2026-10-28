@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, ClassVar
 from unittest import mock
 
-from haprion_ui.views import STATIC_DIRECTORY
+from haprion_ui.templates import STATIC_DIRECTORY
 from tests import browser_policy
 from tests.test_editor_page import EditorTestCase
 from tests.test_waf_page import CATALOG, LOGGING, finding, objects

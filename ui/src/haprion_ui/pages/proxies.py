@@ -45,6 +45,7 @@ from haprion_ui import (
 from haprion_ui import editor as editor_module
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     BLOCKED_NOTICES,
     HISTORY_SOURCE,
@@ -55,7 +56,6 @@ from haprion_ui.views import (
     SAVED_NOTICE,
     SERVER_NOTICES,
     STATUS_SOURCE,
-    TEMPLATES,
     _admin_write_gate,
     _advanced_submit,
     _earlier_names,

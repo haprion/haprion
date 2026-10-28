@@ -28,9 +28,9 @@ from haprion_ui import (
 )
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     DNS_PROFILE_APPLY_WAIT,
-    TEMPLATES,
     _dns_public_key,
     _posted,
     current_session,

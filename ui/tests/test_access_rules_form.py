@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl
 
 import yaml
 
-from haprion_ui.views import STATIC_DIRECTORY
+from haprion_ui.templates import STATIC_DIRECTORY
 from tests.test_editor_page import EditorTestCase
 
 if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):

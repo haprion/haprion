@@ -18,7 +18,7 @@ from unittest import mock
 import uvicorn
 
 from haprion_ui.app import create_app
-from haprion_ui.views import STATIC_DIRECTORY
+from haprion_ui.templates import STATIC_DIRECTORY
 from tests import browser_policy
 from tests.test_editor_page import EditorTestCase, writing_configuration
 from tests.test_history import reading

@@ -12,7 +12,7 @@ from uuid import uuid4
 from haprion_ui import objects
 from haprion_ui.db import ClusterInventory, ClusterObjects, ClusterStatus, Job
 from haprion_ui.objects import ListedObject
-from haprion_ui.views import TEMPLATES
+from haprion_ui.templates import TEMPLATES
 from tests.test_login import LoginTestCase, configuration
 
 OBSERVED = datetime(2026, 9, 3, 9, 0, tzinfo=UTC)

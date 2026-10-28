@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import unittest
 
-from haprion_ui.views import STATIC_DIRECTORY
+from haprion_ui.templates import STATIC_DIRECTORY
 
 CSS = (STATIC_DIRECTORY / "app.css").read_text(encoding="utf-8")
 STATES = ("healthy", "warning", "critical", "info", "unknown")

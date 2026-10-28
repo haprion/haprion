@@ -13,13 +13,13 @@ from typing import Any
 
 from starlette.templating import _TemplateResponse
 
-from haprion_ui import views
+from haprion_ui import templates
 from tests import well_formed
 
-_render = views._TimedTemplates.TemplateResponse
+_render = templates.TimedTemplates.TemplateResponse
 
 
-def _well_formed(self: views._TimedTemplates, *args: Any, **kwargs: Any) -> _TemplateResponse:
+def _well_formed(self: templates.TimedTemplates, *args: Any, **kwargs: Any) -> _TemplateResponse:
     response = _render(self, *args, **kwargs)
     found = well_formed.problems(bytes(response.body).decode())
     if found:
@@ -28,4 +28,4 @@ def _well_formed(self: views._TimedTemplates, *args: Any, **kwargs: Any) -> _Tem
     return response
 
 
-views._TimedTemplates.TemplateResponse = _well_formed  # type: ignore[method-assign]
+templates.TimedTemplates.TemplateResponse = _well_formed  # type: ignore[method-assign]

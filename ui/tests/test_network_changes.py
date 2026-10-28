@@ -9,7 +9,7 @@ from unittest import mock
 
 from haprion_ui import views
 from haprion_ui.network import NetworkChange, Usage, changes
-from haprion_ui.views import TEMPLATES
+from haprion_ui.templates import TEMPLATES
 
 PUBLISHED: dict[str, Any] = {
     "default_vip": "web",

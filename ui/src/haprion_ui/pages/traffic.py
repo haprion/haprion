@@ -34,10 +34,10 @@ from haprion_ui import (
 )
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.config import Config
+from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     OBJECTS_SOURCE,
     STATUS_SOURCE,
-    TEMPLATES,
     _creations,
     _earlier_names,
     _freshness_warnings,

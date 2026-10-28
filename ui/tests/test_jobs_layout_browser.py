@@ -11,7 +11,7 @@ import os
 from dataclasses import replace
 from unittest import mock
 
-from haprion_ui.views import STATIC_DIRECTORY
+from haprion_ui.templates import STATIC_DIRECTORY
 from tests.test_job_page import job
 from tests.test_login import LoginTestCase, configuration
 

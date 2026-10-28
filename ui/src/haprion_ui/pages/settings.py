@@ -43,6 +43,7 @@ from haprion_ui import (
 )
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     COMMIT_ID,
     HASHING_BUSY,
@@ -50,7 +51,6 @@ from haprion_ui.views import (
     SETTINGS_SOURCE,
     STATUS_SOURCE,
     SWITCHED,
-    TEMPLATES,
     UNAVAILABLE_PROVIDER,
     _account_rows,
     _admin_write_gate,

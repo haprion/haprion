@@ -11,7 +11,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from haprion_ui.views import THEME_COOKIE, selected_theme
+from haprion_ui.templates import THEME_COOKIE, selected_theme
 
 
 def _request(cookies: dict[str, str]) -> mock.Mock:

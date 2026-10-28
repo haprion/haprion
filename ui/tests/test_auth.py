@@ -152,7 +152,9 @@ class SessionPolicyTests(unittest.TestCase):
 
         from dataclasses import replace
 
-        from haprion_ui.views import touch_after
+        from haprion_ui.views import (
+            touch_after,
+        )
 
         policy = SessionPolicy(inactivity_minutes=1, absolute_hours=168, cookie_secure=True)
         start = datetime.now(UTC)
@@ -165,7 +167,10 @@ class SessionPolicyTests(unittest.TestCase):
                 current = replace(current, last_seen_at=moment)
 
     def test_the_default_timeout_keeps_the_one_minute_touch(self) -> None:
-        from haprion_ui.views import TOUCH_AFTER, touch_after
+        from haprion_ui.views import (
+            TOUCH_AFTER,
+            touch_after,
+        )
 
         self.assertEqual(touch_after(600), TOUCH_AFTER)
         self.assertEqual(touch_after(1), timedelta(seconds=30))

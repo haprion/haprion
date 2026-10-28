@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haprion_ui.views import STATIC_DIRECTORY, asset_token, release_label
+from haprion_ui.templates import STATIC_DIRECTORY, asset_token, release_label
 
 
 class AssetTokenTests(unittest.TestCase):

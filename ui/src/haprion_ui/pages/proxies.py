@@ -57,6 +57,7 @@ from haprion_ui.reading import (
     read_source,
 )
 from haprion_ui.refusals import refusal_page
+from haprion_ui.saved_work import objects_reading_of, settled_draft, settled_drafts, top_layers
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     BLOCKED_NOTICES,
@@ -69,12 +70,8 @@ from haprion_ui.views import (
     _editor_state,
     _editor_submit,
     _lookup_again,
-    _objects_reading,
     _posted,
     _removal_submit,
-    _settled_draft,
-    _settled_drafts,
-    _top_layers,
     _traffic_marks,
     moved_dns_servers,
 )
@@ -261,11 +258,11 @@ def build_router(config: Config) -> APIRouter:
                 # saved change (B257), each carrying its stage for the badge.
                 #
                 view.cluster: tuple(
-                    _top_layers(
-                        _settled_drafts(
+                    top_layers(
+                        settled_drafts(
                             connection,
                             view.cluster,
-                            _objects_reading(
+                            objects_reading_of(
                                 rows.get(view.cluster),
                                 {listing.name for listing in listed[view.cluster]},
                             ),
@@ -922,11 +919,11 @@ def build_router(config: Config) -> APIRouter:
             # draft whose publish has finished is kept until that reading shows
             # it. Otherwise the page loses both between the job and the poll.
             #
-            draft = _settled_draft(
+            draft = settled_draft(
                 connection,
                 cluster,
                 name,
-                _objects_reading(
+                objects_reading_of(
                     next((row for row in object_rows if row.cluster == cluster), None),
                     {name} if detail.stored else set(),
                 ),

@@ -38,8 +38,8 @@ CAUGHT = {
     ("pages/settings.py", "cluster_settings_save"): "the form is drawn again as it was typed",
     ("pages/proxies.py", "proxy_servers"): "the server card says it in place",
     ("pages/proxies.py", "proxy_unblock"): "the blocked-address card says it in place",
-    ("views.py", "_discard_shown"): "a newer draft is kept, not refused",
-    ("views.py", "_settled_changes"): "a newer saved change is kept, not refused",
+    ("saved_work.py", "_discard_shown"): "a newer draft is kept, not refused",
+    ("saved_work.py", "settled_changes"): "a newer saved change is kept, not refused",
     ("views.py", "_advanced_submit"): "the dialog answers in its own document",
     ("views.py", "_waf_save"): "the dialog answers in its own document",
     # Found when the scan widened from pages/ and views.py to the package (K01).

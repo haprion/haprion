@@ -57,12 +57,12 @@ from haprion_ui.reading import (
     read_source,
 )
 from haprion_ui.refusals import refusal_page
+from haprion_ui.saved_work import COMMIT_ID
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     AUDIT_KEEP_DAYS,
     AUDIT_PAGE,
     AUDIT_TABLE,
-    COMMIT_ID,
     MAX_SEARCH_PAGE,
     NODE_EVENT_KEEP_DAYS,
     NODE_EVENT_TABLE,

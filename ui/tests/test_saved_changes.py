@@ -10,7 +10,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID
 
-from haprion_ui import db, demo, views
+from haprion_ui import db, demo, saved_work
 from tests.test_editor_page import EditorTestCase, published
 from tests.test_login import configuration
 from tests.test_queue_route import QueueRouteTestCase
@@ -202,7 +202,7 @@ class ASavedChangeIsClearedByItsPublish(unittest.TestCase):
             mock.patch("haprion_ui.db.cluster_history", return_value=listing),
             mock.patch("haprion_ui.db.discard_cluster_change") as discard,
         ):
-            kept = views._settled_changes(mock.Mock(), "edge-demo", {kind: head})
+            kept = saved_work.settled_changes(mock.Mock(), "edge-demo", {kind: head})
         return kept, discard
 
     def test_a_reading_at_the_publish_clears_it(self) -> None:

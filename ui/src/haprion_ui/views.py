@@ -25,7 +25,6 @@ import hashlib
 import io
 import json
 import logging
-import re
 import zipfile
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -114,7 +113,6 @@ from haprion_ui.reading import (
     INVENTORY_SOURCE,
     NETWORK_SOURCE,
     OBJECTS_SOURCE,
-    SETTINGS_SOURCE,
     STATUS_SOURCE,
     cluster_creations,
     listed_clusters,
@@ -123,14 +121,19 @@ from haprion_ui.reading import (
     read_source,
 )
 from haprion_ui.refusals import refusal_page
+from haprion_ui.saved_work import (
+    ObjectsReading,
+    ObjectWork,
+    objects_reading_of,
+    reading_heads,
+    saved_network_rows,
+    settled_changes,
+    settled_draft,
+    settled_drafts,
+    settled_work,
+    top_layers,
+)
 from haprion_ui.templates import TEMPLATES
-
-#
-# A commit as a form carries it, checked before it reaches a column that
-# would refuse it with a database error instead of a sentence.
-#
-COMMIT_ID = re.compile(r"[0-9a-f]{40}")
-
 
 logger = logging.getLogger("haprion_ui")
 
@@ -636,7 +639,7 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
     # saved for a VIP the same publish adds would otherwise be refused for it.
     #
     with request.app.state.pool.connection() as connection:
-        network_rows, _saved = _saved_network_rows(connection, list(network_rows))
+        network_rows, _saved = saved_network_rows(connection, list(network_rows))
     described = next(
         (
             view
@@ -783,9 +786,7 @@ def _editor_page(
 
     with request.app.state.pool.connection() as connection:
         work = (
-            _settled_work(connection, cluster, name, _state_reading(state))
-            if name
-            else ObjectWork()
+            settled_work(connection, cluster, name, _state_reading(state)) if name else ObjectWork()
         )
     draft = work.top
 
@@ -1036,7 +1037,7 @@ def _lookup_again(
             request, config, "This cluster has no proxy of that name.", back="/proxies"
         )
     with request.app.state.pool.connection() as connection:
-        draft = _settled_draft(connection, cluster, name, _state_reading(state))
+        draft = settled_draft(connection, cluster, name, _state_reading(state))
     if draft is not None:
         #
         # Saving the stored object would throw the draft's work away. Saving
@@ -1428,9 +1429,7 @@ def _editor_submit(
 
     with request.app.state.pool.connection() as connection:
         work = (
-            _settled_work(connection, cluster, name, _state_reading(state))
-            if name
-            else ObjectWork()
+            settled_work(connection, cluster, name, _state_reading(state)) if name else ObjectWork()
         )
     #
     # The published name this work takes the place of. A rename of a published
@@ -1462,7 +1461,7 @@ def _editor_submit(
                 back=_proxy_path(cluster, name, "edit"),
             )
         with request.app.state.pool.connection() as connection:
-            taken = _settled_draft(connection, cluster, typed, _state_reading(state))
+            taken = settled_draft(connection, cluster, typed, _state_reading(state))
         stored_elsewhere = any(view.name == typed for view in state.stored) and typed != replaces
         if stored_elsewhere or taken is not None:
             return refusal_page(
@@ -1761,14 +1760,14 @@ def _pending_count(request: Request, config: Config, cluster: str) -> int:
 
     _, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
     objects_row = next((row for row in object_rows if row.cluster == cluster), None)
-    heads = _reading_heads(request, config, cluster)
+    heads = reading_heads(request, config, cluster)
     with request.app.state.pool.connection() as connection:
         saved = [
             row
-            for row in _settled_drafts(connection, cluster, _objects_reading(objects_row))
+            for row in settled_drafts(connection, cluster, objects_reading_of(objects_row))
             if row.stage == db.SAVED
         ]
-        changes = _settled_changes(connection, cluster, heads)
+        changes = settled_changes(connection, cluster, heads)
     return len(saved) + len(changes)
 
 
@@ -1783,14 +1782,14 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
 
     state = _editor_state(request, config, cluster)
     head = state.commit
-    heads = _reading_heads(request, config, cluster)
+    heads = reading_heads(request, config, cluster)
     with request.app.state.pool.connection() as connection:
         saved = [
             row
-            for row in _settled_drafts(connection, cluster, _state_reading(state))
+            for row in settled_drafts(connection, cluster, _state_reading(state))
             if row.stage == db.SAVED
         ]
-        changes = _settled_changes(connection, cluster, heads)
+        changes = settled_changes(connection, cluster, heads)
     rows: list[PendingRow] = []
     objects: dict[str, str | None] = {}
     published = {view.name for view in state.stored}
@@ -2032,7 +2031,7 @@ def _removal_submit(
         )
 
     with request.app.state.pool.connection() as connection:
-        existing = _settled_work(connection, cluster, name, _state_reading(state))
+        existing = settled_work(connection, cluster, name, _state_reading(state))
         #
         # A removal is finished work, so it is a saved change (B257). A
         # draft over the object goes with it, as the removal replaced the
@@ -2119,404 +2118,6 @@ def _publish_key(cluster: str, operation: str, payload: Mapping[str, Any], *, dr
         default=str,
     )
     return uuid5(PUBLISH_NAMESPACE, sha256(body.encode("utf-8")).hexdigest())
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectsReading:
-    """What the objects cache holds for one cluster: the names, and the commit read."""
-
-    names: Collection[str]
-    commit: str | None = None
-
-
-def _objects_reading(row: Any, names: Collection[str] | None = None) -> ObjectsReading:
-    """One cluster's objects cache row as `_reflects` reads it; `names` overrides the row's."""
-
-    result = getattr(row, "result", None)
-    commit = result.get("commit") if isinstance(result, Mapping) else None
-    if names is None:
-        names = {view.name for view in objects.cluster_object_views(row)} if row else set()
-    return ObjectsReading(names, commit if isinstance(commit, str) and commit else None)
-
-
-@dataclass(frozen=True, slots=True)
-class DraftPublish:
-    """A finished publish of one draft revision: the commit it was made against, and
-    whether it changed anything."""
-
-    base: str
-    changed: bool | None
-
-
-def _published_drafts(
-    connection: Any, cluster: str, drafts: Iterable[db.ProxyDraft]
-) -> dict[tuple[str, int], DraftPublish]:
-    """Which draft revisions a finished publish has already carried away.
-
-    Named by identity - the draft's own id and the revision that was published -
-    and never by what the document says. Content matched a draft that had been
-    edited back to a text published earlier, which is somebody deliberately
-    reverting, and it deleted their work as though it were finished.
-
-    Asked about these drafts and no others (CR-04): the newest twenty jobs were
-    the evidence until 2026-10-06, and twenty later jobs made published work look
-    unpublished.
-    """
-
-    ids = {str(draft.id) for draft in drafts if draft.id is not None}
-    settled: dict[tuple[str, int], DraftPublish] = {}
-    for job in db.draft_publishes(connection, cluster=cluster, draft_ids=ids):
-        payload = job.payload if isinstance(job.payload, Mapping) else {}
-        base = payload.get("expected_head")
-        #
-        # Every publish is queued with the commit it was made against; a job
-        # without one is no evidence, and its row stays for the operator.
-        #
-        if not isinstance(base, str) or not base:
-            continue
-        changed = _publish_changed(job.result)
-        for identity, revision in _carried(payload, "drafts"):
-            settled.setdefault(
-                (identity, revision),
-                DraftPublish(base, changed if isinstance(changed, bool) else None),
-            )
-    return settled
-
-
-def _publish_changed(result: Any) -> bool | None:
-    """Whether a finished publish recorded a new version: the helper's `result.changed`.
-
-    Read from inside the envelope, where the helper writes it. It was read from
-    the envelope's top level until 2026-10-08, where it never is - so a publish
-    that changed nothing kept its draft until some later commit moved the
-    cache, and the tests built their jobs in the same wrong shape. A publish
-    followed by a deploy in one job (B257) keeps its own answer under `publish`.
-    """
-
-    envelope = jobs.publish_answer(result)
-    body = envelope.get("result") if envelope is not None else None
-    changed = body.get("changed") if isinstance(body, Mapping) else None
-    return changed if isinstance(changed, bool) else None
-
-
-def _carried(payload: Mapping[str, Any], key: str) -> list[tuple[str, int]]:
-    """The saved rows a publish of saved changes carried, under `drafts` or `changes` (B257)."""
-
-    listed = payload.get(key)
-    entries = listed if isinstance(listed, list) else []
-    return [
-        (entry["id"], entry["revision"])
-        for entry in entries
-        if isinstance(entry, Mapping)
-        and isinstance(entry.get("id"), str)
-        and isinstance(entry.get("revision"), int)
-    ]
-
-
-def _reflects(draft: db.ProxyDraft, publish: DraftPublish, reading: ObjectsReading) -> bool:
-    """Whether the objects cache has caught up with what this draft published.
-
-    A publish finishes before the poller reads the repository again, so between
-    the two there is a stretch where the job is done and the cache still shows
-    the object as it was. Clearing the draft on the job alone made the row
-    vanish for that stretch, and in the editor it opened the old document in
-    place of the published one (review 2026-10-04, CR-03).
-
-    Decided by the commit. The publish was made against the commit the cache
-    showed when it was queued, and the repository only moves forward, so a
-    cache that has read any other commit has read this publish or a later one.
-    A cache still at that commit has not - unless the publish changed nothing,
-    and then presence is all there is to wait for: a new object, or a removal.
-    """
-
-    if reading.commit is None:
-        return False
-    if reading.commit != publish.base:
-        return True
-    if publish.changed is not False:
-        return False
-    return (
-        (draft.object_id not in reading.names)
-        if draft.deleted
-        else (draft.object_id in reading.names)
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectWork:
-    """What one object has besides its stored document (B257).
-
-    A draft is unfinished and never published; a saved change goes out with
-    the next publish. Both may exist - a draft started on top of a saved
-    change - and what the editor opens is the top one.
-    """
-
-    draft: db.ProxyDraft | None = None
-    saved: db.ProxyDraft | None = None
-
-    @property
-    def top(self) -> db.ProxyDraft | None:
-        return self.draft or self.saved
-
-
-def _settled_row(
-    connection: Any, cluster: str, row: db.ProxyDraft, reading: ObjectsReading
-) -> db.ProxyDraft | None:
-    """One row, cleared away if its own publish has finished and can be read."""
-
-    if not _shown_rows(connection, cluster, (row,), reading):
-        #
-        # Unpublished, or published and the cache has not caught up. The row
-        # is the only thing that can carry the object until it does.
-        #
-        return row
-    if not _discard_shown(connection, cluster, row):
-        return db.read_draft(connection, cluster, row.object_id, row.stage)
-    connection.commit()
-    return None
-
-
-def _shown_rows(
-    connection: Any, cluster: str, rows: Sequence[db.ProxyDraft], reading: ObjectsReading
-) -> set[tuple[str, str]]:
-    """The rows - by object and stage - whose own publish is done and the reading shows.
-
-    The one rule for clearing an object's draft or saved change, asked of one
-    row by the editor and of a cluster's rows by the listings (review 26-10-08,
-    F5): written twice, a fix to one copy left the other behind.
-    """
-
-    settled = _published_drafts(connection, cluster, rows)
-    return {
-        (row.object_id, row.stage)
-        for row in rows
-        if (publish := settled.get((str(row.id), row.revision))) is not None
-        and _reflects(row, publish, reading)
-    }
-
-
-def _discard_shown(connection: Any, cluster: str, row: db.ProxyDraft) -> bool:
-    """Delete one row its publish has carried; False when it was saved again since it was read.
-
-    That row is the newer one and stays. The conflict is not caught by
-    rolling back: it is a delete that matched no row, not a failed statement,
-    so the transaction is still good - and a rollback would throw away the
-    deletes a caller clearing several rows has already made. Uncaught, it took
-    the whole listing down with it, a 500 for a tidying step that was allowed
-    to change nothing.
-    """
-
-    try:
-        db.discard_draft(
-            connection,
-            cluster=cluster,
-            object_id=row.object_id,
-            expected_revision=row.revision,
-            stage=row.stage,
-        )
-    except db.DraftConflict:
-        return False
-    return True
-
-
-def _settled_work(
-    connection: Any, cluster: str, object_id: str, reading: ObjectsReading
-) -> ObjectWork:
-    """One object's draft and saved change, each cleared away once its publish can be read.
-
-    The editor reads this rather than the rows directly, and that is the case
-    that matters most: the editor opens the top row in preference to the
-    stored object, so a stale one would hand somebody their pre-publish copy
-    of a document they have already published - and the next save would write
-    it back.
-    """
-
-    rows = {
-        stage: row
-        for stage in (db.DRAFT, db.SAVED)
-        if (row := db.read_draft(connection, cluster, object_id, stage)) is not None
-    }
-    settled = {
-        stage: _settled_row(connection, cluster, row, reading) for stage, row in rows.items()
-    }
-    return ObjectWork(draft=settled.get(db.DRAFT), saved=settled.get(db.SAVED))
-
-
-def _settled_draft(
-    connection: Any, cluster: str, object_id: str, reading: ObjectsReading
-) -> db.ProxyDraft | None:
-    """The top of one object's work: its draft, else its saved change, else None."""
-
-    return _settled_work(connection, cluster, object_id, reading).top
-
-
-def _top_layers(rows: Iterable[db.ProxyDraft]) -> list[db.ProxyDraft]:
-    """One row per object, the one the editor would open: the draft over a saved change."""
-
-    top: dict[str, db.ProxyDraft] = {}
-    for row in rows:
-        if row.object_id not in top or row.stage == db.DRAFT:
-            top[row.object_id] = row
-    return [top[name] for name in sorted(top)]
-
-
-def _settled_changes(
-    connection: Any, cluster: str, heads: Mapping[str, str | None]
-) -> dict[str, db.ClusterChange]:
-    """This cluster's saved network and settings, each cleared once its own reading shows it (B257).
-
-    `heads` holds the commit each kind's reading stands at - the network page's
-    and the settings page's, the readings the document is drawn over. A kind
-    not named there is kept as it is. Shown means the reading stands at the
-    commit the publish recorded, or at a later version by the cached listing.
-    Not "at another commit than the publish's base": the network, the settings
-    and the objects are read by separate helper runs, and a reading that lags
-    stands at an older commit than the base the package was published against
-    (review 26-10-08, F3). A publish that changed nothing recorded the commit
-    that was already there, so a reading at it has shown it.
-    """
-
-    changes = db.cluster_changes(connection, cluster)
-    if not changes:
-        return changes
-    recorded: dict[tuple[str, int], tuple[str, int | None]] = {}
-    ids = {str(change.id) for change in changes.values()}
-    for job in db.change_publishes(connection, cluster=cluster, change_ids=ids):
-        payload = job.payload if isinstance(job.payload, Mapping) else {}
-        answer = _publish_recorded(job.result)
-        if answer is None:
-            continue
-        for identity, revision in _carried(payload, "changes"):
-            recorded.setdefault((identity, revision), answer)
-    versions: dict[str, int] | None = None
-    kept = dict(changes)
-    for kind, change in changes.items():
-        answer = recorded.get((str(change.id), change.revision))
-        head = heads.get(kind)
-        if answer is None or head is None:
-            continue
-        commit, version = answer
-        if head != commit:
-            if versions is None:
-                versions = _listed_versions(connection, cluster)
-            shown = versions.get(head)
-            if shown is None or version is None or shown <= version:
-                continue
-        try:
-            db.discard_cluster_change(
-                connection, cluster=cluster, kind=kind, expected_revision=change.revision
-            )
-        except db.DraftConflict:
-            #
-            # Saved again between the read and the delete: that one is newer
-            # and stays. No rollback, for the reason `_discard_shown` gives.
-            #
-            continue
-        del kept[kind]
-    connection.commit()
-    return kept
-
-
-def _publish_recorded(result: Any) -> tuple[str, int | None] | None:
-    """The commit and version a finished publish recorded, from inside its envelope."""
-
-    envelope = jobs.publish_answer(result)
-    body = envelope.get("result") if envelope is not None else None
-    if not isinstance(body, Mapping):
-        return None
-    commit, version = body.get("hash"), body.get("version")
-    if not isinstance(commit, str) or not COMMIT_ID.fullmatch(commit):
-        return None
-    return commit, version if isinstance(version, int) and not isinstance(version, bool) else None
-
-
-def _listed_versions(connection: Any, cluster: str) -> dict[str, int]:
-    """Commit to version number, from the cluster's cached version listing."""
-
-    history = db.cluster_history(connection, cluster)
-    entries = history.result.get("versions") if history is not None else None
-    numbers: dict[str, int] = {}
-    for entry in entries if isinstance(entries, list) else ():
-        if not isinstance(entry, Mapping):
-            continue
-        commit, number = entry.get("hash"), entry.get("version")
-        if isinstance(commit, str) and isinstance(number, int) and not isinstance(number, bool):
-            numbers[commit] = number
-    return numbers
-
-
-def _reading_heads(request: Request, config: Config, cluster: str) -> dict[str, str | None]:
-    """The commit the network and the settings readings of one cluster stand at."""
-
-    _, network_rows = read_source(request, config, NETWORK_SOURCE, cluster=cluster)
-    _, settings_rows = read_source(request, config, SETTINGS_SOURCE)
-    return {
-        "network": _reading_head(next((r for r in network_rows if r.cluster == cluster), None)),
-        "settings": _reading_head(
-            next((r for r in settings_rows if r.cluster == cluster and r.outcome == "done"), None)
-        ),
-    }
-
-
-def _reading_head(row: Any) -> str | None:
-    result = getattr(row, "result", None)
-    head = result.get("head") if isinstance(result, Mapping) else None
-    return head if isinstance(head, str) and head else None
-
-
-def _saved_network_rows(
-    connection: Any, rows: Sequence[db.ClusterNetwork]
-) -> tuple[list[db.ClusterNetwork], dict[str, db.ClusterChange]]:
-    """The network readings with each cluster's saved description over them, and those saves."""
-
-    saved: dict[str, db.ClusterChange] = {}
-    for row in rows:
-        change = _settled_changes(connection, row.cluster, {"network": _reading_head(row)}).get(
-            "network"
-        )
-        if change is not None:
-            saved[row.cluster] = change
-    return (
-        network.with_saved(rows, {cluster: change.document for cluster, change in saved.items()}),
-        saved,
-    )
-
-
-def _settled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> list[db.ProxyDraft]:
-    """This cluster's drafts, with the ones already published cleared away.
-
-    Published work is not a draft any more. Left behind it is worse than untidy:
-    the editor opens the draft in preference to the stored object, so a stale
-    row would hand somebody yesterday's copy of a document they published.
-
-    Done here and not in the worker because only the web role may touch this
-    table - the privilege split keeps the worker out of it on purpose, and it
-    publishes from the job payload rather than from the row. So the clearing
-    happens the next time the interface reads, which is a write during a read
-    and deliberately a narrow one: it deletes nothing but a draft whose own
-    publish is recorded as done.
-    """
-
-    drafts = db.cluster_drafts(connection, cluster)
-    published = _shown_rows(connection, cluster, drafts, reading)
-    if not published:
-        return drafts
-    #
-    # Counted rather than assumed, because the rows returned below have to
-    # match what the table now holds.
-    #
-    kept = {
-        (draft.object_id, draft.stage)
-        for draft in drafts
-        if (draft.object_id, draft.stage) in published
-        and not _discard_shown(connection, cluster, draft)
-    }
-    connection.commit()
-    return [
-        draft
-        for draft in drafts
-        if (key := (draft.object_id, draft.stage)) not in published or key in kept
-    ]
 
 
 #
@@ -2779,7 +2380,7 @@ def _network_page(request: Request, config: Config) -> Response:
     # carries (B257), so it is drawn in place of the published one and said so.
     #
     with request.app.state.pool.connection() as connection:
-        network_rows, saved_network = _saved_network_rows(connection, list(network_rows))
+        network_rows, saved_network = saved_network_rows(connection, list(network_rows))
     overview = network.build_network_overview(
         clusters,
         network_rows,
@@ -2980,7 +2581,7 @@ def _advanced_submit(
     state = _editor_state(request, config, cluster)
     stored = next((view for view in state.stored if view.name == name), None)
     with request.app.state.pool.connection() as connection:
-        work = _settled_work(connection, cluster, name, _state_reading(state))
+        work = settled_work(connection, cluster, name, _state_reading(state))
     #
     # The dialog saves finished work (B257), so it starts from the saved change
     # or the stored object - never from a draft somebody has not finished,
@@ -3088,8 +2689,8 @@ def _waf_documents(
     drafted: dict[tuple[str, str], str] = {}
     for cluster in clusters:
         names = {name for owner, name in stored if owner == cluster}
-        for draft in _top_layers(
-            _settled_drafts(connection, cluster, _objects_reading(readings.get(cluster), names))
+        for draft in top_layers(
+            settled_drafts(connection, cluster, objects_reading_of(readings.get(cluster), names))
         ):
             if not draft.deleted:
                 drafted[(cluster, draft.object_id)] = draft.yaml
@@ -3364,7 +2965,7 @@ def _waf_save(
     state = _editor_state(request, config, cluster)
     stored = next((view for view in state.stored if view.name == name), None)
     with request.app.state.pool.connection() as connection:
-        work = _settled_work(connection, cluster, name, _state_reading(state))
+        work = settled_work(connection, cluster, name, _state_reading(state))
     #
     # An exception is finished work, so it is a saved change (B257), made on
     # the saved change or the stored object and never on a draft somebody has

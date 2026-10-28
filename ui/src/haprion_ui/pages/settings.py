@@ -53,9 +53,9 @@ from haprion_ui.reading import (
     read_manager_certificates,
     read_source,
 )
+from haprion_ui.saved_work import COMMIT_ID, reading_head, settled_changes
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
-    COMMIT_ID,
     HASHING_BUSY,
     SWITCHED,
     UNAVAILABLE_PROVIDER,
@@ -69,9 +69,7 @@ from haprion_ui.views import (
     _page_context,
     _posted,
     _queue_node_job,
-    _reading_head,
     _registry_overview,
-    _settled_changes,
     _start_oidc,
     _status_row,
 )
@@ -468,7 +466,7 @@ def build_router(config: Config) -> APIRouter:
 
     def _saved_settings(request: Request, cluster: str, row: Any) -> db.ClusterChange | None:
         with request.app.state.pool.connection() as connection:
-            return _settled_changes(connection, cluster, {"settings": _reading_head(row)}).get(
+            return settled_changes(connection, cluster, {"settings": reading_head(row)}).get(
                 "settings"
             )
 

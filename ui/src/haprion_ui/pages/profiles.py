@@ -445,6 +445,16 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    def _ndes_missing(request: Request) -> bool:
+        """The manager's last reading says the runtime policy has no ndes block.
+
+        Its helper refuses an NDES profile then, after the form had taken it
+        (prod 26-10-28, F28). An older engine says nothing, and is not refused.
+        """
+
+        manager = read_manager_certificates(request, config)
+        return manager is not None and manager.result.get("ndes_configured") is False
+
     @router.get("/ndes-profiles", response_class=HTMLResponse)
     def ndes_profile_list(request: Request) -> Response:
         gate = _dns_profiles_gate(request)
@@ -453,9 +463,8 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             profiles = db.ndes_profiles(connection)
             recent = db.profile_jobs(connection, "ndes_profile_apply")
-        references = certificates.profile_references(
-            read_manager_certificates(request, config), field="ndes_profile"
-        )
+        manager = read_manager_certificates(request, config)
+        references = certificates.profile_references(manager, field="ndes_profile")
         statuses = {
             p.id: dns_profile_form.without_stale_refusal(
                 ndes_profile_form.profile_status(p.id, p.revision, recent), p.id, references
@@ -472,6 +481,8 @@ def build_router(config: Config) -> APIRouter:
                 "statuses": statuses,
                 "just_removed": _just_removed(request, [profile.id for profile in profiles]),
                 "public_key": _dns_public_key(config),
+                "ndes_missing": manager is not None
+                and manager.result.get("ndes_configured") is False,
                 "refresh": any(p.label in {"Applying", "Removing"} for p in statuses.values()),
                 "section": "certificates",
                 "management_writes": config.management_writes,
@@ -484,6 +495,8 @@ def build_router(config: Config) -> APIRouter:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
+        if _ndes_missing(request):
+            return RedirectResponse("/ndes-profiles", status_code=303)
         return _ndes_profile_form_page(request, gate, ndes_profile_form.EMPTY_FORM, existing=None)
 
     @router.post("/ndes-profiles/new", response_class=HTMLResponse)
@@ -491,6 +504,8 @@ def build_router(config: Config) -> APIRouter:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
+        if _ndes_missing(request):
+            return RedirectResponse("/ndes-profiles", status_code=303)
         return _ndes_profile_submit(request, gate, existing=None)
 
     @router.get("/ndes-profiles/{profile_id}/replace", response_class=HTMLResponse)
@@ -498,6 +513,8 @@ def build_router(config: Config) -> APIRouter:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
+        if _ndes_missing(request):
+            return RedirectResponse("/ndes-profiles", status_code=303)
         with request.app.state.pool.connection() as connection:
             existing = db.ndes_profile(connection, profile_id)
         if existing is None:
@@ -516,6 +533,8 @@ def build_router(config: Config) -> APIRouter:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
+        if _ndes_missing(request):
+            return RedirectResponse("/ndes-profiles", status_code=303)
         with request.app.state.pool.connection() as connection:
             existing = db.ndes_profile(connection, profile_id)
         if existing is None:

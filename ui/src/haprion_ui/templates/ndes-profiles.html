@@ -13,9 +13,12 @@
 #}
 <section class="page-heading">
   <div class="heading-title">{{ back_button('/certificates', 'Certificates') }}<h1>NDES profiles</h1><p class="page-lede">Master challenges for Microsoft AD CS enrollment over SCEP, sealed for the enrollment helper.</p></div>
-  <div class="heading-badges">{% if public_key %}<a class="secondary-button" href="/ndes-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+  <div class="heading-badges">{% if public_key and not ndes_missing %}<a class="secondary-button" href="/ndes-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
+{% if ndes_missing %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>NDES is not set up on this manager.</strong> The runtime policy has no <code>ndes</code> block; see <em>Manager configuration and packaging</em> in the user manual.</p>
+{% endif %}
 {% if not public_key %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>This installation has no profile key.</strong> Profiles can be listed but not created until <code>[dns_profiles] public_key</code> names one; see <em>The DNS profile key pair</em> in the user manual.</p>
 {% endif %}

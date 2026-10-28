@@ -12,6 +12,7 @@ import io
 import json
 import subprocess
 import tempfile
+import types
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1000,7 +1001,7 @@ class HelperTests(unittest.TestCase):
     """
 
     def _run(
-        self, *, cluster: str | None = "alpha", with_root: bool = True
+        self, *, cluster: str | None = "alpha", with_root: bool = True, with_ndes: bool = False
     ) -> tuple[int, str, str]:
         request = {
             "schema_version": 1,
@@ -1017,6 +1018,8 @@ class HelperTests(unittest.TestCase):
 
             class Policy:
                 certificate_root = root if with_root else None
+                # The ndes block, as far as the listing reads it.
+                ndes = types.SimpleNamespace(state_root=root / "requests") if with_ndes else None
 
                 def certificate_directory(self, cluster_id: str) -> Path | None:
                     # No registry: one flat directory every cluster reads.
@@ -1070,7 +1073,18 @@ class HelperTests(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         document = assert_contract("haprion-cert-list", out)
         self.assertIsNone(document["cluster"])
-        self.assertEqual(document["result"], {"interface_served": None})
+        self.assertEqual(document["result"], {"interface_served": None, "ndes_configured": False})
+
+    def test_the_manager_s_answer_says_whether_ndes_is_set_up(self) -> None:
+        #
+        # Without the ndes block the profile's helper refuses it, after the
+        # form had taken it (prod 26-10-28, F28); the interface asks first.
+        #
+        code, out, _ = self._run(cluster=None, with_ndes=True)
+
+        self.assertEqual(code, 0)
+        document = assert_contract("haprion-cert-list", out)
+        self.assertIs(document["result"]["ndes_configured"], True)
 
     def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
         code, out, err = self._run(cluster="beta")

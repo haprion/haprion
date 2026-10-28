@@ -867,6 +867,7 @@ def manager_result(
     request_root: Path | None = None,
     manager: str | None = None,
     interface_served: Mapping[str, Any] | None = None,
+    ndes_configured: bool | None = None,
 ) -> dict[str, Any]:
     """What the manager holds, asked of the manager rather than of a cluster.
 
@@ -882,6 +883,13 @@ def manager_result(
     result: dict[str, Any] = {
         "interface_served": dict(interface_served) if interface_served is not None else None
     }
+    #
+    # Whether the runtime policy has its ndes block: without it an NDES
+    # profile is refused by its helper, after the form had taken it (prod
+    # 26-10-28, F28). The interface asks before it queues one.
+    #
+    if ndes_configured is not None:
+        result["ndes_configured"] = ndes_configured
     if registry is not None:
         result["registry"] = registry_result(
             registry,

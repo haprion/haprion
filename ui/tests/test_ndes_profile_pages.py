@@ -22,7 +22,7 @@ from tests.test_queue_route import queued
 ENDPOINT = "https://ca.example.com/certsrv/mscep/mscep.dll"
 
 
-class NdesPages(ProfileRouteTestCase):
+class NdesRoutes(ProfileRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
 
@@ -59,6 +59,8 @@ class NdesPages(ProfileRouteTestCase):
         data.update(fields)
         return client.post(path, data=data, follow_redirects=False)
 
+
+class NdesPages(NdesRoutes):
     def test_routes_require_admin_and_csrf(self) -> None:
         self.assertEqual(self.writing_client(role="reader").get("/ndes-profiles").status_code, 403)
         client = self.writing_client()
@@ -132,6 +134,56 @@ class NdesPages(ProfileRouteTestCase):
                     ciphertext=b"x" * 48,
                 ),
             )
+
+
+class AManagerWithoutTheNdesBlock(NdesRoutes):
+    """Its helper refused the profile after the form had taken it (prod 26-10-28, F28)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        reading = db.ManagerCertificates(
+            observed_at=datetime.now(UTC),
+            outcome="done",
+            result={"interface_served": None, "ndes_configured": False},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        patch = mock.patch(
+            "haprion_ui.pages.profiles.read_manager_certificates", return_value=reading
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_the_page_says_so_and_offers_no_new_profile(self) -> None:
+        listing = self.writing_client().get("/ndes-profiles")
+
+        self.assertIn("NDES is not set up on this manager.", listing.text)
+        self.assertNotIn('href="/ndes-profiles/new"', listing.text)
+
+    def test_nothing_is_stored_or_queued(self) -> None:
+        client = self.writing_client()
+
+        self.assertEqual(client.get("/ndes-profiles/new", follow_redirects=False).status_code, 303)
+        response = self.post_ndes(client)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/ndes-profiles")
+        self.assertEqual(self.created, [])
+        self.assertEqual(self.queued, [])
+
+    def test_a_manager_with_the_block_takes_the_profile_as_before(self) -> None:
+        with mock.patch(
+            "haprion_ui.pages.profiles.read_manager_certificates",
+            return_value=replace(
+                db.ManagerCertificates(datetime.now(UTC), "done", {}, [], None, None),
+                result={"interface_served": None, "ndes_configured": True},
+            ),
+        ):
+            response = self.post_ndes(self.writing_client())
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(len(self.created), 1)
 
 
 class RemovingAnNdesProfile(NdesPages):

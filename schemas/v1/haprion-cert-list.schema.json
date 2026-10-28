@@ -279,7 +279,11 @@
       "required": ["interface_served"],
       "properties": {
         "interface_served": { "$ref": "#/$defs/interface_served" },
-        "registry": { "$ref": "#/$defs/registry" }
+        "registry": { "$ref": "#/$defs/registry" },
+        "ndes_configured": {
+          "description": "Additive (F28): whether the runtime policy has its ndes block. Without it an NDES profile is refused, so the interface asks before it queues one.",
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     }

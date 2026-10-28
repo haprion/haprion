@@ -705,7 +705,8 @@ class Run:
 
             openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key",
                     "-out", "ca.pem", "-days", "2", "-subj", "/CN=Install Test NDES CA",
-                    "-addext", "basicConstraints=critical,CA:TRUE")  # fmt: skip
+                    "-addext", "basicConstraints=critical,CA:TRUE",
+                    "-addext", "keyUsage=critical,keyCertSign,cRLSign")  # fmt: skip
             for name, subject, extension in (
                 ("ra", "/CN=Install Test NDES RA", "basicConstraints=CA:FALSE"),
                 ("tls", "/CN=mgr", "subjectAltName=DNS:mgr"),

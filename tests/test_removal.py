@@ -528,6 +528,17 @@ class ANode(unittest.TestCase):
         self.assertIn(["/usr/sbin/userdel", "_haprion-trigger"], self.machine.ran)
         self.assertFalse(self.machine.path("/etc/sysusers.d/haprion-node.conf").exists())
 
+    def test_the_fragment_s_directory_goes_with_it_when_nothing_else_is_there(self) -> None:
+        #
+        # The fragment went last (F24), after the files step had tidied the
+        # empty directories: the installation test found /etc/sysusers.d
+        # left behind on a node that had none before (26-10-28).
+        #
+        code, said = self.main("--yes")
+
+        self.assertEqual(code, 0, said)
+        self.assertFalse(self.machine.path("/etc/sysusers.d").exists())
+
     def test_the_node_s_timer_stamps_go_with_its_timers(self) -> None:
         self.main("--yes")
 

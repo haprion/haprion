@@ -231,6 +231,9 @@ def plan(host: Host) -> list[Step]:
         #
         if not failed:
             failed += remove([fragment])
+            # Its directory, if the installation made it: the files step
+            # tidied the empty ones before the fragment went.
+            tidy_empty(host)
         return failed
 
     accounts.action = remove_accounts

@@ -43,6 +43,7 @@ from haprion_ui import (
     server_card,
 )
 from haprion_ui import editor as editor_module
+from haprion_ui.access import admin_write_gate, current_session, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import (
@@ -61,7 +62,6 @@ from haprion_ui.views import (
     OBJECT_FIGURES,
     SAVED_NOTICE,
     SERVER_NOTICES,
-    _admin_write_gate,
     _advanced_submit,
     _earlier_names,
     _editor_page,
@@ -76,8 +76,6 @@ from haprion_ui.views import (
     _settled_drafts,
     _top_layers,
     _traffic_marks,
-    current_session,
-    forbidden_page,
     moved_dns_servers,
 )
 
@@ -640,7 +638,7 @@ def build_router(config: Config) -> APIRouter:
         before a node is asked, so what is checked here is the shape only.
         """
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -717,7 +715,7 @@ def build_router(config: Config) -> APIRouter:
         before a node is asked; what is checked here is the shape only.
         """
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")

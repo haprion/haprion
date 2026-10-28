@@ -40,6 +40,7 @@ from haprion_ui import (
     ndes_profile_form,
     operations,
 )
+from haprion_ui.access import admin_write_gate, current_session, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import (
@@ -53,15 +54,12 @@ from haprion_ui.reading import (
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     UPLOADED_FILE,
-    _admin_write_gate,
     _dns_public_key,
     _page_context,
     _public_files,
     _refusal_page,
     _registry_overview,
     _zip_response,
-    current_session,
-    forbidden_page,
 )
 
 
@@ -396,7 +394,7 @@ def build_router(config: Config) -> APIRouter:
         certificate: Sequence[str] = Form(default=()),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         if not features.is_on(features.CERT_RECEIVERS):
@@ -511,7 +509,7 @@ def build_router(config: Config) -> APIRouter:
     def _external_certificate_gate(
         request: Request, certificate_id: str, csrf_token: str
     ) -> tuple[AuthenticatedSession, certificates.RegistryCertificateView] | Response:
-        session = _admin_write_gate(config, request)
+        session = admin_write_gate(config, request)
         if not isinstance(session, AuthenticatedSession):
             return session
         if not features.is_on(features.CERT_RECEIVERS) or not CERTIFICATE_ID.fullmatch(
@@ -1183,7 +1181,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """The page behind *Renew…*: one row, renewed the way its source is made."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1200,7 +1198,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue the certbot or NDES renewal the page offered; a file goes to the upload route."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1316,7 +1314,7 @@ def build_router(config: Config) -> APIRouter:
 
         if action not in certificate_retarget.ACTIONS:
             return PlainTextResponse("Not found", status_code=404)
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1345,7 +1343,7 @@ def build_router(config: Config) -> APIRouter:
 
         if action not in certificate_retarget.ACTIONS:
             return PlainTextResponse("Not found", status_code=404)
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1502,7 +1500,7 @@ def build_router(config: Config) -> APIRouter:
     def certificate_receivers_page(request: Request) -> Response:
         """Who fetches from this manager, and what each host runs to do it."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _receivers_page(request, gate)
@@ -1511,7 +1509,7 @@ def build_router(config: Config) -> APIRouter:
     def certificate_receiver_form(request: Request) -> Response:
         """Register a receiver: its own page, like a new certificate is."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         if _registry_overview(config, request) is None:
@@ -1591,7 +1589,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue one `cert_receiver` add job, or draw the form again saying why not."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1629,7 +1627,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue a new secret for an https receiver, and show its password once."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1695,7 +1693,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/certificates/receivers/key", response_class=HTMLResponse)
     def certificate_receiver_key_form(request: Request) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         receiver = request.query_params.get("receiver", "")
@@ -1714,7 +1712,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue a new key for an ssh receiver; its lock, directory and certificates stay."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1749,7 +1747,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue one `cert_receiver` remove job for a receiver nothing publishes to."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1781,7 +1779,7 @@ def build_router(config: Config) -> APIRouter:
         about a change, not a view somebody should bookmark.
         """
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1805,7 +1803,7 @@ def build_router(config: Config) -> APIRouter:
         on the job's rows.
         """
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")

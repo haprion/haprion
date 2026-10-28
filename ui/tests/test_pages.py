@@ -5,8 +5,8 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from haprion_ui.access import hidden_by_a_switch
 from haprion_ui.app import create_app
-from haprion_ui.views import hidden_by_a_switch
 from tests.test_login import configuration
 
 #

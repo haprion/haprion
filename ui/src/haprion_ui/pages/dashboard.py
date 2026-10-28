@@ -42,6 +42,7 @@ from haprion_ui import (
     traffic_summary,
 )
 from haprion_ui import version_changes as version_changes_view
+from haprion_ui.access import admin_write_gate, client_address, current_session, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import (
@@ -65,7 +66,6 @@ from haprion_ui.views import (
     NODE_EVENT_KEEP_DAYS,
     NODE_EVENT_TABLE,
     _account_rows,
-    _admin_write_gate,
     _attention,
     _backup_overview,
     _first_cluster,
@@ -78,9 +78,6 @@ from haprion_ui.views import (
     _refusal_page,
     _registry_overview,
     _return_path,
-    client_address,
-    current_session,
-    forbidden_page,
 )
 
 #
@@ -329,7 +326,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Hide the getting started list for the whole installation (B316)."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -349,7 +346,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Show a hidden getting started list again (0076)."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -453,7 +450,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Leave one row of *Needs attention* out until it has gone (B299)."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -622,7 +619,7 @@ def build_router(config: Config) -> APIRouter:
         and the page is shown again instead.
         """
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -761,7 +758,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Run or discard a job held since the manager last started (0082, review 2026-10-20 R1)."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")

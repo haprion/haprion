@@ -28,11 +28,12 @@ from haprion_ui import (
     node_restores,
     operations,
 )
+from haprion_ui.access import admin_write_gate, current_session, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import BACKUP_SOURCE, read_source
 from haprion_ui.templates import TEMPLATES
-from haprion_ui.views import EXPIRED, _admin_write_gate, current_session, forbidden_page
+from haprion_ui.views import EXPIRED
 
 
 def build_router(config: Config) -> APIRouter:
@@ -266,7 +267,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Start a restore from one archive row: the target and the mode."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _restore_form_page(request, gate, cluster=cluster, node=node, archive=archive)
@@ -287,7 +288,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue `node_restore_prepare` under a new run ID, then show the run."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -353,7 +354,7 @@ def build_router(config: Config) -> APIRouter:
     def _restore_step(
         request: Request, run: str, csrf_token: str, idempotency_key: str
     ) -> tuple[AuthenticatedSession, node_restores.RestoreRun, UUID] | Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")

@@ -41,6 +41,7 @@ from haprion_ui import (
     users,
     waf,
 )
+from haprion_ui.access import admin_write_gate, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import (
@@ -59,7 +60,6 @@ from haprion_ui.views import (
     SWITCHED,
     UNAVAILABLE_PROVIDER,
     _account_rows,
-    _admin_write_gate,
     _backup_overview,
     _dns_public_key,
     _hashed,
@@ -74,7 +74,6 @@ from haprion_ui.views import (
     _settled_changes,
     _start_oidc,
     _status_row,
-    forbidden_page,
 )
 
 
@@ -98,7 +97,7 @@ def build_router(config: Config) -> APIRouter:
     #
     @router.get("/settings/status-access", response_class=HTMLResponse)
     def status_access_edit(request: Request) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _status_access_page(request, gate)
@@ -142,7 +141,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Replace the list of addresses that may ask /status/ (B274); empty switches it off."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -167,7 +166,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         switched = request.query_params.get("switched", "")[:32]
@@ -297,7 +296,7 @@ def build_router(config: Config) -> APIRouter:
     def feature_page(request: Request, name: str) -> Response:
         """The question before turning a feature off, when off does more than hide."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         feature = features.BY_NAME.get(name)
@@ -324,7 +323,7 @@ def build_router(config: Config) -> APIRouter:
         enabled: str = Form(default="", max_length=3),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -483,7 +482,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings/clusters/{cluster}", response_class=HTMLResponse)
     def cluster_settings_edit(request: Request, cluster: str) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         row = _settings_reading(request, cluster)
@@ -536,7 +535,7 @@ def build_router(config: Config) -> APIRouter:
         saved_revision: str = Form(default="", max_length=16),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -718,7 +717,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings/nodes/{cluster}", response_class=HTMLResponse)
     def cluster_nodes_page(request: Request, cluster: str) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         if cluster not in listed_clusters(request, config):
@@ -737,7 +736,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Read the block and show what it says; with the node's name typed, queue it."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -817,7 +816,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Ask first; with the node's name typed, queue the removal."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -869,7 +868,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """The same node at another name (B295): ask for the host, then queue the change."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -927,7 +926,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Ask first; with the cluster's ID typed, queue its removal (B211)."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1002,7 +1001,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings/new-cluster", response_class=HTMLResponse)
     def new_cluster_page(request: Request) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         #
@@ -1047,7 +1046,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Read the form and both blocks and show them; with the ID typed, queue it (B211)."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1123,7 +1122,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings/new-user", response_class=HTMLResponse)
     def new_user_page(request: Request) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _new_user_page(request, gate)
@@ -1137,7 +1136,7 @@ def build_router(config: Config) -> APIRouter:
         repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1185,7 +1184,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings/users/{name}", response_class=HTMLResponse)
     def user_page(request: Request, name: str) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         row = _account_row(request, name)
@@ -1204,7 +1203,7 @@ def build_router(config: Config) -> APIRouter:
         break_glass: str = Form(default="", max_length=8),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1315,7 +1314,7 @@ def build_router(config: Config) -> APIRouter:
     def oidc_settings_page(request: Request) -> Response:
         """Settings -> Users -> OIDC configuration (B197)."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         provider = _oidc_provider(request)
@@ -1336,7 +1335,7 @@ def build_router(config: Config) -> APIRouter:
     def change_oidc_settings(request: Request) -> Response:
         """Save, Verify, and turn on or off. Each is audited; the secret never is."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         posted = _posted(request)
@@ -1500,7 +1499,7 @@ def build_router(config: Config) -> APIRouter:
     def delete_user_page(request: Request, name: str) -> Response:
         """The question before an account is removed for good (B197)."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         row = _account_row(request, name)

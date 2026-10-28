@@ -17,6 +17,13 @@ from haprion_ui import (
     db,
     oidc_web,
 )
+from haprion_ui.access import (
+    admin_write_gate,
+    client_address,
+    current_session,
+    forbidden_page,
+    set_session_cookie,
+)
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.templates import TEMPLATES
@@ -25,8 +32,6 @@ from haprion_ui.views import (
     SIGN_IN_BUSY,
     SIGN_IN_FAILED,
     UNAVAILABLE_PROVIDER,
-    _admin_write_gate,
-    _cookie,
     _count_attempt,
     _hashed,
     _login_again,
@@ -40,9 +45,6 @@ from haprion_ui.views import (
     _sign_in_throttled,
     _sso_button,
     _start_oidc,
-    client_address,
-    current_session,
-    forbidden_page,
 )
 
 
@@ -220,7 +222,7 @@ def build_router(config: Config) -> APIRouter:
             connection.commit()
 
         response = RedirectResponse("/", status_code=303)
-        _cookie(response, config, token, expires_at)
+        set_session_cookie(response, config, token, expires_at)
         response.delete_cookie(
             auth.PRE_SESSION_COOKIE, path="/", secure=config.session.cookie_secure
         )
@@ -372,7 +374,7 @@ def build_router(config: Config) -> APIRouter:
 
         gate: AuthenticatedSession | Response | None = None
         if pending.mode == "test":
-            gate = _admin_write_gate(config, request)
+            gate = admin_write_gate(config, request)
             if not isinstance(gate, AuthenticatedSession):
                 return gate
 
@@ -556,7 +558,7 @@ def build_router(config: Config) -> APIRouter:
             connection.commit()
 
         response = RedirectResponse("/", status_code=303)
-        _cookie(response, config, token, expires_at)
+        set_session_cookie(response, config, token, expires_at)
         response.delete_cookie(
             auth.PRE_SESSION_COOKIE, path="/", secure=config.session.cookie_secure
         )

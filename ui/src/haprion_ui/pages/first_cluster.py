@@ -21,19 +21,17 @@ from haprion_ui import (
     first_cluster,
     jobs,
 )
+from haprion_ui.access import admin_write_gate, current_session, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import NETWORK_SOURCE, STATUS_SOURCE, listed_clusters, read_source
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
-    _admin_write_gate,
     _dns_public_key,
     _first_cluster,
     _queue_node_job,
     _registry_overview,
     _status_row,
-    current_session,
-    forbidden_page,
 )
 
 
@@ -74,7 +72,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     def _first_cluster_gate(request: Request, csrf_token: str) -> AuthenticatedSession | Response:
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -277,7 +275,7 @@ def build_router(config: Config) -> APIRouter:
     def first_cluster_node_package(request: Request, name: str) -> Response:
         """The node package the CLI release carries, under its versioned name, for the guide."""
 
-        gate = _admin_write_gate(config, request)
+        gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         if name != first_cluster.node_package_name() or not first_cluster.NODE_PACKAGE.is_file():

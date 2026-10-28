@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from haprion_ui.access import hidden_by_a_switch
 from haprion_ui.config import Config
 from haprion_ui.pages import (
     backups,
@@ -16,7 +17,6 @@ from haprion_ui.pages import (
     sign_in,
     traffic,
 )
-from haprion_ui.views import hidden_by_a_switch
 
 
 def build_router(config: Config) -> APIRouter:

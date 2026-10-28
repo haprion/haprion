@@ -32,6 +32,7 @@ from haprion_ui import (
     traffic_log_table,
     traffic_logs,
 )
+from haprion_ui.access import current_session, forbidden_page
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.config import Config
 from haprion_ui.reading import (
@@ -53,8 +54,6 @@ from haprion_ui.views import (
     _waf_overview,
     _waf_remove,
     _waf_work_page,
-    current_session,
-    forbidden_page,
 )
 
 

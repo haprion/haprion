@@ -26,17 +26,12 @@ from haprion_ui import (
     jobs,
     ndes_profile_form,
 )
+from haprion_ui.access import current_session, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import read_manager_certificates
 from haprion_ui.templates import TEMPLATES
-from haprion_ui.views import (
-    DNS_PROFILE_APPLY_WAIT,
-    _dns_public_key,
-    _posted,
-    current_session,
-    forbidden_page,
-)
+from haprion_ui.views import DNS_PROFILE_APPLY_WAIT, _dns_public_key, _posted
 
 
 def build_router(config: Config) -> APIRouter:

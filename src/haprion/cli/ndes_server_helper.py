@@ -73,12 +73,13 @@ def perform(
         return ndes_servers.add(
             endpoint, _string(parameters, "sha256"), policy_path=policy_path, fetch=fetch
         )
-    policy = load_policy(policy_path).ndes
-    used_by = (
-        ndes_servers.profiles_using(policy.profiles.directory, endpoint)
-        if policy is not None
-        else ()
-    )
+
+    def used_by() -> tuple[str, ...]:
+        policy = load_policy(policy_path).ndes
+        if policy is None:
+            return ()
+        return ndes_servers.profiles_using(policy.profiles.directory, endpoint)
+
     return ndes_servers.remove(endpoint, used_by=used_by, policy_path=policy_path)
 
 

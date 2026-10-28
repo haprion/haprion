@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import io
 import json
+import multiprocessing
+import os
 import subprocess
 import tempfile
 import unittest
@@ -15,7 +18,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import exit_codes, ndes_servers
+from haprion import exit_codes, ndes_servers, safe_yaml
 from haprion.cli import ndes_server, ndes_server_helper
 from haprion.config import load_policy
 from tests.contract_schema import assert_contract
@@ -109,6 +112,10 @@ class ThePolicy(unittest.TestCase):
         self.cas = self.root / "ndes-ca"
         self.answer = Answer(self.root)
         self.issuing = self.answer.sha256(self.answer.pki.intermediate)
+        self.lock = self.root / "locks" / "ndes-policy.lock"
+        patch = mock.patch.object(ndes_servers, "LOCK_PATH", self.lock)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def add(self, endpoint: str = ENDPOINT, sha256: str | None = None) -> dict[str, object]:
         return ndes_servers.add(
@@ -175,12 +182,12 @@ class ThePolicy(unittest.TestCase):
         self.add()
         self.add(OTHER)
         with self.assertRaises(ndes_servers.NdesServerError) as caught:
-            ndes_servers.remove(OTHER, used_by=("internal-ca",), policy_path=self.policy)
+            ndes_servers.remove(OTHER, used_by=lambda: ("internal-ca",), policy_path=self.policy)
         self.assertEqual(caught.exception.code, "in_use")
 
-        ndes_servers.remove(OTHER, used_by=(), policy_path=self.policy)
+        ndes_servers.remove(OTHER, used_by=lambda: (), policy_path=self.policy)
         self.assertEqual(self.servers(), [ENDPOINT])
-        ndes_servers.remove(ENDPOINT, used_by=(), policy_path=self.policy)
+        ndes_servers.remove(ENDPOINT, used_by=lambda: (), policy_path=self.policy)
         self.assertNotIn("ndes", yaml.safe_load(self.policy.read_text()))
         self.assertIsNone(load_policy(self.policy, require_secure=False).ndes)
 
@@ -192,6 +199,77 @@ class ThePolicy(unittest.TestCase):
         )
         (records / "other.json").write_text(f'{{"profile_id": "other", "endpoint": "{OTHER}"}}')
         self.assertEqual(ndes_servers.profiles_using(records, ENDPOINT), ("internal-ca",))
+
+    def test_the_profiles_using_a_server_are_asked_under_the_lock(self) -> None:
+        self.add()
+        held = []
+
+        def used_by() -> tuple[str, ...]:
+            handle = os.open(self.lock, os.O_RDWR)
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held.append(False)
+            except BlockingIOError:
+                held.append(True)
+            finally:
+                os.close(handle)
+            return ()
+
+        ndes_servers.remove(ENDPOINT, used_by=used_by, policy_path=self.policy)
+        self.assertEqual(held, [True])
+
+    def test_two_processes_adding_servers_at_once_keep_both(self) -> None:
+        # Review 2026-10-28, F05: the command and the web's helper are two
+        # processes. The first reads the policy and waits for the second to
+        # read it too; the second writes only after the first has. Without the
+        # lock both read the same file and the second write loses the first
+        # server; with it the second cannot read until the first has written.
+        context = multiprocessing.get_context("fork")
+        first_read, second_read, first_written = (context.Event() for _ in range(3))
+        real_load, real_write = safe_yaml.load, ndes_servers._write_policy
+
+        def first() -> None:
+            def load(text: str) -> Any:
+                first_read.set()
+                second_read.wait(2)
+                return real_load(text)
+
+            def write(policy_path: Path, text: str) -> None:
+                real_write(policy_path, text)
+                first_written.set()
+
+            with (
+                mock.patch.object(safe_yaml, "load", load),
+                mock.patch.object(ndes_servers, "_write_policy", write),
+            ):
+                self.add(ENDPOINT)
+
+        def second() -> None:
+            def load(text: str) -> Any:
+                second_read.set()
+                first_written.wait(10)
+                return real_load(text)
+
+            with mock.patch.object(safe_yaml, "load", load):
+                self.add(OTHER)
+
+        def run(work: Any) -> None:
+            status = 1
+            try:
+                work()
+                status = 0
+            finally:
+                os._exit(status)
+
+        one = context.Process(target=run, args=(first,))
+        one.start()
+        self.assertTrue(first_read.wait(30))
+        two = context.Process(target=run, args=(second,))
+        two.start()
+        one.join(30)
+        two.join(30)
+        self.assertEqual((one.exitcode, two.exitcode), (0, 0))
+        self.assertEqual(sorted(self.servers()), sorted([ENDPOINT, OTHER]))
 
 
 if __name__ == "__main__":
@@ -216,6 +294,7 @@ class TheHelperAndTheCommand(unittest.TestCase):
                 side_effect=lambda path: load_policy(path, require_secure=False),
             ),
             mock.patch.object(ndes_servers, "CA_DIRECTORY", self.root / "ndes-ca"),
+            mock.patch.object(ndes_servers, "LOCK_PATH", self.root / "ndes-policy.lock"),
         ):
             patch.start()
             self.addCleanup(patch.stop)

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import exit_codes, labels, ndes_profiles
+from haprion import exit_codes, labels, ndes_profiles, ndes_servers
 from haprion.cli import cert_job
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_registry
 from haprion.dns_profile_keys import KeyFileError, read_private_key
@@ -138,11 +138,20 @@ def main(
                     policy.ndes, opened.profile_id, require_secure=require_secure
                 )
             else:
-                ndes_profiles.materialize(policy.ndes, opened, require_secure=require_secure)
+                # The server is checked against the policy as it is under the
+                # NDES lock, which a server's removal holds too (review
+                # 2026-10-28, F05): the reading above may already be stale.
+                with ndes_servers.locked():
+                    current = load_policy(policy_path, require_secure=require_secure).ndes
+                    if current is None:
+                        raise ProfileError("runtime policy.ndes is not configured")
+                    ndes_profiles.materialize(current, opened, require_secure=require_secure)
         finally:
             os.close(fd)
     except BlockingIOError:
         return refuse("busy", "another NDES profile apply is running", exit_codes.BLOCKED)
+    except ndes_servers.NdesServerError as exc:
+        return refuse("busy", str(exc), exc.exit_code)
     except (ProfileError, OSError, ConfigError):
         return refuse(
             "dependency_unavailable",

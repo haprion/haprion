@@ -12,6 +12,12 @@ The policy is otherwise left as it is: only the `ndes:` block is replaced, so
 the rest of the file and its comments stay, and the result is read back with
 the engine's own parser before it replaces the file. A block in the form
 before B385 - one `endpoint` beside the rest - becomes the first server.
+
+Every change to the block reads the policy again under one lock, held by the
+command, the web's helper and the profile apply helper alike (review
+2026-10-28, F05): an atomic replace keeps a file whole, not a change two
+writers made from the same reading. The question to the server stays outside
+the lock; only the local reading and writing is inside it.
 """
 
 from __future__ import annotations
@@ -21,14 +27,15 @@ import json
 import re
 import urllib.request
 from base64 import b64decode
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from haprion import atomic_file, exit_codes, safe_yaml
+from haprion import atomic_file, cert_lock, exit_codes, safe_yaml
 from haprion.cert_import import ImportError_, _names, _openssl, read_bytes
 from haprion.certificates import CERTIFICATE_BLOCK
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
@@ -39,6 +46,12 @@ CA_DIRECTORY = Path("/etc/haprion/ndes-ca")
 CLIENT_ROOT = "/opt/haprion-scep/current"
 STATE_ROOT = "/etc/haprion/ndes-requests"
 PROFILE_DIRECTORY = "/etc/haprion/ndes-profiles"
+#
+# Under /run/haprion, which the worker's sandbox and the socket helper's both
+# write. Held only for local files: milliseconds, so a short wait.
+#
+LOCK_PATH = Path("/run/haprion/locks/ndes-policy.lock")
+LOCK_WAIT_SECONDS = 30
 #
 # SCEP's GetCACert answers with the CA and the RA certificates: a few kB.
 #
@@ -160,6 +173,22 @@ def authorities(endpoint: str, *, fetch: Fetch = get_ca_cert) -> tuple[Authority
     return tuple(sorted(found, key=lambda authority: not authority.issues_ra))
 
 
+@contextmanager
+def locked(path: Path | None = None) -> Iterator[None]:
+    """Hold the NDES policy lock around a read-modify-write of the `ndes:` block.
+
+    Taken once per process: a second take in the same process waits for the
+    first, as `cert_lock` says.
+    """
+
+    with cert_lock.hold(
+        LOCK_PATH if path is None else path,
+        wait=LOCK_WAIT_SECONDS,
+        refuse=lambda message: NdesServerError("operation_locked", message, exit_codes.BLOCKED),
+    ):
+        yield
+
+
 def ca_file(endpoint: str, directory: Path = CA_DIRECTORY) -> Path:
     return directory / f"{hashlib.sha256(endpoint.encode()).hexdigest()[:16]}.pem"
 
@@ -258,25 +287,35 @@ def add(
             f"{endpoint} no longer gives the CA with SHA-256 {sha256}; fetch it again and compare",
         )
     path = ca_file(endpoint, ca_directory)
-    ca_directory.mkdir(mode=0o755, exist_ok=True)
-    atomic_file.write(path, "".join(a.pem for a in found).encode(), mode=0o644)
-    text = policy_path.read_text()
-    data = safe_yaml.load(text) or {}
-    block = _ndes_block(data, policy_path)
-    servers = [s for s in block["servers"] if s.get("endpoint") != endpoint]
-    block["servers"] = [*servers, {"endpoint": endpoint, "issuing_ca": str(path)}]
-    _write_policy(policy_path, with_ndes(text, block))
+    with locked():
+        ca_directory.mkdir(mode=0o755, exist_ok=True)
+        atomic_file.write(path, "".join(a.pem for a in found).encode(), mode=0o644)
+        text = policy_path.read_text()
+        data = safe_yaml.load(text) or {}
+        block = _ndes_block(data, policy_path)
+        servers = [s for s in block["servers"] if s.get("endpoint") != endpoint]
+        block["servers"] = [*servers, {"endpoint": endpoint, "issuing_ca": str(path)}]
+        _write_policy(policy_path, with_ndes(text, block))
     return {"endpoint": endpoint, "issuing_ca": str(path), "sha256": sha256}
 
 
 def remove(
     endpoint: str,
     *,
-    used_by: Sequence[str],
+    used_by: Callable[[], Sequence[str]],
     policy_path: Path = DEFAULT_POLICY_PATH,
 ) -> dict[str, Any]:
-    """Take the server out of the policy, unless a profile still uses it."""
+    """Take the server out of the policy, unless a profile still uses it.
 
+    `used_by` is asked under the lock, so a profile applied a moment before is
+    seen: the profile apply helper checks its server under the same lock.
+    """
+
+    with locked():
+        return _remove(endpoint, used_by=used_by(), policy_path=policy_path)
+
+
+def _remove(endpoint: str, *, used_by: Sequence[str], policy_path: Path) -> dict[str, Any]:
     if used_by:
         raise NdesServerError(
             "in_use", f"{endpoint} is used by the NDES profile {', '.join(sorted(used_by))}"

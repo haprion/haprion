@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import io
 import json
 import os
@@ -10,10 +11,11 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
-from haprion import dns_profiles, ndes_profiles
+from haprion import dns_profiles, exit_codes, ndes_profiles, ndes_servers
 from haprion.cli import ndes_profile_apply_helper
 from haprion.config import (
     SYSTEM_TRUST,
@@ -35,6 +37,9 @@ class NdesProfiles(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        patch = mock.patch.object(ndes_servers, "LOCK_PATH", self.root / "ndes-policy.lock")
+        patch.start()
+        self.addCleanup(patch.stop)
         profiles = self.root / "profiles"
         profiles.mkdir(mode=0o700)
         self.policy = NdesPolicy(
@@ -283,6 +288,22 @@ class NdesProfileRemoval(NdesProfiles):
         self.assertNotIn("example-challenge", json.dumps(doc) + errors)
         code, doc, _ = self._helper(self._request(remove=True))
         self.assertEqual(code, 0)
+
+    def test_an_apply_checks_its_server_under_the_ndes_lock(self) -> None:
+        # Review 2026-10-28, F05: a server's removal holds this lock while it
+        # asks which profiles use the server; an apply must not slip between.
+        self._policy_file()
+        handle = os.open(ndes_servers.LOCK_PATH, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, handle)
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        with mock.patch.object(ndes_servers, "LOCK_WAIT_SECONDS", 0):
+            code, doc, _ = self._helper(self._request(remove=False))
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual(doc["error"]["code"], "busy")
+        self.assertFalse(ndes_profiles.record_path(self.policy, "internal-ca").exists())
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        code, _, errors = self._helper(self._request(remove=False))
+        self.assertEqual(code, 0, errors)
 
     def test_removal_is_refused_while_an_enrollment_is_pending(self) -> None:
         self._policy_file()

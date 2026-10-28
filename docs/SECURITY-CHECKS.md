@@ -134,7 +134,8 @@ reasons. A release's packages are therefore installed the way an operator instal
 machines that have only systemd and sshd, before they go anywhere else:
 
 ```bash
-tools/install-test --packages /path/to/release-packages --distribution all
+tools/install-test --packages /path/to/release-packages \
+    --upgrade-from /path/to/previous-release-packages --distribution all
 ```
 
 The command runs as the developer, with rootless podman. For each of Debian 13 and Ubuntu 26.04 it
@@ -147,6 +148,13 @@ exactly one, the object answering there, the address moving when its holder's ke
 staying where it went when it comes back, and a second deploy that changes nothing. The first step
 that does not hold stops the run with its output; every machine's output and journal are kept in
 the logs directory. `--keep` leaves the machines running for a look inside.
+
+`--upgrade-from` tests the update as well. The previous release's packages are installed on a
+second set of machines, with a cluster and an object deployed, and then updated to the new ones with
+apt. The run then requires every package configured at its new version, the web answering, a deploy
+that succeeds and the object answering. A release that cannot be installed over the one before
+fails here, not on the operator's manager. `--no-upgrade` tests a new installation only, and has to
+be given on purpose.
 
 Not covered: syslog objects' IPVS (a rootless container may not load the kernel table), certbot's
 dry-run renewal (it needs a public ACME server) and the web pages, whose root helpers the CLI drives

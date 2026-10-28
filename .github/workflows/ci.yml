@@ -269,7 +269,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/install-test --packages "${RUNNER_TEMP}/packages" --distribution all \
+          python3 tools/install-test --packages "${RUNNER_TEMP}/packages" --no-upgrade --distribution all \
             --logs "${RUNNER_TEMP}/install-test-logs"
 
       - name: Keep what the machines said

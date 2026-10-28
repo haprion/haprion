@@ -3,6 +3,7 @@
 
     tools/install-test --packages <dir> | --apt-repo <site> | --url <published site>
                        --distribution debian13|ubuntu26.04|all [--keep] [--logs <dir>]
+                       [--upgrade-from <previous release's files> | --no-upgrade]
 
 Every new installation found its faults one at a time on a lab VM (Fas 18:
 a missing dependency, a step that could not be rerun, a check that refused a
@@ -36,6 +37,11 @@ does not resolve fails here (B325). With `--url`, the published repository,
 added word for word as docs/install.md does it: curl, the real key fetched
 from the site (refused unless it is the key in this tree), the source over
 https - and afterwards the key file belongs to haprion-archive-keyring.
+
+With `--packages` the update is tested too, or `--no-upgrade` says it is not:
+`--upgrade-from` names the previous release's files, which are installed and
+serving first - a cluster, an object deployed - and then updated to these
+with apt, as docs/install.md has an operator update.
 
 Not here: syslog objects' IPVS (a rootless container may not load the kernel
 table; measured 26-10-15), certbot's dry-run renewal (it asks Let's Encrypt's
@@ -738,6 +744,22 @@ def package(directory: Path, pattern: str) -> Path:
     return found[0]
 
 
+def release_files(packages: Path, distribution: Distribution) -> tuple[list[Path], list[Path]]:
+    """A release's files for the manager, and for a node."""
+
+    key = package(packages, "haprion-archive-keyring_*_all.deb")
+    engine = package(packages, "haprion-coraza-spoa_*_amd64.deb")
+    manager_files = [
+        package(packages, "haprion-cli_*_all.deb"),
+        package(packages, f"haprion-ui_*{distribution.ui_suffix}_amd64.deb"),
+        package(packages, f"haprion-certbot_*{distribution.ui_suffix}_amd64.deb"),
+        engine,
+        package(packages, "haprion-crs_*_all.deb"),
+        key,
+    ]
+    return manager_files, [engine, key, package(packages, "haprion-node_*_all.deb")]
+
+
 def run_one(
     distribution: Distribution,
     packages: Path | None,
@@ -748,17 +770,7 @@ def run_one(
 ) -> bool:
     manager_files = node_files = None
     if packages is not None:
-        key = package(packages, "haprion-archive-keyring_*_all.deb")
-        engine = package(packages, "haprion-coraza-spoa_*_amd64.deb")
-        manager_files = [
-            package(packages, "haprion-cli_*_all.deb"),
-            package(packages, f"haprion-ui_*{distribution.ui_suffix}_amd64.deb"),
-            package(packages, f"haprion-certbot_*{distribution.ui_suffix}_amd64.deb"),
-            engine,
-            package(packages, "haprion-crs_*_all.deb"),
-            key,
-        ]
-        node_files = [engine, key, package(packages, "haprion-node_*_all.deb")]
+        manager_files, node_files = release_files(packages, distribution)
     logs.mkdir(parents=True, exist_ok=True)
     run = Run(distribution, logs)
     steps: list[str] = []
@@ -1037,6 +1049,116 @@ def run_one(
     return True
 
 
+def run_upgrade(
+    distribution: Distribution, previous: Path, packages: Path, logs: Path, keep: bool
+) -> bool:
+    """The previous release installed and serving, then this one over it with apt.
+
+    0.99.3 passed every step above and could not be installed over 0.99.2
+    (26-10-28): its migration was declared unsafe for the running release, and
+    the UI package's postinst stopped where docs/install.md says to run
+    `apt upgrade`. Only an update from the release before shows that.
+    """
+
+    old_manager, old_node = release_files(previous, distribution)
+    new_manager, new_node = release_files(packages, distribution)
+    logs.mkdir(parents=True, exist_ok=True)
+    run = Run(distribution, logs)
+    steps: list[str] = []
+    label = f"{distribution.name} upgrade"
+    # The version the package files carry, as `haprion-cli_0.99.2+git..._all.deb` names it.
+    before = old_manager[0].name.split("_")[1].split("+")[0]
+
+    def step(title: str, action: Callable[[], T]) -> T:
+        run.step += 1
+        print(f"  [{label} {run.step:2d}] {title} ... ", end="", flush=True)
+        started = time.monotonic()
+        result = action()
+        print(f"ok ({time.monotonic() - started:.0f} s)")
+        steps.append(title)
+        return result
+
+    def upgraded(role: str, files: list[Path]) -> None:
+        names = [run.copy(role, path) for path in files]
+        run.on(
+            role,
+            "export DEBIAN_FRONTEND=noninteractive && "
+            f"apt-get install -y -q {' '.join(shlex.quote(name) for name in names)}",
+        )
+        _, states = run.on(role, "dpkg-query -W -f='${db:Status-Abbrev} ${Package}\\n' 'haprion*'")
+        unfinished = [line for line in states.splitlines() if line.split()[0] not in ("ii", "un")]
+        if unfinished:
+            raise Failed(f"{role}: packages left unconfigured:\n" + "\n".join(unfinished))
+        for path in files:
+            _, wanted = run.on(role, f"dpkg-deb -f /root/install/{path.name} Package Version")
+            fields = dict(line.split(": ", 1) for line in wanted.splitlines() if ": " in line)
+            _, have = run.on(role, f"dpkg-query -W -f='${{Version}}' {fields['Package']}")
+            if have.strip() != fields["Version"]:
+                raise Failed(
+                    f"{role}: {fields['Package']} is {have.strip()}, not {fields['Version']}"
+                )
+
+    def the_manager_serves_after_it() -> None:
+        for unit in ("haprion-web.socket", "haprion-worker", "haprion-poller"):
+            run.on("mgr", f"systemctl is-active --quiet {unit}")
+        _, answer = run.on(
+            "mgr", "curl -fsS --unix-socket /run/haprion-web.sock http://localhost/healthz"
+        )
+        if '"ok":true' not in answer.replace(" ", ""):
+            raise Failed(f"the web does not answer after the update:\n{answer}")
+        output = run.deploy()
+        if "RESULT: OK" not in output:
+            raise Failed(f"a deploy after the update did not succeed:\n{output}")
+        run.wait_for_one_holder()
+        run.answers_on_the_vip()
+
+    def published_and_deployed() -> None:
+        run.publish()
+        run.deploy()
+
+    try:
+        image = step("an empty server image", run.image)
+        step("a manager and two nodes booted", lambda: run.start(image))
+        step(
+            f"the manager: {before}'s packages, haprion-setup",
+            lambda: run.install_manager(old_manager),
+        )
+        blocks = [
+            step(
+                f"{role}: {before}'s package",
+                functools.partial(run.prepare_node, role, old_node),
+            )
+            for role in NODES
+        ]
+        step("the cluster with both nodes", lambda: run.create_cluster(blocks[0]))
+        step("the first deploy rolls out version 1", run.first_deploy_is_version_one)
+        step(f"{NODES[1]} added", lambda: run.add_node(NODES[1], blocks[1]))
+        step("an object published and deployed", published_and_deployed)
+        step("the manager updated to this release with apt", lambda: upgraded("mgr", new_manager))
+        for role in NODES:
+            step(
+                f"{role} updated to this release with apt",
+                functools.partial(upgraded, role, new_node),
+            )
+        step("the manager serves, deploys, and the object answers", the_manager_serves_after_it)
+    except Failed as failure:
+        print("FAILED")
+        print()
+        print(str(failure))
+        run.save_logs()
+        print(f"\n  The whole output of every machine is in {logs}")
+        if keep:
+            print(f"  The machines are left running: podman exec -it {run.container('mgr')} bash")
+        else:
+            run.remove()
+        return False
+    run.save_logs()
+    if not keep:
+        run.remove()
+    print(f"  [{label}] updated from {before} and serving: {len(steps)} steps")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="install-test")
     source = parser.add_mutually_exclusive_group(required=True)
@@ -1048,7 +1170,21 @@ def main() -> int:
     parser.add_argument("--distribution", choices=[*DISTRIBUTIONS, "all"], default="all")
     parser.add_argument("--logs", type=Path)
     parser.add_argument("--keep", action="store_true")
+    #
+    # A release's files are tested as an update as well, or it is said that
+    # they are not: the chain is written per release, and an update left out
+    # by omission is how 0.99.3 went out (26-10-28).
+    #
+    update = parser.add_mutually_exclusive_group()
+    update.add_argument(
+        "--upgrade-from", type=Path, help="the previous release's package files, updated from"
+    )
+    update.add_argument("--no-upgrade", action="store_true", help="test a new installation only")
     args = parser.parse_args()
+    if args.packages and not (args.upgrade_from or args.no_upgrade):
+        parser.error("--packages needs --upgrade-from <previous release's files> or --no-upgrade")
+    if args.upgrade_from and not args.packages:
+        parser.error("--upgrade-from updates to --packages")
     logs = args.logs or Path(tempfile.mkdtemp(prefix="haprion-install-test-"))
     chosen = list(DISTRIBUTIONS) if args.distribution == "all" else [args.distribution]
     results = {
@@ -1062,6 +1198,17 @@ def main() -> int:
         )
         for name in chosen
     }
+    if args.upgrade_from:
+        results |= {
+            f"{name} upgrade": run_upgrade(
+                DISTRIBUTIONS[name],
+                args.upgrade_from.resolve(),
+                args.packages.resolve(),
+                logs / f"{name}-upgrade",
+                args.keep,
+            )
+            for name in chosen
+        }
     print()
     for name, passed in results.items():
         print(f"  {name}: {'PASSED' if passed else 'FAILED'}")

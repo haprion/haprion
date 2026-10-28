@@ -24,28 +24,28 @@ from haprion_ui.access import (
     forbidden_page,
     set_session_cookie,
 )
-from haprion_ui.config import Config
-from haprion_ui.db import AuthenticatedSession
-from haprion_ui.templates import TEMPLATES
-from haprion_ui.views import (
+from haprion_ui.accounts import (
     HASHING_BUSY,
     SIGN_IN_BUSY,
     SIGN_IN_FAILED,
     UNAVAILABLE_PROVIDER,
-    _count_attempt,
-    _hashed,
-    _login_again,
-    _new_password_problem,
-    _oidc_account_refusal,
-    _oidc_page,
-    _oidc_provider,
-    _oidc_redirect,
-    _password_page,
-    _prove_password,
-    _sign_in_throttled,
-    _sso_button,
-    _start_oidc,
+    count_sign_in_attempt,
+    current_oidc_provider,
+    hashed_password,
+    login_again,
+    new_password_problem,
+    oidc_account_refusal,
+    oidc_page,
+    oidc_redirect,
+    password_page,
+    prove_password,
+    sign_in_throttled,
+    sso_button,
+    start_oidc,
 )
+from haprion_ui.config import Config
+from haprion_ui.db import AuthenticatedSession
+from haprion_ui.templates import TEMPLATES
 
 
 def build_router(config: Config) -> APIRouter:
@@ -64,7 +64,7 @@ def build_router(config: Config) -> APIRouter:
         response: Response = TEMPLATES.TemplateResponse(
             request,
             "login.html",
-            {"error": None, "csrf_token": auth.csrf_token(pre_token), "sso": _sso_button(request)},
+            {"error": None, "csrf_token": auth.csrf_token(pre_token), "sso": sso_button(request)},
         )
         response.set_cookie(
             auth.PRE_SESSION_COOKIE,
@@ -91,11 +91,11 @@ def build_router(config: Config) -> APIRouter:
             # open longer than the pre-session cookie lived - and the useful
             # answer is a fresh form, not a diagnosis.
             #
-            return _login_again(request, config)
+            return login_again(request, config)
 
         address = client_address(request)
         with request.app.state.pool.connection() as connection:
-            throttled = _sign_in_throttled(connection, config, username=username, address=address)
+            throttled = sign_in_throttled(connection, config, username=username, address=address)
             account = None if throttled else db.account_by_username(connection, username)
             provider = db.oidc_provider(connection)
         #
@@ -126,7 +126,7 @@ def build_router(config: Config) -> APIRouter:
             accepted, busy = False, True
         else:
             try:
-                throttled = _count_attempt(
+                throttled = count_sign_in_attempt(
                     request.app.state.pool, config, username=username, address=address
                 )
             except BaseException:
@@ -159,7 +159,7 @@ def build_router(config: Config) -> APIRouter:
             # Not counted against the name or the address: the load is not
             # this person's doing, and a flood must not lock real users out.
             #
-            return _login_again(request, config, error=SIGN_IN_BUSY)
+            return login_again(request, config, error=SIGN_IN_BUSY)
 
         with request.app.state.pool.connection() as connection:
             if accepted:
@@ -197,7 +197,7 @@ def build_router(config: Config) -> APIRouter:
                     },
                 )
                 connection.commit()
-                return _login_again(request, config, error=SIGN_IN_FAILED)
+                return login_again(request, config, error=SIGN_IN_FAILED)
 
             assert account is not None  # noqa: S101 - accepted implies an account was found
             #
@@ -236,7 +236,7 @@ def build_router(config: Config) -> APIRouter:
         if session.source == "oidc":
             # The provider's account has no password here to change.
             return PlainTextResponse("Not found", status_code=404)
-        return _password_page(
+        return password_page(
             request, config, session, changed=request.query_params.get("changed") == "1"
         )
 
@@ -270,12 +270,12 @@ def build_router(config: Config) -> APIRouter:
         # The new password is judged before the current one is tried, so a
         # typing mistake in the new one never spends a throttle attempt.
         #
-        problem = _new_password_problem(new_password, repeat_password)
+        problem = new_password_problem(new_password, repeat_password)
         if problem:
-            return _password_page(request, config, session, problem=problem, status_code=400)
+            return password_page(request, config, session, problem=problem, status_code=400)
 
         address = client_address(request)
-        refused = _prove_password(
+        refused = prove_password(
             request.app.state.pool,
             config,
             session,
@@ -286,12 +286,12 @@ def build_router(config: Config) -> APIRouter:
         )
         if refused:
             busy = refused == HASHING_BUSY
-            return _password_page(
+            return password_page(
                 request, config, session, problem=refused, status_code=503 if busy else 400
             )
-        password_hash = _hashed(new_password)
+        password_hash = hashed_password(new_password)
         if password_hash is None:
-            return _password_page(request, config, session, problem=HASHING_BUSY, status_code=503)
+            return password_page(request, config, session, problem=HASHING_BUSY, status_code=503)
         with request.app.state.pool.connection() as connection:
             ended = db.change_password(
                 connection,
@@ -321,7 +321,7 @@ def build_router(config: Config) -> APIRouter:
 
         if current_session(request) is not None:
             return RedirectResponse("/", status_code=303)
-        provider = _oidc_provider(request)
+        provider = current_oidc_provider(request)
         if provider is None or not provider.enabled:
             return RedirectResponse("/login", status_code=303)
         #
@@ -331,9 +331,9 @@ def build_router(config: Config) -> APIRouter:
         #
         pre_token = auth.new_session_token()
         try:
-            started = _start_oidc(request, provider, mode="sign_in", bound_to=pre_token)
+            started = start_oidc(request, provider, mode="sign_in", bound_to=pre_token)
         except oidc_web.OidcProblem as error:
-            return _login_again(request, config, error=f"{UNAVAILABLE_PROVIDER}: {error}")
+            return login_again(request, config, error=f"{UNAVAILABLE_PROVIDER}: {error}")
         started.set_cookie(
             auth.PRE_SESSION_COOKIE,
             pre_token,
@@ -356,7 +356,7 @@ def build_router(config: Config) -> APIRouter:
             pending = db.use_oidc_login(connection, state=state) if state else None
             connection.commit()
         if pending is None:
-            return _login_again(
+            return login_again(
                 request, config, error="That sign-in expired or was already used. Try again."
             )
         #
@@ -368,7 +368,7 @@ def build_router(config: Config) -> APIRouter:
             auth.SESSION_COOKIE if pending.mode == "test" else auth.PRE_SESSION_COOKIE, ""
         )
         if not bound or not hmac.compare_digest(auth.token_hash(bound), pending.pre_session_hash):
-            return _login_again(
+            return login_again(
                 request, config, error="That sign-in was started in another browser. Try again."
             )
 
@@ -378,20 +378,18 @@ def build_router(config: Config) -> APIRouter:
             if not isinstance(gate, AuthenticatedSession):
                 return gate
 
-        provider = _oidc_provider(request)
+        provider = current_oidc_provider(request)
         if provider is None or provider.issuer is None:
-            return _login_again(
-                request, config, error="Sign-in through the provider is not set up."
-            )
+            return login_again(request, config, error="Sign-in through the provider is not set up.")
         refusal = request.query_params.get("error", "")[:64]
         if refusal:
             said = request.query_params.get("error_description", "")[:256] or refusal
             message = f"The provider did not sign you in: {said}"
             if isinstance(gate, AuthenticatedSession):
-                return _oidc_page(config, request, gate, provider, problem=message, status_code=409)
-            return _login_again(request, config, error=message)
+                return oidc_page(config, request, gate, provider, problem=message, status_code=409)
+            return login_again(request, config, error=message)
         if not code:
-            return _login_again(
+            return login_again(
                 request, config, error="The provider answered without a code. Try again."
             )
 
@@ -399,7 +397,7 @@ def build_router(config: Config) -> APIRouter:
             signed_in = oidc_web.ask(
                 "exchange",
                 provider,
-                redirect=_oidc_redirect(request),
+                redirect=oidc_redirect(request),
                 code=code,
                 verifier=pending.verifier,
                 nonce=pending.nonce,
@@ -410,7 +408,7 @@ def build_router(config: Config) -> APIRouter:
         except oidc_web.OidcProblem as error:
             message = f"The provider's answer was refused: {error}"
             if isinstance(gate, AuthenticatedSession):
-                return _oidc_page(config, request, gate, provider, problem=message, status_code=409)
+                return oidc_page(config, request, gate, provider, problem=message, status_code=409)
             with request.app.state.pool.connection() as connection:
                 db.record_audit_event(
                     connection,
@@ -424,7 +422,7 @@ def build_router(config: Config) -> APIRouter:
                     },
                 )
                 connection.commit()
-            return _login_again(request, config, error=message)
+            return login_again(request, config, error=message)
 
         groups = [group for group in signed_in.get("groups", []) if isinstance(group, str)]
         role = oidc_web.role_for(provider, groups)
@@ -436,7 +434,7 @@ def build_router(config: Config) -> APIRouter:
                 # What a real sign-in would meet at the account step, so the
                 # test does not promise a sign-in the account step refuses.
                 refused = (
-                    _oidc_account_refusal(
+                    oidc_account_refusal(
                         connection, issuer=issuer, subject=subject, username=username
                     )
                     if role is not None
@@ -483,7 +481,7 @@ def build_router(config: Config) -> APIRouter:
                     },
                 )
                 connection.commit()
-            return _login_again(request, config, error=message)
+            return login_again(request, config, error=message)
 
         if not provider.enabled:
             return refuse("Sign-in through the provider is off.", "oidc_off")
@@ -496,7 +494,7 @@ def build_router(config: Config) -> APIRouter:
             return refuse("The provider sent no name for you.", "no_username")
 
         with request.app.state.pool.connection() as connection:
-            refused = _oidc_account_refusal(
+            refused = oidc_account_refusal(
                 connection, issuer=issuer, subject=subject, username=username
             )
             if refused is not None:
@@ -620,7 +618,7 @@ def build_router(config: Config) -> APIRouter:
             and provider.logout_mode == "provider"
         ):
             try:
-                found = oidc_web.ask("discover", provider, redirect=_oidc_redirect(request))
+                found = oidc_web.ask("discover", provider, redirect=oidc_redirect(request))
             except oidc_web.OidcProblem:
                 found = {}
             onward = oidc_web.end_session_url(

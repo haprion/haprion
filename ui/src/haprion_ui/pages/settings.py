@@ -42,6 +42,16 @@ from haprion_ui import (
     waf,
 )
 from haprion_ui.access import admin_write_gate, forbidden_page
+from haprion_ui.accounts import (
+    HASHING_BUSY,
+    UNAVAILABLE_PROVIDER,
+    current_oidc_provider,
+    hashed_password,
+    listed_accounts,
+    new_password_problem,
+    oidc_page,
+    start_oidc,
+)
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import (
@@ -56,21 +66,13 @@ from haprion_ui.reading import (
 from haprion_ui.saved_work import COMMIT_ID, reading_head, settled_changes
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
-    HASHING_BUSY,
     SWITCHED,
-    UNAVAILABLE_PROVIDER,
-    _account_rows,
     _backup_overview,
     _dns_public_key,
-    _hashed,
-    _new_password_problem,
-    _oidc_page,
-    _oidc_provider,
     _page_context,
     _posted,
     _queue_node_job,
     _registry_overview,
-    _start_oidc,
     _status_row,
 )
 
@@ -219,7 +221,7 @@ def build_router(config: Config) -> APIRouter:
                 and bool(entry.fingerprint)
                 and entry.fingerprint != served.fingerprint,
                 "users": users.user_views(
-                    _account_rows(config, request), signed_in_as=gate.username, sort=sort
+                    listed_accounts(config, request), signed_in_as=gate.username, sort=sort
                 ),
                 "user_sorts": users.TABLE.links(sort),
                 # Which provider sign-in goes through, said where accounts are
@@ -1148,10 +1150,10 @@ def build_router(config: Config) -> APIRouter:
         elif role not in users.ROLES:
             problem = "Choose a role."
         else:
-            problem = _new_password_problem(new_password, repeat_password)
+            problem = new_password_problem(new_password, repeat_password)
         if problem:
             return _new_user_page(request, gate, problem=problem, form=form, status_code=400)
-        password_hash = _hashed(new_password)
+        password_hash = hashed_password(new_password)
         if password_hash is None:
             return _new_user_page(request, gate, problem=HASHING_BUSY, form=form, status_code=503)
 
@@ -1235,14 +1237,14 @@ def build_router(config: Config) -> APIRouter:
         if action == "save" and not (new_role or new_secret or new_break_glass):
             return again("Nothing to save: change the role, the password or break-glass.")
         if new_secret:
-            problem = _new_password_problem(new_password, repeat_password)
+            problem = new_password_problem(new_password, repeat_password)
             if problem:
                 return again(problem)
         if action == "disable" and row.disabled:
             return again("The account is already disabled.")
         if action == "enable" and not row.disabled:
             return again("The account is already enabled.")
-        password_hash = _hashed(new_password) if new_secret else None
+        password_hash = hashed_password(new_password) if new_secret else None
         if new_secret and password_hash is None:
             return again(HASHING_BUSY, status_code=503)
 
@@ -1315,7 +1317,7 @@ def build_router(config: Config) -> APIRouter:
         gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        provider = _oidc_provider(request)
+        provider = current_oidc_provider(request)
         if provider is None:
             return PlainTextResponse("Not found", status_code=404)
         done = {
@@ -1327,7 +1329,7 @@ def build_router(config: Config) -> APIRouter:
         ended = request.query_params.get("ended", "")
         if said and request.query_params.get("done") == "off" and is_digits(ended):
             said += f" {labels.counted(int(ended[:6]), 'session')} signed in through it ended."
-        return _oidc_page(config, request, gate, provider, done=said)
+        return oidc_page(config, request, gate, provider, done=said)
 
     @router.post("/settings/oidc", response_class=HTMLResponse)
     def change_oidc_settings(request: Request) -> Response:
@@ -1341,7 +1343,7 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, form.get(auth.CSRF_FIELD, "")):
             return forbidden_page(request, config)
-        provider = _oidc_provider(request)
+        provider = current_oidc_provider(request)
         if provider is None:
             return PlainTextResponse("Not found", status_code=404)
         action = form.get("action", "")
@@ -1354,7 +1356,7 @@ def build_router(config: Config) -> APIRouter:
             checks: list[dict[str, Any]] | None = None,
             status_code: int = 400,
         ) -> Response:
-            return _oidc_page(
+            return oidc_page(
                 config,
                 request,
                 gate,
@@ -1446,8 +1448,8 @@ def build_router(config: Config) -> APIRouter:
                     },
                 )
                 connection.commit()
-            refreshed = _oidc_provider(request) or provider
-            return _oidc_page(
+            refreshed = current_oidc_provider(request) or provider
+            return oidc_page(
                 config,
                 request,
                 gate,
@@ -1464,7 +1466,7 @@ def build_router(config: Config) -> APIRouter:
             # bound to this admin's session rather than a pre-sign-in cookie.
             #
             try:
-                return _start_oidc(request, provider, mode="test", bound_to=token)
+                return start_oidc(request, provider, mode="test", bound_to=token)
             except oidc_web.OidcProblem as error:
                 return again(f"{UNAVAILABLE_PROVIDER}: {error}", status_code=409)
 

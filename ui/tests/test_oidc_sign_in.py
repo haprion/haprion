@@ -20,8 +20,8 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi.testclient import TestClient
 
 from haprion_ui import auth, db, oidc_web
+from haprion_ui.accounts import SIGN_IN_FAILED
 from haprion_ui.db import Account
-from haprion_ui.views import SIGN_IN_FAILED
 from tests.test_login import PASSWORD, LoginTestCase, configuration
 from tests.test_settings_oidc import ISSUER, provider
 

@@ -43,6 +43,7 @@ from haprion_ui import (
 )
 from haprion_ui import version_changes as version_changes_view
 from haprion_ui.access import admin_write_gate, client_address, current_session, forbidden_page
+from haprion_ui.accounts import listed_accounts
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.pending import held_server_counts, pending_count, pending_package, publish_key
@@ -67,7 +68,6 @@ from haprion_ui.views import (
     MAX_SEARCH_PAGE,
     NODE_EVENT_KEEP_DAYS,
     NODE_EVENT_TABLE,
-    _account_rows,
     _attention,
     _backup_overview,
     _first_cluster,
@@ -427,7 +427,7 @@ def build_router(config: Config) -> APIRouter:
                 if view.configured
             ),
             interface_self_signed=served.self_signed if served is not None else None,
-            accounts=len(_account_rows(config, request)),
+            accounts=len(listed_accounts(config, request)),
             sso=provider is not None and provider.enabled,
             site_certificates=registry.for_proxies if registry else 0,
             node_backups_on=backups_on,

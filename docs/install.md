@@ -134,6 +134,10 @@ ending in `ubuntu26.04_amd64.deb` or `deb13_amd64.deb`. To build the packages yo
 time, starting with a node that does not hold the VIP: a new WAF engine restarts the engine on that node. The web
 interface's package updates the running interface by itself.
 
+A new HAProxy is the exception. The manager checks each configuration with its own HAProxy before a node gets it,
+so the manager must not be the newer of the two. When `apt list --upgradable` on the manager shows `haproxy`, update
+the nodes first and the manager last ([Keeping HAProxy current](user-manual.md#keeping-haproxy-current)).
+
 Do not add the repository to unattended-upgrades. An update is something you choose the moment for.
 
 ### Removing

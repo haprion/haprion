@@ -2129,7 +2129,9 @@ where replacing the key is the stated intent. Enrollment from a Microsoft CA nee
 ([Preparing Microsoft AD CS / NDES for CSR enrollment](#preparing-microsoft-ad-cs--ndes-for-csr-enrollment)).
 
 **A CA certificate for the pools.** *Import certificate → CA certificate* takes a CA's certificate,
-without a key, and the clusters whose pools may verify servers against it. It may hold several: a
+without a key, and the clusters whose pools may verify servers against it. It is for a pool that reaches
+its servers over HTTPS and checks their certificates, when your own CA issued them
+([A pool over HTTPS](#a-pool-over-https)). It may hold several: a
 root and its intermediates, or an old root beside its successor while servers move over.
 
 - *Upload* takes a file in the forms above. A key in it is refused.
@@ -4397,6 +4399,9 @@ Package sources and pinning are described under
 
 While the update check is on, a newer release shows in the header, beside the version. Updating is `apt`
 on each machine: the manager first, then the nodes.
+A new HAProxy is the exception: when `apt list --upgradable` on the manager shows `haproxy`, the nodes go
+first and the manager last, so its check is never the newer
+([Keeping HAProxy current](#keeping-haproxy-current)).
 
 **The manager.**
 

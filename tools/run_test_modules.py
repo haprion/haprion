@@ -172,6 +172,14 @@ def run(module: Module, limit: float = UNTIMED) -> Outcome:
         if left:
             returncode = returncode or 1
             output += f"\nleft in its temporary directory: {', '.join(left)}\n"
+        #
+        # A socket or file a test left open is said as a ResourceWarning, which
+        # unittest shows and nothing fails: an OIDC error answer stayed open
+        # through every gate until a review read the output (26-10-28, F04).
+        #
+        if "ResourceWarning" in output:
+            returncode = returncode or 1
+            output += "\na ResourceWarning: something the module opened was left open\n"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return Outcome(module, returncode, time.monotonic() - started, output)

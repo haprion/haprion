@@ -110,6 +110,21 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertNotIn(".org.chromium.Chromium.", result.stdout)
         self.assertIn("failed: demo/test_leak.py", result.stderr)
 
+    def test_a_module_that_leaves_a_file_open_fails(self) -> None:
+        leaving = (
+            "import unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_open(self) -> None:\n"
+            "        open(__file__).read()\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tests = self.suite(root, {"test_a.py": PASSING, "test_open.py": leaving})
+            result = self.execute(tests, root / "durations.json")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ResourceWarning: unclosed file", result.stdout)
+        self.assertIn("failed: demo/test_open.py", result.stderr)
+
     def test_every_module_discover_would_find_is_run(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

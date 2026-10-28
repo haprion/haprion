@@ -3,7 +3,7 @@
   "requires": {
     "database_baseline": "0100",
     "database_head": "0101",
-    "rollback_safe_from": "0101",
+    "rollback_safe_from": "0100",
     "database_revisions": [
       "0100",
       "0101"

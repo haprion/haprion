@@ -6,6 +6,11 @@ Neither `.` nor `_` needs quoting in a shell or harms the file name, and the
 first character is still a letter or a digit, so `.` and `..` stay out. The two
 checks are replaced; nothing else changes.
 
+Safe under the release before it: declared unsafe first, which stopped 0.99.3's
+update over 0.99.2, and then measured - 0.99.2's code creates, lists, replaces
+and removes profiles named `cs2.example.com` and `dns_main` over this schema,
+and a job for one is queued. Its form only refuses a new such ID.
+
 Revision ID: 0101
 Revises: 0100
 """
@@ -19,9 +24,10 @@ down_revision = "0100"
 branch_labels = None
 depends_on = None
 
-ROLLBACK_SAFE = False
+ROLLBACK_SAFE = True
 ROLLBACK_SAFE_BECAUSE = (
-    "a profile named with a dot or an underscore is a row a UI from before refuses to read"
+    "it only widens two checks: a UI from before never checks a stored ID's shape, and 0.99.2's "
+    "database suite and its profile calls ran over 0101 with dotted IDs (26-10-28)"
 )
 
 

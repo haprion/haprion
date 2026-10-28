@@ -64,6 +64,17 @@ class Answer:
         self.asked.append(endpoint)
         return self.der
 
+    def digest(self, path: Path, algorithm: str) -> str:
+        """The certificate's DER digest as openssl's own `dgst` gives it."""
+
+        der = subprocess.run(
+            [OPENSSL, "x509", "-in", str(path), "-outform", "DER"], capture_output=True, check=True
+        ).stdout
+        said = subprocess.run(
+            [OPENSSL, "dgst", algorithm, "-r"], input=der, capture_output=True, check=True
+        ).stdout
+        return said.split()[0].decode()
+
     def sha256(self, path: Path) -> str:
         der = subprocess.run(
             [OPENSSL, "x509", "-in", str(path), "-outform", "DER"], capture_output=True, check=True
@@ -77,13 +88,14 @@ class TheAuthorities(unittest.TestCase):
             answer = Answer(Path(raw))
             found = ndes_servers.authorities(ENDPOINT, fetch=answer)
             issuing = answer.sha256(answer.pki.intermediate)
+            thumbprint = answer.digest(answer.pki.intermediate, "-sha1")
 
         self.assertEqual(len(found), 2)
         self.assertTrue(found[0].issues_ra)
         self.assertEqual(found[0].subject, "CN=Test Issuing CA")
         self.assertFalse(found[1].issues_ra)
         self.assertEqual(found[0].sha256, issuing)
-        self.assertRegex(found[0].sha1, r"^[0-9a-f]{40}$")
+        self.assertEqual(found[0].sha1, thumbprint)
         self.assertEqual(answer.asked, [ENDPOINT])
 
     def test_an_address_that_is_not_https_is_refused_before_anything_is_asked(self) -> None:

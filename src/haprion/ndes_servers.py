@@ -158,11 +158,22 @@ def authorities(endpoint: str, *, fetch: Fetch = get_ca_cert) -> tuple[Authority
             issuers.add(issuer)
     for subject, certificate in authority_pems:
         der = _der(certificate)
+        #
+        # The SHA-1 is shown, never decided on: the thumbprint Windows and
+        # certutil show, read as openssl prints a certificate's fingerprint.
+        # What is confirmed is the SHA-256 (review 2026-10-28: CodeQL took a
+        # SHA-1 of a certificate in this process for a weak hash of a secret).
+        #
+        thumbprint = _openssl(
+            ["x509", "-noout", "-fingerprint", "-sha1"],
+            stdin=certificate,
+            what="read a certificate's thumbprint from the NDES server",
+        )
         found.append(
             Authority(
                 subject=subject,
                 sha256=hashlib.sha256(der).hexdigest(),
-                sha1=hashlib.sha1(der, usedforsecurity=False).hexdigest(),
+                sha1=thumbprint.partition("=")[2].strip().replace(":", "").lower(),
                 pem=certificate,
                 issues_ra=subject in issuers,
             )

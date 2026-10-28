@@ -3853,6 +3853,7 @@ class AProfileIdMayHoldADot(unittest.TestCase):
                     self.insert(table, ".hidden")
 
 
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
     """Migration 0025: sealed DNS provider profiles and the job that applies them.
 

@@ -41,7 +41,7 @@ CAUGHT = {
     ("saved_work.py", "_discard_shown"): "a newer draft is kept, not refused",
     ("saved_work.py", "settled_changes"): "a newer saved change is kept, not refused",
     ("editor_flow.py", "advanced_submit"): "the dialog answers in its own document",
-    ("views.py", "_waf_save"): "the dialog answers in its own document",
+    ("waf_work.py", "_waf_save"): "the dialog answers in its own document",
     # Found when the scan widened from pages/ and views.py to the package (K01).
     ("feature_switch.py", "switch"): "the switch is refused with its own sentence",
     ("profile_apply.py", "_queue"): "the command answers in its own contract",

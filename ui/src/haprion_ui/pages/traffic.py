@@ -45,15 +45,12 @@ from haprion_ui.reading import (
     read_source,
 )
 from haprion_ui.templates import TEMPLATES
-from haprion_ui.views import (
-    _freshness_warnings,
-    _log_time_filter,
-    _posted,
-    _traffic_marks,
-    _waf_allow,
-    _waf_overview,
-    _waf_remove,
-    _waf_work_page,
+from haprion_ui.views import _freshness_warnings, _log_time_filter, _posted, _traffic_marks
+from haprion_ui.waf_work import (
+    allow_waf_exception,
+    remove_waf_exception,
+    waf_overview,
+    waf_work_page,
 )
 
 
@@ -556,19 +553,19 @@ def build_router(config: Config) -> APIRouter:
         view = request.query_params.get("view", "")
         if view == "requests":
             return _traffic_log_page(request, waf_page=True)
-        return _waf_work_page(request, config, "exceptions" if view == "exceptions" else "findings")
+        return waf_work_page(request, config, "exceptions" if view == "exceptions" else "findings")
 
     @router.get("/waf/allow", response_class=HTMLResponse)
     def waf_allow_page(request: Request) -> Response:
-        return _waf_allow(request, config, None)
+        return allow_waf_exception(request, config, None)
 
     @router.post("/waf/allow", response_class=HTMLResponse)
     def waf_allow(request: Request) -> Response:
-        return _waf_allow(request, config, _posted(request))
+        return allow_waf_exception(request, config, _posted(request))
 
     @router.post("/waf/exceptions/remove", response_class=HTMLResponse)
     def waf_remove_exception(request: Request) -> Response:
-        return _waf_remove(request, config, _posted(request))
+        return remove_waf_exception(request, config, _posted(request))
 
     def _traffic_log_page(request: Request, *, waf_page: bool) -> Response:
         session = current_session(request)
@@ -720,7 +717,7 @@ def build_router(config: Config) -> APIRouter:
         if waf_page:
             listed = listed_clusters(request, config)
             chosen = (selected_cluster,) if selected_cluster in listed else tuple(listed)
-            waf_tabs = {"tab_counts": _waf_overview(request, config, chosen).tab_counts()}
+            waf_tabs = {"tab_counts": waf_overview(request, config, chosen).tab_counts()}
         response = TEMPLATES.TemplateResponse(
             request,
             "logs.html",

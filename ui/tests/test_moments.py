@@ -26,7 +26,7 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "haprion_ui"
 WRITERS = {"moments.py", "metrics.py"}
 NOT_A_MOMENT = {
     ("backups.py", "%H:%M %Z"),
-    ("views.py", "%Y-%m-%dT%H:%M:%SZ"),
+    ("waf_work.py", "%Y-%m-%dT%H:%M:%SZ"),
     ("preview.py", "%Y-%m-%dT%H:%M:%SZ"),
     ("demo.py", "%Y-%m-%d_%H-%M-%S"),
 }

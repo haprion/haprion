@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import hashlib
 import json
 import re
 import shlex
@@ -186,6 +187,32 @@ RUN apt-get update -q \\
  && systemctl enable ssh-host-keys.service
 CMD ["/sbin/init"]
 """
+
+
+#
+# An NDES server as far as confirming it goes (B383, B385): GetCACert over HTTPS,
+# answered with the CA and an RA certificate as PKCS#7, as AD CS does.
+#
+FAKE_NDES = """\
+import http.server, ssl
+answer = open("/root/ndes-fake/getcacert.p7b", "rb").read()
+class Ndes(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if not self.path.startswith("/certsrv/mscep/mscep.dll?operation=GetCACert"):
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-x509-ca-ra-cert")
+        self.send_header("Content-Length", str(len(answer)))
+        self.end_headers()
+        self.wfile.write(answer)
+server = http.server.HTTPServer(("0.0.0.0", 8443), Ndes)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain("/root/ndes-fake/tls.pem", "/root/ndes-fake/tls.key")
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+"""
+NDES_ENDPOINT = "https://mgr:8443/certsrv/mscep/mscep.dll"
 
 
 @dataclass(frozen=True)
@@ -661,6 +688,102 @@ class Run:
         "node": (("the WAF engine", "test -x /usr/sbin/coraza-spoa"),),
     }
 
+    def ndes_server_confirmed(self) -> None:
+        """B383, B385: a server added from its CA, by the command and through the web's socket.
+
+        The helper's unit is the one in use - its sandbox, the network and the
+        write to /etc/haprion - and the CA it pins is compared with the one made here.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw)
+
+            def openssl(*arguments: str) -> None:
+                subprocess.run(  # noqa: S603 - the host's openssl, arguments built here
+                    ["/usr/bin/openssl", *arguments], cwd=work, check=True, capture_output=True
+                )
+
+            openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key",
+                    "-out", "ca.pem", "-days", "2", "-subj", "/CN=Install Test NDES CA",
+                    "-addext", "basicConstraints=critical,CA:TRUE")  # fmt: skip
+            for name, subject, extension in (
+                ("ra", "/CN=Install Test NDES RA", "basicConstraints=CA:FALSE"),
+                ("tls", "/CN=mgr", "subjectAltName=DNS:mgr"),
+            ):
+                openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", f"{name}.key",
+                        "-out", f"{name}.csr", "-subj", subject)  # fmt: skip
+                (work / f"{name}.ext").write_text(extension + "\n")
+                openssl("x509", "-req", "-in", f"{name}.csr", "-CA", "ca.pem", "-CAkey", "ca.key",
+                        "-CAcreateserial", "-days", "2", "-extfile", f"{name}.ext",
+                        "-out", f"{name}.pem")  # fmt: skip
+            (work / "both.pem").write_text(
+                (work / "ca.pem").read_text() + (work / "ra.pem").read_text()
+            )
+            openssl("crl2pkcs7", "-nocrl", "-certfile", "both.pem", "-outform", "DER",
+                    "-out", "getcacert.p7b")  # fmt: skip
+            der = subprocess.run(  # noqa: S603 - the host's openssl, arguments built here
+                ["/usr/bin/openssl", "x509", "-in", str(work / "ca.pem"), "-outform", "DER"],
+                check=True,
+                capture_output=True,
+            ).stdout
+            sha256 = hashlib.sha256(der).hexdigest()
+            (work / "serve.py").write_text(FAKE_NDES)
+            self.on("mgr", "mkdir -p /root/ndes-fake")
+            for name in ("getcacert.p7b", "tls.pem", "tls.key", "serve.py"):
+                self.podman(
+                    "cp", str(work / name), f"{self.container('mgr')}:/root/ndes-fake/{name}"
+                )
+            self.podman(
+                "cp",
+                str(work / "ca.pem"),
+                f"{self.container('mgr')}:/usr/local/share/ca-certificates/install-test-ndes.crt",
+            )
+        try:
+            self.on(
+                "mgr",
+                "update-ca-certificates >/dev/null && systemd-run --unit=install-test-ndes "
+                "python3 /root/ndes-fake/serve.py && sleep 2",
+            )
+            _, shown = self.on("mgr", f"haprion-ndes-server add {NDES_ENDPOINT}")
+            if f"SHA-256  {sha256}" not in shown or "Nothing was changed" not in shown:
+                raise Failed(f"haprion-ndes-server did not show the CA made here:\n{shown}")
+            request = json.dumps(
+                {
+                    "schema_version": 1,
+                    "operation": "ndes_server",
+                    "cluster": None,
+                    "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    "parameters": {"action": "add", "endpoint": NDES_ENDPOINT, "sha256": sha256},
+                }
+            )
+            ask = (
+                "import socket, sys; s = socket.socket(socket.AF_UNIX); "
+                "s.connect('/run/haprion/ndes-server.sock'); "
+                "s.sendall(sys.stdin.buffer.read()); s.shutdown(socket.SHUT_WR); "
+                "print(s.makefile().read())"
+            )
+            _, answer = self.on(
+                "mgr",
+                f"runuser -u _haprion-web -- python3 -c {shlex.quote(ask)}",
+                stdin=request + "\n",
+            )
+            if '"outcome": "done"' not in answer and '"outcome":"done"' not in answer:
+                raise Failed(f"the web's socket did not add the server:\n{answer}")
+            _, listed = self.on("mgr", "haprion-ndes-server list")
+            if NDES_ENDPOINT not in listed:
+                raise Failed(f"the server is not in the policy after it was added:\n{listed}")
+            _, removed = self.on("mgr", f"haprion-ndes-server remove {NDES_ENDPOINT}")
+            if "No NDES server" not in self.on("mgr", "haprion-ndes-server list")[1]:
+                raise Failed(f"the server was not removed:\n{removed}")
+        finally:
+            self.on(
+                "mgr",
+                "systemctl stop install-test-ndes; rm -rf /root/ndes-fake "
+                "/usr/local/share/ca-certificates/install-test-ndes.crt /etc/haprion/ndes-ca; "
+                "update-ca-certificates --fresh >/dev/null",
+                check=False,
+            )
+
     def every_function_has_what_it_needs(self) -> None:
         missing = [
             f"{role}: {what}"
@@ -831,6 +954,10 @@ def run_one(
             run.a_node_reads_its_own_cluster_alone,
         )
         step("every function has what it needs", run.every_function_has_what_it_needs)
+        step(
+            "an NDES server confirmed from its CA, as the web and the command do",
+            run.ndes_server_confirmed,
+        )
         step("an object published", run.publish)
 
         def added_node_starts_as_standby() -> None:

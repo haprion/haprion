@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haprion_ui import auth, db, operations, views
+from haprion_ui import auth, db, operations, refusals, views
 from tests.test_login import LoginTestCase, configuration
 
 KEY = str(uuid4())
@@ -350,20 +350,20 @@ class TheWayBackIsNamedAsTheMenuNamesIt(unittest.TestCase):
     #
     def test_a_query_or_a_deeper_path_names_the_page_it_belongs_to(self) -> None:
         self.assertEqual(
-            views._back_place("/certificates?view=registry&open=x"),
+            refusals.back_place("/certificates?view=registry&open=x"),
             ("certificates", "Certificates"),
         )
-        self.assertEqual(views._back_place("/proxies/edge/www/edit"), ("proxies", "Proxies"))
-        self.assertEqual(views._back_place("/settings#nodes"), ("settings", "Settings"))
-        self.assertEqual(views._back_place("/history"), ("history", "Versions"))
-        self.assertEqual(views._back_place("/"), ("dashboard", "the dashboard"))
+        self.assertEqual(refusals.back_place("/proxies/edge/www/edit"), ("proxies", "Proxies"))
+        self.assertEqual(refusals.back_place("/settings#nodes"), ("settings", "Settings"))
+        self.assertEqual(refusals.back_place("/history"), ("history", "Versions"))
+        self.assertEqual(refusals.back_place("/"), ("dashboard", "the dashboard"))
 
     def test_every_page_has_a_name_to_go_back_to(self) -> None:
         """Review 26-10-25, 12-07: four pages read as "the page", with no menu marked."""
 
         source = Path(views.__file__).parent
         pages = set()
-        for path in [*sorted((source / "pages").glob("*.py")), source / "views.py"]:
+        for path in [*sorted(source.glob("*.py")), *sorted((source / "pages").glob("*.py"))]:
             pages.update(
                 re.findall(
                     r'@router\.get\("/([^/"?{]*)[^"]*", response_class=HTMLResponse',
@@ -371,12 +371,12 @@ class TheWayBackIsNamedAsTheMenuNamesIt(unittest.TestCase):
                 )
             )
         # Signing in is before any page, so nothing goes back to it.
-        self.assertEqual(sorted(pages - set(views.BACK_PLACES) - {"login"}), [])
+        self.assertEqual(sorted(pages - set(refusals.BACK_PLACES) - {"login"}), [])
 
     def test_every_page_an_operation_returns_to_has_a_name(self) -> None:
         for name, path in views.RETURN_PATHS.items():
             with self.subTest(name):
-                self.assertIn(path.split("?")[0].lstrip("/").split("/")[0], views.BACK_PLACES)
+                self.assertIn(path.split("?")[0].lstrip("/").split("/")[0], refusals.BACK_PLACES)
 
 
 class ConflictsAreToldApart(QueueRouteTestCase):

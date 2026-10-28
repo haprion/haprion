@@ -56,6 +56,7 @@ from haprion_ui.reading import (
     read_manager_certificates,
     read_source,
 )
+from haprion_ui.refusals import refusal_page
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     AUDIT_KEEP_DAYS,
@@ -75,7 +76,6 @@ from haprion_ui.views import (
     _package,
     _pending_count,
     _publish_key,
-    _refusal_page,
     _registry_overview,
     _return_path,
 )
@@ -631,11 +631,11 @@ def build_router(config: Config) -> APIRouter:
         back = "/" if deploy else "/history"
         package = _package(request, config, cluster)
         if package.problem:
-            return _refusal_page(request, config, package.problem, back=back)
+            return refusal_page(request, config, package.problem, back=back)
         if not package.rows:
-            return _refusal_page(request, config, "Nothing is saved to publish.", back=back)
+            return refusal_page(request, config, "Nothing is saved to publish.", back=back)
         if expected_head != package.head:
-            return _refusal_page(
+            return refusal_page(
                 request,
                 config,
                 "A newer version was recorded after this page was opened. Read the list again "
@@ -647,7 +647,7 @@ def build_router(config: Config) -> APIRouter:
             # Saved again, added or taken away in another tab since the list
             # was drawn (R1): what would go is not what was confirmed.
             #
-            return _refusal_page(
+            return refusal_page(
                 request,
                 config,
                 "The saved changes changed after this page was opened. Read the list again "
@@ -655,7 +655,7 @@ def build_router(config: Config) -> APIRouter:
                 back=back,
             )
         if not comment.strip():
-            return _refusal_page(
+            return refusal_page(
                 request, config, "A comment is needed: it is the version's.", back=back
             )
         #
@@ -664,7 +664,7 @@ def build_router(config: Config) -> APIRouter:
         #
         problem = comment_problem(comment.strip())
         if problem:
-            return _refusal_page(request, config, f"The comment {problem}.", back=back)
+            return refusal_page(request, config, f"The comment {problem}.", back=back)
         payload = {
             **package.payload,
             "comment": comment.strip(),
@@ -681,7 +681,7 @@ def build_router(config: Config) -> APIRouter:
                 operation="changes_publish", cluster=cluster, request_id=uuid4(), payload=payload
             )
         except operations.BadPayload:
-            return _refusal_page(
+            return refusal_page(
                 request,
                 config,
                 "This interface could not build a publish from what is saved.",
@@ -1178,7 +1178,7 @@ def build_router(config: Config) -> APIRouter:
             revision = int(saved_revision) if is_digits(saved_revision) else None
             if network_action == "discard":
                 if revision is None:
-                    return _refusal_page(
+                    return refusal_page(
                         request, config, "There is nothing to discard.", back="/network"
                     )
                 with request.app.state.pool.connection() as connection:
@@ -1203,7 +1203,7 @@ def build_router(config: Config) -> APIRouter:
             # when the description is saved (B257), since that is where the
             # decision is made.
             if default_vip_confirmation != "on":
-                return _refusal_page(
+                return refusal_page(
                     request,
                     config,
                     "Confirm the default VIP impact before saving.",
@@ -1236,7 +1236,7 @@ def build_router(config: Config) -> APIRouter:
             except network.FormProblem as problem:
                 # Safe to show: these messages name a row's position, never
                 # anything that was typed into it.
-                return _refusal_page(request, config, str(problem), back="/network")
+                return refusal_page(request, config, str(problem), back="/network")
             if not COMMIT_ID.fullmatch(expected_head):
                 return PlainTextResponse("Invalid operation parameters", status_code=400)
             #
@@ -1292,7 +1292,7 @@ def build_router(config: Config) -> APIRouter:
             # nor CodeQL's stack-trace surface. Said inside the interface's own
             # page, which a bare text answer was not (review 26-10-24, 07-01).
             #
-            return _refusal_page(
+            return refusal_page(
                 request,
                 config,
                 REFUSED_FORMS.get(

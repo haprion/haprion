@@ -14,7 +14,7 @@ from pathlib import Path
 
 from starlette.requests import Request
 
-from haprion_ui import db, views
+from haprion_ui import db, refusals, views
 from tests.test_login import configuration
 
 PACKAGE = Path(views.__file__).parent
@@ -42,12 +42,15 @@ CAUGHT = {
     ("views.py", "_settled_changes"): "a newer saved change is kept, not refused",
     ("views.py", "_advanced_submit"): "the dialog answers in its own document",
     ("views.py", "_waf_save"): "the dialog answers in its own document",
+    # Found when the scan widened from pages/ and views.py to the package (K01).
+    ("feature_switch.py", "switch"): "the switch is refused with its own sentence",
+    ("profile_apply.py", "_queue"): "the command answers in its own contract",
 }
 
 
 def caught() -> set[tuple[str, str]]:
     found: set[tuple[str, str]] = set()
-    for path in [*sorted((PACKAGE / "pages").glob("*.py")), PACKAGE / "views.py"]:
+    for path in [*sorted(PACKAGE.glob("*.py")), *sorted((PACKAGE / "pages").glob("*.py"))]:
         name = str(path.relative_to(PACKAGE))
 
         def visit(node: ast.AST, function: str) -> None:
@@ -84,15 +87,17 @@ class OneAnswer(unittest.TestCase):
     def test_a_route_that_catches_one_answers_a_conflict_with_the_page(self) -> None:
         """Review 26-10-25, 2-04: three second-click branches still answered in bare text."""
 
-        for path in [*sorted((PACKAGE / "pages").glob("*.py")), PACKAGE / "views.py"]:
+        for path in [*sorted(PACKAGE.glob("*.py")), *sorted((PACKAGE / "pages").glob("*.py"))]:
             with self.subTest(path=path.name):
                 self.assertNotIn("asked for something else", path.read_text(encoding="utf-8"))
 
     def test_a_script_is_answered_in_text_with_the_same_sentence(self) -> None:
-        answer = views.conflict_page(request("application/json"), configuration(), db.ClusterBusy())
+        answer = refusals.conflict_page(
+            request("application/json"), configuration(), db.ClusterBusy()
+        )
 
         self.assertEqual(answer.status_code, 409)
-        self.assertEqual(bytes(answer.body).decode(), views.CONFLICT_SENTENCES[db.ClusterBusy])
+        self.assertEqual(bytes(answer.body).decode(), refusals.CONFLICT_SENTENCES[db.ClusterBusy])
 
     def test_the_page_it_came_from_is_only_ever_one_of_ours(self) -> None:
         for referer, back in (
@@ -107,7 +112,7 @@ class OneAnswer(unittest.TestCase):
                     (b"host", b"manager.example.com"),
                     (b"referer", referer.encode()),
                 ]
-                self.assertEqual(views._page_it_came_from(Request(scope)), back)
+                self.assertEqual(refusals._page_it_came_from(Request(scope)), back)
 
 
 if __name__ == "__main__":

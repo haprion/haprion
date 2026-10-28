@@ -2182,7 +2182,7 @@ class ARealDatabase(unittest.TestCase):
     def test_a_log_query_past_the_web_role_limit_is_cancelled_as_the_503_page_expects(self) -> None:
         """The installation's 5 s limit, held by test-database too, stops a reading (review D2).
 
-        `views.database_unavailable` turns `QueryCanceled` into the page that
+        `refusals.database_unavailable` turns `QueryCanceled` into the page that
         says to narrow the filter (U2, `test_database_unavailable`); this is
         the real server raising it for the log page's own query. A lock held
         by another session keeps the query waiting, so the limit is what ends

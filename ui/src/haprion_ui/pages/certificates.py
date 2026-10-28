@@ -51,13 +51,13 @@ from haprion_ui.reading import (
     read_manager_certificates,
     read_source,
 )
+from haprion_ui.refusals import refusal_page
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     UPLOADED_FILE,
     _dns_public_key,
     _page_context,
     _public_files,
-    _refusal_page,
     _registry_overview,
     _zip_response,
 )
@@ -463,9 +463,9 @@ def build_router(config: Config) -> APIRouter:
                     requested_by=session.username,
                 )
         except ExportError as refusal:
-            return _refusal_page(request, config, f"{refusal} Nothing was exported.", back=back)
+            return refusal_page(request, config, f"{refusal} Nothing was exported.", back=back)
         if any(item.fingerprint != row.fingerprint for item in exported.values()):
-            return _refusal_page(
+            return refusal_page(
                 request,
                 config,
                 f"{certificate_id} changed since the page was read. Open it again; "
@@ -521,7 +521,7 @@ def build_router(config: Config) -> APIRouter:
             return forbidden_page(request, config)
         row = _registry_views(request, config).get(certificate_id)
         if row is None or not row.exportable or not row.fullchain_pem or not row.fingerprint:
-            return _refusal_page(
+            return refusal_page(
                 request,
                 config,
                 f"{certificate_id} is not an external certificate that can be read.",
@@ -661,7 +661,7 @@ def build_router(config: Config) -> APIRouter:
         if row is None or row.placeholder:
             return PlainTextResponse("Certificate is not in the registry", status_code=404)
         if row.source_kind != "import":
-            return _refusal_page(
+            return refusal_page(
                 request,
                 config,
                 f"{certificate_id} is not an imported certificate; its material is not "
@@ -670,7 +670,7 @@ def build_router(config: Config) -> APIRouter:
             )
         public_key = _dns_public_key(config)
         if public_key is None:
-            return _refusal_page(
+            return refusal_page(
                 request,
                 config,
                 "The installation's sealing key is not configured, so a file cannot be "
@@ -691,7 +691,7 @@ def build_router(config: Config) -> APIRouter:
                 keep_key=True,
             )
         except certificate_form.FormProblem as problem:
-            return _refusal_page(request, config, str(problem), back=back)
+            return refusal_page(request, config, str(problem), back=back)
         if row.interface:
             #
             # The interface's own certificate (B188), or the answer to the

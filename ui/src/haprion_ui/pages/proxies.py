@@ -56,6 +56,7 @@ from haprion_ui.reading import (
     read_concurrently,
     read_source,
 )
+from haprion_ui.refusals import refusal_page
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     BLOCKED_NOTICES,
@@ -70,7 +71,6 @@ from haprion_ui.views import (
     _lookup_again,
     _objects_reading,
     _posted,
-    _refusal_page,
     _removal_submit,
     _settled_draft,
     _settled_drafts,
@@ -560,7 +560,7 @@ def build_router(config: Config) -> APIRouter:
         state = _editor_state(request, config, cluster)
         stored = next((view for view in state.stored if view.name == name), None)
         if stored is None:
-            return _refusal_page(
+            return refusal_page(
                 request,
                 config,
                 "This cluster has no proxy of that name to remove.",

@@ -42,7 +42,7 @@ HSTS_SNIPPET="${HSTS_SNIPPET:-/etc/nginx/snippets/haprion-hsts.conf}"
 # step adds; the timers steps 06, 11, 13 and 14 install. Tests hold the lists to
 # the steps and to the examples.
 #
-SOCKETS=(resolve cert-export cert-receiver node tls backup-job node-restore)
+SOCKETS=(resolve cert-export cert-receiver node tls backup-job node-restore ndes-server)
 OPTIONAL_SOCKETS=(probe oidc)
 TIMERS=(haprion-backup haprion-restore-check haprion-retention haprion-retention-budget
         haprion-traffic-collector haprion-certbot-renew)

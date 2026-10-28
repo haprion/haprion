@@ -1,0 +1,300 @@
+"""The NDES servers a manager enrolls with, each confirmed from its CA (B383, B385).
+
+An administrator gives an NDES server's address. The manager asks the server
+for its CA with SCEP's `GetCACert`, over HTTPS checked against the system's
+store (B381: the store a manager has already trusts an internal CA it was
+given), and shows each CA certificate with its fingerprints. Only when the
+administrator confirms one of them - by its SHA-256, which is asked again from
+the server and must still be there - is the server written into the runtime
+policy's `ndes.servers`, with the CA certificates in a file of their own.
+
+The policy is otherwise left as it is: only the `ndes:` block is replaced, so
+the rest of the file and its comments stay, and the result is read back with
+the engine's own parser before it replaces the file. A block in the form
+before B385 - one `endpoint` beside the rest - becomes the first server.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import urllib.request
+from base64 import b64decode
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from haprion import atomic_file
+from haprion.cert_import import ImportError_, _names, _openssl, read_bytes
+from haprion.certificates import CERTIFICATE_BLOCK
+from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
+from haprion.dns_profiles import ProfileError
+from haprion.ndes_profiles import check_endpoint
+
+CA_DIRECTORY = Path("/etc/haprion/ndes-ca")
+CLIENT_ROOT = "/opt/haprion-scep/current"
+STATE_ROOT = "/etc/haprion/ndes-requests"
+PROFILE_DIRECTORY = "/etc/haprion/ndes-profiles"
+#
+# SCEP's GetCACert answers with the CA and the RA certificates: a few kB.
+#
+MAX_ANSWER = 256 * 1024
+TIMEOUT = 20.0
+SHA256 = re.compile(r"[0-9a-f]{64}")
+TOP_LEVEL = re.compile(r"^[A-Za-z_][\w-]*:", re.MULTILINE)
+
+type Fetch = Callable[[str], bytes]
+
+
+class NdesServerError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True, slots=True)
+class Authority:
+    """One CA certificate the server gave, as the administrator compares it."""
+
+    subject: str
+    sha256: str
+    #
+    # Windows shows a certificate's SHA-1 as its thumbprint; the administrator
+    # of the CA reads that one.
+    #
+    sha1: str
+    pem: str
+    #
+    # Whether it issued the server's RA certificate: the CA the NDES server
+    # enrolls for.
+    #
+    issues_ra: bool
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "subject": self.subject,
+            "sha256": self.sha256,
+            "sha1": self.sha1,
+            "issues_ra": self.issues_ra,
+        }
+
+
+def get_ca_cert(endpoint: str) -> bytes:
+    """`GetCACert` over HTTPS, the server's certificate checked with the system's store."""
+
+    url = endpoint + "?operation=GetCACert&message=ca"
+    try:
+        with urllib.request.urlopen(url, timeout=TIMEOUT) as response:  # noqa: S310 - checked https
+            data: bytes = response.read(MAX_ANSWER + 1)
+    except OSError as exc:
+        raise NdesServerError("unreachable", f"{endpoint} did not answer: {exc}") from None
+    if len(data) > MAX_ANSWER:
+        raise NdesServerError("bad_answer", f"{endpoint} answered with more than a CA could be")
+    return data
+
+
+def _der(pem: str) -> bytes:
+    match = CERTIFICATE_BLOCK.search(pem)
+    if match is None:
+        raise NdesServerError("bad_answer", "the server's answer holds no certificate")
+    return b64decode("".join(match.group(1).split()))
+
+
+def authorities(endpoint: str, *, fetch: Fetch = get_ca_cert) -> tuple[Authority, ...]:
+    """The CA certificates the server gives, the one that issued its RA certificate first."""
+
+    try:
+        endpoint = check_endpoint(endpoint)
+    except ProfileError:
+        raise NdesServerError(
+            "bad_input", "the address must be an HTTPS URL without credentials or query"
+        ) from None
+    try:
+        certificates, _keys = read_bytes(fetch(endpoint))
+    except ImportError_ as exc:
+        raise NdesServerError("bad_answer", f"{endpoint} answered with no CA: {exc}") from None
+    found: list[Authority] = []
+    issuers = set()
+    authority_pems = []
+    for certificate in certificates:
+        constraints = _openssl(
+            ["x509", "-noout", "-ext", "basicConstraints"],
+            stdin=certificate,
+            what="read a certificate from the NDES server",
+        )
+        subject, issuer = _names(certificate)
+        if "CA:TRUE" in constraints.replace(" ", ""):
+            authority_pems.append((subject, certificate))
+        else:
+            issuers.add(issuer)
+    for subject, certificate in authority_pems:
+        der = _der(certificate)
+        found.append(
+            Authority(
+                subject=subject,
+                sha256=hashlib.sha256(der).hexdigest(),
+                sha1=hashlib.sha1(der, usedforsecurity=False).hexdigest(),
+                pem=certificate,
+                issues_ra=subject in issuers,
+            )
+        )
+    if not found:
+        raise NdesServerError("bad_answer", f"{endpoint} answered with no CA certificate")
+    return tuple(sorted(found, key=lambda authority: not authority.issues_ra))
+
+
+def ca_file(endpoint: str, directory: Path = CA_DIRECTORY) -> Path:
+    return directory / f"{hashlib.sha256(endpoint.encode()).hexdigest()[:16]}.pem"
+
+
+def _ndes_block(data: dict[str, Any], policy_path: Path) -> dict[str, Any]:
+    """The policy's ndes block in the form with servers; a new one with the defaults."""
+
+    raw = data.get("ndes")
+    if raw is None:
+        acme = data.get("acme")
+        if not isinstance(acme, dict):
+            acme = {}
+        dns = acme.get("dns_profiles") or {}
+        return {
+            "servers": [],
+            "client_root": CLIENT_ROOT,
+            "state_root": STATE_ROOT,
+            "profiles": {
+                "directory": PROFILE_DIRECTORY,
+                "private_keys": list(dns.get("private_keys") or []),
+            },
+        }
+    if not isinstance(raw, dict):
+        raise NdesServerError("bad_policy", f"{policy_path}: ndes is not a mapping")
+    block = dict(raw)
+    if "endpoint" in block:
+        server = {"endpoint": block.pop("endpoint"), "issuing_ca": block.pop("issuing_ca", None)}
+        if "tls_ca" in block:
+            server["tls_ca"] = block.pop("tls_ca")
+        block = {"servers": [server], **block}
+    block.setdefault("servers", [])
+    return block
+
+
+def with_ndes(text: str, block: dict[str, Any]) -> str:
+    """The policy's text with its ndes block replaced, or added at its end."""
+
+    rendered = yaml.safe_dump({"ndes": block}, sort_keys=False, default_flow_style=False)
+    start = re.search(r"^ndes:", text, re.MULTILINE)
+    if start is None:
+        return text.rstrip("\n") + "\n\n" + rendered
+    following = TOP_LEVEL.search(text, start.end())
+    end = following.start() if following else len(text)
+    return text[: start.start()] + rendered + ("\n" if following else "") + text[end:]
+
+
+def without_ndes(text: str) -> str:
+    start = re.search(r"^ndes:", text, re.MULTILINE)
+    if start is None:
+        return text
+    following = TOP_LEVEL.search(text, start.end())
+    return (
+        text[: start.start()].rstrip("\n")
+        + "\n"
+        + ("\n" + text[following.start() :] if following else "")
+    )
+
+
+def _write_policy(policy_path: Path, text: str) -> None:
+    """Read back with the engine's parser, then put in place as the file it replaces is."""
+
+    staged = policy_path.with_name(f".{policy_path.name}.ndes")
+    try:
+        atomic_file.write_like(staged, text.encode(), like=policy_path)
+        try:
+            load_policy(staged, require_secure=False)
+        except ConfigError as exc:
+            raise NdesServerError(
+                "bad_policy", f"the changed policy would not load: {exc}"
+            ) from None
+        atomic_file.move(staged, policy_path)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+def add(
+    endpoint: str,
+    sha256: str,
+    *,
+    policy_path: Path = DEFAULT_POLICY_PATH,
+    ca_directory: Path | None = None,
+    fetch: Fetch = get_ca_cert,
+) -> dict[str, Any]:
+    """Confirm the server whose CA has this SHA-256, and write it into the policy."""
+
+    ca_directory = CA_DIRECTORY if ca_directory is None else ca_directory
+    if SHA256.fullmatch(sha256) is None:
+        raise NdesServerError("bad_input", "the fingerprint must be a SHA-256 in hexadecimal")
+    found = authorities(endpoint, fetch=fetch)
+    endpoint = check_endpoint(endpoint)
+    if not any(authority.sha256 == sha256 for authority in found):
+        raise NdesServerError(
+            "changed",
+            f"{endpoint} no longer gives the CA with SHA-256 {sha256}; fetch it again and compare",
+        )
+    path = ca_file(endpoint, ca_directory)
+    ca_directory.mkdir(mode=0o755, exist_ok=True)
+    atomic_file.write(path, "".join(a.pem for a in found).encode(), mode=0o644)
+    text = policy_path.read_text()
+    data = yaml.safe_load(text) or {}
+    block = _ndes_block(data, policy_path)
+    servers = [s for s in block["servers"] if s.get("endpoint") != endpoint]
+    block["servers"] = [*servers, {"endpoint": endpoint, "issuing_ca": str(path)}]
+    _write_policy(policy_path, with_ndes(text, block))
+    return {"endpoint": endpoint, "issuing_ca": str(path), "sha256": sha256}
+
+
+def remove(
+    endpoint: str,
+    *,
+    used_by: Sequence[str],
+    policy_path: Path = DEFAULT_POLICY_PATH,
+) -> dict[str, Any]:
+    """Take the server out of the policy, unless a profile still uses it."""
+
+    if used_by:
+        raise NdesServerError(
+            "in_use", f"{endpoint} is used by the NDES profile {', '.join(sorted(used_by))}"
+        )
+    text = policy_path.read_text()
+    data = yaml.safe_load(text) or {}
+    if data.get("ndes") is None:
+        raise NdesServerError("not_found", f"{endpoint} is not an NDES server here")
+    block = _ndes_block(data, policy_path)
+    servers = [s for s in block["servers"] if s.get("endpoint") != endpoint]
+    if len(servers) == len(block["servers"]):
+        raise NdesServerError("not_found", f"{endpoint} is not an NDES server here")
+    #
+    # The last server takes the block with it: what else it holds are the
+    # defaults a new one is made with.
+    #
+    if servers:
+        block["servers"] = servers
+        _write_policy(policy_path, with_ndes(text, block))
+    else:
+        _write_policy(policy_path, without_ndes(text))
+    return {"endpoint": endpoint}
+
+
+def profiles_using(directory: Path, endpoint: str) -> tuple[str, ...]:
+    """The materialized profiles whose address is this server's."""
+
+    found = []
+    for record in sorted(directory.glob("*.json")) if directory.is_dir() else ():
+        try:
+            row = json.loads(record.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(row, dict) and row.get("endpoint") == endpoint:
+            found.append(str(row.get("profile_id") or record.stem))
+    return tuple(found)

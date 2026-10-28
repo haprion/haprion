@@ -8,7 +8,7 @@
       "0100",
       "0101"
     ],
-    "engine_api": 34,
+    "engine_api": 35,
     "node_api": 1,
     "poller_helpers": [
       "haprion-status-helper",
@@ -39,7 +39,8 @@
       "haprion-tls-helper": "/run/haprion/ui-tls.sock",
       "haprion-node-helper": "/run/haprion/cluster-node.sock",
       "haprion-resolve-helper": "/run/haprion/resolve.sock",
-      "haprion-cert-export-helper": "/run/haprion/cert-export.sock"
+      "haprion-cert-export-helper": "/run/haprion/cert-export.sock",
+      "haprion-ndes-server-helper": "/run/haprion/ndes-server.sock"
     }
   }
 }

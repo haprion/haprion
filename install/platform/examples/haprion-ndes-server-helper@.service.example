@@ -1,0 +1,55 @@
+# Confirms an NDES server for the interface, then exits.
+#
+# Started by haprion-ndes-server-helper.socket, one instance per connection.
+# The connection is this process's stdin and stdout.
+#
+# What it may do with root
+# ------------------------
+# Ask an NDES server for its CA with GetCACert over HTTPS, checked against the
+# system's store, and - when the administrator confirmed the CA by its
+# SHA-256, asked again here - write the CA certificates under
+# /etc/haprion/ndes-ca and the server into the runtime policy's ndes block,
+# read back by the engine's parser before it replaces the file. Remove a
+# server no NDES profile uses.
+#
+# Why this sandbox is looser than the worker's: writing /etc/haprion is the
+# job, as it is the TLS helper's, and asking the server needs the network.
+#
+# Installed as /etc/systemd/system/haprion-ndes-server-helper@.service.
+
+[Unit]
+Description=Confirm an NDES server for the Haprion interface
+Documentation=file:///opt/haprion/current
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/opt/haprion/current/bin/haprion-ndes-server-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+MemoryMax=256M
+MemorySwapMax=0
+# GetCACert is bounded at 20 s, the rest is local.
+TimeoutStartSec=60
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=yes
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

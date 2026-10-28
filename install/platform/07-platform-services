@@ -108,6 +108,22 @@ systemctl is-active --quiet haprion-resolve-helper.socket \
     || die "haprion-resolve-helper.socket did not start"
 log "  listening on /run/haprion/resolve.sock  (group ${WEB_USER})"
 
+#
+# An NDES server is confirmed from its CA in the interface (B383, B385): the
+# web asks over a socket, group this account, and a root helper writes the
+# CA and the runtime policy's ndes block.
+#
+install_file "/etc/systemd/system/haprion-ndes-server-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-ndes-server-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-ndes-server-helper.socket" root:root 644 \
+    "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-ndes-server-helper.socket.example)"
+systemctl daemon-reload
+systemctl enable --quiet haprion-ndes-server-helper.socket
+systemctl restart haprion-ndes-server-helper.socket
+systemctl is-active --quiet haprion-ndes-server-helper.socket \
+    || die "haprion-ndes-server-helper.socket did not start"
+log "  listening on /run/haprion/ndes-server.sock  (group ${WEB_USER})"
+
 step "The web service's way to an exportable certificate's key"
 #
 # A certificate made exportable (B255) is downloaded with its key from the

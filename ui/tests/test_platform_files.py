@@ -416,6 +416,7 @@ class TheListsAreTheSteps(unittest.TestCase):
             "tls",
             "backup-job",
             "node-restore",
+            "ndes-server",
         )
         for suffix in ("@.service", ".socket")
     }

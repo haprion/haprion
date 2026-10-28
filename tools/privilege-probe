@@ -57,6 +57,7 @@ declare -A SOCKET_GROUP=(
     [/run/haprion/oidc.sock]=_haprion-web
     [/run/haprion/probe.sock]=_haprion-web
     [/run/haprion/resolve.sock]=_haprion-web
+    [/run/haprion/ndes-server.sock]=_haprion-web
     [/run/haprion-web.sock]=www-data
 )
 

@@ -1,0 +1,134 @@
+"""`haprion-ndes-server-helper` - confirm an NDES server for the web (B383, B385).
+
+The web asks over `/run/haprion/ndes-server.sock`, one request per connection:
+
+    fetch    the CA certificates the server gives (`GetCACert`), to show
+    add      write the server into the runtime policy, if the CA with the given
+             SHA-256 is still what it gives
+    remove   take it out, unless a profile on this manager uses it
+
+Root, because `add` and `remove` write `/etc/haprion` - which the worker's
+helpers cannot (B163) - and the network, because asking the server is the
+point. What it writes is bounded by `haprion.ndes_servers`: one CA file under
+`/etc/haprion/ndes-ca` and the policy's `ndes:` block, read back by the
+engine's parser before it replaces the file.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any, BinaryIO, TextIO
+
+from haprion import exit_codes, ndes_servers
+from haprion.cli import cert_job
+from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
+from haprion.envelope import envelope
+from haprion.helper_protocol import HelperProtocolError, write_document
+
+OPERATION = "ndes_server"
+PARAMETERS = frozenset({"action", "endpoint", "sha256"})
+ACTIONS = ("fetch", "add", "remove")
+EXIT_CODES = {
+    "bad_input": exit_codes.REFUSED,
+    "changed": exit_codes.REFUSED,
+    "in_use": exit_codes.REFUSED,
+    "not_found": exit_codes.NOT_FOUND,
+    "unreachable": exit_codes.UNAVAILABLE,
+    "bad_answer": exit_codes.UNAVAILABLE,
+    "bad_policy": exit_codes.CONFIG,
+}
+
+
+def _string(parameters: dict[str, Any], name: str) -> str:
+    value = parameters.get(name)
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        raise HelperProtocolError(
+            f"parameters.{name} must be a string", exit_code=exit_codes.REFUSED
+        )
+    return value
+
+
+def perform(
+    parameters: dict[str, Any],
+    *,
+    policy_path: Path = DEFAULT_POLICY_PATH,
+    fetch: ndes_servers.Fetch = ndes_servers.get_ca_cert,
+) -> dict[str, Any]:
+    action = parameters.get("action")
+    if action not in ACTIONS:
+        raise HelperProtocolError(
+            "parameters.action must be one of: " + ", ".join(ACTIONS), exit_code=exit_codes.REFUSED
+        )
+    endpoint = _string(parameters, "endpoint")
+    if action == "fetch":
+        found = ndes_servers.authorities(endpoint, fetch=fetch)
+        policy = load_policy(policy_path).ndes
+        return {
+            "endpoint": endpoint,
+            "authorities": [authority.summary() for authority in found],
+            "confirmed": policy is not None and policy.server(endpoint) is not None,
+        }
+    if action == "add":
+        return ndes_servers.add(
+            endpoint, _string(parameters, "sha256"), policy_path=policy_path, fetch=fetch
+        )
+    policy = load_policy(policy_path).ndes
+    used_by = (
+        ndes_servers.profiles_using(policy.profiles.directory, endpoint)
+        if policy is not None
+        else ()
+    )
+    return ndes_servers.remove(endpoint, used_by=used_by, policy_path=policy_path)
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    input_stream: BinaryIO | None = None,
+    output_stream: TextIO | None = None,
+    error_stream: TextIO | None = None,
+    policy_path: Path = DEFAULT_POLICY_PATH,
+    fetch: ndes_servers.Fetch = ndes_servers.get_ca_cert,
+    require_root: bool = True,
+) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    writer: TextIO = output_stream or sys.stdout
+    errors: TextIO = error_stream or sys.stderr
+    try:
+        request = cert_job.read_request(
+            OPERATION,
+            parameters=PARAMETERS,
+            input_stream=input_stream,
+            argv=argv,
+            require_root=require_root,
+            helper_name="haprion-ndes-server-helper",
+        )
+    except HelperProtocolError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+
+    refuse = cert_job.Refuse(OPERATION, request, writer, errors)
+    try:
+        result = perform(dict(request.parameters), policy_path=policy_path, fetch=fetch)
+    except HelperProtocolError as exc:
+        return refuse("bad_input", str(exc), exc.exit_code)
+    except ndes_servers.NdesServerError as exc:
+        return refuse(exc.code, str(exc), EXIT_CODES[exc.code])
+    except ConfigError as exc:
+        return refuse("bad_policy", str(exc), exit_codes.CONFIG)
+    return write_document(
+        writer,
+        envelope(
+            operation=OPERATION,
+            outcome="done",
+            cluster=None,
+            request_id=request.request_id,
+            result=result,
+        ),
+        0,
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

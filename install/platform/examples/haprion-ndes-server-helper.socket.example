@@ -1,0 +1,29 @@
+# The socket the interface confirms an NDES server through (B383, B385).
+#
+# Owned by root, connectable by the web's account. Each connection starts one
+# instance of haprion-ndes-server-helper@.service, which reads one request -
+# fetch a server's CA, add a server whose CA the administrator confirmed, or
+# remove one no profile uses - and writes one answer.
+#
+# Installed as /etc/systemd/system/haprion-ndes-server-helper.socket, with
+# WEB_USER rendered by 07-platform-services.
+
+[Unit]
+Description=Socket the Haprion interface confirms NDES servers through
+Documentation=file:///opt/haprion/current
+
+[Socket]
+ListenStream=/run/haprion/ndes-server.sock
+SocketUser=root
+SocketGroup=WEB_USER
+SocketMode=0660
+
+Accept=yes
+
+# One at a time: two changes of the policy's ndes block must not interleave.
+MaxConnections=1
+
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

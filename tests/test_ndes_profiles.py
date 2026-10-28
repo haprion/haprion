@@ -15,7 +15,14 @@ import yaml
 
 from haprion import dns_profiles, ndes_profiles
 from haprion.cli import ndes_profile_apply_helper
-from haprion.config import DnsProfilesPolicy, NdesPolicy
+from haprion.config import (
+    SYSTEM_TRUST,
+    ConfigError,
+    DnsProfilesPolicy,
+    NdesPolicy,
+    NdesServer,
+    load_policy,
+)
 from haprion.dns_profile_keys import generate, render_private_key
 from haprion.dns_profiles import ProfileError
 
@@ -31,9 +38,7 @@ class NdesProfiles(unittest.TestCase):
         profiles = self.root / "profiles"
         profiles.mkdir(mode=0o700)
         self.policy = NdesPolicy(
-            ENDPOINT,
-            self.root / "ca.crt",
-            self.root / "ca.crt",
+            (NdesServer(ENDPOINT, self.root / "ca.crt", self.root / "ca.crt"),),
             self.root / "client",
             self.root / "state",
             DnsProfilesPolicy(profiles, (self.root / "private.key",)),
@@ -165,8 +170,8 @@ class NdesProfiles(unittest.TestCase):
             "validation_certs_root": str(self.root / "validation"),
             "ndes": {
                 "endpoint": ENDPOINT,
-                "tls_ca": str(self.policy.tls_ca),
-                "issuing_ca": str(self.policy.issuing_ca),
+                "tls_ca": str(self.policy.servers[0].tls_ca),
+                "issuing_ca": str(self.policy.servers[0].issuing_ca),
                 "client_root": str(self.policy.client_root),
                 "state_root": str(self.policy.state_root),
                 "profiles": {
@@ -231,8 +236,8 @@ class NdesProfileRemoval(NdesProfiles):
                     "validation_certs_root": str(self.root / "validation"),
                     "ndes": {
                         "endpoint": ENDPOINT,
-                        "tls_ca": str(self.policy.tls_ca),
-                        "issuing_ca": str(self.policy.issuing_ca),
+                        "tls_ca": str(self.policy.servers[0].tls_ca),
+                        "issuing_ca": str(self.policy.servers[0].issuing_ca),
                         "client_root": str(self.policy.client_root),
                         "state_root": str(self.policy.state_root),
                         "profiles": {
@@ -331,3 +336,74 @@ class NdesProfileRemoval(NdesProfiles):
         self.assertEqual(doc["error"]["code"], "profile_in_use")
         self.assertIn("webserver1-scep", doc["error"]["message"])
         self.assertNotIn("by-hand", doc["error"]["message"])
+
+
+class TheServersInThePolicy(unittest.TestCase):
+    """B385: each NDES server confirmed for itself; the form before it read as one."""
+
+    def load(self, ndes: dict[str, object]) -> NdesPolicy:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            path = root / "runtime.yaml"
+            path.write_text(
+                yaml.safe_dump(
+                    {
+                        "schema_version": 1,
+                        "cluster_file": str(root / "clusters.yaml"),
+                        "config_root": str(root / "config"),
+                        "publish_root": str(root / "publish"),
+                        "validation_certs_root": str(root / "validation"),
+                        "ndes": {
+                            **ndes,
+                            "client_root": "/opt/haprion-scep/current",
+                            "state_root": "/etc/haprion/ndes-requests",
+                            "profiles": {
+                                "directory": "/etc/haprion/ndes-profiles",
+                                "private_keys": ["/etc/haprion/ui-secrets/0123456789abcdef.key"],
+                            },
+                        },
+                    }
+                )
+            )
+            policy = load_policy(path, require_secure=False).ndes
+        assert policy is not None
+        return policy
+
+    def test_the_form_before_it_is_one_server(self) -> None:
+        policy = self.load(
+            {
+                "endpoint": ENDPOINT,
+                "tls_ca": "/etc/haprion/tls.pem",
+                "issuing_ca": "/etc/haprion/ca.pem",
+            }
+        )
+        self.assertEqual(
+            policy.servers,
+            (NdesServer(ENDPOINT, Path("/etc/haprion/ca.pem"), Path("/etc/haprion/tls.pem")),),
+        )
+
+    def test_several_servers_and_the_system_store_when_none_is_named(self) -> None:
+        other = "https://ca2.example.com/certsrv/mscep/mscep.dll"
+        policy = self.load(
+            {
+                "servers": [
+                    {"endpoint": ENDPOINT, "issuing_ca": "/etc/haprion/ndes-ca/a.pem"},
+                    {"endpoint": other, "issuing_ca": "/etc/haprion/ndes-ca/b.pem"},
+                ]
+            }
+        )
+        self.assertEqual([server.endpoint for server in policy.servers], [ENDPOINT, other])
+        self.assertEqual(policy.servers[0].tls_ca, SYSTEM_TRUST)
+        self.assertEqual(policy.server(other), policy.servers[1])
+        self.assertIsNone(policy.server("https://ca3.example.com/certsrv/mscep/mscep.dll"))
+
+    def test_both_forms_an_address_twice_and_an_empty_list_are_refused(self) -> None:
+        server = {"endpoint": ENDPOINT, "issuing_ca": "/etc/haprion/ca.pem"}
+        for ndes, said in (
+            ({"servers": [server], "endpoint": ENDPOINT}, "not beside it"),
+            ({"servers": [server, server]}, "names an address twice"),
+            ({"servers": []}, "non-empty list"),
+            ({"servers": [{**server, "port": 443}]}, "port"),
+        ):
+            with self.subTest(said=said), self.assertRaisesRegex(ConfigError, said):
+                self.load(ndes)

@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import tempfile
 import time
 import unittest
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
 from haprion import cert_import, ndes
-from haprion.config import DnsProfilesPolicy, NdesPolicy
+from haprion.config import SYSTEM_TRUST, DnsProfilesPolicy, NdesPolicy, NdesServer
 from haprion.ndes_profiles import OpenedProfile
 from tests.test_cert_import import Pki, openssl
 
@@ -30,9 +32,7 @@ class EnrollmentStaging(unittest.TestCase):
         ca = self.root / "ca.pem"
         ca.write_text("example CA material")
         self.policy = NdesPolicy(
-            ENDPOINT,
-            ca,
-            ca,
+            (NdesServer(ENDPOINT, ca, ca),),
             self.root / "client",
             state,
             DnsProfilesPolicy(self.root / "profiles", ()),
@@ -216,12 +216,54 @@ class EnrollmentStaging(unittest.TestCase):
             mock.patch.object(ndes, "status", return_value="CA_WORKING"),
         ):
             self.enroll()
-        self.policy.issuing_ca.write_text("changed example CA material")
+        self.policy.servers[0].issuing_ca.write_text("changed example CA material")
         with mock.patch.object(ndes, "instance") as instance, self.assertRaises(ndes.NdesError):
             self.enroll(resume=True)
         self.assertFalse(instance.called)
         with self.assertRaises(ndes.NdesError):
             ndes.names(["example.com\nextra"])
+
+    def test_the_profile_s_server_is_the_one_enrolled_with(self) -> None:
+        """B385: with two servers confirmed, the profile's address picks one; the
+        system's store is recorded as such, so a ca-certificates update between a
+        request and its resume does not refuse the resume."""
+
+        other = "https://ca2.example.com/certsrv/mscep/mscep.dll"
+        issuing = self.root / "other-ca.pem"
+        issuing.write_text("other example CA material")
+        self.policy = replace(
+            self.policy, servers=(*self.policy.servers, NdesServer(other, issuing))
+        )
+        self.profile = replace(self.profile, endpoint=other)
+        added: list[list[str]] = []
+        with (
+            mock.patch.object(ndes, "command", side_effect=lambda p, d, a: added.append(list(a))),
+            mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+            mock.patch.object(
+                ndes,
+                "secure_file",
+                side_effect=lambda path, **_: (
+                    path.read_bytes() if path != SYSTEM_TRUST else b"system store"
+                ),
+            ),
+        ):
+            self.enroll()
+        helper = next(arguments for arguments in added if arguments[0] == "add-ca")[-1]
+        self.assertIn(f"-u {other}", helper)
+        record = json.loads((self.directory / "request.json").read_text())
+        self.assertEqual(record["endpoint"], other)
+        self.assertEqual(record["tls_ca_sha256"], "system")
+        self.assertEqual(
+            (self.directory / "issuing-ca.pem").read_text(), "other example CA material"
+        )
+
+    def test_a_profile_on_a_server_not_confirmed_is_refused(self) -> None:
+        self.profile = replace(
+            self.profile, endpoint="https://ca3.example.com/certsrv/mscep/mscep.dll"
+        )
+        with mock.patch.object(ndes, "instance") as instance, self.assertRaises(ndes.NdesError):
+            self.enroll()
+        self.assertFalse(instance.called)
 
 
 class IssuedCertificate(unittest.TestCase):

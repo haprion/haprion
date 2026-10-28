@@ -38,7 +38,7 @@ from haprion.cert_import import (
     authority_blocks,
     import_authority,
     import_certificate,
-    read_authority_file,
+    ndes_authority_blocks,
     read_bytes,
     stored_key,
 )
@@ -162,7 +162,7 @@ def main(
         try:
             result = import_authority(
                 certificate_id=certificate_id,
-                blocks=read_authority_file(policy.ndes.issuing_ca),
+                blocks=ndes_authority_blocks(policy.ndes.servers),
                 clusters=clusters,
                 policy=policy,
                 runtime=runtime,

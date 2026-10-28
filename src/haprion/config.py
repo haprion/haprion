@@ -221,11 +221,33 @@ class DnsProfilesPolicy:
     private_keys: tuple[Path, ...]
 
 
+#
+# The system's CA store, as the distribution's ca-certificates keeps it.
+#
+SYSTEM_TRUST = Path("/etc/ssl/certs/ca-certificates.crt")
+
+
+@dataclass(frozen=True, slots=True)
+class NdesServer:
+    """One NDES server: its address, the CA it issues from, and what its HTTPS is trusted with."""
+
+    endpoint: str
+    issuing_ca: Path
+    #
+    # The CA bundle its HTTPS certificate is checked against; the system's
+    # store when the policy names none (B381: a server the manager's store
+    # already trusts needs nothing more).
+    #
+    tls_ca: Path = SYSTEM_TRUST
+
+
 @dataclass(frozen=True, slots=True)
 class NdesPolicy:
-    endpoint: str
-    tls_ca: Path
-    issuing_ca: Path
+    #
+    # Each confirmed by an administrator, from its CA's fingerprint (B383, B385).
+    # A profile's address must be one of them.
+    #
+    servers: tuple[NdesServer, ...]
     client_root: Path
     state_root: Path
     profiles: DnsProfilesPolicy
@@ -234,6 +256,9 @@ class NdesPolicy:
     # before the current one expires. Optional; 30 is certbot's habit.
     #
     renew_days: int = 30
+
+    def server(self, endpoint: str) -> NdesServer | None:
+        return next((server for server in self.servers if server.endpoint == endpoint), None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1213,7 +1238,16 @@ def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
     entry = _mapping(raw, location)
     _only_keys(
         entry,
-        {"endpoint", "tls_ca", "issuing_ca", "client_root", "state_root", "profiles", "renew_days"},
+        {
+            "servers",
+            "endpoint",
+            "tls_ca",
+            "issuing_ca",
+            "client_root",
+            "state_root",
+            "profiles",
+            "renew_days",
+        },
         location,
     )
     renew_days = entry.get("renew_days", 30)
@@ -1223,22 +1257,33 @@ def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
         or not 1 <= renew_days <= 3650
     ):
         raise ConfigError(f"{location}.renew_days must be an integer between 1 and 3650")
-    from haprion.dns_profiles import ProfileError
-    from haprion.ndes_profiles import check_endpoint
-
-    try:
-        endpoint = check_endpoint(_required_string(entry, "endpoint", location))
-    except ProfileError:
-        raise ConfigError(f"{location}.endpoint must be a valid HTTPS URL") from None
+    #
+    # One server named in the block itself is how a policy said it before
+    # B385, and is read as the only one.
+    #
+    single = {"endpoint", "tls_ca", "issuing_ca"} & entry.keys()
+    if single and "servers" in entry:
+        raise ConfigError(f"{location} names its servers in servers, not beside it")
+    if single:
+        servers: tuple[NdesServer, ...] = (_ndes_server(entry, location),)
+    else:
+        raw_servers = entry.get("servers")
+        if not isinstance(raw_servers, list) or not raw_servers:
+            raise ConfigError(f"{location}.servers must be a non-empty list")
+        servers = tuple(
+            _ndes_server(
+                _mapping(item, f"{location}.servers[{index}]"), f"{location}.servers[{index}]"
+            )
+            for index, item in enumerate(raw_servers)
+        )
+    endpoints = [server.endpoint for server in servers]
+    if len(set(endpoints)) != len(endpoints):
+        raise ConfigError(f"{location}.servers names an address twice")
     profiles = _dns_profiles_policy({"dns_profiles": entry.get("profiles")}, f"{location}.profiles")
     if profiles is None:
         raise ConfigError(f"{location}.profiles must be configured")
     return NdesPolicy(
-        endpoint=endpoint,
-        tls_ca=_absolute_path(_required_string(entry, "tls_ca", location), f"{location}.tls_ca"),
-        issuing_ca=_absolute_path(
-            _required_string(entry, "issuing_ca", location), f"{location}.issuing_ca"
-        ),
+        servers=servers,
         client_root=_absolute_path(
             _required_string(entry, "client_root", location), f"{location}.client_root"
         ),
@@ -1247,6 +1292,28 @@ def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
         ),
         profiles=profiles,
         renew_days=renew_days,
+    )
+
+
+def _ndes_server(entry: Mapping[str, Any], location: str) -> NdesServer:
+    from haprion.dns_profiles import ProfileError
+    from haprion.ndes_profiles import check_endpoint
+
+    if not location.endswith("ndes"):
+        _only_keys(entry, {"endpoint", "tls_ca", "issuing_ca"}, location)
+    try:
+        endpoint = check_endpoint(_required_string(entry, "endpoint", location))
+    except ProfileError:
+        raise ConfigError(f"{location}.endpoint must be a valid HTTPS URL") from None
+    issuing_ca = _absolute_path(
+        _required_string(entry, "issuing_ca", location), f"{location}.issuing_ca"
+    )
+    if entry.get("tls_ca") is None:
+        return NdesServer(endpoint=endpoint, issuing_ca=issuing_ca)
+    return NdesServer(
+        endpoint=endpoint,
+        issuing_ca=issuing_ca,
+        tls_ca=_absolute_path(_required_string(entry, "tls_ca", location), f"{location}.tls_ca"),
     )
 
 

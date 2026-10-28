@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 
 from haprion import exit_codes
 from haprion.cert_import import Material, assemble, check, split_blocks
-from haprion.config import CERTIFICATE_ID, HOSTNAME, NdesPolicy
+from haprion.config import CERTIFICATE_ID, HOSTNAME, SYSTEM_TRUST, NdesPolicy, NdesServer
 from haprion.dns_profiles import ProfileError
 from haprion.ndes_profiles import OpenedProfile, check_challenge, secure_directory
 from haprion.ndes_state import remove_request, request_directory
@@ -64,8 +64,8 @@ def names(values: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(checked))
 
 
-def validate_policy(policy: NdesPolicy, *, require_secure: bool = True) -> None:
-    endpoint = urlsplit(policy.endpoint)
+def validate_policy(policy: NdesPolicy, server: NdesServer, *, require_secure: bool = True) -> None:
+    endpoint = urlsplit(server.endpoint)
     if (
         endpoint.scheme != "https"
         or not endpoint.hostname
@@ -73,12 +73,12 @@ def validate_policy(policy: NdesPolicy, *, require_secure: bool = True) -> None:
         or endpoint.password is not None
         or endpoint.query
         or endpoint.fragment
-        or any(c.isspace() for c in policy.endpoint)
+        or any(c.isspace() for c in server.endpoint)
     ):
         raise NdesError(
             "bad_input", "NDES endpoint must be an HTTPS URL without credentials or query"
         )
-    for path in (policy.tls_ca, policy.issuing_ca):
+    for path in (server.tls_ca, server.issuing_ca):
         secure_file(path, require_secure=require_secure)
     for name in ("certmonger", "getcert", "scep-submit"):
         binary = (policy.client_root / "bin" / name).resolve()
@@ -296,7 +296,14 @@ def _enroll(
         raise NdesError(
             "bad_input", "use the base DNS name as primary CN and list the wildcard as a SAN"
         )
-    validate_policy(policy, require_secure=require_secure)
+    server = policy.server(profile.endpoint)
+    if server is None:
+        raise NdesError(
+            "dependency_unavailable",
+            "the profile's NDES server is not confirmed on this manager",
+            exit_code=exit_codes.CONFIG,
+        )
+    validate_policy(policy, server, require_secure=require_secure)
     directory = request_directory(policy.state_root, certificate_id)
     if directory.is_symlink() or policy.state_root.is_symlink():
         raise NdesError("bad_input", "NDES state directories cannot be symlinks")
@@ -325,13 +332,17 @@ def _enroll(
         "profile": profile.profile_id,
         "revision": profile.revision,
         "key_id": profile.key_id,
-        "endpoint": policy.endpoint,
+        "endpoint": server.endpoint,
         "issuing_ca_sha256": hashlib.sha256(
-            secure_file(policy.issuing_ca, require_secure=require_secure)
+            secure_file(server.issuing_ca, require_secure=require_secure)
         ).hexdigest(),
-        "tls_ca_sha256": hashlib.sha256(
-            secure_file(policy.tls_ca, require_secure=require_secure)
-        ).hexdigest(),
+        #
+        # The system's store changes with every ca-certificates update; a
+        # request waiting for the CA must still resume after one (B385).
+        #
+        "tls_ca_sha256": "system"
+        if server.tls_ca == SYSTEM_TRUST
+        else hashlib.sha256(secure_file(server.tls_ca, require_secure=require_secure)).hexdigest(),
         "domains": list(requested),
     }
     if resume:
@@ -351,7 +362,7 @@ def _enroll(
         fd = os.open(record, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as handle:
             json.dump(expected, handle)
-    for source, filename in ((policy.tls_ca, "tls-ca.pem"), (policy.issuing_ca, "issuing-ca.pem")):
+    for source, filename in ((server.tls_ca, "tls-ca.pem"), (server.issuing_ca, "issuing-ca.pem")):
         content = secure_file(source, require_secure=require_secure)
         destination = directory / filename
         fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
@@ -369,7 +380,7 @@ def _enroll(
                     [
                         str(policy.client_root / "bin/scep-submit"),
                         "-u",
-                        policy.endpoint,
+                        server.endpoint,
                         "-R",
                         str(directory / "tls-ca.pem"),
                         "-N",
@@ -490,7 +501,7 @@ def enroll(
     require_secure: bool = True,
     timeout: float = ENROLL_TIMEOUT,
 ) -> Iterator[Enrollment]:
-    if not CERTIFICATE_ID.fullmatch(certificate_id) or profile.endpoint != policy.endpoint:
+    if not CERTIFICATE_ID.fullmatch(certificate_id) or policy.server(profile.endpoint) is None:
         raise NdesError("bad_input", "certificate ID or NDES profile endpoint is invalid")
     policy = replace(policy, client_root=policy.client_root.resolve())
     try:

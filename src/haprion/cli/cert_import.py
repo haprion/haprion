@@ -28,6 +28,7 @@ from haprion.cert_import import (
     ImportResult,
     import_authority,
     import_certificate,
+    ndes_authority_blocks,
     read_authority_file,
     read_material,
     stored_key,
@@ -75,7 +76,7 @@ USAGE = (
     "  --authority <file>    A CA certificate - or several, a root and its\n"
     "                        intermediates - without a key, for the clusters' pools to\n"
     "                        verify their servers against (tls verify: ca).\n"
-    "  --ndes-ca             The same, from the NDES issuing CA the runtime policy names.\n"
+    "  --ndes-ca             The same, from the issuing CA of each NDES server the runtime policy names.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 
@@ -311,13 +312,13 @@ def main(
                         "runtime policy.ndes is not configured",
                         exit_codes.CONFIG,
                     )
-                source = policy.ndes.issuing_ca
+                blocks = ndes_authority_blocks(policy.ndes.servers)
             else:
                 assert arguments.authority is not None  # noqa: S101 - the branch says so
-                source = arguments.authority
+                blocks = read_authority_file(arguments.authority)
             result = import_authority(
                 certificate_id=arguments.certificate_id,
-                blocks=read_authority_file(source),
+                blocks=blocks,
                 clusters=arguments.clusters,
                 policy=policy,
                 runtime=runtime,

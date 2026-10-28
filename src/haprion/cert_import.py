@@ -43,7 +43,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -81,6 +81,7 @@ from haprion.config import (
     CERTIFICATE_ID,
     RECEIVER_FORMATS,
     ConfigError,
+    NdesServer,
     PathPolicy,
     RuntimeConfig,
     load_runtime_config,
@@ -1180,3 +1181,13 @@ def read_authority_file(path: Path) -> tuple[str, ...]:
         raise ImportError_("bad_input", f"the CA file could not be read: {exc}") from exc
     certificates, keys = read_bytes(data)
     return authority_blocks(certificates, keys)
+
+
+def ndes_authority_blocks(servers: Iterable[NdesServer]) -> tuple[str, ...]:
+    """The issuing CAs of every confirmed NDES server, each once (B385)."""
+
+    return tuple(
+        dict.fromkeys(
+            block for server in servers for block in read_authority_file(server.issuing_ca)
+        )
+    )

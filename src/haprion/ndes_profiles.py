@@ -206,8 +206,8 @@ def resolve(policy: NdesPolicy, profile_id: str, *, require_secure: bool = True)
     if not isinstance(key_id, str) or KEY_ID.fullmatch(key_id) is None:
         raise ProfileError("NDES profile key ID is invalid")
     endpoint = check_endpoint(row["endpoint"])
-    if endpoint != policy.endpoint:
-        raise ProfileError("NDES endpoint does not match protected runtime policy")
+    if policy.server(endpoint) is None:
+        raise ProfileError("NDES endpoint is not a server confirmed in the runtime policy")
     return OpenedProfile(
         profile_id,
         endpoint,
@@ -222,8 +222,8 @@ def materialize(policy: NdesPolicy, opened: OpenedProfile, *, require_secure: bo
     check_profile_id(opened.profile_id)
     check_revision(opened.revision)
     check_challenge(opened.challenge)
-    if check_endpoint(opened.endpoint) != policy.endpoint:
-        raise ProfileError("NDES endpoint does not match protected runtime policy")
+    if policy.server(check_endpoint(opened.endpoint)) is None:
+        raise ProfileError("NDES endpoint is not a server confirmed in the runtime policy")
     path = record_path(policy, opened.profile_id)
     # Callers serialize profile applies with the certificate operation lock.
     if path.exists() or path.is_symlink():

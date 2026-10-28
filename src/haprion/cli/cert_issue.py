@@ -18,15 +18,7 @@ from typing import Any, TextIO
 
 from haprion import exit_codes, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haprion.cert_issue import (
-    Certbot,
-    IssueError,
-    IssueResult,
-    adopt,
-    issue,
-    renew,
-    run_certbot,
-)
+from haprion.cert_issue import Certbot, IssueError, IssueResult, issue, renew, run_certbot
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haprion.cli import cert_job
 from haprion.cli.cert_publish import default_deployer
@@ -36,7 +28,6 @@ from haprion.helper_protocol import HelperProtocolError, config_error_code, writ
 
 OPERATION = "cert_issue"
 RENEW = "renew"
-ADOPT = "adopt"
 
 USAGE = (
     "Usage:\n"
@@ -45,8 +36,6 @@ USAGE = (
     "                     [--receiver <id>]... [--format <id>=<form>]...\n"
     "                     [--interface | --exportable] [--json]\n"
     "  haprion-cert-issue --domain <certificate id> --renew [--json]\n"
-    "  haprion-cert-issue --domain <lineage> --adopt [--cluster <id>]...\n"
-    "                     [--receiver <id>]... [--format <id>=<form>]... [--json]\n"
     "\n"
     "Obtains a certificate from the ACME account this host already has, adds it\n"
     "to the certificate registry, publishes it to the named targets and rolls\n"
@@ -71,9 +60,6 @@ USAGE = (
     "  --exportable          For a device never connected to this manager: one name,\n"
     "                        no targets, an RSA key that may be exported from the\n"
     "                        interface.\n"
-    "  --adopt               Register a lineage certbot already has under that name,\n"
-    "                        with its targets, and publish it. Nothing is issued;\n"
-    "                        it renews with its own renewal configuration.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 
@@ -128,9 +114,6 @@ def _parse(
             #
             method = RENEW
             index += 1
-        elif argument == "--adopt":
-            method = ADOPT
-            index += 1
         elif argument == "--interface":
             interface = True
             index += 1
@@ -157,16 +140,10 @@ def _parse(
 
 
 def _summary(result: IssueResult, writer: TextIO) -> None:
-    if result.adopted:
-        writer.write(
-            f"registered {result.request.certificate_id} ({', '.join(result.request.domains)}) "
-            "from certbot's lineage; nothing was issued\n"
-        )
-    else:
-        writer.write(
-            f"issued {result.request.certificate_id} ({', '.join(result.request.domains)}) "
-            f"via {result.request.method} in {result.certbot_seconds:.0f}s\n"
-        )
+    writer.write(
+        f"issued {result.request.certificate_id} ({', '.join(result.request.domains)}) "
+        f"via {result.request.method} in {result.certbot_seconds:.0f}s\n"
+    )
     for entry in result.publish.certificates:
         targets = ", ".join(f"{t.kind} {t.name}" for t in entry.targets)
         writer.write(f"published: {entry.status} ({targets})\n")
@@ -327,32 +304,6 @@ def main(
         except IssueError as exc:
             return refuse(exc.code, str(exc), exc.exit_code, exc.details)
         return _answer(renewed, request_id, json_mode=json_mode, writer=writer, errors=errors)
-
-    if method == ADOPT:
-        if dns_profile or interface or exportable:
-            return refuse(
-                "bad_input",
-                "a lineage is registered with its targets only; it renews as certbot has it",
-                exit_codes.USAGE,
-            )
-        try:
-            adopted = adopt(
-                certificate_id=domain,
-                clusters=clusters,
-                receivers=receivers,
-                formats=formats,
-                policy=policy,
-                runtime=runtime,
-                deployer=deployer or default_deployer(errors),
-                installer=installer or ui_interface.install,
-                live=live,
-                store=store,
-                lock_path=lock_path,
-                require_secure=require_secure,
-            )
-        except IssueError as exc:
-            return refuse(exc.code, str(exc), exc.exit_code, exc.details)
-        return _answer(adopted, request_id, json_mode=json_mode, writer=writer, errors=errors)
 
     try:
         result = issue(

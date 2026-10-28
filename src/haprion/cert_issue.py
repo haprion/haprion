@@ -40,7 +40,7 @@ from __future__ import annotations
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -186,11 +186,6 @@ class IssueResult:
     # the row can say "renewed" rather than "issued" about it.
     #
     renewed: bool = False
-    #
-    # True for a lineage certbot had before it was registered (F26): nothing
-    # was issued, so the summary says "registered".
-    #
-    adopted: bool = False
     lineage: str | None = None
     #
     # D5: the entry that served the interface before this one, and what
@@ -732,8 +727,7 @@ def issue(
         raise IssueError(
             "already_exists",
             f"certbot already has a lineage named {request.certificate_id!r}; register it "
-            f"with 'haprion-cert-issue --domain {request.certificate_id} --adopt' and its "
-            "targets instead of issuing it again",
+            "in the registry instead of issuing it again",
         )
     invocation = certbot_invocation(request, policy, require_secure=require_secure)
 
@@ -806,100 +800,6 @@ def issue(
         total_seconds=time.monotonic() - started,
         publish=report,
         retired=retired,
-    )
-
-
-def adopt(
-    *,
-    certificate_id: str,
-    clusters: Sequence[str],
-    receivers: Sequence[str],
-    formats: Mapping[str, str] | None = None,
-    policy: PathPolicy,
-    runtime: RuntimeConfig,
-    deployer: Deployer | None = None,
-    installer: Installer | None = None,
-    live: Path = LETSENCRYPT_LIVE,
-    store: Path = IMPORT_STORE,
-    lock_path: Path = DEFAULT_LOCK_PATH,
-    renewal_directory: Path | None = None,
-    require_secure: bool = True,
-    now: datetime | None = None,
-) -> IssueResult:
-    """A lineage certbot already has, registered with its targets and published (F26).
-
-    `issue` refuses a name certbot has, and rightly: issuing it again makes a
-    second lineage. A chain from before the installation - a reinstall keeps
-    the ones the manager renewed for other hosts - then had no way in but an
-    edit of the registry by hand (prod 26-10-27). Nothing is asked of certbot:
-    the lineage renews on its own schedule, with its own renewal conf, and the
-    deploy hook publishes it from then on.
-    """
-
-    started = time.monotonic()
-    conf = (renewal_directory or RENEWAL_DIRECTORY) / f"{certificate_id}.conf"
-    if not CERTIFICATE_ID.fullmatch(certificate_id) or not conf.is_file():
-        raise IssueError(
-            "no_lineage", f"certbot has no renewal configuration for {certificate_id!r}"
-        )
-    if not (live / certificate_id).is_dir():
-        raise IssueError("no_lineage", f"certbot has no live lineage named {certificate_id!r}")
-    request = build_request(
-        domain=certificate_id,
-        method=renewal_method(conf),
-        clusters=clusters,
-        receivers=receivers,
-        runtime=runtime,
-        formats=formats,
-    )
-    assert policy.certificate_registry is not None  # noqa: S101 - build_request checked it
-    add_to_registry(
-        policy.certificate_registry,
-        request,
-        runtime,
-        require_secure=require_secure,
-        lock_path=lock_path,
-    )
-    refreshed = load_runtime_config(policy, require_secure=require_secure)
-    #
-    # The names are the certificate's, read as a renewal reads them: a
-    # wildcard lineage is named without its asterisk.
-    #
-    entry = refreshed.registry.certificates.get(certificate_id) if refreshed.registry else None
-    if entry is not None and policy.certificate_root is not None:
-        measured = measure_registered(
-            entry, certificate_root=policy.certificate_root, live=live, store=store
-        )
-        if not isinstance(measured, str):
-            facts = measured[1]
-            names = ([facts.common_name] if facts.common_name else []) + list(facts.sans)
-            domains = tuple(dict.fromkeys(names))
-            request = replace(
-                request,
-                domains=domains,
-                wildcard=any(name.startswith("*.") for name in domains),
-            )
-    try:
-        report = publish(
-            refreshed,
-            policy,
-            only=[certificate_id],
-            live=live,
-            store=store,
-            lock_path=lock_path,
-            deployer=deployer,
-            installer=installer,
-            now=now or datetime.now(UTC),
-        )
-    except PublishError as exc:
-        raise IssueError(exc.code, str(exc), exit_code=exit_codes.CONFIG) from exc
-    return IssueResult(
-        request=request,
-        certbot_seconds=0.0,
-        total_seconds=time.monotonic() - started,
-        publish=report,
-        adopted=True,
-        lineage=certificate_id,
     )
 
 

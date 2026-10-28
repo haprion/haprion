@@ -136,6 +136,7 @@ class ADatabaseErrorIsToldApart(unittest.TestCase):
             mock.patch.object(profile_apply, "connect", return_value=mock.MagicMock()),
             mock.patch.object(profile_apply, "KINDS", ()),
             mock.patch.object(profile_apply, "plan", return_value=profile_apply.Plan(changes, ())),
+            mock.patch.object(profile_apply, "confirmed_servers", return_value=[]),
             mock.patch.object(profile_apply, "actor_name", return_value="admin"),
             mock.patch.object(profile_apply, "_queue", side_effect=queue),
             mock.patch.object(job_wait, "finished", return_value=("done", None)),

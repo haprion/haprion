@@ -62,13 +62,21 @@ ensure_identity_directories
 # activation leaves the previous release running, with the files it was
 # checked against.
 #
+#
+# `files_settled` is no until the files are proved in place - by this
+# release's proof or by their restore - and then yes; a restore that failed
+# makes it failed, and the copy stays (review 2026-10-28, F02).
+#
 kept="$(mktemp -d)"
 files_settled=no
 settle_files() {
-    if [[ "$files_settled" != yes ]]; then
-        ./refresh-platform-files --restore "$kept" \
-            || warn "the platform files could not all be put back; ${kept} holds them"
-        files_settled=yes
+    if [[ "$files_settled" == no ]]; then
+        if ./refresh-platform-files --restore "$kept"; then
+            files_settled=yes
+        else
+            files_settled=failed
+            warn "the platform files could not all be put back; ${kept} holds them"
+        fi
     fi
 }
 #
@@ -80,12 +88,22 @@ settle_files() {
 #
 on_exit() {
     local status=$?
-    if [[ "$files_settled" != yes ]] && declare -F restore_previous >/dev/null && candidate_current; then
+    if [[ "$files_settled" == no ]] && declare -F restore_previous >/dev/null && candidate_current; then
         restore_previous || warn "the previous release could not be restored; run ${rollback} --to ${previous_id}"
     fi
     settle_files
-    rm -rf -- "$kept"
+    #
+    # The copy goes only with the files proved in place. One that could not be
+    # put back stays, 0700 as mktemp made it, for the run where_it_stands
+    # names; this trap tries no second round, and the update does not end 0.
+    #
+    if [[ "$files_settled" == yes ]]; then
+        rm -rf -- "$kept"
+    elif (( status == 0 )); then
+        status=1
+    fi
     (( status == 0 )) || where_it_stands
+    exit "$status"
 }
 
 #
@@ -111,6 +129,10 @@ where_it_stands() {
                 echo "The database moved from schema ${schema_now} to ${schema}, which ${running} runs on."
                 [[ -z "$dump" ]] || echo "The dump taken before the migration: ${dump}"
             fi
+        fi
+        if [[ "${files_settled:-}" == failed ]]; then
+            echo "The platform files the update replaced are kept in ${kept}, listed in its manifest."
+            echo "Put them back with: sudo $(pwd)/refresh-platform-files --restore ${kept}"
         fi
         if [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]]; then
             echo "Correct what the lines above name, then: sudo dpkg --configure -a"

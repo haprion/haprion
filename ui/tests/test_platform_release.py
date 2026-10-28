@@ -179,13 +179,64 @@ class CoordinatedUpdateTests(unittest.TestCase):
                         f"files_settled={settled}; kept=/nonexistent; "
                         "warn() { :; }; restore_previous() { echo restore; }; "
                         f"candidate_current() {{ {switched}; }}; where_it_stands() {{ echo said; }}; "
-                        f"settle_files() {{ echo settle; }}; {body}on_exit",
+                        f"settle_files() {{ echo settle; files_settled=yes; }}; {body}on_exit",
                     ],
                     capture_output=True,
                     text=True,
                     check=True,
                 )
                 self.assertEqual(done.stdout.split(), expected)
+
+    def settle_and_exit(self, restore_status: int) -> tuple[subprocess.CompletedProcess[str], Path]:
+        """`settle_files` and `on_exit` as written, after an update that stopped with 3."""
+
+        functions = ""
+        for name in ("settle_files() {", "on_exit() {"):
+            start = self.update.index(name)
+            functions += self.update[start : self.update.index("\n}\n", start) + 3]
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw)
+        here = Path(raw)
+        (here / "refresh-platform-files").write_text(f"#!/bin/sh\nexit {restore_status}\n")
+        (here / "refresh-platform-files").chmod(0o755)
+        kept = here / "kept"
+        kept.mkdir()
+        (kept / "manifest").write_text("unit\t/etc/systemd/system/haprion-web.service\t\n")
+        done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own functions
+            [
+                "/bin/bash",
+                "-c",
+                f'files_settled=no; kept="$1"; warn() {{ echo "WARNING: $*" >&2; }}; '
+                "restore_previous() { settle_files; }; candidate_current() { false; }; "
+                f"where_it_stands() {{ echo said; }}; {functions}(exit 3); on_exit",
+                "-",
+                str(kept),
+            ],
+            cwd=raw,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return done, kept
+
+    def test_a_restore_that_failed_keeps_the_copy_and_the_failure(self) -> None:
+        """Review 2026-10-28, F02: the warning named the copy, and the trap then deleted it."""
+
+        done, kept = self.settle_and_exit(1)
+        self.assertEqual(done.returncode, 3)
+        self.assertIn(f"{kept} holds them", done.stderr)
+        self.assertTrue((kept / "manifest").exists())
+        self.assertEqual(done.stdout.split(), ["said"])
+
+        done, kept = self.settle_and_exit(0)
+        self.assertEqual(done.returncode, 3)
+        self.assertFalse(kept.exists())
+
+    def test_where_it_stands_names_the_copy_a_restore_left(self) -> None:
+        start = self.update.index("where_it_stands() {")
+        body = self.update[start : self.update.index("\n}\n", start) + 3]
+        self.assertIn('if [[ "${files_settled:-}" == failed ]]; then', body)
+        self.assertIn("refresh-platform-files --restore ${kept}", body)
 
     def test_an_activation_that_never_switched_says_so_once(self) -> None:
         """R2 26-10-27 (F8): *was restored* and *no UI rollback is needed* twice."""

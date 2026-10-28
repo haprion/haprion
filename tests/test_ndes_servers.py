@@ -215,11 +215,6 @@ class TheHelperAndTheCommand(unittest.TestCase):
                 "load_policy",
                 side_effect=lambda path: load_policy(path, require_secure=False),
             ),
-            mock.patch.object(
-                ndes_server,
-                "load_policy",
-                side_effect=lambda path: load_policy(path, require_secure=False),
-            ),
             mock.patch.object(ndes_servers, "CA_DIRECTORY", self.root / "ndes-ca"),
         ):
             patch.start()
@@ -292,3 +287,12 @@ class TheHelperAndTheCommand(unittest.TestCase):
         code, said = self.command("remove", ENDPOINT)
         self.assertEqual(code, 0, said)
         self.assertIn("No NDES server", self.command("list")[1])
+
+    def test_the_command_answers_in_the_helper_s_contract(self) -> None:
+        code, said = self.command("add", ENDPOINT, "--json", root=False)
+        self.assertEqual(code, 0)
+        document = assert_contract("haprion-ndes-server", said)
+        self.assertEqual(document["result"]["authorities"][0]["sha256"], self.issuing)
+        code, said = self.command("remove", ENDPOINT, "--json", root=False)
+        self.assertEqual(code, exit_codes.NOT_ROOT)
+        self.assertEqual(assert_contract("haprion-ndes-server", said)["error"]["code"], "not_root")

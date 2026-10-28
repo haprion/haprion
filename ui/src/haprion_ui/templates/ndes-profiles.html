@@ -13,11 +13,11 @@
 #}
 <section class="page-heading">
   <div class="heading-title">{{ back_button('/certificates', 'Certificates') }}<h1>NDES profiles</h1><p class="page-lede">Master challenges for Microsoft AD CS enrollment over SCEP, sealed for the enrollment helper.</p></div>
-  <div class="heading-badges">{% if public_key and not ndes_missing %}<a class="secondary-button" href="/ndes-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+  <div class="heading-badges">{% if public_key and servers %}<a class="secondary-button" href="/ndes-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
-{% if ndes_missing %}
-<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>NDES is not set up on this manager.</strong> The runtime policy has no <code>ndes</code> block; see <em>Manager configuration and packaging</em> in the user manual.</p>
+{% if servers_problem or server_problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ server_problem or servers_problem }}</strong></p>
 {% endif %}
 {% if not public_key %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>This installation has no profile key.</strong> Profiles can be listed but not created until <code>[dns_profiles] public_key</code> names one; see <em>The DNS profile key pair</em> in the user manual.</p>
@@ -26,6 +26,28 @@
 {% for profile in profiles if statuses[profile.id].attention_message and profile.id == just_removed %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>Removal of <code>{{ profile.id }}</code> was refused.</strong> {{ statuses[profile.id].attention_message }}. The profile stays in effect; delete or re-enroll those certificates first.</p>
 {% endfor %}
+
+<form method="post" action="/ndes-profiles/servers/remove" class="preview-form">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>NDES servers</h3><p>Each confirmed from its CA.</p></div></div></header>
+  <div class="table-scroll"><table class="node-table ndes-server-table">
+    <thead><tr><th scope="col"></th><th scope="col">Server</th><th scope="col">Profiles</th></tr></thead>
+    <tbody>
+    {% for server in servers or [] %}
+    <tr>
+      <td data-label=""><input type="radio" name="endpoint" value="{{ server }}" aria-label="Select {{ server }}"{% if server in servers_in_use %} disabled{% endif %}></td>
+      <td data-label="Server"><span class="certificate-sans" title="{{ server }}">{{ server }}</span></td>
+      <td data-label="Profiles">{% if server in servers_in_use %}In use{% else %}<span class="optional">None</span>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3"><span class="optional">No NDES server yet.</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="editor-actions editor-submit list-actions"><div class="form-buttons"><a class="secondary-button" href="/ndes-profiles/servers/new">Add NDES server</a>{% if servers %}<button type="submit" class="secondary-button">Remove</button>{% endif %}</div></div>
+</section>
+</form>
 
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Profiles</h3><p>{{ profiles | length }} profile{{ '' if profiles | length == 1 else 's' }}.</p></div></div></header>

@@ -37,7 +37,7 @@ import stat
 import sys
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -45,6 +45,7 @@ from typing import Any
 import psycopg
 import yaml
 from haprion import exit_codes, ndes_profiles, safe_yaml
+from haprion.config import load_policy
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.dns_profiles import ProfileError
 
@@ -267,9 +268,20 @@ def plan(
     *,
     replace: Sequence[str],
     prune: bool,
+    servers: Collection[str],
 ) -> Plan:
-    """What would change, with every new box sealed: a bad entry is refused before any write."""
+    """What would change, with every new box sealed: a bad entry is refused before any write.
 
+    An NDES profile's address must be a server the policy names (B385): one the
+    form would not offer is refused here too, not when its job runs.
+    """
+
+    for wanted in found.get(NDES.section, ()):
+        if _endpoint(wanted.values["endpoint"]) not in servers:
+            raise ApplyError(
+                f"ndes_profiles {wanted.profile_id}: {wanted.values['endpoint']} is not an NDES "
+                "server confirmed on this manager; add it with haprion-ndes-server"
+            )
     changes: list[Change] = []
     unchanged: list[str] = []
     asked = set(replace)
@@ -423,6 +435,13 @@ def _stopped(
     return exit_codes.PARTIAL if took else exit_code
 
 
+def confirmed_servers() -> list[str]:
+    """The NDES servers the runtime policy names; root reads it, as the command runs."""
+
+    ndes = load_policy().ndes
+    return [server.endpoint for server in ndes.servers] if ndes is not None else []
+
+
 def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = time.sleep) -> int:
     applied: list[dict[str, Any]] = []
     the_plan: Plan | None = None
@@ -438,7 +457,14 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
         with connect(load_environment()) as connection:
             stored = {kind.section: kind.listed(connection) for kind in KINDS}
             connection.commit()
-            the_plan = plan(found, stored, public_key, replace=args.replace, prune=args.prune)
+            the_plan = plan(
+                found,
+                stored,
+                public_key,
+                replace=args.replace,
+                prune=args.prune,
+                servers=confirmed_servers(),
+            )
             if not args.check:
                 actor = actor_name()
                 for change in the_plan.changes:

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from time import monotonic, sleep
 from typing import Annotated
+from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Form, Request, Response
@@ -14,6 +15,8 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
 )
+from haprion import ndes_server_socket
+from haprion.ndes_servers import NdesServerError
 
 from haprion_ui import (
     auth,
@@ -427,6 +430,7 @@ def build_router(config: Config) -> APIRouter:
         problem: str = "",
     ) -> Response:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
+        servers, servers_problem = _ndes_servers()
         return TEMPLATES.TemplateResponse(
             request,
             "ndes-profile-form.html",
@@ -438,22 +442,26 @@ def build_router(config: Config) -> APIRouter:
                 "values": ndes_profile_form.redraw_values(form.values),
                 "existing": existing,
                 "public_key": _dns_public_key(config),
-                "problem": problem,
+                "servers": servers,
+                "problem": problem or servers_problem,
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
             },
         )
 
-    def _ndes_missing(request: Request) -> bool:
-        """The manager's last reading says the runtime policy has no ndes block.
+    def _ndes_servers() -> tuple[list[str] | None, str]:
+        """The NDES servers the runtime policy names, or why they cannot be listed.
 
-        Its helper refuses an NDES profile then, after the form had taken it
-        (prod 26-10-28, F28). An older engine says nothing, and is not refused.
+        A profile's address must be one of them (B385). Each is added on its
+        own page, from its CA, so the form chooses among them.
         """
 
-        manager = read_manager_certificates(request, config)
-        return manager is not None and manager.result.get("ndes_configured") is False
+        try:
+            listed = ndes_server_socket.ask("list")
+        except NdesServerError as exc:
+            return None, str(exc)
+        return [str(server["endpoint"]) for server in listed.get("servers", [])], ""
 
     @router.get("/ndes-profiles", response_class=HTMLResponse)
     def ndes_profile_list(request: Request) -> Response:
@@ -464,6 +472,7 @@ def build_router(config: Config) -> APIRouter:
             profiles = db.ndes_profiles(connection)
             recent = db.profile_jobs(connection, "ndes_profile_apply")
         manager = read_manager_certificates(request, config)
+        servers, servers_problem = _ndes_servers()
         references = certificates.profile_references(manager, field="ndes_profile")
         statuses = {
             p.id: dns_profile_form.without_stale_refusal(
@@ -475,14 +484,17 @@ def build_router(config: Config) -> APIRouter:
             request,
             "ndes-profiles.html",
             {
+                "csrf_token": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
                 "username": gate.username,
                 "role": gate.role,
                 "profiles": profiles,
                 "statuses": statuses,
                 "just_removed": _just_removed(request, [profile.id for profile in profiles]),
                 "public_key": _dns_public_key(config),
-                "ndes_missing": manager is not None
-                and manager.result.get("ndes_configured") is False,
+                "servers": servers,
+                "servers_problem": servers_problem,
+                "servers_in_use": {p.endpoint for p in profiles if p.endpoint},
+                "server_problem": request.query_params.get("server_problem", "")[:300],
                 "refresh": any(p.label in {"Applying", "Removing"} for p in statuses.values()),
                 "section": "certificates",
                 "management_writes": config.management_writes,
@@ -490,13 +502,127 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    def _ndes_server_page(
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        endpoint: str = "",
+        authorities: Sequence[dict[str, object]] = (),
+        problem: str = "",
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "ndes-server-form.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "endpoint": endpoint,
+                "authorities": authorities,
+                "problem": problem,
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+            },
+        )
+
+    @router.get("/ndes-profiles/servers/new", response_class=HTMLResponse)
+    def ndes_server_new_form(request: Request) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        return _ndes_server_page(request, gate)
+
+    @router.post("/ndes-profiles/servers/new", response_class=HTMLResponse)
+    def ndes_server_fetch(
+        request: Request,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        endpoint: Annotated[str, Form(max_length=2048)],
+    ) -> Response:
+        """The CA the server gives, for the administrator to compare; nothing is changed."""
+
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        if not auth.csrf_token_is_valid(request.cookies.get(auth.SESSION_COOKIE, ""), csrf_token):
+            return forbidden_page(request, config)
+        endpoint = endpoint.strip()
+        try:
+            fetched = ndes_server_socket.ask("fetch", endpoint=endpoint)
+        except NdesServerError as exc:
+            return _ndes_server_page(request, gate, endpoint=endpoint, problem=str(exc))
+        if fetched.get("confirmed") is True:
+            return RedirectResponse("/ndes-profiles", status_code=303)
+        return _ndes_server_page(
+            request, gate, endpoint=endpoint, authorities=fetched.get("authorities") or []
+        )
+
+    @router.post("/ndes-profiles/servers/confirm")
+    def ndes_server_confirm(
+        request: Request,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        endpoint: Annotated[str, Form(max_length=2048)],
+        sha256: Annotated[str, Form(max_length=64)],
+    ) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        if not auth.csrf_token_is_valid(request.cookies.get(auth.SESSION_COOKIE, ""), csrf_token):
+            return forbidden_page(request, config)
+        try:
+            ndes_server_socket.ask("add", endpoint=endpoint, sha256=sha256)
+        except NdesServerError as exc:
+            return _ndes_server_page(request, gate, endpoint=endpoint, problem=str(exc))
+        with request.app.state.pool.connection() as connection:
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="ndes_server_added",
+                detail={"endpoint": endpoint, "sha256": sha256},
+            )
+            connection.commit()
+        return RedirectResponse("/ndes-profiles", status_code=303)
+
+    @router.post("/ndes-profiles/servers/remove")
+    def ndes_server_remove(
+        request: Request,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        endpoint: Annotated[str, Form(max_length=2048)],
+    ) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        if not auth.csrf_token_is_valid(request.cookies.get(auth.SESSION_COOKIE, ""), csrf_token):
+            return forbidden_page(request, config)
+        with request.app.state.pool.connection() as connection:
+            used = [p.id for p in db.ndes_profiles(connection) if p.endpoint == endpoint]
+        if used:
+            problem = endpoint + " is used by " + ", ".join(used)
+            return RedirectResponse(
+                "/ndes-profiles?" + urlencode({"server_problem": problem}), status_code=303
+            )
+        try:
+            ndes_server_socket.ask("remove", endpoint=endpoint)
+        except NdesServerError as exc:
+            return RedirectResponse(
+                "/ndes-profiles?" + urlencode({"server_problem": str(exc)}), status_code=303
+            )
+        with request.app.state.pool.connection() as connection:
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="ndes_server_removed",
+                detail={"endpoint": endpoint},
+            )
+            connection.commit()
+        return RedirectResponse("/ndes-profiles", status_code=303)
+
     @router.get("/ndes-profiles/new", response_class=HTMLResponse)
     def ndes_profile_new_form(request: Request) -> Response:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        if _ndes_missing(request):
-            return RedirectResponse("/ndes-profiles", status_code=303)
         return _ndes_profile_form_page(request, gate, ndes_profile_form.EMPTY_FORM, existing=None)
 
     @router.post("/ndes-profiles/new", response_class=HTMLResponse)
@@ -504,8 +630,6 @@ def build_router(config: Config) -> APIRouter:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        if _ndes_missing(request):
-            return RedirectResponse("/ndes-profiles", status_code=303)
         return _ndes_profile_submit(request, gate, existing=None)
 
     @router.get("/ndes-profiles/{profile_id}/replace", response_class=HTMLResponse)
@@ -513,8 +637,6 @@ def build_router(config: Config) -> APIRouter:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        if _ndes_missing(request):
-            return RedirectResponse("/ndes-profiles", status_code=303)
         with request.app.state.pool.connection() as connection:
             existing = db.ndes_profile(connection, profile_id)
         if existing is None:
@@ -533,8 +655,6 @@ def build_router(config: Config) -> APIRouter:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        if _ndes_missing(request):
-            return RedirectResponse("/ndes-profiles", status_code=303)
         with request.app.state.pool.connection() as connection:
             existing = db.ndes_profile(connection, profile_id)
         if existing is None:
@@ -579,6 +699,16 @@ def build_router(config: Config) -> APIRouter:
                 existing=existing,
                 problem="This installation has no certificate profile key; see the installation "
                 "guide, 1.4.8.",
+            )
+        servers, servers_problem = _ndes_servers()
+        if servers is None or form.values.get("endpoint") not in servers:
+            return _ndes_profile_form_page(
+                request,
+                session,
+                form,
+                existing=existing,
+                problem=servers_problem
+                or "NDES server — choose one of the servers confirmed on this manager.",
             )
         revision = existing.revision + 1 if existing else 1
         with request.app.state.pool.connection() as connection:

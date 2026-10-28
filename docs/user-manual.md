@@ -1867,6 +1867,8 @@ way the page stores it, and applied by the same job.
   left as it is, unless `--replace <id>` asks for it or, for NDES, the endpoint differs. Running the
   same file twice changes nothing.
 - A DNS profile keeps its provider. Another provider means another ID.
+- An NDES profile's `endpoint` must be a server confirmed on the manager
+  ([Adding an NDES server](#adding-an-ndes-server)); the file is refused otherwise.
 - `--prune` removes the stored profiles of a kind the file lists but does not name. `remove` removes
   one. A removal is refused for the same reasons as on the page.
 - Only one certificate job runs at a time. So the command queues each change, waits for the worker to
@@ -2135,8 +2137,8 @@ its servers over HTTPS and checks their certificates, when your own CA issued th
 root and its intermediates, or an old root beside its successor while servers move over.
 
 - *Upload* takes a file in the forms above. A key in it is refused.
-- *The NDES CA* takes the issuing CA that the NDES profiles' certificates are signed by. That is the
-  file the runtime policy names as `ndes.issuing_ca`, read by root on the manager.
+- *The NDES CA* takes the CA certificates of every confirmed NDES server, each once: those the
+  NDES profiles' certificates are signed by, read by root on the manager.
 
 Every certificate in the file must be a CA (`basicConstraints CA:TRUE`). A server certificate is
 refused (`not_authority`), and so is a file in which every certificate has expired.
@@ -2207,7 +2209,7 @@ platform step 07 are part of the release.
 
 ### Enrolling and renewing through NDES
 
-Once the runtime policy has its `ndes` block and an NDES profile is in effect, root enrolls a
+Once an NDES server is confirmed and an NDES profile on it is in effect, root enrolls a
 certificate from the terminal with:
 
 ```sh
@@ -5820,7 +5822,8 @@ prepare the Microsoft side. Using it - enrolling, renewing, pending requests - i
 **What the manager provides:**
 
 - NDES profiles, with the challenge stored encrypted (*Certificates → NDES profiles*)
-- the Certmonger client, kept as a reviewed bundle, which speaks SCEP
+- the NDES servers it enrolls with, each added from its CA (*Certificates → NDES profiles → Add NDES server*)
+- the Certmonger client, in the `haprion-scep` package, which speaks SCEP
 - the root enrollment command, `haprion-cert-scep`, and the job helper behind it
 - the certificate form's *NDES* method
 
@@ -5834,10 +5837,8 @@ manager needs no domain membership or AD account, and does not visit `mscep_admi
 
 **The SCEP client.** [Certmonger](https://codeberg.org/freeipa/certmonger/) provides the SCEP support. It
 runs as a temporary process with a private socket for each request, and Certmonger's own renewal is
-disabled: the manager schedules renewal itself. It is installed separately with platform step 16 (below);
-`haprion-setup` does not install it. Keep the bundle's package, matching source code, license and build
-instructions with your release material, so the version you use stays available independently of where
-upstream hosts it.
+disabled: the manager schedules renewal itself. It comes in the `haprion-scep` package, with the
+distribution's certmonger package, its source code and its license (below).
 
 **Other SCEP servers.** The client speaks plain SCEP. The manager makes two choices that NDES needs and
 other servers accept: a signature-and-encryption request, and the challenge as a PrintableString. Only
@@ -5845,30 +5846,50 @@ NDES has been verified. Another SCEP CA should work but is untested - step-ca is
 and EJBCA, OpenXPKI and network appliances also serve SCEP. The profile and policy fields keep their NDES
 names.
 
+##### Adding an NDES server
+
+A profile enrolls with one of the NDES servers the manager has confirmed. Add a server under
+*Certificates → NDES profiles* with *Add NDES server*:
+
+1. Enter the server's `mscep.dll` address and choose *Fetch the CA*. The manager asks the server for its CA
+   certificates over HTTPS, checked against the manager's system certificate store, and shows each one with
+   its SHA-256 and its SHA-1 thumbprint - the thumbprint Windows shows in the certificate's details.
+2. Compare them with the CA's own certificate. The one marked *issues for NDES* is the CA the server enrolls
+   for.
+3. Choose *Confirm this CA*. The manager asks the server again and adds it only if that CA is still there.
+
+The HTTPS certificate of the NDES server must be trusted by the manager's system store. A server signed by an
+internal CA needs that CA in the store, as any other internal HTTPS service does (`update-ca-certificates`).
+
+A server is removed from the same page, when no profile uses it. From the command line:
+
+```bash
+haprion-ndes-server list
+haprion-ndes-server add https://ndes.example.com/certsrv/mscep/mscep.dll
+sudo haprion-ndes-server add https://ndes.example.com/certsrv/mscep/mscep.dll --sha256 <SHA-256>
+sudo haprion-ndes-server remove https://ndes.example.com/certsrv/mscep/mscep.dll
+```
+
+`add` without `--sha256` shows the CA and changes nothing.
+
 ##### Manager configuration and packaging
 
-**The runtime policy's `ndes` block** is optional. Its fields:
+**The runtime policy's `ndes` block** is written by the manager when the first server is added, and removed
+with the last one. Its fields:
 
 | Field | What it is |
 |---|---|
-| `endpoint` | the NDES URL; must be HTTPS, and must match the provider profile exactly |
-| `tls_ca` | the CA certificate that the endpoint's HTTPS certificate is checked against |
-| `issuing_ca` | the CA certificate that issued certificates are checked against |
-| `client_root` | where the SCEP client is installed |
-| `state_root` | where enrollment requests are kept |
-| `profiles` | `directory` (where profile records are kept) and `private_keys` |
+| `servers` | the confirmed servers: each `endpoint` (the HTTPS address), `issuing_ca` (the file with the CA certificates it gave) and optionally `tls_ca` (a CA file its HTTPS is checked against; the system store when left out) |
+| `client_root` | where the SCEP client is installed: `/opt/haprion-scep/current` |
+| `state_root` | where enrollment requests are kept: `/etc/haprion/ndes-requests` |
+| `profiles` | `directory` (where profile records are kept: `/etc/haprion/ndes-profiles`) and `private_keys`, the DNS profile key pair's private key |
 | `renew_days` | optional; renew this many days before expiry (1-3650, default 30) |
-
-All paths are absolute. `private_keys` is a non-empty list of private-key files - the same DNS profile key
-pair as above. TLS trust and certificate trust are configured separately, on purpose. Suggested places are
-`/opt/haprion-scep/current` for `client_root`, `/etc/haprion/ndes-requests` for `state_root` and
-`/etc/haprion/ndes-profiles` for the profile directory:
 
 ```yaml
 ndes:
-  endpoint: https://ndes.example.com/certsrv/mscep/mscep.dll
-  tls_ca: <file with the CA that signed the NDES server's HTTPS certificate>
-  issuing_ca: <file with the issuing CA's certificate>
+  servers:
+    - endpoint: https://ndes.example.com/certsrv/mscep/mscep.dll
+      issuing_ca: /etc/haprion/ndes-ca/0123456789abcdef.pem
   client_root: /opt/haprion-scep/current
   state_root: /etc/haprion/ndes-requests
   profiles:
@@ -5877,8 +5898,9 @@ ndes:
       - /etc/haprion/ui-secrets/dns-profile-keys/0123456789abcdef.key
 ```
 
-The two `/etc/haprion` directories are root-owned with mode `0700`; the records and keys in them have mode
-`0600`.
+A block with one `endpoint`, `tls_ca` and `issuing_ca` beside the other fields is read as one server. The
+manager rewrites only the `ndes` block; the rest of the file and its comments stay. The two `/etc/haprion`
+directories are root-owned with mode `0700`; the records and keys in them have mode `0600`.
 
 **The client comes in the `haprion-scep` package.** `haprion-ui` depends on it, so it is installed with the
 manager, and `haprion-setup` installs the client. The package carries Certmonger's own programs from the

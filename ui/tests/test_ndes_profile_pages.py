@@ -12,6 +12,7 @@ from unittest import mock
 from uuid import uuid4
 
 from haprion.ndes_profiles import open_profile
+from haprion.ndes_servers import NdesServerError
 
 from haprion_ui import auth, db, operations
 from tests.test_certificates import reading as certificate_reading
@@ -36,7 +37,54 @@ class NdesRoutes(ProfileRouteTestCase):
                 id=fields["profile_id"], provider_id="ndes", revision=fields["revision"]
             )
 
+        #
+        # The root helper behind /run/haprion/ndes-server.sock, as the web asks it.
+        #
+        self.servers = [ENDPOINT]
+        self.asked: list[tuple[str, dict[str, str]]] = []
+
+        def ask(action: str, **parameters: str) -> dict[str, Any]:
+            self.asked.append((action, parameters))
+            endpoint = parameters.get("endpoint", "")
+            if action == "list":
+                return {
+                    "servers": [
+                        {"endpoint": e, "issuing_ca": "/etc/haprion/ndes-ca/0.pem"}
+                        for e in self.servers
+                    ]
+                }
+            if action == "fetch":
+                return {
+                    "endpoint": endpoint,
+                    "confirmed": endpoint in self.servers,
+                    "authorities": [
+                        {
+                            "subject": "CN=Example Issuing CA",
+                            "sha256": "a" * 64,
+                            "sha1": "b" * 40,
+                            "issues_ra": True,
+                        },
+                    ],
+                }
+            if action == "add":
+                if parameters["sha256"] != "a" * 64:
+                    raise NdesServerError("changed", f"{endpoint} no longer gives that CA")
+                self.servers.append(endpoint)
+                return {
+                    "endpoint": endpoint,
+                    "issuing_ca": "/etc/haprion/ndes-ca/1.pem",
+                    "sha256": parameters["sha256"],
+                }
+            self.servers.remove(endpoint)
+            return {"endpoint": endpoint}
+
+        self.audited: list[dict[str, Any]] = []
         for patch in (
+            mock.patch("haprion_ui.pages.profiles.ndes_server_socket.ask", side_effect=ask),
+            mock.patch(
+                "haprion_ui.db.record_audit_event",
+                side_effect=lambda _c, **fields: self.audited.append(fields),
+            ),
             mock.patch("haprion_ui.db.create_ndes_profile", side_effect=create),
             mock.patch("haprion_ui.db.replace_ndes_profile", side_effect=replacing),
             mock.patch("haprion_ui.db.ndes_profiles", side_effect=lambda _c: list(self.rows)),
@@ -136,54 +184,89 @@ class NdesPages(NdesRoutes):
             )
 
 
-class AManagerWithoutTheNdesBlock(NdesRoutes):
-    """Its helper refused the profile after the form had taken it (prod 26-10-28, F28)."""
+class TheNdesServers(NdesRoutes):
+    """B383, B385: a profile chooses among servers each confirmed from its CA."""
 
-    def setUp(self) -> None:
-        super().setUp()
-        reading = db.ManagerCertificates(
-            observed_at=datetime.now(UTC),
-            outcome="done",
-            result={"interface_served": None, "ndes_configured": False},
-            warnings=[],
-            error=None,
-            poll_error=None,
-        )
-        patch = mock.patch(
-            "haprion_ui.pages.profiles.read_manager_certificates", return_value=reading
-        )
-        patch.start()
-        self.addCleanup(patch.stop)
-
-    def test_the_page_says_so_and_offers_no_new_profile(self) -> None:
-        listing = self.writing_client().get("/ndes-profiles")
-
-        self.assertIn("NDES is not set up on this manager.", listing.text)
+    def test_without_a_server_no_profile_is_offered_or_taken(self) -> None:
+        self.servers = []
+        client = self.writing_client()
+        listing = client.get("/ndes-profiles")
+        self.assertIn("No NDES server yet.", listing.text)
+        self.assertIn('href="/ndes-profiles/servers/new"', listing.text)
         self.assertNotIn('href="/ndes-profiles/new"', listing.text)
 
-    def test_nothing_is_stored_or_queued(self) -> None:
-        client = self.writing_client()
-
-        self.assertEqual(client.get("/ndes-profiles/new", follow_redirects=False).status_code, 303)
         response = self.post_ndes(client)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("choose one of the servers confirmed on this manager", response.text)
+        self.assertNotIn(GUARD, response.text)
+        self.assertEqual((self.created, self.queued), ([], []))
 
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/ndes-profiles")
-        self.assertEqual(self.created, [])
-        self.assertEqual(self.queued, [])
+    def test_a_server_is_added_once_its_ca_is_confirmed(self) -> None:
+        other = "https://ca2.example.com/certsrv/mscep/mscep.dll"
+        client = self.writing_client()
+        csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        self.assertEqual(client.get("/ndes-profiles/servers/new").status_code, 200)
 
-    def test_a_manager_with_the_block_takes_the_profile_as_before(self) -> None:
-        with mock.patch(
-            "haprion_ui.pages.profiles.read_manager_certificates",
-            return_value=replace(
-                db.ManagerCertificates(datetime.now(UTC), "done", {}, [], None, None),
-                result={"interface_served": None, "ndes_configured": True},
-            ),
-        ):
-            response = self.post_ndes(self.writing_client())
+        shown = client.post(
+            "/ndes-profiles/servers/new", data={"csrf_token": csrf, "endpoint": other}
+        )
+        self.assertIn("CN=Example Issuing CA", shown.text)
+        self.assertIn("a" * 64, shown.text)
+        self.assertIn("b" * 40, shown.text)
+        self.assertNotIn(other, self.servers)
 
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(len(self.created), 1)
+        confirmed = client.post(
+            "/ndes-profiles/servers/confirm",
+            data={"csrf_token": csrf, "endpoint": other, "sha256": "a" * 64},
+            follow_redirects=False,
+        )
+        self.assertEqual(confirmed.status_code, 303)
+        self.assertIn(other, self.servers)
+        self.assertEqual(self.audited[-1]["action"], "ndes_server_added")
+        self.assertIn(other, client.get("/ndes-profiles/new").text)
+
+    def test_a_ca_that_changed_is_said_and_nothing_is_added(self) -> None:
+        other = "https://ca2.example.com/certsrv/mscep/mscep.dll"
+        client = self.writing_client()
+        csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        response = client.post(
+            "/ndes-profiles/servers/confirm",
+            data={"csrf_token": csrf, "endpoint": other, "sha256": "c" * 64},
+        )
+        self.assertIn("no longer gives that CA", response.text)
+        self.assertNotIn(other, self.servers)
+        self.assertNotIn("ndes_server_added", [event["action"] for event in self.audited])
+
+    def test_a_server_in_use_stays_and_one_unused_is_removed(self) -> None:
+        other = "https://ca2.example.com/certsrv/mscep/mscep.dll"
+        self.servers.append(other)
+        self.rows = [profile_row(id="internal-ca", provider_id="ndes", endpoint=ENDPOINT)]
+        client = self.writing_client()
+        csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+
+        refused = client.post(
+            "/ndes-profiles/servers/remove",
+            data={"csrf_token": csrf, "endpoint": ENDPOINT},
+            follow_redirects=True,
+        )
+        self.assertIn("is used by internal-ca", refused.text)
+        self.assertIn(ENDPOINT, self.servers)
+
+        client.post(
+            "/ndes-profiles/servers/remove",
+            data={"csrf_token": csrf, "endpoint": other},
+            follow_redirects=False,
+        )
+        self.assertNotIn(other, self.servers)
+        self.assertEqual(self.audited[-1]["action"], "ndes_server_removed")
+
+    def test_server_routes_require_csrf(self) -> None:
+        client = self.writing_client()
+        for path in ("/ndes-profiles/servers/new", "/ndes-profiles/servers/remove"):
+            with self.subTest(path=path):
+                response = client.post(path, data={"csrf_token": "x", "endpoint": ENDPOINT})
+                self.assertEqual(response.status_code, 403)
+        self.assertEqual([action for action, _ in self.asked if action != "list"], [])
 
 
 class RemovingAnNdesProfile(NdesPages):

@@ -1,0 +1,59 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}Add NDES server — Haprion{% endblock %}
+{% block content %}
+{#
+  B383, B385: an NDES server is added from its CA. The manager asks the server
+  with GetCACert over HTTPS against the system's store and shows what it gives;
+  the administrator compares the CA with the one they know and confirms it.
+  The confirmation is asked again by the helper, which refuses a CA that is
+  no longer the one shown.
+#}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/ndes-profiles', 'NDES profiles') }}<h1>Add NDES server</h1></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<form method="post" action="/ndes-profiles/servers/new" class="preview-form dns-profile-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Server</h3></div></div></header>
+    <div class="form-grid">
+      <label><span class="field-title">NDES address</span><input name="endpoint" type="url" value="{{ endpoint }}" maxlength="2048" placeholder="https://ca.example.com/certsrv/mscep/mscep.dll" spellcheck="false" required><small>HTTPS, the <code>mscep.dll</code> address.</small></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/ndes-profiles">Cancel</a><button type="submit" class="secondary-button">Fetch the CA</button></div>
+    </div>
+  </section>
+</form>
+
+{% if authorities %}
+<form method="post" action="/ndes-profiles/servers/confirm" class="preview-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="endpoint" value="{{ endpoint }}">
+  <input type="hidden" name="sha256" value="{{ authorities[0].sha256 }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The CA the server gives</h3><p>Compare with the CA's certificate before you confirm.</p></div></div></header>
+    <div class="table-scroll"><table class="node-table ndes-authority-table">
+      <thead><tr><th scope="col">Certificate</th><th scope="col">SHA-256</th><th scope="col">Thumbprint (SHA-1)</th></tr></thead>
+      <tbody>
+      {% for authority in authorities %}
+      <tr>
+        <td data-label="Certificate">{{ authority.subject }}{% if authority.issues_ra %} <span class="optional">· issues for NDES</span>{% endif %}</td>
+        <td data-label="SHA-256"><code class="fingerprint">{{ authority.sha256 }}</code></td>
+        <td data-label="Thumbprint (SHA-1)"><code class="fingerprint">{{ authority.sha1 }}</code></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/ndes-profiles">Cancel</a><button type="submit" class="secondary-button deploy-button">Confirm this CA</button></div>
+    </div>
+  </section>
+</form>
+{% endif %}
+{% endblock %}

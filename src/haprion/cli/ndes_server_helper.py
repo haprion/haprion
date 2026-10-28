@@ -2,6 +2,7 @@
 
 The web asks over `/run/haprion/ndes-server.sock`, one request per connection:
 
+    list     the servers the runtime policy names
     fetch    the CA certificates the server gives (`GetCACert`), to show
     add      write the server into the runtime policy, if the CA with the given
              SHA-256 is still what it gives
@@ -28,16 +29,7 @@ from haprion.helper_protocol import HelperProtocolError, write_document
 
 OPERATION = "ndes_server"
 PARAMETERS = frozenset({"action", "endpoint", "sha256"})
-ACTIONS = ("fetch", "add", "remove")
-EXIT_CODES = {
-    "bad_input": exit_codes.REFUSED,
-    "changed": exit_codes.REFUSED,
-    "in_use": exit_codes.REFUSED,
-    "not_found": exit_codes.NOT_FOUND,
-    "unreachable": exit_codes.UNAVAILABLE,
-    "bad_answer": exit_codes.UNAVAILABLE,
-    "bad_policy": exit_codes.CONFIG,
-}
+ACTIONS = ("list", "fetch", "add", "remove")
 
 
 def _string(parameters: dict[str, Any], name: str) -> str:
@@ -60,6 +52,14 @@ def perform(
         raise HelperProtocolError(
             "parameters.action must be one of: " + ", ".join(ACTIONS), exit_code=exit_codes.REFUSED
         )
+    if action == "list":
+        ndes = load_policy(policy_path).ndes
+        return {
+            "servers": [
+                {"endpoint": server.endpoint, "issuing_ca": str(server.issuing_ca)}
+                for server in (ndes.servers if ndes is not None else ())
+            ]
+        }
     endpoint = _string(parameters, "endpoint")
     if action == "fetch":
         found = ndes_servers.authorities(endpoint, fetch=fetch)
@@ -114,7 +114,7 @@ def main(
     except HelperProtocolError as exc:
         return refuse("bad_input", str(exc), exc.exit_code)
     except ndes_servers.NdesServerError as exc:
-        return refuse(exc.code, str(exc), EXIT_CODES[exc.code])
+        return refuse(exc.code, str(exc), exc.exit_code)
     except ConfigError as exc:
         return refuse("bad_policy", str(exc), exit_codes.CONFIG)
     return write_document(

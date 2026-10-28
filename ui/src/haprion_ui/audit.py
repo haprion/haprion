@@ -175,6 +175,12 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "certificate_export": lambda detail: (
         f"Exported the key of {_text(detail, 'certificate', 'a certificate')}"
     ),
+    "ndes_server_added": lambda detail: (
+        f"Confirmed the NDES server {_text(detail, 'endpoint', '?')} from its CA"
+    ),
+    "ndes_server_removed": lambda detail: (
+        f"Removed the NDES server {_text(detail, 'endpoint', '?')}"
+    ),
     "certificate_download": lambda detail: (
         f"Downloaded {_text(detail, 'certificate', 'a certificate')} without its key"
     ),

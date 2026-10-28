@@ -398,12 +398,13 @@ class TheServersInThePolicy(unittest.TestCase):
         self.assertIsNone(policy.server("https://ca3.example.com/certsrv/mscep/mscep.dll"))
 
     def test_both_forms_an_address_twice_and_an_empty_list_are_refused(self) -> None:
-        server = {"endpoint": ENDPOINT, "issuing_ca": "/etc/haprion/ca.pem"}
-        for ndes, said in (
+        server: dict[str, object] = {"endpoint": ENDPOINT, "issuing_ca": "/etc/haprion/ca.pem"}
+        cases: list[tuple[dict[str, object], str]] = [
             ({"servers": [server], "endpoint": ENDPOINT}, "not beside it"),
             ({"servers": [server, server]}, "names an address twice"),
             ({"servers": []}, "non-empty list"),
             ({"servers": [{**server, "port": 443}]}, "port"),
-        ):
+        ]
+        for ndes, said in cases:
             with self.subTest(said=said), self.assertRaisesRegex(ConfigError, said):
                 self.load(ndes)

@@ -4,9 +4,8 @@
 {% block content %}
 {#
   One provider, so one step: the DNS form's second card without its first.
-  The endpoint is typed rather than taken from the policy so a profile is a
-  complete statement on its own, and the helper refuses one that names a
-  different endpoint than the policy pins. The challenge is always drawn
+  The server is one the policy names, each confirmed from its CA on its own
+  page (B385); the helper refuses any other. The challenge is always drawn
   empty - a value echoed into a response is a value in a cache.
 #}
 <section class="page-heading">
@@ -34,12 +33,12 @@
       {% else %}
       <label><span class="field-title">Profile ID</span><input name="profile_id" value="{{ form.profile_id }}" maxlength="32" placeholder="internal-ca" pattern="[a-z0-9][a-z0-9._-]{0,31}" spellcheck="false" required><small>1–32 lowercase letters, digits, dots, hyphens or underscores, starting with a letter or digit. It names the profile record and is <code>--profile</code> on the command line.</small></label>
       {% endif %}
-      <label><span class="field-title">NDES endpoint</span><input name="field.endpoint" type="url" value="{{ values.endpoint }}" maxlength="2048" placeholder="https://ca.example.com/certsrv/mscep/mscep.dll" spellcheck="false" required><small>HTTPS, the <code>mscep.dll</code> address. It must match the endpoint the installation's policy pins.{% if existing %} Enter it again to replace.{% endif %}</small></label>
+      <label><span class="field-title">NDES server</span><select name="field.endpoint" required>{% for server in servers or [] %}<option value="{{ server }}"{% if server == values.endpoint %} selected{% endif %}>{{ server }}</option>{% endfor %}</select><small>{% if servers %}A server confirmed from its CA.{% else %}No NDES server is confirmed yet: <a href="/ndes-profiles/servers/new">add one</a>.{% endif %}</small></label>
       <label><span class="field-title">Master challenge</span><input type="password" name="field.challenge" maxlength="4096" autocomplete="new-password" spellcheck="false" required><small>The reusable single password from <code>mscep_admin</code>. Sealed on save; never shown again.{% if existing %} Enter it again to replace.{% endif %}</small></label>
     </div>
     <div class="editor-actions editor-submit">
       <p class="table-note">Saving seals the challenge and queues one apply job; the profile is in effect when the job is done.</p>
-      <div class="form-buttons"><a class="secondary-button" href="/ndes-profiles">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if not public_key %} disabled{% endif %}>{% if existing %}Replace and apply{% else %}Save and apply{% endif %}</button></div>
+      <div class="form-buttons"><a class="secondary-button" href="/ndes-profiles">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if not public_key or not servers %} disabled{% endif %}>{% if existing %}Replace and apply{% else %}Save and apply{% endif %}</button></div>
     </div>
   </section>
 </form>

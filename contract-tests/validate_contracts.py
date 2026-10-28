@@ -960,6 +960,21 @@ def check_resolve_semantics(document: dict[str, object], path: Path) -> None:
                 raise AssertionError(f"{path}: {entry['name']} needs an address or a problem")
 
 
+def check_ndes_server_semantics(document: dict[str, object], path: Path) -> None:
+    # A result only on success; the CA that issues the server's RA certificate
+    # is the first shown, since it is the one the administrator confirms.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done ndes_server carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} ndes_server carries a result")
+    if isinstance(result, dict) and "authorities" in result:
+        authorities = result["authorities"]
+        assert isinstance(authorities, list)
+        if any(a["issues_ra"] for a in authorities) and not authorities[0]["issues_ra"]:
+            raise AssertionError(f"{path}: the CA that issues for NDES is not shown first")
+
+
 def check_cert_export_semantics(document: dict[str, object], path: Path) -> None:
     # A file only on success, and named and typed after its form: the web
     # serves it under that name and type, so a key must not leave as a .pfx.
@@ -1251,6 +1266,7 @@ SEMANTIC_CHECKS = {
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
     "resolve": check_resolve_semantics,
+    "ndes_server": check_ndes_server_semantics,
     "probe": check_probe_semantics,
     "cert_export": check_cert_export_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
@@ -1354,6 +1370,12 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         invalid["outcome"] = "failed"
     elif operation == "resolve":
         result["names"][0]["problem"] = "said beside an address"
+    elif operation == "ndes_server":
+        if "authorities" in result:
+            result["authorities"][0]["issues_ra"] = False
+            result["authorities"].append({**result["authorities"][0], "issues_ra": True})
+        else:
+            invalid["outcome"] = "failed"
     elif operation == "probe":
         for node in result["nodes"]:
             node["reachable"] = invalid["outcome"] == "failed"

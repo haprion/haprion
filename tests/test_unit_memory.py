@@ -32,6 +32,7 @@ LIMITED = {
             "backup-job",
             "cert-export",
             "cert-receiver",
+            "ndes-server",
             "node",
             "oidc",
             "probe",

@@ -123,6 +123,9 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/ndes-profiles/{profile_id}/remove": Command(
         "haprion-profiles remove", "haprion-profiles-apply"
     ),
+    "/ndes-profiles/servers/new": Command("haprion-ndes-server add", "haprion-ndes-server"),
+    "/ndes-profiles/servers/confirm": Command("haprion-ndes-server add", "haprion-ndes-server"),
+    "/ndes-profiles/servers/remove": Command("haprion-ndes-server remove", "haprion-ndes-server"),
     "/settings/clusters/{cluster}": Command(
         "haprion-cluster-settings apply", "haprion-cluster-settings-apply"
     ),

@@ -28,7 +28,7 @@ from typing import Any
 
 import yaml
 
-from haprion import atomic_file
+from haprion import atomic_file, exit_codes, safe_yaml
 from haprion.cert_import import ImportError_, _names, _openssl, read_bytes
 from haprion.certificates import CERTIFICATE_BLOCK
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
@@ -51,9 +51,10 @@ type Fetch = Callable[[str], bytes]
 
 
 class NdesServerError(Exception):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, exit_code: int = exit_codes.REFUSED) -> None:
         super().__init__(message)
         self.code = code
+        self.exit_code = exit_code
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,16 +92,24 @@ def get_ca_cert(endpoint: str) -> bytes:
         with urllib.request.urlopen(url, timeout=TIMEOUT) as response:  # noqa: S310 - checked https
             data: bytes = response.read(MAX_ANSWER + 1)
     except OSError as exc:
-        raise NdesServerError("unreachable", f"{endpoint} did not answer: {exc}") from None
+        raise NdesServerError(
+            "unreachable", f"{endpoint} did not answer: {exc}", exit_codes.UNAVAILABLE
+        ) from None
     if len(data) > MAX_ANSWER:
-        raise NdesServerError("bad_answer", f"{endpoint} answered with more than a CA could be")
+        raise NdesServerError(
+            "bad_answer",
+            f"{endpoint} answered with more than a CA could be",
+            exit_codes.UNAVAILABLE,
+        )
     return data
 
 
 def _der(pem: str) -> bytes:
     match = CERTIFICATE_BLOCK.search(pem)
     if match is None:
-        raise NdesServerError("bad_answer", "the server's answer holds no certificate")
+        raise NdesServerError(
+            "bad_answer", "the server's answer holds no certificate", exit_codes.UNAVAILABLE
+        )
     return b64decode("".join(match.group(1).split()))
 
 
@@ -116,7 +125,9 @@ def authorities(endpoint: str, *, fetch: Fetch = get_ca_cert) -> tuple[Authority
     try:
         certificates, _keys = read_bytes(fetch(endpoint))
     except ImportError_ as exc:
-        raise NdesServerError("bad_answer", f"{endpoint} answered with no CA: {exc}") from None
+        raise NdesServerError(
+            "bad_answer", f"{endpoint} answered with no CA: {exc}", exit_codes.UNAVAILABLE
+        ) from None
     found: list[Authority] = []
     issuers = set()
     authority_pems = []
@@ -143,7 +154,9 @@ def authorities(endpoint: str, *, fetch: Fetch = get_ca_cert) -> tuple[Authority
             )
         )
     if not found:
-        raise NdesServerError("bad_answer", f"{endpoint} answered with no CA certificate")
+        raise NdesServerError(
+            "bad_answer", f"{endpoint} answered with no CA certificate", exit_codes.UNAVAILABLE
+        )
     return tuple(sorted(found, key=lambda authority: not authority.issues_ra))
 
 
@@ -170,7 +183,9 @@ def _ndes_block(data: dict[str, Any], policy_path: Path) -> dict[str, Any]:
             },
         }
     if not isinstance(raw, dict):
-        raise NdesServerError("bad_policy", f"{policy_path}: ndes is not a mapping")
+        raise NdesServerError(
+            "bad_policy", f"{policy_path}: ndes is not a mapping", exit_codes.CONFIG
+        )
     block = dict(raw)
     if "endpoint" in block:
         server = {"endpoint": block.pop("endpoint"), "issuing_ca": block.pop("issuing_ca", None)}
@@ -215,7 +230,7 @@ def _write_policy(policy_path: Path, text: str) -> None:
             load_policy(staged, require_secure=False)
         except ConfigError as exc:
             raise NdesServerError(
-                "bad_policy", f"the changed policy would not load: {exc}"
+                "bad_policy", f"the changed policy would not load: {exc}", exit_codes.CONFIG
             ) from None
         atomic_file.move(staged, policy_path)
     finally:
@@ -246,7 +261,7 @@ def add(
     ca_directory.mkdir(mode=0o755, exist_ok=True)
     atomic_file.write(path, "".join(a.pem for a in found).encode(), mode=0o644)
     text = policy_path.read_text()
-    data = yaml.safe_load(text) or {}
+    data = safe_yaml.load(text) or {}
     block = _ndes_block(data, policy_path)
     servers = [s for s in block["servers"] if s.get("endpoint") != endpoint]
     block["servers"] = [*servers, {"endpoint": endpoint, "issuing_ca": str(path)}]
@@ -267,13 +282,17 @@ def remove(
             "in_use", f"{endpoint} is used by the NDES profile {', '.join(sorted(used_by))}"
         )
     text = policy_path.read_text()
-    data = yaml.safe_load(text) or {}
+    data = safe_yaml.load(text) or {}
     if data.get("ndes") is None:
-        raise NdesServerError("not_found", f"{endpoint} is not an NDES server here")
+        raise NdesServerError(
+            "not_found", f"{endpoint} is not an NDES server here", exit_codes.NOT_FOUND
+        )
     block = _ndes_block(data, policy_path)
     servers = [s for s in block["servers"] if s.get("endpoint") != endpoint]
     if len(servers) == len(block["servers"]):
-        raise NdesServerError("not_found", f"{endpoint} is not an NDES server here")
+        raise NdesServerError(
+            "not_found", f"{endpoint} is not an NDES server here", exit_codes.NOT_FOUND
+        )
     #
     # The last server takes the block with it: what else it holds are the
     # defaults a new one is made with.

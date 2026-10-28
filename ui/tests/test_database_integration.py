@@ -8002,6 +8002,14 @@ ndes_profiles:
             ),
             mock.patch.object(profile_apply, "connect", side_effect=lambda _e: self.connect()),
             mock.patch.object(
+                profile_apply,
+                "confirmed_servers",
+                return_value=[
+                    "https://ndes.example.com/certsrv/mscep/mscep.dll",
+                    "https://ca.example.com/certsrv/mscep/mscep.dll",
+                ],
+            ),
+            mock.patch.object(
                 ui_config,
                 "load",
                 return_value=replace(configuration(), dns_profiles_public_key=keys / "k.pub"),
@@ -8226,6 +8234,11 @@ class TheExportAppliesUnchanged(unittest.TestCase):
             ),
             mock.patch.object(settings_apply, "verify_with_helper", return_value=(True, [], "")),
             mock.patch.object(db, "cluster_list", return_value=None),
+            mock.patch.object(
+                profile_apply,
+                "confirmed_servers",
+                return_value=["https://ndes.example.com/certsrv/mscep/mscep.dll"],
+            ),
             mock.patch.dict(os.environ, {"SUDO_USER": "operator"}),
         ]
         for patch in patches:

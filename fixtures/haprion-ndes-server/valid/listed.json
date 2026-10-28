@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "operation": "ndes_server",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "servers": [
+      { "endpoint": "https://ca.example.com/certsrv/mscep/mscep.dll", "issuing_ca": "/etc/haprion/ndes-ca/0123456789abcdef.pem" }
+    ]
+  },
+  "error": null
+}

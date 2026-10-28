@@ -100,3 +100,34 @@ class TheAnswer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnNdesProfileNeedsAConfirmedServer(unittest.TestCase):
+    """B385: the file is refused for an address the form would not offer, before anything is sealed."""
+
+    def test_an_address_not_confirmed_is_refused_and_a_confirmed_one_passes_the_check(self) -> None:
+        wanted = profile_apply.Wanted(
+            profile_apply.NDES,
+            "internal-ca",
+            "ndes",
+            {"endpoint": "https://ca.example.com/certsrv/mscep/mscep.dll", "challenge": "x"},
+        )
+        with self.assertRaisesRegex(ApplyError, "not an NDES server confirmed on this manager"):
+            profile_apply.plan(
+                {"ndes_profiles": [wanted]},
+                {},
+                object(),  # type: ignore[arg-type]
+                replace=(),
+                prune=False,
+                servers=["https://ca2.example.com/certsrv/mscep/mscep.dll"],
+            )
+        with self.assertRaises(Exception) as sealed:
+            profile_apply.plan(
+                {"ndes_profiles": [wanted]},
+                {},
+                object(),  # type: ignore[arg-type]
+                replace=(),
+                prune=False,
+                servers=["https://ca.example.com/certsrv/mscep/mscep.dll"],
+            )
+        self.assertNotIn("not an NDES server", str(sealed.exception))

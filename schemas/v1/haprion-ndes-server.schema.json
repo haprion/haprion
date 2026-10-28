@@ -11,6 +11,7 @@
         "outcome": { "enum": ["done", "blocked", "failed"] },
         "result": {
           "oneOf": [
+            { "$ref": "#/$defs/listed" },
             { "$ref": "#/$defs/fetched" },
             { "$ref": "#/$defs/added" },
             { "$ref": "#/$defs/removed" },
@@ -24,6 +25,27 @@
   "$defs": {
     "endpoint": { "type": "string", "pattern": "^https://", "maxLength": 2048 },
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "listed": {
+      "description": "The servers the runtime policy's ndes block names.",
+      "type": "object",
+      "required": ["servers"],
+      "properties": {
+        "servers": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["endpoint", "issuing_ca"],
+            "properties": {
+              "endpoint": { "$ref": "#/$defs/endpoint" },
+              "issuing_ca": { "type": "string", "pattern": "^/" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "fetched": {
       "description": "The CA certificates the server gives with GetCACert, the one that issued its RA certificate first (B383, B385).",
       "type": "object",

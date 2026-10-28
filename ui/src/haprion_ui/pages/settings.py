@@ -67,13 +67,13 @@ from haprion_ui.saved_work import COMMIT_ID, reading_head, settled_changes
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     SWITCHED,
-    _backup_overview,
-    _dns_public_key,
-    _page_context,
-    _posted,
-    _queue_node_job,
-    _registry_overview,
-    _status_row,
+    certificate_page_context,
+    posted_form,
+    queue_node_job,
+    read_backup_overview,
+    read_dns_public_key,
+    read_status_row,
+    registry_overview,
 )
 
 
@@ -185,7 +185,7 @@ def build_router(config: Config) -> APIRouter:
         done: str = "",
         status_code: int = 200,
     ) -> Response:
-        _token, registry, context = _page_context(config, request, gate)
+        _token, registry, context = certificate_page_context(config, request, gate)
         entry = registry.interface if registry else None
         served = certificates.interface_served(read_manager_certificates(request, config))
         sort, asked = users.TABLE.chosen(request)
@@ -335,7 +335,7 @@ def build_router(config: Config) -> APIRouter:
         want = enabled == "on"
         readings = feature_switch.Readings(
             clusters=lambda: listed_clusters(request, config),
-            backup_overview=lambda: _backup_overview(config, request),
+            backup_overview=lambda: read_backup_overview(config, request),
             objects=lambda: read_source(request, config, OBJECTS_SOURCE)[1],
             restore_waiting=lambda: _restore_waiting(request),
         )
@@ -669,12 +669,12 @@ def build_router(config: Config) -> APIRouter:
         joined: bool = False,
         status_code: int = 200,
     ) -> Response:
-        _token, _registry, context = _page_context(config, request, gate)
+        _token, _registry, context = certificate_page_context(config, request, gate)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
             hidden_at = db.getting_started_hidden_at(connection)
         listed = listed_clusters(request, config)
-        status = _status_row(config, request, cluster)
+        status = read_status_row(config, request, cluster)
         rows = cluster_nodes.node_rows(status)
         return TEMPLATES.TemplateResponse(
             request,
@@ -749,7 +749,7 @@ def build_router(config: Config) -> APIRouter:
                 block,
                 cluster=cluster,
                 host=host,
-                count=len(cluster_nodes.node_rows(_status_row(config, request, cluster))),
+                count=len(cluster_nodes.node_rows(read_status_row(config, request, cluster))),
             )
         except cluster_nodes.FormProblem as problem:
             return _nodes_page(
@@ -778,7 +778,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
         try:
             stored, join_key = cluster_nodes.sealed_block(
-                addition.block, cluster=cluster, public_key=_dns_public_key(config)
+                addition.block, cluster=cluster, public_key=read_dns_public_key(config)
             )
         except cluster_nodes.FormProblem as problem:
             return _nodes_page(
@@ -792,7 +792,7 @@ def build_router(config: Config) -> APIRouter:
         }
         if join_key is not None:
             payload["join_key"] = join_key
-        return _queue_node_job(
+        return queue_node_job(
             config,
             request,
             gate,
@@ -825,7 +825,7 @@ def build_router(config: Config) -> APIRouter:
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
         refused = cluster_nodes.removable(
-            cluster_nodes.node_rows(_status_row(config, request, cluster)), node
+            cluster_nodes.node_rows(read_status_row(config, request, cluster)), node
         )
         if refused is not None:
             return _nodes_page(request, gate, cluster, problem=refused, status_code=400)
@@ -844,7 +844,7 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        return _queue_node_job(
+        return queue_node_job(
             config,
             request,
             gate,
@@ -876,7 +876,7 @@ def build_router(config: Config) -> APIRouter:
             return forbidden_page(request, config)
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
-        rows = cluster_nodes.node_rows(_status_row(config, request, cluster))
+        rows = cluster_nodes.node_rows(read_status_row(config, request, cluster))
         if not any(row.name == node for row in rows):
             return PlainTextResponse("Not found", status_code=404)
         if not idempotency_key:
@@ -897,7 +897,7 @@ def build_router(config: Config) -> APIRouter:
             )
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        return _queue_node_job(
+        return queue_node_job(
             config,
             request,
             gate,
@@ -955,7 +955,7 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        return _queue_node_job(
+        return queue_node_job(
             config,
             request,
             gate,
@@ -980,7 +980,7 @@ def build_router(config: Config) -> APIRouter:
         problem: str = "",
         status_code: int = 200,
     ) -> Response:
-        _token, registry, context = _page_context(config, request, gate)
+        _token, registry, context = certificate_page_context(config, request, gate)
         return TEMPLATES.TemplateResponse(
             request,
             "settings-cluster-new.html",
@@ -1065,7 +1065,7 @@ def build_router(config: Config) -> APIRouter:
             "block_2": block_2,
             "host_2": host_2,
         }
-        registry = _registry_overview(config, request)
+        registry = registry_overview(config, request)
         try:
             creation = cluster_nodes.read_creation(
                 form,
@@ -1094,12 +1094,12 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         try:
-            creation_payload = creation.payload(_dns_public_key(config))
+            creation_payload = creation.payload(read_dns_public_key(config))
         except cluster_nodes.FormProblem as problem:
             return _new_cluster_page(
                 request, gate, form=form, creation=creation, problem=str(problem), status_code=400
             )
-        return _queue_node_job(
+        return queue_node_job(
             config,
             request,
             gate,
@@ -1338,7 +1338,7 @@ def build_router(config: Config) -> APIRouter:
         gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        posted = _posted(request)
+        posted = posted_form(request)
         form = {key: value for key, value in posted.items() if isinstance(value, str)}
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, form.get(auth.CSRF_FIELD, "")):

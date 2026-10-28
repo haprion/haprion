@@ -31,7 +31,14 @@ from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import read_manager_certificates
 from haprion_ui.templates import TEMPLATES
-from haprion_ui.views import DNS_PROFILE_APPLY_WAIT, _dns_public_key, _posted
+from haprion_ui.views import posted_form, read_dns_public_key
+
+# How long saving a DNS profile waits for its apply job before the list is
+# drawn. The job is one root helper call; when the queue is idle it is done
+# within a second, and the page should say so rather than send the operator
+# to the Jobs page for a one-second job. In seconds.
+#
+DNS_PROFILE_APPLY_WAIT = 6.0
 
 
 def build_router(config: Config) -> APIRouter:
@@ -71,7 +78,7 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             profiles = db.dns_profiles(connection)
             recent = db.profile_jobs(connection, "dns_profile_apply")
-        public_key = _dns_public_key(config)
+        public_key = read_dns_public_key(config)
         catalogue = {provider.id: provider for provider in dns_profile_form.providers()}
         references = certificates.profile_references(
             read_manager_certificates(request, config), field="dns_profile"
@@ -233,7 +240,7 @@ def build_router(config: Config) -> APIRouter:
         depends on the provider chosen, and only the catalogue knows.
         """
 
-        posted = _posted(request)
+        posted = posted_form(request)
         text = {key: value for key, value in posted.items() if isinstance(value, str)}
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, text.get(auth.CSRF_FIELD, "")):
@@ -252,7 +259,7 @@ def build_router(config: Config) -> APIRouter:
                 if name.startswith("field.")
             },
         )
-        public_key = _dns_public_key(config)
+        public_key = read_dns_public_key(config)
         if public_key is None:
             return _dns_profile_form_page(
                 request,
@@ -407,7 +414,7 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 "providers": dns_profile_form.providers(),
                 "existing": existing,
-                "public_key": _dns_public_key(config),
+                "public_key": read_dns_public_key(config),
                 "problem": problem,
                 "certificate_job": jobs.certificate_in_flight(recent),
                 "section": "certificates",
@@ -436,7 +443,7 @@ def build_router(config: Config) -> APIRouter:
                 "form": form,
                 "values": ndes_profile_form.redraw_values(form.values),
                 "existing": existing,
-                "public_key": _dns_public_key(config),
+                "public_key": read_dns_public_key(config),
                 "servers": servers,
                 "problem": problem or servers_problem,
                 "section": "certificates",
@@ -485,7 +492,7 @@ def build_router(config: Config) -> APIRouter:
                 "profiles": profiles,
                 "statuses": statuses,
                 "just_removed": _just_removed(request, [profile.id for profile in profiles]),
-                "public_key": _dns_public_key(config),
+                "public_key": read_dns_public_key(config),
                 "servers": servers,
                 "servers_problem": servers_problem,
                 "servers_in_use": {p.endpoint for p in profiles if p.endpoint},
@@ -672,7 +679,7 @@ def build_router(config: Config) -> APIRouter:
         depends on the provider chosen, and only the catalogue knows.
         """
 
-        posted = _posted(request)
+        posted = posted_form(request)
         text = {key: value for key, value in posted.items() if isinstance(value, str)}
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, text.get(auth.CSRF_FIELD, "")):
@@ -691,7 +698,7 @@ def build_router(config: Config) -> APIRouter:
                 if name.startswith("field.")
             },
         )
-        public_key = _dns_public_key(config)
+        public_key = read_dns_public_key(config)
         if public_key is None:
             return _ndes_profile_form_page(
                 request,

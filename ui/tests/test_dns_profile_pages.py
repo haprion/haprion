@@ -223,7 +223,7 @@ class ProfileRouteTestCase(LoginTestCase):
             mock.patch("haprion_ui.db.replace_dns_profile", side_effect=replace_profile),
             mock.patch("haprion_ui.db.dns_profiles", side_effect=lambda _c: list(self.rows)),
             mock.patch("haprion_ui.db.job_state", side_effect=job_state),
-            mock.patch("haprion_ui.views.DNS_PROFILE_APPLY_WAIT", 1.0),
+            mock.patch("haprion_ui.pages.profiles.DNS_PROFILE_APPLY_WAIT", 1.0),
             mock.patch(
                 "haprion_ui.db.dns_profile",
                 side_effect=lambda _c, pid: next((r for r in self.rows if r.id == pid), None),

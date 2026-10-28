@@ -68,13 +68,13 @@ from haprion_ui.views import (
     MAX_SEARCH_PAGE,
     NODE_EVENT_KEEP_DAYS,
     NODE_EVENT_TABLE,
-    _attention,
-    _backup_overview,
-    _first_cluster,
-    _log_time_filter,
-    _network_page,
-    _registry_overview,
-    _return_path,
+    attention_items,
+    first_cluster_view,
+    log_time_filter,
+    network_page,
+    read_backup_overview,
+    registry_overview,
+    return_path_for,
 )
 
 #
@@ -145,7 +145,7 @@ def build_router(config: Config) -> APIRouter:
         # row while it has a step to show, never the dashboard in its place
         # (B328, 26-10-18): a guide in the dashboard's place had no way out.
         #
-        first = _first_cluster(
+        first = first_cluster_view(
             config,
             request,
             session,
@@ -186,7 +186,7 @@ def build_router(config: Config) -> APIRouter:
                 #
                 # What needs doing, under the four cards (B274).
                 #
-                "attention": _attention(request, config),
+                "attention": attention_items(request, config),
                 "getting_started": checklist,
                 "show_getting_started": checklist is None
                 and session.role == "admin"
@@ -315,7 +315,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/network", response_class=HTMLResponse)
     def network_overview(request: Request) -> Response:
-        return _network_page(request, config)
+        return network_page(request, config)
 
     @router.post("/getting-started/hide")
     def hide_getting_started(
@@ -396,13 +396,13 @@ def build_router(config: Config) -> APIRouter:
         scheduled = (
             {
                 view.cluster
-                for view in _backup_overview(config, request).clusters
+                for view in read_backup_overview(config, request).clusters
                 if view.schedule is not None and view.schedule.enabled
             }
             if backups_on
             else set()
         )
-        registry = _registry_overview(config, request)
+        registry = registry_overview(config, request)
         served = certificates.interface_served(read_manager_certificates(request, config))
         _, object_rows = read_source(request, config, OBJECTS_SOURCE)
         proxies = {
@@ -460,7 +460,7 @@ def build_router(config: Config) -> APIRouter:
         shown = next(
             (
                 item
-                for item in _attention(request, config).items
+                for item in attention_items(request, config).items
                 if item.key == (kind, cluster, subject)
             ),
             None,
@@ -731,7 +731,7 @@ def build_router(config: Config) -> APIRouter:
         if not _status_allowed(request):
             return PlainTextResponse("Not found", status_code=404)
         return Response(
-            _attention(request, config).as_json(),
+            attention_items(request, config).as_json(),
             media_type="application/json",
             headers={"Cache-Control": "no-store"},
         )
@@ -741,7 +741,7 @@ def build_router(config: Config) -> APIRouter:
         if not _status_allowed(request):
             return PlainTextResponse("Not found", status_code=404)
         return Response(
-            _attention(request, config).as_metrics(),
+            attention_items(request, config).as_metrics(),
             media_type="text/plain; version=0.0.4",
             headers={"Cache-Control": "no-store"},
         )
@@ -853,10 +853,10 @@ def build_router(config: Config) -> APIRouter:
         outside = "Choose a date and time within the two years the record keeps."
         time_error: str | None = None
         try:
-            since = _log_time_filter(
+            since = log_time_filter(
                 selected_from, earliest=local_earliest.astimezone(UTC), latest=now, outside=outside
             )
-            until = _log_time_filter(
+            until = log_time_filter(
                 selected_to,
                 earliest=local_earliest.astimezone(UTC),
                 latest=now,
@@ -962,10 +962,10 @@ def build_router(config: Config) -> APIRouter:
         outside = "Choose a date and time within the 90 days the log keeps."
         time_error: str | None = None
         try:
-            since = _log_time_filter(
+            since = log_time_filter(
                 selected_from, earliest=local_earliest.astimezone(UTC), latest=now, outside=outside
             )
-            until = _log_time_filter(
+            until = log_time_filter(
                 selected_to,
                 earliest=local_earliest.astimezone(UTC),
                 latest=now,
@@ -1295,7 +1295,7 @@ def build_router(config: Config) -> APIRouter:
                 REFUSED_FORMS.get(
                     operation, "The form was not accepted. Go back and check its fields."
                 ),
-                back=_return_path(return_to, open=return_open),
+                back=return_path_for(return_to, open=return_open),
             )
 
         with request.app.state.pool.connection() as connection:
@@ -1328,6 +1328,6 @@ def build_router(config: Config) -> APIRouter:
         # the interface moved them to one that could. The page says it now, so
         # it can keep them.
         #
-        return RedirectResponse(_return_path(return_to, open=return_open), status_code=303)
+        return RedirectResponse(return_path_for(return_to, open=return_open), status_code=303)
 
     return router

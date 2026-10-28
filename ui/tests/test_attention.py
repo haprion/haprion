@@ -900,9 +900,9 @@ class TheDashboardBox(LoginTestCase):
         client = self.client()
         self.sign_in(client)
 
-        with mock.patch("haprion_ui.pages.dashboard._attention", return_value=some):
+        with mock.patch("haprion_ui.pages.dashboard.attention_items", return_value=some):
             drawn = client.get("/").text
-        with mock.patch("haprion_ui.pages.dashboard._attention", return_value=none):
+        with mock.patch("haprion_ui.pages.dashboard.attention_items", return_value=none):
             empty = client.get("/").text
 
         self.assertIn("Needs attention", drawn)
@@ -927,7 +927,7 @@ class TheDashboardBox(LoginTestCase):
             with self.subTest(writes=writes):
                 client = self.client(replace(configuration(), management_writes=writes))
                 self.sign_in(client)
-                with mock.patch("haprion_ui.pages.dashboard._attention", return_value=some):
+                with mock.patch("haprion_ui.pages.dashboard.attention_items", return_value=some):
                     drawn = client.get("/").text
                 self.assertIn("lines dropped", drawn)
                 self.assertEqual('href="/settings/clusters/alpha#delivery"' in drawn, linked)

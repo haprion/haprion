@@ -74,8 +74,8 @@ from haprion_ui.views import (
     BLOCKED_NOTICES,
     OBJECT_FIGURES,
     SERVER_NOTICES,
-    _posted,
-    _traffic_marks,
+    posted_form,
+    traffic_marks,
 )
 
 
@@ -651,7 +651,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         back = "/proxies/" + listed + "/" + name
-        posted = _posted(request)
+        posted = posted_form(request)
         #
         # One past the bound, so the helper's own limit refuses a request
         # over it rather than this quietly sending part of one.
@@ -728,7 +728,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         back = "/proxies/" + listed + "/" + name
-        posted = _posted(request)
+        posted = posted_form(request)
         #
         # One past the bound, so the helper's own limit refuses a request over
         # it rather than this quietly sending part of one.
@@ -1298,7 +1298,7 @@ def build_router(config: Config) -> APIRouter:
                 "traffic_rate_unit": chosen.rate_unit,
                 "traffic_windows": metrics.WINDOWS,
                 "traffic_chosen": chosen.key,
-                **_traffic_marks(request, marked),
+                **traffic_marks(request, marked),
                 #
                 # The object's own traffic and WAF requests are one link away
                 # (26-10-10), where there is a traffic log to open.

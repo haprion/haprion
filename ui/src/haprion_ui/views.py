@@ -1,22 +1,14 @@
-"""What every page shares: sessions, cookies, the poller's readings, templates and gates.
+"""What several pages share and no one area owns (K01, review 2026-10-28).
 
-The pages themselves are in `haprion_ui.pages`, one module per area; they read
-from here and this module reads nothing of theirs.
-
-The rules that shape every handler:
-
-* **The client address comes from a header nginx overwrites**, never from one a
-  client can contribute to. The site config sets `X-Forwarded-For` to the peer
-  address rather than appending to it, so what arrives here is one address that
-  a request cannot lie about. If it is missing or unparseable, the peer address
-  is used and the request is still served - the throttle must not be the reason
-  the interface stops working.
-* **Failures say one thing.** Unknown account, wrong password, disabled account
-  and a throttled address all render the same sentence. Anything else turns the
-  form into a way to learn which usernames exist and which are locked.
-* **Every state-changing request carries a CSRF token**, including logout. A
-  forced logout is a small attack, but an exception in the rule is how the rule
-  stops being checkable.
+The pages are in `haprion_ui.pages`, one module per area, and what they share
+by subject has its own module: the templates (`templates`), the readings
+(`reading`), the session and the write gate (`access`), the refusal pages
+(`refusals`), saved work and what waits to be published (`saved_work`,
+`pending`), the proxy form (`editor_flow`), signing in (`accounts`) and the
+WAF's work (`waf_work`). What is left here is shared between a few pages: the
+traffic log's filters and marks, the certificate pages' context and export,
+the node job a first cluster and Settings queue, the network page, and what
+the dashboard's attention list and Events read.
 """
 
 from __future__ import annotations
@@ -94,7 +86,7 @@ NETWORK_SELECTION = Form(default=[])
 UPLOADED_FILE = File(default=None)
 
 
-def _freshness_warnings(reading: traffic_logs.Reading, now: datetime) -> tuple[Any, ...]:
+def log_freshness_warnings(reading: traffic_logs.Reading, now: datetime) -> tuple[Any, ...]:
     """(node, seconds since success, seconds since attempt) for each node the log warning names."""
 
     freshness = tuple(
@@ -110,7 +102,7 @@ def _freshness_warnings(reading: traffic_logs.Reading, now: datetime) -> tuple[A
     )
 
 
-def _log_time_filter(
+def log_time_filter(
     value: str,
     *,
     earliest: datetime,
@@ -138,7 +130,7 @@ def _log_time_filter(
     return result
 
 
-def _traffic_marks(request: Request, marked: metrics.Selection) -> dict[str, object]:
+def traffic_marks(request: Request, marked: metrics.Selection) -> dict[str, object]:
     """What a card needs to draw and extend the reader's marked range.
 
     The link is handed over as a callable rather than one link per bucket:
@@ -163,13 +155,6 @@ def _traffic_marks(request: Request, marked: metrics.Selection) -> dict[str, obj
         "traffic_clear": metrics.link_clear(base) if marked.since is not None else "",
     }
 
-
-# How long saving a DNS profile waits for its apply job before the list is
-# drawn. The job is one root helper call; when the queue is idle it is done
-# within a second, and the page should say so rather than send the operator
-# to the Jobs page for a one-second job. In seconds.
-#
-DNS_PROFILE_APPLY_WAIT = 6.0
 
 #
 # The figures an object's traffic card draws, by what serves it: dnsdist counts
@@ -233,13 +218,13 @@ async def _read_form(request: Request) -> FormData:
     return await request.form()
 
 
-def _posted(request: Request) -> FormData:
+def posted_form(request: Request) -> FormData:
     """The request's form, read from a handler running in the thread pool."""
 
     return anyio.from_thread.run(_read_form, request)
 
 
-def _registry_overview(config: Config, request: Request) -> certificates.RegistryView | None:
+def registry_overview(config: Config, request: Request) -> certificates.RegistryView | None:
     clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
     overview = certificates.build_certificate_overview(
         clusters,
@@ -250,11 +235,11 @@ def _registry_overview(config: Config, request: Request) -> certificates.Registr
     return overview.registry
 
 
-def _page_context(
+def certificate_page_context(
     config: Config, request: Request, session: AuthenticatedSession
 ) -> tuple[str, certificates.RegistryView | None, dict[str, Any]]:
     token = request.cookies.get(auth.SESSION_COOKIE, "")
-    registry = _registry_overview(config, request)
+    registry = registry_overview(config, request)
     with request.app.state.pool.connection() as connection:
         recent = db.recent_jobs(connection)
     return (
@@ -273,7 +258,7 @@ def _page_context(
     )
 
 
-def _backup_overview(config: Config, request: Request) -> Any:
+def read_backup_overview(config: Config, request: Request) -> Any:
     clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
     return backups.build_backup_overview(
         clusters,
@@ -282,14 +267,14 @@ def _backup_overview(config: Config, request: Request) -> Any:
     )
 
 
-def _status_row(config: Config, request: Request, cluster: str) -> Any | None:
+def read_status_row(config: Config, request: Request, cluster: str) -> Any | None:
     clusters, rows = read_source(request, config, STATUS_SOURCE)
     if cluster not in clusters:
         return None
     return next((row for row in rows if row.cluster == cluster), None)
 
 
-def _queue_node_job(
+def queue_node_job(
     config: Config,
     request: Request,
     gate: AuthenticatedSession,
@@ -367,7 +352,7 @@ def _queue_node_job(
     return RedirectResponse("/settings/nodes/" + listed, status_code=303)
 
 
-def _first_cluster(
+def first_cluster_view(
     config: Config,
     request: Request,
     session: AuthenticatedSession,
@@ -404,7 +389,7 @@ def _first_cluster(
     )
 
 
-def _dns_public_key(config: Config) -> DnsProfilePublicKey | None:
+def read_dns_public_key(config: Config) -> DnsProfilePublicKey | None:
     """The key the web seals against, read fresh: a rotation is a file swap."""
 
     if config.dns_profiles_public_key is None:
@@ -478,7 +463,7 @@ RETURN_PATHS = {
 }
 
 
-def _return_path(name: str, *, open: str = "") -> str:
+def return_path_for(name: str, *, open: str = "") -> str:
     """The page an operation returns to, or the jobs page.
 
     The jobs page is the fallback rather than the default, so a form that has
@@ -494,7 +479,9 @@ def _return_path(name: str, *, open: str = "") -> str:
     return path
 
 
-def _public_files(certificate_id: str, fullchain_pem: str) -> list[tuple[str, bytes, bool]]:
+def public_certificate_files(
+    certificate_id: str, fullchain_pem: str
+) -> list[tuple[str, bytes, bool]]:
     """An external certificate's public files: the chain whole, the leaf, the issuers.
 
     The three a device asks for (B255), named after the certificate, and
@@ -510,7 +497,7 @@ def _public_files(certificate_id: str, fullchain_pem: str) -> list[tuple[str, by
     return [(name, text.encode("ascii"), False) for name, text in files if text]
 
 
-def _zip_response(files: Sequence[tuple[str, bytes, bool]], filename: str) -> Response:
+def zip_response(files: Sequence[tuple[str, bytes, bool]], filename: str) -> Response:
     """Files as one zip, built in memory and served without a copy kept (2026-10-07).
 
     A secret member is marked owner-only, so an unzip that honours the bits
@@ -535,7 +522,7 @@ def _zip_response(files: Sequence[tuple[str, bytes, bool]], filename: str) -> Re
     )
 
 
-def _network_page(request: Request, config: Config) -> Response:
+def network_page(request: Request, config: Config) -> Response:
     """Each cluster's addresses, as the poller last read them.
 
     The page reads the cache like every other page rather than reaching a
@@ -657,7 +644,7 @@ def _service_lamps(
     return lamps
 
 
-def _attention(request: Request, config: Config) -> attention.Attention:
+def attention_items(request: Request, config: Config) -> attention.Attention:
     """What needs doing, worked out from the pages' own builders (B274)."""
 
     stale_after = config.poller.stale_after

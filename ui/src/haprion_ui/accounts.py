@@ -1,8 +1,10 @@
 """Signing in and the accounts behind it: passwords, the provider and the account list (K01, review 2026-10-28).
 
 A password is proved against its hash off the event loop, with a throttle per
-address and a bound on how many are hashed at once; failures all read the
-same. Signing in through the identity provider starts and ends here, and an
+address and a bound on how many are hashed at once. **Failures say one
+thing:** unknown account, wrong password, disabled account and a throttled
+address all render the same sentence. Anything else turns the form into a way
+to learn which usernames exist and which are locked. Signing in through the identity provider starts and ends here, and an
 account the provider names that may not sign in is told why on a page of its
 own. The account list is what Settings shows.
 """

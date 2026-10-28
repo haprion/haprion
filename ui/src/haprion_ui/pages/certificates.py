@@ -55,11 +55,11 @@ from haprion_ui.refusals import refusal_page
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
     UPLOADED_FILE,
-    _dns_public_key,
-    _page_context,
-    _public_files,
-    _registry_overview,
-    _zip_response,
+    certificate_page_context,
+    public_certificate_files,
+    read_dns_public_key,
+    registry_overview,
+    zip_response,
 )
 
 
@@ -379,8 +379,9 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
-        return _zip_response(
-            _public_files(certificate_id, row.fullchain_pem or ""), f"{certificate_id}.zip"
+        return zip_response(
+            public_certificate_files(certificate_id, row.fullchain_pem or ""),
+            f"{certificate_id}.zip",
         )
 
     #
@@ -492,13 +493,13 @@ def build_router(config: Config) -> APIRouter:
         # the helper's answer into a header or a member name.
         #
         files = [
-            *_public_files(certificate_id, row.fullchain_pem or ""),
+            *public_certificate_files(certificate_id, row.fullchain_pem or ""),
             (f"{certificate_id}.key.pem", exported["pem-key"].content, True),
             (f"{certificate_id}.pfx", exported["pfx"].content, True),
             (f"{certificate_id}.compatible.pfx", exported["pfx-compatible"].content, True),
             (f"{certificate_id}.password", (password + "\n").encode("ascii"), True),
         ]
-        return _zip_response(files, f"{certificate_id}.with-key.zip")
+        return zip_response(files, f"{certificate_id}.with-key.zip")
 
     #
     # What both routes above check before they give anything out: an admin
@@ -613,7 +614,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
 
-        public_key = _dns_public_key(config)
+        public_key = read_dns_public_key(config)
         choices = _certificate_choices(request, config)
         try:
             payload = certificate_import_form.payload_from_form(
@@ -668,7 +669,7 @@ def build_router(config: Config) -> APIRouter:
                 "replaced by an upload.",
                 back=f"/certificates?view=registry&open={certificate_id}",
             )
-        public_key = _dns_public_key(config)
+        public_key = read_dns_public_key(config)
         if public_key is None:
             return refusal_page(
                 request,
@@ -811,7 +812,7 @@ def build_router(config: Config) -> APIRouter:
                 "problem": problem,
                 "accept": certificate_import_form.ACCEPT,
                 "max_kb": certificate_import_form.MAX_UPLOAD_BYTES // 1024,
-                "sealing_available": _dns_public_key(config) is not None,
+                "sealing_available": read_dns_public_key(config) is not None,
                 "certificate_job": jobs.certificate_in_flight(recent),
                 "section": "certificates",
                 "management_writes": config.management_writes,
@@ -1422,7 +1423,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """The list: every receiver, its fetch commands, and the job on its row."""
 
-        _token, registry, context = _page_context(config, request, session)
+        _token, registry, context = certificate_page_context(config, request, session)
         rows = registry.receiver_rows if registry else ()
         manager = registry.manager if registry else None
         with request.app.state.pool.connection() as connection:
@@ -1454,7 +1455,7 @@ def build_router(config: Config) -> APIRouter:
         keeps it - not the database, not a cache.
         """
 
-        _token, registry, context = _page_context(config, request, session)
+        _token, registry, context = certificate_page_context(config, request, session)
         manager = registry.manager if registry else None
         return TEMPLATES.TemplateResponse(
             request,
@@ -1478,7 +1479,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """The form: what is needed before the job, and nothing from after it."""
 
-        _token, _registry, context = _page_context(config, request, session)
+        _token, _registry, context = certificate_page_context(config, request, session)
         entered = {"receiver": "", "transport": "sftp", "public_key": "", "allow": ""}
         if form:
             entered.update(form)
@@ -1512,7 +1513,7 @@ def build_router(config: Config) -> APIRouter:
         gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        if _registry_overview(config, request) is None:
+        if registry_overview(config, request) is None:
             return RedirectResponse("/certificates/receivers", status_code=303)
         return _receiver_form_page(request, gate)
 
@@ -1605,7 +1606,7 @@ def build_router(config: Config) -> APIRouter:
             "public_key": public_key,
             "allow": allow,
         }
-        registry = _registry_overview(config, request)
+        registry = registry_overview(config, request)
         try:
             payload = certificate_receivers.payload(
                 receiver, transport, public_key, allow, registry.receiver_rows if registry else ()
@@ -1637,7 +1638,7 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        registry = _registry_overview(config, request)
+        registry = registry_overview(config, request)
         rows = registry.receiver_rows if registry else ()
         if not any(row.identifier == receiver and row.transport == "https" for row in rows):
             return _receivers_page(request, gate, problem=f"{receiver} is not an https receiver.")
@@ -1663,7 +1664,7 @@ def build_router(config: Config) -> APIRouter:
         public_key: str = "",
         problem: str = "",
     ) -> Response:
-        _token, _registry, context = _page_context(config, request, session)
+        _token, _registry, context = certificate_page_context(config, request, session)
         return TEMPLATES.TemplateResponse(
             request,
             "certificate-receiver-key.html",
@@ -1680,7 +1681,7 @@ def build_router(config: Config) -> APIRouter:
     def _ssh_transport(request: Request, receiver: str) -> str | None:
         """The receiver's transport when it fetches over ssh, else None."""
 
-        registry = _registry_overview(config, request)
+        registry = registry_overview(config, request)
         rows = registry.receiver_rows if registry else ()
         return next(
             (
@@ -1757,7 +1758,7 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        registry = _registry_overview(config, request)
+        registry = registry_overview(config, request)
         try:
             payload = certificate_receivers.removal(
                 receiver, registry.receiver_rows if registry else ()

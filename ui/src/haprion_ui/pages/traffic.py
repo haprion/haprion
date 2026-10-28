@@ -45,7 +45,7 @@ from haprion_ui.reading import (
     read_source,
 )
 from haprion_ui.templates import TEMPLATES
-from haprion_ui.views import _freshness_warnings, _log_time_filter, _posted, _traffic_marks
+from haprion_ui.views import log_freshness_warnings, log_time_filter, posted_form, traffic_marks
 from haprion_ui.waf_work import (
     allow_waf_exception,
     remove_waf_exception,
@@ -481,7 +481,7 @@ def build_router(config: Config) -> APIRouter:
                 "traffic_rate_unit": chosen.rate_unit,
                 "traffic_windows": metrics.WINDOWS,
                 "traffic_chosen": chosen.key,
-                **_traffic_marks(request, marked),
+                **traffic_marks(request, marked),
                 #
                 # Always named here, unlike the object page. Every card on this
                 # page is one of several being compared, so which series a line
@@ -533,7 +533,7 @@ def build_router(config: Config) -> APIRouter:
             {
                 "enabled": config.traffic_logs.enabled,
                 "reading": reading,
-                "freshness_warnings": _freshness_warnings(reading, datetime.now(UTC)),
+                "freshness_warnings": log_freshness_warnings(reading, datetime.now(UTC)),
                 "selected_cluster": selected,
             },
         )
@@ -561,11 +561,11 @@ def build_router(config: Config) -> APIRouter:
 
     @router.post("/waf/allow", response_class=HTMLResponse)
     def waf_allow(request: Request) -> Response:
-        return allow_waf_exception(request, config, _posted(request))
+        return allow_waf_exception(request, config, posted_form(request))
 
     @router.post("/waf/exceptions/remove", response_class=HTMLResponse)
     def waf_remove_exception(request: Request) -> Response:
-        return remove_waf_exception(request, config, _posted(request))
+        return remove_waf_exception(request, config, posted_form(request))
 
     def _traffic_log_page(request: Request, *, waf_page: bool) -> Response:
         session = current_session(request)
@@ -599,8 +599,8 @@ def build_router(config: Config) -> APIRouter:
         earliest = local_earliest.astimezone(UTC)
         time_filter_error: str | None
         try:
-            from_at = _log_time_filter(selected_from, earliest=earliest, latest=now)
-            to_at = _log_time_filter(selected_to, earliest=earliest, latest=now, end_of_minute=True)
+            from_at = log_time_filter(selected_from, earliest=earliest, latest=now)
+            to_at = log_time_filter(selected_to, earliest=earliest, latest=now, end_of_minute=True)
             if from_at is not None and to_at is not None and from_at > to_at:
                 raise ValueError("From must be earlier than To.")
         except ValueError as exc:
@@ -708,7 +708,7 @@ def build_router(config: Config) -> APIRouter:
             )
             if value
         }
-        freshness_warnings = _freshness_warnings(reading, now)
+        freshness_warnings = log_freshness_warnings(reading, now)
         #
         # The WAF page's Requests tab carries the same three figures as its
         # other two (mock round 7), over the same clusters and days.

@@ -27,11 +27,11 @@ from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import NETWORK_SOURCE, STATUS_SOURCE, listed_clusters, read_source
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import (
-    _dns_public_key,
-    _first_cluster,
-    _queue_node_job,
-    _registry_overview,
-    _status_row,
+    first_cluster_view,
+    queue_node_job,
+    read_dns_public_key,
+    read_status_row,
+    registry_overview,
 )
 
 
@@ -127,7 +127,7 @@ def build_router(config: Config) -> APIRouter:
         if action == "back":
             return _first_cluster_page(request, first_cluster.Guide(step=1), form=form)
         step = first_cluster.Guide(step=2)
-        registry = _registry_overview(config, request)
+        registry = registry_overview(config, request)
         try:
             creation = cluster_nodes.read_creation(
                 {**form, "block_1": block, "host_1": host},
@@ -153,7 +153,7 @@ def build_router(config: Config) -> APIRouter:
             )
         try:
             key = UUID(idempotency_key)
-            payload = creation.payload(_dns_public_key(config))
+            payload = creation.payload(read_dns_public_key(config))
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         except cluster_nodes.FormProblem as problem:
@@ -166,7 +166,7 @@ def build_router(config: Config) -> APIRouter:
                 problem=str(problem),
                 status_code=400,
             )
-        return _queue_node_job(
+        return queue_node_job(
             config,
             request,
             gate,
@@ -198,7 +198,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
-        reading = _status_row(config, request, cluster)
+        reading = read_status_row(config, request, cluster)
         step = first_cluster.Guide(step=3, cluster=cluster, joined=first_cluster.joined(reading))
         try:
             addition = cluster_nodes.read_addition(
@@ -219,7 +219,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
         try:
             stored, join_key = cluster_nodes.sealed_block(
-                addition.block, cluster=cluster, public_key=_dns_public_key(config)
+                addition.block, cluster=cluster, public_key=read_dns_public_key(config)
             )
         except cluster_nodes.FormProblem as problem:
             return _first_cluster_page(
@@ -233,7 +233,7 @@ def build_router(config: Config) -> APIRouter:
         }
         if join_key is not None:
             payload["join_key"] = join_key
-        return _queue_node_job(
+        return queue_node_job(
             config,
             request,
             gate,
@@ -258,7 +258,7 @@ def build_router(config: Config) -> APIRouter:
         _, network_rows = read_source(request, config, NETWORK_SOURCE)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
-        guide = _first_cluster(
+        guide = first_cluster_view(
             config,
             request,
             session,

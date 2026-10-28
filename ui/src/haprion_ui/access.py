@@ -3,8 +3,17 @@
 Every signed-in page starts with `current_session`; every page that queues a
 change passes `admin_write_gate` - signed in, writes on, an admin - and an
 account whose role may not do something is answered with `forbidden_page`.
-The client address is the one nginx writes, never one a client adds to; the
-session cookie is set with every flag stated.
+
+* **The client address comes from a header nginx overwrites**, never from one a
+  client can contribute to. The site config sets `X-Forwarded-For` to the peer
+  address rather than appending to it, so what arrives here is one address that
+  a request cannot lie about. If it is missing or unparseable, the peer address
+  is used and the request is still served - the throttle must not be the reason
+  the interface stops working.
+* **Every state-changing request carries a CSRF token**, including logout. A
+  forced logout is a small attack, but an exception in the rule is how the rule
+  stops being checkable.
+* **The session cookie is set with every flag stated** rather than defaulted.
 """
 
 from __future__ import annotations

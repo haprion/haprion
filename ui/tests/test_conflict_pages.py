@@ -27,7 +27,7 @@ REFUSALS = {"ClusterBusy", "CertificateBusy", "RequestConflict", "DraftConflict"
 CAUGHT = {
     ("pages/backups.py", "_queue_restore_job"): "a second click is answered with the first's job",
     ("pages/certificates.py", "_queue_import"): "a second click is answered with the first's job",
-    ("views.py", "_queue_node_job"): "a second click is answered with the first's job",
+    ("views.py", "queue_node_job"): "a second click is answered with the first's job",
     ("pages/certificates.py", "new_certificate_submit"): "the form is drawn again as it was typed",
     ("pages/certificates.py", "certificate_renew_confirm"): "the question is drawn again",
     ("pages/certificates.py", "certificate_retarget_confirm"): "the question is drawn again",

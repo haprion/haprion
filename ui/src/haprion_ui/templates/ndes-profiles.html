@@ -32,12 +32,12 @@
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>NDES servers</h3><p>Each confirmed from its CA.</p></div></div></header>
   <div class="table-scroll"><table class="node-table ndes-server-table">
-    <thead><tr><th scope="col"></th><th scope="col">Server</th><th scope="col">Profiles</th></tr></thead>
+    <thead><tr><th scope="col" class="select-column"><span class="visually-hidden">Select</span></th><th scope="col" class="server-column">Server</th><th scope="col">Profiles</th></tr></thead>
     <tbody>
     {% for server in servers or [] %}
     <tr>
-      <td data-label=""><input type="radio" name="endpoint" value="{{ server }}" aria-label="Select {{ server }}"{% if server in servers_in_use %} disabled{% endif %}></td>
-      <td data-label="Server"><span class="certificate-sans" title="{{ server }}">{{ server }}</span></td>
+      <td class="select-column" data-label="Select"><input type="radio" name="endpoint" value="{{ server }}" aria-label="Select {{ server }}"{% if server in servers_in_use %} disabled{% endif %}></td>
+      <td class="server-column" data-label="Server"><span class="certificate-sans" title="{{ server }}">{{ server }}</span></td>
       <td data-label="Profiles">{% if server in servers_in_use %}In use{% else %}<span class="optional">None</span>{% endif %}</td>
     </tr>
     {% else %}

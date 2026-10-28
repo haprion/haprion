@@ -1585,9 +1585,16 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .dns-profile-table th:nth-child(3), .dns-profile-table td:nth-child(3) { width: 36ch; }
 .dns-profile-table th:nth-child(4), .dns-profile-table td:nth-child(4) { width: auto; text-align: right; }
 .dns-profile-table td:nth-child(1), .dns-profile-table td:nth-child(2), .dns-profile-table td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; }
-/* The NDES list shows a URL where the DNS list shows a provider name; a 36ch cell cuts it. */
+/* The NDES list shows a URL where the DNS list shows a provider name: the URL takes what is left, the actions only their links. */
 .ndes-profile-table th:nth-child(1), .ndes-profile-table td:nth-child(1) { width: 20ch; }
-.ndes-profile-table th:nth-child(2), .ndes-profile-table td:nth-child(2) { width: 44ch; }
+.ndes-profile-table th:nth-child(2), .ndes-profile-table td:nth-child(2) { width: auto; }
+.ndes-profile-table th:nth-child(4), .ndes-profile-table td:nth-child(4) { width: 22ch; }
+/* The NDES servers card: the radio as narrow as the object page's select column, the address the rest.
+   Only as a table; below 1050px the cards keep their label room. */
+@media (min-width: 1050px) {
+  .ndes-server-table th.select-column, .ndes-server-table td.select-column { width: 44px; padding-left: 18px; padding-right: 0; }
+  .ndes-server-table th.server-column, .ndes-server-table td.server-column { width: auto; padding-left: 8px; }
+}
 .certificate-form .receiver-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .certificate-form .receiver-heading .field-title { color: var(--text-secondary); font-weight: 620; }
 .certificate-form .receiver-search { margin-top: 4px; }

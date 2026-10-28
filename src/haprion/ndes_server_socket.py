@@ -23,7 +23,7 @@ SOCKET_PATH = "/run/haprion/ndes-server.sock"
 TIMEOUT_SECONDS = 45.0
 
 
-def ask(action: str, *, path: str = SOCKET_PATH, **parameters: str) -> dict[str, Any]:
+def ask(action: str, *, path: str = SOCKET_PATH, **parameters: str | list[str]) -> dict[str, Any]:
     """The helper's result for one action, or NdesServerError with its sentence."""
 
     request = {

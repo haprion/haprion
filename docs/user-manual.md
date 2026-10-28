@@ -5854,9 +5854,10 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
 1. Enter the server's `mscep.dll` address and choose *Fetch the CA*. The manager asks the server for its CA
    certificates over HTTPS, checked against the manager's system certificate store, and shows each one with
    its SHA-256 and its SHA-1 thumbprint - the thumbprint Windows shows in the certificate's details.
-2. Compare them with the CA's own certificate. The one marked *issues for NDES* is the CA the server enrolls
-   for.
-3. Choose *Confirm this CA*. The manager asks the server again and adds it only if that CA is still there.
+2. Compare them with the CA's own certificates. The one marked *issues for NDES* is the CA the server enrolls
+   for; the others are the rest of its chain.
+3. Choose *Confirm this CA*, or *Confirm these CAs* when there are several. The manager asks the server again
+   and adds it only if it still gives exactly these certificates. All of them are saved for the server.
 
 The HTTPS certificate of the NDES server must be trusted by the manager's system store. A server signed by an
 internal CA needs that CA in the store, as any other internal HTTPS service does (`update-ca-certificates`).
@@ -5866,11 +5867,12 @@ A server is removed from the same page, when no profile uses it. From the comman
 ```bash
 haprion-ndes-server list
 haprion-ndes-server add https://ndes.example.com/certsrv/mscep/mscep.dll
-sudo haprion-ndes-server add https://ndes.example.com/certsrv/mscep/mscep.dll --sha256 <SHA-256>
+sudo haprion-ndes-server add https://ndes.example.com/certsrv/mscep/mscep.dll --sha256 <SHA-256> --sha256 <SHA-256>
 sudo haprion-ndes-server remove https://ndes.example.com/certsrv/mscep/mscep.dll
 ```
 
-`add` without `--sha256` shows the CA and changes nothing.
+`add` without `--sha256` shows the CA certificates and changes nothing. To confirm, give one `--sha256` for each
+certificate shown.
 
 ##### Manager configuration and packaging
 

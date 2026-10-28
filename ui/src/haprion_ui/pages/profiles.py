@@ -563,13 +563,19 @@ def build_router(config: Config) -> APIRouter:
         request: Request,
         csrf_token: Annotated[str, Form(max_length=128)],
         endpoint: Annotated[str, Form(max_length=2048)],
-        sha256: Annotated[str, Form(max_length=64)],
+        sha256: Annotated[list[str], Form()],
     ) -> Response:
+        # One SHA-256 per CA certificate shown: all of them are saved, so all
+        # are confirmed (review 2026-10-28, U02). The helper checks their form.
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         if not auth.csrf_token_is_valid(request.cookies.get(auth.SESSION_COOKIE, ""), csrf_token):
             return forbidden_page(request, config)
+        if len(sha256) > 16 or any(len(each) > 64 for each in sha256):
+            return _ndes_server_page(
+                request, gate, endpoint=endpoint, problem="The fingerprints were not read."
+            )
         try:
             ndes_server_socket.ask("add", endpoint=endpoint, sha256=sha256)
         except NdesServerError as exc:

@@ -9,7 +9,10 @@
   "result": {
     "endpoint": "https://ca.example.com/certsrv/mscep/mscep.dll",
     "issuing_ca": "/etc/haprion/ndes-ca/0123456789abcdef.pem",
-    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    "sha256": [
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    ]
   },
   "error": null
 }

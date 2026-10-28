@@ -41,9 +41,17 @@ class NdesRoutes(ProfileRouteTestCase):
         # The root helper behind /run/haprion/ndes-server.sock, as the web asks it.
         #
         self.servers = [ENDPOINT]
-        self.asked: list[tuple[str, dict[str, str]]] = []
+        self.asked: list[tuple[str, dict[str, Any]]] = []
+        self.authorities: list[dict[str, Any]] = [
+            {
+                "subject": "CN=Example Issuing CA",
+                "sha256": "a" * 64,
+                "sha1": "b" * 40,
+                "issues_ra": True,
+            },
+        ]
 
-        def ask(action: str, **parameters: str) -> dict[str, Any]:
+        def ask(action: str, **parameters: Any) -> dict[str, Any]:
             self.asked.append((action, parameters))
             endpoint = parameters.get("endpoint", "")
             if action == "list":
@@ -57,17 +65,10 @@ class NdesRoutes(ProfileRouteTestCase):
                 return {
                     "endpoint": endpoint,
                     "confirmed": endpoint in self.servers,
-                    "authorities": [
-                        {
-                            "subject": "CN=Example Issuing CA",
-                            "sha256": "a" * 64,
-                            "sha1": "b" * 40,
-                            "issues_ra": True,
-                        },
-                    ],
+                    "authorities": self.authorities,
                 }
             if action == "add":
-                if parameters["sha256"] != "a" * 64:
+                if sorted(parameters["sha256"]) != sorted(a["sha256"] for a in self.authorities):
                     raise NdesServerError("changed", f"{endpoint} no longer gives that CA")
                 self.servers.append(endpoint)
                 return {
@@ -236,6 +237,41 @@ class TheNdesServers(NdesRoutes):
         self.assertIn("no longer gives that CA", response.text)
         self.assertNotIn(other, self.servers)
         self.assertNotIn("ndes_server_added", [event["action"] for event in self.audited])
+
+    def test_a_chain_is_confirmed_whole(self) -> None:
+        # Review 2026-10-28, U02: every CA certificate shown is saved, so the
+        # form sends every one, and the button says it confirms them all.
+        other = "https://ca2.example.com/certsrv/mscep/mscep.dll"
+        self.authorities.append(
+            {
+                "subject": "CN=Example Root CA",
+                "sha256": "d" * 64,
+                "sha1": "e" * 40,
+                "issues_ra": False,
+            }
+        )
+        client = self.writing_client()
+        csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        shown = client.post(
+            "/ndes-profiles/servers/new", data={"csrf_token": csrf, "endpoint": other}
+        ).text
+        self.assertIn("Confirm these CAs", shown)
+        self.assertIn(f'name="sha256" value="{"a" * 64}"', shown)
+        self.assertIn(f'name="sha256" value="{"d" * 64}"', shown)
+
+        client.post(
+            "/ndes-profiles/servers/confirm",
+            data={"csrf_token": csrf, "endpoint": other, "sha256": "a" * 64},
+        )
+        self.assertNotIn(other, self.servers)
+        confirmed = client.post(
+            "/ndes-profiles/servers/confirm",
+            data={"csrf_token": csrf, "endpoint": other, "sha256": ["a" * 64, "d" * 64]},
+            follow_redirects=False,
+        )
+        self.assertEqual(confirmed.status_code, 303)
+        self.assertEqual(self.asked[-1][1]["sha256"], ["a" * 64, "d" * 64])
+        self.assertEqual(self.audited[-1]["detail"]["sha256"], ["a" * 64, "d" * 64])
 
     def test_a_server_in_use_stays_and_one_unused_is_removed(self) -> None:
         other = "https://ca2.example.com/certsrv/mscep/mscep.dll"

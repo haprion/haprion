@@ -2,13 +2,14 @@
 
     haprion-ndes-server list [--json]
     haprion-ndes-server add <address> [--json]                    the CA it gives; nothing changes
-    sudo haprion-ndes-server add <address> --sha256 <x> [--json]  confirm it, write it in the policy
+    sudo haprion-ndes-server add <address> --sha256 <x> ... [--json]  confirm, write it in the policy
     sudo haprion-ndes-server remove <address> [--json]
 
 What the interface's NDES profile page does, through the same code as its
 helper: the CA certificates a server gives with `GetCACert`, each with its
-SHA-256 and the SHA-1 Windows shows as its thumbprint. Compare one of them
-with the CA's own, then confirm it by its SHA-256. A server is removed only
+SHA-256 and the SHA-1 Windows shows as its thumbprint. Compare them with the
+CA's own, then confirm them: one `--sha256` for each certificate shown, since
+every one is saved. A server is removed only
 when no NDES profile on this manager uses it. `--json` answers with the
 helper's document.
 """
@@ -40,7 +41,11 @@ def _parser() -> argparse.ArgumentParser:
     listed = actions.add_parser("list", help="the servers in the runtime policy")
     add = actions.add_parser("add", help="show a server's CA, or confirm it with --sha256")
     add.add_argument("address")
-    add.add_argument("--sha256", help="the SHA-256 of the CA certificate you compared")
+    add.add_argument(
+        "--sha256",
+        action="append",
+        help="the SHA-256 of a CA certificate you compared; once for each one shown",
+    )
     remove = actions.add_parser("remove", help="take a server no profile uses out of the policy")
     remove.add_argument("address")
     for each in (listed, add, remove):
@@ -65,12 +70,15 @@ def _text(action: str, result: dict[str, Any], out: TextIO) -> None:
         if result["confirmed"]:
             out.write("This server is confirmed already.\n")
         else:
+            confirm = " ".join(f"--sha256 {a['sha256']}" for a in result["authorities"])
             out.write(
-                "Nothing was changed. Compare with the CA, then confirm:\n"
-                f"  sudo haprion-ndes-server add {result['endpoint']} --sha256 <SHA-256>\n"
+                "Nothing was changed. Compare with the CA, then confirm every certificate shown:\n"
+                f"  sudo haprion-ndes-server add {result['endpoint']} {confirm}\n"
             )
     elif action == "add":
-        out.write(f"Confirmed {result['endpoint']}; its CA is in {result['issuing_ca']}.\n")
+        out.write(
+            f"Confirmed {result['endpoint']}; its CA certificates are in {result['issuing_ca']}.\n"
+        )
     else:
         out.write(f"Removed {result['endpoint']}.\n")
 
@@ -95,7 +103,7 @@ def main(
         if arguments.sha256 is None:
             parameters["action"] = action = "fetch"
         else:
-            parameters["sha256"] = arguments.sha256.lower()
+            parameters["sha256"] = [each.lower() for each in arguments.sha256]
     request_id = str(uuid.uuid4())
     code, message, exit_code = "", "", exit_codes.OK
     result: dict[str, Any] = {}

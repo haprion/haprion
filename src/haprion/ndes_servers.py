@@ -4,8 +4,9 @@ An administrator gives an NDES server's address. The manager asks the server
 for its CA with SCEP's `GetCACert`, over HTTPS checked against the system's
 store (B381: the store a manager has already trusts an internal CA it was
 given), and shows each CA certificate with its fingerprints. Only when the
-administrator confirms one of them - by its SHA-256, which is asked again from
-the server and must still be there - is the server written into the runtime
+administrator confirms them - by their SHA-256s, asked again from the server,
+which must still give exactly those certificates (review 2026-10-28, U02: what
+is confirmed is what is saved) - is the server written into the runtime
 policy's `ndes.servers`, with the CA certificates in a file of their own.
 
 The policy is otherwise left as it is: only the `ndes:` block is replaced, so
@@ -268,23 +269,27 @@ def _write_policy(policy_path: Path, text: str) -> None:
 
 def add(
     endpoint: str,
-    sha256: str,
+    fingerprints: Sequence[str],
     *,
     policy_path: Path = DEFAULT_POLICY_PATH,
     ca_directory: Path | None = None,
     fetch: Fetch = get_ca_cert,
 ) -> dict[str, Any]:
-    """Confirm the server whose CA has this SHA-256, and write it into the policy."""
+    """Confirm the server whose CA certificates have these SHA-256s, and write it into the policy.
+
+    Every certificate the server gives is saved, so every one is confirmed: a
+    server that now gives one more, one fewer or another is refused.
+    """
 
     ca_directory = CA_DIRECTORY if ca_directory is None else ca_directory
-    if SHA256.fullmatch(sha256) is None:
-        raise NdesServerError("bad_input", "the fingerprint must be a SHA-256 in hexadecimal")
+    if not fingerprints or any(SHA256.fullmatch(each) is None for each in fingerprints):
+        raise NdesServerError("bad_input", "each fingerprint must be a SHA-256 in hexadecimal")
     found = authorities(endpoint, fetch=fetch)
     endpoint = check_endpoint(endpoint)
-    if not any(authority.sha256 == sha256 for authority in found):
+    if {authority.sha256 for authority in found} != set(fingerprints):
         raise NdesServerError(
             "changed",
-            f"{endpoint} no longer gives the CA with SHA-256 {sha256}; fetch it again and compare",
+            f"{endpoint} no longer gives the CA certificates confirmed; fetch them again and compare",
         )
     path = ca_file(endpoint, ca_directory)
     with locked():
@@ -296,7 +301,11 @@ def add(
         servers = [s for s in block["servers"] if s.get("endpoint") != endpoint]
         block["servers"] = [*servers, {"endpoint": endpoint, "issuing_ca": str(path)}]
         _write_policy(policy_path, with_ndes(text, block))
-    return {"endpoint": endpoint, "issuing_ca": str(path), "sha256": sha256}
+    return {
+        "endpoint": endpoint,
+        "issuing_ca": str(path),
+        "sha256": [authority.sha256 for authority in found],
+    }
 
 
 def remove(

@@ -4,8 +4,8 @@ The web asks over `/run/haprion/ndes-server.sock`, one request per connection:
 
     list     the servers the runtime policy names
     fetch    the CA certificates the server gives (`GetCACert`), to show
-    add      write the server into the runtime policy, if the CA with the given
-             SHA-256 is still what it gives
+    add      write the server into the runtime policy, if it still gives exactly
+             the CA certificates with the given SHA-256s
     remove   take it out, unless a profile on this manager uses it
 
 Root, because `add` and `remove` write `/etc/haprion` - which the worker's
@@ -41,6 +41,20 @@ def _string(parameters: dict[str, Any], name: str) -> str:
     return value
 
 
+def _fingerprints(parameters: dict[str, Any]) -> list[str]:
+    value = parameters.get("sha256")
+    if (
+        not isinstance(value, list)
+        or not 1 <= len(value) <= 16
+        or not all(isinstance(each, str) and len(each) <= 64 for each in value)
+    ):
+        raise HelperProtocolError(
+            "parameters.sha256 must list the SHA-256 of every CA certificate shown",
+            exit_code=exit_codes.REFUSED,
+        )
+    return value
+
+
 def perform(
     parameters: dict[str, Any],
     *,
@@ -71,7 +85,7 @@ def perform(
         }
     if action == "add":
         return ndes_servers.add(
-            endpoint, _string(parameters, "sha256"), policy_path=policy_path, fetch=fetch
+            endpoint, _fingerprints(parameters), policy_path=policy_path, fetch=fetch
         )
 
     def used_by() -> tuple[str, ...]:

@@ -753,7 +753,7 @@ class Run:
                     "operation": "ndes_server",
                     "cluster": None,
                     "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
-                    "parameters": {"action": "add", "endpoint": NDES_ENDPOINT, "sha256": sha256},
+                    "parameters": {"action": "add", "endpoint": NDES_ENDPOINT, "sha256": [sha256]},
                 }
             )
             ask = (

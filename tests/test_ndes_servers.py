@@ -112,15 +112,18 @@ class ThePolicy(unittest.TestCase):
         self.cas = self.root / "ndes-ca"
         self.answer = Answer(self.root)
         self.issuing = self.answer.sha256(self.answer.pki.intermediate)
+        self.chain = [self.issuing, self.answer.sha256(self.answer.pki.root)]
         self.lock = self.root / "locks" / "ndes-policy.lock"
         patch = mock.patch.object(ndes_servers, "LOCK_PATH", self.lock)
         patch.start()
         self.addCleanup(patch.stop)
 
-    def add(self, endpoint: str = ENDPOINT, sha256: str | None = None) -> dict[str, object]:
+    def add(
+        self, endpoint: str = ENDPOINT, fingerprints: list[str] | None = None
+    ) -> dict[str, object]:
         return ndes_servers.add(
             endpoint,
-            sha256 or self.issuing,
+            self.chain if fingerprints is None else fingerprints,
             policy_path=self.policy,
             ca_directory=self.cas,
             fetch=self.answer,
@@ -173,10 +176,21 @@ class ThePolicy(unittest.TestCase):
     def test_a_fingerprint_the_server_no_longer_gives_changes_nothing(self) -> None:
         before = self.policy.read_text()
         with self.assertRaises(ndes_servers.NdesServerError) as caught:
-            self.add(sha256="0" * 64)
+            self.add(fingerprints=["0" * 64])
         self.assertEqual(caught.exception.code, "changed")
         self.assertEqual(self.policy.read_text(), before)
         self.assertFalse(self.cas.exists())
+
+    def test_every_ca_certificate_saved_is_one_confirmed(self) -> None:
+        # Review 2026-10-28, U02: the server's whole chain is saved, so the
+        # issuing CA alone, or the chain with one more, confirms nothing.
+        before = self.policy.read_text()
+        for fingerprints in ([self.issuing], [*self.chain, "0" * 64], []):
+            with self.assertRaises(ndes_servers.NdesServerError):
+                self.add(fingerprints=fingerprints)
+        self.assertEqual(self.policy.read_text(), before)
+        added = self.add(fingerprints=list(reversed(self.chain)))
+        self.assertEqual(added["sha256"], self.chain)
 
     def test_a_server_in_use_stays_and_the_last_one_takes_the_block(self) -> None:
         self.add()
@@ -287,6 +301,7 @@ class TheHelperAndTheCommand(unittest.TestCase):
         self.policy.write_text(POLICY.format(root=self.root))
         self.answer = Answer(self.root)
         self.issuing = self.answer.sha256(self.answer.pki.intermediate)
+        self.chain = [self.issuing, self.answer.sha256(self.answer.pki.root)]
         for patch in (
             mock.patch.object(
                 ndes_server_helper,
@@ -325,15 +340,17 @@ class TheHelperAndTheCommand(unittest.TestCase):
         self.assertFalse(fetched["result"]["confirmed"])
         self.assertEqual(fetched["result"]["authorities"][0]["sha256"], self.issuing)
 
-        code, added = self.ask(action="add", endpoint=ENDPOINT, sha256=self.issuing)
+        code, added = self.ask(action="add", endpoint=ENDPOINT, sha256=self.chain)
         self.assertEqual((code, added["outcome"]), (0, "done"))
         _code, again = self.ask(action="fetch", endpoint=ENDPOINT)
         self.assertTrue(again["result"]["confirmed"])
 
     def test_a_changed_ca_and_a_bad_action_are_refused_by_the_contract(self) -> None:
-        code, refused = self.ask(action="add", endpoint=ENDPOINT, sha256="0" * 64)
+        code, refused = self.ask(action="add", endpoint=ENDPOINT, sha256=["0" * 64])
         self.assertEqual(code, exit_codes.REFUSED)
         self.assertEqual(refused["error"]["code"], "changed")
+        code, refused = self.ask(action="add", endpoint=ENDPOINT, sha256=self.issuing)
+        self.assertEqual((code, refused["error"]["code"]), (exit_codes.REFUSED, "bad_input"))
         code, refused = self.ask(action="drop", endpoint=ENDPOINT)
         self.assertEqual((code, refused["error"]["code"]), (exit_codes.REFUSED, "bad_input"))
 
@@ -355,11 +372,17 @@ class TheHelperAndTheCommand(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn(f"SHA-256  {self.issuing}", said)
         self.assertIn("Nothing was changed", said)
+        confirm = " ".join(f"--sha256 {each}" for each in self.chain)
+        self.assertIn(f"add {ENDPOINT} {confirm}", said)
         self.assertEqual(self.policy.read_text(), before)
 
-        code, said = self.command("add", ENDPOINT, "--sha256", self.issuing, root=False)
+        code, said = self.command("add", ENDPOINT, *confirm.split(), root=False)
         self.assertEqual(code, exit_codes.NOT_ROOT)
-        code, said = self.command("add", ENDPOINT, "--sha256", self.issuing.upper())
+        code, said = self.command("add", ENDPOINT, "--sha256", self.issuing)
+        self.assertEqual(code, exit_codes.REFUSED, said)
+        code, said = self.command(
+            "add", ENDPOINT, *confirm.upper().replace("--SHA256", "--sha256").split()
+        )
         self.assertEqual(code, 0, said)
         code, said = self.command("list")
         self.assertIn(ENDPOINT, said)

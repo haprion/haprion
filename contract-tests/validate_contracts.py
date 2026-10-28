@@ -962,7 +962,7 @@ def check_resolve_semantics(document: dict[str, object], path: Path) -> None:
 
 def check_ndes_server_semantics(document: dict[str, object], path: Path) -> None:
     # A result only on success; the CA that issues the server's RA certificate
-    # is the first shown, since it is the one the administrator confirms.
+    # is the first shown, since it is the one the server enrolls for.
     result = document["result"]
     if document["outcome"] == "done" and result is None:
         raise AssertionError(f"{path}: a done ndes_server carries no result")

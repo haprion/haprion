@@ -539,6 +539,12 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
 
     items: list[Item] = []
     for node in nodes:
+        #
+        # A node still being joined has no keys in place yet; the collector
+        # does not count it either (26-10-27, F25).
+        #
+        if node.being_joined(now=now):
+            continue
         stale = node.stale_seconds(now=now)
         if node.latest_attempt_failed() and node.outcome == "budget":
             message = "log collection paused: the manager's copy is over its space budget"

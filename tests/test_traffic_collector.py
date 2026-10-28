@@ -23,6 +23,7 @@ import psycopg
 from haprion import traffic_collector
 from haprion.traffic_collector import (
     CLOSED_DAY_GRACE,
+    JOINING_SECONDS,
     CollectorConfig,
     CollectorError,
     NodeTarget,
@@ -287,6 +288,10 @@ class TrafficCollectorTests(unittest.TestCase):
                 raise SSHError("node-b did not answer")
             return self.response(wanted, offset, b"")
 
+        # Tried before, longer ago than a join takes, so its failure counts.
+        (self.mirror / "alpha--node-b.meta.json").write_text(
+            json.dumps({"schema_version": 1, "first_attempt": "2026-01-01T00:00:00+00:00"})
+        )
         errors = StringIO()
         with patch("sys.stderr", errors):
             self.assertEqual(collect(configured, now=NOW, fetch=fetch), 1)
@@ -541,6 +546,38 @@ class TrafficCollectorTests(unittest.TestCase):
         )
         self.assertIn((yesterday, 0), calls)
         self.assertTrue(marker.exists())
+
+    def test_a_node_still_being_joined_does_not_fail_the_run(self) -> None:
+        #
+        # Its keys are installed during the join; the collector ran in between
+        # in prod and failed its unit for a minute (26-10-27, F25).
+        #
+        def unreachable(_target: NodeTarget, _wanted: date, _offset: int) -> Response:
+            raise SSHError("Permission denied (publickey)")
+
+        errors = StringIO()
+        with patch("sys.stderr", errors):
+            self.assertEqual(collect(self.config, now=NOW, fetch=unreachable), 0)
+            later = NOW + timedelta(seconds=JOINING_SECONDS - 1)
+            self.assertEqual(collect(self.config, now=later, fetch=unreachable), 0)
+            much_later = NOW + timedelta(seconds=JOINING_SECONDS)
+            self.assertEqual(collect(self.config, now=much_later, fetch=unreachable), 1)
+
+        self.assertIn("never reached since it was added; not counted yet", errors.getvalue())
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        self.assertEqual(meta["first_attempt"], NOW.isoformat())
+
+    def test_a_node_reached_once_fails_the_run_at_once(self) -> None:
+        def good(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            return self.response(wanted, offset, b"")
+
+        def unreachable(_target: NodeTarget, _wanted: date, _offset: int) -> Response:
+            raise SSHError("unreachable")
+
+        self.assertEqual(collect(self.config, now=NOW, fetch=good), 0)
+        with patch("sys.stderr", StringIO()):
+            later = NOW + timedelta(seconds=60)
+            self.assertEqual(collect(self.config, now=later, fetch=unreachable), 1)
 
     def test_failure_preserves_the_mirror_and_last_success(self) -> None:
         line = b'{"schema":1}\n'

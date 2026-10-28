@@ -58,6 +58,11 @@ class Entry:
 
 
 LASTING_RUNS = 5
+#
+# The collector's JOINING_SECONDS: a node never reached and first tried less
+# than this ago is one still being joined, not a fault (26-10-27, F25).
+#
+JOINING_SECONDS = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +87,19 @@ class Freshness:
     # `None` from a collector older than the count.
     #
     behind_runs: int | None = None
+    #
+    # The collector's first try at this node; `None` from a collector older
+    # than the field.
+    #
+    first_attempt: datetime | None = None
+
+    def being_joined(self, *, now: datetime) -> bool:
+        return (
+            self.last_success is None
+            and self.outcome == "ssh"
+            and self.first_attempt is not None
+            and (now - self.first_attempt).total_seconds() < JOINING_SECONDS
+        )
 
     def catching_up(self) -> bool:
         return self.current_complete is False or bool(self.pending_days)
@@ -428,6 +446,7 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
         else None,
         pending_days=pending if type(pending) is int and 0 <= pending <= 90 else None,
         behind_runs=behind if type(behind) is int and 0 <= behind <= 2**31 else None,
+        first_attempt=_stamp(value.get("first_attempt")),
     )
 
 

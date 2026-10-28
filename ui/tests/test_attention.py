@@ -395,6 +395,25 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
             ],
         )
 
+    def test_a_node_being_joined_is_not_listed_until_the_join_has_had_its_time(self) -> None:
+        from haprion_ui.traffic_logs import JOINING_SECONDS
+
+        joining = {"outcome": "ssh", "last_success": None}
+        self.assertEqual(
+            self.messages(
+                self.freshness(**joining, first_attempt=self.NOW - timedelta(seconds=30)),
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.messages(
+                self.freshness(
+                    **joining, first_attempt=self.NOW - timedelta(seconds=JOINING_SECONDS)
+                ),
+            ),
+            ["log collection failed (ssh)"],
+        )
+
     def test_a_receiver_that_dropped_lines_is_critical(self) -> None:
         row = SimpleNamespace(
             cluster="alpha",

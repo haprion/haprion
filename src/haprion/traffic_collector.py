@@ -452,6 +452,34 @@ def _previous_success(path: Path) -> str | None:
     return success if isinstance(success, str) else None
 
 
+#
+# How long a node the collector has never reached is taken to be one still
+# being joined: its keys are installed during the join, and the collector ran
+# in between in prod and failed its unit for a minute (26-10-27, F25).
+#
+JOINING_SECONDS = 300
+
+
+def _joining(config: CollectorConfig, target: NodeTarget, now: datetime) -> bool:
+    """Never reached over SSH, and first tried less than JOINING_SECONDS ago.
+
+    Only an SSH failure: a node that answered with something wrong is not one
+    whose keys are still on their way.
+    """
+
+    previous = _previous(_meta_path(config, target))
+    if isinstance(previous.get("last_success"), str) or previous.get("outcome") != "ssh":
+        return False
+    first = previous.get("first_attempt")
+    if not isinstance(first, str):
+        return False
+    try:
+        started = datetime.fromisoformat(first)
+    except ValueError:
+        return False
+    return (now - started).total_seconds() < JOINING_SECONDS
+
+
 def _behind_runs(path: Path) -> int:
     runs = _previous(path).get("behind_runs")
     return runs if isinstance(runs, int) and not isinstance(runs, bool) and runs >= 0 else 0
@@ -483,11 +511,13 @@ def _write_meta(
     else:
         behind = 0
     stamp = attempted.isoformat()
+    first = _previous(path).get("first_attempt")
     content = json.dumps(
         {
             "schema_version": 1,
             "cluster": target.cluster,
             "node": target.node,
+            "first_attempt": first if isinstance(first, str) else stamp,
             "last_attempt": stamp,
             "last_success": stamp if success else previous,
             "outcome": outcome,
@@ -1613,14 +1643,19 @@ def collect(
         for target, run in zip(config.nodes, runs, strict=True):
             if run.waf is not None:
                 pages.append((target, run.waf))
+            joining = not full and _joining(config, target, attempted)
+            note = " (never reached since it was added; not counted yet)" if joining else ""
             if run.waf_problem is not None:
-                print(f"{target.cluster}/{target.node}: waf: {run.waf_problem}", file=sys.stderr)
-                failures += 1
+                print(
+                    f"{target.cluster}/{target.node}: waf: {run.waf_problem}{note}",
+                    file=sys.stderr,
+                )
+                failures += not joining
             if run.problem is None:
                 mirrored.append(target)
                 continue
-            print(f"{target.cluster}/{target.node}: {run.problem}", file=sys.stderr)
-            failures += 1
+            print(f"{target.cluster}/{target.node}: {run.problem}{note}", file=sys.stderr)
+            failures += not joining
         try:
             skipped, expired = _ingest_database(config)
             if skipped:

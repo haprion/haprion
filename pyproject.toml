@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "haprion"
-version = "0.99.4"
+version = "0.99.5"
 description = "UI-independent HAProxy management engine"
 readme = "README.md"
 requires-python = ">=3.13"

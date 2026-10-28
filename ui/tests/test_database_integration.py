@@ -3827,6 +3827,32 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class AProfileIdMayHoldADot(unittest.TestCase):
+    """Migration 0101 (B380): `.` and `_` in a DNS or NDES profile ID, nothing more."""
+
+    def connect(self) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}")
+
+    def insert(self, table: str, profile_id: str) -> None:
+        provider = "ndes" if table == "ndes_provider_profile" else "cloudflare"
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                f"insert into {table} (id, name, provider_id, schema_version, key_id, "  # noqa: S608 - the test's own table names
+                "ciphertext, created_by, updated_by) values (%(id)s, %(id)s, %(provider)s, 1, "
+                "'0123456789abcdef', %(blob)s, 'a', 'a')",
+                {"id": profile_id, "provider": provider, "blob": b"x" * 48},
+            )
+            connection.rollback()
+
+    def test_both_tables_take_a_server_s_name_and_refuse_a_leading_dot(self) -> None:
+        for table in ("dns_provider_profile", "ndes_provider_profile"):
+            with self.subTest(table=table):
+                self.insert(table, "cs2.example.com")
+                self.insert(table, "cs2_example-com")
+                with self.assertRaises(psycopg.errors.CheckViolation):
+                    self.insert(table, ".hidden")
+
+
 class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
     """Migration 0025: sealed DNS provider profiles and the job that applies them.
 

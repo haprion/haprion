@@ -2,12 +2,13 @@
   "schema_version": 1,
   "requires": {
     "database_baseline": "0100",
-    "database_head": "0100",
-    "rollback_safe_from": "0100",
+    "database_head": "0101",
+    "rollback_safe_from": "0101",
     "database_revisions": [
-      "0100"
+      "0100",
+      "0101"
     ],
-    "engine_api": 33,
+    "engine_api": 34,
     "node_api": 1,
     "poller_helpers": [
       "haprion-status-helper",

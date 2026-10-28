@@ -256,7 +256,8 @@ class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
         )
 
     def test_a_baseline_past_the_head_is_refused(self) -> None:
-        for baseline in ("0101", "x1"):
+        head = json.loads(MANIFEST.read_text())["requires"]["database_head"]
+        for baseline in (f"{int(head) + 1:04d}", "x1"):
             with self.subTest(baseline=baseline), tempfile.TemporaryDirectory() as raw:
                 path = Path(raw) / "compatibility.json"
                 document = json.loads(MANIFEST.read_text())

@@ -133,7 +133,7 @@ def seal_submission(
         check_profile_id(profile_id)
     except ProfileError:
         raise FormProblem(
-            "Profile ID — 1-32 lowercase letters, digits or hyphens. It names the "
+            "Profile ID — 1-32 lowercase letters, digits, dots, hyphens or underscores, starting with a letter or digit. It names the "
             "credentials file and is used on the command line, so keep it short."
         ) from None
     if revision == 1 and profile_id in set(taken):

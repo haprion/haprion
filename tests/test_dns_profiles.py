@@ -10,6 +10,7 @@ from haprion.dns_profile_keys import generate, seal
 from haprion.dns_profiles import (
     ProfileError,
     build_request,
+    check_profile_id,
     open_profile,
     seal_profile,
     secret_values,
@@ -17,6 +18,21 @@ from haprion.dns_profiles import (
 from haprion.dns_provider_catalog import provider_by_id
 
 FIELDS = {"api_token": "token-example"}
+
+
+class TheProfileId(unittest.TestCase):
+    def test_a_profile_may_be_named_after_the_server_it_reaches(self) -> None:
+        #
+        # B380: `cs2_hq-local` was what the operator wanted for an NDES profile.
+        #
+        for name in ("cs2.example.com", "cs2_example-com", "a", "a" * 32, "0.9"):
+            with self.subTest(name=name):
+                self.assertEqual(check_profile_id(name), name)
+
+    def test_what_could_be_read_as_a_path_or_a_flag_is_still_refused(self) -> None:
+        for name in (".", "..", ".hidden", "-x", "_x", "a/b", "A", "a b", "a" * 33, ""):
+            with self.subTest(name=name), self.assertRaises(ProfileError):
+                check_profile_id(name)
 
 
 class SealingTests(unittest.TestCase):

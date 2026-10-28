@@ -17,7 +17,7 @@
   "additionalProperties": true,
   "$defs": {
     "kind": { "enum": ["dns", "ndes"] },
-    "profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+    "profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
     "profiles_apply_result": {
       "type": "object",
       "required": ["changed", "check", "changes", "jobs", "unchanged"],
@@ -51,7 +51,7 @@
             "additionalProperties": false
           }
         },
-        "unchanged": { "type": "array", "items": { "type": "string", "pattern": "^(dns|ndes)/[a-z0-9][a-z0-9-]{0,31}$" } }
+        "unchanged": { "type": "array", "items": { "type": "string", "pattern": "^(dns|ndes)/[a-z0-9][a-z0-9._-]{0,31}$" } }
       },
       "additionalProperties": true
     }

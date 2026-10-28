@@ -1298,6 +1298,10 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
     is the only place both files are known.
     """
 
+    # The profile IDs are the profile store's own rule, not a copy of it
+    # (B380); imported here because that module reads this one.
+    from haprion.dns_profiles import PROFILE_ID
+
     data = _secure_yaml(path, require_secure=require_secure)
     _only_keys(data, {"schema_version", "receivers", "certificates"}, "certificate registry")
     schema_version = data.get("schema_version")
@@ -1355,7 +1359,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
                     raise ConfigError(f"{location}.source.lineage is not a lineage name")
             if raw_source.get("dns_profile") is not None:
                 dns_profile = _required_string(raw_source, "dns_profile", f"{location}.source")
-                if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", dns_profile):
+                if not PROFILE_ID.fullmatch(dns_profile):
                     raise ConfigError(f"{location}.source.dns_profile is not a profile ID")
         elif raw_source.get("lineage") is not None:
             raise ConfigError(f"{location}.source.lineage belongs to an acme source only")
@@ -1367,7 +1371,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
                     f"{location}.source.ndes_profile belongs to an import source only"
                 )
             ndes_profile = _required_string(raw_source, "ndes_profile", f"{location}.source")
-            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", ndes_profile):
+            if not PROFILE_ID.fullmatch(ndes_profile):
                 raise ConfigError(f"{location}.source.ndes_profile is not a profile ID")
 
         clusters = _id_list(raw, "clusters", location, CLUSTER_ID)

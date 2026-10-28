@@ -52,8 +52,8 @@
                   "properties": {
                     "kind": { "enum": ["acme", "import", "authority"] },
                     "lineage": { "type": ["string", "null"], "maxLength": 255 },
-                    "dns_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
-                    "ndes_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" }
+                    "dns_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
+                    "ndes_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" }
                   },
                   "additionalProperties": false
                 }
@@ -133,8 +133,8 @@
           "properties": {
             "kind": { "enum": ["acme", "import", "authority"] },
             "lineage": { "type": ["string", "null"], "maxLength": 255 },
-            "dns_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
-            "ndes_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" }
+            "dns_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
+            "ndes_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" }
           },
           "additionalProperties": false
         },

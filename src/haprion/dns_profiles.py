@@ -50,7 +50,12 @@ from haprion.dns_provider_catalog import (
 
 OPERATION = "dns_profile_apply"
 SCHEMA_VERSION = 1
-PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+#
+# `.` and `_` since B380 (26-10-28): a profile is named after what it reaches,
+# and neither harms the file name or needs quoting; the first character keeps
+# `.` and `..` out.
+#
+PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
 MAX_REVISION = 1_000_000
 MAX_CIPHERTEXT = 65536
 HELPER = "/opt/haprion/current/bin/haprion-dns-profile-apply-helper"
@@ -104,7 +109,10 @@ def metadata_path(directory: str | os.PathLike[str], profile_id: str) -> str:
 
 def check_profile_id(value: object) -> str:
     if not isinstance(value, str) or PROFILE_ID.fullmatch(value) is None:
-        raise ProfileError("profile id must be 1-32 lowercase letters, digits or hyphens")
+        raise ProfileError(
+            "profile id must be 1-32 lowercase letters, digits, dots, hyphens or underscores, "
+            "starting with a letter or digit"
+        )
     return value
 
 

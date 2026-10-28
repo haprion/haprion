@@ -20,7 +20,7 @@
       "type": "object",
       "required": ["profile", "provider", "key_id", "revision", "plugin"],
       "properties": {
-        "profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+        "profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
         "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
         "key_id": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
         "revision": { "type": "integer", "minimum": 1, "maximum": 1000000 },

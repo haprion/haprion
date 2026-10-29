@@ -984,7 +984,11 @@ class AHeldJob(LoginTestCase):
         with mock.patch("haprion_ui.db.recent_jobs", return_value=[running]):
             page = self.admin().get("/jobs").text
         self.assertIn(">Held</span>", page)
-        self.assertIn("Running when the manager last started.", page)
+        self.assertIn(
+            "Running when the manager last started. It may have finished before a restore;"
+            " Discard keeps what it did and runs nothing more.",
+            page,
+        )
         self.assertIn('name="decision" value="discard">Discard</button>', page)
 
     def test_the_answer_is_recorded_and_anything_else_refused(self) -> None:

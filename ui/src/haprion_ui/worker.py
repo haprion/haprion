@@ -652,24 +652,26 @@ def run_one_job(
     if job.held_decision == "discard":
         #
         # Held since the manager started, and an admin said it should not run
-        # (0082). Ended here, as every job is, and never started.
+        # (0082). Ended here, as every job is, and not started again. One taken
+        # before (attempts) had begun: recovery put it back in the queue - a
+        # publish whose version was recorded - and nothing more of it runs
+        # (review 26-10-29, C04).
         #
         logger.info("job %s was held and discarded by %s", job.id, job.held_decided_by)
+        message = (
+            f"it had begun before the manager last started; {job.held_decided_by}"
+            " decided it should not run again"
+            if job.attempts > 1
+            else f"queued before the manager last started; {job.held_decided_by}"
+            " decided it should not run"
+        )
         _finish(
             connection,
             job,
             state="blocked",
             outcome="blocked",
             exit_code=None,
-            result={
-                "error": {
-                    "code": "held_discarded",
-                    "message": (
-                        f"queued before the manager last started; {job.held_decided_by}"
-                        " decided it should not run"
-                    ),
-                }
-            },
+            result={"error": {"code": "held_discarded", "message": message}},
             stderr_excerpt=None,
             worker=worker,
         )

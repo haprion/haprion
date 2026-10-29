@@ -683,8 +683,8 @@ WAITING = {
     "source_missing": "Certificate distribution waits for imported material",
 }
 #
-# A held job an admin chose not to run (0082). It never started, so it neither
-# fails nor ends an earlier failure.
+# A held job an admin chose not to run (0082). Nothing more of it ran, so it
+# neither fails nor ends an earlier failure.
 #
 DISCARDED = "held_discarded"
 

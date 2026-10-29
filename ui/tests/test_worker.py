@@ -523,6 +523,23 @@ class JobsHeldSinceTheBoot(WorkerTestCase):
         self.assertEqual(finished["result"]["error"]["code"], "held_discarded")
         self.assertIn("admin", finished["result"]["error"]["message"])
 
+    def test_a_discarded_job_recovery_put_back_says_it_had_begun(self) -> None:
+        """Review 26-10-29, C04: a publish that had recorded its version "should not run"."""
+
+        job = replace(
+            claimed("changes_publish"), attempts=2, held_decision="discard", held_decided_by="admin"
+        )
+        with mock.patch.object(execution, "run") as never:
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        never.assert_not_called()
+        (finished,) = self.finished
+        self.assertEqual(finished["result"]["error"]["code"], "held_discarded")
+        self.assertEqual(
+            finished["result"]["error"]["message"],
+            "it had begun before the manager last started; admin decided it should not run again",
+        )
+
     def test_a_job_an_admin_let_run_is_not_held_to_the_two_hours(self) -> None:
         job = replace(
             claimed(),

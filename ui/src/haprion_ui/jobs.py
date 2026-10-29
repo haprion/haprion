@@ -1203,6 +1203,7 @@ def build_job_overview(
     now: datetime | None = None,
     awaiting: frozenset[str] = frozenset(),
     diagnostics: bool = False,
+    judged: list[Job] | None = None,
 ) -> JobOverview:
     """Build one bounded, newest-first operation history from database rows.
 
@@ -1220,6 +1221,9 @@ def build_job_overview(
     `diagnostics` says whether the caller is entitled to the operations' stderr.
     It defaults to false, so a page that forgets to ask the question gets the
     reader-safe projection rather than the privileged one.
+
+    `judged` is what *Need review* counts: the jobs Needs attention judges
+    (`views.attention_jobs`), not only the ones listed (review 26-10-29, C02).
     """
 
     current = now or datetime.now(UTC)
@@ -1274,7 +1278,7 @@ def build_job_overview(
     return JobOverview(
         jobs=jobs,
         active_count=sum(job.state in {"pending", "running"} for job in jobs),
-        attention_count=_unresolved(rows),
+        attention_count=_unresolved(rows if judged is None else judged),
         completed_count=sum(job.state == "done" for job in jobs),
     )
 

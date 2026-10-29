@@ -69,6 +69,7 @@ from haprion_ui.views import (
     NODE_EVENT_KEEP_DAYS,
     NODE_EVENT_TABLE,
     attention_items,
+    attention_jobs,
     first_cluster_view,
     log_time_filter,
     network_page,
@@ -798,8 +799,10 @@ def build_router(config: Config) -> APIRouter:
             return _audit_page(request, session, token)
         if request.query_params.get("view") == "nodes":
             return _node_events_page(request, session, token)
+        clusters = listed_clusters(request, config)
         with request.app.state.pool.connection() as connection:
             listed = db.recent_jobs(connection)
+            _, judged = attention_jobs(connection, clusters)
             queued_by = db.requested_by(connection, [row.request_id for row in listed])
             #
             # The cluster readings decide whether a job's follow-up line is
@@ -816,6 +819,7 @@ def build_router(config: Config) -> APIRouter:
                 # never contains the diagnostics at all. See B44.
                 #
                 diagnostics=session.role == "admin",
+                judged=judged,
             )
             claim_pause = db.claim_pause(connection)
         not_held = request.query_params.get("not_held", "")

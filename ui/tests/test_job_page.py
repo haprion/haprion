@@ -1142,3 +1142,60 @@ class AHeldJob(LoginTestCase):
         self.assertIn(notice, client.get("/jobs?not_held=19").text)
         self.assertNotIn("no longer waits", client.get("/jobs?not_held=x").text)
         self.assertNotIn("no longer waits", client.get("/jobs").text)
+
+
+class NeedReviewCountsWhatNeedsAttentionLists(LoginTestCase):
+    """Review 26-10-29, C02: the count read the page's newest 20 jobs, the list all of them.
+
+    A failed deploy followed by twenty other jobs was listed and not counted,
+    and a removed cluster's was counted and not listed: pages built from one
+    set of rows said different things.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        now = datetime.now(UTC)
+        self.failed = replace(
+            job(state="failed", outcome="failed", operation="deploy"),
+            id=1,
+            created_at=now - timedelta(hours=2),
+            result={"error": {"code": "deploy_refused", "message": "refused"}},
+        )
+        # Twenty backups after it: none settles a deploy.
+        self.later = [
+            replace(
+                job(state="done", outcome="done", operation="backup_run"),
+                id=index,
+                created_at=now - timedelta(minutes=index),
+            )
+            for index in range(2, 22)
+        ]
+        self.gone = replace(self.failed, id=22, cluster="gamma", created_at=now)
+
+    def pages(self, rows: list[db.Job], *paths: str) -> list[str]:
+        def newest(_connection: object, *, cluster: str | None = None, limit: int = 20) -> Any:
+            return [row for row in rows if cluster in {None, row.cluster}][:limit]
+
+        failed = [row for row in rows if row.state == "failed"]
+        with (
+            mock.patch("haprion_ui.db.recent_jobs", side_effect=newest),
+            mock.patch("haprion_ui.db.attention_evidence", return_value=failed),
+        ):
+            client = self.client(
+                replace(configuration(), management_writes=True, clusters=("alpha",))
+            )
+            self.sign_in(client)
+            return [client.get(path).text for path in paths]
+
+    def test_a_failure_twenty_jobs_back_is_counted_and_in_the_deploy_cell(self) -> None:
+        listing, events, network = self.pages([*self.later, self.failed], "/", "/jobs", "/network")
+
+        self.assertIn("/jobs#job-1", listing)
+        self.assertIn("<strong>1</strong><span>Need review</span>", events)
+        self.assertIn("deploy_refused · view jobs for details", network)
+
+    def test_a_removed_cluster_s_failure_is_neither_listed_nor_counted(self) -> None:
+        listing, events = self.pages([self.gone, *self.later], "/", "/jobs")
+
+        self.assertNotIn("/jobs#job-22", listing)
+        self.assertIn("<strong>0</strong><span>Need review</span>", events)

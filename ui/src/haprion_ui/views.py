@@ -16,7 +16,7 @@ from __future__ import annotations
 import io
 import logging
 import zipfile
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -558,6 +558,7 @@ def network_page(request: Request, config: Config) -> Response:
     #
     with request.app.state.pool.connection() as connection:
         recent = db.recent_jobs(connection)
+        _, judged = attention_jobs(connection, clusters)
     #
     # Where the configuration has got to, as one badge per cluster. Three of
     # the four states come from the machine - which is what lets the page
@@ -584,7 +585,7 @@ def network_page(request: Request, config: Config) -> Response:
     }
     awaiting = network.awaiting_deploy(recent)
     busy = jobs.in_flight(recent)
-    failures = jobs.last_failure(recent)
+    failures = jobs.last_failure(judged)
     state = {
         view.cluster: network.deployment(
             running=busy.get(view.cluster),
@@ -646,6 +647,39 @@ def _service_lamps(
     return lamps
 
 
+#
+# How many of the newest jobs Needs attention reads, beside every cluster's,
+# step's and subject's newest finished job however old.
+#
+ATTENTION_RECENT = 200
+
+
+def attention_jobs(connection: Any, clusters: Collection[str]) -> tuple[list[db.Job], list[db.Job]]:
+    """The newest jobs, and the jobs Needs attention judges, newest first.
+
+    One set for every page that names or counts what went wrong: *Need review*
+    on Jobs and the deploy cell on Network read the page's newest 20, and a
+    failed deploy followed by twenty other jobs was listed here and counted
+    nowhere (review 26-10-29, C02).
+
+    A removed cluster's failures are no longer anybody's to settle: no step
+    runs on a cluster that is gone, and a new cluster given the name would
+    inherit them (review 26-10-25, 4-02). An unread list hides nothing. The
+    newest are returned as read, for what is about the manager rather than a
+    cluster.
+    """
+
+    recent = db.recent_jobs(connection, limit=ATTENTION_RECENT)
+    known = {job.id for job in recent}
+    every = recent + [job for job in db.attention_evidence(connection) if job.id not in known]
+    judged = sorted(
+        (job for job in every if job.cluster is None or not clusters or job.cluster in clusters),
+        key=lambda job: (job.created_at, job.id),
+        reverse=True,
+    )
+    return recent, judged
+
+
 def attention_items(request: Request, config: Config) -> attention.Attention:
     """What needs doing, worked out from the pages' own builders (B274)."""
 
@@ -669,22 +703,8 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
     items: list[attention.Item] = []
     with request.app.state.pool.connection() as connection:
         features.read_in(db.feature_switches(connection))
-        recent = db.recent_jobs(connection, limit=200)
-        known = {job.id for job in recent}
-        #
-        # A removed cluster's failures are no longer anybody's to settle: no
-        # step runs on a cluster that is gone, and a new cluster given the
-        # name would inherit them (review 26-10-25, 4-02). An unread list
-        # hides nothing.
-        #
-        items += attention.from_jobs(
-            [
-                job
-                for job in recent
-                + [job for job in db.attention_evidence(connection) if job.id not in known]
-                if job.cluster is None or not clusters or job.cluster in clusters
-            ]
-        )
+        recent, judged = attention_jobs(connection, clusters)
+        items += attention.from_jobs(judged)
         cluster_list_at = db.cluster_list_observed(connection)
         items += attention.from_manager(
             cluster_list_at=cluster_list_at,

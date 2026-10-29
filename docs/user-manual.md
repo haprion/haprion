@@ -2258,10 +2258,13 @@ only once the new certificate has been checked. If the CA holds the request, the
 pending**, with the same *Resume enrollment* button, and the next pass resumes that request rather than
 asking again.
 
-One record per certificate under `<state_root>/renewals/` says what the last attempt did. The listing
-shows a failure as **Renewal failed**, with the CA's sentence, rather than letting the expiry date
-creep closer. Abandoning a renewal's request removes its record, so the row shows the expiry again and
-the next pass asks anew.
+One record per certificate under `<state_root>/renewals/` says what the pass's last attempt did. The
+listing shows a failure as **Renewal failed**, with the CA's sentence, rather than letting the expiry
+date creep closer. The record is about the certificate the pass tried to renew. It ends when a new
+certificate is imported, or the CA takes a request for it, whichever way that was asked for: the pass,
+*Renew…*, *Resume enrollment* or `haprion-cert-scep`. Abandoning the request or deleting the certificate
+removes it too. A pass that finds another enrollment running for the certificate skips it and asks
+again next time.
 
 **Renewing by hand.**
 
@@ -2272,7 +2275,9 @@ the next pass asks anew.
   the other lineages, but the NDES pass still runs as usual.
 - `--dry-run` says which certificates would renew.
 
-The interface's *Renew…* does the same as `--acme-now` or `--ndes-now`, depending on the source.
+The interface's *Renew…* renews the same way as `--acme-now` or `--ndes-now`, depending on the source.
+Its outcome is its job's. While the CA holds a request for an NDES certificate, *Renew…* points to the
+row's *Resume enrollment* instead, which is what `--ndes-now` does then.
 
 **From the interface**, *Certificates → New certificate* offers *NDES* beside the two Let's Encrypt
 challenges. It is greyed while no NDES profile is in effect. A wildcard domain becomes the base name as

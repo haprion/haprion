@@ -17,6 +17,7 @@ import unittest
 import unittest.mock
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -335,7 +336,8 @@ class WhatGoes(DeleteFixture):
         finding 2). With an NDES block in the policy it is a layer of its
         own; a request the CA still holds is deletable by name alone."""
 
-        from haprion.ndes_state import request_directory
+        from haprion import ndes_renew
+        from haprion.ndes_state import renewal_record, request_directory
 
         policy_path = self.prepared(
             {
@@ -367,10 +369,21 @@ class WhatGoes(DeleteFixture):
             directory.mkdir(mode=0o700)
             (directory / "request.json").write_text(f'{{"certificate": "{certificate_id}"}}')
             (directory / "privkey.pem").write_text("key\n")
+        #
+        # The renewal pass's word about the certificate goes with it: left, a
+        # new certificate under the same ID read the old failure (review
+        # 2026-10-29, round 2, BBB01).
+        #
+        ndes_renew.write_record(
+            state,
+            ndes_renew.Outcome("enrolled.example", "failed", "CA_REJECTED"),
+            now=datetime(2026, 9, 15, tzinfo=UTC),
+        )
 
         report = self.run_delete(policy_path, "enrolled.example")
         self.assertEqual(report.removed, ("enrolled.example",))
         self.assertFalse(request_directory(state, "enrolled.example").exists())
+        self.assertIsNone(renewal_record(state, "enrolled.example"))
         self.assertIn(
             ("NDES request enrolled.example", "removed"),
             [(layer.name, layer.state) for layer in report.outcomes[0].layers],

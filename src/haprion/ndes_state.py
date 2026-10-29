@@ -7,6 +7,7 @@ the import path, which imports the listing).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -15,6 +16,7 @@ import shutil
 import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -298,9 +300,7 @@ def record_path(state_root: Path, certificate_id: str) -> Path:
     )
 
 
-def renewal_record(state_root: Path, certificate_id: str) -> dict[str, Any] | None:
-    """The last attempt's record, or None; anything unreadable is no record."""
-
+def _read_renewal(state_root: Path, certificate_id: str) -> dict[str, Any] | None:
     path = record_path(state_root, certificate_id)
     try:
         if (
@@ -323,7 +323,64 @@ def renewal_record(state_root: Path, certificate_id: str) -> dict[str, Any] | No
         or not isinstance(message, str)
     ):
         return None
-    return {"attempted_at": attempted, "outcome": outcome, "message": message[:1000]}
+    return loaded
+
+
+def renewal_record(state_root: Path, certificate_id: str) -> dict[str, Any] | None:
+    """The last attempt's record, or None; anything unreadable is no record."""
+
+    loaded = _read_renewal(state_root, certificate_id)
+    if loaded is None:
+        return None
+    return {
+        "attempted_at": loaded["attempted_at"],
+        "outcome": loaded["outcome"],
+        "message": loaded["message"][:1000],
+    }
+
+
+def renewal_of(
+    state_root: Path, certificate_id: str, *, fingerprint: str, not_before: datetime
+) -> dict[str, Any] | None:
+    """The record, when it is about the certificate the source holds now; None otherwise.
+
+    The record is the pass's word about an attempt to renew one certificate.
+    A certificate made since - by *Renew…*, *Resume enrollment*, the
+    terminal command or anything else - is not the one it spoke of, and a
+    failure read off it stood on the row for months (review 2026-10-29,
+    round 2, BBB01). It names the certificate's SHA-256; one written before
+    it did is the current certificate's when it is no older than it.
+    """
+
+    loaded = _read_renewal(state_root, certificate_id)
+    if loaded is None:
+        return None
+    named = loaded.get("fingerprint_sha256")
+    if isinstance(named, str):
+        if named != fingerprint:
+            return None
+    else:
+        try:
+            attempted = datetime.fromisoformat(loaded["attempted_at"])
+        except ValueError:
+            return None
+        if attempted.tzinfo is None or attempted < not_before:
+            return None
+    return renewal_record(state_root, certificate_id)
+
+
+def end_renewal(state_root: Path, certificate_id: str) -> None:
+    """Drop the record once an enrollment has given the row a newer word than it.
+
+    Called under the enrollment's lock when a certificate has been imported
+    or the CA holds a request: the material, or the request on the disk,
+    is then what the row says, whoever asked (review 2026-10-29, round 2,
+    BBB01). Best effort: the record names the certificate it was about, so
+    one left behind is not read for another.
+    """
+
+    with contextlib.suppress(OSError):
+        record_path(state_root, certificate_id).unlink(missing_ok=True)
 
 
 def forget_renewal(state_root: Path, certificate_id: str) -> None:
@@ -332,9 +389,11 @@ def forget_renewal(state_root: Path, certificate_id: str) -> None:
     A `pending` or `failed` record is the last pass's word about the request
     an abandon has just removed; left, the row went back to *Renewal pending*
     or kept pointing at *Abandon request* (review 2026-10-29 again, BB03). A
-    `renewed` record is about a certificate that exists, and stays.
+    `renewed` record is about a certificate that exists, and stays. Best
+    effort, as `end_renewal`: the request is already gone, and an abandon
+    that took effect is not reported as one that could not run.
     """
 
     record = renewal_record(state_root, certificate_id)
     if record is not None and record["outcome"] in {"pending", "failed"}:
-        record_path(state_root, certificate_id).unlink(missing_ok=True)
+        end_renewal(state_root, certificate_id)

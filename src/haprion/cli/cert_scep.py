@@ -26,6 +26,7 @@ from haprion.dns_profiles import ProfileError
 from haprion.envelope import Message, envelope, new_request_id
 from haprion.helper_protocol import HelperProtocolError, write_document, write_failure
 from haprion.ndes_state import (
+    end_renewal,
     request_formats,
     request_is_exportable,
     request_is_interface,
@@ -196,6 +197,8 @@ def enroll(
                     interface=interface,
                     exportable=exportable,
                 )
+                # The request on the disk is the row's word now (BBB01).
+                end_renewal(policy.ndes.state_root, certificate_id)
                 doc = envelope(
                     operation=OPERATION,
                     outcome="partial",
@@ -264,9 +267,12 @@ def enroll(
             # Imported and registered: the request is over whatever the
             # publication's exit code says, and `haprion-cert-publish` is
             # the way to finish that - not a resume of a request the CA has
-            # already answered.
+            # already answered. Whatever the renewal pass last said is
+            # about the certificate this one replaced (review 2026-10-29,
+            # round 2, BBB01): the row reads the material again.
             #
             shutil.rmtree(enrolled.directory, ignore_errors=True)
+            end_renewal(policy.ndes.state_root, certificate_id)
             return doc, exit_code
     except ConfigError as exc:
         raise ScepRefusal("dependency_unavailable", str(exc), exc.exit_code) from exc

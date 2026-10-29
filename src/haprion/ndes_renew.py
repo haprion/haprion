@@ -24,7 +24,9 @@ One record per certificate under the NDES state root saying what the last
 attempt did - renewed, pending at the CA, or failed and why - so the
 listing helper can put it on the certificate's row. The record is the run's
 word about itself; the material and the registry are still measured
-directly.
+directly. It names the certificate it tried to renew, and an enrollment
+that imports a certificate or leaves a request with the CA - from any
+entrance - ends it (`ndes_state.end_renewal`).
 """
 
 from __future__ import annotations
@@ -56,6 +58,8 @@ class Candidate:
     not_after: datetime
     days_left: int
     interface: bool = False
+    fingerprint: str = ""
+    """The SHA-256 of the certificate this renewal replaces, for its record."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +113,7 @@ def candidates(
         if isinstance(measured, str):
             problems.append(Outcome(entry.certificate_id, "skipped", measured))
             continue
-        _, facts, _ = measured
+        fingerprint, facts, _ = measured
         days_left = (facts.not_after - now).days
         if entry.certificate_id not in wanted and days_left >= threshold_days:
             continue
@@ -134,6 +138,7 @@ def candidates(
                 facts.not_after,
                 days_left,
                 entry.interface,
+                fingerprint,
             )
         )
     return due, problems
@@ -154,6 +159,19 @@ def outcome_of(candidate: Candidate, document: dict[str, Any], exit_code: int) -
         )
     error = document.get("error") if isinstance(document.get("error"), dict) else {}
     message = error.get("message") if isinstance(error, dict) else None
+    if isinstance(error, dict) and error.get("code") == "busy":
+        #
+        # Another enrollment holds the certificate's lock - *Resume
+        # enrollment*, *Renew…* or the terminal - and its outcome is the one
+        # that counts. Written down as this pass's failure it stood on the
+        # row after that enrollment had finished (review 2026-10-29, round 2,
+        # BBB02); the next pass asks again.
+        #
+        return Outcome(
+            candidate.certificate_id,
+            "skipped",
+            message if isinstance(message, str) and message else "another enrollment is running",
+        )
     return Outcome(
         candidate.certificate_id,
         "failed",
@@ -161,7 +179,11 @@ def outcome_of(candidate: Candidate, document: dict[str, Any], exit_code: int) -
     )
 
 
-def write_record(state_root: Path, outcome: Outcome, *, now: datetime) -> None:
+def write_record(
+    state_root: Path, outcome: Outcome, *, now: datetime, fingerprint: str = ""
+) -> None:
+    """The attempt's record, naming the certificate it tried to renew (`ndes_state.renewal_of`)."""
+
     directory = records_directory(state_root)
     directory.mkdir(mode=0o700, exist_ok=True)
     path = record_path(state_root, outcome.certificate_id)
@@ -170,6 +192,7 @@ def write_record(state_root: Path, outcome: Outcome, *, now: datetime) -> None:
         "attempted_at": now.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "outcome": outcome.outcome,
         "message": outcome.message,
+        **({"fingerprint_sha256": fingerprint} if fingerprint else {}),
     }
     atomic_file.write(path, json.dumps(body).encode("utf-8"), mode=0o600)
 
@@ -196,6 +219,7 @@ def renew(
             outcome = Outcome(candidate.certificate_id, "failed", str(exc) or type(exc).__name__)
         else:
             outcome = outcome_of(candidate, document, exit_code)
-        write_record(state_root, outcome, now=now)
+        if outcome.outcome != "skipped":
+            write_record(state_root, outcome, now=now, fingerprint=candidate.fingerprint)
         outcomes.append(outcome)
     return outcomes

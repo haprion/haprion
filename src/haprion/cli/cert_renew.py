@@ -222,7 +222,11 @@ def renew_ndes(
             f"ndes: {outcome.certificate_id}: {outcome.outcome} {outcome.message}".rstrip(),
             file=errors,
         )
-        failed = failed or outcome.outcome == "failed"
+        failed = (
+            failed
+            or outcome.outcome == "failed"
+            or (outcome.outcome == "skipped" and outcome.certificate_id in only)
+        )
     return failed
 
 

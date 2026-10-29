@@ -91,7 +91,7 @@ from haprion.config import (
 )
 from haprion.git_command import GitError
 from haprion.managed_publish import managed_proxies
-from haprion.ndes_state import remove_request
+from haprion.ndes_state import record_path, remove_request
 from haprion.proxy_model import ModelError
 from haprion.repo_snapshot import PublishError, read_tree_files, resolve_head
 
@@ -494,7 +494,7 @@ def remove_source(
 
 
 def remove_request_state(policy: PathPolicy, certificate_id: str) -> Layer | None:
-    """The NDES request directory, when the policy has an NDES block.
+    """The NDES request directory and the renewal record, when the policy has an NDES block.
 
     A request the CA is still holding has a key and its targets there and
     nothing in the registry; a deletion that left it would leave the ID
@@ -508,6 +508,15 @@ def remove_request_state(policy: PathPolicy, certificate_id: str) -> Layer | Non
     name = f"NDES request {certificate_id}"
     try:
         removed = remove_request(policy.ndes.state_root, certificate_id)
+        #
+        # The renewal pass's record about the certificate goes too: left, a
+        # new certificate under the same ID was read with the old one's
+        # failure (review 2026-10-29, round 2, BBB01).
+        #
+        record = record_path(policy.ndes.state_root, certificate_id)
+        if record.is_file() or record.is_symlink():
+            record.unlink()
+            removed = True
     except OSError as exc:
         return Layer(name, "failed", exc.strerror or str(exc))
     return Layer(name, "removed" if removed else "absent")

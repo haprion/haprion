@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import io
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 
-from haprion import ndes_renew, ndes_state
+from haprion import exit_codes, ndes, ndes_renew, ndes_state
 from haprion.cert_import import import_certificate
 from haprion.cert_inventory import registry_result
 from haprion.cli import cert_renew, cert_scep
@@ -207,6 +208,114 @@ class WhatAnAttemptLeaves(RenewFixture):
                 self.assertNotIn("request_state", row)
                 self.assertEqual("renewal" in row, kept)
 
+    def failed_pass(self, now: datetime, message: str = "CA_REJECTED") -> None:
+        due, _ = self.candidates(now=now, only=("web.example.com",))
+        ndes_renew.renew(
+            due,
+            state_root=self.ndes_policy.state_root,
+            enroll=answering(({"outcome": "failed", "error": {"message": message}}, 1)),
+            now=now,
+        )
+        self.assertEqual(self.listed_row(now)["renewal"]["outcome"], "failed")
+
+    def enrolled(self, state: str, *, terminal: bool) -> int:
+        """One enrollment the way the page's job or `haprion-cert-scep` makes it."""
+
+        directory = ndes_state.request_directory(self.ndes_policy.state_root, "web.example.com")
+        directory.mkdir(mode=0o700, exist_ok=True)
+        enrollment = ndes.Enrollment(
+            state, directory, self.material() if state == "issued" else None
+        )
+        with (
+            mock.patch.object(ndes, "enroll") as engine,
+            mock.patch.object(ndes, "validate_certificate"),
+        ):
+            engine.return_value.__enter__.return_value = enrollment
+            if terminal:
+                return cert_scep.main(
+                    ["--id", "web.example.com", "--resume", "--json"],
+                    policy_path=self.policy_path,
+                    output_stream=io.StringIO(),
+                    error_stream=io.StringIO(),
+                    require_secure=False,
+                    require_root=False,
+                    deployer=self.deploy,
+                    live=self.live,
+                    store=self.store,
+                    lock_path=self.lock,
+                )
+            code, _doc, _errors = self.helper({"id": "web.example.com", "resume": True})
+            return code
+
+    def test_a_renewal_that_succeeds_anywhere_ends_the_pass_s_failure(self) -> None:
+        """Review 2026-10-29, round 2, BBB01: only the pass wrote the record, and only abandon took it.
+
+        *Renew…*, *Resume enrollment* and the terminal command left the
+        failure on the row for as long as the new certificate was not due.
+        """
+
+        now = datetime(2026, 9, 15, 20, 0, tzinfo=UTC)
+        for terminal in (False, True):
+            with self.subTest(terminal=terminal):
+                self.failed_pass(now)
+                self.pending("web.example.com")
+                self.assertEqual(self.enrolled("issued", terminal=terminal), 0)
+                self.assertIsNone(
+                    ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
+                )
+                row = self.listed_row(now)
+                self.assertNotIn("renewal", row)
+                self.assertNotIn("request_state", row)
+
+    def test_a_request_the_ca_now_holds_ends_the_pass_s_failure(self) -> None:
+        """BBB02's other half: a resume the CA answers with "pending" is the row's newest word."""
+
+        now = datetime(2026, 9, 15, 20, 0, tzinfo=UTC)
+        for terminal in (False, True):
+            with self.subTest(terminal=terminal):
+                self.pending("web.example.com")
+                self.failed_pass(now, "Certmonger enrollment timed out: CA_UNREACHABLE")
+                self.assertEqual(self.enrolled("pending", terminal=terminal), exit_codes.PARTIAL)
+                row = self.listed_row(now)
+                self.assertNotIn("renewal", row)
+                self.assertEqual(row["request_state"], "pending")
+                ndes_state.remove_request(self.ndes_policy.state_root, "web.example.com")
+
+    def test_a_record_about_an_earlier_certificate_is_not_the_row_s(self) -> None:
+        """The record names the certificate it tried to renew; another one on the row is not its."""
+
+        now = datetime(2026, 9, 15, 20, 0, tzinfo=UTC)
+        self.failed_pass(now)
+        path = ndes_state.record_path(self.ndes_policy.state_root, "web.example.com")
+        written = json.loads(path.read_text())
+        self.assertRegex(written["fingerprint_sha256"], "^[0-9a-f]{64}$")
+        self.assertEqual(written["fingerprint_sha256"], self.listed_row(now)["fingerprint_sha256"])
+        path.write_text(json.dumps({**written, "fingerprint_sha256": "0" * 64}))
+        self.assertNotIn("renewal", self.listed_row(now))
+        # A record written before records named one is the row's when it is
+        # newer than the certificate, and not when it is older.
+        del written["fingerprint_sha256"]
+        made = datetime.fromisoformat(self.listed_row(now)["not_before"])
+        later = (made + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        path.write_text(json.dumps({**written, "attempted_at": later}))
+        self.assertEqual(self.listed_row(now)["renewal"]["outcome"], "failed")
+        path.write_text(json.dumps({**written, "attempted_at": "2000-01-01T00:00:00Z"}))
+        self.assertNotIn("renewal", self.listed_row(now))
+
+    def test_a_busy_enrollment_is_no_attempt_of_the_pass(self) -> None:
+        """Another enrollment holding the lock says nothing about this certificate's renewal."""
+
+        now = datetime(2026, 9, 15, 20, 0, tzinfo=UTC)
+        self.failed_pass(now)
+        due, _ = self.candidates(now=now, only=("web.example.com",))
+        busy = {"outcome": "failed", "error": {"code": "busy", "message": "another enrollment"}}
+        (outcome,) = ndes_renew.renew(
+            due, state_root=self.ndes_policy.state_root, enroll=answering((busy, 75)), now=now
+        )
+        self.assertEqual(outcome.outcome, "skipped")
+        record = ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
+        self.assertEqual((record or {}).get("message"), "CA_REJECTED")
+
     def test_an_exception_from_the_enrollment_is_a_failed_record_not_a_crash(self) -> None:
         now = datetime.now(UTC)
         due, _ = self.candidates(now=now, only=("web.example.com",))
@@ -313,7 +422,7 @@ class ThePassInCertRenew(RenewFixture):
         self.assertIn("ERROR: keeper-alpha.example: not an NDES certificate", errors.getvalue())
 
         def refuse(**kwargs: Any) -> tuple[dict[str, Any], int]:
-            raise cert_scep.ScepRefusal("busy", "another enrollment is running", 75)
+            raise cert_scep.ScepRefusal("profile_unavailable", "the profile is gone", 78)
 
         with mock.patch.object(cert_scep, "enroll", refuse):
             failed = cert_renew.renew_ndes(
@@ -328,7 +437,29 @@ class ThePassInCertRenew(RenewFixture):
             )
         self.assertTrue(failed)
         record = ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
-        self.assertEqual((record or {}).get("message"), "another enrollment is running")
+        self.assertEqual((record or {}).get("message"), "the profile is gone")
+
+        # Busy is no attempt and writes nothing, but a certificate asked for by
+        # name that was not renewed is still the command's failure.
+        def busy(**kwargs: Any) -> tuple[dict[str, Any], int]:
+            raise cert_scep.ScepRefusal("busy", "another enrollment is running", 75)
+
+        errors = io.StringIO()
+        with mock.patch.object(cert_scep, "enroll", busy):
+            failed = cert_renew.renew_ndes(
+                self.policy,
+                self.runtime,
+                only=("web.example.com",),
+                now=self.not_after - timedelta(days=500),
+                errors=errors,
+                policy_path=self.policy_path,
+                live=self.live,
+                store=self.store,
+            )
+        self.assertTrue(failed)
+        self.assertIn("web.example.com: skipped another enrollment is running", errors.getvalue())
+        record = ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
+        self.assertEqual((record or {}).get("message"), "the profile is gone")
 
     def test_the_threshold_comes_from_the_policy(self) -> None:
         self.assertEqual(self.policy.ndes.renew_days, 30)  # type: ignore[union-attr]

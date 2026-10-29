@@ -57,7 +57,7 @@ from haprion.config import (
     Registry,
     cluster_certificates,
 )
-from haprion.ndes_state import pending_requests, renewal_record, request_is_pending
+from haprion.ndes_state import pending_requests, renewal_of, request_is_pending
 
 OPENSSL = "/usr/bin/openssl"
 LETSENCRYPT_ROOT = Path("/etc/letsencrypt")
@@ -587,7 +587,12 @@ def registry_result(
             # failed" with the CA's sentence rather than an expiry creeping.
             #
             if request_root is not None and entry.source.ndes_profile is not None:
-                renewal = renewal_record(request_root, entry.certificate_id)
+                renewal = renewal_of(
+                    request_root,
+                    entry.certificate_id,
+                    fingerprint=fingerprint,
+                    not_before=facts.not_before,
+                )
                 if renewal is not None:
                     row["renewal"] = renewal
             if entry.source.kind == AUTHORITY:

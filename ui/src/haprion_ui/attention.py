@@ -89,6 +89,12 @@ class Item:
 
     @property
     def page(self) -> str:
+        #
+        # A job's row goes to Events, whatever its kind: the kind keys the
+        # acknowledgement and stays (rig 26-10-29).
+        #
+        if self.link.startswith("/jobs"):
+            return "Events"
         return PAGES[self.kind]
 
     @property

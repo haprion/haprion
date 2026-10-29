@@ -956,6 +956,8 @@ class TheManagersOwnServices(unittest.TestCase):
             ("manager", "critical", "alpha", "/jobs#job-12", gone.lease_lapsed_since),
         )
         self.assertEqual(item.message, "running, but no worker has held it since")
+        # Its row goes to Events, not to the Dashboard its kind names (rig 26-10-29).
+        self.assertEqual((item.page, listed["worker"].page), ("Events", "Events"))
         #
         # A lease just run out is a worker restarting or a helper finishing
         # behind its socket; a living lease still holds the worker's row back.

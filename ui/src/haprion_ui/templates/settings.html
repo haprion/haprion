@@ -40,7 +40,7 @@
   <p class="table-note">The served certificate could not be read. The listing is refreshed by the poller; if this stays, check <code>haprion-tls show</code> on the manager.</p>
   {% endif %}
   {% if mismatch %}
-  <p class="preview-notice settings-notice"><span class="status-orb status-warning" aria-hidden="true"></span><strong><code>{{ entry.identifier }}</code> is marked for the interface, but nginx serves another certificate.</strong></p>
+  <p class="preview-notice settings-notice notice-warning"><span class="status-orb status-warning" aria-hidden="true"></span><strong><code>{{ entry.identifier }}</code> is marked for the interface, but nginx serves another certificate.</strong></p>
   {% elif entry and entry.state_active %}
   <p class="preview-notice settings-notice"><span class="badge-spinner" aria-hidden="true"></span><strong>{{ entry.state_label }}</strong>{% if entry.state_detail %} — {{ entry.state_detail }}{% endif %}</p>
   {% endif %}

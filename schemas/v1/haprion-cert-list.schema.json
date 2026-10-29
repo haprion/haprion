@@ -175,7 +175,7 @@
         "readable": { "type": "boolean" },
         "validation_error": { "type": ["string", "null"], "maxLength": 2048 },
         "request_state": {
-          "description": "Additive (C6): an import whose material has not arrived because an NDES enrollment for it is still waiting on the CA, or (C9b) because a signing request made on the manager is waiting for its signature. Absent otherwise.",
+          "description": "Additive (C6): an import whose material has not arrived because an NDES enrollment for it is still waiting on the CA, or (C9b) because a signing request made on the manager is waiting for its signature. Also on a readable import whose NDES renewal request the CA still holds (2026-10-29). Absent otherwise.",
           "const": "pending"
         },
         "request": {

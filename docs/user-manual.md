@@ -2240,7 +2240,8 @@ certificate removes its request state too.
 
 A waiting request is bound to its profile as it was: its revision, its server and that server's CA. A
 profile is therefore not replaced while one of its requests waits; abandon the request first. A resume that
-finds any of them changed names what changed, and is refused.
+finds any of them changed names what changed, and is refused. The row then says **Renewal failed**, and
+*Abandon request…* gives the request up from there too.
 
 **Scheduled renewal.** `haprion-certbot-renew.timer` runs `haprion-cert-renew` twice a day. After
 certbot's renewals, it makes an NDES pass. It renews every registered certificate whose source names an
@@ -2258,7 +2259,8 @@ asking again.
 
 One record per certificate under `<state_root>/renewals/` says what the last attempt did. The listing
 shows a failure as **Renewal failed**, with the CA's sentence, rather than letting the expiry date
-creep closer.
+creep closer. Abandoning a renewal's request removes its record, so the row shows the expiry again and
+the next pass asks anew.
 
 **Renewing by hand.**
 

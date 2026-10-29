@@ -500,16 +500,54 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
         self.assertIn("CA_REJECTED", row.state_detail)
         self.assertIn("(tried 26-09-15 ", row.state_detail)
 
+        self.assertFalse(row.request_pending)
         entry["renewal"]["outcome"] = "pending"
+        entry["request_state"] = "pending"
         row = registry_of(view := overview(with_registry(reading(), entry))).certificates[0]
         self.assertEqual((row.state_label, row.state_tone), ("Renewal pending", "info"))
+        self.assertTrue(row.request_pending)
 
         entry["renewal"]["outcome"] = "renewed"
+        del entry["request_state"]
         view = overview(
             with_registry(reading(), entry),
             status=(status(node(("example.com", "a" * 64)), node(("example.com", "a" * 64))),),
         )
         self.assertEqual(registry_of(view).certificates[0].state_label, "On all 2 nodes")
+
+    def test_the_request_on_the_disk_decides_whether_a_renewal_waits(self) -> None:
+        """Review 2026-10-29 again, BB01 and BB03.
+
+        A renewal whose resume was refused still holds its request, and the
+        row's *Abandon request…* is the way out its sentence names; a
+        "pending" record whose request was given up is no request.
+        """
+
+        entry = registered(fingerprint="a" * 64, kind="import")
+        entry["source"]["ndes_profile"] = "certserver1"
+        entry["renewal"] = {
+            "attempted_at": "2026-09-15T05:00:00Z",
+            "outcome": "failed",
+            "message": "the NDES server's CA changed since the request waiting at the CA was made",
+        }
+        entry["request_state"] = "pending"
+        nodes = (status(node(("example.com", "a" * 64)), node(("example.com", "a" * 64))),)
+        row = registry_of(overview(with_registry(reading(), entry), status=nodes)).certificates[0]
+        self.assertEqual(row.state_label, "Renewal failed")
+        self.assertTrue(row.request_pending)
+
+        entry["renewal"]["outcome"] = "pending"
+        del entry["request_state"]
+        row = registry_of(overview(with_registry(reading(), entry), status=nodes)).certificates[0]
+        self.assertEqual(row.state_label, "On all 2 nodes")
+        self.assertFalse(row.request_pending)
+
+        # A renewal asked for from the page has no record of the pass's own.
+        del entry["renewal"]
+        entry["request_state"] = "pending"
+        row = registry_of(overview(with_registry(reading(), entry), status=nodes)).certificates[0]
+        self.assertEqual(row.state_label, "Renewal pending")
+        self.assertTrue(row.request_pending)
 
     def test_a_node_that_is_behind_is_counted_and_named_as_such(self) -> None:
         entry = registered(fingerprint="a" * 64)

@@ -308,3 +308,17 @@ def renewal_record(state_root: Path, certificate_id: str) -> dict[str, Any] | No
     ):
         return None
     return {"attempted_at": attempted, "outcome": outcome, "message": message[:1000]}
+
+
+def forget_renewal(state_root: Path, certificate_id: str) -> None:
+    """Drop a renewal record that speaks of a request, once the request is given up.
+
+    A `pending` or `failed` record is the last pass's word about the request
+    an abandon has just removed; left, the row went back to *Renewal pending*
+    or kept pointing at *Abandon request* (review 2026-10-29 again, BB03). A
+    `renewed` record is about a certificate that exists, and stays.
+    """
+
+    record = renewal_record(state_root, certificate_id)
+    if record is not None and record["outcome"] in {"pending", "failed"}:
+        record_path(state_root, certificate_id).unlink(missing_ok=True)

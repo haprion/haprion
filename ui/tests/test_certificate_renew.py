@@ -69,12 +69,21 @@ class TheWay(unittest.TestCase):
         pending = ndes_row("wait.example.net", readable=False)
         pending["request_state"] = "pending"
         pending["validation_error"] = "no material at its source yet"
-        registry = rows(registered(fingerprint="a" * 64), ndes_row(), pending)
+        failed = ndes_row("failed.example.net")
+        failed["renewal"] = {
+            "attempted_at": "2026-10-29T05:00:00Z",
+            "outcome": "failed",
+            "message": "the profile's revision changed since the request waiting at the CA was made",
+        }
+        failed["request_state"] = "pending"
+        registry = rows(registered(fingerprint="a" * 64), ndes_row(), pending, failed)
         for chosen, words in (
             ([], "Select one"),
             (["example.com", "ndes.example.net"], "one certificate at a time"),
             (["nobody.example"], "not in the registry"),
             (["wait.example.net"], "still holding"),
+            # Review 2026-10-29 again, BB01: asking anew was refused by the engine.
+            (["failed.example.net"], "Abandon request"),
         ):
             with (
                 self.subTest(chosen=chosen),

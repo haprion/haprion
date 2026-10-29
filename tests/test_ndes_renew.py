@@ -139,6 +139,74 @@ class WhatAnAttemptLeaves(RenewFixture):
             self.assertEqual(row["renewal"], record)
             self.assertTrue(row["readable"])
 
+    def listed_row(self, now: datetime) -> dict[str, Any]:
+        listed = registry_result(
+            self.runtime.registry,  # type: ignore[arg-type]
+            certificate_root=self.dist,
+            renewed=frozenset(),
+            now=now,
+            live=self.live,
+            store=self.store,
+            request_root=self.ndes_policy.state_root,
+        )
+        (row,) = [r for r in listed["certificates"] if r["id"] == "web.example.com"]
+        self.assertIsInstance(row, dict)
+        return dict(row)
+
+    def test_a_readable_row_says_when_the_ca_still_holds_a_request_for_it(self) -> None:
+        """Review 2026-10-29 again, BB01: a failed resume left a request nobody could abandon.
+
+        The row's word is the request on the disk, not the record: a failed
+        renewal may still hold one, and a "pending" record may outlive it.
+        """
+
+        now = datetime(2026, 9, 15, 20, 0, tzinfo=UTC)
+        due, _ = self.candidates(now=now, only=("web.example.com",))
+        self.assertNotIn("request_state", self.listed_row(now))
+        self.pending("web.example.com")
+        for answer in (
+            ({"outcome": "partial", "result": {"state": "pending"}}, 0),
+            ({"outcome": "failed", "error": {"code": "bad_input", "message": "changed"}}, 65),
+        ):
+            ndes_renew.renew(
+                due, state_root=self.ndes_policy.state_root, enroll=answering(answer), now=now
+            )
+            row = self.listed_row(now)
+            self.assertTrue(row["readable"])
+            self.assertEqual(row["request_state"], "pending")
+        ndes_state.remove_request(self.ndes_policy.state_root, "web.example.com")
+        self.assertNotIn("request_state", self.listed_row(now))
+
+    def test_an_abandon_takes_the_renewal_s_word_about_the_request_with_it(self) -> None:
+        """Review 2026-10-29 again, BB03: the row went back to Renewal pending after 90 s."""
+
+        now = datetime(2026, 9, 15, 20, 0, tzinfo=UTC)
+        due, _ = self.candidates(now=now, only=("web.example.com",))
+        for outcome, answer, kept in (
+            ("pending", ({"outcome": "partial", "result": {"state": "pending"}}, 0), False),
+            ("failed", ({"outcome": "failed", "error": {"message": "changed"}}, 65), False),
+            ("renewed", ({"outcome": "done", "result": {"state": "issued"}}, 0), True),
+        ):
+            with self.subTest(outcome=outcome):
+                ndes_renew.renew(
+                    due, state_root=self.ndes_policy.state_root, enroll=answering(answer), now=now
+                )
+                self.pending("web.example.com")
+                code = cert_scep.main(
+                    ["--id", "web.example.com", "--abandon", "--json"],
+                    policy_path=self.policy_path,
+                    output_stream=io.StringIO(),
+                    error_stream=io.StringIO(),
+                    require_secure=False,
+                    require_root=False,
+                )
+                self.assertEqual(code, 0)
+                record = ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
+                self.assertEqual(record is not None, kept)
+                row = self.listed_row(now)
+                self.assertNotIn("request_state", row)
+                self.assertEqual("renewal" in row, kept)
+
     def test_an_exception_from_the_enrollment_is_a_failed_record_not_a_crash(self) -> None:
         now = datetime.now(UTC)
         due, _ = self.candidates(now=now, only=("web.example.com",))

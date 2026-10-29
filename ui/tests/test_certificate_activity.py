@@ -442,6 +442,61 @@ class AbandoningARequest(DeleteRouteTestCase):
             "Queued the abandon of the NDES request for wait.example.com (job 7)",
         )
 
+    def failed_reading(self, *, waiting: bool) -> Any:
+        failed = registered("wait.example.com", fingerprint="a" * 64, kind="import")
+        failed["source"]["ndes_profile"] = "certserver1"
+        failed["renewal"] = {
+            "attempted_at": "2026-10-29T05:00:00Z",
+            "outcome": "failed",
+            "message": "the NDES server's CA changed since the request waiting at the CA was "
+            "made, and it resumes only as it was made. Give it up with Abandon request under "
+            "Certificates, or haprion-cert-scep --id wait.example.com --abandon",
+        }
+        if waiting:
+            failed["request_state"] = "pending"
+        return with_registry(certificate_reading(), failed)
+
+    def test_a_renewal_whose_resume_was_refused_can_be_abandoned(self) -> None:
+        """Review 2026-10-29 again, BB01: the sentence sent the reader to a grey button."""
+
+        for waiting in (True, False):
+            with (
+                self.subTest(waiting=waiting),
+                mock.patch(
+                    "haprion_ui.db.cluster_certificates",
+                    return_value=[self.failed_reading(waiting=waiting)],
+                ),
+            ):
+                self.queued.clear()
+                client = self.writing_client()
+                page = client.get("/certificates?view=registry&open=wait.example.com").text
+                self.assertIn(">Renewal failed<", page)
+                self.assertEqual(
+                    'value="wait.example.com" form="certificate-selection" data-delete-pick '
+                    "data-pending" in page,
+                    waiting,
+                )
+                self.assertNotIn(">Resume enrollment<", page)
+                token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+                response = client.post(
+                    "/certificates/abandon/confirm",
+                    data={
+                        "certificate": "wait.example.com",
+                        "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                        auth.CSRF_FIELD: token,
+                    },
+                    follow_redirects=False,
+                )
+                if waiting:
+                    self.assertEqual(response.status_code, 303)
+                    (job,) = self.queued
+                    self.assertEqual(
+                        job["payload"], {"id": "wait.example.com", "action": "abandon"}
+                    )
+                else:
+                    self.assertIn("has no request waiting at the CA", response.text)
+                    self.assertEqual(self.queued, [])
+
     def test_a_row_without_a_waiting_request_is_refused(self) -> None:
         client = self.writing_client()
         token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])

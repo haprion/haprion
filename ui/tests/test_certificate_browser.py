@@ -231,6 +231,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
         waiting = registered(fingerprint="a" * 64, kind="import")
         waiting["source"]["ndes_profile"] = "certserver1"
         waiting["renewal"] = {"attempted_at": "2026-09-15T05:00:00Z", "outcome": "pending"}
+        waiting["request_state"] = "pending"
         other = registered("other.example.com", fingerprint="b" * 64, kind="import")
         rows = [with_registry(reading(), waiting, other)]
         with (

@@ -72,7 +72,14 @@ def selection(chosen: Sequence[str], registry: Mapping[str, RegistryCertificateV
         return Renewal(row, "certbot")
     if row.source_kind == "import":
         if row.ndes_profile:
-            if row.state_label in {"Request pending", "Renewal pending"}:
+            if row.request_pending and row.state_label == "Renewal failed":
+                # Its resume was refused; a new request is refused while it
+                # waits (review 2026-10-29 again, BB01).
+                raise SelectionProblem(
+                    f"{row.identifier} has a request the CA is still holding that can no longer "
+                    "resume; give it up with Abandon request… first."
+                )
+            if row.request_pending:
                 raise SelectionProblem(
                     f"{row.identifier} has an enrollment the CA is still holding; "
                     "resume it from its row instead of asking again."
@@ -126,12 +133,7 @@ def waiting_selection(
     if len(names) != 1:
         raise SelectionProblem("Select the one certificate whose request to abandon.")
     row = registry.get(names[0])
-    if (
-        row is None
-        or row.placeholder
-        or not row.ndes_profile
-        or row.state_label not in {"Request pending", "Renewal pending"}
-    ):
+    if row is None or row.placeholder or not row.request_pending:
         raise SelectionProblem(f"{names[0]} has no request waiting at the CA.")
     if row.state_active:
         raise SelectionProblem(f"{row.identifier} has a job running; wait for its row to settle.")

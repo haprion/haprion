@@ -27,7 +27,7 @@ from haprion.cert_import import Material, assemble, check, split_blocks
 from haprion.config import CERTIFICATE_ID, HOSTNAME, SYSTEM_TRUST, NdesPolicy, NdesServer
 from haprion.dns_profiles import ProfileError
 from haprion.ndes_profiles import OpenedProfile, check_challenge, check_endpoint, secure_directory
-from haprion.ndes_state import remove_request, request_directory
+from haprion.ndes_state import forget_renewal, remove_request, request_directory
 
 MAX_BYTES = 1024 * 1024
 COMMAND_TIMEOUT = 15
@@ -613,7 +613,10 @@ def abandon(policy: NdesPolicy, certificate_id: str, *, require_secure: bool = T
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return remove_request(policy.state_root, certificate_id)
+            removed = remove_request(policy.state_root, certificate_id)
+            if removed:
+                forget_renewal(policy.state_root, certificate_id)
+            return removed
         finally:
             os.close(fd)
     except BlockingIOError:

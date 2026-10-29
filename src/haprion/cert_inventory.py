@@ -541,22 +541,25 @@ def registry_result(
             **_unmeasured(now),
         }
         fingerprint: str | None = None
+        #
+        # An import whose material has not arrived may be a request the CA
+        # is still holding (C6), and one whose material is readable may be
+        # waiting on a renewal's. Said as its own field so the listing can
+        # tell "waiting" from "broken" without parsing the sentence, and so
+        # a renewal whose resume was refused still offers its abandon
+        # (review 2026-10-29 again, BB01).
+        #
+        if (
+            request_root is not None
+            and entry.source.kind == "import"
+            and request_is_pending(request_root, entry.certificate_id)
+        ):
+            row["request_state"] = "pending"
         measured = measure_registered(
             entry, certificate_root=certificate_root, live=live, store=store
         )
         if isinstance(measured, str):
             row["validation_error"] = measured
-            #
-            # An import whose material has not arrived may be a request the
-            # CA is still holding (C6). Said as its own field so the listing
-            # can tell "waiting" from "broken" without parsing the sentence.
-            #
-            if (
-                request_root is not None
-                and entry.source.kind == "import"
-                and request_is_pending(request_root, entry.certificate_id)
-            ):
-                row["request_state"] = "pending"
         else:
             fingerprint, facts, row["measured_at"] = measured
             #

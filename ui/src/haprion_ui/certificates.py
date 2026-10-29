@@ -203,6 +203,13 @@ class RegistryCertificateView:
     #
     ndes_profile: str = ""
     #
+    # Whether the CA still holds an NDES request for this row, as the
+    # listing helper read the request state itself - not the label: a
+    # renewal whose resume was refused is *Renewal failed* and still has one
+    # to abandon (review 2026-10-29 again, BB01).
+    #
+    request_pending: bool = False
+    #
     # The manager's own interface certificate (B188). Drawn on the settings
     # page, not in this list: it has no targets and is published to nginx.
     #
@@ -975,7 +982,13 @@ def _registry_state(
             _text(renewal.get("message"), "The scheduled renewal failed") + when,
             "critical",
         )
-    if renewal.get("outcome") == "pending":
+    #
+    # Pending is the request on the disk, not the record: an abandon removes
+    # the request, and a record saying "pending" may outlive it (review
+    # 2026-10-29 again, BB03); a renewal asked for from the page has no
+    # record of the pass's own.
+    #
+    if entry.get("request_state") == "pending":
         return (
             "Renewal pending",
             "The CA is holding the renewal request; resume it from the row",
@@ -1208,6 +1221,8 @@ def _registry_certificate(
         valid_from=_date(entry.get("not_before")) if readable else "—",
         csr_pem=csr_pem,
         ndes_profile=_text(source.get("ndes_profile"), ""),
+        request_pending=bool(_text(source.get("ndes_profile"), ""))
+        and entry.get("request_state") == "pending",
         interface=entry.get("interface") is True,
         exportable=entry.get("exportable") is True,
         fullchain_pem=_chain(entry.get("fullchain_pem"))

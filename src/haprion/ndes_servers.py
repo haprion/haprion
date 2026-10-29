@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -420,14 +421,27 @@ def _forget_ca(previous: object, servers: Sequence[Any], directory: Path) -> Non
     """Remove a CA file no server names any more, when the manager wrote it.
 
     Only a file in the manager's own directory: a policy from before B385
-    names its CA file where the installation put it.
+    names its CA file where the installation put it. A server names a file
+    as its `issuing_ca` or as its `tls_ca` - the same root may issue both -
+    and the names are compared as paths, not as the policy spells them
+    (review 2026-10-29 again, BB05).
     """
 
-    if not isinstance(previous, str) or Path(previous).parent != directory:
+    if not isinstance(previous, str):
         return
-    if any(isinstance(s, dict) and s.get("issuing_ca") == previous for s in servers):
+    path = os.path.normpath(previous)
+    if Path(path).parent != Path(os.path.normpath(directory)):
         return
-    Path(previous).unlink(missing_ok=True)
+    if any(
+        isinstance(s, dict)
+        and any(
+            isinstance(s.get(field), str) and os.path.normpath(s[field]) == path
+            for field in ("issuing_ca", "tls_ca")
+        )
+        for s in servers
+    ):
+        return
+    Path(path).unlink(missing_ok=True)
 
 
 def _dns_keys(data: dict[str, Any]) -> list[Any] | None:
@@ -672,6 +686,7 @@ def _remove(
         _write_policy(policy_path, without_ndes(text))
     for entry in gone:
         _forget_ca(entry.get("issuing_ca"), servers, ca_directory)
+        _forget_ca(entry.get("tls_ca"), servers, ca_directory)
     return {"endpoint": endpoint}
 
 

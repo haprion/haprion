@@ -591,6 +591,40 @@ class ThePolicy(unittest.TestCase):
         )
         self.assertEqual(list(self.cas.iterdir()), [])
 
+    def test_a_ca_file_a_server_trusts_for_its_https_stays(self) -> None:
+        """Review 2026-10-29 again, BB05: only `issuing_ca` was counted as a reference.
+
+        Written the way a hand edit may name it (`./`), which the comparison
+        of the policy's string missed too.
+        """
+
+        first = Path(str(self.add()["issuing_ca"]))
+        data = yaml.safe_load(self.policy.read_text())
+        data["ndes"]["servers"][0]["tls_ca"] = f"{first.parent}/./{first.name}"
+        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
+        (self.root / "renewed").mkdir()
+        self.answer = Answer(self.root / "renewed")
+        renewed = [
+            self.answer.sha256(self.answer.pki.intermediate),
+            self.answer.sha256(self.answer.pki.root),
+        ]
+        second = Path(str(self.add(fingerprints=renewed)["issuing_ca"]))
+        self.assertTrue(first.exists())
+        # Another server that borrows the file keeps it past this one's removal.
+        data = yaml.safe_load(self.policy.read_text())
+        del data["ndes"]["servers"][0]["tls_ca"]
+        data["ndes"]["servers"].append(
+            {"endpoint": OTHER, "issuing_ca": str(second), "tls_ca": str(first)}
+        )
+        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
+        data["ndes"]["servers"][0]["issuing_ca"] = str(first)
+        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
+        ndes_servers.remove(
+            ENDPOINT, used_by=lambda: (), policy_path=self.policy, ca_directory=self.cas
+        )
+        self.assertTrue(first.exists())
+        self.assertTrue(second.exists())
+
     def test_a_ca_file_outside_the_manager_s_directory_is_never_removed(self) -> None:
         # A policy from before B385 names its CA file where the installation put it.
         own = self.root / "issuing-ca.pem"

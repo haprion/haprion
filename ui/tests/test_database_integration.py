@@ -2017,6 +2017,36 @@ class ARealDatabase(unittest.TestCase):
             waiting.join(timeout=10)
             other.rollback()
 
+    def test_a_sign_in_s_lock_cannot_meet_the_worker_s_or_the_poller_s(self) -> None:
+        """Review 26-10-29, A4: `hashtext` of a name is an int4, and the one-key form took
+        it in the singleton locks' space: a name hashed to the worker's key waited 5 s."""
+
+        from haprion_ui import poller, worker
+
+        role = os.environ["HAPRION_UI_TEST_WORKER_ROLE"]
+        with (
+            psycopg.connect(f"{DSN} user={role}", autocommit=True) as held,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+        ):
+            self.assertTrue(db.try_singleton_lock(held, worker.WORKER_LOCK_KEY))
+            db.lock_sign_in(connection, username="Operator")
+            taken = connection.execute(
+                "select classid::bigint, objsubid from pg_locks"
+                " where locktype = 'advisory' and pid = pg_backend_pid()"
+            ).fetchall()
+            one_key, two_keys = connection.execute(
+                "select pg_try_advisory_xact_lock(%(key)s::integer),"
+                " pg_try_advisory_xact_lock(%(space)s::integer, %(key)s::integer)",
+                {"key": worker.WORKER_LOCK_KEY, "space": db.SIGN_IN_LOCKS},
+            ).fetchone() or (None, None)
+            kept = connection.execute("select hashtext('app_user_keep_an_admin')").fetchone()
+            connection.rollback()
+        self.assertEqual(taken, [(db.SIGN_IN_LOCKS, 2)])
+        self.assertEqual((one_key, two_keys), (False, True))
+        # The last-admin guard keeps the one-key form, which 0100's trigger takes as
+        # well, on a fixed name whose hash is neither singleton key.
+        self.assertNotIn(kept, ((worker.WORKER_LOCK_KEY,), (poller.POLLER_LOCK_KEY,)))
+
     def test_two_saves_of_the_status_list_at_once_both_finish(self) -> None:
         """Review 2026-10-22, 3-9: both saw the address missing, and the second met the
         unique index - a 500 for somebody saving the same list a moment later."""

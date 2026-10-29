@@ -90,16 +90,19 @@ MAX_PENDING_SECONDS = 2 * 60 * 60
 # One worker, held to it by the database as the poller is (review 26-10-29,
 # Q02). A second - started by hand as the account while one runs - would
 # settle the first one's job as abandoned when a renewal came late, and run it
-# again beside a helper still at work. The poller's key and this one's differ;
-# nothing else in the installation takes an advisory lock.
+# again beside a helper still at work. The poller's key and this one's differ.
+# The other advisory locks in the installation are held for a transaction: a
+# sign-in's takes two keys, a space no one-key lock is in (db.SIGN_IN_LOCKS),
+# and the last-admin guard's is the hash of a fixed name that is neither key
+# (review 26-10-29, A4).
 #
 WORKER_LOCK_KEY = 0x48415057
 
 #
 # How long a borrow from the pool may wait for a connection during a job: one
 # tick. The pool's own wait is 30 s, and a renewal that waited it ran past the
-# lease's margin, so the run was stopped after its lease had ended rather than
-# before (review 26-10-29, Q02).
+# lease's margin, so the run was told to stop after its lease had ended; one
+# tick's wait tells it before (review 26-10-29, Q02).
 #
 BORROW_SECONDS = execution.TICK_SECONDS
 

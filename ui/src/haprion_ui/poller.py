@@ -54,8 +54,9 @@ logger = logging.getLogger("haprion_ui.poller")
 
 #
 # An arbitrary constant, and it only has to be stable and unlikely to collide
-# with another application's advisory locks in the same database. Nothing else
-# in this installation takes one.
+# with another application's advisory locks in the same database. The worker's
+# key differs, and the installation's other advisory locks cannot meet it (see
+# `worker.WORKER_LOCK_KEY`).
 #
 POLLER_LOCK_KEY = 0x48415052
 

@@ -108,6 +108,17 @@ def record_login_attempt(
         )
 
 
+#
+# The first of the two keys a sign-in's lock is taken with (review 26-10-29,
+# A4). A name's `hashtext` is an int4, and taken alone it went into the
+# one-key space the worker's and the poller's singleton locks hold: a name
+# whose hash is one of their keys - chosen by whoever sends the form, before
+# any check - waited out the web's statement timeout. PostgreSQL keeps the
+# two-key locks apart from the one-key ones, so this space meets neither.
+#
+SIGN_IN_LOCKS = 1
+
+
 def lock_sign_in(connection: Connection[Any], *, username: str) -> None:
     """Hold one name's sign-ins to one at a time until the caller's transaction ends (3-3).
 
@@ -117,8 +128,9 @@ def lock_sign_in(connection: Connection[Any], *, username: str) -> None:
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select pg_advisory_xact_lock(hashtext('haprion-sign-in:' || lower(%(username)s)))",
-            {"username": username},
+            "select pg_advisory_xact_lock(%(space)s::integer,"
+            " hashtext('haprion-sign-in:' || lower(%(username)s)))",
+            {"space": SIGN_IN_LOCKS, "username": username},
         )
 
 

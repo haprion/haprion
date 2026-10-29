@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from haprion_ui.db.accounts import (
     _ACCOUNT_ROWS,
+    SIGN_IN_LOCKS,
     Account,
     AccountRow,
     AuthenticatedSession,
@@ -372,6 +373,7 @@ __all__ = [
     "ProxyDraft",
     "RequestConflict",
     "SAVED",
+    "SIGN_IN_LOCKS",
     "STORED_DELTAS",
     "SealedProfile",
     "StatusAccess",

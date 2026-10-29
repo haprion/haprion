@@ -9,6 +9,7 @@ import io
 import json
 import multiprocessing
 import os
+import ssl
 import subprocess
 import tempfile
 import threading
@@ -26,7 +27,7 @@ import yaml
 
 from haprion import exit_codes, ndes_server_socket, ndes_servers, safe_yaml
 from haprion.cli import ndes_server, ndes_server_helper
-from haprion.config import ConfigError, load_policy
+from haprion.config import SYSTEM_TRUST, ConfigError, load_policy
 from tests.contract_schema import assert_contract
 from tests.test_cert_import import OPENSSL, Pki
 
@@ -65,9 +66,11 @@ class Answer:
             check=True,
         ).stdout
         self.asked: list[str] = []
+        self.trusted: list[Path] = []
 
-    def __call__(self, endpoint: str) -> bytes:
+    def __call__(self, endpoint: str, trust: Path) -> bytes:
         self.asked.append(endpoint)
+        self.trusted.append(trust)
         return self.der
 
     def digest(self, path: Path, algorithm: str) -> str:
@@ -265,7 +268,7 @@ class AChainWithoutItsRoot(unittest.TestCase):
         self.assertEqual([a.from_store for a in found], [False, False])
 
     def test_the_root_is_taken_from_the_store_and_confirmed_with_the_rest(self) -> None:
-        found = ndes_servers.authorities(ENDPOINT, fetch=lambda _: self.short, trust=self.store)
+        found = ndes_servers.authorities(ENDPOINT, fetch=lambda *_: self.short, trust=self.store)
         root = self.answer.sha256(self.answer.pki.root)
         self.assertEqual(
             [(a.subject, a.from_store) for a in found],
@@ -277,7 +280,7 @@ class AChainWithoutItsRoot(unittest.TestCase):
     def test_a_root_the_store_does_not_have_is_refused(self) -> None:
         self.store.write_text(Pki(self.root / "third", names=("x.example.com",)).root.read_text())
         with self.assertRaises(ndes_servers.NdesServerError) as caught:
-            ndes_servers.authorities(ENDPOINT, fetch=lambda _: self.short, trust=self.store)
+            ndes_servers.authorities(ENDPOINT, fetch=lambda *_: self.short, trust=self.store)
         self.assertEqual(caught.exception.code, "no_root")
         self.assertIn("gives no root CA", str(caught.exception))
 
@@ -287,7 +290,7 @@ class AChainWithoutItsRoot(unittest.TestCase):
         impostor = Pki(self.root / "impostor" / "pki", names=("x.example.com",))
         self.store.write_text(impostor.root.read_text())
         with self.assertRaises(ndes_servers.NdesServerError) as caught:
-            ndes_servers.authorities(ENDPOINT, fetch=lambda _: self.short, trust=self.store)
+            ndes_servers.authorities(ENDPOINT, fetch=lambda *_: self.short, trust=self.store)
         self.assertEqual(caught.exception.code, "no_root")
 
 
@@ -322,6 +325,49 @@ class TheAuthorities(unittest.TestCase):
         self.assertIn("HTTP 404", str(caught.exception))
         self.assertTrue(stream.closed)
 
+    def test_https_is_checked_against_the_store_it_is_given(self) -> None:
+        """Review 2026-10-29 again, BB07: always the system's, while Certmonger used `tls_ca`."""
+
+        opener = mock.Mock(open=mock.Mock(side_effect=OSError("stop")))
+        own = Path("/nonexistent/tls.pem")
+        with (
+            mock.patch.object(ndes_servers, "_opener", return_value=opener) as built,
+            self.assertRaises(ndes_servers.NdesServerError),
+        ):
+            ndes_servers.get_ca_cert(ENDPOINT, own)
+        built.assert_called_once_with(own)
+
+    def test_an_https_certificate_not_trusted_is_said_as_such(self) -> None:
+        """Review 2026-10-29 again, BB07: it was "did not answer"."""
+
+        untrusted = urllib.error.URLError(
+            ssl.SSLCertVerificationError(
+                1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
+            )
+        )
+        for trust, store in (
+            (SYSTEM_TRUST, "this manager's certificate store"),
+            (Path("/nonexistent/tls.pem"), "the server's tls_ca /nonexistent/tls.pem"),
+        ):
+            opener = mock.Mock(open=mock.Mock(side_effect=untrusted))
+            with (
+                self.subTest(trust=trust),
+                mock.patch.object(ndes_servers, "_opener", return_value=opener),
+                self.assertRaises(ndes_servers.NdesServerError) as caught,
+            ):
+                ndes_servers.get_ca_cert(ENDPOINT, trust)
+            self.assertEqual(caught.exception.code, "tls")
+            self.assertIn(f"its HTTPS certificate is not trusted by {store}", str(caught.exception))
+            self.assertNotIn("did not answer", str(caught.exception))
+        opener = mock.Mock(open=mock.Mock(side_effect=ssl.SSLError(1, "handshake failure")))
+        with (
+            mock.patch.object(ndes_servers, "_opener", return_value=opener),
+            self.assertRaises(ndes_servers.NdesServerError) as caught,
+        ):
+            ndes_servers.get_ca_cert(ENDPOINT, SYSTEM_TRUST)
+        self.assertEqual(caught.exception.code, "tls")
+        self.assertIn("TLS failed", str(caught.exception))
+
     def test_an_address_that_is_not_https_is_refused_before_anything_is_asked(self) -> None:
         asked: list[str] = []
         with self.assertRaises(ndes_servers.NdesServerError) as caught:
@@ -333,7 +379,7 @@ class TheAuthorities(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             leaf = Answer(Path(raw)).pki.leaf.read_bytes()
             with self.assertRaises(ndes_servers.NdesServerError) as caught:
-                ndes_servers.authorities(ENDPOINT, fetch=lambda _: leaf)
+                ndes_servers.authorities(ENDPOINT, fetch=lambda *_: leaf)
         self.assertEqual(caught.exception.code, "bad_answer")
 
 
@@ -821,6 +867,20 @@ class TheHelperAndTheCommand(unittest.TestCase):
         )
         self.journal = err.getvalue()
         return code, assert_contract("haprion-ndes-server", out.getvalue())
+
+    def test_a_known_server_is_asked_over_the_https_its_tls_ca_trusts(self) -> None:
+        """Review 2026-10-29 again, BB07: the fetch and the completion use one store."""
+
+        self.ask(action="add", endpoint=ENDPOINT, sha256=self.chain)
+        self.assertEqual(self.answer.trusted[-1], SYSTEM_TRUST)
+        data = yaml.safe_load(self.policy.read_text())
+        own = self.root / "tls.pem"
+        own.write_text(self.answer.pki.root.read_text())
+        data["ndes"]["servers"][0]["tls_ca"] = str(own)
+        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
+        code, _ = self.ask(action="fetch", endpoint=ENDPOINT)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.answer.trusted[-1], own)
 
     def test_fetch_shows_the_cas_and_add_confirms_one(self) -> None:
         code, fetched = self.ask(action="fetch", endpoint=ENDPOINT)

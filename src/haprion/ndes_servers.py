@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import re
+import ssl
 import subprocess
 import tempfile
 import time
@@ -84,7 +85,10 @@ MAX_COMPLETION = 4
 #
 TOP_LEVEL = re.compile(r"^(?!-\s|#)\S", re.MULTILINE)
 
-type Fetch = Callable[[str], bytes]
+#
+# The server's address, and the store its HTTPS is checked against.
+#
+type Fetch = Callable[[str, Path], bytes]
 
 
 class NdesServerError(Exception):
@@ -127,24 +131,57 @@ class Authority:
         }
 
 
-def _opener() -> urllib.request.OpenerDirector:
-    """HTTPS checked with the system's store, straight to the server.
+def _opener(trust: Path) -> urllib.request.OpenerDirector:
+    """HTTPS checked with `trust`, straight to the server.
 
     Review 2026-10-29, B07: `urlopen` followed a redirect to http and took a
     proxy from the environment, so the CA shown could come over neither the
     HTTPS nor the server the administrator named.
     """
 
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}), http_answer.NoRedirect())
+    context = ssl.create_default_context(cafile=str(trust))
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPSHandler(context=context),
+        http_answer.NoRedirect(),
+    )
 
 
-def get_ca_cert(endpoint: str) -> bytes:
-    """`GetCACert` over HTTPS, the server's certificate checked with the system's store."""
+def _store(trust: Path) -> str:
+    if trust == SYSTEM_TRUST:
+        return "this manager's certificate store"
+    return f"the server's tls_ca {trust}"
+
+
+def _tls_said(error: ssl.SSLError) -> str:
+    """OpenSSL's own words: why the certificate failed, or the reason it gave."""
+
+    for words in (getattr(error, "verify_message", None), getattr(error, "reason", None)):
+        if isinstance(words, str) and words:
+            return words
+    return http_answer.said(error)
+
+
+def get_ca_cert(endpoint: str, trust: Path = SYSTEM_TRUST) -> bytes:
+    """`GetCACert` over HTTPS, the server's certificate checked with `trust`.
+
+    The store is the one enrollment checks the server with - its `tls_ca`,
+    or the system's - and the one a chain short of its root is completed
+    from (review 2026-10-29 again, BB07).
+    """
 
     url = endpoint + "?operation=GetCACert&message=ca"
     deadline = time.monotonic() + DEADLINE
     try:
-        with _opener().open(url, timeout=TIMEOUT) as response:
+        opener = _opener(trust)
+    except (OSError, ssl.SSLError) as exc:
+        raise NdesServerError(
+            "tls",
+            f"{_store(trust)} cannot be read: {http_answer.said(exc)}",
+            exit_codes.CONFIG,
+        ) from None
+    try:
+        with opener.open(url, timeout=TIMEOUT) as response:
             data = http_answer.read_body(response, MAX_ANSWER, deadline=deadline)
     except urllib.error.HTTPError as exc:
         # The error is the response too, and is closed (review 2026-10-28, F04).
@@ -160,6 +197,25 @@ def get_ca_cert(endpoint: str) -> bytes:
                 "unreachable", f"{endpoint} answered HTTP {exc.code}", exit_codes.UNAVAILABLE
             ) from None
     except http_answer.BROKEN as exc:
+        #
+        # The server answered, but not over HTTPS this manager trusts - the
+        # likeliest failure at a first setup, and not "did not answer" (review
+        # 2026-10-29 again, BB07). URLError carries the TLS error as its reason.
+        #
+        reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            raise NdesServerError(
+                "tls",
+                f"{endpoint}: its HTTPS certificate is not trusted by {_store(trust)} "
+                f"({_tls_said(reason)}); add the CA that issued it to the store",
+                exit_codes.UNAVAILABLE,
+            ) from None
+        if isinstance(reason, ssl.SSLError):
+            raise NdesServerError(
+                "tls",
+                f"{endpoint}: TLS failed: {_tls_said(reason)}",
+                exit_codes.UNAVAILABLE,
+            ) from None
         raise NdesServerError(
             "unreachable",
             f"{endpoint} did not answer: {http_answer.said(exc)}",
@@ -201,7 +257,7 @@ def authorities(
             "bad_input", "the address must be an HTTPS URL without credentials or query"
         ) from None
     try:
-        certificates, _keys = read_bytes(fetch(endpoint))
+        certificates, _keys = read_bytes(fetch(endpoint, trust))
         issuers = set()
         authority_pems = []
         for certificate in certificates:

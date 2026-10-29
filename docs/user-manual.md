@@ -5889,7 +5889,8 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
 *Certificates → NDES profiles* with *Add NDES server*:
 
 1. Enter the server's `mscep.dll` address and choose *Fetch the CA*. The manager asks the server for its CA
-   certificates over HTTPS, checked against the manager's system certificate store, and shows each one with
+   certificates over HTTPS, checked against the manager's system certificate store (or, for a server already
+   confirmed, its `tls_ca` when it has one), and shows each one with
    its SHA-256 and its SHA-1 thumbprint - the thumbprint Windows shows in the certificate's details. It asks
    the server directly, without a proxy, and does not follow a redirect: it names the address to give instead.
 2. Compare them with the CA's own certificates. The one marked *issues for NDES* is the CA the server enrolls
@@ -5910,6 +5911,9 @@ other CA certificates, and confirming the new ones replaces them. Its profiles a
 
 The HTTPS certificate of the NDES server must be trusted by the manager's system store. A server signed by an
 internal CA needs that CA in the store, as any other internal HTTPS service does (`update-ca-certificates`).
+When it is not, *Fetch the CA* says the server's HTTPS certificate is not trusted. A server with its own
+`tls_ca` is checked against that file instead, by the fetch, the completion of its chain and the enrollment
+alike.
 
 A server is removed from the same page, when no profile uses it. The command refuses while a profile applied
 on this manager names the server, or a profile record cannot be read; the interface also refuses while a

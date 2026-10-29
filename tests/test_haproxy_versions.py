@@ -94,6 +94,12 @@ class DpkgOrder(unittest.TestCase):
             with self.subTest(left=left, right=right):
                 self.assertEqual(compare(left, right), dpkg_order(left, right))
 
+    def test_the_epoch_is_what_comes_before_the_first_colon(self) -> None:
+        """Review 26-10-29: an upstream version with a colon of its own took the epoch with it."""
+
+        self.assertEqual(compare("1:1.0:2-1", "2.0-1"), 1)
+        self.assertEqual(compare("1:1.0:2-1", "1:1.0:10-1"), -1)
+
     def test_a_revision_alone_orders_them(self) -> None:
         self.assertEqual(compare("3.0.13-0ubuntu3.4", "3.0.13-0ubuntu3.10"), -1)
         self.assertEqual(compare("3.4.6-1ppa2~resolute", "3.4.6-1ppa1~resolute"), 1)

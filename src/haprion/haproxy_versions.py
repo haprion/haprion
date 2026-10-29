@@ -110,7 +110,7 @@ def compare(left: str, right: str) -> int:
     """-1, 0 or 1 as `dpkg --compare-versions` orders two package versions."""
 
     def split(version: str) -> tuple[int, str, str]:
-        epoch, _, rest = version.rpartition(":") if ":" in version else ("0", "", version)
+        epoch, _, rest = version.partition(":") if ":" in version else ("0", "", version)
         upstream_part, _, revision = rest.rpartition("-") if "-" in rest else (rest, "", "")
         return (int(epoch) if is_digits(epoch) else 0), upstream_part, revision
 

@@ -4426,10 +4426,10 @@ sudo apt update && sudo apt upgrade
 
 The web interface's package updates the running platform itself. It:
 
-1. checks the new release against everything installed;
-2. takes a dump of the database before a schema change;
-3. migrates the database;
-4. installs the platform's service files again;
+1. installs the platform's service files again;
+2. checks the new release against everything installed;
+3. takes a dump of the database before a schema change;
+4. migrates the database;
 5. switches to the new release.
 
 A job that is running is finished first, and new jobs wait. The pages stop answering for a few seconds
@@ -4524,8 +4524,8 @@ The sudo rules, units and site stay as the installed package wrote them; a rollb
 `check-compatibility` names a sudo rule for a helper the target release does not run as a warning, not a
 failure. The package's next update writes the files again.
 
-`--list` shows the releases newest first, ordered by when each release's directory was last changed, not
-by name. A release id ends in a commit hash, which sorts alphabetically and says nothing about when it was
+`--list` shows the releases newest first, ordered by the time of the commit each was built from, not by
+name. A release id ends in a commit hash, which sorts alphabetically and says nothing about when it was
 built. Without `--to`, the target is the newest release that is not the current one.
 
 How far back that list reaches is limited. `update-platform-release` keeps the ten newest releases. It

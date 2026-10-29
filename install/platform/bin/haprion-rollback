@@ -113,9 +113,11 @@ link="${platform_root}/current"
 current="$(basename "$(readlink "$link")")"
 
 #
-# Ordered by modification time rather than by name. A release id ends in a
-# commit hash, which sorts alphabetically and says nothing about when it was
-# built - so sorting by name would offer a "previous" release at random.
+# Ordered by modification time rather than by name - the time of the commit
+# the release was built from, which the build gives every file. A release id
+# ends in a commit hash, which sorts alphabetically and says nothing about
+# when it was built - so sorting by name would offer a "previous" release at
+# random.
 #
 mapfile -t known < <(find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
                      | sort -rn | cut -d' ' -f2-)

@@ -306,7 +306,8 @@ proved=yes
 # is reproducible from its commit, so an old directory loses nothing Git
 # holds. The release just activated and the one it replaced always stay,
 # whatever their age: the rollback path is never the one pruned. Ordered by
-# modification time, not name - a release id ends in a commit hash.
+# modification time - the commit's, which the build gives every file - not
+# by name: a release id ends in a commit hash.
 # Said only when there is something to remove: "removed 0" on every update
 # is a line to read that says nothing (Fas 18, 26-10-13).
 #

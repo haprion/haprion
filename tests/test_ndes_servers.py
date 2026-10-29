@@ -293,6 +293,58 @@ class AChainWithoutItsRoot(unittest.TestCase):
             ndes_servers.authorities(ENDPOINT, fetch=lambda *_: self.short, trust=self.store)
         self.assertEqual(caught.exception.code, "no_root")
 
+    def test_a_chain_that_does_not_verify_is_refused_as_issuance_would(self) -> None:
+        """Review 2026-10-29 again, BB04: the server's own chain was judged by its names.
+
+        A root renewed with a new key keeps its name, and a CA past its
+        date keeps both; each was confirmed and every issue failed after.
+        """
+
+        pki = self.answer.pki
+        (self.root / "impostor").mkdir()
+        impostor = Pki(self.root / "impostor" / "pki", names=("x.example.com",))
+        expired = pki.directory / "expired-issuing.pem"
+        subprocess.run(
+            [
+                OPENSSL,
+                "x509",
+                "-req",
+                "-in",
+                str(pki.directory / "Test Issuing CA.csr"),
+                "-CA",
+                str(pki.root),
+                "-CAkey",
+                str(pki.root_key),
+                "-not_before",
+                "20200101000000Z",
+                "-not_after",
+                "20200201000000Z",
+                "-extfile",
+                str(pki.directory / "Test Issuing CA.ext"),
+                "-out",
+                str(expired),
+            ],
+            capture_output=True,
+            check=True,
+        )
+        for name, answer in (
+            (
+                "a root of the same name and another key",
+                pkcs7(pki.intermediate, impostor.root, pki.leaf),
+            ),
+            ("an issuing CA past its date", pkcs7(expired, pki.root, pki.leaf)),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaises(ndes_servers.NdesServerError) as caught,
+            ):
+                ndes_servers.authorities(
+                    ENDPOINT, fetch=lambda *_, given=answer: given, trust=self.store
+                )
+            self.assertEqual(caught.exception.code, "bad_chain")
+            self.assertIn("do not verify as a chain", str(caught.exception))
+            self.assertIn("CN=Test Issuing CA", str(caught.exception))
+
 
 class TheAuthorities(unittest.TestCase):
     def test_the_cas_the_issuing_one_first_and_never_the_ra(self) -> None:

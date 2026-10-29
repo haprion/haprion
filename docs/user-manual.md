@@ -5897,7 +5897,9 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
    for; the others are the rest of its chain. A server that gives its chain without the root CA has it
    completed from the manager's certificate store - the store its HTTPS is checked against - and the root is
    marked *from this manager's certificate store*. When the store has no CA that issued the chain, the server
-   is refused; add its root CA to the store first.
+   is refused; add its root CA to the store first. A chain that does not verify - a root with the right name
+   but another key, or a CA past its date - is refused too, with OpenSSL's reason, since every issue would
+   fail on it.
 3. Choose *Confirm this CA*, or *Confirm these CAs* when there are several. The manager asks the server again
    and adds it only if it still gives exactly these certificates. All of them are saved for the server.
 

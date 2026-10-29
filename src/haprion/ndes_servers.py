@@ -292,7 +292,51 @@ def authorities(
         raise NdesServerError(
             "bad_answer", f"{endpoint} answered with no CA: {exc}", exit_codes.UNAVAILABLE
         ) from None
+    problem = _chain_problem(found)
+    if problem is not None:
+        raise NdesServerError(
+            "bad_chain",
+            f"the CA certificates {endpoint} gives do not verify as a chain: {problem}",
+        )
     return tuple(sorted(found, key=lambda authority: not authority.issues_ra))
+
+
+def _chain_problem(found: Sequence[Authority]) -> str | None:
+    """Why the set does not verify as a chain, as issuance will check it; None when it does.
+
+    Issuance verifies against exactly what is saved, without `-partial_chain`
+    (`ndes.validate_certificate`). The server's own part of the chain was
+    judged by its names, so a root renewed with a new key, or a CA past its
+    date, was confirmed and every issue failed after (review 2026-10-29
+    again, BB04). Each CA certificate is verified against the whole set.
+    """
+
+    with tempfile.TemporaryDirectory() as raw:
+        bundle = Path(raw) / "set.pem"
+        bundle.write_text("".join(authority.pem for authority in found))
+        for authority in found:
+            try:
+                verified = subprocess.run(  # noqa: S603 - fixed binary, a private temporary file
+                    [OPENSSL, "verify", "-CAfile", str(bundle)],
+                    input=authority.pem,
+                    capture_output=True,
+                    text=True,
+                    timeout=OPENSSL_TIMEOUT,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                return f"{authority.subject}: openssl could not be run"
+            if verified.returncode:
+                said = next(
+                    (
+                        line.partition(" lookup: ")[2] or line
+                        for line in verified.stderr.splitlines()
+                        if line.startswith("error ") and " depth " in line
+                    ),
+                    "verification failed",
+                )
+                return f"{authority.subject}: {said}"
+    return None
 
 
 def _authority(

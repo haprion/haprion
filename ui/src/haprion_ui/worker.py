@@ -746,7 +746,7 @@ def run_one_job(
 
     if job.held_decision == "discard":
         #
-        # Held since the manager started, and an admin said it should not run
+        # Held after a restart or a restore, and an admin said it should not run
         # (0082). Ended here, as every job is, and not started again. One taken
         # before (attempts) had begun: recovery put it back in the queue - a
         # publish whose version was recorded - and nothing more of it runs

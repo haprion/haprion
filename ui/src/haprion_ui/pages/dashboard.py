@@ -754,7 +754,7 @@ def build_router(config: Config) -> APIRouter:
         csrf_token: Annotated[str, Form(max_length=128)],
         decision: Annotated[str, Form(max_length=16)],
     ) -> Response:
-        """Run or discard a job held since the manager last started (0082, review 2026-10-20 R1)."""
+        """Run or discard a job held after a restart or a restore (0082, review 2026-10-20 R1)."""
 
         gate = admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):

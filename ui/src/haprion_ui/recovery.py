@@ -227,7 +227,9 @@ def judge(
         return Judgement(
             "abandon",
             "operation_unknown",
-            f"there is no completion evidence defined for {job.operation}",
+            "its helper's receipt could not be read, so what it did is not known"
+            if job.operation in KEEPS_ANSWER
+            else f"there is no completion evidence defined for {job.operation}",
         )
 
     if history is None or history.poll_error is not None or history.outcome != "done":
@@ -370,7 +372,7 @@ def adjudicate(
             #
             # Its helper's answer is kept and waits with it: what follows in
             # the job - a node change's deploy - is new work, and a job held
-            # since the manager started runs nothing new before an admin's
+            # after a restart or a restore runs nothing new before an admin's
             # Run (review 2026-10-28, F01). Discard ends it on that answer.
             # Not said every pass: Jobs and Needs attention say it (26-10-29).
             #

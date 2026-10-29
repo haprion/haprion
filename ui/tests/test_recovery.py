@@ -376,11 +376,13 @@ class AHelperThatOutlivedItsWorker(unittest.TestCase):
                     recovery.judge(abandoned("deploy"), None, receipt).code,
                     "operation_repeatable",
                 )
+        unread = recovery.judge(
+            abandoned("cluster_node"), None, answer_receipt.Receipt("unavailable")
+        )
+        self.assertEqual(unread.code, "operation_unknown")
+        # Its evidence is defined; it could not be read (review 26-10-29, b).
         self.assertEqual(
-            recovery.judge(
-                abandoned("cluster_node"), None, answer_receipt.Receipt("unavailable")
-            ).code,
-            "operation_unknown",
+            unread.reason, "its helper's receipt could not be read, so what it did is not known"
         )
 
     def test_an_answer_no_longer_kept_is_said_as_such(self) -> None:

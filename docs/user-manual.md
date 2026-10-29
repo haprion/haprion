@@ -4071,8 +4071,8 @@ widen what may be run; only that file does.
 **A helper that outlives its worker.** The helpers behind sockets - node and cluster changes,
 node backups and restores, receivers - run in systemd units of their own. A worker that is stopped or
 restarted on its own - a UI release, `needrestart` - does not stop them; a reboot does. Nor does a client
-that stops waiting: a node's join runs apt, and a slow mirror can keep it past the 14 minutes the
-worker's client waits. Each helper keeps its answer in `/var/lib/haprion/answers` (root's, readable by the
+that stops waiting: a node's join runs apt, and a slow mirror can keep it past the 14 minutes its
+client waits. Each helper keeps its answer in `/var/lib/haprion/answers` (root's, readable by the
 worker). The job stays *running* while its helper works, and then ends on the helper's own answer, with what follows it in the same job: a node
 change's deploy runs then. A helper that ended without an answer leaves the job `unknown`, and so does
 one a reboot ended mid-work. An answer is kept two weeks from its helper's end. A held job whose answer

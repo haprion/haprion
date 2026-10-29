@@ -167,6 +167,8 @@ fi
 step "Starting the background services"
 for background_unit in "$WORKER_UNIT" "$POLLER_UNIT"; do
     if systemctl cat "$background_unit" >/dev/null 2>&1; then
+        # Past a start limit an earlier release's crashes reached (AA02).
+        systemctl reset-failed "$background_unit" 2>/dev/null || true
         systemctl restart "$background_unit"
         log "  restarted ${background_unit}"
     else
@@ -187,6 +189,7 @@ if systemctl cat "$unit" >/dev/null 2>&1; then
     # restarted, and the web holds the descriptor it was handed until it is.
     socket="${unit%.service}.socket"
     systemctl enable --quiet "$socket"
+    systemctl reset-failed "$socket" "$unit" 2>/dev/null || true
     systemctl restart "$socket" "$unit"
     log "  restarted ${socket} ${unit}"
 

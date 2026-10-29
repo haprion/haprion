@@ -274,6 +274,13 @@ ln -sfn "${releases}/${target}" "${link}.new"
 mv -T "${link}.new" "$link"
 log "  current -> ${target}"
 
+#
+# A release whose web dies at start is restarted every 2 s, and five starts in
+# 10 s is the start limit, manual starts included: a restart after it is
+# refused, and the target would never answer. `reset-failed` sets the count
+# back to zero (review 26-10-29, AA02).
+#
+systemctl reset-failed "${SERVICES[@]}" 2>/dev/null || true
 systemctl restart "${SERVICES[@]}" || true
 
 step "Proving the interface answers"
@@ -301,6 +308,7 @@ if [[ -z "$answered" ]]; then
     warn "the interface did not answer on ${target}; switching back to ${current}"
     ln -sfn "${releases}/${current}" "${link}.new"
     mv -T "${link}.new" "$link"
+    systemctl reset-failed "${SERVICES[@]}" 2>/dev/null || true
     systemctl restart "${SERVICES[@]}" || true
     journalctl -u haprion-web.service --no-pager --lines=15 || true
     die "back on ${current}; ${target} did not answer"

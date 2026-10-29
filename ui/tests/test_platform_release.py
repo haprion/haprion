@@ -156,6 +156,30 @@ class CoordinatedUpdateTests(unittest.TestCase):
         for said in ("rolled back to", "Roll forward with", "rolling forward to", "rolled forward"):
             self.assertNotIn(said, rollback)
 
+    def test_a_restart_is_not_stopped_by_the_start_limit_a_crashing_release_reached(self) -> None:
+        """Review 26-10-29, AA02: the web restarts every 2 s, and five starts in 10 s is the limit.
+
+        A candidate whose web dies at start reaches it; the rollback's restart
+        was then refused, the target never answered, and the rollback switched
+        back to the candidate. `reset-failed` sets the counter to zero.
+        """
+
+        restart = re.compile(r"^( *)systemctl restart (.+?)( \|\| true)?$", re.M)
+        for path in (
+            "install/platform/bin/haprion-rollback",
+            "install/platform/install-ui-release",
+        ):
+            text = (ROOT / path).read_text()
+            found = list(restart.finditer(text))
+            self.assertTrue(found, path)
+            for match in found:
+                with self.subTest(path=path, line=match.group(0).strip()):
+                    before = text[: match.start()].rstrip("\n").rsplit("\n", 1)[-1]
+                    self.assertEqual(
+                        before,
+                        f"{match.group(1)}systemctl reset-failed {match.group(2)} 2>/dev/null || true",
+                    )
+
     def test_both_post_switch_failures_restore_the_previous_release(self) -> None:
         self.assertEqual(self.update.count("    restore_previous && die "), 2)
         self.assertIn('"$rollback" --to "$previous_id"', self.update)

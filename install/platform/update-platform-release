@@ -44,12 +44,21 @@ rollback="/usr/sbin/haprion-rollback"
 state="${UI_DATA}/platform-update"
 marker="${state}/update"
 kept="${state}/kept"
+#
+# A marker that names no release to go back to - its release removed by hand,
+# or purged by a package that left the marker behind - is the operator's to
+# end: only they know whether the running release is the one to keep. Said
+# with the way out; every apt run stopped on it without one (review 26-10-29,
+# AA04).
+#
 unfinished_update() {
-    local RELEASE="" PREVIOUS=""
+    local RELEASE="" PREVIOUS="" again="then run the update again"
     [[ -f "$marker" ]] || return 0
-    read_admin_file "$marker" RELEASE PREVIOUS || die "${marker} cannot be read"
+    [[ -z "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]] || again="then: sudo dpkg --configure -a"
+    local way_out="If ${previous_id} is the release to keep, remove ${marker}, ${again}"
+    read_admin_file "$marker" RELEASE PREVIOUS || die "${marker} cannot be read. ${way_out}"
     [[ -n "$PREVIOUS" && -d "${UI_ROOT}/releases/${PREVIOUS}" ]] \
-        || die "${marker} names no release on disk to go back to (${PREVIOUS:-none})"
+        || die "${marker} names no release on disk to go back to (${PREVIOUS:-none}). ${way_out}"
     previous_id="$PREVIOUS"
     warn "the update to ${RELEASE:-another release} did not complete; this one goes on from ${previous_id}"
 }

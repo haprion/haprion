@@ -303,7 +303,9 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertIn('elif [[ "${files_settled:-}" == candidate ]]; then', body)
         self.assertIn("could not be restored, and ${running} is not proved", body)
 
-    def unfinished(self, marker: str | None) -> subprocess.CompletedProcess[str]:
+    def unfinished(
+        self, marker: str | None, *, dpkg: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         lib = (ROOT / "install/lib.sh").read_text()
         start = lib.index("read_admin_file() {")
         reader = lib[start : lib.index("\n}\n", start) + 3]
@@ -325,6 +327,10 @@ class CoordinatedUpdateTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env={
+                "PATH": "/usr/bin:/bin",
+                **({"DPKG_MAINTSCRIPT_PACKAGE": "haprion-ui"} if dpkg else {}),
+            },
         )
 
     def test_an_update_run_again_goes_on_from_the_release_last_proved(self) -> None:
@@ -339,6 +345,22 @@ class CoordinatedUpdateTests(unittest.TestCase):
         refused = self.unfinished("RELEASE=cand\nPREVIOUS=gone\n")
         self.assertEqual(refused.returncode, 1)
         self.assertIn("names no release on disk to go back to (gone)", refused.stderr)
+
+    def test_a_marker_with_no_way_back_says_the_way_out(self) -> None:
+        """Review 26-10-29, AA04: every apt run stopped on it, and nothing said what to do."""
+
+        for marker in ("RELEASE=cand\nPREVIOUS=gone\n", "not a plain assignment\n"):
+            for dpkg, then in (
+                (False, "then run the update again"),
+                (True, "then: sudo dpkg --configure -a"),
+            ):
+                with self.subTest(marker=marker, dpkg=dpkg):
+                    refused = self.unfinished(marker, dpkg=dpkg)
+                    self.assertEqual(refused.returncode, 1)
+                    self.assertRegex(
+                        refused.stderr,
+                        r"If cand is the release to keep, remove \S+/update, " + then,
+                    )
 
     def test_the_copy_and_the_marker_are_on_disk_and_root_s_alone(self) -> None:
         """Review 26-10-29, A03: the copy was in /tmp, a tmpfs a restart empties."""

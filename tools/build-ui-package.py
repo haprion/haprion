@@ -203,7 +203,8 @@ COMMANDS = (
 # the switch and the proof, by a rollback that failed or by a power cut, was
 # otherwise taken as done (review 26-10-29, A02).
 #
-UPDATE_MARKER = "/var/lib/haprion-ui/platform-update/update"
+UPDATE_STATE = "/var/lib/haprion-ui/platform-update"
+UPDATE_MARKER = f"{UPDATE_STATE}/update"
 #
 # The archive is unpacked beside the releases and moved into place whole, so
 # an interrupted unpack never leaves a directory that looks like a release.
@@ -239,14 +240,16 @@ fi
 """
 #
 # The releases under /opt/haprion-ui are the installer's, not dpkg's (model C);
-# purge is what removes them. Configuration under /etc/haprion and the data
-# under /var/lib/haprion-ui are the operator's and stay.
+# purge is what removes them, and the state of an update under way with them:
+# it names those releases, and a marker left behind stopped every update of the
+# next installation (review 26-10-29, AA04). Configuration under /etc/haprion
+# and the data under /var/lib/haprion-ui are the operator's and stay.
 #
 POSTRM = f"""\
 #!/bin/sh
 set -e
 if [ "$1" = purge ]; then
-    rm -rf {ROOT}
+    rm -rf {ROOT} {UPDATE_STATE}
 fi
 """
 

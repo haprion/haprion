@@ -4451,7 +4451,8 @@ If the update fails, it says why in its own output, and nothing has changed for 
 release is still running, with the files it ran with. Correct what the output names, then run the update
 again with `sudo dpkg --configure -a`. If the previous release could not be put back either, the output
 says so: the new release runs, not yet proved. Every later update, of that release or a newer one, goes
-on from the release last proved, and goes back to it if it fails after its switch.
+on from the release last proved, and goes back to it if it fails after its switch. Until then the update
+keeps what it goes back to in `/var/lib/haprion-ui/platform-update`.
 
 A newer certbot that fails its trial renewal is not made current. The update says so, the previous
 certbot keeps renewing, and the update goes on.

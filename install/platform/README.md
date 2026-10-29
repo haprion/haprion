@@ -107,6 +107,12 @@ update fails, the package is left unconfigured, the previous release is the one
 running, and the files it replaced are back. `./refresh-platform-files` is that
 part on its own.
 
+Until an update is proved or undone, its state is in
+`/var/lib/haprion-ui/platform-update`, root's alone: `update` names the release it
+goes back to, and `kept` holds the platform files it replaced. The next run, of
+any release, goes on from there. `apt purge haprion-ui` removes it with the
+releases.
+
 **Which packages a change releases, and in what order, is decided in
 [`CONTRIBUTING.md` — Releasing](../../CONTRIBUTING.md#releasing).**
 Read it before running this command. In short: a commit that changes both the

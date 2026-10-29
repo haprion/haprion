@@ -241,6 +241,32 @@ class TheTree(unittest.TestCase):
         self.assertEqual(TOOL.UPDATE_MARKER, f"{accounts.UI_DATA}/platform-update/update")
         self.assertIn('state="${UI_DATA}/platform-update"\nmarker="${state}/update"\n', update)
 
+    def test_a_purge_takes_the_update_s_state_with_the_releases(self) -> None:
+        """Review 26-10-29, AA04: the marker outlived the releases it names.
+
+        After a purge and a new installation it named a release no longer on
+        disk, and every update stopped on it. The data beside it stays.
+        """
+
+        for argument, gone in (("purge", True), ("remove", False)):
+            with self.subTest(argument=argument), tempfile.TemporaryDirectory() as raw:
+                here = Path(raw)
+                state = here / "data/platform-update"
+                (state / "kept").mkdir(parents=True)
+                (state / "update").write_text("RELEASE=b\nPREVIOUS=a\n")
+                (here / "data/backups").mkdir()
+                (here / "opt/releases/a").mkdir(parents=True)
+                script = TOOL.POSTRM.replace(TOOL.UPDATE_STATE, str(state)).replace(
+                    TOOL.ROOT, f"{here}/opt"
+                )
+                subprocess.run(  # fixed interpreter, the package's own script
+                    ["/bin/sh", "-c", script, "postrm", argument], check=True
+                )
+                self.assertEqual(state.exists(), not gone)
+                self.assertEqual((here / "opt").exists(), not gone)
+                self.assertTrue((here / "data/backups").exists())
+        self.assertEqual(TOOL.UPDATE_MARKER, f"{TOOL.UPDATE_STATE}/update")
+
     def test_the_update_test_takes_the_way_back_and_asks_the_check(self) -> None:
         """Review 26-10-29, A04: only the way that works had run, and no check after it."""
 

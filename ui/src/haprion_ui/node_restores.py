@@ -206,6 +206,8 @@ class RestoreRun:
     `stage` is what the page asks for next:
 
     ``working``            a job is queued or running; the page refreshes
+    ``held``               that job waits for an admin's Run or Discard on Jobs
+                           (`held_job`), queued before the manager last started
     ``prepare_failed``     the run was never created on the manager
     ``fingerprint``        paste the line on the target, then enter its fingerprint
     ``confirm``            the preview found no problems; type the node's name
@@ -251,6 +253,8 @@ class RestoreRun:
     overwrite: Mapping[str, Any] | None = None
     # With stage `unknown`: what the last question found, or "" before one was asked.
     standing: str = ""
+    # With stage `held`: the job that waits for Run or Discard.
+    held_job: int | None = None
 
     @property
     def backup_failed(self) -> bool:
@@ -268,7 +272,7 @@ class RestoreRun:
 
     @property
     def active(self) -> bool:
-        return self.stage == "working"
+        return self.stage in {"working", "held"}
 
     @property
     def askable(self) -> bool:
@@ -416,6 +420,17 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         else:
             error = _error(discard)
 
+    held_job = None
+    if stage == "working":
+        #
+        # The one job of the run the queue holds active, held since the
+        # manager last started: it waits for an admin, not for a worker
+        # (review 26-10-29, C06).
+        #
+        held = [job for job in jobs if job.state in ACTIVE_STATES and job.waits_for_decision]
+        if held:
+            stage, held_job = "held", held[-1].id
+
     target_facts = preview.get("target") if isinstance(preview.get("target"), dict) else None
     return RestoreRun(
         run=run,
@@ -432,6 +447,7 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         profile=test if isinstance(test, dict) else None,
         stage=stage,
         working=working,
+        held_job=held_job,
         paste=str(_body(prepared).get("paste") or ""),
         plan=plan,
         target_facts=target_facts,
@@ -488,7 +504,7 @@ def step_states(restore: RestoreRun) -> dict[str, str]:
     """Where each of the three steps stands: done, current, failed or waiting."""
 
     order = ("prepare", "preview", "run")
-    if restore.stage == "working" and restore.jobs[-1].operation != DISCARD:
+    if restore.stage in {"working", "held"} and restore.jobs[-1].operation != DISCARD:
         latest = restore.jobs[-1].operation
         at = {PREPARE: 0, PREVIEW: 1, RUN: 2, STATUS: 2}[latest]
         return {
@@ -521,6 +537,7 @@ def usable_run(run: str) -> bool:
 #
 STAGE_LABELS: dict[str, tuple[str, str]] = {
     "working": ("Running", "info"),
+    "held": ("Held", "warning"),
     "prepare_failed": ("Not prepared", "critical"),
     "fingerprint": ("Waiting for the fingerprint", "warning"),
     "confirm": ("Waiting for confirmation", "warning"),

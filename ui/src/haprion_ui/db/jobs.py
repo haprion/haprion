@@ -250,7 +250,7 @@ def operation_jobs(connection: Connection[Any], operation: str, *, limit: int = 
         cursor.execute(
             "select id, request_id, operation, cluster, payload, state, created_at, "
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
-            "       idempotency_key, attempts "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by "
             "  from job "
             " where operation = %(operation)s "
             " order by created_at desc, id desc "
@@ -301,7 +301,7 @@ def restore_jobs(connection: Connection[Any], run: str) -> list[Job]:
         cursor.execute(
             "select id, request_id, operation, cluster, payload, state, created_at, "
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
-            "       idempotency_key, attempts "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by "
             "  from job "
             " where operation in ('node_restore_prepare', 'node_restore_preview', "
             "                     'node_restore', 'node_restore_discard', "

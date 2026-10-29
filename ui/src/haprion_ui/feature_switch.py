@@ -53,7 +53,8 @@ def restore_waiting(connection: Any) -> bool:
     ]
     runs = node_restores.recent_runs(rows, shown=metrics.shown, now=datetime.now(UTC))
     waiting = {
-        node_restores.STAGE_LABELS[stage][0] for stage in ("working", "fingerprint", "confirm")
+        node_restores.STAGE_LABELS[stage][0]
+        for stage in ("working", "held", "fingerprint", "confirm")
     }
     return any(run.label in waiting for listed in runs.values() for run in listed)
 

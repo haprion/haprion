@@ -3084,8 +3084,9 @@ node itself, or a test with its own host name, address and VIP. The run's own pa
 Each step is one job - `node_restore_prepare`, `node_restore_preview`, `node_restore` - run by the
 worker through the root helper on `node-restore.sock`, with the same engine as the command. The page is
 drawn from those jobs alone; nothing else is stored. While a job runs, it holds the cluster's job slot,
-so a deploy to that cluster waits. *Discard this run* on the run's page is the fourth job,
-`node_restore_discard`.
+so a deploy to that cluster waits. A job held since the manager last started shows as *Held*, with a
+link to it on *Events → Jobs*, where an admin answers it. *Discard this run* on the run's page is the
+fourth job, `node_restore_discard`.
 
 **When the run's job loses its answer.** The job ends `unknown`, because the helper may have carried on
 as root and changed the node. The page says *Outcome unknown* rather than failed. *Ask for the outcome*

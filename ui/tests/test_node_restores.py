@@ -191,6 +191,28 @@ class TheRunPage(unittest.TestCase):
             {"prepare": "current", "preview": "waiting", "run": "waiting"},
         )
 
+    def test_a_held_job_is_held_and_names_the_job_to_answer(self) -> None:
+        """Review 26-10-29, C06: it was drawn as running while it waited for Run."""
+
+        for state in ("pending", "running"):
+            with self.subTest(state=state):
+                held = replace(job("node_restore", state, number=3), held_since=PREPARED.created_at)
+                restore = self.view(PREPARED, PREVIEWED, held)
+                self.assertEqual(restore.stage, "held")
+                self.assertEqual(restore.held_job, 3)
+                self.assertTrue(restore.active)
+                self.assertFalse(restore.discardable)
+                self.assertEqual(
+                    node_restores.step_states(restore),
+                    {"prepare": "done", "preview": "done", "run": "current"},
+                )
+        answered = replace(
+            job("node_restore", "pending", number=3),
+            held_since=PREPARED.created_at,
+            held_decision="run",
+        )
+        self.assertEqual(self.view(PREPARED, PREVIEWED, answered).stage, "working")
+
     def test_prepared_asks_for_the_fingerprint_with_the_line_to_paste(self) -> None:
         restore = self.view(PREPARED)
         self.assertEqual(restore.stage, "fingerprint")
@@ -644,6 +666,16 @@ class FollowingARun(RestoreRouteTestCase):
             page,
         )
         self.assertIn("Preparing restore.", page)
+
+    def test_a_held_run_says_where_it_is_answered(self) -> None:
+        self.runs = [
+            replace(job("node_restore_prepare", "pending", number=4), held_since=SOON),
+        ]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn(
+            'Held until an admin answers on <a href="/jobs#job-4">Events → Jobs</a>.', page
+        )
+        self.assertNotIn("Preparing restore.", page)
 
     def test_a_warning_s_command_is_offered_with_a_copy_button(self) -> None:
         done = fixture("haprion-node-restore", "done.json")

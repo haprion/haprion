@@ -779,7 +779,9 @@ def build_router(config: Config) -> APIRouter:
         # Another admin answered first, or the job ended: said, rather than a
         # page that looks as if the answer was taken (review 26-10-29, b).
         #
-        return RedirectResponse("/jobs" if taken else f"/jobs?not_held={job_id}", status_code=303)
+        return RedirectResponse(
+            "/jobs" if taken else "/jobs?not_held=" + str(job_id), status_code=303
+        )
 
     @router.get("/jobs", response_class=HTMLResponse)
     def latest_jobs(request: Request) -> Response:
@@ -831,7 +833,7 @@ def build_router(config: Config) -> APIRouter:
                 "jobs": overview,
                 "claim_pause": claim_pause,
                 "management_writes": config.management_writes,
-                "not_held": int(not_held) if not_held.isdigit() and len(not_held) < 19 else None,
+                "not_held": int(not_held) if is_digits(not_held) and len(not_held) < 19 else None,
                 "section": "jobs",
                 "view": "jobs",
             },

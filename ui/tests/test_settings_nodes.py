@@ -748,7 +748,7 @@ class AClusterBeingCreated(NodesPage):
             result={"error": {"code": "node_unreachable", "message": "gamma-a did not answer"}},
         )
         page, busy = self.page([failed], "/settings/new-cluster?creating=gamma")
-        self.assertIn("Creating the cluster failed: gamma", page.text)
+        self.assertIn("Creating the cluster was refused: gamma", page.text)
         self.assertIn("gamma-a did not answer", page.text)
         self.assertIn('href="/jobs#job-41"', page.text)
         self.assertIn('name="block_1"', page.text)

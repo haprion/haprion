@@ -233,10 +233,7 @@ def build_router(config: Config) -> APIRouter:
                 if earlier is None:
                     if isinstance(refused, db.RequestConflict):
                         raise refused
-                    return again(
-                        refusals.not_finishing(refused)
-                        or f"A job is already running for {cluster}. Wait for it to finish, then ask again."
-                    )
+                    return again(refusals.conflict_sentence(refused))
                 job = earlier
             else:
                 #

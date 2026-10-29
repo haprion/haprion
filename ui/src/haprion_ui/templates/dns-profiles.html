@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_certificate_job.html" import certificate_job_notice %}
 {% from "_back.html" import back_button %}
 {% block title %}DNS profiles — Haprion{% endblock %}
 {% block head_extra %}{% if refresh %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}{% endblock %}
@@ -21,7 +22,7 @@
 {% endif %}
 
 {% if certificate_job %}
-<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; a profile can be saved once it has finished.{% if refresh %} This page refreshes until then.{% endif %}</p>
+{% call certificate_job_notice(certificate_job) %}The queue runs one certificate job at a time; a profile can be saved once it has finished.{% if refresh %} This page refreshes until then.{% endif %}{% endcall %}
 {% endif %}
 
 {% for row in rows if row.status.attention_message and row.profile.id == just_removed %}

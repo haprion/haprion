@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_certificate_job.html" import certificate_job_notice %}
 {% from "_back.html" import back_button %}
 {% from "_target-row.html" import target_row %}
 {% block title %}{{ selection.label if selection else 'Certificate targets' }} — Haprion{% endblock %}
@@ -65,7 +66,7 @@
       <li>The job refuses a certificate a published proxy in that cluster still names, that is the cluster's default, or that is the last one the cluster has — and says why on its row. The others go through.</li>
       {% endif %}
     </ul>
-    {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish first.</p>{% endif %}
+    {% if certificate_job %}{% call certificate_job_notice(certificate_job) %}Wait for it to finish first.{% endcall %}{% endif %}
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button class="{{ 'secondary-button deploy-button' if adding else 'danger-button' }}" type="submit" data-target-submit{% if certificate_job or not selection.offered %} disabled{% endif %}>{{ selection.label }} the chosen targets</button></div>
     </div>

@@ -140,32 +140,49 @@ CONFLICT_SENTENCES: dict[type[Exception], str] = {
 #
 # A job that holds the place and does not finish by itself (review 26-10-29,
 # Q07/R05): "try again when it has finished" sent somebody to wait for nothing.
+# The forms that see one before they are sent say the same (`jobs.InFlight`).
 #
-HELD_BUSY = (
-    "A job held after a restart or a restore holds the queue here."
-    " It waits for an admin's Run or Discard on Events → Jobs."
-)
-NO_WORKER_BUSY = (
-    "The job that holds the queue here has no worker, and does not finish by itself."
-    " Events → Jobs shows it."
-)
+HELD_BUSY = jobs.HELD_BUSY
+NO_WORKER_BUSY = jobs.NO_WORKER_BUSY
 
 
 def not_finishing(exc: Exception, now: datetime | None = None) -> str | None:
     """The sentence for a busy queue whose job does not finish by itself, or None."""
 
-    if isinstance(exc, db.ClusterBusy | db.CertificateBusy) and exc.active is not None:
-        if exc.active.waits_for_decision:
-            return HELD_BUSY
-        if jobs.no_worker(exc.active, now or datetime.now(UTC)):
-            return NO_WORKER_BUSY
+    if isinstance(exc, db.ClusterBusy | db.CertificateBusy):
+        return jobs.not_finishing(exc.active, now or datetime.now(UTC))
     return None
 
 
-def conflict_sentence(exc: Exception) -> str:
-    """The one sentence a refusal is answered with, by what holds the queue."""
+def conflict_sentence(exc: Exception, default: str | None = None) -> str:
+    """The one sentence a refusal is answered with, by what holds the queue.
 
-    return not_finishing(exc) or CONFLICT_SENTENCES[type(exc)]
+    `default` is a route's own sentence for a queue that is merely busy, where
+    the common one would name the wrong thing: a switch that queues a job on
+    every cluster, a command that answers in its own words (review 26-10-29, A3).
+    """
+
+    return not_finishing(exc) or default or CONFLICT_SENTENCES[type(exc)]
+
+
+#
+# What a redirect carries for a busy queue, so that the page it lands on can
+# say it (`?servers=`, `?blocked=`), and the sentence each one is.
+#
+BUSY_NOTICES = {
+    "busy": CONFLICT_SENTENCES[db.ClusterBusy],
+    "held": HELD_BUSY,
+    "no-worker": NO_WORKER_BUSY,
+}
+
+
+def busy_query(exc: Exception, now: datetime | None = None) -> str:
+    """The `BUSY_NOTICES` word for this refusal."""
+
+    sentence = not_finishing(exc, now)
+    return (
+        "held" if sentence == HELD_BUSY else "no-worker" if sentence == NO_WORKER_BUSY else "busy"
+    )
 
 
 def _from_a_browser(request: Request) -> bool:

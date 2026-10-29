@@ -9,6 +9,7 @@ the job the worker runs, for an admin, with the servers named by address.
 
 from __future__ import annotations
 
+import html
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -18,7 +19,7 @@ from uuid import uuid4
 
 from haprion.proxy_model import load_proxy
 
-from haprion_ui import auth, db, demo, health, server_card
+from haprion_ui import auth, db, demo, health, refusals, server_card
 from haprion_ui.db import ClusterStatus
 from tests.test_login import configuration
 from tests.test_object_page import DraftReading
@@ -404,7 +405,19 @@ class TheButtons(DraftReading):
 
         self.assertEqual(answer.headers["location"], "/proxies/edge-demo/public-web?servers=busy")
         page = client.get(answer.headers["location"])
-        self.assertIn("A job is already running for this cluster", page.text)
+        self.assertIn("This cluster is already running a job.", page.text)
+
+    def test_a_cluster_held_by_a_job_that_does_not_finish_says_so(self) -> None:
+        """Review 26-10-29, A3: "try again when it has finished" of a held job."""
+
+        client = self.writing_client()
+        held = replace(queued(state="pending"), held_since=datetime.now(UTC))
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy(active=held)):
+            answer = self.post(client)
+        self.assertEqual(answer.headers["location"], "/proxies/edge-demo/public-web?servers=held")
+        page = html.unescape(client.get(answer.headers["location"]).text)
+        self.assertIn(refusals.HELD_BUSY, page)
+        self.assertNotIn("when it has finished", page)
 
     def test_a_state_the_worker_does_not_run_is_refused(self) -> None:
         answer = self.post(self.writing_client(), state="disable")

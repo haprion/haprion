@@ -9,6 +9,7 @@ the button is a courtesy, and what stops a reader or a stale form is here.
 
 from __future__ import annotations
 
+import html
 import tempfile
 import unittest
 from dataclasses import replace
@@ -18,7 +19,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haprion_ui import auth, certificate_form, db
+from haprion_ui import auth, certificate_form, db, jobs
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
 from tests.test_login import LoginTestCase, configuration
@@ -377,6 +378,23 @@ class TheFormPage(CertificateFormRouteTestCase):
 
         self.assertIn("Issuing certificate is in progress", page)
         self.assertIn("disabled>Request the certificate", page)
+
+    def test_a_held_certificate_job_is_said_as_one_that_does_not_finish(self) -> None:
+        """Review 26-10-29, A3: "Held is in progress ... once it has finished"."""
+
+        held = replace(
+            queued(operation="cert_issue", cluster=None, state="pending"),
+            held_since=datetime.now(UTC),
+        )
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[held]):
+            page = self.writing_client().get("/certificates/new").text
+        self.assertIn(jobs.HELD_BUSY, html.unescape(page))
+        self.assertNotIn("is in progress", page)
+        self.assertIn("disabled>Request the certificate", page)
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy(active=held)):
+            response = self.post(self.writing_client())
+        self.assertIn(jobs.HELD_BUSY, html.unescape(response.text))
+        self.assertNotIn("Wait for it to finish", response.text)
 
     def test_only_an_in_effect_dns_profile_is_offered(self) -> None:
         now = datetime.now(UTC)

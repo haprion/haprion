@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_certificate_job.html" import certificate_job_notice %}
 {% import "_sort.html" as sort %}
 {% block title %}Settings — Haprion{% endblock %}
 {% block head_extra %}{% if certificate_job %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}{% endblock %}
@@ -16,7 +17,7 @@
 </section>
 
 {% if certificate_job %}
-<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> This page refreshes until it has finished.</p>
+{% call certificate_job_notice(certificate_job) %}This page refreshes until it has finished.{% endcall %}
 {% endif %}
 {% if done %}
 <p class="preview-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>{{ done }}</strong></p>

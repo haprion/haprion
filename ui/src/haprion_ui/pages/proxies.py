@@ -39,6 +39,7 @@ from haprion_ui import (
     objects,
     operations,
     proxies,
+    refusals,
     search_index,
     server_card,
 )
@@ -680,9 +681,11 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.ClusterBusy:
+            except db.ClusterBusy as busy:
                 connection.rollback()
-                return RedirectResponse(back + "?servers=busy", status_code=303)
+                return RedirectResponse(
+                    back + "?servers=" + refusals.busy_query(busy), status_code=303
+                )
             db.record_audit_event(
                 connection,
                 actor=gate.username,
@@ -757,9 +760,11 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.ClusterBusy:
+            except db.ClusterBusy as busy:
                 connection.rollback()
-                return RedirectResponse(back + "?blocked=busy", status_code=303)
+                return RedirectResponse(
+                    back + "?blocked=" + refusals.busy_query(busy), status_code=303
+                )
             db.record_audit_event(
                 connection,
                 actor=gate.username,

@@ -294,7 +294,7 @@ class TheObjectPageAndTheDashboard(DraftReading):
 
         self.assertEqual(answer.headers["location"], "/proxies/edge-demo/public-web?blocked=busy")
         page = client.get(answer.headers["location"])
-        self.assertIn("A job is already running for this cluster", page.text)
+        self.assertIn("This cluster is already running a job.", page.text)
 
     def test_only_an_admin_with_a_valid_form_may_unblock(self) -> None:
         self.assertEqual(self.post(self.writing_client(role="reader")).status_code, 403)

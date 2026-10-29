@@ -675,7 +675,7 @@ class StartingARun(RestoreRouteTestCase):
         with mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy()):
             response = self.start(self.writing_client())
         self.assertEqual(response.status_code, 200)
-        self.assertIn("A job is already running for alpha", response.text)
+        self.assertIn("This cluster is already running a job.", response.text)
 
 
 class FollowingARun(RestoreRouteTestCase):

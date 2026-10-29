@@ -180,14 +180,8 @@ MAX_SEARCH_PAGE = 10000
 # Why the Servers card's buttons did nothing, by `?servers=` (B263). A queued
 # job needs no sentence: the buttons give way to its spinner.
 #
-SERVER_NOTICES = {
-    "none": "Tick the servers first.",
-    "busy": "A job is already running for this cluster. Try again when it has finished.",
-}
-BLOCKED_NOTICES = {
-    "none": "Tick the addresses first.",
-    "busy": SERVER_NOTICES["busy"],
-}
+SERVER_NOTICES = {"none": "Tick the servers first.", **refusals.BUSY_NOTICES}
+BLOCKED_NOTICES = {"none": "Tick the addresses first.", **refusals.BUSY_NOTICES}
 
 
 #
@@ -317,10 +311,7 @@ def queue_node_job(
             if db.job_for_key(connection, key, operation=operation, cluster=cluster) is None:
                 if isinstance(refused, db.RequestConflict):
                     raise refused
-                return again(
-                    refusals.not_finishing(refused)
-                    or "A job is already running for this cluster. Try again when it has finished."
-                )
+                return again(refusals.conflict_sentence(refused))
         else:
             #
             # The audit row names the node and the action, never the block: the

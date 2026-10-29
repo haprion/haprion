@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_certificate_job.html" import certificate_job_notice %}
 {% from "_back.html" import back_button %}
 {% block title %}Register a receiver — Haprion{% endblock %}
 {% block head_extra %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
@@ -20,7 +21,7 @@
 {% endif %}
 
 {% if certificate_job %}
-<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; this form can be sent once it has finished. Its row on the <a href="/certificates/receivers">receiver list</a> shows how it is going.</p>
+{% call certificate_job_notice(certificate_job) %}The queue runs one certificate job at a time; this form can be sent once it has finished. Its row on the <a href="/certificates/receivers">receiver list</a> shows how it is going.{% endcall %}
 {% endif %}
 
 <form method="post" action="/certificates/receivers/new" class="preview-form certificate-form receiver-form" data-receiver-form>

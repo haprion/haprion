@@ -22,7 +22,16 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from haprion_ui import cluster_identity, db, features, metrics, node_restores, operations, waf
+from haprion_ui import (
+    cluster_identity,
+    db,
+    features,
+    jobs,
+    metrics,
+    node_restores,
+    operations,
+    waf,
+)
 
 
 class UnknownFeature(Exception):
@@ -134,8 +143,13 @@ def switch(
             for cluster, payload in asked
         ]
     except db.ClusterBusy as error:
+        #
+        # Said by the rule a busy queue is said by everywhere (review 26-10-29,
+        # A3); merely busy, it names the clusters, since it queued on each.
+        #
         raise features.SwitchRefused(
-            "A job is running on one of the clusters. Try again when it has finished."
+            jobs.not_finishing(error.active, datetime.now(UTC))
+            or "A job is running on one of the clusters. Try again when it has finished."
         ) from error
     db.record_audit_event(
         connection,

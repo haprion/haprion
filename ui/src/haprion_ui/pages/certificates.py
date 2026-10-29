@@ -39,6 +39,7 @@ from haprion_ui import (
     jobs,
     ndes_profile_form,
     operations,
+    refusals,
 )
 from haprion_ui.access import admin_write_gate, current_session, forbidden_page
 from haprion_ui.config import Config
@@ -289,14 +290,10 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.CertificateBusy:
+            except db.CertificateBusy as busy:
                 connection.rollback()
                 return _certificate_form_page(
-                    request,
-                    config,
-                    form,
-                    problem="A certificate job is already running. Wait for it to "
-                    "finish on the Jobs page, then ask again.",
+                    request, config, form, problem=refusals.conflict_sentence(busy)
                 )
             db.record_audit_event(
                 connection,
@@ -753,7 +750,7 @@ def build_router(config: Config) -> APIRouter:
                 if db.job_for_key(connection, key, operation="cert_import", cluster=None) is None:
                     if isinstance(refused, db.RequestConflict):
                         raise refused
-                    busy = "A certificate job is already running. Wait for it to finish, then try again."
+                    busy = refusals.conflict_sentence(refused)
                     if form is not None:
                         return _certificate_import_page(request, config, form, problem=busy)
                     return PlainTextResponse(busy, status_code=409)
@@ -1232,14 +1229,13 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.CertificateBusy:
+            except db.CertificateBusy as busy:
                 connection.rollback()
                 return _certificate_renew_page(
                     request,
                     gate,
                     chosen=tuple(certificate),
-                    problem="A certificate job is already running. Wait for it to finish on "
-                    "the Jobs page, then ask again.",
+                    problem=refusals.conflict_sentence(busy),
                 )
             db.record_audit_event(
                 connection,
@@ -1359,14 +1355,13 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.CertificateBusy:
+            except db.CertificateBusy as busy:
                 connection.rollback()
                 return _certificate_abandon_page(
                     request,
                     gate,
                     chosen=tuple(certificate),
-                    problem="A certificate job is already running. Wait for it to finish on "
-                    "the Jobs page, then ask again.",
+                    problem=refusals.conflict_sentence(busy),
                 )
             db.record_audit_event(
                 connection,
@@ -1509,15 +1504,14 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.CertificateBusy:
+            except db.CertificateBusy as busy:
                 connection.rollback()
                 return _certificate_retarget_page(
                     request,
                     gate,
                     action,
                     chosen=tuple(certificate),
-                    problem="A certificate job is already running. Wait for it to finish, "
-                    "then ask again.",
+                    problem=refusals.conflict_sentence(busy),
                 )
             db.record_audit_event(
                 connection,
@@ -1668,11 +1662,9 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.CertificateBusy:
+            except db.CertificateBusy as busy:
                 connection.rollback()
-                return again(
-                    "A certificate job is already running. Wait for it to finish, then ask again."
-                )
+                return again(refusals.conflict_sentence(busy))
             #
             # The audit row names the receiver and the action, never the key:
             # a public key is not a secret, but the audit log is not where a
@@ -1985,14 +1977,13 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.CertificateBusy:
+            except db.CertificateBusy as busy:
                 connection.rollback()
                 return _certificate_delete_page(
                     request,
                     gate,
                     chosen=tuple(certificate),
-                    problem="A certificate job is already running. Wait for it to finish on "
-                    "the Jobs page, then ask again.",
+                    problem=refusals.conflict_sentence(busy),
                 )
             db.record_audit_event(
                 connection,

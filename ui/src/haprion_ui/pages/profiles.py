@@ -26,6 +26,7 @@ from haprion_ui import (
     dns_profile_form,
     jobs,
     ndes_profile_form,
+    refusals,
 )
 from haprion_ui.access import current_session, forbidden_page
 from haprion_ui.config import Config
@@ -344,15 +345,14 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.CertificateBusy:
+            except db.CertificateBusy as busy:
                 connection.rollback()
                 return _dns_profile_form_page(
                     request,
                     session,
                     form,
                     existing=existing,
-                    problem="A certificate job is already running. Wait for it to finish "
-                    "on the Jobs page, then save again.",
+                    problem=refusals.conflict_sentence(busy),
                 )
             db.record_audit_event(
                 connection,
@@ -845,15 +845,14 @@ def build_router(config: Config) -> APIRouter:
                     payload=payload,
                     idempotency_key=key,
                 )
-            except db.CertificateBusy:
+            except db.CertificateBusy as busy:
                 connection.rollback()
                 return _ndes_profile_form_page(
                     request,
                     session,
                     form,
                     existing=existing,
-                    problem="A certificate job is already running. Wait for it to finish "
-                    "on the Jobs page, then save again.",
+                    problem=refusals.conflict_sentence(busy),
                 )
             db.record_audit_event(
                 connection,

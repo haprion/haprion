@@ -72,6 +72,43 @@ def caught() -> set[tuple[str, str]]:
     return found
 
 
+def caught_busy() -> set[tuple[str, str]]:
+    """The named routes whose handler catches a busy queue, as opposed to a draft."""
+
+    busy = {"ClusterBusy", "CertificateBusy"}
+    found: set[tuple[str, str]] = set()
+    for name, function in CAUGHT:
+        tree = ast.parse((PACKAGE / name).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == function:
+                for handler in ast.walk(node):
+                    if isinstance(handler, ast.ExceptHandler) and handler.type is not None:
+                        types = (
+                            handler.type.elts
+                            if isinstance(handler.type, ast.Tuple)
+                            else [handler.type]
+                        )
+                        if {t.attr for t in types if isinstance(t, ast.Attribute)} & busy:
+                            found.add((name, function))
+    return found
+
+
+def calls(path: Path, function: str) -> set[str]:
+    """The names of what `function` in `path` calls."""
+
+    called: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == function:
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call):
+                    target = call.func
+                    if isinstance(target, ast.Attribute):
+                        called.add(target.attr)
+                    elif isinstance(target, ast.Name):
+                        called.add(target.id)
+    return called
+
+
 def request(content_type: str) -> Request:
     return Request(
         {
@@ -94,6 +131,31 @@ class OneAnswer(unittest.TestCase):
         for path in [*sorted(PACKAGE.glob("*.py")), *sorted((PACKAGE / "pages").glob("*.py"))]:
             with self.subTest(path=path.name):
                 self.assertNotIn("asked for something else", path.read_text(encoding="utf-8"))
+
+    def test_a_route_that_catches_a_busy_queue_says_it_by_the_one_rule(self) -> None:
+        """Review 26-10-29, A3: thirteen routes and twelve forms said "wait for it to
+        finish" of a held job, each with a sentence of its own."""
+
+        for name, function in sorted(caught_busy()):
+            with self.subTest(route=f"{name}:{function}"):
+                self.assertTrue(
+                    calls(PACKAGE / name, function)
+                    & {"conflict_sentence", "busy_query", "not_finishing"},
+                    "say a busy queue by refusals.conflict_sentence, busy_query or not_finishing",
+                )
+        #
+        # The command says a merely busy queue in its own words, by the same rule.
+        #
+        for path in [*sorted(PACKAGE.glob("*.py")), *sorted((PACKAGE / "pages").glob("*.py"))]:
+            if path.name in {"refusals.py", "jobs.py", "profile_apply.py"}:
+                continue
+            with self.subTest(path=path.name):
+                self.assertNotIn("already running", path.read_text(encoding="utf-8"))
+        for path in sorted((PACKAGE / "templates").glob("*.html")):
+            if path.name == "_certificate_job.html":
+                continue
+            with self.subTest(template=path.name):
+                self.assertNotIn("{{ certificate_job }}", path.read_text(encoding="utf-8"))
 
     def test_a_script_is_answered_in_text_with_the_same_sentence(self) -> None:
         answer = refusals.conflict_page(

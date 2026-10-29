@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_certificate_job.html" import certificate_job_notice %}
 {% from "_back.html" import back_button %}
 {% block title %}Abandon request — Haprion{% endblock %}
 {% block content %}
@@ -30,7 +31,7 @@
     <li>The key the request was made with is discarded; a certificate the CA issues for it later cannot be used.</li>
     <li>The certificate can be enrolled again afterwards, with a new key and a new request.</li>
   </ul>
-  {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before abandoning.</p>{% endif %}
+  {% if certificate_job %}{% call certificate_job_notice(certificate_job) %}Wait for it to finish before abandoning.{% endcall %}{% endif %}
   <form method="post" action="/certificates/abandon/confirm" class="editor-actions editor-submit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">

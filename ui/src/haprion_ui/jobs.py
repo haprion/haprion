@@ -1509,18 +1509,37 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
     return {cluster: verdict for cluster, verdict in verdicts.items() if verdict.label}
 
 
-def certificate_in_flight(jobs: Iterable[Job]) -> str | None:
+@dataclass(frozen=True, slots=True)
+class InFlight:
+    """The job that holds the certificates' place in the queue, as a form says it.
+
+    `not_finishing` is the sentence for one that does not finish by itself,
+    which a form says in place of "is in progress" (review 26-10-29, A3).
+    """
+
+    label: str
+    not_finishing: str | None = None
+    tone: str = "info"
+
+
+def certificate_in_flight(jobs: Iterable[Job]) -> InFlight | None:
     """What the one certificate slot is busy with, if anything.
 
     The counterpart of `in_flight` for jobs that belong to no cluster. The
     queue holds one active certificate job at a time, so this is a single
-    label or nothing - and the form that would queue another can say so
+    job or nothing - and the form that would queue another can say so
     before the queue refuses it.
     """
 
     for job in jobs:
         if job.cluster is None and job.state in {"pending", "running"}:
-            return running_label(job)
+            now = datetime.now(UTC)
+            sentence = not_finishing(job, now)
+            return InFlight(
+                running_label(job, now),
+                sentence,
+                "info" if sentence is None else "warning" if job.waits_for_decision else "critical",
+            )
     return None
 
 
@@ -1565,6 +1584,17 @@ PUBLISH_AND_DEPLOY = "Publishing and deploying"
 HELD = "Held"
 
 #
+# A job that holds a queue and does not finish by itself (review 26-10-29,
+# Q07/R05, A3): "try again when it has finished" sent somebody to wait for
+# nothing. Said by every route and form a busy queue meets.
+#
+HELD_BUSY = (
+    "A job held after a restart or a restore holds the queue here."
+    " It waits for an admin's Run or Discard on Events → Jobs."
+)
+NO_WORKER_BUSY = "The job that holds the queue here has no worker; see Events → Jobs."
+
+#
 # How long a running job's lease may have run out before it is said to have
 # no worker (review 26-10-29, Q01/R01). A living worker settles a lease run
 # out on its next turn. What it waits for longer is a helper behind its socket
@@ -1595,16 +1625,31 @@ def no_worker(job: Job, now: datetime) -> bool:
     )
 
 
-def running_label(job: Job) -> str:
+def not_finishing(job: Job | None, now: datetime) -> str | None:
+    """The sentence for a queue's job that does not finish by itself, or None."""
+
+    if job is None:
+        return None
+    if job.waits_for_decision:
+        return HELD_BUSY
+    if no_worker(job, now):
+        return NO_WORKER_BUSY
+    return None
+
+
+def running_label(job: Job, now: datetime | None = None) -> str:
     """What a cluster's job is called while it is pending or running.
 
     A job held after a restart waits for an administrator's Run or Discard, and
     is not doing what its operation says; it was drawn as "Deploying" with a
-    spinner for as long as nobody answered (review 2026-10-22, 1B-4).
+    spinner for as long as nobody answered (review 2026-10-22, 1B-4). Nor is
+    one no worker holds (review 26-10-29, A3).
     """
 
     if job.waits_for_decision:
         return HELD
+    if no_worker(job, now or datetime.now(UTC)):
+        return NO_WORKER
     if job.operation == "changes_publish" and deploys(job):
         return PUBLISH_AND_DEPLOY
     if named := action_names(job):

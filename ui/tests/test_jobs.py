@@ -373,11 +373,13 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
 
         payload = {"id": "web.example.com", "action": "abandon"}
         running = self.job(None, "cert_scep", "running", payload)
-        self.assertEqual(jobs.certificate_in_flight([running]), "Abandoning request")
+        self.assertEqual(jobs.certificate_in_flight([running]), jobs.InFlight("Abandoning request"))
         unknown = self.job(None, "cert_scep", "unknown", payload)
         self.assertNotIn("issued", jobs.unknown_note(unknown) or "")
         enrolling = self.job(None, "cert_scep", "running", {"id": "x"})
-        self.assertEqual(jobs.certificate_in_flight([enrolling]), "Enrolling certificate")
+        self.assertEqual(
+            jobs.certificate_in_flight([enrolling]), jobs.InFlight("Enrolling certificate")
+        )
 
     def test_without_an_action_the_operation_names_it(self) -> None:
         busy = jobs.in_flight([self.job("alpha", "cluster_node", "running")])
@@ -398,6 +400,27 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
         self.assertEqual(jobs.in_flight([held]), {"alpha": jobs.HELD})
         answered = replace(held, held_decision="run", held_decided_by="admin")
         self.assertEqual(jobs.in_flight([answered]), {"alpha": "Deploying"})
+
+    def test_a_job_no_worker_holds_is_named_so_and_neither_is_said_to_finish(self) -> None:
+        """Review 26-10-29, A3: the badge named the operation, with a spinner, and the
+        certificate forms said "is in progress" of a job that does not finish by itself."""
+
+        now = datetime.now(UTC)
+        gone = replace(
+            self.job("alpha", "deploy", "running"),
+            lease_lapsed_since=now - jobs.NO_WORKER_AFTER - timedelta(minutes=1),
+        )
+        self.assertEqual(jobs.in_flight([gone]), {"alpha": jobs.NO_WORKER})
+        certificate = replace(gone, cluster=None, operation="cert_issue")
+        held = replace(self.job(None, "cert_issue", "pending"), held_since=now)
+        self.assertEqual(
+            jobs.certificate_in_flight([certificate]),
+            jobs.InFlight(jobs.NO_WORKER, jobs.NO_WORKER_BUSY, "critical"),
+        )
+        self.assertEqual(
+            jobs.certificate_in_flight([held]), jobs.InFlight(jobs.HELD, jobs.HELD_BUSY, "warning")
+        )
+        self.assertIsNone(jobs.not_finishing(self.job(None, "cert_issue", "running"), now))
 
     def test_a_queued_job_counts_as_busy_too(self) -> None:
         busy = jobs.in_flight([self.job("alpha", "cert_deploy", "pending")])

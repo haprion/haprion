@@ -39,6 +39,7 @@ import time
 import uuid
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,7 @@ from haprion_ui import (
     db,
     dns_profile_form,
     job_wait,
+    jobs,
     labels,
     ndes_profile_form,
     tool_answer,
@@ -370,7 +372,8 @@ def _queue(connection: Any, change: Change, *, actor: str) -> db.Job:
         ) from exc
     except db.CertificateBusy as exc:
         raise ApplyError(
-            "A certificate job is already running. Wait for it to finish, then run this again.",
+            jobs.not_finishing(exc.active, datetime.now(UTC))
+            or "A certificate job is already running. Wait for it to finish, then run this again.",
             code="operation_locked",
             exit_code=exit_codes.BLOCKED,
         ) from exc

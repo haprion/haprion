@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_certificate_job.html" import certificate_job_notice %}
 {% from "_back.html" import back_button %}
 {% block title %}Delete certificates — Haprion{% endblock %}
 {% block content %}
@@ -37,7 +38,7 @@
     <li>A node that does not know how to drop a copy yet, or cannot be reached, keeps it and says so. The file is inert there: nothing lists it. Deleting the same certificate again asks that node again.</li>
     <li>Nothing here can be undone. A deleted Certbot lineage has to be issued again.</li>
   </ul>
-  {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before deleting.</p>{% endif %}
+  {% if certificate_job %}{% call certificate_job_notice(certificate_job) %}Wait for it to finish before deleting.{% endcall %}{% endif %}
   <form method="post" action="/certificates/delete/confirm" class="editor-actions editor-submit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">

@@ -1,7 +1,8 @@
 {% extends "layout.html" %}
+{% from "_busy.html" import busy_badge %}
 {% from "_back.html" import back_button %}
 {% block title %}First cluster — Haprion{% endblock %}
-{% block head_extra %}{% if guide.busy %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block head_extra %}{% if guide.busy and guide.busy.working %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {#
   The guide through the first cluster (B315, mock approved 26-10-15): each step
@@ -23,7 +24,7 @@
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Set up your first cluster</h3></div></div></header>
   <div class="guide-steps">{% for number, name, state in guide.steps %}<span class="guide-step {{ state }}"><b>{% if state == 'is-done' %}✓{% else %}{{ number }}{% endif %}</b>{{ name }}</span>{% endfor %}</div>
   {% if guide.busy %}
-  <div class="guide-body">{{ joined_rows() }}<div class="guide-joined"><span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ guide.busy }}</span></div></div>
+  <div class="guide-body">{{ joined_rows() }}<div class="guide-joined">{{ busy_badge(guide.busy) }}</div></div>
   {% elif guide.step == 1 %}
   <form method="post" action="/first-cluster/name">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

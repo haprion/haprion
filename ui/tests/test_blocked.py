@@ -18,6 +18,7 @@ from uuid import uuid4
 from haprion_ui import auth, blocked, db, demo
 from haprion_ui.db import ClusterStatus
 from haprion_ui.form_groups import form_groups
+from tests.test_busy_clusters import BadgeReading, held_job, workerless_job
 from tests.test_login import configuration
 from tests.test_object_page import DraftReading
 from tests.test_queue_route import queued
@@ -168,7 +169,7 @@ class TheFormSaysHowManyAreBlocked(unittest.TestCase):
         self.assertNotIn("blocked ·", form_groups(form)["blocking"].summary)
 
 
-class TheObjectPageAndTheDashboard(DraftReading):
+class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
     def setUp(self) -> None:
         super().setUp()
         self.queued: list[dict[str, Any]] = []
@@ -264,6 +265,22 @@ class TheObjectPageAndTheDashboard(DraftReading):
                 self.assertNotIn("data-busy", other)
                 self.assertNotIn(">Unblock</button>", page)
                 self.assertNotIn('name="state" value="drain"', page)
+
+    def test_a_job_that_does_not_finish_by_itself_does_not_spin_on_its_card(self) -> None:
+        """Review 26-10-29 (rig): Held and No worker spun as the operation does."""
+
+        for operation, card in (
+            ("dynamic_unblock", 'id="blocked"'),
+            ("server_state", "<h3>Servers</h3>"),
+        ):
+            for stuck in (held_job, workerless_job):
+                with self.subTest(operation, state=stuck.__name__):
+                    row = stuck(queued(operation=operation, cluster="edge-demo"))
+                    with mock.patch("haprion_ui.db.recent_jobs", return_value=[row]):
+                        page = self.writing_client().get("/proxies/edge-demo/public-web").text
+                    self.assert_not_working(
+                        page.split(card)[1].split("</header>")[0], cluster="edge-demo"
+                    )
 
     def test_the_ticked_addresses_are_queued(self) -> None:
         answer = self.post(self.writing_client())

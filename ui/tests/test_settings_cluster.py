@@ -18,6 +18,7 @@ from unittest import mock
 from haprion.cluster_settings import load_document
 
 from haprion_ui import auth, cluster_settings_page, db, demo
+from tests.test_busy_clusters import BadgeReading, held_job, workerless_job
 from tests.test_login import configuration
 from tests.test_queue_route import KEY, QueueRouteTestCase
 
@@ -45,7 +46,7 @@ class TheCard(QueueRouteTestCase):
         self.assertEqual((never.readable, never.logs), (False, "Not read yet"))
 
 
-class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
+class WhereTheSettingsHaveGotTo(QueueRouteTestCase, BadgeReading):
     """Active only when what is shown is what the nodes run (review 2026-09-29 F1)."""
 
     def job(self, part: str, cluster: str, state: str = "done") -> Any:
@@ -132,6 +133,30 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         self.assertNotIn(">Active<", edge)
         self.assertNotIn("deploy to activate", edge)
         self.assertIn("/static/waiting.js", page)
+
+    def test_a_held_publish_is_not_drawn_as_publishing(self) -> None:
+        """Review 26-10-29 (rig): the row spun "Held" as a publish does."""
+
+        patch = mock.patch(
+            "haprion_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.account = replace(self.account, role="admin")
+        client = self.client(
+            replace(configuration(), management_writes=True, clusters=("edge-demo", "service-demo"))
+        )
+        self.sign_in(client)
+        for stuck in (held_job, workerless_job):
+            with (
+                self.subTest(state=stuck.__name__),
+                mock.patch(
+                    "haprion_ui.db.recent_jobs",
+                    return_value=[stuck(self.job("settings", "edge-demo"))],
+                ),
+            ):
+                card = client.get("/settings").text.split('id="logs-metrics"')[1]
+                self.assert_not_working(card.split("</section>")[0], cluster="edge-demo")
 
     def test_a_job_that_is_not_the_settings_is_not_shown_on_their_row(self) -> None:
         """Switching node backups off queued `backup_schedule`, and the row said so (26-10-10)."""

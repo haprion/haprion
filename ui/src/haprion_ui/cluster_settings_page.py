@@ -28,6 +28,7 @@ from haprion.digits import is_digits
 
 from haprion_ui.attention import FORWARD_WAITING
 from haprion_ui.cluster_identity import accent_index
+from haprion_ui.jobs import InFlight
 
 MAX_TARGETS = cluster_settings.MAX_TARGETS
 
@@ -68,7 +69,7 @@ class ClusterSettingsView:
     # nobody made (2026-10-05). Drawn with `data-busy`, so the page reloads
     # itself when the job ends.
     #
-    running: str = ""
+    running: InFlight | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +163,7 @@ def card_views(
     rows: Iterable[Any],
     *,
     waiting: Iterable[str] = (),
-    running: Mapping[str, str] | None = None,
+    running: Mapping[str, InFlight] | None = None,
 ) -> list[ClusterSettingsView]:
     """One row per listed cluster, in the order the installation lists them."""
 
@@ -185,7 +186,7 @@ def card_views(
                 counters=_counters(result) if isinstance(result, Mapping) else "",
                 counters_set=isinstance(result, Mapping) and _peers_port(result) is not None,
                 waiting=cluster in waiting,
-                running=(running or {}).get(cluster, ""),
+                running=(running or {}).get(cluster),
                 logs_set=isinstance(result, Mapping) and bool(_targets(result)),
                 metrics_set=isinstance(result, Mapping)
                 and isinstance(result.get("metrics"), Mapping),

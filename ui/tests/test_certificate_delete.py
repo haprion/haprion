@@ -17,6 +17,7 @@ from unittest import mock
 from uuid import uuid4
 
 from haprion_ui import auth, certificate_delete, db, jobs
+from tests.test_busy_clusters import BadgeReading, held_job, workerless_job
 from tests.test_certificates import node, registered, status, with_registry
 from tests.test_certificates import reading as certificate_reading
 from tests.test_login import LoginTestCase, configuration
@@ -136,7 +137,7 @@ class TheRegistryViewOffersTheBoxes(DeleteRouteTestCase):
         )
 
 
-class DeployingAnOlderCopy(DeleteRouteTestCase):
+class DeployingAnOlderCopy(DeleteRouteTestCase, BadgeReading):
     def stale_reading(self) -> Any:
         return with_registry(
             certificate_reading(),
@@ -217,6 +218,26 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
                 )
                 self.assertEqual(response.status_code, 303)
                 self.assertEqual(response.headers["location"], expected)
+
+    def test_a_cluster_job_that_does_not_finish_by_itself_does_not_spin_on_the_row(self) -> None:
+        """Review 26-10-29 (rig): the row's badge spun "Held" as a deploy does."""
+
+        for stuck in (held_job, workerless_job):
+            with (
+                self.subTest(state=stuck.__name__),
+                mock.patch(
+                    "haprion_ui.db.cluster_certificates", return_value=[self.stale_reading()]
+                ),
+                mock.patch("haprion_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+                mock.patch(
+                    "haprion_ui.db.recent_jobs",
+                    return_value=[stuck(queued(operation="deploy", cluster="beta"))],
+                ),
+            ):
+                client = self.writing_client(clusters=("alpha", "beta"))
+                page = client.get("/certificates?view=registry&open=example.com").text
+            self.assert_not_working(page, cluster="beta")
+            self.assertNotIn(">Deploy to nodes<", page)
 
     def test_a_running_deploy_is_said_on_the_row_and_the_page_refreshes(self) -> None:
         #

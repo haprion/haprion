@@ -351,7 +351,7 @@ def first_cluster_view(
     session: AuthenticatedSession,
     *,
     recent: list[Any],
-    busy: Mapping[str, str],
+    busy: Mapping[str, jobs.InFlight],
     status_rows: Iterable[Any],
     network_readings: Iterable[Any],
 ) -> first_cluster.Guide | None:

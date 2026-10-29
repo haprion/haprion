@@ -21,7 +21,7 @@ from haprion import address_ranges
 
 from haprion_ui import demo
 from haprion_ui.db import Job
-from haprion_ui.jobs import Failure
+from haprion_ui.jobs import HELD, HELD_BUSY, Failure, InFlight
 from haprion_ui.network import (
     FormProblem,
     NetworkClusterView,
@@ -32,7 +32,9 @@ from haprion_ui.network import (
     document_from_form,
     row_numbers,
 )
+from tests.test_busy_clusters import BadgeReading, held_job, workerless_job
 from tests.test_login import LoginTestCase, configuration
+from tests.test_queue_route import queued
 
 NOW = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 STALE_AFTER = timedelta(seconds=120)
@@ -253,10 +255,18 @@ class WhereTheConfigurationHasGotTo(unittest.TestCase):
     """
 
     def test_a_running_job_is_what_the_badge_says(self) -> None:
-        state = deployment(running="Deploying", release_state="Converged", version="v53")
+        state = deployment(running=InFlight("Deploying"), release_state="Converged", version="v53")
 
         self.assertEqual(state.label, "Deploying")
-        self.assertTrue(state.running)
+        self.assertEqual(state.busy, InFlight("Deploying"))
+
+    def test_a_held_job_is_what_the_badge_says_in_its_own_tone(self) -> None:
+        """Review 26-10-29 (rig): Held was drawn in the info tone with a spinner."""
+
+        running = InFlight(HELD, HELD_BUSY, "warning")
+        state = deployment(running=running, release_state="Converged", version="v53")
+
+        self.assertEqual((state.label, state.tone, state.busy), (HELD, "warning", running))
 
     def test_a_failure_beats_a_cluster_that_looks_well(self) -> None:
         """Which it does, because a refused job changed nothing.
@@ -493,7 +503,7 @@ class TheRowsBecomeTheDocument(unittest.TestCase):
         self.assertEqual(document["networks"]["partners"], ["198.51.100.0/24", "203.0.113.10"])
 
 
-class ThePageIsReachableAndWritesNothing(LoginTestCase):
+class ThePageIsReachableAndWritesNothing(LoginTestCase, BadgeReading):
     def demo_client(self) -> TestClient:
         return self.client(replace(configuration(), demo_fixture=True))
 
@@ -684,6 +694,19 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         page = self.editable_page()
 
         self.assertIn("waiting.js", page.text)
+
+    def test_a_job_that_does_not_finish_by_itself_does_not_spin(self) -> None:
+        """Review 26-10-29 (rig): Held and No worker spun as Deploying does."""
+
+        for stuck in (held_job, workerless_job):
+            with (
+                self.subTest(state=stuck.__name__),
+                mock.patch(
+                    "haprion_ui.db.recent_jobs",
+                    return_value=[stuck(queued(operation="deploy", cluster="edge-demo"))],
+                ),
+            ):
+                self.assert_not_working(self.editable_page().text, cluster="edge-demo")
 
     def test_the_editable_cluster_shows_each_address_once(self) -> None:
         #

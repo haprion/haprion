@@ -1511,7 +1511,7 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
 
 @dataclass(frozen=True, slots=True)
 class InFlight:
-    """The job that holds the certificates' place in the queue, as a form says it.
+    """The job that holds a queue's place, as a badge or a form says it.
 
     `not_finishing` is the sentence for one that does not finish by itself,
     which a form says in place of "is in progress" (review 26-10-29, A3).
@@ -1519,7 +1519,27 @@ class InFlight:
 
     label: str
     not_finishing: str | None = None
-    tone: str = "info"
+    tone: Tone = "info"
+
+    @property
+    def working(self) -> bool:
+        """Whether it finishes by itself: what a spinner says (review 26-10-29).
+
+        A held job and one no worker holds were drawn with the spinner on
+        every page but Events → Jobs, which says them in the warning and the
+        critical tone.
+        """
+
+        return self.not_finishing is None
+
+
+def busy_with(job: Job, now: datetime | None = None) -> InFlight:
+    """What a pending or running job is called and how it is drawn, by one rule."""
+
+    moment = now or datetime.now(UTC)
+    sentence = not_finishing(job, moment)
+    tone: Tone = "info" if sentence is None else "warning" if job.waits_for_decision else "critical"
+    return InFlight(running_label(job, moment), sentence, tone)
 
 
 def certificate_in_flight(jobs: Iterable[Job]) -> InFlight | None:
@@ -1533,17 +1553,13 @@ def certificate_in_flight(jobs: Iterable[Job]) -> InFlight | None:
 
     for job in jobs:
         if job.cluster is None and job.state in {"pending", "running"}:
-            now = datetime.now(UTC)
-            sentence = not_finishing(job, now)
-            return InFlight(
-                running_label(job, now),
-                sentence,
-                "info" if sentence is None else "warning" if job.waits_for_decision else "critical",
-            )
+            return busy_with(job)
     return None
 
 
-def in_flight(jobs: Iterable[Job], operations: Collection[str] | None = None) -> dict[str, str]:
+def in_flight(
+    jobs: Iterable[Job], operations: Collection[str] | None = None
+) -> dict[str, InFlight]:
     """What each cluster is busy with, by cluster - or only with these operations.
 
     One entry at most per cluster, because the queue permits one pending job per
@@ -1555,7 +1571,8 @@ def in_flight(jobs: Iterable[Job], operations: Collection[str] | None = None) ->
     name is better than a cluster that looks idle while it is not.
     """
 
-    busy: dict[str, str] = {}
+    now = datetime.now(UTC)
+    busy: dict[str, InFlight] = {}
     for job in jobs:
         if job.cluster is None:
             #
@@ -1569,7 +1586,7 @@ def in_flight(jobs: Iterable[Job], operations: Collection[str] | None = None) ->
             continue
         if operations is not None and job.operation not in operations:
             continue
-        busy[job.cluster] = running_label(job)
+        busy[job.cluster] = busy_with(job, now)
     return busy
 
 

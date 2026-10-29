@@ -1,0 +1,9 @@
+{#
+  What a queue is busy with, as one badge wherever its buttons give way to it
+  (`jobs.InFlight`): the spinner only for a job that finishes by itself; a
+  held one in the warning tone and one no worker holds in the critical, as
+  Events → Jobs draws them (review 26-10-29). `cluster` is what waiting.js
+  compares with /clusters/busy, so a held job is still named: the page
+  redraws when an admin answers it.
+#}
+{% macro busy_badge(state, cluster=none, extra="") %}<span class="status-badge status-badge-{{ state.tone }}{% if extra %} {{ extra }}{% endif %}"{% if cluster %} data-busy="{{ cluster }}"{% endif %}>{% if state.working %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}{{ state.label }}</span>{% endmacro %}

@@ -26,6 +26,7 @@ from haprion.node_enrollment import Enrollment
 
 from haprion_ui import auth, cluster_nodes, db, demo, first_cluster
 from haprion_ui.db import ManagerCertificates
+from tests.test_busy_clusters import BadgeReading, held_job, workerless_job
 from tests.test_login import configuration
 from tests.test_queue_route import KEY, QueueRouteTestCase, queued
 
@@ -170,7 +171,7 @@ class ThePage(NodesPage):
         self.assertNotIn("<table", card)
 
 
-class AJobOnThePage(NodesPage):
+class AJobOnThePage(NodesPage, BadgeReading):
     """The badge said "Changing nodes" and stayed after the job was done (Fas 18, 26-10-15)."""
 
     def test_a_running_addition_is_named_and_the_page_waits_for_it(self) -> None:
@@ -197,6 +198,16 @@ class AJobOnThePage(NodesPage):
         self.assertNotIn("Changing nodes", page.text)
         self.assertIn('data-busy="edge-demo"', page.text)
         self.assertIn("/static/waiting.js", page.text)
+
+    def test_a_job_that_does_not_finish_by_itself_does_not_spin(self) -> None:
+        """Review 26-10-29 (rig): Held and No worker spun as the operation does."""
+
+        for stuck in (held_job, workerless_job):
+            with self.subTest(state=stuck.__name__):
+                row = stuck(queued(operation="cluster_node", cluster="edge-demo"))
+                with mock.patch("haprion_ui.db.recent_jobs", return_value=[row]):
+                    page = self.client_for().get("/settings/nodes/edge-demo").text
+                self.assert_not_working(page, cluster="edge-demo")
 
 
 class AddingANode(NodesPage):
@@ -682,7 +693,7 @@ def creation_job(state: str, *, finished: datetime | None = None, result: Any = 
     )
 
 
-class AClusterBeingCreated(NodesPage):
+class AClusterBeingCreated(NodesPage, BadgeReading):
     """After Create cluster the admin landed on Jobs to see anything (Fas 18 finding 51).
 
     Held on the page it was made from, as the guide's first-node step does
@@ -715,6 +726,17 @@ class AClusterBeingCreated(NodesPage):
                 self.assertEqual(busy.get("gamma"), "Creating cluster")
                 card = self.card(self.page([creation_job(state)], "/settings")[0])
                 self.assertIn('data-busy="gamma"', card)
+
+    def test_a_creation_that_does_not_finish_by_itself_does_not_spin(self) -> None:
+        """Review 26-10-29 (rig): Held and No worker spun as Creating cluster does."""
+
+        for stuck in (held_job, workerless_job):
+            with self.subTest(state=stuck.__name__):
+                row = stuck(creation_job("pending"))
+                page, busy = self.page([row], "/settings/new-cluster?creating=gamma")
+                self.assert_not_working(page.text, cluster="gamma")
+                self.assertIn(busy.get("gamma"), {"Held", "No worker"})
+                self.assert_not_working(self.card(self.page([row], "/settings")[0]), "gamma")
 
     def test_a_finished_creation_waits_for_the_poller_and_then_lets_go(self) -> None:
         just = creation_job("done", finished=datetime.now(UTC))

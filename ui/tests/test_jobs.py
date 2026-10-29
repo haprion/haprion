@@ -364,7 +364,7 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
             with self.subTest(operation=operation, action=action):
                 payload = {"action": action}
                 busy = jobs.in_flight([self.job("alpha", operation, "running", payload)])
-                self.assertEqual(busy, {"alpha": running})
+                self.assertEqual(busy, {"alpha": jobs.InFlight(running)})
                 failure = jobs.failure_label(self.job("alpha", operation, "failed", payload))
                 self.assertEqual(failure, failed)
 
@@ -383,12 +383,12 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
 
     def test_without_an_action_the_operation_names_it(self) -> None:
         busy = jobs.in_flight([self.job("alpha", "cluster_node", "running")])
-        self.assertEqual(busy, {"alpha": "Changing nodes"})
+        self.assertEqual(busy, {"alpha": jobs.InFlight("Changing nodes")})
 
     def test_a_running_job_names_what_it_is_doing(self) -> None:
         busy = jobs.in_flight([self.job("alpha", "deploy", "running")])
 
-        self.assertEqual(busy, {"alpha": "Deploying"})
+        self.assertEqual(busy, {"alpha": jobs.InFlight("Deploying")})
 
     def test_a_job_held_for_an_answer_says_held(self) -> None:
         """Review 26-10-22, 1B-4: held after a restart, it waits for Run or Discard and
@@ -397,9 +397,13 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
         held = replace(
             self.job("alpha", "deploy", "pending"), held_since=datetime(2026, 10, 22, tzinfo=UTC)
         )
-        self.assertEqual(jobs.in_flight([held]), {"alpha": jobs.HELD})
+        self.assertEqual(
+            jobs.in_flight([held]), {"alpha": jobs.InFlight(jobs.HELD, jobs.HELD_BUSY, "warning")}
+        )
+        self.assertFalse(jobs.in_flight([held])["alpha"].working)
         answered = replace(held, held_decision="run", held_decided_by="admin")
-        self.assertEqual(jobs.in_flight([answered]), {"alpha": "Deploying"})
+        self.assertEqual(jobs.in_flight([answered]), {"alpha": jobs.InFlight("Deploying")})
+        self.assertTrue(jobs.in_flight([answered])["alpha"].working)
 
     def test_a_job_no_worker_holds_is_named_so_and_neither_is_said_to_finish(self) -> None:
         """Review 26-10-29, A3: the badge named the operation, with a spinner, and the
@@ -410,7 +414,11 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
             self.job("alpha", "deploy", "running"),
             lease_lapsed_since=now - jobs.NO_WORKER_AFTER - timedelta(minutes=1),
         )
-        self.assertEqual(jobs.in_flight([gone]), {"alpha": jobs.NO_WORKER})
+        self.assertEqual(
+            jobs.in_flight([gone]),
+            {"alpha": jobs.InFlight(jobs.NO_WORKER, jobs.NO_WORKER_BUSY, "critical")},
+        )
+        self.assertFalse(jobs.in_flight([gone])["alpha"].working)
         certificate = replace(gone, cluster=None, operation="cert_issue")
         held = replace(self.job(None, "cert_issue", "pending"), held_since=now)
         self.assertEqual(
@@ -425,7 +433,7 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
     def test_a_queued_job_counts_as_busy_too(self) -> None:
         busy = jobs.in_flight([self.job("alpha", "cert_deploy", "pending")])
 
-        self.assertEqual(busy, {"alpha": "Deploying certificates"})
+        self.assertEqual(busy, {"alpha": jobs.InFlight("Deploying certificates")})
 
     def test_a_finished_job_leaves_the_cluster_free(self) -> None:
         self.assertEqual(jobs.in_flight([self.job("alpha", "deploy", "done")]), {})
@@ -438,7 +446,9 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(busy, {"alpha": "Deploying", "beta": "Publishing"})
+        self.assertEqual(
+            busy, {"alpha": jobs.InFlight("Deploying"), "beta": jobs.InFlight("Publishing")}
+        )
 
     def test_publish_and_deploy_names_both_halves(self) -> None:
         """One job publishes, then deploys; "Publishing" alone hid the deploy."""
@@ -453,7 +463,11 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
 
         self.assertEqual(
             busy,
-            {"alpha": "Publishing and deploying", "beta": "Publishing", "gamma": "Deploying"},
+            {
+                "alpha": jobs.InFlight("Publishing and deploying"),
+                "beta": jobs.InFlight("Publishing"),
+                "gamma": jobs.InFlight("Deploying"),
+            },
         )
 
     def test_an_operation_without_a_label_is_still_busy(self) -> None:
@@ -461,7 +475,7 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
 
         busy = jobs.in_flight([self.job("alpha", "something_new", "running")])
 
-        self.assertEqual(busy, {"alpha": "something_new"})
+        self.assertEqual(busy, {"alpha": jobs.InFlight("something_new")})
 
     def test_every_operation_the_code_prepares_has_a_word_for_it(self) -> None:
         source = Path(operations.__file__).read_text(encoding="utf-8")

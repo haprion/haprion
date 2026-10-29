@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_busy.html" import busy_badge %}
 {% block title %}Dashboard — Haprion{% endblock %}
 {% block head_extra %}{% if live_seconds %}<meta name="haproxy-live" content="{{ live_seconds }}">{% endif %}{% endblock %}
 {% block content %}
@@ -171,7 +172,7 @@
       {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
       {% if running %}
       <div class="action-buttons" data-busy="{{ cluster.cluster }}">
-        <span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>
+        {{ busy_badge(running) }}
       </div>
       {% else %}
       {#

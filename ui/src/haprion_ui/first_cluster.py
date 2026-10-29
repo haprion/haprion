@@ -27,6 +27,7 @@ from typing import Any
 from haprion_ui import dashboard, jobs
 from haprion_ui.cluster_nodes import Creating
 from haprion_ui.db import Job
+from haprion_ui.jobs import InFlight
 
 STEPS = ("Name and address", "First node", "Second node", "Deploy", "Done")
 #
@@ -74,7 +75,7 @@ class Guide:
     # What runs now, in the words of the job's badge; while it does, the step
     # shows only that.
     #
-    busy: str | None = None
+    busy: InFlight | None = None
     problem: str | None = None
     vip: str = ""
     #
@@ -151,7 +152,7 @@ def guide(
     clusters: Collection[str],
     reading: Any | None,
     creations: Iterable[Creating],
-    busy: Mapping[str, str],
+    busy: Mapping[str, InFlight],
     vip: str,
     phase: str,
     deployed_recently: bool,
@@ -200,7 +201,9 @@ def guide(
         #
         # Deployed, and the poller has not read the nodes since.
         #
-        return Guide(step=4, cluster=cluster, joined=nodes, busy="Reading the nodes", vip=vip)
+        return Guide(
+            step=4, cluster=cluster, joined=nodes, busy=InFlight("Reading the nodes"), vip=vip
+        )
     if len(nodes) < 2 and phase != SKIP:
         return Guide(step=3, cluster=cluster, joined=nodes, vip=vip, problem=failure)
     return Guide(step=4, cluster=cluster, joined=nodes, vip=vip, problem=failure)

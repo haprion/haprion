@@ -48,7 +48,7 @@ class ClusterRow:
     href: str | None
     # A cluster being created: the running badge until the poller has read
     # it (finding 51).
-    creating: str | None = None
+    creating: jobs.InFlight | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +56,7 @@ class Creating:
     """A cluster asked for and not yet on the cluster list."""
 
     cluster: str
-    running: str | None
+    running: jobs.InFlight | None
     failed: str | None
     message: str | None
     job: int
@@ -104,7 +104,7 @@ def creations(
             job.state == "done" and job.finished_at is not None and now - job.finished_at <= settle
         )
         if job.state in {"pending", "running"} or settling:
-            found.append(Creating(job.cluster, jobs.running_label(job), None, None, job.id))
+            found.append(Creating(job.cluster, jobs.busy_with(job, now), None, None, job.id))
         elif job.state in jobs.ATTENTION:
             found.append(
                 Creating(

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
 import unittest
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 
+from haprion_ui import db
+from haprion_ui import jobs as job_states
 from haprion_ui.db import Job
 from tests.test_certificates import reading as certificate_reading
 from tests.test_dashboard import reading as status_reading
@@ -127,6 +130,103 @@ class EveryPageThatDeploysSaysTheClusterIsBusy(BusyPagesTestCase):
         for path, source, label in self.PAGES:
             with self.subTest(page=path):
                 self.assertIn(label, self.page(path, source, elsewhere).text)
+
+
+def held_job(row: Job) -> Job:
+    """`row` held after a restart, waiting for an admin's Run or Discard."""
+
+    return replace(row, state="pending", held_since=datetime.now(UTC))
+
+
+def workerless_job(row: Job) -> Job:
+    """`row` running with a lease no worker has held for longer than the limit."""
+
+    return replace(
+        row,
+        state="running",
+        lease_lapsed_since=datetime.now(UTC) - job_states.NO_WORKER_AFTER - timedelta(minutes=1),
+    )
+
+
+class BadgeReading(unittest.TestCase):
+    def badge(self, page: str, label: str) -> str:
+        """The one status badge that says `label`, whole."""
+
+        found = re.findall(
+            r'<span class="status-badge [^"]*"[^>]*>'
+            r'(?:<span class="badge-spinner" aria-hidden="true"></span>)?'
+            + re.escape(label)
+            + "</span>",
+            page,
+        )
+        self.assertEqual(len(found), 1, f"one badge saying {label!r}")
+        return str(found[0])
+
+    def assert_not_working(self, page: str, cluster: str | None = "alpha") -> None:
+        """Held in the warning tone, no worker in the critical one; neither spins.
+
+        Review 26-10-29 (rig): both were drawn as the operation's badge does,
+        in the info tone with a spinner, on every page but Events → Jobs.
+        """
+
+        for label, tone in ((job_states.HELD, "warning"), (job_states.NO_WORKER, "critical")):
+            if label not in page:
+                continue
+            badge = self.badge(page, label)
+            self.assertIn(f"status-badge-{tone}", badge)
+            self.assertNotIn("badge-spinner", badge)
+            if cluster is not None:
+                self.assertIn(f'data-busy="{cluster}"', badge)
+            return
+        self.fail("neither Held nor No worker is drawn")
+
+
+class AJobThatDoesNotFinishByItselfIsNotDrawnAsWorking(BusyPagesTestCase, BadgeReading):
+    def test_a_held_job_is_held_and_one_no_worker_holds_is_said_so(self) -> None:
+        for path, source, label in self.PAGES:
+            for row in (
+                held_job(job(state="pending", cluster="alpha")),
+                workerless_job(job(state="running", cluster="alpha")),
+            ):
+                with self.subTest(page=path, state=row.state):
+                    page = self.page(path, source, [row]).text
+                    self.assertNotIn(label, page)
+                    #
+                    # The dashboard and Versions name the cluster on the
+                    # wrapper the buttons were in, not on the badge.
+                    #
+                    self.assertIn('data-busy="alpha"', page)
+                    self.assert_not_working(page, cluster=None)
+
+    def test_back_up_now_gives_way_to_the_same_badge(self) -> None:
+        row = db.ClusterBackups(
+            cluster="alpha",
+            observed_at=datetime.now(UTC),
+            outcome="done",
+            result={"limit": 14, "nodes": [], "schedule": {"known": True, "scheduled": False}},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        for stuck in (held_job, workerless_job):
+            with self.subTest(state=stuck.__name__):
+                running = stuck(job(state="pending", operation="backup_run", cluster="alpha"))
+                with mock.patch("haprion_ui.db.cluster_backups", return_value=[row]):
+                    page = self.page("/backups", "haprion_ui.db.cluster_backups", [running]).text
+                self.assertNotIn(">Back up now</button>", page)
+                self.assert_not_working(page)
+
+    def test_the_busy_answer_still_names_the_cluster(self) -> None:
+        """A page drawing Held still waits for it to end (waiting.js compares by cluster)."""
+
+        client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
+        self.sign_in(client)
+        with mock.patch(
+            "haprion_ui.db.recent_jobs",
+            return_value=[held_job(job(state="pending", cluster="alpha"))],
+        ):
+            answer = client.get("/clusters/busy").json()
+        self.assertEqual(answer["busy"], {"alpha": job_states.HELD})
 
 
 if __name__ == "__main__":

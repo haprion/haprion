@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_busy.html" import busy_badge %}
 {% block title %}Network — Haprion{% endblock %}
 {% block content %}
 {#-
@@ -42,7 +43,7 @@
         the rest of the story, because a refused job leaves nothing behind for
         a status reading to find.
       #}
-      <div class="cluster-state">{% set state = deployment.get(cluster.cluster) if deployment else none %}{% if state %}{% if state.code %}<a class="status-badge status-badge-critical" href="/jobs" title="Open the jobs page">{{ state.label }} · {{ state.code }} · view jobs for details</a>{% elif state.tone == 'critical' %}<a class="status-badge status-badge-critical" href="/jobs" title="Open the jobs page">{{ state.label }} · view jobs for details</a>{% else %}<span class="status-badge status-badge-{{ state.tone }}"{% if state.running %} data-busy="{{ cluster.cluster }}"{% endif %}>{% if state.running %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}{{ state.label }}</span>{% endif %}{% endif %}<span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_iso %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+      <div class="cluster-state">{% set state = deployment.get(cluster.cluster) if deployment else none %}{% if state %}{% if state.busy %}{{ busy_badge(state.busy, cluster.cluster) }}{% elif state.code %}<a class="status-badge status-badge-critical" href="/jobs" title="Open the jobs page">{{ state.label }} · {{ state.code }} · view jobs for details</a>{% elif state.tone == 'critical' %}<a class="status-badge status-badge-critical" href="/jobs" title="Open the jobs page">{{ state.label }} · view jobs for details</a>{% else %}<span class="status-badge status-badge-{{ state.tone }}">{{ state.label }}</span>{% endif %}{% endif %}<span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_iso %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
 
     {% if not cluster.vips %}

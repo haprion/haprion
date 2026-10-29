@@ -16,6 +16,7 @@ from typing import Any
 
 from haprion_ui import auth, first_cluster
 from haprion_ui.getting_started import ClusterFacts, Facts, Vip, checklist, offered_again
+from haprion_ui.jobs import InFlight
 from tests.test_login import LoginTestCase, configuration
 
 
@@ -204,7 +205,7 @@ class OnTheDashboard(LoginTestCase):
         # returns to the second node.
         waiting = first_cluster.Guide(step=3, cluster="alpha")
         self.assertEqual(waiting.resumed, (4, "Deploy", "/first-cluster?first-cluster=skip"))
-        joining = first_cluster.Guide(step=3, cluster="alpha", busy="Adding node-b")
+        joining = first_cluster.Guide(step=3, cluster="alpha", busy=InFlight("Adding node-b"))
         self.assertEqual(joining.resumed, (3, "Second node", "/first-cluster"))
         row = item(facts(guide=waiting.resumed), "Nodes and a cluster")
         self.assertEqual(

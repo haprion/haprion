@@ -75,7 +75,7 @@ def build_router(config: Config) -> APIRouter:
             return JSONResponse({"detail": "not signed in"}, status_code=401)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
-            busy = jobs.in_flight(recent)
+            busy = {cluster: state.label for cluster, state in jobs.in_flight(recent).items()}
             #
             # And which clusters the poller has not read through since their
             # last job ended (0068). A job finishing is not the same moment as
@@ -95,7 +95,7 @@ def build_router(config: Config) -> APIRouter:
         #
         for entry in cluster_creations(request, recent):
             if entry.running:
-                busy.setdefault(entry.cluster, entry.running)
+                busy.setdefault(entry.cluster, entry.running.label)
         return JSONResponse({"busy": busy, "catching_up": catching_up})
 
     def _documents(readings: Iterable[Any], cluster: str) -> dict[str, Any]:

@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_busy.html" import busy_badge %}
 {% from "_back.html" import back_button %}
 {% block title %}Create cluster — Haprion{% endblock %}
 {% block content %}
@@ -21,7 +22,7 @@
 <div class="cluster-list">
 {% if creating and creating.running %}
 <section class="cluster-card">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ creating.cluster }}</h3></div></div><span class="status-badge status-badge-info" data-busy="{{ creating.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ creating.running }}</span></header>
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ creating.cluster }}</h3></div></div>{{ busy_badge(creating.running, creating.cluster) }}</header>
 </section>
 {% else %}
 {% if creating and creating.failed %}

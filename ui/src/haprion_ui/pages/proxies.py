@@ -1149,9 +1149,9 @@ def build_router(config: Config) -> APIRouter:
         # on every page that queues a job; and the last drain or maintenance of
         # this object that not every node took is said until the next one.
         #
-        servers_busy: str | None = None
-        blocked_busy: str | None = None
-        cluster_busy: str | None = None
+        servers_busy: jobs.InFlight | None = None
+        blocked_busy: jobs.InFlight | None = None
+        cluster_busy: jobs.InFlight | None = None
         servers_missed = ""
         #
         # The addresses the object's dynamic blocking holds (B271), with the

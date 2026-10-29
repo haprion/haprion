@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_busy.html" import busy_badge %}
 {% from "_certificate_job.html" import certificate_job_notice %}
 {% import "_sort.html" as sort %}
 {% block title %}Settings — Haprion{% endblock %}
@@ -111,7 +112,7 @@
         <td data-label="Traffic log"{% if row.logs_title %} title="{{ row.logs_title }}"{% endif %}{% if not row.logs_set %} class="table-empty"{% endif %}>{% if row.logs_set and live %}{{ check() }}{% endif %}{{ row.logs }}</td>
         <td data-label="Metrics"{% if row.metrics_title %} title="{{ row.metrics_title }}"{% endif %}{% if not row.metrics_set %} class="table-empty"{% endif %}>{% if row.metrics_set and live %}{{ check() }}{% endif %}{{ row.metrics }}</td>
         <td data-label="Counters"{% if not row.counters_set %} class="table-empty"{% endif %}>{% if row.counters_set and live %}{{ check() }}{% endif %}{{ row.counters }}</td>
-        <td data-label="" class="settings-actions">{% if row.running %}<span class="status-badge status-badge-info settings-active" data-busy="{{ row.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ row.running }}</span>{% elif row.waiting %}<span class="status-badge status-badge-warning settings-active">Reconfigured · deploy to activate</span>{% endif %}{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>
+        <td data-label="" class="settings-actions">{% if row.running %}{{ busy_badge(row.running, row.cluster, "settings-active") }}{% elif row.waiting %}<span class="status-badge status-badge-warning settings-active">Reconfigured · deploy to activate</span>{% endif %}{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -133,7 +134,7 @@
       <tr>
         <td data-label="Cluster"><strong>{{ row.cluster }}</strong></td>
         <td data-label="Nodes" class="table-empty"></td>
-        <td data-label=""><span class="status-badge status-badge-info settings-active" data-busy="{{ row.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ row.creating }}</span></td>
+        <td data-label="">{{ busy_badge(row.creating, row.cluster, "settings-active") }}</td>
       </tr>
       {% else %}
       <tr data-href="{{ row.href }}">

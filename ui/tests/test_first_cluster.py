@@ -22,6 +22,8 @@ from haprion import node_enrollment
 
 from haprion_ui import demo, first_cluster
 from haprion_ui.cluster_nodes import Creating
+from haprion_ui.jobs import InFlight
+from tests.test_busy_clusters import BadgeReading, held_job, workerless_job
 from tests.test_login import configuration
 from tests.test_settings_nodes import NOW, NodesPage, block, creation_job, key
 
@@ -57,24 +59,32 @@ def step(found: first_cluster.Guide | None) -> int | None:
 
 class WhichStep(NodesPage):
     def test_from_the_installation_as_it_is(self) -> None:
-        creating = Creating("gamma", "Creating cluster", None, None, 41)
+        creating = Creating("gamma", InFlight("Creating cluster"), None, None, 41)
         failed = Creating("gamma", None, "Creation failed", "gamma-a did not answer", 41)
-        cases: dict[str, tuple[dict[str, Any], int, str | None]] = {
+        cases: dict[str, tuple[dict[str, Any], int, InFlight | None]] = {
             "no cluster": (dict(clusters=(), reading=None), 1, None),
             "being created": (
                 dict(clusters=(), reading=None, creations=(creating,)),
                 2,
-                "Creating cluster",
+                InFlight("Creating cluster"),
             ),
             "one node": (dict(reading=reading(1)), 3, None),
             "second skipped": (dict(reading=reading(1), phase="skip"), 4, None),
             "two nodes": (dict(), 4, None),
-            "second joining": (dict(busy={"edge-demo": "Adding node"}), 3, "Adding node"),
-            "deploying": (dict(busy={"edge-demo": "Deploying"}, phase="deploying"), 4, "Deploying"),
+            "second joining": (
+                dict(busy={"edge-demo": InFlight("Adding node")}),
+                3,
+                InFlight("Adding node"),
+            ),
+            "deploying": (
+                dict(busy={"edge-demo": InFlight("Deploying")}, phase="deploying"),
+                4,
+                InFlight("Deploying"),
+            ),
             "deployed, not read yet": (
                 dict(phase="deploying", deployed_recently=True),
                 4,
-                "Reading the nodes",
+                InFlight("Reading the nodes"),
             ),
             "done": (
                 dict(reading=reading(deployed=True), phase="deploying", deployed_recently=True),
@@ -102,11 +112,28 @@ class WhichStep(NodesPage):
         self.assertEqual((done.owner, done.standby), ("edge-a", ("edge-b",)))
 
 
-class TheSteps(NodesPage):
+class TheSteps(NodesPage, BadgeReading):
     def first(self, **fields: Any) -> Any:
         form = {"cluster": "gamma", "display_name": "Gamma", "vip": "198.51.100.30"}
         form.update(fields)
         return form
+
+    def test_a_creation_that_does_not_finish_by_itself_neither_spins_nor_refreshes(self) -> None:
+        """Review 26-10-29 (rig): the step spun "Held" and redrew itself every 3 s."""
+
+        self.account = replace(self.account, role="admin")
+        client = self.client(replace(configuration(), management_writes=True, clusters=()))
+        self.sign_in(client)
+        for stuck in (held_job, workerless_job):
+            with (
+                self.subTest(state=stuck.__name__),
+                mock.patch(
+                    "haprion_ui.db.recent_jobs", return_value=[stuck(creation_job("pending"))]
+                ),
+            ):
+                page = client.get("/first-cluster").text
+            self.assert_not_working(page, cluster=None)
+            self.assertNotIn('name="haproxy-live"', page)
 
     def test_name_and_address_are_checked_as_create_cluster_checks_them(self) -> None:
         client = self.client_for()

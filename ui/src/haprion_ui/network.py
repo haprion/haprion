@@ -31,7 +31,7 @@ from haprion_ui import labels, moments
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
 from haprion_ui.db import ClusterNetwork, Job
-from haprion_ui.jobs import Failure, deploys, published
+from haprion_ui.jobs import Failure, InFlight, deploys, published
 
 type Tone = Literal["healthy", "warning", "critical", "unknown"]
 #
@@ -188,13 +188,18 @@ class Deployment:
 
     label: str
     tone: BadgeTone
-    running: bool
     code: str | None
+    #
+    # The job the cluster's queue is busy with, drawn as every busy badge is
+    # (`_busy.html`): a held one in its own tone and without the spinner
+    # (review 26-10-29).
+    #
+    busy: InFlight | None = None
 
 
 def deployment(
     *,
-    running: str | None = None,
+    running: InFlight | None = None,
     failure: Failure | None = None,
     awaiting: bool = False,
     release_state: str = "",
@@ -208,13 +213,13 @@ def deployment(
     that is merely unreachable and is not something a deploy fixes.
     """
 
-    if running:
-        return Deployment(running, "info", True, None)
+    if running is not None:
+        return Deployment(running.label, running.tone, None, running)
     if failure is not None:
-        return Deployment(failure.label, "critical", False, failure.code)
+        return Deployment(failure.label, "critical", failure.code)
     if awaiting:
         # The proxy listing's words for a changed thing the nodes do not run yet (2026-09-29).
-        return Deployment("Reconfigured · deploy to activate", "warning", False, None)
+        return Deployment("Reconfigured · deploy to activate", "warning", None)
     #
     # "Unknown" is the dashboard's word for a cluster it could not read, and it
     # is not a claim that the nodes are behind. Reading it as one had a cluster
@@ -223,7 +228,7 @@ def deployment(
     # button for.
     #
     if not release_state or release_state.lower() == "unknown":
-        return Deployment("Deployment state unknown", "unknown", False, None)
+        return Deployment("Deployment state unknown", "unknown", None)
     if release_state.lower() == "incomplete":
         #
         # A node could not be read. Nothing is owed that a deploy mends, so the
@@ -231,14 +236,14 @@ def deployment(
         # down, which is when an address is most likely to need changing
         # (review 26-10-24, 12-02).
         #
-        return Deployment("A node is not reporting", "unknown", False, None)
+        return Deployment("A node is not reporting", "unknown", None)
     if release_state.lower() != "converged":
         #
         # Not "deploy to activate": nothing here was published, and a node that
         # cannot be reached reads as behind for a reason no button mends.
         #
-        return Deployment(labels.BEHIND, "warning", False, None)
-    return Deployment(f"{version} deployed" if version else "Deployed", "healthy", False, None)
+        return Deployment(labels.BEHIND, "warning", None)
+    return Deployment(f"{version} deployed" if version else "Deployed", "healthy", None)
 
 
 @dataclass(frozen=True, slots=True)

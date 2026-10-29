@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_busy.html" import busy_badge %}
 {% block title %}Node backups — Haprion{% endblock %}
 {% block content %}
 {% macro schedule_line(schedule) %}<span class="status-dot status-{{ schedule.tone }}" aria-hidden="true"></span><strong>{{ schedule.label }}</strong><span class="schedule-facts"><span title="{{ schedule.calendar }}">{{ schedule.readable }}{% if schedule.reader_time %} {{ clock }} ({{ schedule.reader_time }}){% endif %}</span>{% if schedule.retention %} · keeps {{ schedule.retention }} per node{% endif %} · last backup {{ schedule.last_run }}{% if schedule.outcome != '—' %} ({{ schedule.outcome }}){% endif %} · next {{ schedule.next_run }}</span>{% endmacro %}
@@ -50,7 +51,7 @@
       {% endif %}
       {% if editable %}
       <div class="backup-now">
-        {% if running %}<span class="status-badge status-badge-info" data-busy="{{ cluster.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>{% else %}
+        {% if running %}{{ busy_badge(running, cluster.cluster) }}{% else %}
         <form method="post" action="/operations" class="inline-form" data-backup-now>
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="backup_run"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
           <button class="secondary-button" type="submit">Back up now</button>

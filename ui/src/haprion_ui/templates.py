@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from uuid import uuid4
 
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 from starlette.templating import _TemplateResponse
 
 from haprion_ui import (
@@ -173,7 +175,31 @@ def shown_at(moment: datetime) -> str:
     return moments.moment(moment)
 
 
+#
+# A full moment, `yy-mm-dd hh:mm:ss`, as `moments.moment` writes it.
+#
+A_MOMENT = re.compile(r"\b\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\b")
+
+
+def moments_whole(text: str) -> Markup:
+    """`text` escaped, with each moment in it kept on one line.
+
+    A sentence that ends in "(tried 26-10-29 06:00:00)" broke at the
+    date's hyphen at 1280 (review 2026-10-29, round 3).
+    """
+
+    pieces: list[Markup] = []
+    last = 0
+    for found in A_MOMENT.finditer(text):
+        pieces.append(escape(text[last : found.start()]))
+        pieces.append(Markup('<span class="moment">{}</span>').format(found.group(0)))
+        last = found.end()
+    pieces.append(escape(text[last:]))
+    return Markup("").join(pieces)
+
+
 TEMPLATES.env.filters["shown_at"] = shown_at
+TEMPLATES.env.filters["moments_whole"] = moments_whole
 TEMPLATES.env.filters["shown_day"] = moments.day
 TEMPLATES.env.filters["shown_time"] = moments.time_of_day
 TEMPLATES.env.filters["groupby_object"] = waf.by_object

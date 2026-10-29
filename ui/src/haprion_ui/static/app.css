@@ -2322,6 +2322,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 /* A one-button form inside a detail cell: sits on the line, no block of its own. */
 .registry-detail .inline-form { display: inline-flex; margin-left: 12px; vertical-align: middle; }
 .registry-detail .certificate-state-action { display: flex; width: fit-content; margin: 6px 0 0; }
+.moment { white-space: nowrap; }
 
 /* Node restore (§15.2): the run's three steps, its paste line and its plan. */
 .restore-steps { display: flex; flex-wrap: wrap; gap: 8px 24px; list-style: none; margin: 0 0 16px; padding: 0; }

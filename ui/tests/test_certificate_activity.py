@@ -498,6 +498,22 @@ class AbandoningARequest(DeleteRouteTestCase):
                     self.assertIn("has no request waiting at the CA", response.text)
                     self.assertEqual(self.queued, [])
 
+    def test_a_failed_renewal_keeps_its_moment_and_its_resume_under_the_sentence(self) -> None:
+        """Review 2026-10-29, round 3: "(tried 26-10-" / "29 06:00:00)" at 1280."""
+
+        with mock.patch(
+            "haprion_ui.db.cluster_certificates", return_value=[self.failed_reading(waiting=True)]
+        ):
+            page = self.writing_client().get("/certificates?view=registry&open=wait.example.com")
+        self.assertRegex(
+            page.text, r'\(tried <span class="moment">\d\d-\d\d-\d\d \d\d:\d\d:\d\d</span>\)'
+        )
+        self.assertIn(
+            'action="/certificates/wait.example.com/resume" class="inline-form '
+            'certificate-state-action"',
+            page.text,
+        )
+
     def test_every_state_of_an_ndes_row_has_one_rule(self) -> None:
         """Review 2026-10-29, round 2, BBB02 and BBB06: the label and the buttons asked apart.
 

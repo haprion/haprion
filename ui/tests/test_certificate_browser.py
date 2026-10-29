@@ -178,6 +178,49 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             self.assertAlmostEqual(button_box["x"], state["x"], delta=1)
             self.assertTrue(button.evaluate("button => button.form.action.endsWith('/operations')"))
 
+    def test_a_failed_renewal_s_moment_is_one_line_and_its_resume_sits_below(self) -> None:
+        """Review 2026-10-29, round 3: "(tried 26-10-" / "29 06:00:00)" at 1280, and the
+        resume after the text where *Publish now* sits under it."""
+
+        from tests.test_certificates import reading, registered, with_registry
+
+        failed = registered("wait.example.com", fingerprint="a" * 64, kind="import")
+        failed["source"]["ndes_profile"] = "certserver1"
+        failed["request_state"] = "pending"
+        failed["renewal"] = {
+            "attempted_at": "2026-10-29T05:00:00Z",
+            "outcome": "failed",
+            "message": "the NDES server's CA changed since the request waiting at the CA was "
+            "made, and it resumes only as it was made. Give it up with Abandon request under "
+            "Certificates, or haprion-cert-scep --id wait.example.com --abandon",
+        }
+        rows = [with_registry(reading(), failed)]
+        for width in (1280, 1920):
+            with (
+                self.subTest(width=width),
+                mock.patch("haprion_ui.db.cluster_certificates", return_value=rows),
+                self.signed_in("?view=registry&open=wait.example.com") as page,
+            ):
+                page.set_viewport_size({"width": width, "height": 900})
+                moment = page.locator(".registry-detail .moment")
+                self.assertEqual(moment.evaluate("span => span.getClientRects().length"), 1)
+                state = page.locator(".registry-detail-grid > div > span").nth(2).bounding_box()
+                button = page.get_by_role("button", name="Resume enrollment")
+                box = button.bounding_box()
+                if state is None or box is None:
+                    self.fail("the state value and its resume must have layout boxes")
+                self.assertGreater(box["y"], state["y"])
+                self.assertAlmostEqual(box["x"], state["x"], delta=1)
+                self.assertTrue(
+                    button.evaluate("button => button.scrollWidth <= button.clientWidth")
+                )
+                self.assertTrue(
+                    page.evaluate(
+                        "() => document.documentElement.scrollWidth"
+                        " <= document.documentElement.clientWidth"
+                    )
+                )
+
     def test_registry_selection_controls_keep_their_external_form_owner(self) -> None:
         with self.signed_in("?view=registry") as page:
             pick = page.locator("[data-delete-pick]").first

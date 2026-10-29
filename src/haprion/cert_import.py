@@ -69,7 +69,15 @@ from haprion.cert_inventory import (
     describe,
 )
 from haprion.cert_issue import certbot_binary
-from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer, Report, publish
+from haprion.cert_publish import (
+    DEFAULT_LOCK_PATH,
+    Deployer,
+    Installer,
+    PublishError,
+    Report,
+    publish,
+    unpublished,
+)
 from haprion.certificates import (
     DELIMITER,
     MAX_CERTIFICATE_BYTES,
@@ -105,7 +113,7 @@ _CERTIFICATE = "CERTIFICATE"
 
 
 class ImportError_(Exception):  # `ImportError` is Python's; the trailing mark says so
-    """The import is refused; nothing was written."""
+    """The import is refused, or stopped after the store; `exit_code` says which."""
 
     def __init__(
         self,
@@ -631,8 +639,8 @@ def register(
         raise ImportError_(
             exc.code,
             f"the material is in the store but the registry did not take {certificate_id!r}: "
-            f"{exc} Fix the targets and import again.",
-            exit_code=exc.exit_code,
+            f"{str(exc).rstrip('.')}. Fix the targets and import again.",
+            exit_code=exit_codes.after_a_change(exc.exit_code),
         ) from exc
 
 
@@ -861,17 +869,24 @@ def import_certificate(
         refreshed = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         raise ImportError_("dependency_unavailable", str(exc), exit_code=exc.exit_code) from exc
-    report = publish(
-        refreshed,
-        policy,
-        only=[certificate_id],
-        live=live,
-        store=store,
-        lock_path=lock_path,
-        deployer=deployer,
-        installer=installer,
-        now=now,
-    )
+    try:
+        report = publish(
+            refreshed,
+            policy,
+            only=[certificate_id],
+            live=live,
+            store=store,
+            lock_path=lock_path,
+            deployer=deployer,
+            installer=installer,
+            now=now,
+        )
+    except PublishError as exc:
+        #
+        # Stored and registered: the answer an unfinished publish has. It was
+        # raised past the command, with no answer at all (26-10-29, C01).
+        #
+        report = unpublished(certificate_id, exc)
     marked = interface or bool(existing is not None and existing.interface)
     retired = cert_delete.retire_displaced_interface(
         displaced,
@@ -1072,8 +1087,8 @@ def _register_authority(
         raise ImportError_(
             exc.code,
             f"the CA file is in the store but the registry did not take {certificate_id!r}: "
-            f"{exc} Fix the targets and import again.",
-            exit_code=exc.exit_code,
+            f"{str(exc).rstrip('.')}. Fix the targets and import again.",
+            exit_code=exit_codes.after_a_change(exc.exit_code),
         ) from exc
 
 
@@ -1147,16 +1162,19 @@ def import_authority(
         refreshed = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         raise ImportError_("dependency_unavailable", str(exc), exit_code=exc.exit_code) from exc
-    report = publish(
-        refreshed,
-        policy,
-        only=[certificate_id],
-        live=live,
-        store=store,
-        lock_path=lock_path,
-        deployer=deployer,
-        now=now,
-    )
+    try:
+        report = publish(
+            refreshed,
+            policy,
+            only=[certificate_id],
+            live=live,
+            store=store,
+            lock_path=lock_path,
+            deployer=deployer,
+            now=now,
+        )
+    except PublishError as exc:
+        report = unpublished(certificate_id, exc)
     return ImportResult(
         certificate_id,
         described[0],

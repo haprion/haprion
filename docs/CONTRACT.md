@@ -160,6 +160,11 @@ A `certbot_failed` error carries certbot's captured output under `error.details.
 secrets replaced by `[redacted]` (and `certbot_exit_code` and `certbot_seconds` beside it);
 `error.message` states only the exit and the elapsed time. A message is capped at 2048 characters.
 
+`cert_issue` and `cert_import` are `blocked` only before anything is written. Once certbot has issued,
+or the material is in the store, a registry that does not take the entry is `failed` with the
+registry's code (`operation_locked`, `already_exists`), and a publish that does not start is
+`publish_failed` with the certificate `failed` in `result.publish`, as one that could not be written.
+
 ## Reconcile invariants
 
 These rules are shared by config deploy and certificate deploy:

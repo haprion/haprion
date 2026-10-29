@@ -255,6 +255,28 @@ class Report:
         }
 
 
+def unpublished(certificate_id: str, exc: PublishError) -> Report:
+    """The report of a publish that never started, for one certificate it was to publish.
+
+    For a caller that has changed something already - certbot issued, the
+    material is in the store, the registry took the entry - and whose answer
+    must not read as if nothing had. A lock held past its wait is the usual
+    reason. The certificate is `failed`, as one the publisher could not write
+    is, so the answer is the one a later publish ends (26-10-29, C01).
+    """
+
+    return Report(
+        certificates=(
+            CertificateResult(
+                certificate_id, "failed", targets=exc.written, error=(exc.code, str(exc))
+            ),
+        ),
+        changed_clusters=tuple(
+            sorted({t.name for t in exc.written if t.kind == "cluster" and t.changed})
+        ),
+    )
+
+
 #
 # Reading and checking
 #

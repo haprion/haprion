@@ -104,6 +104,16 @@ def outcome(code: int) -> str:
     return "failed"
 
 
+def after_a_change(code: int) -> int:
+    """`code` for a stop after something was changed: `FAILED` for `BLOCKED`, which says nothing was.
+
+    certbot has issued, or the material is in the store, when the registry
+    cannot take the entry (26-10-29, C01).
+    """
+
+    return FAILED if code == BLOCKED else code
+
+
 def for_outcome(document_outcome: object) -> int:
     """The exit code for a document's outcome, with `FAILED` for every failure.
 

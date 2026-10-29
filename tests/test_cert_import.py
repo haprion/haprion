@@ -31,6 +31,7 @@ from haprion.cert_inventory import FULLCHAIN, PRIVKEY
 from haprion.cli import cert_import as command
 from haprion.config import load_policy, load_runtime_config
 from tests.contract_schema import assert_contract
+from tests.test_cert_issue import HeldLock
 from tests.test_cert_publish import Fixture
 
 OPENSSL = shutil.which("openssl") or "/usr/bin/openssl"
@@ -477,6 +478,75 @@ class TheCommand(ImportFixture):
         self.assertEqual(
             [warning["code"] for warning in document["warnings"]], ["pending_unrecorded"]
         )
+
+    def import_held(self, after: str, *argv: str) -> tuple[int, str, str]:
+        """An import while another certificate operation holds the lock from `after` on."""
+
+        held = HeldLock(self.lock)
+        real = getattr(cert_import, after)
+
+        def then_held(*args: Any, **kwargs: Any) -> Any:
+            answer = real(*args, **kwargs)
+            held.take()
+            return answer
+
+        with held.waits_one_second(), mock.patch.object(cert_import, after, then_held):
+            try:
+                return self.run_cli(*argv)
+            finally:
+                held.release()
+
+    def test_a_lock_held_after_the_store_is_a_failure_not_a_refusal(self) -> None:
+        """26-10-29, C01: the material is in the store, so the answer may not say nothing changed."""
+
+        for written, certificate_id, argv in (
+            (
+                "write_store",
+                "shop.example",
+                ("--certificate", str(self.pki.leaf), "--key", str(self.pki.leaf_key)),
+            ),
+            ("write_authority_store", "corp-root", ("--authority", str(self.pki.root))),
+        ):
+            with self.subTest(written):
+                code, out, err = self.import_held(
+                    written, "--id", certificate_id, *argv, "--cluster", "alpha", "--json"
+                )
+                document = assert_contract("haprion-cert-import", out)
+                self.assertEqual((code, document["outcome"]), (exit_codes.FAILED, "failed"), err)
+                self.assertEqual(document["error"]["code"], "operation_locked")
+                self.assertIn("1 seconds. Fix the targets", document["error"]["message"])
+                self.assertTrue((self.store / certificate_id).is_dir())
+                self.assertNotIn(certificate_id, self.registered())
+
+    def test_a_publish_lock_held_after_the_registry_is_imported_and_not_distributed(
+        self,
+    ) -> None:
+        """26-10-29, C01: the answer of a publish that failed, which a later publish ends."""
+
+        for argv in (
+            ("--certificate", str(self.pki.leaf), "--key", str(self.pki.leaf_key)),
+            ("--authority", str(self.pki.root)),
+        ):
+            with self.subTest(argv[0]):
+                certificate_id = "shop.example" if argv[0] == "--certificate" else "corp-root"
+                code, out, err = self.import_held(
+                    "load_runtime_config",
+                    "--id",
+                    certificate_id,
+                    *argv,
+                    "--cluster",
+                    "alpha",
+                    "--json",
+                )
+                document = assert_contract("haprion-cert-import", out)
+                self.assertEqual((code, document["outcome"]), (1, "failed"), err)
+                self.assertEqual(document["error"]["code"], "publish_failed")
+                # What the interface reads for *imported; distribution failed*.
+                [entry] = document["result"]["publish"]["certificates"]
+                self.assertEqual((entry["id"], entry["status"]), (certificate_id, "failed"))
+                self.assertEqual(entry["error"]["code"], "operation_locked")
+                self.assertIn(certificate_id, self.registered())
+                self.assertEqual(self.deployed, [])
 
     def test_pkcs12_at_a_terminal(self) -> None:
         bundle = self.pki.pkcs12("pw")

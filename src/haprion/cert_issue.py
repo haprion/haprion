@@ -61,6 +61,7 @@ from haprion.cert_publish import (
     PublishError,
     Report,
     publish,
+    unpublished,
 )
 from haprion.config import (
     CERTIFICATE_ID,
@@ -634,13 +635,13 @@ def add_to_registry(
                 "issued lineage is not registered: remove it with "
                 f"'sudo certbot delete --cert-name {request.certificate_id}', then issue under "
                 "another name.",
-                exit_code=exc.exit_code,
+                exit_code=exit_codes.after_a_change(exc.exit_code),
             ) from exc
         raise IssueError(
             exc.code,
             f"certbot issued {request.certificate_id!r} but the registry did not take it: "
-            f"{exc} Register the lineage by hand, then publish it.",
-            exit_code=exc.exit_code,
+            f"{str(exc).rstrip('.')}. Register the lineage by hand, then publish it.",
+            exit_code=exit_codes.after_a_change(exc.exit_code),
         ) from exc
 
 
@@ -783,7 +784,11 @@ def issue(
             now=now or datetime.now(UTC),
         )
     except PublishError as exc:
-        raise IssueError(exc.code, str(exc), exit_code=exit_codes.CONFIG) from exc
+        #
+        # Issued and registered: the answer an unfinished publish has, not a
+        # failed issue (26-10-29, C01).
+        #
+        report = unpublished(request.certificate_id, exc)
 
     retired = cert_delete.retire_displaced_interface(
         displaced,
@@ -910,7 +915,7 @@ def renew(
             now=now or datetime.now(UTC),
         )
     except PublishError as exc:
-        raise IssueError(exc.code, str(exc), exit_code=exit_codes.CONFIG) from exc
+        report = unpublished(certificate_id, exc)
     return IssueResult(
         request=request,
         certbot_seconds=certbot_seconds,

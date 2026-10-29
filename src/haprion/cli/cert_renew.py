@@ -330,6 +330,14 @@ def main(argv: list[str] | None = None) -> int:
             # As the JSON answer carries them (review 26-10-25, 13-06).
             for code, message in result.publish.warnings:
                 print(f"WARNING: [{code}] {certificate_id}: {message}", file=sys.stderr)
+            #
+            # Renewed and not published: why, as the raise said it before the
+            # report carried it (26-10-29, C01).
+            #
+            for entry in result.publish.failed:
+                if entry.error:
+                    code, message = entry.error
+                    print(f"ERROR: [{code}] {certificate_id}: {message}", file=sys.stderr)
             failed = failed or bool(result.publish.failed)
     #
     # After certbot, not instead of it: a failure in one pass does not spare

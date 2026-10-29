@@ -1780,6 +1780,12 @@ then the registry entry, then the publish and the rollout of the clusters named.
 The whole run is timed and the time is part of its result, because the point of the command is that
 number: a certificate on its targets in minutes, from one line.
 
+**When it stops after certbot.** The lineage exists by then, so the run ends `failed`, never `blocked`.
+If the registry does not take the entry - another certificate job held the lock for more than 120
+seconds - the message says what to do with the lineage. If the publish does not start, the certificate
+is issued and registered: *Needs attention* says *Certificate issued; distribution failed*, and
+*Publish now* on the certificate's row finishes it.
+
 The ACME account is the one certbot already has on this host; the command registers none. The
 certificate becomes an ordinary certbot lineage. It is renewed by `haprion-certbot-renew.timer`, which
 runs twice a day, and published by the deploy hook described in
@@ -2105,6 +2111,10 @@ and `fullchain.pem`, root-only, in one rename. These are the same four files cer
 directory holds, so the publisher and the listing read both sources the same way. Then the registry
 entry, `source.kind: import`, with the targets named. Then the publish of that one certificate and the
 rollout of its clusters, exactly as after an issue.
+
+Once the material is written, a stop is `failed`, not `blocked`. If the registry does not take the
+entry - another certificate job held the lock for more than 120 seconds - import again. If the publish
+does not start, the certificate is imported and registered, and *Publish now* finishes it.
 
 **Importing again.** Importing the same ID a second time replaces the material - a rotated key, or a
 renewed certificate from the same CA - and keeps every target the entry has. Targets named on the

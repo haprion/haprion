@@ -12,13 +12,15 @@ named clusters.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import io
 import json
 import os
 import stat
 import tempfile
 import unittest
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -26,7 +28,15 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_issue, cert_pending, dns_provider_catalog, exit_codes, ui_interface
+from haprion import (
+    cert_issue,
+    cert_pending,
+    cert_publish,
+    cert_registry,
+    dns_provider_catalog,
+    exit_codes,
+    ui_interface,
+)
 from haprion.cert_issue import CertbotResult, IssueError, certbot_arguments, parse_domain
 from haprion.cli import cert_issue as command
 from haprion.cli import cert_issue_helper, cert_renew
@@ -56,6 +66,35 @@ class FakeCertbot:
             name = arguments[list(arguments).index("--cert-name") + 1]
             issue(self.live / name, name)
         return CertbotResult(self.returncode, self.output)
+
+
+class HeldLock:
+    """Another certificate operation holding the lock, from the moment `take` is called."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.handles: list[int] = []
+
+    def take(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = os.open(self.path, os.O_RDWR | os.O_CREAT)
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        self.handles.append(handle)
+
+    def release(self) -> None:
+        while self.handles:
+            os.close(self.handles.pop())
+
+    @staticmethod
+    @contextlib.contextmanager
+    def waits_one_second() -> Iterator[None]:
+        """The 120 s that the registry and the publisher wait, cut to one."""
+
+        with (
+            mock.patch.object(cert_registry, "LOCK_WAIT_SECONDS", 1),
+            mock.patch.object(cert_publish, "LOCK_WAIT_SECONDS", 1),
+        ):
+            yield
 
 
 class IssueFixture(Fixture):
@@ -647,17 +686,128 @@ class WhenCertbotSucceeds(IssueFixture):
         )
 
         document = assert_contract("haprion-cert-issue", out)
-        self.assertEqual(document["outcome"], "blocked", err)
+        # Not `blocked`: certbot has issued, so something changed (26-10-29, C01).
+        self.assertEqual(document["outcome"], "failed", err)
         self.assertEqual(document["error"]["code"], "already_exists")
         # Review 26-10-25, 1-04: not "register it by hand", which would write over it.
         self.assertIn(
             "sudo certbot delete --cert-name www.example.com", document["error"]["message"]
         )
         self.assertNotIn("by hand", document["error"]["message"])
-        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual(code, exit_codes.FAILED)
         registry = yaml.safe_load(self.registry_path.read_text())
         self.assertEqual(registry["certificates"]["www.example.com"], imported)
         self.assertEqual(deployed, [])
+
+    def test_a_lock_held_after_certbot_is_a_failure_not_a_refusal(self) -> None:
+        """26-10-29, C01: the lineage exists, so the answer may not say nothing changed."""
+
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        held = HeldLock(self.lock)
+
+        class ThenHeld(FakeCertbot):
+            def __call__(
+                self, arguments: Sequence[str], environment: Mapping[str, str], timeout: int
+            ) -> CertbotResult:
+                result = super().__call__(arguments, environment, timeout)
+                held.take()
+                return result
+
+        with held.waits_one_second():
+            try:
+                code, out, err, deployed = self.run_issue(
+                    policy_path,
+                    "--domain",
+                    "www.example.com",
+                    "--method",
+                    "dns-01",
+                    "--cluster",
+                    "alpha",
+                    "--json",
+                    certbot=ThenHeld(self.live),
+                )
+            finally:
+                held.release()
+
+        document = assert_contract("haprion-cert-issue", out)
+        self.assertEqual((code, document["outcome"]), (exit_codes.FAILED, "failed"), err)
+        self.assertEqual(document["error"]["code"], "operation_locked")
+        self.assertIn("1 seconds. Register the lineage by hand", document["error"]["message"])
+        self.assertTrue((self.live / "www.example.com").exists())
+        self.assertNotIn("www.example.com", self.registry_path.read_text())
+        self.assertEqual(deployed, [])
+
+    def test_a_publish_lock_held_after_the_registry_is_issued_and_not_distributed(
+        self,
+    ) -> None:
+        """26-10-29, C01: the same answer as a publish that failed, which a later publish ends."""
+
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        held = HeldLock(self.lock)
+        real = load_runtime_config
+
+        def registered_then_held(*args: Any, **kwargs: Any) -> Any:
+            held.take()
+            return real(*args, **kwargs)
+
+        with (
+            held.waits_one_second(),
+            mock.patch.object(cert_issue, "load_runtime_config", registered_then_held),
+        ):
+            try:
+                code, out, err, deployed = self.run_issue(
+                    policy_path,
+                    "--domain",
+                    "www.example.com",
+                    "--method",
+                    "dns-01",
+                    "--cluster",
+                    "alpha",
+                    "--json",
+                )
+            finally:
+                held.release()
+
+        document = assert_contract("haprion-cert-issue", out)
+        self.assertEqual((code, document["outcome"]), (1, "failed"), err)
+        self.assertEqual(document["error"]["code"], "publish_failed")
+        self.assertIn("for more than 1 seconds", document["error"]["message"])
+        # What the interface reads for *issued; distribution failed* (jobs.undistributed).
+        self.assertEqual(document["result"]["id"], "www.example.com")
+        [entry] = document["result"]["publish"]["certificates"]
+        self.assertEqual((entry["id"], entry["status"]), ("www.example.com", "failed"))
+        self.assertEqual(entry["error"]["code"], "operation_locked")
+        registry = yaml.safe_load(self.registry_path.read_text())
+        self.assertIn("www.example.com", registry["certificates"])
+        self.assertEqual(deployed, [])
+
+        # At a terminal: the sentence an unfinished publish has.
+        held = HeldLock(self.lock)
+        with (
+            held.waits_one_second(),
+            mock.patch.object(cert_issue, "load_runtime_config", registered_then_held),
+        ):
+            try:
+                code, out, err, _ = self.run_issue(
+                    policy_path,
+                    "--domain",
+                    "www2.example.com",
+                    "--method",
+                    "dns-01",
+                    "--cluster",
+                    "alpha",
+                )
+            finally:
+                held.release()
+        self.assertEqual(code, 1, err)
+        self.assertIn("published: failed", out)
+        self.assertIn("issued and registered but not fully published", err)
 
     def test_an_interface_certificate_for_another_name_never_reaches_certbot(self) -> None:
         """Review 26-10-24, 15-03: certbot issued it, then the install refused the name."""
@@ -792,6 +942,49 @@ class RenewingALineage(IssueFixture):
         self.assertEqual(document["lineage"], "example.net")
         registry = yaml.safe_load(self.registry_path.read_text())
         self.assertEqual(list(registry["certificates"]), ["example.net"])
+
+    def test_a_publish_lock_held_after_certbot_renewed_is_reported_not_raised(self) -> None:
+        """26-10-29, C01: renewed, then not distributed - the report says so, as an issue's does."""
+
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        renewal = self.renewal_conf("example.net")
+        policy = load_policy(policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+        held = HeldLock(self.lock)
+        real = load_runtime_config
+
+        def renewed_then_held(*args: Any, **kwargs: Any) -> Any:
+            held.take()
+            return real(*args, **kwargs)
+
+        with (
+            held.waits_one_second(),
+            mock.patch.object(cert_issue, "load_runtime_config", renewed_then_held),
+        ):
+            try:
+                result = cert_issue.renew(
+                    certificate_id="example.net",
+                    policy=policy,
+                    runtime=runtime,
+                    certbot=FakeCertbot(self.live),
+                    deployer=lambda cluster: 0,
+                    live=self.live,
+                    store=self.store,
+                    lock_path=self.lock,
+                    renewal_directory=renewal,
+                    require_secure=False,
+                )
+            finally:
+                held.release()
+
+        [entry] = result.publish.failed
+        self.assertEqual(entry.certificate_id, "example.net")
+        self.assertEqual(entry.error[0] if entry.error else None, "operation_locked")
+        document, code = command.result_envelope(result, request_id="r")
+        self.assertEqual((code, document["error"]["code"]), (1, "publish_failed"))
 
     def test_what_is_refused(self) -> None:
         issue(self.live / "example.net", "example.net")
@@ -954,3 +1147,28 @@ class RenewingALineage(IssueFixture):
             "WARNING: [pending_unrecorded] example.net: could not update the pending list",
             err.getvalue(),
         )
+
+    def test_the_forced_renewal_says_why_it_was_not_published(self) -> None:
+        """26-10-29, C01: a held lock is in the report now, not raised; the text still says it."""
+
+        renewed = SimpleNamespace(
+            certbot_seconds=3.0,
+            publish=SimpleNamespace(
+                certificates=("example.net",),
+                failed=(SimpleNamespace(error=("operation_locked", "the lock was held")),),
+                warnings=(),
+            ),
+        )
+        err = io.StringIO()
+        with (
+            mock.patch("haprion.cli.cert_renew.os.geteuid", return_value=0),
+            mock.patch("haprion.cli.cert_renew.cert_issue.renew", return_value=renewed),
+            mock.patch("haprion.cli.cert_renew.load_policy"),
+            mock.patch("haprion.cli.cert_renew.load_runtime_config"),
+            mock.patch("haprion.cli.cert_renew.renew_ndes", return_value=False),
+            mock.patch("sys.stderr", err),
+        ):
+            code = cert_renew.main(["--acme-now", "example.net"])
+
+        self.assertEqual(code, 1, err.getvalue())
+        self.assertIn("ERROR: [operation_locked] example.net: the lock was held", err.getvalue())

@@ -8,6 +8,7 @@ may open them. The job is the engine's `dynamic_unblock`.
 
 from __future__ import annotations
 
+import html
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -15,13 +16,14 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haprion_ui import auth, blocked, db, demo
+from haprion_ui import auth, blocked, db, demo, refusals
 from haprion_ui.db import ClusterStatus
 from haprion_ui.form_groups import form_groups
 from tests.test_busy_clusters import BadgeReading, held_job, workerless_job
 from tests.test_login import configuration
 from tests.test_object_page import DraftReading
 from tests.test_queue_route import queued
+from tests.test_server_card import NOTICE_MARKUP
 
 OBSERVED = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 KEY = str(uuid4())
@@ -312,6 +314,16 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
         self.assertEqual(answer.headers["location"], "/proxies/edge-demo/public-web?blocked=busy")
         page = client.get(answer.headers["location"])
         self.assertIn("This cluster is already running a job.", page.text)
+
+    def test_the_notice_has_the_tone_of_what_holds_the_queue(self) -> None:
+        """Review 26-10-29 (rig): a held job's notice was drawn as a problem."""
+
+        client = self.writing_client()
+        for word, drawn in NOTICE_MARKUP.items():
+            with self.subTest(word=word):
+                page = client.get(f"/proxies/edge-demo/public-web?blocked={word}").text
+                own = html.unescape(page.split('id="blocked"')[1].split("<table")[0])
+                self.assertIn(drawn + refusals.BUSY_NOTICES[word], own)
 
     def test_only_an_admin_with_a_valid_form_may_unblock(self) -> None:
         self.assertEqual(self.post(self.writing_client(role="reader")).status_code, 403)

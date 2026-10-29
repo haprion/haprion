@@ -453,3 +453,32 @@ class TheButtons(DraftReading):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+#
+# How each busy word is drawn: a held job as the certificate forms and
+# Events → Jobs draw it, no worker as critical, a busy queue as it was
+# (review 26-10-29, rig).
+#
+NOTICE_MARKUP = {
+    "held": '<p class="preview-notice notice-warning"><span class="status-orb status-warning"'
+    ' aria-hidden="true"></span><strong>',
+    "no-worker": '<p class="preview-notice form-problem"><span class="status-orb status-critical"'
+    ' aria-hidden="true"></span><strong>',
+    "busy": '<p class="preview-notice form-problem">',
+}
+
+
+class TheNoticeHasTheToneOfWhatHoldsTheQueue(DraftReading):
+    def test_held_is_a_warning_no_worker_critical_and_busy_as_it_was(self) -> None:
+        client = self.client(
+            replace(
+                configuration(), demo_fixture=True, management_writes=True, clusters=demo.CLUSTERS
+            )
+        )
+        self.sign_in(client)
+        for word, drawn in NOTICE_MARKUP.items():
+            with self.subTest(word=word):
+                page = client.get(f"/proxies/edge-demo/public-web?servers={word}").text
+                own = html.unescape(page.split("<h3>Servers</h3>")[1].split("<table")[0])
+                self.assertIn(drawn + refusals.BUSY_NOTICES[word], own)

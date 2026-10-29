@@ -174,6 +174,11 @@ BUSY_NOTICES = {
     "held": HELD_BUSY,
     "no-worker": NO_WORKER_BUSY,
 }
+#
+# And the tone each is drawn in, as the certificate forms and Events → Jobs
+# draw the job (review 26-10-29): a busy queue, or none at all, is a problem.
+#
+BUSY_TONES = {"held": "warning", "no-worker": "critical"}
 
 
 def busy_query(exc: Exception, now: datetime | None = None) -> str:

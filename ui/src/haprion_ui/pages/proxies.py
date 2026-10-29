@@ -1228,12 +1228,18 @@ def build_router(config: Config) -> APIRouter:
                 "server_set_by": server_set_by,
                 "server_shared": server_shared,
                 "servers_notice": SERVER_NOTICES.get(request.query_params.get("servers", "")),
+                "servers_notice_tone": refusals.BUSY_TONES.get(
+                    request.query_params.get("servers", "")
+                ),
                 "servers_busy": servers_busy,
                 "blocked_busy": blocked_busy,
                 "cluster_busy": cluster_busy,
                 "servers_missed": servers_missed,
                 "blocked": blocked_card,
                 "blocked_notice": BLOCKED_NOTICES.get(request.query_params.get("blocked", "")),
+                "blocked_notice_tone": refusals.BUSY_TONES.get(
+                    request.query_params.get("blocked", "")
+                ),
                 "blocked_missed": blocked_missed,
                 "time_left": blocked.time_left,
                 "live_seconds": (

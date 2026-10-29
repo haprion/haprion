@@ -7,3 +7,9 @@
   redraws when an admin answers it.
 #}
 {% macro busy_badge(state, cluster=none, extra="") %}<span class="status-badge status-badge-{{ state.tone }}{% if extra %} {{ extra }}{% endif %}"{% if cluster %} data-busy="{{ cluster }}"{% endif %}>{% if state.working %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}{{ state.label }}</span>{% endmacro %}
+{#
+  The sentence a busy queue is answered with, in the tone of what holds it:
+  a held job's as a warning, one no worker holds as critical, and a queue
+  that is merely busy as the problem it was (review 26-10-29).
+#}
+{% macro queue_notice(sentence, tone=none) %}{% if tone == 'warning' %}<p class="preview-notice notice-warning"><span class="status-orb status-warning" aria-hidden="true"></span><strong>{{ sentence }}</strong></p>{% elif tone == 'critical' %}<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ sentence }}</strong></p>{% else %}<p class="preview-notice form-problem">{{ sentence }}</p>{% endif %}{% endmacro %}

@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% from "_busy.html" import busy_badge %}
+{% from "_busy.html" import busy_badge, queue_notice %}
 {% from "_back.html" import back_button %}
 {% block title %}{{ object.name }} — Haprion{% endblock %}
 {#- Kept current once per poll while the object blocks (B271): the card says what the nodes hold now. -#}
@@ -103,7 +103,7 @@
     <div class="cluster-identity"><div><h3>Servers</h3><p>{{ 'Pool' if servers.pools | length == 1 else 'Pools' }} {% for pool in servers.pools %}<code>{{ pool }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p></div></div>
     {% if management_writes %}{% if cluster_busy %}{% if servers_busy %}<div class="cluster-state">{{ busy_badge(servers_busy, object.cluster) }}</div>{% endif %}{% else %}<div class="action-buttons"><button class="secondary-button" type="submit" name="state" value="drain">Drain</button><button class="secondary-button" type="submit" name="state" value="maint">Maintenance</button><button class="secondary-button" type="submit" name="state" value="ready">Ready</button></div>{% endif %}{% endif %}
   </header>
-  {% if servers_notice %}<p class="preview-notice form-problem">{{ servers_notice }}</p>{% elif servers_missed %}<p class="preview-notice form-problem">{{ servers_missed }} <a href="/jobs">See Jobs</a></p>{% endif %}
+  {% if servers_notice %}{{ queue_notice(servers_notice, servers_notice_tone) }}{% elif servers_missed %}<p class="preview-notice form-problem">{{ servers_missed }} <a href="/jobs">See Jobs</a></p>{% endif %}
   <div class="table-scroll"><table class="node-table server-table{% if management_writes %} selectable-rows" data-select-rows{% else %}"{% endif %}>
     <thead><tr>{% if management_writes %}<th class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}<th class="server-column">Server</th>{% for node in servers.nodes %}<th class="node-column">{{ node }}</th>{% endfor %}<th class="count-column">Sessions</th><th class="count-column">Weight</th></tr></thead>
     <tbody>
@@ -129,7 +129,7 @@
     <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Blocked addresses</h3><p>{{ blocked.count }} blocked by dynamic blocking{% if blocked.more %}, {{ blocked.more }} not listed{% endif %}</p></div></div>
     {% if management_writes %}{% if cluster_busy %}{% if blocked_busy %}<div class="cluster-state">{{ busy_badge(blocked_busy, object.cluster) }}</div>{% endif %}{% else %}<div class="action-buttons"><button class="secondary-button" type="submit">Unblock</button></div>{% endif %}{% endif %}
   </header>
-  {% if blocked_notice %}<p class="preview-notice form-problem">{{ blocked_notice }}</p>{% elif blocked_missed %}<p class="preview-notice form-problem">{{ blocked_missed }} <a href="/jobs">See Jobs</a></p>{% endif %}
+  {% if blocked_notice %}{{ queue_notice(blocked_notice, blocked_notice_tone) }}{% elif blocked_missed %}<p class="preview-notice form-problem">{{ blocked_missed }} <a href="/jobs">See Jobs</a></p>{% endif %}
   <div class="table-scroll"><table class="node-table blocked-table{% if management_writes %} selectable-rows" data-select-rows{% else %}"{% endif %}>
     <thead><tr>{% if management_writes %}<th class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}<th class="address-column">Address</th><th class="count-column">Time left</th><th>Nodes</th></tr></thead>
     <tbody>

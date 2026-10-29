@@ -501,10 +501,81 @@ COLLECTOR_CONFIG=/etc/haprion/traffic-collector.json
 COLLECTOR_COMMAND=/opt/haprion/current/bin/haprion-traffic-collector
 RETENTION_COMMAND=/usr/sbin/haprion-retention
 RETENTION_TIMER=/etc/systemd/system/haprion-retention.timer
+#
+# The units a restore stopped, kept until a restore finishes (review 26-10-29,
+# D1). A restore that fails after the stop leaves them stopped and says to run
+# it again, and that run found nothing active: it started nothing, and the web,
+# the worker and every timer - the daily dump's too - stayed down while it said
+# the restore had finished. Under /run, which is emptied at every boot, when
+# systemd starts the enabled units itself; root's alone, and written under the
+# lock `restore` takes.
+#
+RESTORE_STOPPED=/run/haprion/restore-stopped
+
+#
+# The units in RESTORE_STOPPED, one per line. Only a name in RESTORE_UNITS is
+# one: anything else is said and left alone rather than started as root.
+#
+stopped_before() {
+    local unit known
+    [[ -e "$RESTORE_STOPPED" ]] || return 0
+    while IFS= read -r unit || [[ -n "$unit" ]]; do
+        for known in "${RESTORE_UNITS[@]}"; do
+            if [[ "$unit" == "$known" ]]; then
+                echo "$unit"
+                continue 2
+            fi
+        done
+        warn "${RESTORE_STOPPED} names ${unit}, which a restore does not stop; it is left alone"
+    done <"$RESTORE_STOPPED"
+}
+
+#
+# RESTORE_STOPPED holding the units named, in RESTORE_UNITS' order, or removed
+# when none is. Renamed into place, so a run stopped mid-write leaves the list
+# before it.
+#
+remember_stopped() {
+    local unit name
+    local -a kept=()
+    for unit in "${RESTORE_UNITS[@]}"; do
+        for name; do
+            if [[ "$name" == "$unit" ]]; then
+                kept+=("$unit")
+                break
+            fi
+        done
+    done
+    if [[ ${#kept[@]} -eq 0 ]]; then
+        rm -f -- "$RESTORE_STOPPED"
+        return
+    fi
+    mkdir -p -- "${RESTORE_STOPPED%/*}"
+    ( umask 077 && printf '%s\n' "${kept[@]}" >"${RESTORE_STOPPED}.partial" )
+    mv -f -- "${RESTORE_STOPPED}.partial" "$RESTORE_STOPPED"
+}
+
+#
+# A restore that stopped once the services were (review 26-10-29, D1 and
+# P3-3): they stay stopped, and a run again starts them once it finishes.
+# `held` says the dump's jobs are in the database and nothing has held them
+# yet, so whoever starts a service by hand holds them first; after a failed
+# pg_restore there may be no database to hold them in. Then the units.
+#
+restore_stopped() {
+    local reason="$1" names="$2" held="$3" hold=""
+    shift 3
+    if [[ -n "$held" ]]; then
+        hold="
+  Before starting any of them by hand, hold the restored jobs: sudo haprion-backup after-restore"
+    fi
+    die "${reason}; the services stay stopped: ${*:-none}.
+  Correct what ${names} names and run this again; it starts them once a restore finishes.${hold}"
+}
 
 do_restore() {
     local dump="$1" unit connections collector revision plan verdict head release
-    local -a stopped=()
+    local -a before=() stopped=() now=()
     [[ -f "$dump" && -r "$dump" ]] || die "cannot read the dump ${dump}"
     pg_restore --list "$dump" >/dev/null 2>&1 || die "${dump} is not a dump pg_restore can read"
     [[ -x "${PLATFORM_STEPS}/03-verify" ]] || die "${PLATFORM_STEPS}/03-verify is missing"
@@ -519,20 +590,38 @@ do_restore() {
     plan="$(schema_plan "$revision")" \
         || die "nothing was stopped or restored; the dump is at schema ${revision}"
     read -r verdict head release <<<"$plan"
+    [[ "$verdict" != migrate || -x "${PLATFORM_STEPS}/migrate" ]] \
+        || die "${PLATFORM_STEPS}/migrate is missing; nothing was stopped or restored"
 
+    #
+    # What a restore before this one stopped and did not start again, started
+    # with what this one stops once it finishes. Each unit is written down
+    # before it is stopped, so a run cut short keeps it too.
+    #
+    mapfile -t before < <(stopped_before)
     step_log "Stopping what writes the database"
     for unit in "${RESTORE_UNITS[@]}"; do
         if systemctl is-active --quiet "$unit"; then
+            remember_stopped "${before[@]}" "${now[@]}" "$unit"
             systemctl stop "$unit"
+            now+=("$unit")
             stopped+=("$unit")
             log "  stopped  ${unit}"
+        elif [[ " ${before[*]} " == *" ${unit} "* ]]; then
+            stopped+=("$unit")
+            log "  ${unit} stays stopped from a restore that did not finish"
         fi
     done
     connections="$(psql_scratch -d postgres -c \
         "select count(*) from pg_stat_activity where datname = '${DB_NAME}'")"
     if [[ "$connections" != 0 ]]; then
-        start_units "${stopped[@]}"
-        die "$(counted "$connections" connection) to ${DB_NAME} still open; nothing was restored.
+        #
+        # Only what this run stopped: the database is untouched since, and what
+        # a failed restore before it stopped stays stopped on what that left.
+        #
+        start_units "${now[@]}"
+        remember_stopped "${before[@]}"
+        die "$(counted "$connections" connection) to ${DB_NAME} still open; nothing was restored${before[*]:+, and ${before[*]} stay stopped}.
   See them with: sudo -u postgres psql -c \"select pid, usename, application_name from pg_stat_activity where datname = '${DB_NAME}'\""
     fi
 
@@ -545,8 +634,7 @@ do_restore() {
     # shellcheck disable=SC2024 # root opening the file is the point: postgres may not read it
     if ! sudo -u postgres pg_restore -d postgres --clean --create --if-exists \
             --exit-on-error < "$dump"; then
-        die "the restore stopped; the services stay stopped: ${stopped[*]:-none}.
-  Correct what pg_restore names and run this again."
+        restore_stopped "the restore stopped" pg_restore "" "${stopped[@]}"
     fi
     log "  restored ${DB_NAME} from $(basename "$dump")"
 
@@ -559,8 +647,7 @@ do_restore() {
     if [[ "$verdict" == migrate ]]; then
         step_log "Migrating ${revision} -> ${head}"
         (cd "$PLATFORM_STEPS" && ./migrate --release "$release") \
-            || die "the migration from ${revision} stopped; the services stay stopped: ${stopped[*]:-none}.
-  Correct what it names and run this again."
+            || restore_stopped "the migration from ${revision} stopped" migrate held "${stopped[@]}"
         log "  the dump is at ${revision}; migrated to ${head}"
         if [[ -e "$RETENTION_TIMER" ]]; then
             "$RETENTION_COMMAND" horizon \
@@ -570,14 +657,15 @@ do_restore() {
 
     step_log "Proving the database's privileges"
     (cd "$PLATFORM_STEPS" && ./03-verify) \
-        || die "the restored database does not grant what the contract says; the services stay stopped: ${stopped[*]:-none}.
-  Before starting any of them, hold the restored jobs: sudo haprion-backup after-restore"
+        || restore_stopped "the restored database does not grant what the contract says" \
+            03-verify held "${stopped[@]}"
 
     step_log "Holding waiting jobs and ending sessions"
     do_after_restore
 
     step_log "Starting what was stopped"
     start_units "${stopped[@]}"
+    remember_stopped
 
     collector="$(systemctl show -p User --value haprion-traffic-collector.service 2>/dev/null || true)"
     if [[ -n "$collector" && -r "$COLLECTOR_CONFIG" && -x "$COLLECTOR_COMMAND" ]]; then

@@ -9088,12 +9088,21 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                 for name in ("counted", "psql_as", "psql_scratch")
             )
             + units.group(0)
-            + f"PLATFORM_STEPS={self.directory / 'steps'}\n"
+            + f"RESTORE_STOPPED={self.directory / 'restore-stopped'}\n"
+            f"PLATFORM_STEPS={self.directory / 'steps'}\n"
             f"COLLECTOR_CONFIG={self.directory / 'none'}\nCOLLECTOR_COMMAND=/bin/false\n"
             f"RETENTION_COMMAND=/bin/false\nRETENTION_TIMER={self.directory / 'none'}\n"
             + "".join(
                 function(name)
-                for name in ("dump_revision", "do_after_restore", "do_restore", "start_units")
+                for name in (
+                    "dump_revision",
+                    "do_after_restore",
+                    "stopped_before",
+                    "remember_stopped",
+                    "restore_stopped",
+                    "do_restore",
+                    "start_units",
+                )
             )
             + 'do_restore "$1"\n'
         )

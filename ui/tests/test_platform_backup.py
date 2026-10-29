@@ -316,7 +316,12 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         restored: bool = True,
         plan: str | None = "same 0102 new",
         migrated: bool = True,
+        proved: bool = True,
+        migrate_step: bool = True,
+        remembered: Path | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        """One run; `remembered` is the file the runs before it left, kept across runs."""
+
         source = SCRIPT.read_text()
         units = re.search(r"^RESTORE_UNITS=\(\n.*?^\)\n", source, re.MULTILINE | re.DOTALL)
         if units is None:
@@ -327,12 +332,15 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
             dump.write_text("dump")
             steps = here / "steps"
             steps.mkdir()
-            (steps / "03-verify").write_text('#!/bin/sh\necho "03-verify" >> "$CALLS"\n')
-            (steps / "03-verify").chmod(0o755)
-            (steps / "migrate").write_text(
-                f'#!/bin/sh\necho "migrate $*" >> "$CALLS"\nexit {0 if migrated else 1}\n'
+            (steps / "03-verify").write_text(
+                f'#!/bin/sh\necho "03-verify" >> "$CALLS"\nexit {0 if proved else 1}\n'
             )
-            (steps / "migrate").chmod(0o755)
+            (steps / "03-verify").chmod(0o755)
+            if migrate_step:
+                (steps / "migrate").write_text(
+                    f'#!/bin/sh\necho "migrate $*" >> "$CALLS"\nexit {0 if migrated else 1}\n'
+                )
+                (steps / "migrate").chmod(0o755)
             retention = here / "haprion-retention"
             retention.write_text('#!/bin/sh\necho "retention $*" >> "$CALLS"\n')
             retention.chmod(0o755)
@@ -367,12 +375,21 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 "DB_NAME=haprion\n"
                 + re.search(r"^counted\(\) .*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
                 + units.group(0)
+                + f'RESTORE_STOPPED="{remembered or here / "restore-stopped"}"\n'
                 + f'PLATFORM_STEPS="{steps}"\nCOLLECTOR_CONFIG="{config}"\n'
                 f'RETENTION_COMMAND="{retention}"\nRETENTION_TIMER="{timer}"\n'
                 f'COLLECTOR_COMMAND="{collector}"\n'
-                + function("dump_revision", source)
-                + function("do_restore", source)
-                + function("start_units", source)
+                + "".join(
+                    function(name, source)
+                    for name in (
+                        "dump_revision",
+                        "stopped_before",
+                        "remember_stopped",
+                        "restore_stopped",
+                        "do_restore",
+                        "start_units",
+                    )
+                )
                 + 'do_restore "$1"\n'
             )
             done = subprocess.run(  # noqa: S603 - fixed program
@@ -438,12 +455,131 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         self.assertNotIn("03-verify", said)
         self.assertNotIn("after-restore", said)
 
-    def test_a_failed_proof_says_to_hold_the_jobs_before_anything_starts(self) -> None:
-        """Review 26-10-29, B1: started by hand, the restored jobs ran unheld."""
+    def test_a_failure_after_the_dump_is_in_says_to_hold_the_jobs_before_anything_starts(
+        self,
+    ) -> None:
+        """Review 26-10-29, B1 and P3-3: started by hand, the restored jobs ran unheld.
 
-        source = SCRIPT.read_text()
-        proof = source[source.index("./03-verify)") :]
-        self.assertIn("sudo haprion-backup after-restore", proof[: proof.index("\n\n")])
+        Said wherever the dump's jobs are in the database and nothing has held
+        them: after a failed migration as after a failed proof. Not after a
+        failed pg_restore, which may have left no database to hold them in.
+        """
+
+        hold = "Before starting any of them by hand, hold the restored jobs:"
+        for failure, held in (
+            ({"plan": "migrate 0102 new", "migrated": False}, True),
+            ({"proved": False}, True),
+            ({"restored": False}, False),
+        ):
+            with self.subTest(**failure):
+                done, said = self.restore(active=self.ACTIVE, **failure)
+                self.assertEqual(done.returncode, 1)
+                self.assertIn("run this again; it starts them once a restore finishes", done.stderr)
+                self.assertEqual(f"{hold} sudo haprion-backup after-restore" in done.stderr, held)
+                self.assertNotIn("after-restore", said)
+
+    def test_a_run_after_a_failed_one_starts_what_that_one_stopped(self) -> None:
+        """Review 26-10-29, D1: the run again found nothing active and started nothing.
+
+        The web, the worker, the poller and every timer - the daily dump's too -
+        stayed down while the command said the restore had finished.
+        """
+
+        for failure in (
+            {"restored": False},
+            {"plan": "migrate 0102 new", "migrated": False},
+            {"proved": False},
+        ):
+            with self.subTest(**failure), tempfile.TemporaryDirectory() as raw:
+                remembered = Path(raw) / "restore-stopped"
+                first, _ = self.restore(active=self.ACTIVE, remembered=remembered, **failure)
+                self.assertEqual(first.returncode, 1)
+                self.assertEqual(stat.S_IMODE(remembered.stat().st_mode), 0o600)
+                done, said = self.restore(active="", remembered=remembered)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertFalse(any(line.startswith("systemctl stop") for line in said))
+                self.assertEqual(
+                    said[said.index("after-restore") :][:4],
+                    [
+                        "after-restore",
+                        "systemctl start haprion-worker.service",
+                        "systemctl start haprion-web.socket",
+                        "systemctl start haprion-traffic-collector.timer",
+                    ],
+                )
+                self.assertIn("haprion-worker.service stays stopped", done.stdout)
+                self.assertFalse(remembered.exists())
+
+    def test_what_the_run_again_finds_running_is_stopped_and_started_with_the_rest(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            remembered = Path(raw) / "restore-stopped"
+            self.restore(active=self.ACTIVE, remembered=remembered, restored=False)
+            done, said = self.restore(active="haprion-poller.service", remembered=remembered)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn("systemctl stop haprion-poller.service", said)
+            self.assertEqual(
+                [line for line in said if line.startswith("systemctl start")],
+                [
+                    "systemctl start haprion-poller.service",
+                    "systemctl start haprion-worker.service",
+                    "systemctl start haprion-web.socket",
+                    "systemctl start haprion-traffic-collector.timer",
+                ],
+            )
+
+    def test_a_connection_left_on_the_run_again_starts_only_what_that_run_stopped(self) -> None:
+        """The database is still the failed restore's: what that one stopped stays down."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            remembered = Path(raw) / "restore-stopped"
+            self.restore(active=self.ACTIVE, remembered=remembered, restored=False)
+            before = remembered.read_text()
+            done, said = self.restore(
+                active="haprion-poller.service", remembered=remembered, connections="1"
+            )
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(
+                [line for line in said if line.startswith("systemctl start")],
+                ["systemctl start haprion-poller.service"],
+            )
+            self.assertIn("haprion-worker.service", done.stderr)
+            self.assertEqual(remembered.read_text(), before)
+
+    def test_after_a_boot_the_run_again_stops_and_starts_what_systemd_started(self) -> None:
+        """/run is emptied at boot, and systemd starts the enabled units itself."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            remembered = Path(raw) / "restore-stopped"
+            self.restore(active=self.ACTIVE, remembered=remembered, restored=False)
+            remembered.unlink()
+            done, said = self.restore(active=self.ACTIVE, remembered=remembered)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(
+                [line for line in said if line.startswith("systemctl start")],
+                [
+                    "systemctl start haprion-worker.service",
+                    "systemctl start haprion-web.socket",
+                    "systemctl start haprion-traffic-collector.timer",
+                ],
+            )
+
+    def test_a_name_not_one_of_the_units_is_not_started(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            remembered = Path(raw) / "restore-stopped"
+            remembered.write_text("haprion-worker.service\nsshd.service\n")
+            done, said = self.restore(active="", remembered=remembered)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(
+                [line for line in said if line.startswith("systemctl start")],
+                ["systemctl start haprion-worker.service"],
+            )
+            self.assertIn("names sshd.service", done.stderr)
+
+    def test_without_the_migration_step_an_older_dump_stops_nothing(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, plan="migrate 0102 new", migrate_step=False)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("/migrate is missing", done.stderr)
+        self.assertEqual(said, ["plan 0101"])
 
     def test_a_connection_left_restores_nothing_and_starts_what_it_stopped(self) -> None:
         done, said = self.restore(active=self.ACTIVE, connections="1")
@@ -463,6 +599,14 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         source = SCRIPT.read_text()
         self.assertIn("#     haprion-backup restore <dump>", source)
         self.assertIn('restore)        take_lock; do_restore "$1" ;;', source)
+
+    def test_what_a_restore_stopped_is_kept_where_only_root_writes_and_a_boot_empties(
+        self,
+    ) -> None:
+        source = SCRIPT.read_text()
+        self.assertIn("\nRESTORE_STOPPED=/run/haprion/restore-stopped\n", source)
+        tmpfiles = (ROOT / "install/tmpfiles/haprion.conf").read_text()
+        self.assertIn("\nd /run/haprion 0755 root root -\n", tmpfiles)
 
 
 class TheWeeklyCheckAsksWhatARestoreAsks(unittest.TestCase):

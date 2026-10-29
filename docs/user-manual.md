@@ -2987,7 +2987,13 @@ makes the database again from the dump, checks its privileges with `03-verify`, 
 and ends the sessions (`after-restore`), starts what it stopped, and replays the traffic log (below).
 A dump from before an update that changed the schema is migrated to the installed release's schema
 before that check; one the release cannot take, such as one from a newer release, is refused before
-anything stops. If the restore itself fails, the services stay stopped and the command says so.
+anything stops.
+
+If the restore fails after the stop, for example on a damaged dump, a failed migration or a full disk,
+the services stay stopped and the command says what failed. Correct it and run the same command again,
+with this dump or another: once a restore finishes, it starts what the failed run stopped. To start a
+service by hand instead, hold the restored jobs first with `sudo haprion-backup after-restore`. A
+reboot in between starts the services as any boot does, and the next restore stops them again.
 
 `after-restore` holds every waiting or running job in the same way, and ends every session: the
 restored sessions include ones that were signed out or revoked since. Run on its own, it does the same

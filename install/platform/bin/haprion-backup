@@ -363,12 +363,14 @@ do_verify_restore() {
 # Refused while the worker runs (review 26-10-29, C05): a job it is running
 # would be held as well, and an admin's Discard is read when a job is taken,
 # not while it runs - so the job would go on with what follows it. `restore`
-# has stopped the worker before it gets here.
+# has stopped the worker before it gets here. Checked once, without a lock: a
+# worker that starts after the check - by hand, or restarting on its own - is
+# not refused.
 #
 do_after_restore() {
     local answer
     if systemctl is-active --quiet haprion-worker.service; then
-        die "haprion-worker.service is running; stop it first: sudo systemctl stop haprion-worker.service"
+        die "haprion-worker.service is running; stop it first: sudo systemctl stop haprion-worker.service, and start it again after: sudo systemctl start haprion-worker.service"
     fi
     answer="$(psql_as -d "$DB_NAME" <<'SQL'
 begin;

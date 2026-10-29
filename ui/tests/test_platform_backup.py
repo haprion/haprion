@@ -418,6 +418,9 @@ class HoldingAfterARestore(unittest.TestCase):
         done = self.after_restore(active=True)
         self.assertEqual(done.returncode, 1)
         self.assertIn("haprion-worker.service is running; stop it first", done.stderr)
+        self.assertIn(
+            "start it again after: sudo systemctl start haprion-worker.service", done.stderr
+        )
         self.assertNotIn("held for an admin", done.stdout)
 
     def test_with_the_worker_stopped_it_holds_and_ends_the_sessions(self) -> None:

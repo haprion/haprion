@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import os
+import random
 import re
 import shlex
 import shutil
@@ -1527,3 +1528,85 @@ class OneReleaseChangeAtATime(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(again.stdout.strip(), "free", again.stderr)
+
+
+#
+# Every way an update can end, in random order over four releases: what runs,
+# which release's files are under it, and what the marker and the copy say,
+# held to a model after each step (review 26-10-29, the second pass after
+# AAA01 - each fix to the chain had moved its fault, and a fixed case found
+# the next one only when a reviewer thought of it).
+#
+CHAIN_RELEASES = "ABCD"
+CHAIN_ENDINGS = (
+    ("before", "refused"),
+    ("after", "refused"),
+    ("after", "restored"),
+    ("none", "refused"),
+    ("cut before", "refused"),
+    ("cut after", "refused"),
+)
+
+
+def chain_holds(case: unittest.TestCase, sequence: list[tuple[str, tuple[str, str]]]) -> None:
+    """Run one sequence of updates; fail `case` where it leaves the model."""
+
+    class Chain(UpdatesOverAnUnprovedRelease):
+        def runTest(self) -> None:
+            pass
+
+    chain = Chain()
+    chain.setUp()
+    proved = running = rule = "A"
+    done: list[tuple[str, str, str]] = []
+    try:
+        for release, (fails, rollback) in sequence:
+            done.append((release, fails, rollback))
+            chain.update(release, fails=fails, rollback=rollback)
+            if fails == "before":
+                rule = running
+            elif fails == "after" and rollback == "restored":
+                running = rule = proved
+            elif fails in ("after", "cut after"):
+                running = rule = release
+            elif fails == "none":
+                proved = running = rule = release
+            elif fails == "cut before":
+                rule = release
+            found = (chain.running, chain.rule.read_text().strip().split("'")[0])
+            case.assertEqual(found, (running, rule), done)
+            if chain.marker is None:
+                case.assertTrue(running == proved or fails.startswith("cut"), (done, "no marker"))
+            else:
+                case.assertIn(f"PREVIOUS={proved}\n", chain.marker, done)
+                if chain.kept:
+                    case.assertEqual(chain.kept[0].split("'")[0], proved, done)
+                else:
+                    case.assertTrue(running == proved or fails.startswith("cut"), (done, "no copy"))
+    finally:
+        chain.doCleanups()
+
+
+class AnyOrderOfUpdates(unittest.TestCase):
+    def test_the_sequence_that_found_the_last_fault(self) -> None:
+        chain_holds(
+            self,
+            [
+                ("A", ("after", "restored")),
+                ("C", ("none", "refused")),
+                ("D", ("after", "refused")),
+                ("A", ("cut before", "refused")),
+                ("C", ("before", "refused")),
+                ("B", ("after", "refused")),
+            ],
+        )
+
+    def test_a_fixed_draw_of_sequences_holds(self) -> None:
+        draw = random.Random(1)  # noqa: S311 - a fixed draw of cases, not a secret
+        for number in range(120):
+            sequence = [
+                (draw.choice(CHAIN_RELEASES), draw.choice(CHAIN_ENDINGS))
+                for _ in range(draw.randint(1, 6))
+            ]
+            with self.subTest(number=number):
+                chain_holds(self, sequence)

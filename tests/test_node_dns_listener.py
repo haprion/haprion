@@ -216,7 +216,11 @@ class TheStatusReport(unittest.TestCase):
 
     def report(self, dpkg: tuple[int, str], active: bool) -> dict[str, object]:
         text = STATUS.read_text()
-        helper = re.search(r"^def package_version\(.*?(?=^\S)", text, re.DOTALL | re.MULTILINE)
+        helper = re.search(
+            r"^CONFIGURED_STATES = .*?^def package_version\(.*?(?=^\S)",
+            text,
+            re.DOTALL | re.MULTILINE,
+        )
         reader = re.search(r"^def read_dns_listener\(.*?(?=^\S)", text, re.DOTALL | re.MULTILINE)
         assert helper and reader, "the dns report is no longer where the test extracts it from"
         self.asked = 0

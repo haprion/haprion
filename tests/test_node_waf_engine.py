@@ -285,7 +285,7 @@ class TheStatusReport(unittest.TestCase):
     def report(self, dpkg: tuple[int, str], active: bool) -> dict[str, object]:
         text = STATUS.read_text()
         found = re.search(
-            r"^def package_version\(.*?^def read_waf_engine\(.*?(?=^\S)",
+            r"^CONFIGURED_STATES = .*?^def read_waf_engine\(.*?(?=^\S)",
             text,
             re.DOTALL | re.MULTILINE,
         )

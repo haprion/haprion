@@ -1588,6 +1588,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 /* The NDES list shows a URL where the DNS list shows a provider name: the URL takes what is left, the actions only their links. */
 .ndes-profile-table th:nth-child(1), .ndes-profile-table td:nth-child(1) { width: 20ch; }
 .ndes-profile-table th:nth-child(2), .ndes-profile-table td:nth-child(2) { width: auto; }
+/* The status holds a refusal and its link on one line (review 2026-10-29 again, BB06). */
+.ndes-profile-table th:nth-child(3), .ndes-profile-table td:nth-child(3) { width: 42ch; }
 .ndes-profile-table th:nth-child(4), .ndes-profile-table td:nth-child(4) { width: 22ch; }
 /* The NDES servers card: the radio as narrow as the object page's select column, the address the rest.
    Only as a table; below 1050px the cards keep their label room. */

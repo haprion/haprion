@@ -296,7 +296,7 @@ def profile_status(
                 "critical",
                 False,
                 job.id,
-                "A request waits at the CA",
+                "Request waiting",
                 message if isinstance(message, str) else "",
             )
         return ProfileStatus("Apply failed", "critical", False)

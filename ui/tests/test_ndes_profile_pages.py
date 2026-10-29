@@ -483,7 +483,7 @@ class RemovingAnNdesProfile(NdesPages):
         with mock.patch("haprion_ui.db.recent_jobs", return_value=[refused]):
             page = self.writing_client().get("/ndes-profiles").text
         self.assertIn("Apply refused", page)
-        self.assertIn('href="/jobs#job-42">· A request waits at the CA</a>', page)
+        self.assertIn('href="/jobs#job-42">· Request waiting</a>', page)
         self.assertNotIn("Apply failed", page)
 
     def test_a_refused_removal_says_why_on_the_page(self) -> None:

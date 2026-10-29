@@ -612,7 +612,7 @@ def build_router(config: Config) -> APIRouter:
         try:
             ndes_server_socket.ask("add", endpoint=endpoint, sha256=sha256)
         except NdesServerError as exc:
-            if exc.code == "unavailable":
+            if exc.code == "unanswered":
                 _audit_unanswered(
                     request, gate, "ndes_server_added", {"endpoint": endpoint, "sha256": sha256}
                 )
@@ -666,7 +666,7 @@ def build_router(config: Config) -> APIRouter:
         try:
             ndes_server_socket.ask("remove", endpoint=endpoint)
         except NdesServerError as exc:
-            if exc.code == "unavailable":
+            if exc.code == "unanswered":
                 _audit_unanswered(request, gate, "ndes_server_removed", {"endpoint": endpoint})
             return RedirectResponse(
                 "/ndes-profiles?" + urlencode({"server_problem": str(exc)}), status_code=303

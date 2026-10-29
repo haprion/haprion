@@ -382,7 +382,7 @@ class TheNdesServers(NdesRoutes):
 
         client = self.writing_client()
         csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
-        unanswered = NdesServerError("unavailable", "the NDES server service did not answer")
+        unanswered = NdesServerError("unanswered", "the NDES server service did not answer")
         with mock.patch("haprion_ui.pages.profiles.ndes_server_socket.ask", side_effect=unanswered):
             shown = client.post(
                 "/ndes-profiles/servers/confirm",
@@ -405,6 +405,18 @@ class TheNdesServers(NdesRoutes):
         phrase = audit.ACTIVITY_PHRASES["ndes_server_added"]
         added = next(e for e in self.audited if e["action"] == "ndes_server_added")
         self.assertIn("did not answer", phrase(added["detail"]))
+        # A service that could not be asked changed nothing, and says so alone.
+        self.audited.clear()
+        unreachable = NdesServerError("unavailable", "the NDES server service is not running")
+        with mock.patch(
+            "haprion_ui.pages.profiles.ndes_server_socket.ask", side_effect=unreachable
+        ):
+            shown = client.post(
+                "/ndes-profiles/servers/confirm",
+                data={"csrf_token": csrf, "endpoint": ENDPOINT, "sha256": "a" * 64},
+            )
+        self.assertIn("is not running", shown.text)
+        self.assertEqual([e for e in self.audited if e["action"].startswith("ndes_server")], [])
 
     def test_server_routes_require_csrf(self) -> None:
         client = self.writing_client()

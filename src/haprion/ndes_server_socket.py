@@ -38,6 +38,15 @@ def ask(action: str, *, path: str = SOCKET_PATH, **parameters: str | list[str]) 
         raw = helper_socket.ask(
             request, path=path, timeout=TIMEOUT_SECONDS, what="the NDES server service"
         )
+    except helper_socket.HelperBusy as error:
+        raise NdesServerError("unavailable", str(error)) from error
+    except helper_socket.HelperSilent as error:
+        #
+        # Asked, then quiet: root may have made the change. Told apart from a
+        # service that could not be asked at all, which changed nothing
+        # (review 2026-10-29 again).
+        #
+        raise NdesServerError("unanswered", str(error)) from error
     except helper_socket.HelperUnavailable as error:
         raise NdesServerError("unavailable", str(error)) from error
     try:

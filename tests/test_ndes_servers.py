@@ -25,7 +25,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import exit_codes, ndes_server_socket, ndes_servers, safe_yaml
+from haprion import exit_codes, helper_socket, ndes_server_socket, ndes_servers, safe_yaml
 from haprion.cli import ndes_server, ndes_server_helper
 from haprion.config import SYSTEM_TRUST, ConfigError, load_policy
 from tests.contract_schema import assert_contract
@@ -218,6 +218,24 @@ class TheFetch(unittest.TestCase):
         refused = self.fetch(answer)
         self.assertEqual(refused.code, "unreachable")
         self.assertIn("HTTP 404", str(refused))
+
+
+class TheSocketClient(unittest.TestCase):
+    def test_a_service_asked_and_then_silent_is_told_from_one_never_asked(self) -> None:
+        """Review 2026-10-29 again: both were `unavailable`, and both left an `unknown` row."""
+
+        for error, code in (
+            (helper_socket.HelperUnavailable("not running"), "unavailable"),
+            (helper_socket.HelperBusy("busy"), "unavailable"),
+            (helper_socket.HelperSilent("did not answer"), "unanswered"),
+        ):
+            with (
+                self.subTest(error=type(error).__name__),
+                mock.patch.object(helper_socket, "ask", side_effect=error),
+                self.assertRaises(ndes_servers.NdesServerError) as caught,
+            ):
+                ndes_server_socket.ask("add", endpoint=ENDPOINT)
+            self.assertEqual(caught.exception.code, code)
 
 
 class TheHelperUnit(unittest.TestCase):

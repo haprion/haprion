@@ -17,7 +17,11 @@ So the helper keeps a receipt, one file per request under ROOT:
   lock let go;
 - read by recovery under a shared lock it does not wait for. A lock it cannot
   take is a helper still running; `flock` is let go by the kernel when the
-  process ends, so a helper that died never reads as running.
+  process ends, so a helper that died never reads as running;
+- never replaced. A request ID is one job's, so a receipt already there is a
+  request asked before: a job a restored database still had waiting, which ran
+  after its dump. The helper does not do it again; it gives the answer kept
+  and exits as it did then, or refuses when there is none.
 
 The worker's sandbox hides other processes (`ProtectProc=invisible`), and the
 lock answers what a process table would have. The directory is root's and
@@ -42,7 +46,7 @@ from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 from uuid import UUID
 
-from haprion import atomic_file
+from haprion import atomic_file, exit_codes
 
 ROOT = Path("/var/lib/haprion/answers")
 #
@@ -94,6 +98,15 @@ def root() -> Path | None:
     """Where receipts are kept: ROOT when running as root, else nowhere."""
 
     return ROOT if os.geteuid() == 0 else None
+
+
+class AskedBefore(Exception):
+    """The request has a receipt already; `kept` is what it says."""
+
+    def __init__(self, request_id: str, kept: Receipt) -> None:
+        super().__init__(request_id)
+        self.request_id = request_id
+        self.kept = kept
 
 
 class Kept(io.TextIOBase):
@@ -171,13 +184,27 @@ class Kept(io.TextIOBase):
             os.fchmod(fd, 0o640)
             fcntl.flock(fd, fcntl.LOCK_EX)
             os.fchown(fd, -1, os.stat(self._directory).st_gid)
-            atomic_file.move(staging, self._directory / name)
+            #
+            # Linked rather than renamed: a rename replaced the receipt of a
+            # request asked before, and with it the only account of what its
+            # first run did (review 26-10-29, R02).
+            #
+            os.link(staging, self._directory / name)
+        except FileExistsError:
+            os.close(fd)
+            staging.unlink(missing_ok=True)
+            raise AskedBefore(request_id, read(request_id, self._directory)) from None
         except OSError as exc:
             os.close(fd)
             staging.unlink(missing_ok=True)
             self.warning = f"the answer cannot be kept for recovery: {exc}"
             return
         self._fd = fd
+        try:
+            staging.unlink()
+            atomic_file.sync_directory(self._directory)
+        except OSError as exc:
+            self.warning = f"the answer may not survive a crash: {exc}"
 
     def end(self, exit_code: int | None) -> None:
         """Write the answer and let go of the lock. `exit_code` None: the helper raised."""
@@ -216,6 +243,11 @@ def keeps_answer[**P](main: Callable[P, int]) -> Callable[P, int]:
         try:
             code = main(*args, **kwargs)
             return code
+        except AskedBefore as asked:
+            code = _answer_again(
+                asked, output, cast(TextIO | None, kwargs.get("error_stream")) or sys.stderr
+            )
+            return code
         finally:
             output.end(code)
             if output.warning is not None:
@@ -223,6 +255,28 @@ def keeps_answer[**P](main: Callable[P, int]) -> Callable[P, int]:
                 errors.write(f"WARNING: {output.warning}\n")
 
     return kept
+
+
+def _answer_again(asked: AskedBefore, output: Kept, errors: TextIO) -> int:
+    """What a request asked before is answered with: its kept answer, or a refusal."""
+
+    kept = asked.kept
+    if kept.state == "answered":
+        output.warning = (
+            f"request {asked.request_id} was answered before; that answer is given again"
+            " and nothing is run"
+        )
+        output.write(kept.stdout)
+        output.flush()
+        return kept.exit_code if kept.exit_code is not None else exit_codes.INTERNAL
+    why = {
+        "running": "its first run is still going",
+        "silent": "its first run ended without an answer",
+    }.get(kept.state, "its receipt cannot be read")
+    errors.write(
+        f"ERROR: request {asked.request_id} was asked before and {why}; it is not run again\n"
+    )
+    return exit_codes.BLOCKED
 
 
 def begin(output: Any, request_id: str) -> None:

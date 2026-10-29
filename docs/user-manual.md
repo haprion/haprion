@@ -2942,6 +2942,9 @@ and the worker holds every such job:
   says how many wait.
 - A discarded job that waits in the queue ends *blocked* with the code `held_discarded`; nothing more
   of it ran.
+- A waiting job whose answer the manager already kept is not run again. That is a node change, for
+  example, that ran after the backup was taken. **Run** and **Discard** end it on that answer, as for a
+  running job below.
 - A job that was *running* when the host went down or was backed up is held too; stopping only the
   manager's services holds nothing. Its own step may have finished: a node change, for example, whose
   answer the manager kept. **Run** goes on with what follows it in the job, such as the deploy after a
@@ -7867,6 +7870,8 @@ request, closes its write side and passes the answer through untouched.
 - A helper that was asked and went quiet leaves the job `unknown` (see the backup and restore
   helpers below). When the worker was stopped, the job ends on the helper's kept answer instead
   ([The worker](#the-worker)).
+- A request is carried out once. Asked again with the same request ID, the helper gives the answer it
+  kept and does nothing; with no answer kept, it refuses.
 
 The helper's own stderr goes to the journal (`journalctl -u 'haprion-cert-receiver-helper@*'`), not
 to the job.

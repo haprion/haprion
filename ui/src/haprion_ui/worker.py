@@ -647,6 +647,12 @@ def run_one_job(
     is not a lease lost: the run goes on while the lease this worker last wrote
     still holds by its own clock, and the end is written on a fresh connection
     (review 2026-10-22, 1B-6).
+
+    A job whose helper keeps its answer is not asked again when a receipt for
+    its request is there already (review 26-10-29, R02). The request ID is the
+    job's own, so the receipt is the job's: one a restored database still had
+    queued, which ran after its dump. It ends on that answer as an adopted job
+    does - Run with what follows it, Discard without - and is not run twice.
     """
 
     #
@@ -660,6 +666,40 @@ def run_one_job(
 
     def end_before_the_run(**fields: Any) -> None:
         _finish_on(connection, connect, lambda: lease.renewed_at, job, worker=worker, **fields)
+
+    if job.operation in recovery.KEEPS_ANSWER:
+        kept = answer_receipt.read(str(job.request_id))
+        if kept.state == "running":
+            #
+            # Its first run is still at work: the lease runs out, and recovery
+            # waits for that answer and adopts it, as it does for any job.
+            #
+            logger.warning(
+                "job %s: its helper is still running its request; not asked again", job.id
+            )
+            return
+        if kept.state == "silent":
+            logger.warning("job %s: its helper was asked before and kept no answer", job.id)
+            end_before_the_run(
+                state="unknown",
+                outcome="unknown",
+                exit_code=None,
+                result={"error": {"code": "helper_silent", "message": recovery.HELPER_SILENT}},
+                stderr_excerpt=None,
+            )
+            return
+        if kept.state == "answered":
+            logger.warning("job %s: its helper answered it before; ended on that answer", job.id)
+            _conclude(
+                connection,
+                job,
+                _kept_run(kept),
+                lease,
+                worker=worker,
+                connect=connect,
+                stopping=stopping,
+            )
+            return
 
     if job.held_decision == "discard":
         #
@@ -768,6 +808,14 @@ def run_one_job(
     _conclude(connection, job, completed, lease, worker=worker, connect=connect, stopping=stopping)
 
 
+def _kept_run(receipt: answer_receipt.Receipt) -> execution.Completed:
+    """A helper's kept answer, as the run that gave it would have ended."""
+
+    return execution.Completed(
+        ending="finished", exit_code=receipt.exit_code, stdout=receipt.stdout, stderr=""
+    )
+
+
 def resume_adopted(
     connection: Any,
     job: db.ClaimedJob,
@@ -785,13 +833,10 @@ def resume_adopted(
     """
 
     logger.warning("job %s: ended on the answer its helper kept", job.id)
-    completed = execution.Completed(
-        ending="finished", exit_code=receipt.exit_code, stdout=receipt.stdout, stderr=""
-    )
     _conclude(
         connection,
         job,
-        completed,
+        _kept_run(receipt),
         _Lease(connection, job, connect),
         worker=worker,
         connect=connect,

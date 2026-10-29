@@ -120,6 +120,12 @@ class WorkerTestCase(unittest.TestCase):
         sudo.start()
         self.addCleanup(sudo.stop)
 
+        # Nor the machine's receipts; `ARequestThatRanAfterTheDump` keeps its own.
+        self.receipts = mock.patch.object(
+            answer_receipt, "read", return_value=answer_receipt.Receipt("absent")
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+
 
 class TheResultIsRedactedBeforeItIsStored(WorkerTestCase):
     """Review 2026-10-22, 5-9: a refusal's diagnostics reached the job row as they came."""
@@ -1052,8 +1058,8 @@ class TheWorkerKeepsOutOfTheDraftTable(unittest.TestCase):
         self.assertNotIn("live_drafts", source)
 
 
-class NodeChangeAndDeploy(WorkerTestCase):
-    """B321: a node change that is all a deploy would roll out is deployed in the same job."""
+class NodeChangeCase(WorkerTestCase):
+    """A node change's job, run or ended on a kept answer, and the helpers it asks."""
 
     def run_job(
         self,
@@ -1114,6 +1120,10 @@ class NodeChangeAndDeploy(WorkerTestCase):
             fields.setdefault("block", "block")
             fields.setdefault("host", "node-c.example.com")
         return claimed(operation="cluster_node", payload=fields)
+
+
+class NodeChangeAndDeploy(NodeChangeCase):
+    """B321: a node change that is all a deploy would roll out is deployed in the same job."""
 
     def test_a_removal_is_deployed_and_the_job_ends_as_the_deploy(self) -> None:
         job = self.job("remove")
@@ -1233,6 +1243,76 @@ class NodeChangeAndDeploy(WorkerTestCase):
 
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(self.finished[0]["result"]["operation"], "cluster_node")
+
+
+class ARequestThatRanAfterTheDump(NodeChangeCase):
+    """Review 26-10-29, R02: a job a restored database still had queued had run since.
+
+    Its helper's answer was kept, and Run asked the helper the same request
+    again: a node removed after the dump, and added back since, was removed a
+    second time.
+    """
+
+    def kept(self, job: db.ClaimedJob) -> answer_receipt.Receipt:
+        return answer_receipt.Receipt("answered", stdout=self.changed(job)({}).stdout, exit_code=0)
+
+    def test_run_ends_on_the_kept_answer_and_goes_on_with_its_deploy(self) -> None:
+        job = replace(self.job("remove"), held_decision="run", held_decided_by="admin")
+        self.receipts.return_value = self.kept(job)
+
+        calls = self.run_job(job, [self.ran("deploy")])
+
+        self.receipts.assert_called_once_with(str(job.request_id))
+        self.assertEqual([call["operation"] for call in calls], ["deploy_cluster"])
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "done")
+        self.assertEqual(finished["result"]["node"]["result"]["action"], "removed")
+
+    def test_discard_ends_on_the_kept_answer_and_deploys_nothing(self) -> None:
+        job = replace(self.job("remove"), held_decision="discard", held_decided_by="admin")
+        self.receipts.return_value = self.kept(job)
+
+        calls = self.run_job(job, [])
+
+        self.assertEqual(calls, [])
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "done")
+        self.assertEqual(finished["result"]["result"]["action"], "removed")
+
+    def test_a_first_run_that_left_no_answer_ends_unknown(self) -> None:
+        job = replace(self.job("remove"), held_decision="run", held_decided_by="admin")
+        self.receipts.return_value = answer_receipt.Receipt("silent")
+
+        calls = self.run_job(job, [])
+
+        self.assertEqual(calls, [])
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "unknown")
+        self.assertEqual(finished["result"]["error"]["code"], "helper_silent")
+
+    def test_a_first_run_still_going_is_left_to_recovery(self) -> None:
+        job = replace(self.job("remove"), held_decision="run", held_decided_by="admin")
+        self.receipts.return_value = answer_receipt.Receipt("running")
+
+        calls = self.run_job(job, [])
+
+        self.assertEqual(calls, [])
+        self.assertEqual(self.finished, [])
+
+    def test_a_request_never_asked_runs(self) -> None:
+        job = self.job("remove")
+
+        calls = self.run_job(job, [self.changed(job), self.ran("deploy")])
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.finished[0]["state"], "done")
+
+    def test_a_job_whose_helper_keeps_no_answer_reads_none(self) -> None:
+        job = claimed()
+        with mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.receipts.assert_not_called()
 
 
 class PublishAndDeploy(WorkerTestCase):

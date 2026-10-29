@@ -18,7 +18,7 @@ from typing import TextIO
 from unittest import mock
 from uuid import uuid4
 
-from haprion import answer_receipt
+from haprion import answer_receipt, exit_codes
 from haprion.cli import backup_job_helper, cert_receiver_helper, node_helper, node_restore_helper
 
 REQUEST_ID = "6f1e2d3c-4b5a-4968-8776-655443322110"
@@ -155,6 +155,55 @@ class AReceipt(unittest.TestCase):
             left = sorted(os.listdir(directory))
 
         self.assertEqual(left, sorted([f"{held}.json", f"{new}.json", f"{REQUEST_ID}.json"]))
+
+
+class ARequestAskedAgain(unittest.TestCase):
+    """Review 26-10-29, R02: after a database restore the same request was run twice.
+
+    The second run renamed its receipt over the first, and the evidence of what
+    the first did was gone.
+    """
+
+    def test_is_answered_with_the_kept_answer_and_not_run(self) -> None:
+        ran: list[str] = []
+        with receipts() as directory:
+            helper(output_stream=io.StringIO(), code=0)
+            kept = (directory / f"{REQUEST_ID}.json").read_bytes()
+            output, errors = io.StringIO(), io.StringIO()
+
+            code = helper(
+                output_stream=output,
+                error_stream=errors,
+                during=lambda: ran.append("again"),
+                code=75,
+            )
+
+            self.assertEqual((directory / f"{REQUEST_ID}.json").read_bytes(), kept)
+            self.assertEqual(sorted(os.listdir(directory)), [f"{REQUEST_ID}.json"])
+
+        self.assertEqual(ran, [])
+        self.assertEqual(code, 0)
+        self.assertEqual(output.getvalue(), 'before\nbefore\n{"outcome": "done"}\n')
+        self.assertIn("answered before", errors.getvalue())
+
+    def test_whose_first_run_left_no_answer_is_refused(self) -> None:
+        ran: list[str] = []
+        with receipts() as directory:
+            first = answer_receipt.Kept(io.StringIO(), directory)
+            first.begin(REQUEST_ID)
+            os.close(first._fd)  # type: ignore[arg-type]
+            output, errors = io.StringIO(), io.StringIO()
+
+            code = helper(
+                output_stream=output, error_stream=errors, during=lambda: ran.append("again")
+            )
+
+            self.assertEqual(answer_receipt.read(REQUEST_ID, directory).state, "silent")
+
+        self.assertEqual(ran, [])
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual(output.getvalue(), "before\n")
+        self.assertIn("ended without an answer", errors.getvalue())
 
 
 class EverySocketHelperKeepsItsAnswer(unittest.TestCase):

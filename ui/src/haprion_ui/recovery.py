@@ -111,6 +111,12 @@ type Verdict = Literal["requeue", "abandon", "wait", "adopt"]
 
 NO_RECEIPT = answer_receipt.Receipt("unavailable")
 
+#
+# Said of a job whose helper ended without an answer, here and by the worker
+# that finds such a receipt for a job it has just taken.
+#
+HELPER_SILENT = "its helper ended without an answer, so what it did is not known"
+
 
 @dataclass(frozen=True, slots=True)
 class Judgement:
@@ -178,11 +184,7 @@ def judge(
         )
 
     if receipt.state == "silent":
-        return Judgement(
-            "abandon",
-            "helper_silent",
-            "its helper ended without an answer, so what it did is not known",
-        )
+        return Judgement("abandon", "helper_silent", HELPER_SILENT)
 
     if receipt.state == "absent" and job.operation in KEEPS_ANSWER:
         #

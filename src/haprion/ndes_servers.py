@@ -299,7 +299,8 @@ def authorities(
     except ProfileError:
         raise NdesServerError(
             "bad_input",
-            "the address must be an HTTPS URL without credentials, query, fragment, quotes or spaces",
+            "the address must be an HTTPS URL with a path, in ASCII, without credentials, query, "
+            "fragment, quotes, backslashes or spaces",
         ) from None
     try:
         certificates, _keys = read_bytes(fetch(endpoint, trust))
@@ -324,7 +325,7 @@ def authorities(
         if completed is None:
             raise NdesServerError(
                 "no_root",
-                f"{endpoint} gives no root CA, and none in the manager's certificate store "
+                f"{endpoint} gives no root CA, and none in {_store(trust)} "
                 "issues its CA; add the root CA to the store",
             )
         found = [
@@ -691,8 +692,8 @@ def _forget_ca(previous: object, servers: Sequence[Any], directory: Path) -> Non
     Only a file in the manager's own directory: a policy from before B385
     names its CA file where the installation put it. A server names a file
     as its `issuing_ca` or as its `tls_ca` - the same root may issue both -
-    and the names are compared as paths, not as the policy spells them
-    (review 2026-10-29 again, BB05).
+    and the names are compared as the files they lead to, not as the policy
+    spells them (review 2026-10-29 again, BB05; a link, round 2).
     """
 
     if not isinstance(previous, str):
@@ -703,7 +704,7 @@ def _forget_ca(previous: object, servers: Sequence[Any], directory: Path) -> Non
     if any(
         isinstance(s, dict)
         and any(
-            isinstance(s.get(field), str) and os.path.normpath(s[field]) == path
+            isinstance(s.get(field), str) and os.path.realpath(s[field]) == os.path.realpath(path)
             for field in ("issuing_ca", "tls_ca")
         )
         for s in servers

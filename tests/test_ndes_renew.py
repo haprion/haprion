@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -315,6 +316,28 @@ class WhatAnAttemptLeaves(RenewFixture):
         self.assertEqual(outcome.outcome, "skipped")
         record = ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
         self.assertEqual((record or {}).get("message"), "CA_REJECTED")
+
+    def test_an_abandon_that_cannot_take_the_record_is_still_an_abandon(self) -> None:
+        """Round 2, cosmetic: the request was gone and the answer said the state was unavailable."""
+
+        now = datetime(2026, 9, 15, 20, 0, tzinfo=UTC)
+        self.pending("web.example.com")
+        self.failed_pass(now)
+        output = io.StringIO()
+        with mock.patch.object(Path, "unlink", side_effect=PermissionError("read-only")):
+            code = cert_scep.main(
+                ["--id", "web.example.com", "--abandon", "--json"],
+                policy_path=self.policy_path,
+                output_stream=output,
+                error_stream=io.StringIO(),
+                require_secure=False,
+                require_root=False,
+            )
+        self.assertEqual(code, 0, output.getvalue())
+        self.assertEqual(json.loads(output.getvalue())["result"]["state"], "abandoned")
+        self.assertFalse(
+            ndes_state.request_is_pending(self.ndes_policy.state_root, "web.example.com")
+        )
 
     def test_an_exception_from_the_enrollment_is_a_failed_record_not_a_crash(self) -> None:
         now = datetime.now(UTC)

@@ -321,6 +321,8 @@ class AChainWithoutItsRoot(unittest.TestCase):
             ndes_servers.authorities(ENDPOINT, fetch=lambda *_: self.short, trust=self.store)
         self.assertEqual(caught.exception.code, "no_root")
         self.assertIn("gives no root CA", str(caught.exception))
+        # The store it was completed from, not always the manager's (round 2, cosmetic).
+        self.assertIn(f"none in the server's tls_ca {self.store} issues", str(caught.exception))
 
     def test_a_name_alone_does_not_make_a_root(self) -> None:
         # Another CA under the same name, not the one that signed the chain.
@@ -987,6 +989,24 @@ class ThePolicy(unittest.TestCase):
         )
         self.assertTrue(first.exists())
         self.assertTrue(second.exists())
+
+    def test_a_ca_file_a_server_trusts_through_a_link_stays(self) -> None:
+        """Review 2026-10-29, round 2, cosmetic: a `tls_ca` linked to the file did not hold it."""
+
+        first = Path(str(self.add()["issuing_ca"]))
+        link = self.root / "tls-link.pem"
+        link.symlink_to(first)
+        data = yaml.safe_load(self.policy.read_text())
+        data["ndes"]["servers"][0]["tls_ca"] = str(link)
+        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
+        (self.root / "renewed").mkdir()
+        self.answer = Answer(self.root / "renewed")
+        renewed = [
+            self.answer.sha256(self.answer.pki.intermediate),
+            self.answer.sha256(self.answer.pki.root),
+        ]
+        self.add(fingerprints=renewed)
+        self.assertTrue(first.exists())
 
     def test_a_ca_file_outside_the_manager_s_directory_is_never_removed(self) -> None:
         # A policy from before B385 names its CA file where the installation put it.

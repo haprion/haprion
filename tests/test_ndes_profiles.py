@@ -125,6 +125,15 @@ class NdesProfiles(unittest.TestCase):
             with self.subTest(endpoint=endpoint), self.assertRaises(ProfileError) as caught:
                 ndes_profiles.check_endpoint(endpoint)
             self.assertNotIn("example-value", str(caught.exception))
+        # Review 2026-10-29, round 2, cosmetic: the sentence names every rule it applies.
+        for endpoint, words in (
+            ("https://ca.example.com", "with a path"),
+            ("https://ca.example.com/cert\\srv", "backslashes"),
+            ("https://ca.example.com/cértsrv", "in ASCII"),
+        ):
+            with self.subTest(endpoint=endpoint), self.assertRaises(ProfileError) as caught:
+                ndes_profiles.check_endpoint(endpoint)
+            self.assertIn(words, str(caught.exception))
         for challenge in ("", "example-value\n", "example-value_", "é", "a" * 4097):
             with self.subTest(length=len(challenge)), self.assertRaises(ProfileError):
                 ndes_profiles.check_challenge(challenge)

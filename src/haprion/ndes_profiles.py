@@ -77,7 +77,8 @@ def check_endpoint(value: object) -> str:
         or any(ord(c) <= 32 or ord(c) >= 127 or c in "\\\"'?#" for c in value)
     ):
         raise ProfileError(
-            "endpoint must be an HTTPS URL without credentials, query, fragment, quotes or spaces"
+            "endpoint must be an HTTPS URL with a path, in ASCII, without credentials, query, "
+            "fragment, quotes, backslashes or spaces"
         )
     return value
 

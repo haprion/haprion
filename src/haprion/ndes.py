@@ -87,7 +87,8 @@ def validate_policy(policy: NdesPolicy, server: NdesServer, *, require_secure: b
     except ProfileError:
         raise NdesError(
             "bad_input",
-            "NDES endpoint must be an HTTPS URL without credentials, query, fragment, quotes or spaces",
+            "NDES endpoint must be an HTTPS URL with a path, in ASCII, without credentials, query, "
+            "fragment, quotes, backslashes or spaces",
         ) from None
     for path in (server.tls_ca, server.issuing_ca):
         secure_file(path, require_secure=require_secure)

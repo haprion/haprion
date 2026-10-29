@@ -364,6 +364,176 @@ class AChainWithoutItsRoot(unittest.TestCase):
             self.assertIn("CN=Test Issuing CA", str(caught.exception))
 
 
+class EcPki:
+    """Small EC PKIs, each CA built to one shape, for the confirmation against issuance."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.serial = 0
+
+    def make(
+        self,
+        name: str,
+        extensions: str,
+        issuer: tuple[Path, Path] | None = None,
+        *,
+        dates: tuple[str, str] | None = None,
+    ) -> tuple[Path, Path]:
+        self.serial += 1
+        key, certificate = self.root / f"{name}.key", self.root / f"{name}.pem"
+        config, request = self.root / f"{name}.ext", self.root / f"{name}.csr"
+        run = [OPENSSL, "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256"]
+        subprocess.run([*run, "-out", str(key)], capture_output=True, check=True)
+        config.write_text(
+            "[v]\n"
+            + extensions
+            + "\nsubjectKeyIdentifier=hash\n"
+            + ("authorityKeyIdentifier=keyid\n" if issuer else "")
+        )
+        subprocess.run(
+            [
+                OPENSSL,
+                "req",
+                "-new",
+                "-key",
+                str(key),
+                "-subj",
+                f"/CN={name}",
+                "-out",
+                str(request),
+            ],
+            capture_output=True,
+            check=True,
+        )
+        signing = (
+            ["-CA", str(issuer[0]), "-CAkey", str(issuer[1])] if issuer else ["-key", str(key)]
+        )
+        subprocess.run(
+            [OPENSSL, "x509", "-req", "-in", str(request), "-out", str(certificate)]
+            + ["-extfile", str(config), "-extensions", "v", "-days", "3650"]
+            + ["-set_serial", str(self.serial), *signing]
+            + (["-not_before", dates[0], "-not_after", dates[1]] if dates else []),
+            capture_output=True,
+            check=True,
+        )
+        return certificate, key
+
+
+CA = "basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign"
+# An RA certificate is no server's: its own usage is never one issuance asks for.
+RA = "basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=clientAuth"
+
+
+class TheConfirmationChecksWhatIssuanceChecks(unittest.TestCase):
+    """Review 2026-10-29, round 2, BBB04: issuance is the answer key.
+
+    The check judged each CA certificate as the end of a chain, while
+    issuance verifies a server certificate under the issuing CA. A
+    constraint that bites only below the issuing CA was confirmed and failed
+    every issue; a CA beside the path refused a server issuance would use.
+    Each shape is put to both, and they must agree.
+    """
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def issued(self, pki: EcPki, issuing: tuple[Path, Path], found: Any) -> bool:
+        """What `ndes.validate_certificate` does with a server certificate from the issuing CA."""
+
+        from haprion import ndes
+        from haprion.cert_import import assemble
+
+        leaf, key = pki.make(
+            "web.example.com",
+            "basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\n"
+            "extendedKeyUsage=serverAuth\nsubjectAltName=DNS:web.example.com",
+            issuing,
+        )
+        directory = pki.root / "staging"
+        directory.mkdir()
+        saved = "".join(authority.pem for authority in found)
+        (directory / "issuing-ca.pem").write_text(saved)
+        material = assemble(
+            [leaf.read_text(), *[authority.pem for authority in found]], [key.read_text()]
+        )
+        try:
+            ndes.validate_certificate(material, ["web.example.com"], directory)
+        except ndes.NdesError as exc:
+            self.assertEqual(exc.code, "untrusted_certificate", str(exc))
+            return False
+        return True
+
+    def test_the_confirmation_and_issuance_agree(self) -> None:
+        old = ("20200101000000Z", "20210101000000Z")
+        names = (
+            "a root that issues, as AD CS's one level",
+            "a root with pathlen:0 over the issuing CA",
+            "an issuing CA for clients only",
+            "an issuing CA for any purpose by name",
+            "an issuing CA for servers and clients",
+            "a CA past its date beside the path",
+        )
+        # name: (the confirmation's refusal or None, whether issuance issues)
+        shapes: dict[str, tuple[str | None, bool]] = {}
+        for number, name in enumerate(names):
+            pki = EcPki(self.root / str(number))
+            pki.root.mkdir()
+            if number == 0:
+                root = pki.make("Root", CA)
+                issuing, chain = root, [root]
+            else:
+                root = pki.make(
+                    "Root", CA.replace("CA:TRUE", "CA:TRUE,pathlen:0") if number == 1 else CA
+                )
+                eku = {
+                    2: "\nextendedKeyUsage=clientAuth",
+                    3: "\nextendedKeyUsage=anyExtendedKeyUsage",
+                    4: "\nextendedKeyUsage=serverAuth,clientAuth",
+                }.get(number, "")
+                issuing = pki.make("Issuing", CA + eku, root)
+                chain = [issuing, root]
+                if number == 5:
+                    chain.append(pki.make("Old Issuing", CA, root, dates=old))
+            ra = pki.make("RA", RA, issuing)
+            answer = pkcs7(*[each[0] for each in chain], ra[0])
+            refused: str | None = None
+            try:
+                found = ndes_servers.authorities(
+                    ENDPOINT, fetch=lambda *_, given=answer: given, trust=self.root / "none.pem"
+                )
+            except ndes_servers.NdesServerError as exc:
+                self.assertEqual(exc.code, "bad_chain", str(exc))
+                refused = str(exc)
+                found = tuple(
+                    ndes_servers.Authority(
+                        subject="", sha256="", sha1="", pem=each[0].read_text(), issues_ra=False
+                    )
+                    for each in chain
+                )
+            shapes[name] = (refused, self.issued(pki, issuing, found))
+        for name, (refused, issued) in shapes.items():
+            with self.subTest(name):
+                self.assertEqual(refused is None, issued, refused)
+        self.assertEqual(
+            [name for name, (_refused, issued) in shapes.items() if issued],
+            [
+                "a root that issues, as AD CS's one level",
+                "an issuing CA for servers and clients",
+                "a CA past its date beside the path",
+            ],
+        )
+        said = {name: refused for name, (refused, _issued) in shapes.items() if refused}
+        self.assertIn(
+            "CN=Root: path length constraint exceeded",
+            said["a root with pathlen:0 over the issuing CA"],
+        )
+        self.assertIn(
+            "CN=Issuing: unsuitable certificate purpose", said["an issuing CA for clients only"]
+        )
+
+
 class TheAuthorities(unittest.TestCase):
     def test_the_cas_the_issuing_one_first_and_never_the_ra(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

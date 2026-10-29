@@ -247,7 +247,9 @@ def authorities(
     A chain that does not reach a self-signed root is completed from `trust` -
     the store the server's HTTPS is checked against - and refused when it
     cannot be: a certificate issued from it would not verify (review
-    2026-10-29, B09, decided in B388).
+    2026-10-29, B09, decided in B388). A set under which a server
+    certificate would not verify, as issuance verifies one, is refused as
+    `bad_chain` (`_chain_problem`).
     """
 
     try:
@@ -293,7 +295,17 @@ def authorities(
         raise NdesServerError(
             "bad_answer", f"{endpoint} answered with no CA: {exc}", exit_codes.UNAVAILABLE
         ) from None
-    problem = _chain_problem(found)
+    #
+    # The CA that issues the server's certificates is the one that issued its
+    # RA certificate; a server that gives none is asked about the CAs that
+    # issue no other CA in the set.
+    #
+    issuing = [authority.pem for authority in found if authority.issues_ra] or [
+        pem
+        for subject, _issuer, pem in authority_pems
+        if not any(issuer == subject and other != subject for other, issuer, _ in authority_pems)
+    ]
+    problem = _chain_problem(found, issuing)
     if problem is not None:
         raise NdesServerError(
             "bad_chain",
@@ -302,42 +314,155 @@ def authorities(
     return tuple(sorted(found, key=lambda authority: not authority.issues_ra))
 
 
-def _chain_problem(found: Sequence[Authority]) -> str | None:
-    """Why the set does not verify as a chain, as issuance will check it; None when it does.
+#
+# OpenSSL's code for a certificate whose signature does not verify: the one
+# failure a probe made under the issuing CA is built to have.
+#
+SIGNATURE_FAILURE = 7
+VERIFY_ERROR = re.compile(r"error (\d+) at (\d+) depth lookup: (.*)")
+KEY_ALGORITHM = re.compile(r"Public Key Algorithm: (\S+)")
+CURVE = re.compile(r"ASN1 OID: (\S+)")
+KEY_IDENTIFIER = re.compile(r"(?:[0-9A-F]{2}:)*[0-9A-F]{2}")
+PROBE = (
+    "basicConstraints=CA:FALSE\n"
+    "keyUsage=digitalSignature,keyEncipherment\n"
+    "extendedKeyUsage=serverAuth\n"
+    "subjectAltName=DNS:probe.invalid\n"
+)
 
-    Issuance verifies against exactly what is saved, without `-partial_chain`
-    (`ndes.validate_certificate`). The server's own part of the chain was
-    judged by its names, so a root renewed with a new key, or a CA past its
-    date, was confirmed and every issue failed after (review 2026-10-29
-    again, BB04). Each CA certificate is verified against the whole set.
+
+def _chain_problem(found: Sequence[Authority], issuing: Sequence[str]) -> str | None:
+    """Why a server certificate from the issuing CA would not verify, as issuance checks it.
+
+    None when it would. Issuance verifies the certificate it is given
+    against exactly what is saved, without `-partial_chain`, and then for a
+    server (`ndes.validate_certificate`). Each CA certificate judged as the
+    end of a chain was both stricter and weaker than that: a CA beside the
+    path, past its date, refused a server issuance would use, and a root's
+    `pathlen:0` over the issuing CA, or an issuing CA kept to clients, was
+    confirmed and failed every issue (review 2026-10-29, round 2, BBB04).
+
+    There is no certificate before the first issue, so one is made: the
+    issuing CA's name and key identifier, the usages issuance demands of a
+    server's, signed by a throwaway key. Issuance's own two `openssl verify`
+    calls then judge everything above it - signatures, dates, path lengths,
+    purposes - and the one failure left is the probe's own signature, at
+    depth 0. A server with more than one issuing CA is confirmed when one of
+    them would issue.
     """
 
+    first: str | None = None
     with tempfile.TemporaryDirectory() as raw:
-        bundle = Path(raw) / "set.pem"
-        bundle.write_text("".join(authority.pem for authority in found))
-        for authority in found:
-            try:
-                verified = subprocess.run(  # noqa: S603 - fixed binary, a private temporary file
-                    [OPENSSL, "verify", "-CAfile", str(bundle)],
-                    input=authority.pem,
-                    capture_output=True,
-                    text=True,
-                    timeout=OPENSSL_TIMEOUT,
-                    check=False,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                return f"{authority.subject}: openssl could not be run"
-            if verified.returncode:
-                said = next(
-                    (
-                        line.partition(" lookup: ")[2] or line
-                        for line in verified.stderr.splitlines()
-                        if line.startswith("error ") and " depth " in line
-                    ),
-                    "verification failed",
-                )
-                return f"{authority.subject}: {said}"
+        directory = Path(raw)
+        saved = directory / "set.pem"
+        saved.write_text("".join(authority.pem for authority in found))
+        for pem in dict.fromkeys(issuing):
+            problem = _probe(directory, saved, pem)
+            if problem is None:
+                return None
+            first = first or problem
+    return first
+
+
+def _probe(directory: Path, saved: Path, issuing: str) -> str | None:
+    """Issuance's verification of a server certificate under `issuing`, the probe's signature aside."""
+
+    ca, key, fake = directory / "ca.pem", directory / "probe.key", directory / "fake.pem"
+    request, leaf = directory / "probe.csr", directory / "probe.pem"
+    ca.write_text(issuing)
+    try:
+        described = _openssl(
+            ["x509", "-noout", "-text"], stdin=issuing, what="read the issuing CA certificate"
+        )
+        identifier = _openssl(
+            ["x509", "-noout", "-ext", "subjectKeyIdentifier"],
+            stdin=issuing,
+            what="read the issuing CA certificate",
+        )
+    except ImportError_ as exc:
+        return str(exc)
+    #
+    # OpenSSL takes a certificate for a CA's only when the CA's key is of the
+    # kind that signed it, so the throwaway key is of the issuing CA's kind.
+    #
+    algorithm = KEY_ALGORITHM.search(described)
+    curve = CURVE.search(described)
+    kind = algorithm.group(1) if algorithm else ""
+    if kind == "rsaEncryption":
+        generate = ["-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048"]
+    elif kind == "id-ecPublicKey" and curve is not None:
+        generate = ["-algorithm", "EC", "-pkeyopt", f"ec_paramgen_curve:{curve.group(1)}"]
+    elif kind in {"ED25519", "ED448"}:
+        generate = ["-algorithm", kind]
+    else:
+        return f"the issuing CA's key ({kind or 'unknown'}) is not one this check can verify under"
+    #
+    # The issuing CA again under the throwaway key: its name as it is, and
+    # its key identifier, which the probe names as its issuer's.
+    #
+    keyid = KEY_IDENTIFIER.search(identifier.partition("\n")[2])
+    (directory / "fake.ext").write_text(
+        "[v]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=keyCertSign\n"
+        + (f"subjectKeyIdentifier={keyid.group(0)}\n" if keyid else "subjectKeyIdentifier=none\n")
+        + "authorityKeyIdentifier=none\n"
+    )
+    (directory / "probe.ext").write_text(
+        "[v]\n"
+        + PROBE
+        + ("authorityKeyIdentifier=keyid\n" if keyid else "authorityKeyIdentifier=none\n")
+    )
+    try:
+        for arguments in (
+            ["genpkey", *generate, "-out", str(key)],
+            ["x509", "-in", str(ca), "-key", str(key), "-clrext", "-out", str(fake)]
+            + ["-extfile", str(directory / "fake.ext"), "-extensions", "v"],
+            ["req", "-new", "-key", str(key), "-subj", "/CN=probe.invalid", "-out", str(request)],
+            ["x509", "-req", "-in", str(request), "-CA", str(fake), "-CAkey", str(key)]
+            + ["-extfile", str(directory / "probe.ext"), "-extensions", "v"]
+            + ["-days", "1", "-set_serial", "1", "-out", str(leaf)],
+        ):
+            subprocess.run(  # noqa: S603 - fixed binary, a private temporary directory
+                [OPENSSL, *arguments],
+                capture_output=True,
+                timeout=OPENSSL_TIMEOUT,
+                check=True,
+            )
+        # As `ndes.validate_certificate` asks: the chain, then the purpose.
+        base = [OPENSSL, "verify", "-CAfile", str(saved), "-untrusted", str(saved)]
+        for arguments in (base, [*base[:2], "-purpose", "sslserver", *base[2:]]):
+            verified = subprocess.run(  # noqa: S603 - fixed binary, a private temporary directory
+                [*arguments, str(leaf)],
+                capture_output=True,
+                text=True,
+                timeout=OPENSSL_TIMEOUT,
+                check=False,
+            )
+            problem = _verify_problem(verified.returncode, verified.stderr)
+            if problem is not None:
+                return problem
+    except (OSError, subprocess.SubprocessError):
+        return "openssl could not be run"
     return None
+
+
+def _verify_problem(returncode: int, said: str) -> str | None:
+    """The first failure `openssl verify` reports that is not the probe's own signature."""
+
+    if returncode == 0:
+        return None
+    subject = ""
+    seen = False
+    for line in said.splitlines():
+        match = VERIFY_ERROR.fullmatch(line)
+        if match is None:
+            if not line.startswith("error ") and ":error:" not in line:
+                subject = line
+            continue
+        seen = True
+        code, depth, reason = int(match.group(1)), int(match.group(2)), match.group(3)
+        if (code, depth) != (SIGNATURE_FAILURE, 0):
+            return f"{subject}: {reason}" if subject else reason
+    return None if seen else "verification failed"
 
 
 def _authority(

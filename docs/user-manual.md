@@ -2923,11 +2923,13 @@ and the worker holds every such job:
 
 - *Events → Jobs* shows it as *Held*, with **Run** and **Discard** for an admin, and *Needs attention*
   says how many wait.
-- A discarded job ends *blocked* with the code `held_discarded`; nothing more of it ran.
+- A discarded job that waits in the queue ends *blocked* with the code `held_discarded`; nothing more
+  of it ran.
 - A job that was *running* when the host went down or was backed up is held too; stopping only the
   manager's services holds nothing. Its own step may have finished: a node change, for example, whose
   answer the manager kept. **Run** goes on with what follows it in the job, such as the deploy after a
-  node change. **Discard** ends it on what it already did and runs nothing more.
+  node change. **Discard** ends it on what it already did and runs nothing more. Either way it is judged
+  first, as after any worker failure: one whose outcome cannot be read ends `unknown`.
 - While an update of the manager pauses the queue, nothing is taken up again, held or not.
 - A job queued just before an ordinary reboot is held the same way, and needs the same click.
 - An answer holds until the next start. A job answered **Run** that was still waiting or running when

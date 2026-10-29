@@ -241,9 +241,14 @@ def against_carried(installation: object, carried: object) -> tuple[str | None, 
 
 #
 # What is done about a package not configured, in the words the status and the
-# check both say.
+# check both say. `dpkg --configure` finishes one whose install script failed;
+# one whose unpacking stopped (`half-installed`) it refuses, and says to
+# reinstall it (review 26-10-29, AAA04).
 #
-CONFIGURE_ON_THE_NODE = "run sudo dpkg --configure -a on the node"
+CONFIGURE_ON_THE_NODE = (
+    "run sudo dpkg --configure -a on the node, or, if dpkg leaves it unconfigured, "
+    "sudo apt install --reinstall haprion-node"
+)
 
 
 @dataclass(frozen=True)
@@ -257,8 +262,8 @@ class NodePackageStanding:
 def node_package_standing(installation: object, carried: object) -> NodePackageStanding | None:
     """How a node's haprion-node stands, as the dashboard, `haprion-status` and the check say it.
 
-    A package dpkg unpacked and did not configure first, whatever its version:
-    its install script failed, and `dpkg --configure -a` on the node is what
+    A package dpkg did not configure first, whatever its version: its install
+    script failed or its unpacking stopped, and CONFIGURE_ON_THE_NODE is what
     is to be done. Otherwise its version against the carried one's, as
     `against_carried` orders them. One reading for the three, which had a
     sentence each and read `configured` two ways and not at all (review

@@ -1113,7 +1113,8 @@ class FrozenSchemaTests(unittest.TestCase):
         self.assertEqual(len(warnings), 1, warnings)
         self.assertIn(
             "haprion-node 0.99.6 (0123abcd) is installed but not configured - run sudo dpkg "
-            "--configure -a on the node",
+            "--configure -a on the node, or, if dpkg leaves it unconfigured, sudo apt install "
+            "--reinstall haprion-node",
             warnings[0],
         )
 

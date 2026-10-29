@@ -8,6 +8,7 @@ import subprocess
 import unittest
 
 from haprion.haproxy_versions import (
+    CONFIGURE_ON_THE_NODE,
     against_carried,
     compare,
     node_package_standing,
@@ -198,6 +199,18 @@ class HowANodePackageStands(unittest.TestCase):
             node_package_standing({"version": self.CARRIED, "configured": False}, None),
             node_package_standing({"version": self.CARRIED, "configured": False}, self.CARRIED),
         )
+
+    def test_what_to_do_covers_an_unpacking_that_stopped_too(self) -> None:
+        """Review 26-10-29, AAA04: `half-installed` counts as not configured on the node.
+
+        `dpkg --configure` takes only a package unpacked and not configured;
+        for one whose unpacking stopped, dpkg says to reinstall it.
+        """
+
+        self.assertTrue(
+            CONFIGURE_ON_THE_NODE.startswith("run sudo dpkg --configure -a on the node")
+        )
+        self.assertIn("sudo apt install --reinstall haprion-node", CONFIGURE_ON_THE_NODE)
 
     def test_otherwise_it_is_the_order_against_the_carried_package(self) -> None:
         older = "0.99.5+git20261028210223.49d2aeb20207"

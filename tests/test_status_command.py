@@ -925,7 +925,8 @@ class CallerTests(HelperFixture):
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
         self.assertIn(
             "Node package: 0.99.6 (0123abcd)  NOT CONFIGURED - run sudo dpkg --configure -a "
-            "on the node\n",
+            "on the node, or, if dpkg leaves it unconfigured, sudo apt install --reinstall "
+            "haprion-node\n",
             out,
         )
 

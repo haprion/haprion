@@ -649,6 +649,18 @@ def run_one_job(
     (review 2026-10-22, 1B-6).
     """
 
+    #
+    # Every end below is written as the run's is, on a fresh connection while
+    # the lease taken by the claim holds. Written once, a database that dropped
+    # just then left the job to recovery, which put a deploy or a publish back
+    # in the queue - and a request from before a restore ran on its second take
+    # (review 26-10-29, Q03).
+    #
+    lease = _Lease(connection, job, connect)
+
+    def end_before_the_run(**fields: Any) -> None:
+        _finish_on(connection, connect, lambda: lease.renewed_at, job, worker=worker, **fields)
+
     if job.held_decision == "discard":
         #
         # Held since the manager started, and an admin said it should not run
@@ -665,30 +677,29 @@ def run_one_job(
             else f"queued before the manager last started; {job.held_decided_by}"
             " decided it should not run"
         )
-        _finish(
-            connection,
-            job,
+        end_before_the_run(
             state="blocked",
             outcome="blocked",
             exit_code=None,
             result={"error": {"code": "held_discarded", "message": message}},
             stderr_excerpt=None,
-            worker=worker,
         )
         return
 
-    waited = (datetime.now(UTC) - job.created_at).total_seconds()
-    if job.attempts == 1 and job.held_decision is None and waited > MAX_PENDING_SECONDS:
-        #
-        # Taken for the first time and older than any real queue: asked for
-        # before a restore, or while writes were off for hours. Nothing runs;
-        # a job requeued by recovery has been judged on evidence and is not
-        # held to this.
-        #
+    #
+    # How long it waited before it was first taken: `started_at` keeps the
+    # first claim's time. Older than any real queue, it was asked for before a
+    # restore, or while writes were off for hours, and nothing runs. Counted to
+    # the first take and not on the first attempt, so a job put back by
+    # recovery before its end was written is not run on its second (review
+    # 26-10-29, Q03); one taken in time and requeued since was judged on
+    # evidence and runs.
+    #
+    first_taken = job.started_at or datetime.now(UTC)
+    waited = (first_taken - job.created_at).total_seconds()
+    if job.held_decision is None and waited > MAX_PENDING_SECONDS:
         logger.error("job %s waited %d s and was not run", job.id, waited)
-        _finish(
-            connection,
-            job,
+        end_before_the_run(
             state="blocked",
             outcome="blocked",
             exit_code=None,
@@ -702,7 +713,6 @@ def run_one_job(
                 }
             },
             stderr_excerpt=None,
-            worker=worker,
         )
         return
 
@@ -722,32 +732,24 @@ def run_one_job(
         # untouched and the job needs a person, not a retry.
         #
         logger.error("job %s refused before it ran: %s", job.id, refusal)
-        _finish(
-            connection,
-            job,
+        end_before_the_run(
             state="blocked",
             outcome="blocked",
             exit_code=None,
             result=None,
             stderr_excerpt=diagnostics.safe_excerpt(str(refusal)),
-            worker=worker,
         )
         return
-
-    lease = _Lease(connection, job, connect)
 
     refused = execution.sudo_refusal(prepared.argv)
     if refused is not None:
         logger.error("job %s: sudo will not run %s: %s", job.id, prepared.argv[-1], refused)
-        _finish(
-            connection,
-            job,
+        end_before_the_run(
             state="blocked",
             outcome="blocked",
             exit_code=None,
             result=_sudo_refused(prepared.argv, refused),
             stderr_excerpt=diagnostics.safe_excerpt(refused),
-            worker=worker,
         )
         return
 

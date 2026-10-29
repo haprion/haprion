@@ -491,15 +491,73 @@ class RequestsFromBeforeARestore(WorkerTestCase):
         self.assertEqual(finished["result"]["error"]["code"], "request_expired")
 
     def test_a_job_recovery_requeued_is_judged_already(self) -> None:
+        created = datetime.now(UTC) - timedelta(seconds=worker.MAX_PENDING_SECONDS + 60)
         job = replace(
-            claimed(),
-            attempts=2,
-            created_at=datetime.now(UTC) - timedelta(seconds=worker.MAX_PENDING_SECONDS + 60),
+            claimed(), attempts=2, created_at=created, started_at=created + timedelta(minutes=1)
         )
         with mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))):
             worker.run_one_job(self.connection, job, worker=WORKER)
 
         self.assertEqual(self.finished[0]["state"], "done")
+
+    def test_a_job_put_back_before_its_expiry_was_written_is_still_not_run(self) -> None:
+        """Review 26-10-29, Q03: the wait counts to the first take, not to the first attempt.
+
+        Its end could not be written, recovery put it back, and the second
+        take ran a request from before a restore.
+        """
+
+        created = datetime.now(UTC) - timedelta(seconds=worker.MAX_PENDING_SECONDS + 60)
+        job = replace(
+            claimed("server_state"),
+            attempts=2,
+            created_at=created,
+            started_at=created + timedelta(seconds=worker.MAX_PENDING_SECONDS + 30),
+        )
+        with mock.patch.object(execution, "run") as never:
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        never.assert_not_called()
+        (finished,) = self.finished
+        self.assertEqual(finished["result"]["error"]["code"], "request_expired")
+
+    def test_an_end_before_the_run_is_tried_again_while_the_lease_holds(self) -> None:
+        """Review 26-10-29, Q03: the early ends were written once, and left to recovery."""
+
+        cases = {
+            "expired": replace(
+                claimed("server_state"),
+                created_at=datetime.now(UTC) - timedelta(seconds=worker.MAX_PENDING_SECONDS + 60),
+            ),
+            "discarded": replace(claimed(), held_decision="discard", held_decided_by="admin"),
+            "refused": claimed("no_such_operation"),
+        }
+        for name, job in cases.items():
+            with self.subTest(name):
+                self.finished.clear()
+                tries: list[str] = []
+
+                def finish(_c: object, tries: list[str] = tries, **fields: Any) -> bool:
+                    tries.append(fields["state"])
+                    if len(tries) == 1:
+                        raise psycopg.OperationalError("the database system is starting up")
+                    self.finished.append(fields)
+                    return True
+
+                with (
+                    mock.patch.object(execution, "run") as never,
+                    mock.patch.object(db, "finish_job", side_effect=finish),
+                    mock.patch("haprion_ui.worker.time.sleep"),
+                ):
+                    worker.run_one_job(
+                        self.connection,
+                        job,
+                        worker=WORKER,
+                        connect=lambda: nullcontext(self.connection),
+                    )
+
+                never.assert_not_called()
+                self.assertEqual(tries, ["blocked", "blocked"])
 
     def test_a_job_that_waited_in_an_ordinary_queue_runs(self) -> None:
         job = replace(claimed(), created_at=datetime.now(UTC) - timedelta(minutes=45))

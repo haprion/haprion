@@ -4065,8 +4065,9 @@ for example, drain a server that has since been set ready. The worker guards aga
   an admin chooses *Run* or *Discard*, and *Needs attention* lists it. A job queued just before an
   ordinary reboot waits for that choice too. If the start time cannot be read, nothing is held.
 - A job that has waited more than two hours when it is first taken is not run. It ends as `blocked`,
-  saying how long it waited; ask again if it still applies. A job retried after its worker died has been
-  judged on evidence (below) and is not held to this.
+  saying how long it waited; ask again if it still applies. The wait counts to when the job was first
+  taken. A job retried after its worker died is held to that same wait; one first taken in time has been
+  judged on evidence (below) and runs.
 
 **A job whose worker died.** With writes on, each pass first settles jobs whose worker stopped. Each job is
 held under a lease, a claim the worker keeps renewing. An expired lease says only that the process holding

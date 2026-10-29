@@ -7106,7 +7106,8 @@ sudo ./check-compatibility
 ```
 
 The running UI release supplies the database revisions it accepts and the oldest CLI and node APIs
-it works with. The command:
+it works with. A revision past them passes when a release on the machine declares its migrations safe
+for the running one, the same rule `haprion-rollback` decides by. The command:
 
 - reports both release IDs;
 - reads the database's revision from `alembic_version`;

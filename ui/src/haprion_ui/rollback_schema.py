@@ -16,35 +16,16 @@ Exit 0 when the target runs on the schema, 1 with the reason when it does not.
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
 from .compatibility import (
     CompatibilityError,
-    Requirements,
     named_release,
-    rollback_schema_problem,
+    owners,
+    schema_problem,
     ui_requirements,
 )
-
-
-def newest_first(name: str) -> tuple[int, ...]:
-    """`0.99.10-<hash>` after `0.99.9-<hash>`; a name without a version last."""
-
-    version = re.match(r"\d+(?:\.\d+)*", name)
-    return tuple(int(part) for part in version.group().split(".")) if version else ()
-
-
-def owners(root: Path, packaged: str) -> list[Requirements]:
-    found = []
-    releases = sorted((root / "releases").iterdir(), key=lambda path: newest_first(path.name))
-    for release in sorted(releases[::-1], key=lambda path: path.name != packaged):
-        try:
-            found.append(ui_requirements(release))
-        except CompatibilityError:
-            continue  # a release that says nothing carries nothing
-    return found
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -59,9 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     except CompatibilityError as exc:
         print(f"the target says nothing about its schema: {exc}", file=sys.stderr)
         return 1
-    problem = rollback_schema_problem(
-        target, owners(args.platform_root, args.packaged), args.revision
-    )
+    problem = schema_problem(target, owners(args.platform_root, args.packaged), args.revision)
     if problem is not None:
         print(problem, file=sys.stderr)
         return 1

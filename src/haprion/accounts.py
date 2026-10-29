@@ -45,6 +45,8 @@ UI_ROOT = "/opt/haprion-ui"
 UI_CONFIG = "/etc/haprion/ui.toml"
 UI_SECRETS = "/etc/haprion/ui-secrets"
 UI_DATA = "/var/lib/haprion-ui"
+# What the haprion-ui package installed: RELEASE_ID names its release.
+UI_PAYLOAD = "/usr/lib/haprion/ui/PAYLOAD"
 
 # Each node.
 TRIGGER = "_haprion-trigger"

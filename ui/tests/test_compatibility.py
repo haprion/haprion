@@ -460,29 +460,35 @@ class PreparedReleaseTests(unittest.TestCase):
                 compatibility.named_release(root, "candidate", "UI")
 
 
+def release_on_disk(root: Path, name: str, head: str, safe_from: str) -> None:
+    """A UI release under `root/releases` that says only its schema."""
+
+    document = json.loads(MANIFEST.read_text())
+    revisions = document["requires"]["database_revisions"]
+    # Releases with these numbers came before the baseline and named none.
+    document["requires"].pop("database_baseline")
+    document["requires"].update(
+        database_head=head,
+        rollback_safe_from=safe_from,
+        database_revisions=revisions[: revisions.index(head) + 1]
+        if head in revisions
+        else [*revisions, head],
+    )
+    site = root / "releases" / name / "venv/lib/python3.12/site-packages"
+    (site / "haprion_ui").mkdir(parents=True)
+    (site / "haprion_ui" / "compatibility.json").write_text(json.dumps(document))
+    info = site / "haprion_ui-0.1.0.dist-info"
+    info.mkdir()
+    (info / "entry_points.txt").write_text(
+        "[console_scripts]\nhaprion-worker = haprion_ui.worker:_entry\n"
+    )
+
+
 class RollbackSchemaCommandTests(unittest.TestCase):
     """`python -m haprion_ui.rollback_schema`, as `haprion-rollback` asks it (26-10-20)."""
 
     def release(self, root: Path, name: str, head: str, safe_from: str) -> None:
-        document = json.loads(MANIFEST.read_text())
-        revisions = document["requires"]["database_revisions"]
-        # Releases with these numbers came before the baseline and named none.
-        document["requires"].pop("database_baseline")
-        document["requires"].update(
-            database_head=head,
-            rollback_safe_from=safe_from,
-            database_revisions=revisions[: revisions.index(head) + 1]
-            if head in revisions
-            else [*revisions, head],
-        )
-        site = root / "releases" / name / "venv/lib/python3.12/site-packages"
-        (site / "haprion_ui").mkdir(parents=True)
-        (site / "haprion_ui" / "compatibility.json").write_text(json.dumps(document))
-        info = site / "haprion_ui-0.1.0.dist-info"
-        info.mkdir()
-        (info / "entry_points.txt").write_text(
-            "[console_scripts]\nhaprion-worker = haprion_ui.worker:_entry\n"
-        )
+        release_on_disk(root, name, head, safe_from)
 
     def ask(self, root: Path, target: str, revision: str, packaged: str = "new") -> tuple[int, str]:
         from haprion_ui import rollback_schema
@@ -542,6 +548,72 @@ class RollbackSchemaCommandTests(unittest.TestCase):
             self.assertEqual(self.ask(root, "0.99.4-cccc", "0079", "0.99.2-aaaa")[0], 0)
 
 
+class TheCheckAfterARollback(unittest.TestCase):
+    """Review 26-10-29, A01: the check holds a release to the rule the rollback used.
+
+    After `haprion-rollback` over a migration declared safe for the target, or
+    after `update-platform-release` put the previous release back over one,
+    the database stands past the release's own head. The check said FAIL for
+    that, as for a schema the release had never been taken to.
+    """
+
+    def schema_line(self, root: Path, release: str, revision: str) -> str:
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(compatibility, "cli_metadata", return_value={}),
+            mock.patch.object(compatibility, "database_revision", return_value=revision),
+            mock.patch.object(compatibility, "check_cluster_nodes"),
+            contextlib.redirect_stdout(io.StringIO()) as printed,
+        ):
+            (root / "cli/releases/r1").mkdir(parents=True, exist_ok=True)
+            if not (root / "cli/current").is_symlink():
+                (root / "cli/current").symlink_to(root / "cli/releases/r1")
+            compatibility.main(
+                [
+                    "--platform-root", str(root),
+                    "--cli-root", str(root / "cli"),
+                    "--database", "haprion",
+                    "--database-role", "migrate",
+                    "--clusters",
+                    "--runtime-policy", str(root / "runtime-policy.yaml"),
+                    "--collector-config", str(root / "traffic-collector.json"),
+                    "--sudoers-root", str(root / "sudoers.d"),
+                    "--systemd-root", str(root / "systemd"),
+                    "--ui-release", release,
+                    "--packaged", "0.99.6-bbbb",
+                    "--skip-services",
+                ]
+            )  # fmt: skip
+        return next(line for line in printed.getvalue().splitlines() if "schema revision" in line)
+
+    def test_a_schema_its_carrier_declares_safe_for_the_release_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            release_on_disk(root, "0.99.5-aaaa", "0100", "0100")
+            release_on_disk(root, "0.99.6-bbbb", "9999", "0100")
+            line = self.schema_line(root, "0.99.5-aaaa", "9999")
+            self.assertIn("PASS  schema revision", line)
+            self.assertIn("9999, past 0100 over migrations declared safe for it", line)
+            self.assertIn("PASS  schema revision", self.schema_line(root, "0.99.6-bbbb", "9999"))
+
+    def test_a_schema_declared_unsafe_for_the_release_still_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            release_on_disk(root, "0.99.5-aaaa", "0100", "0100")
+            release_on_disk(root, "0.99.6-bbbb", "9999", "9999")
+            line = self.schema_line(root, "0.99.5-aaaa", "9999")
+            self.assertIn("FAIL  schema revision", line)
+            self.assertIn("safe for a UI from 9999 on; the target stands at 0100", line)
+            (root / "releases/0.99.6-bbbb").rename(root / "releases/gone")
+            (
+                root
+                / "releases/gone/venv/lib/python3.12/site-packages/haprion_ui/compatibility.json"
+            ).unlink()
+            line = self.schema_line(root, "0.99.5-aaaa", "9999")
+            self.assertIn("FAIL  schema revision", line)
+            self.assertIn("no release on this machine declares schema 9999 safe", line)
+
+
 class UpgradeFailureTests(unittest.TestCase):
     def requirements(self, *, head: str, accepts: tuple[str, ...]) -> compatibility.Requirements:
         return compatibility.Requirements(
@@ -592,7 +664,7 @@ class UpgradeFailureTests(unittest.TestCase):
         )
         at_0078 = self.requirements(head="0078", accepts=("0072", "0078"))
         at_0071 = self.requirements(head="0071", accepts=("0064", "0071"))
-        problem = compatibility.rollback_schema_problem
+        problem = compatibility.schema_problem
         self.assertIsNone(problem(at_0078, [at_0071, carrier], "0079"))
         self.assertIsNone(problem(at_0078, [], "0078"))
         refused = problem(at_0071, [at_0078, carrier], "0079")
@@ -603,10 +675,32 @@ class UpgradeFailureTests(unittest.TestCase):
     def test_a_rollback_without_a_carrier_or_onto_an_older_schema_is_refused(self) -> None:
         at_0078 = self.requirements(head="0078", accepts=("0072", "0078"))
         undeclared = self.requirements(head="0079", accepts=("0079",))
-        problem = compatibility.rollback_schema_problem
+        problem = compatibility.schema_problem
         self.assertIn("no release on this machine", problem(at_0078, [], "0079") or "")
         self.assertIn("no release on this machine", problem(at_0078, [undeclared], "0079") or "")
         self.assertIn("older than every", problem(at_0078, [], "0070") or "")
+
+    def test_an_update_run_again_after_its_migration_passes_the_first_check(self) -> None:
+        """Review 26-10-29, A01: the database at the candidate's head, the previous release running.
+
+        Where an update that stopped after `./migrate` leaves it, and where
+        `dpkg --configure -a` starts again. The candidate's own migrations
+        declare that schema safe for the running release.
+        """
+
+        running = self.requirements(head="0101", accepts=("0100", "0101"))
+        candidate = replace(
+            self.requirements(head="0102", accepts=("0101", "0102")), rollback_safe_from="0101"
+        )
+        self.assertEqual(compatibility.schema_upgrade_failures(running, candidate, "0102"), ())
+        unsafe = replace(candidate, rollback_safe_from="0102")
+        self.assertEqual(
+            compatibility.schema_upgrade_failures(running, unsafe, "0102"),
+            (
+                "running UI does not accept current revision 0102",
+                "running UI does not accept candidate head 0102",
+            ),
+        )
 
     def test_a_bridge_release_makes_both_live_migration_and_rollback_safe(self) -> None:
         bridge = self.requirements(head="0020", accepts=("0020", "0021"))

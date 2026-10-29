@@ -32,6 +32,8 @@ readonly UI_ROOT=/opt/haprion-ui
 readonly UI_CONFIG=/etc/haprion/ui.toml
 readonly UI_SECRETS=/etc/haprion/ui-secrets
 readonly UI_DATA=/var/lib/haprion-ui
+# What the haprion-ui package installed: RELEASE_ID names its release.
+readonly UI_PAYLOAD=/usr/lib/haprion/ui/PAYLOAD
 
 # Each node.
 readonly TRIGGER_USER=_haprion-trigger

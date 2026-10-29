@@ -74,7 +74,7 @@ class PreparedReleaseTests(unittest.TestCase):
         # may predate the flag. The release answers, the checkout never assumes.
         wrapper = (ROOT / "install/platform/check-compatibility").read_text()
 
-        self.assertIn('-m "${module}.compatibility" --help', wrapper)
+        self.assertIn('-m "${checker_module}.compatibility" --help', wrapper)
         self.assertIn("grep -q -- '--collector-config'", wrapper)
         self.assertIn("predates the traffic collector inventory check", wrapper)
 
@@ -412,10 +412,15 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         (work / "lib.sh").write_text((ROOT / "install/lib.sh").read_text() + "need_root() { :; }\n")
         shutil.copy2(ROOT / "install/node-lib.sh", work / "node-lib.sh")
         shutil.copy2(ROOT / "install/defaults.sh", work / "defaults.sh")
+        self.payload = work / "PAYLOAD"
         (work / "accounts.sh").write_text(
             (ROOT / "install/accounts.sh")
             .read_text()
             .replace("readonly UI_ROOT=/opt/haprion-ui", f"readonly UI_ROOT={self.root}")
+            .replace(
+                "readonly UI_PAYLOAD=/usr/lib/haprion/ui/PAYLOAD",
+                f"readonly UI_PAYLOAD={self.payload}",
+            )
         )
         for release in ("current-release", "candidate"):
             python = self.root / "releases" / release / "venv/bin/python"
@@ -493,6 +498,37 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         for flag in ("--ui-release", "--skip-services", "--upgrade-from-current"):
             self.assertIn(flag, arguments)
         self.assertNotIn("--environment", arguments)
+
+    def test_the_release_the_package_installed_checks_the_current_one(self) -> None:
+        """Review 26-10-29, A01: after a rollback the current release is older.
+
+        Its own code ruled out a schema past its head that the rollback had
+        just let it run on; the packaged release knows the rule the rollback
+        used, and checks the current release's requirements by it.
+        """
+
+        self.payload.write_text("RELEASE_ID=candidate\nRELEASE_SHA256=0\n")
+        code, errors = self.check(module="new")
+        self.assertEqual(code, 0, errors)
+        arguments = self.recorded()
+        self.assertEqual(arguments[0], str(self.root / "releases/candidate/venv/bin/python"))
+        self.assertEqual(arguments[arguments.index("--packaged") + 1], "candidate")
+        self.assertNotIn("--ui-release", arguments)
+        self.assertNotIn("not on disk", errors)
+
+    def test_without_the_package_s_release_the_checked_one_checks_itself(self) -> None:
+        for payload in (None, "RELEASE_ID=gone\n", "RELEASE_ID=../candidate\n"):
+            with self.subTest(payload=payload):
+                if payload is None:
+                    self.payload.unlink(missing_ok=True)
+                else:
+                    self.payload.write_text(payload)
+                code, errors = self.check(module="new")
+                self.assertEqual(code, 0, errors)
+                arguments = self.recorded()
+                self.assertEqual(arguments[0], str(self.root / "current/venv/bin/python"))
+                self.assertNotIn("--packaged", arguments)
+                self.assertIn("is not on disk", errors)
 
     def test_a_first_installation_is_checked_without_what_step_07_installs(self) -> None:
         code, errors = self.check("--release", "candidate", "--first-install", module="new")

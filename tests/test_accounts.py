@@ -53,6 +53,7 @@ SHELL_NAMES = {
     "UI_CONFIG": "UI_CONFIG",
     "UI_SECRETS": "UI_SECRETS",
     "UI_DATA": "UI_DATA",
+    "UI_PAYLOAD": "UI_PAYLOAD",
 }
 
 

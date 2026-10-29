@@ -51,7 +51,9 @@ def _config_path() -> Path:
 
 #
 # The schema revisions this release runs on, from the file the installer and
-# `check-compatibility` read - one definition of compatible, not two.
+# `check-compatibility` read. A revision past them is decided by
+# `compatibility.schema_problem`, which reads the other releases on disk;
+# the web cannot, and accepts what that decided (review 26-10-29, A01).
 #
 REQUIREMENTS = Path(__file__).with_name("compatibility.json")
 

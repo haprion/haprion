@@ -277,7 +277,13 @@ def schema_upgrade_failures(
     """Why migrating under the active UI would make service or rollback unsafe."""
 
     failures = []
-    if current_revision not in active.database_revisions:
+    #
+    # The candidate carries its own migrations: a database already at its head
+    # - an update run again after it migrated - is one the running UI runs on
+    # when they are declared safe for it, by the rule a rollback uses
+    # (review 26-10-29, A01).
+    #
+    if schema_problem(active, (candidate,), current_revision) is not None:
         failures.append(f"running UI does not accept current revision {current_revision}")
     if candidate.database_head not in active.database_revisions and not declared_safe(
         active, candidate
@@ -300,8 +306,8 @@ def declared_safe(active: Requirements, candidate: Requirements) -> bool:
     return safe_from is not None and safe_from <= active.database_head <= candidate.database_head
 
 
-def rollback_schema_problem(
-    target: Requirements, owners: Iterable[Requirements], revision: str
+def schema_problem(
+    target: Requirements, carriers: Iterable[Requirements], revision: str
 ) -> str | None:
     """Why the target cannot run on the database's schema; None when it can (26-10-20).
 
@@ -310,13 +316,18 @@ def rollback_schema_problem(
     the database's revision - declares them safe from the target's head or
     earlier. Nothing on the machine carrying them is no answer, and so a no:
     the web would start on that schema whether it can or not.
+
+    The one rule for a release on a schema: `haprion-rollback` asks it before
+    it switches, the check after it, and an update run again over its own
+    migration (review 26-10-29, A01: three rules, and the check refused what
+    the rollback had just allowed).
     """
 
     if revision in target.database_revisions:
         return None
     if revision < target.database_head:
         return f"schema {revision} is older than every revision the target runs on"
-    for owner in owners:
+    for owner in carriers:
         if owner.database_head == revision and owner.rollback_safe_from is not None:
             if owner.rollback_safe_from <= target.database_head:
                 return None
@@ -325,6 +336,31 @@ def rollback_schema_problem(
                 f"the target stands at {target.database_head}"
             )
     return f"no release on this machine declares schema {revision} safe for the target"
+
+
+def newest_first(name: str) -> tuple[int, ...]:
+    """`0.99.10-<hash>` after `0.99.9-<hash>`; a name without a version last."""
+
+    version = re.match(r"\d+(?:\.\d+)*", name)
+    return tuple(int(part) for part in version.group().split(".")) if version else ()
+
+
+def owners(root: Path, packaged: str | None) -> list[Requirements]:
+    """Every UI release on disk that says its schema: the packaged one first, then the newest.
+
+    A later release may correct an earlier one's declaration, as 0.99.4 did
+    0.99.3's (26-10-28), and the release the package installed knows the
+    newest migrations.
+    """
+
+    found = []
+    releases = sorted((root / "releases").iterdir(), key=lambda path: newest_first(path.name))
+    for release in sorted(releases[::-1], key=lambda path: path.name != packaged):
+        try:
+            found.append(ui_requirements(release))
+        except CompatibilityError:
+            continue  # a release that says nothing carries nothing
+    return found
 
 
 def active_sudo_rules(text: str) -> tuple[str, ...]:
@@ -699,6 +735,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sudoers-root", type=Path, default=Path("/etc/sudoers.d"))
     parser.add_argument("--systemd-root", type=Path, default=Path("/etc/systemd/system"))
     parser.add_argument("--ui-release")
+    #
+    # The release the haprion-ui package installed, asked first about a schema
+    # past the checked release's head - as `haprion-rollback` asks it.
+    #
+    parser.add_argument("--packaged")
     parser.add_argument("--skip-database", action="store_true")
     parser.add_argument("--skip-services", action="store_true")
     parser.add_argument("--upgrade-from-current", action="store_true")
@@ -743,7 +784,13 @@ def check_schema_transition(
         return
     transition_failures = schema_upgrade_failures(active_requirements, requirements, revision)
     if not any("current revision" in failure for failure in transition_failures):
-        report.pass_("running schema", f"{revision}, accepted by {active_release.name}")
+        report.pass_(
+            "running schema",
+            f"{revision}, accepted by {active_release.name}"
+            if revision in active_requirements.database_revisions
+            else f"{revision}, the candidate's head, declared safe for {active_release.name} "
+            "by its migrations",
+        )
     else:
         report.fail(
             "running schema",
@@ -764,6 +811,30 @@ def check_schema_transition(
             f"candidate head {requirements.database_head}; running "
             f"{active_release.name} does not accept it",
         )
+
+
+def check_schema_past_head(
+    report: Report,
+    platform_root: Path,
+    packaged: str | None,
+    requirements: Requirements,
+    revision: str,
+) -> None:
+    """A schema the release does not list: a rollback over migrations, by the rollback's rule."""
+
+    try:
+        carriers = owners(platform_root, packaged)
+    except OSError as exc:
+        report.fail("schema revision", f"{revision}; cannot read the releases on disk: {exc}")
+        return
+    problem = schema_problem(requirements, carriers, revision)
+    if problem is None:
+        report.pass_(
+            "schema revision",
+            f"{revision}, past {requirements.database_head} over migrations declared safe for it",
+        )
+    else:
+        report.fail("schema revision", f"{revision}; {problem}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -846,9 +917,8 @@ def main(argv: list[str] | None = None) -> int:
             elif revision in requirements.database_revisions:
                 report.pass_("schema revision", revision)
             else:
-                report.fail(
-                    "schema revision",
-                    f"{revision}; accepts {', '.join(requirements.database_revisions)}",
+                check_schema_past_head(
+                    report, args.platform_root, args.packaged, requirements, revision
                 )
 
     if not args.skip_services:

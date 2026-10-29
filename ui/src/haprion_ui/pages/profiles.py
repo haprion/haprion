@@ -592,6 +592,10 @@ def build_router(config: Config) -> APIRouter:
         try:
             ndes_server_socket.ask("add", endpoint=endpoint, sha256=sha256)
         except NdesServerError as exc:
+            if exc.code == "unavailable":
+                _audit_unanswered(
+                    request, gate, "ndes_server_added", {"endpoint": endpoint, "sha256": sha256}
+                )
             return _ndes_server_page(request, gate, endpoint=endpoint, problem=str(exc))
         with request.app.state.pool.connection() as connection:
             db.record_audit_event(
@@ -602,6 +606,24 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         return RedirectResponse("/ndes-profiles", status_code=303)
+
+    def _audit_unanswered(
+        request: Request, session: AuthenticatedSession, action: str, detail: dict[str, object]
+    ) -> None:
+        """A change the helper may have made as root, though its answer never came.
+
+        Review 2026-10-29, B12: only an answered change was recorded, so a
+        policy root changed past the web's wait left no row.
+        """
+
+        with request.app.state.pool.connection() as connection:
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action=action,
+                detail={**detail, "outcome": "unknown"},
+            )
+            connection.commit()
 
     @router.post("/ndes-profiles/servers/remove")
     def ndes_server_remove(
@@ -624,6 +646,8 @@ def build_router(config: Config) -> APIRouter:
         try:
             ndes_server_socket.ask("remove", endpoint=endpoint)
         except NdesServerError as exc:
+            if exc.code == "unavailable":
+                _audit_unanswered(request, gate, "ndes_server_removed", {"endpoint": endpoint})
             return RedirectResponse(
                 "/ndes-profiles?" + urlencode({"server_problem": str(exc)}), status_code=303
             )

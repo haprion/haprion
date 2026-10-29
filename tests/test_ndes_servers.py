@@ -664,6 +664,7 @@ class TheHelperAndTheCommand(unittest.TestCase):
             fetch=self.answer,
             require_root=False,
         )
+        self.journal = err.getvalue()
         return code, assert_contract("haprion-ndes-server", out.getvalue())
 
     def test_fetch_shows_the_cas_and_add_confirms_one(self) -> None:
@@ -676,6 +677,18 @@ class TheHelperAndTheCommand(unittest.TestCase):
         self.assertEqual((code, added["outcome"]), (0, "done"))
         _code, again = self.ask(action="fetch", endpoint=ENDPOINT)
         self.assertEqual(again["result"]["state"], "confirmed")
+
+    def test_a_change_of_the_policy_is_written_to_the_journal(self) -> None:
+        """Review 2026-10-29, B12: root changed the policy and said nothing of it."""
+
+        self.ask(action="fetch", endpoint=ENDPOINT)
+        self.assertEqual(self.journal, "")
+        self.ask(action="add", endpoint=ENDPOINT, sha256=self.chain)
+        self.assertIn(f"added {ENDPOINT}", self.journal)
+        for each in self.chain:
+            self.assertIn(each, self.journal)
+        self.ask(action="remove", endpoint=ENDPOINT)
+        self.assertIn(f"removed {ENDPOINT}", self.journal)
 
     def renewed(self) -> list[str]:
         """The server's CA renewed with a new key: another chain at the same address."""

@@ -136,6 +136,20 @@ def main(
         return refuse(exc.code, str(exc), exc.exit_code)
     except ConfigError as exc:
         return refuse("bad_policy", str(exc), exit_codes.CONFIG)
+    #
+    # The journal's line of a change root made (stderr is the journal): the
+    # web records its own only when the answer reaches it (review 2026-10-29,
+    # B12). The command's is sudo's.
+    #
+    action = request.parameters.get("action")
+    if action == "add":
+        errors.write(
+            f"ndes_server: added {result['endpoint']} with the CA certificates "
+            f"{', '.join(result['sha256'])} in {result['issuing_ca']}\n"
+        )
+    elif action == "remove":
+        errors.write(f"ndes_server: removed {result['endpoint']}\n")
+    errors.flush()
     return write_document(
         writer,
         envelope(

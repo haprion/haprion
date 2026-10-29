@@ -14,7 +14,7 @@ from uuid import uuid4
 from haprion.ndes_profiles import open_profile
 from haprion.ndes_servers import NdesServerError
 
-from haprion_ui import auth, db, operations
+from haprion_ui import audit, auth, db, operations
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
 from tests.test_dns_profile_pages import GUARD, KEY, ProfileRouteTestCase, profile_row
@@ -335,6 +335,35 @@ class TheNdesServers(NdesRoutes):
         )
         self.assertNotIn(other, self.servers)
         self.assertEqual(self.audited[-1]["action"], "ndes_server_removed")
+
+    def test_a_change_the_service_did_not_answer_is_recorded_as_unknown(self) -> None:
+        """Review 2026-10-29, B12: root may have changed the policy, and nothing said so."""
+
+        client = self.writing_client()
+        csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        unanswered = NdesServerError("unavailable", "the NDES server service did not answer")
+        with mock.patch("haprion_ui.pages.profiles.ndes_server_socket.ask", side_effect=unanswered):
+            shown = client.post(
+                "/ndes-profiles/servers/confirm",
+                data={"csrf_token": csrf, "endpoint": ENDPOINT, "sha256": "a" * 64},
+            )
+            client.post(
+                "/ndes-profiles/servers/remove",
+                data={"csrf_token": csrf, "endpoint": ENDPOINT},
+                follow_redirects=False,
+            )
+        self.assertIn("did not answer", shown.text)
+        self.assertEqual(
+            [
+                (e["action"], e["detail"].get("outcome"))
+                for e in self.audited
+                if e["action"].startswith("ndes_server")
+            ],
+            [("ndes_server_added", "unknown"), ("ndes_server_removed", "unknown")],
+        )
+        phrase = audit.ACTIVITY_PHRASES["ndes_server_added"]
+        added = next(e for e in self.audited if e["action"] == "ndes_server_added")
+        self.assertIn("did not answer", phrase(added["detail"]))
 
     def test_server_routes_require_csrf(self) -> None:
         client = self.writing_client()

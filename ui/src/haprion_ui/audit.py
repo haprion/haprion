@@ -176,10 +176,14 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
         f"Exported the key of {_text(detail, 'certificate', 'a certificate')}"
     ),
     "ndes_server_added": lambda detail: (
-        f"Confirmed the NDES server {_text(detail, 'endpoint', '?')} from its CA"
+        f"Asked to confirm the NDES server {_text(detail, 'endpoint', '?')}; the service did not answer"
+        if detail.get("outcome") == "unknown"
+        else f"Confirmed the NDES server {_text(detail, 'endpoint', '?')} from its CA"
     ),
     "ndes_server_removed": lambda detail: (
-        f"Removed the NDES server {_text(detail, 'endpoint', '?')}"
+        f"Asked to remove the NDES server {_text(detail, 'endpoint', '?')}; the service did not answer"
+        if detail.get("outcome") == "unknown"
+        else f"Removed the NDES server {_text(detail, 'endpoint', '?')}"
     ),
     "certificate_download": lambda detail: (
         f"Downloaded {_text(detail, 'certificate', 'a certificate')} without its key"

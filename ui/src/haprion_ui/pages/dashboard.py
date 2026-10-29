@@ -764,9 +764,10 @@ def build_router(config: Config) -> APIRouter:
         if decision not in {"run", "discard"}:
             return PlainTextResponse("Refused", status_code=400)
         with request.app.state.pool.connection() as connection:
-            if db.decide_held_job(
+            taken = db.decide_held_job(
                 connection, job_id=job_id, decision=decision, actor=gate.username
-            ):
+            )
+            if taken:
                 db.record_audit_event(
                     connection,
                     actor=gate.username,
@@ -774,7 +775,11 @@ def build_router(config: Config) -> APIRouter:
                     detail={"job": job_id, "decision": decision},
                 )
             connection.commit()
-        return RedirectResponse("/jobs", status_code=303)
+        #
+        # Another admin answered first, or the job ended: said, rather than a
+        # page that looks as if the answer was taken (review 26-10-29, b).
+        #
+        return RedirectResponse("/jobs" if taken else f"/jobs?not_held={job_id}", status_code=303)
 
     @router.get("/jobs", response_class=HTMLResponse)
     def latest_jobs(request: Request) -> Response:
@@ -810,6 +815,7 @@ def build_router(config: Config) -> APIRouter:
                 #
                 diagnostics=session.role == "admin",
             )
+        not_held = request.query_params.get("not_held", "")
         by_job = {row.id: queued_by.get(row.request_id, "") for row in listed}
         overview = replace(
             overview, jobs=tuple(replace(job, by=by_job.get(job.id, "")) for job in overview.jobs)
@@ -823,6 +829,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "jobs": overview,
                 "management_writes": config.management_writes,
+                "not_held": int(not_held) if not_held.isdigit() and len(not_held) < 19 else None,
                 "section": "jobs",
                 "view": "jobs",
             },

@@ -1011,3 +1011,22 @@ class AHeldJob(LoginTestCase):
         decide.assert_called_once()
         self.assertEqual(decide.call_args.kwargs["decision"], "discard")
         self.assertIn("held_job_decided", self.audit)
+
+    def test_an_answer_not_taken_is_said(self) -> None:
+        """Review 26-10-29 (b): back on Jobs with nothing said when the job had moved on."""
+
+        client = self.admin()
+        page = client.get("/jobs").text
+        token = page.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+        with mock.patch("haprion_ui.db.decide_held_job", return_value=False):
+            answered = client.post(
+                "/jobs/19/held",
+                data={"csrf_token": token, "decision": "run"},
+                follow_redirects=False,
+            )
+        self.assertEqual(answered.headers["location"], "/jobs?not_held=19")
+        self.assertNotIn("held_job_decided", self.audit)
+        notice = "Job 19 no longer waits for Run or Discard; nothing was changed."
+        self.assertIn(notice, client.get("/jobs?not_held=19").text)
+        self.assertNotIn("no longer waits", client.get("/jobs?not_held=x").text)
+        self.assertNotIn("no longer waits", client.get("/jobs").text)

@@ -18,11 +18,14 @@ SERVICE = Service(
     command="haprion-cert-receiver-ask",
     socket_path="/run/haprion/cert-receiver.sock",
     #
-    # A registration resolves the receiver's name, runs useradd, checks and
-    # reloads sshd or nginx, and writes the registry. Seconds, not minutes; the
-    # bound exists so a unit that never answers becomes a sentence.
+    # A registration resolves the receiver's name, runs useradd and passwd,
+    # checks and reloads sshd or nginx - thirty seconds each at most - and
+    # writes the registry, which may first wait 120 s for the certificate
+    # lock. Seconds as a rule; the bound exists so a unit that never answers
+    # becomes a sentence, and one that outlasts it ends on the answer the
+    # helper keeps (26-10-29, O06).
     #
-    timeout=120.0,
+    timeout=300.0,
     what="the receiver service",
     install="Install haprion-cert-receiver-helper.socket (07-platform-services).",
     operations=None,

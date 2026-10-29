@@ -22,7 +22,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haprion import exit_codes
+from haprion import cert_lock, cert_receiver, exit_codes
 from haprion.cli import cert_receiver_ask
 from haprion.cli.cert_receiver_helper import build_request
 from tests.test_probe_socket import Listener
@@ -124,6 +124,16 @@ class AcrossTheSocket(unittest.TestCase):
         self.assertIn("[helper_silent]", err)
         self.assertIn("did not answer in time", err)
         self.assertNotIn("Install", err)
+
+
+class ItsBound(unittest.TestCase):
+    def test_it_outlasts_the_certificate_lock_and_the_commands_after_it(self) -> None:
+        """Review 26-10-29, O06: 120 s for a run that may first wait 120 s for the lock."""
+
+        self.assertGreaterEqual(
+            cert_receiver_ask.TIMEOUT_SECONDS,
+            cert_lock.LOCK_WAIT_SECONDS + 4 * cert_receiver.COMMAND_TIMEOUT,
+        )
 
 
 class WhatItRefusesItself(unittest.TestCase):

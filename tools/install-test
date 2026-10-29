@@ -1194,12 +1194,16 @@ def run_one(
 
 #
 # Where the update's marker is while it is under way (update-platform-release),
-# and the drop-in that makes the web refuse every release but one.
+# the drop-in that makes the web refuse every release but one, and the one that
+# makes it refuse them all.
 #
 UPDATE_MARKER = "/var/lib/haprion-ui/platform-update/update"
 FAULT = Path("/etc/systemd/system/haprion-web.service.d/install-test-fault.conf")
 FAULT_UNIT = """[Service]
 ExecStartPre=/bin/sh -c 'case "$$(readlink -f /opt/haprion-ui/current)" in */{release}) exit 0;; esac; exit 1'
+"""
+FAULT_EVERY = """[Service]
+ExecStartPre=/bin/false
 """
 
 
@@ -1281,17 +1285,38 @@ def run_upgrade(
         if not any(line.startswith("COMPATIBLE:") for line in said.splitlines()):
             raise Failed(f"check-compatibility after {after} is not COMPATIBLE:\n{said[-6000:]}")
 
-    def a_failed_update_is_undone_and_run_again() -> None:
-        """The update stopped after its migration, the previous release put back, and run again.
+    def schema(release: str) -> str:
+        """The database's revision, read by `release`'s own alembic, as where_it_stands reads it."""
+
+        _, said = run.on(
+            "mgr",
+            "/usr/share/haprion-ui/install/platform/migrate "
+            f"--release {shlex.quote(release)} current 2>/dev/null "
+            "| grep -Eo '^[0-9A-Za-z_]+' | tail -1",
+        )
+        return said.strip()
+
+    def packaged_release() -> str:
+        _, said = run.on("mgr", "sed -n 's/^RELEASE_ID=//p' /usr/lib/haprion/ui/PAYLOAD")
+        return said.strip()
+
+    def a_failed_update_is_undone_and_run_again() -> str:
+        """The update stopped after its activation, undone, failed again unrestored, and finished.
 
         Every step above took the way that works; the way back had never run
-        (review 26-10-29, A04). The web refuses to start on any release but
-        the previous one, so the activation fails after the migration and
-        the update restores the previous release. `dpkg --configure -a`, the
-        manual's next step, then finishes the update once the cause is gone.
+        (review 26-10-29, A04). First the web refuses to start on any release
+        but the previous one: the activation fails and the update restores
+        the previous release. Then it refuses every release: run again, the
+        update cannot restore the previous release either, and the candidate
+        runs unproved with the marker kept (AA05). `dpkg --configure -a`, the
+        manual's next step, finishes the update once the cause is gone.
+
+        Whether a migration ran before the activation depends on the two
+        releases; the schema before and after is read and said.
         """
 
         previous = released[0]
+        schema_before = schema(previous)
         names = [run.copy("mgr", path) for path in new_manager]
         run.on(
             "mgr",
@@ -1316,11 +1341,44 @@ def run_upgrade(
             raise Failed(f"a restored update left {UPDATE_MARKER} behind")
         the_web_answers("a failed update")
         compatible("a failed update was restored")
+        packaged = packaged_release()
+        schema_after = schema(packaged)
+
+        run.on(
+            "mgr",
+            f"cat > {FAULT} && systemctl daemon-reload",
+            stdin=FAULT_EVERY,
+        )
+        code, said = run.on(
+            "mgr", "export DEBIAN_FRONTEND=noninteractive && dpkg --configure -a", check=False
+        )
+        if code == 0:
+            raise Failed(f"the update went through with no release starting:\n{said[-6000:]}")
+        if current_ui_release() != packaged:
+            raise Failed(
+                f"an update whose restore failed left {current_ui_release()} current, "
+                f"not {packaged}"
+            )
+        _, state = run.on("mgr", "dpkg-query -W -f='${db:Status-Abbrev}' haprion-ui")
+        if state.strip() != "iF":
+            raise Failed(f"haprion-ui is {state.strip()!r} after a failed restore, not 'iF'")
+        code, _ = run.on("mgr", f"test -e {UPDATE_MARKER}", check=False)
+        if code != 0:
+            raise Failed(f"an update whose restore failed left no {UPDATE_MARKER}")
+        if "could not be restored" not in said:
+            raise Failed(f"the update did not say the restore failed:\n{said[-6000:]}")
+
         run.on("mgr", f"rm -f {FAULT} && systemctl daemon-reload")
         run.on("mgr", "export DEBIAN_FRONTEND=noninteractive && dpkg --configure -a")
         all_configured("mgr", new_manager)
-        if current_ui_release() == previous:
-            raise Failed(f"dpkg --configure -a left {previous} current")
+        if current_ui_release() != packaged:
+            raise Failed(f"dpkg --configure -a left {current_ui_release()} current")
+        _, marker = run.on("mgr", f"test ! -e {UPDATE_MARKER} && echo gone", check=False)
+        if "gone" not in marker:
+            raise Failed(f"a finished update left {UPDATE_MARKER} behind")
+        if schema_before == schema_after:
+            return f"no migration ran: the schema stayed at {schema_before}"
+        return f"the schema moved from {schema_before} to {schema_after}"
 
     def the_manager_serves_after_it() -> None:
         the_web_answers("the update")
@@ -1371,10 +1429,11 @@ def run_upgrade(
         step(f"{NODES[1]} added", lambda: run.add_node(NODES[1], blocks[1]))
         step("an object published and deployed", published_and_deployed)
         released.append(current_ui_release())
-        step(
-            "the manager's update failed after its migration, undone, and run again",
+        said = step(
+            "the manager's update failed after its activation, undone, and run again",
             a_failed_update_is_undone_and_run_again,
         )
+        print(f"      {said}")
         for role in NODES:
             step(
                 f"{role} updated to this release with apt",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.machinery
 import importlib.util
 import os
 import re
@@ -283,6 +284,84 @@ class TheTree(unittest.TestCase):
             body.index("a_failed_update_is_undone_and_run_again,"),
             body.index("updated to this release with apt"),
         )
+
+    def install_test(self) -> Any:
+        loader = importlib.machinery.SourceFileLoader(
+            "install_test", str(BASE / "tools/install-test")
+        )
+        spec = importlib.util.spec_from_loader("install_test", loader)
+        assert spec is not None
+        module = importlib.util.module_from_spec(spec)
+        # Its dataclasses look their module up while they are made.
+        sys.modules["install_test"] = module
+        self.addCleanup(sys.modules.pop, "install_test", None)
+        loader.exec_module(module)
+        return module
+
+    def test_the_failed_update_is_said_as_what_it_runs(self) -> None:
+        """Review 26-10-29, AA05: "after its migration", over two releases with none between.
+
+        The activation is what fails; whether a migration ran before it is
+        read from the schema before and after, and said.
+        """
+
+        text = (BASE / "tools/install-test").read_text()
+        body = text[text.index("def run_upgrade(") : text.index("\ndef main(")]
+        self.assertNotIn("after its migration", body)
+        self.assertIn("failed after its activation", body)
+        self.assertIn('"/usr/share/haprion-ui/install/platform/migrate "', body)
+        self.assertIn('f"--release {shlex.quote(release)} current 2>/dev/null "', body)
+
+    def test_a_failed_update_whose_rollback_fails_too_is_kept_and_finished(self) -> None:
+        """AA05: the way the marker exists for - the previous release not restored - never ran.
+
+        The web refuses every release; the rollback fails, the candidate runs
+        unproved, the marker stays and the package `iF`. With the cause gone,
+        `dpkg --configure -a` finishes the update and the marker goes.
+        """
+
+        text = (BASE / "tools/install-test").read_text()
+        body = text[text.index("def run_upgrade(") : text.index("\ndef main(")]
+        start = body.index("def a_failed_update_is_undone_and_run_again(")
+        way = body[start : body.index("\n    def ", start + 1)]
+        restored = way.index("FAULT_UNIT.format(release=previous)")
+        refused = way.index("stdin=FAULT_EVERY")
+        finished = way.rindex('&& dpkg --configure -a")')
+        self.assertLess(restored, refused)
+        self.assertLess(refused, finished)
+        between = way[refused:finished]
+        for said in ('!= "iF"', "test -e {UPDATE_MARKER}", "!= packaged"):
+            with self.subTest(said=said):
+                self.assertIn(said, between)
+        self.assertIn("test ! -e {UPDATE_MARKER}", way[finished:])
+
+    def test_the_faults_refuse_what_they_say(self) -> None:
+        """The drop-ins' commands, as systemd hands them to the shell (`$$` is `$`)."""
+
+        module = self.install_test()
+        with tempfile.TemporaryDirectory() as raw:
+            here = Path(raw)
+            for release in ("0.1-a", "0.2-b"):
+                (here / "releases" / release).mkdir(parents=True)
+            for unit, current, code in (
+                (module.FAULT_UNIT.format(release="0.1-a"), "0.1-a", 0),
+                (module.FAULT_UNIT.format(release="0.1-a"), "0.2-b", 1),
+                (module.FAULT_EVERY, "0.1-a", 1),
+                (module.FAULT_EVERY, "0.2-b", 1),
+            ):
+                with self.subTest(unit=unit, current=current):
+                    link = here / "current"
+                    link.unlink(missing_ok=True)
+                    link.symlink_to(here / "releases" / current)
+                    line = next(
+                        line for line in unit.splitlines() if line.startswith("ExecStartPre=")
+                    )
+                    command = line.removeprefix("ExecStartPre=").replace("$$", "$")
+                    command = command.replace("/opt/haprion-ui/current", str(link))
+                    done = subprocess.run(  # fixed interpreter, the drop-in's own command
+                        ["/bin/sh", "-c", f"exec {command}"], check=False
+                    )
+                    self.assertEqual(done.returncode, code)
 
     def test_what_the_manager_steps_read_beside_them_is_carried(self) -> None:
         carried = {relative for relative, _ in TOOL.shared_files(BASE)}

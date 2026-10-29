@@ -166,6 +166,7 @@ from haprion_ui.db.drafts import (
     save_draft,
 )
 from haprion_ui.db.jobs import (
+    _LEASE_COLUMNS,
     AbandonedJob,
     CertificateBusy,
     ClaimedJob,
@@ -387,6 +388,7 @@ __all__ = [
     "_ACCOUNT_ROWS",
     "_AUDIT_WHERE",
     "_HISTORY",
+    "_LEASE_COLUMNS",
     "_NODE_EVENT_WHERE",
     "_OIDC_COLUMNS",
     "_active",

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion_ui import audit, auth, certificate_activity, certificate_renew, certificates
+from haprion_ui import audit, auth, certificate_activity, certificate_renew, certificates, jobs
 from haprion_ui.certificates import CertificateOverview
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import node, overview, registered, registry_of, status, with_registry
@@ -1157,3 +1158,108 @@ class EveryOverlaySaysAJobThatEndedBadly(unittest.TestCase):
         job = self.ended("cert_scep", "partial", {"id": "web.example.com"})
 
         self.assertEqual(certificate_activity.deletion_states([job], now=NOW), {})
+
+
+class AJobThatDoesNotFinishByItself(unittest.TestCase):
+    """Review 26-10-29 (rig): a held job, or one no worker holds, is not drawn as working.
+
+    Every overlay said its verb with a spinner, and the listing refreshed
+    itself, for as long as nobody answered the job on Events → Jobs.
+    """
+
+    def stuck(self, row: Any, held: bool) -> Any:
+        if held:
+            return replace(row, state="pending", held_since=NOW)
+        return replace(
+            row,
+            state="running",
+            lease_lapsed_since=NOW - jobs.NO_WORKER_AFTER - timedelta(minutes=1),
+        )
+
+    def cases(self) -> list[tuple[str, Any, str]]:
+        names = {"certificates": ["web.example.com"]}
+        scep = {"id": "web.example.com", "domains": ["web.example.com"]}
+        return [
+            (
+                "enrollment",
+                queued(operation="cert_scep", cluster=None, payload=scep),
+                "web.example.com",
+            ),
+            (
+                "abandon",
+                queued(operation="cert_scep", cluster=None, payload={**scep, "action": "abandon"}),
+                "web.example.com",
+            ),
+            (
+                "import",
+                queued(operation="cert_import", cluster=None, payload=scep),
+                "web.example.com",
+            ),
+            (
+                "request",
+                queued(operation="cert_request", cluster=None, payload=scep),
+                "web.example.com",
+            ),
+            ("issue", issue_job("pending"), "new.example.com"),
+            (
+                "renewal",
+                replace(
+                    issue_job("pending"), payload={**issue_job("pending").payload, "renew": True}
+                ),
+                "new.example.com",
+            ),
+            (
+                "publish",
+                queued(operation="cert_publish", cluster=None, payload=names),
+                "web.example.com",
+            ),
+            (
+                "target",
+                queued(operation="cert_target", cluster=None, payload={**names, "action": "add"}),
+                "web.example.com",
+            ),
+            (
+                "delete",
+                queued(operation="cert_delete", cluster=None, payload=names),
+                "web.example.com",
+            ),
+        ]
+
+    def test_each_overlay_says_held_or_no_worker_in_its_tone_and_stops_refreshing(self) -> None:
+        for name, row, identifier in self.cases():
+            for held, label, tone in (
+                (True, jobs.HELD, "warning"),
+                (False, jobs.NO_WORKER, "critical"),
+            ):
+                with self.subTest(name, held=held):
+                    asked = certificate_activity.deletion_states([self.stuck(row, held)], now=NOW)[
+                        identifier
+                    ]
+                    working = certificate_activity.deletion_states([row], now=NOW)[identifier]
+                    self.assertEqual((asked.label, asked.tone, asked.active), (label, tone, False))
+                    self.assertEqual(asked.placeholder, working.placeholder)
+
+    def test_a_deploy_from_the_row_says_so_too(self) -> None:
+        row = SimpleNamespace(identifier="web.example.com", older_copy_clusters=("alpha",))
+        deploy = queued(operation="cert_deploy", cluster="alpha", state="running")
+        for held, label, tone in (
+            (True, jobs.HELD, "warning"),
+            (False, jobs.NO_WORKER, "critical"),
+        ):
+            with self.subTest(held=held):
+                asked = certificate_activity.deploy_states(
+                    [row], [self.stuck(deploy, held)], now=NOW
+                )["web.example.com"]
+                self.assertEqual((asked.label, asked.tone, asked.active), (label, tone, False))
+
+
+class TheListingDoesNotWaitForAJobThatDoesNotFinish(DeleteRouteTestCase):
+    def test_a_held_deletion_neither_spins_nor_refreshes_the_page(self) -> None:
+        """Review 26-10-29 (rig): *Deleting* spun and the page refreshed until answered."""
+
+        row = replace(delete_job("pending", "old.example.com"), held_since=datetime.now(UTC))
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[row]):
+            page = self.writing_client().get("/certificates").text
+        self.assertNotIn('data-refresh="true"', page)
+        self.assertIn('<span class="status-badge status-badge-warning">Held</span>', page)
+        self.assertNotIn(">Deleting<", page)

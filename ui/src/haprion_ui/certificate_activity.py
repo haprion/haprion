@@ -31,6 +31,7 @@ from typing import Any
 
 from haprion.cert_issue import IssueError, parse_domain
 
+from haprion_ui import jobs as queue
 from haprion_ui.db import Job
 
 #
@@ -88,6 +89,33 @@ class DeletionState:
     #
     target_action: str | None = None
     target_names: tuple[str, ...] = ()
+
+
+#
+# What the State cell says of a job that does not finish by itself, in the
+# words the restore run's page uses (review 26-10-29).
+#
+NOT_FINISHING = {
+    "warning": "Held until an admin answers on Events → Jobs",
+    "critical": "No worker holds this job; see Events → Jobs",
+}
+
+
+def _in_flight(
+    job: Job, now: datetime, label: str, detail: str, placeholder: Placeholder | None = None
+) -> DeletionState:
+    """A pending or running job's overlay, by the rule every busy badge follows.
+
+    Each overlay said its verb with a spinner and kept the page refreshing
+    for a job held after a restart or one no worker holds, which ends only
+    when an admin answers it (review 26-10-29). Those say *Held* or *No
+    worker* in their tone, and the page waits for nothing.
+    """
+
+    state = queue.busy_with(job, now)
+    if state.working:
+        return DeletionState(label, detail, "info", True, placeholder)
+    return DeletionState(state.label, NOT_FINISHING[state.tone], state.tone, False, placeholder)
 
 
 def deletion_states(
@@ -172,8 +200,8 @@ def _enrollment_state_of(job: Job, now: datetime) -> DeletionState | None:
         return _abandon_state_of(job, now)
     placeholder = _scep_placeholder(job.payload)
     if job.state in {"pending", "running"}:
-        return DeletionState(
-            "Enrolling", "The CA is being asked for the certificate", "info", True, placeholder
+        return _in_flight(
+            job, now, "Enrolling", "The CA is being asked for the certificate", placeholder
         )
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
@@ -204,7 +232,7 @@ def _abandon_state_of(job: Job, now: datetime) -> DeletionState | None:
     """A request being given up, or just given up: until the listing reads it gone (B388)."""
 
     if job.state in {"pending", "running"}:
-        return DeletionState("Abandoning", "The request is being given up", "info", True)
+        return _in_flight(job, now, "Abandoning", "The request is being given up")
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
     if job.state == "done":
@@ -234,9 +262,7 @@ def _import_state_of(job: Job, now: datetime) -> DeletionState | None:
         _names(job.payload, "receivers"),
     )
     if job.state in {"pending", "running"}:
-        return DeletionState(
-            "Importing", "The uploaded file is being imported", "info", True, placeholder
-        )
+        return _in_flight(job, now, "Importing", "The uploaded file is being imported", placeholder)
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
     if job.state == "done":
@@ -269,11 +295,11 @@ def _request_state_of(job: Job, now: datetime) -> DeletionState | None:
         _names(job.payload, "receivers"),
     )
     if job.state in {"pending", "running"}:
-        return DeletionState(
+        return _in_flight(
+            job,
+            now,
             "Making request",
             "The key and the signing request are being made",
-            "info",
-            True,
             placeholder,
         )
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
@@ -300,7 +326,7 @@ def _renewal_state_of(job: Job, now: datetime) -> DeletionState | None:
     """
 
     if job.state in {"pending", "running"}:
-        return DeletionState("Renewing", "certbot is asked for the certificate again", "info", True)
+        return _in_flight(job, now, "Renewing", "certbot is asked for the certificate again")
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
     return _verdict(job, "Renewal", "The renewal job failed")
@@ -316,8 +342,8 @@ def _issue_state_of(job: Job, now: datetime, placeholder: Placeholder) -> Deleti
     """
 
     if job.state in {"pending", "running"}:
-        return DeletionState(
-            "Requesting", "The CA is being asked for the certificate", "info", True, placeholder
+        return _in_flight(
+            job, now, "Requesting", "The CA is being asked for the certificate", placeholder
         )
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
@@ -421,7 +447,7 @@ def _scep_placeholder(payload: Mapping[str, Any]) -> Placeholder:
 
 def _state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
     if job.state in {"pending", "running"}:
-        return DeletionState("Deleting", "A deletion job is running", "info", True)
+        return _in_flight(job, now, "Deleting", "A deletion job is running")
     if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
         return None
     result = job.result if isinstance(job.result, Mapping) else {}
@@ -454,7 +480,7 @@ def _publish_state_of(job: Job, identifier: str, now: datetime) -> DeletionState
     """A direct Publish now job, until the poller measures its result."""
 
     if job.state in {"pending", "running"}:
-        return DeletionState("Publishing", "A publish job is running", "info", True)
+        return _in_flight(job, now, "Publishing", "A publish job is running")
     if job.finished_at is None:
         return None
     age = now - job.finished_at
@@ -507,7 +533,7 @@ def _target_state_of(job: Job, identifier: str, now: datetime) -> DeletionState 
     adding = job.payload.get("action") == "add"
     verb = "Publishing" if adding else "Removing from targets"
     if job.state in {"pending", "running"}:
-        return DeletionState(verb, "A target change job is running", "info", True)
+        return _in_flight(job, now, verb, "A target change job is running")
     if job.finished_at is None:
         return None
     age = now - job.finished_at
@@ -620,7 +646,7 @@ def deploy_states(
 
 def _deploy_state_of(job: Job, cluster: str, now: datetime) -> DeletionState | None:
     if job.state in {"pending", "running"}:
-        return DeletionState("Deploying", f"Deploying certificates to {cluster}", "info", True)
+        return _in_flight(job, now, "Deploying", f"Deploying certificates to {cluster}")
     if job.finished_at is None:
         return None
     age = now - job.finished_at

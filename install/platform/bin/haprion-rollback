@@ -78,15 +78,22 @@ RELEASE_LOCK=/run/haprion/ui-release.lock
 # function in lib.sh and haprion-rollback, held together by a test.
 #
 hold_release_lock() {
-    local holder
+    local holder again="run this again when it is done"
     if [[ "$(readlink "/proc/$$/fd/9" 2>/dev/null || true)" == "$RELEASE_LOCK" ]] && flock -n 9; then
         return 0
     fi
     mkdir -p -- "${RELEASE_LOCK%/*}"
     exec 9>>"$RELEASE_LOCK"
+    #
+    # Root's alone: `flock` takes a file opened for reading too, and so any
+    # account that could read it held every change off (review 26-10-29,
+    # AA06). Set on the file each time, since one made 0644 is there already.
+    #
+    chmod 600 -- "$RELEASE_LOCK"
     if ! flock -n 9; then
         holder="$(head -1 "$RELEASE_LOCK" 2>/dev/null || true)"
-        die "another change of the UI release is running (pid ${holder:-unknown}); run this again when it is done"
+        [[ -z "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]] || again="when it is done: sudo dpkg --configure -a"
+        die "another change of the UI release is running (pid ${holder:-unknown} or a command it started); ${again}"
     fi
     printf '%s\n' "$$" > "$RELEASE_LOCK"
 }
@@ -110,8 +117,6 @@ releases="${platform_root}/releases"
 link="${platform_root}/current"
 [[ -L "$link" ]] || die "${link} does not exist"
 
-current="$(basename "$(readlink "$link")")"
-
 #
 # Ordered by modification time rather than by name - the time of the commit
 # the release was built from, which the build gives every file. A release id
@@ -119,12 +124,16 @@ current="$(basename "$(readlink "$link")")"
 # when it was built - so sorting by name would offer a "previous" release at
 # random.
 #
-mapfile -t known < <(find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
-                     | sort -rn | cut -d' ' -f2-)
+read_releases() {
+    current="$(basename "$(readlink "$link")")"
+    mapfile -t known < <(find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
+                         | sort -rn | cut -d' ' -f2-)
+}
 
 target=""
 case "${1:-}" in
     --list)
+        read_releases
         for release in "${known[@]}"; do
             if [[ "$release" == "$current" ]]; then
                 echo "  ${release}  <- current"
@@ -139,6 +148,13 @@ case "${1:-}" in
     *)   usage ;;
 esac
 
+#
+# Read under the lock, as an update reads them: an update that ended in
+# between had changed `current`, and the rollback then named the release
+# before it (review 26-10-29, AA06).
+#
+hold_release_lock
+read_releases
 if [[ -z "$target" ]]; then
     for release in "${known[@]}"; do
         [[ "$release" == "$current" ]] && continue
@@ -147,7 +163,6 @@ if [[ -z "$target" ]]; then
     done
 fi
 [[ -n "$target" ]] || die "there is no other release to roll back to"
-hold_release_lock
 [[ -d "${releases}/${target}" ]] || die "no such release: ${target}"
 [[ "$target" != "$current" ]] || die "${target} is already current"
 

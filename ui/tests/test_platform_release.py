@@ -1231,6 +1231,65 @@ class OneReleaseChangeAtATime(unittest.TestCase):
                     "\nRELEASE_LOCK=/run/haprion/ui-release.lock\n", (ROOT / path).read_text()
                 )
 
+    def test_the_lock_is_root_s_alone(self) -> None:
+        """Review 26-10-29, AA06: any account could open the 0644 file and hold every change off."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            lock = Path(raw) / "run/ui-release.lock"
+            lock.parent.mkdir()
+            lock.write_text("")
+            lock.chmod(0o644)
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                [
+                    "/bin/bash",
+                    "-c",
+                    f"RELEASE_LOCK={lock}; umask 022; "
+                    'die() { echo "ERROR: $*" >&2; exit 1; }; '
+                    + self.function()
+                    + "hold_release_lock",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(lock.stat().st_mode & 0o777, 0o600)
+
+    def test_under_dpkg_the_way_to_run_it_again_is_dpkg_s(self) -> None:
+        """Review 26-10-29, a's cosmetics: under apt, "this" is `dpkg --configure -a`."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            prelude = (
+                f"RELEASE_LOCK={Path(raw) / 'ui-release.lock'}; "
+                'die() { echo "ERROR: $*" >&2; exit 1; }; ' + self.function()
+            )
+            inner = prelude + "hold_release_lock"
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                [
+                    "/bin/bash",
+                    "-c",
+                    prelude
+                    + "hold_release_lock; DPKG_MAINTSCRIPT_PACKAGE=haprion-ui "
+                    + f"/bin/bash -c {shlex.quote(inner)} 9>&-",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(done.returncode, 1)
+            self.assertIn("; when it is done: sudo dpkg --configure -a", done.stderr)
+
+    def test_the_rollback_reads_the_releases_under_the_lock(self) -> None:
+        """AA06: `current` read before the lock named the release an update had just replaced."""
+
+        rollback = (ROOT / "install/platform/bin/haprion-rollback").read_text()
+        lock = rollback.index("\nhold_release_lock\n")
+        self.assertLess(lock, rollback.index("\nread_releases\n"))
+        self.assertLess(
+            rollback.index("\nread_releases\n"), rollback.index('if [[ -z "$target" ]]')
+        )
+        self.assertNotIn('\ncurrent="$(basename', rollback[:lock])
+
     def test_each_command_that_changes_the_release_holds_it(self) -> None:
         for path in LOCKED:
             with self.subTest(path=path):
@@ -1268,8 +1327,8 @@ class OneReleaseChangeAtATime(unittest.TestCase):
             self.assertEqual(done.stdout.split(), ["held", "inherited", "second=1"], done.stderr)
             self.assertRegex(
                 done.stderr,
-                r"another change of the UI release is running \(pid [0-9]+\); "
-                "run this again when it is done",
+                r"another change of the UI release is running \(pid [0-9]+ or a command it "
+                r"started\); run this again when it is done",
             )
             again = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
                 ["/bin/bash", "-c", prelude + "hold_release_lock && echo free"],

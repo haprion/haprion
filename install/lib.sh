@@ -229,15 +229,22 @@ RELEASE_LOCK=/run/haprion/ui-release.lock
 # function in lib.sh and haprion-rollback, held together by a test.
 #
 hold_release_lock() {
-    local holder
+    local holder again="run this again when it is done"
     if [[ "$(readlink "/proc/$$/fd/9" 2>/dev/null || true)" == "$RELEASE_LOCK" ]] && flock -n 9; then
         return 0
     fi
     mkdir -p -- "${RELEASE_LOCK%/*}"
     exec 9>>"$RELEASE_LOCK"
+    #
+    # Root's alone: `flock` takes a file opened for reading too, and so any
+    # account that could read it held every change off (review 26-10-29,
+    # AA06). Set on the file each time, since one made 0644 is there already.
+    #
+    chmod 600 -- "$RELEASE_LOCK"
     if ! flock -n 9; then
         holder="$(head -1 "$RELEASE_LOCK" 2>/dev/null || true)"
-        die "another change of the UI release is running (pid ${holder:-unknown}); run this again when it is done"
+        [[ -z "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]] || again="when it is done: sudo dpkg --configure -a"
+        die "another change of the UI release is running (pid ${holder:-unknown} or a command it started); ${again}"
     fi
     printf '%s\n' "$$" > "$RELEASE_LOCK"
 }

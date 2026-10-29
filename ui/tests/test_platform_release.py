@@ -155,9 +155,172 @@ class CoordinatedUpdateTests(unittest.TestCase):
             self.assertNotIn(said, rollback)
 
     def test_both_post_switch_failures_restore_the_previous_release(self) -> None:
-        self.assertEqual(self.update.count("restore_previous\n"), 2)
+        self.assertEqual(self.update.count("    restore_previous && die "), 2)
         self.assertIn('"$rollback" --to "$previous_id"', self.update)
         self.assertIn("was restored but the installation is not compatible", self.update)
+
+    def functions(self, *names: str) -> str:
+        text = ""
+        for name in names:
+            start = self.update.index(f"{name}() {{")
+            text += self.update[start : self.update.index("\n}\n", start) + 3]
+        return text
+
+    def restoring(
+        self, script: str, *, rollback: str, settled: str = "no"
+    ) -> tuple[subprocess.CompletedProcess[str], Path]:
+        """The update's own restore and exit, with a rollback, a check and a file step stubbed.
+
+        Review 26-10-29, A02: the rollback in `restore_previous` refused or
+        switched back by itself, the candidate stayed current with the previous
+        release's files, and `dpkg --configure -a` then called it current.
+        """
+
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw)
+        here = Path(raw)
+        for release in ("prev", "cand"):
+            (here / "releases" / release).mkdir(parents=True)
+        (here / "current").symlink_to(here / "releases/cand")
+        (here / "kept").mkdir()
+        (here / "kept/manifest").write_text("unit\t/etc/systemd/system/haprion-web.service\t\n")
+        (here / "update").write_text("RELEASE=cand\nPREVIOUS=prev\n")
+        for name, body in (
+            ("refresh-platform-files", 'echo "refresh $*" >> "$LOG"'),
+            ("check-compatibility", 'echo check >> "$LOG"'),
+            ("rollback", rollback),
+        ):
+            (here / name).write_text(f"#!/bin/bash\n{body}\n")
+            (here / name).chmod(0o755)
+        done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own functions
+            [
+                "/bin/bash",
+                "-c",
+                f'UI_ROOT="$1"; current="$1/current"; kept="$1/kept"; marker="$1/update"; '
+                f'rollback="$1/rollback"; release_id=cand; previous_id=prev; '
+                f"files_settled={settled}; restore_tried=no; proved=no; "
+                'warn() { echo "WARNING: $*" >&2; }; where_it_stands() { echo said; }; '
+                + self.functions("settle_files", "candidate_current", "restore_previous", "on_exit")
+                + script,
+                "-",
+                raw,
+            ],
+            cwd=raw,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PATH": "/usr/bin:/bin", "LOG": str(here / "log")},
+        )
+        return done, here
+
+    REFUSED = "exit 75"
+    SWITCHED_BACK = (
+        'ln -sfn "$PWD/releases/prev" current; ln -sfn "$PWD/releases/cand" current; exit 1'
+    )
+    RESTORED = 'ln -sfn "$PWD/releases/prev" current'
+
+    def test_a_rollback_that_fails_leaves_the_candidate_with_its_own_files(self) -> None:
+        for rollback in (self.REFUSED, self.SWITCHED_BACK):
+            with self.subTest(rollback=rollback):
+                done, here = self.restoring(
+                    'restore_previous; echo "rc=$? settled=$files_settled"', rollback=rollback
+                )
+                self.assertIn("rc=1 settled=candidate", done.stdout)
+                self.assertEqual(
+                    (here / "log").read_text().splitlines(),
+                    [f"refresh --restore {here}/kept", f"refresh cand {here}/kept"],
+                )
+                self.assertIn(
+                    "prev could not be restored; cand runs, with its own platform files",
+                    done.stderr,
+                )
+                self.assertNotIn("ERROR", done.stderr)
+
+    def test_a_way_out_whose_rollback_fails_keeps_the_marker_and_says_so(self) -> None:
+        """Ctrl-C between the switch and the proof: `restore_previous || warn` hid the failure."""
+
+        for rollback in (self.REFUSED, self.SWITCHED_BACK):
+            with self.subTest(rollback=rollback):
+                done, here = self.restoring("(exit 130); on_exit", rollback=rollback)
+                self.assertEqual(done.returncode, 130)
+                self.assertEqual(done.stdout.split(), ["said"])
+                self.assertIn("prev could not be restored", done.stderr)
+                self.assertNotIn("check", (here / "log").read_text())
+                self.assertTrue((here / "update").exists())
+                self.assertTrue((here / "kept").exists())
+
+    def test_a_restore_that_worked_ends_the_update_s_state(self) -> None:
+        done, here = self.restoring("(exit 1); on_exit", rollback=self.RESTORED)
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(
+            (here / "log").read_text().splitlines(), [f"refresh --restore {here}/kept", "check"]
+        )
+        self.assertFalse((here / "update").exists())
+        self.assertFalse((here / "kept").exists())
+
+    def test_a_proved_update_ends_its_state(self) -> None:
+        done, here = self.restoring("proved=yes; on_exit", rollback=self.REFUSED, settled="yes")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertFalse((here / "update").exists())
+        self.assertFalse((here / "kept").exists())
+        self.assertFalse((here / "log").exists())
+
+    def test_where_it_stands_says_the_candidate_is_not_proved(self) -> None:
+        body = self.functions("where_it_stands")
+        self.assertIn('elif [[ "${files_settled:-}" == candidate ]]; then', body)
+        self.assertIn("could not be restored, and ${running} is not proved", body)
+
+    def unfinished(self, marker: str | None) -> subprocess.CompletedProcess[str]:
+        lib = (ROOT / "install/lib.sh").read_text()
+        start = lib.index("read_admin_file() {")
+        reader = lib[start : lib.index("\n}\n", start) + 3]
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw)
+        (Path(raw) / "releases/prev").mkdir(parents=True)
+        if marker is not None:
+            (Path(raw) / "update").write_text(marker)
+        return subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+            [
+                "/bin/bash",
+                "-c",
+                f'UI_ROOT="$1"; marker="$1/update"; previous_id=cand; '
+                f'warn() {{ echo "WARNING: $*" >&2; }}; die() {{ echo "ERROR: $*" >&2; exit 1; }}; '
+                f'{reader}{self.functions("unfinished_update")}unfinished_update; echo "$previous_id"',
+                "-",
+                raw,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_an_update_run_again_goes_on_from_the_release_last_proved(self) -> None:
+        """A02: `previous_id` came from `current`, the unproved candidate itself."""
+
+        done = self.unfinished("RELEASE=cand\nPREVIOUS=prev\n")
+        self.assertEqual(done.stdout.strip(), "prev")
+        self.assertIn(
+            "the update to cand did not complete; this one goes on from prev", done.stderr
+        )
+        self.assertEqual(self.unfinished(None).stdout.strip(), "cand")
+        refused = self.unfinished("RELEASE=cand\nPREVIOUS=gone\n")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("names no release on disk to go back to (gone)", refused.stderr)
+
+    def test_the_copy_and_the_marker_are_on_disk_and_root_s_alone(self) -> None:
+        """Review 26-10-29, A03: the copy was in /tmp, a tmpfs a restart empties."""
+
+        self.assertNotIn("mktemp -d", self.update)
+        self.assertIn('state="${UI_DATA}/platform-update"\n', self.update)
+        self.assertIn('marker="${state}/update"\n', self.update)
+        self.assertIn('kept="${state}/kept"\n', self.update)
+        self.assertIn('chmod 700 -- "$state" "$kept"\n', self.update)
+        written = self.update.index('mv -f -- "${marker}.new" "$marker"')
+        self.assertLess(written, self.update.index("trap on_exit EXIT"))
+        self.assertLess(
+            written, self.update.index('./refresh-platform-files "$release_id" "$kept"\n')
+        )
+        self.assertLess(self.update.index("\nunfinished_update\n"), written)
 
     def test_a_way_out_after_the_switch_restores_the_previous_release(self) -> None:
         """Review 26-10-24, 03-02: the files went back, the candidate stayed current."""
@@ -176,7 +339,8 @@ class CoordinatedUpdateTests(unittest.TestCase):
                     [
                         "/bin/bash",
                         "-c",
-                        f"files_settled={settled}; kept=/nonexistent; "
+                        f"files_settled={settled}; kept=/nonexistent; restore_tried=no; "
+                        "proved=no; marker=/nonexistent/update; "
                         "warn() { :; }; restore_previous() { echo restore; }; "
                         f"candidate_current() {{ {switched}; }}; where_it_stands() {{ echo said; }}; "
                         f"settle_files() {{ echo settle; files_settled=yes; }}; {body}on_exit",
@@ -206,7 +370,8 @@ class CoordinatedUpdateTests(unittest.TestCase):
             [
                 "/bin/bash",
                 "-c",
-                f'files_settled=no; kept="$1"; warn() {{ echo "WARNING: $*" >&2; }}; '
+                f'files_settled=no; kept="$1"; marker="$1/../update"; restore_tried=no; '
+                f'proved=no; warn() {{ echo "WARNING: $*" >&2; }}; '
                 "restore_previous() { settle_files; }; candidate_current() { false; }; "
                 f"where_it_stands() {{ echo said; }}; {functions}(exit 3); on_exit",
                 "-",

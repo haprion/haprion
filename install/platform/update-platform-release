@@ -31,6 +31,30 @@ rollback="/usr/sbin/haprion-rollback"
 [[ -x "$rollback" ]] || die "${rollback} is missing; reinstall the haprion-ui package"
 
 #
+# An update under way, from before its platform files are replaced until it is
+# proved or the previous release runs again with its own: the release it
+# replaced, and the copy of what it replaced. On disk and root's alone, so that
+# a restart or a power cut in between loses neither - /tmp is a tmpfs (review
+# 26-10-29, A03) - and the next run, whichever release it installs, goes on
+# from the release last proved rather than from whatever `current` now says.
+# The haprion-ui package's postinst runs the update while the marker is there,
+# even with its release current already (A02).
+#
+state="${UI_DATA}/platform-update"
+marker="${state}/update"
+kept="${state}/kept"
+unfinished_update() {
+    local RELEASE="" PREVIOUS=""
+    [[ -f "$marker" ]] || return 0
+    read_admin_file "$marker" RELEASE PREVIOUS || die "${marker} cannot be read"
+    [[ -n "$PREVIOUS" && -d "${UI_ROOT}/releases/${PREVIOUS}" ]] \
+        || die "${marker} names no release on disk to go back to (${PREVIOUS:-none})"
+    previous_id="$PREVIOUS"
+    warn "the update to ${RELEASE:-another release} did not complete; this one goes on from ${previous_id}"
+}
+unfinished_update
+
+#
 # Activation restarts the worker. `install-ui-release` pauses the worker's
 # claims and waits for the running jobs before it switches anything (CR-12);
 # checked once here, minutes before the restart, a restore could start in
@@ -65,10 +89,14 @@ ensure_identity_directories
 #
 # `files_settled` is no until the files are proved in place - by this
 # release's proof or by their restore - and then yes; a restore that failed
-# makes it failed, and the copy stays (review 2026-10-28, F02).
+# makes it failed, and the copy stays (review 2026-10-28, F02). It is
+# candidate when the previous release could not be restored and the
+# candidate's own files were put back under it: the copy stays, and the next
+# run goes on from it (review 26-10-29, A02).
 #
-kept="$(mktemp -d)"
 files_settled=no
+restore_tried=no
+proved=no
 settle_files() {
     if [[ "$files_settled" == no ]]; then
         if ./refresh-platform-files --restore "$kept"; then
@@ -79,26 +107,69 @@ settle_files() {
         fi
     fi
 }
+
+#
+# Whether the switch happened. A failure before it leaves the previous release
+# running with nothing to put back, and says so once (R2, F8: "was restored"
+# and "no UI rollback is needed" twice, for an update that never switched).
+#
+candidate_current() {
+    [[ "$(readlink -f "$current" 2>/dev/null || true)" == "${UI_ROOT}/releases/${release_id}" ]]
+}
+
+#
+# The previous release back, with its files, and proved. Says what failed and
+# returns 1 rather than dying: the caller, or the trap, says the last words. A
+# rollback that refused - its drain timed out - or switched back by itself -
+# the previous release did not answer - leaves the candidate current, and the
+# previous release's files under it are the worst of both: the candidate's go
+# back in place, with the previous release's kept for the next run (review
+# 26-10-29, A02).
+#
+restore_previous() {
+    restore_tried=yes
+    settle_files
+    warn "restoring UI release ${previous_id}"
+    if "$rollback" --to "$previous_id"; then
+        ./check-compatibility && return 0
+        warn "release ${previous_id} was restored but the installation is not compatible"
+        return 1
+    fi
+    candidate_current || return 1
+    if ./refresh-platform-files "$release_id" "$kept"; then
+        warn "release ${previous_id} could not be restored; ${release_id} runs, with its own platform files"
+    else
+        warn "release ${previous_id} could not be restored; ${release_id} runs, without all its platform files"
+    fi
+    files_settled=candidate
+    return 1
+}
+
 #
 # Any way out after the switch and before the proof - an error under `set -e`,
 # Ctrl-C, a dropped SSH session - puts the previous release back, not only its
 # files. With the files alone the candidate stayed current beside the previous
 # release's units, and the next run found it current and called it done
-# (review 26-10-24, 03-02).
+# (review 26-10-24, 03-02). Tried once: a restore the update started itself,
+# and that failed, is not tried again on the way out.
 #
 on_exit() {
     local status=$?
-    if [[ "$files_settled" == no ]] && declare -F restore_previous >/dev/null && candidate_current; then
-        restore_previous || warn "the previous release could not be restored; run ${rollback} --to ${previous_id}"
+    if [[ "$files_settled" == no && "$restore_tried" == no ]] && candidate_current; then
+        restore_previous || true
     fi
     settle_files
     #
-    # The copy goes only with the files proved in place. One that could not be
-    # put back stays, 0700 as mktemp made it, for the run where_it_stands
+    # The copy goes only with the files proved in place, and the marker with it
+    # once the update is proved or the previous release runs again. A copy that
+    # could not be put back stays, root's alone, for the run where_it_stands
     # names; this trap tries no second round, and the update does not end 0.
     #
     if [[ "$files_settled" == yes ]]; then
         rm -rf -- "$kept"
+        if [[ "$proved" == yes ]] || ! candidate_current; then
+            rm -f -- "$marker"
+        fi
     elif (( status == 0 )); then
         status=1
     fi
@@ -133,6 +204,9 @@ where_it_stands() {
         if [[ "${files_settled:-}" == failed ]]; then
             echo "The platform files the update replaced are kept in ${kept}, listed in its manifest."
             echo "Put them back with: sudo $(pwd)/refresh-platform-files --restore ${kept}"
+        elif [[ "${files_settled:-}" == candidate ]]; then
+            echo "${previous_id} could not be restored, and ${running} is not proved."
+            echo "The platform files of ${previous_id} are kept in ${kept}; the next run goes on from them."
         fi
         if [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]]; then
             echo "Correct what the lines above name, then: sudo dpkg --configure -a"
@@ -141,6 +215,10 @@ where_it_stands() {
         fi
     } >&2
 }
+mkdir -p -- "$kept"
+chmod 700 -- "$state" "$kept"
+printf 'RELEASE=%s\nPREVIOUS=%s\n' "$release_id" "$previous_id" > "${marker}.new"
+mv -f -- "${marker}.new" "$marker"
 trap on_exit EXIT
 ./refresh-platform-files "$release_id" "$kept"
 
@@ -188,28 +266,11 @@ fi
 step "Checking the complete candidate before activation"
 ./check-compatibility --release "$release_id"
 
-#
-# Whether the switch happened. A failure before it leaves the previous release
-# running with nothing to put back, and says so once (R2, F8: "was restored"
-# and "no UI rollback is needed" twice, for an update that never switched).
-#
-candidate_current() {
-    [[ "$(readlink -f "$current" 2>/dev/null || true)" == "${UI_ROOT}/releases/${release_id}" ]]
-}
-
-restore_previous() {
-    settle_files
-    warn "restoring UI release ${previous_id}"
-    "$rollback" --to "$previous_id"
-    ./check-compatibility \
-        || die "release ${previous_id} was restored but the installation is not compatible"
-}
-
 step "Activating ${release_id}"
 if ! ./install-ui-release "$release_id"; then
     if candidate_current; then
-        restore_previous
-        die "activation failed; UI release ${previous_id} was restored"
+        restore_previous && die "activation failed; UI release ${previous_id} was restored"
+        die "activation failed, and UI release ${previous_id} could not be restored"
     fi
     die "activation stopped before the switch; ${previous_id} kept running"
 fi
@@ -231,10 +292,11 @@ fi
 
 step "Proving the running installation"
 if ! ./check-compatibility; then
-    restore_previous
-    die "the final compatibility check failed; UI release ${previous_id} was restored"
+    restore_previous && die "the final compatibility check failed; UI release ${previous_id} was restored"
+    die "the final compatibility check failed, and UI release ${previous_id} could not be restored"
 fi
 files_settled=yes
+proved=yes
 
 #
 # Release retention (B156), only now that the update is proved: a new release

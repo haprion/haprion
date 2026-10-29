@@ -4433,7 +4433,8 @@ while the services restart. When it is done, the header shows the new version.
 
 If the update fails, it says why in its own output, and nothing has changed for the users: the previous
 release is still running, with the files it ran with. Correct what the output names, then run the update
-again with `sudo dpkg --configure -a`. A newer certbot that fails its trial renewal is not made current.
+again with `sudo dpkg --configure -a`. If the previous release could not be put back either, the output
+says so: the new release runs, not yet proved, and the next run goes on from where the update stopped. A newer certbot that fails its trial renewal is not made current.
 The update says so, the previous certbot keeps renewing, and the update goes on.
 
 **The nodes**, one at a time, the standby first. The standby is the node that does not hold the virtual

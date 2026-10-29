@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haprion import node_package
+from haprion import accounts, node_package
 from tests.test_package_commands import manager_scripts, node_scripts
 
 BASE = Path(__file__).resolve().parents[1]
@@ -188,6 +188,58 @@ class TheTree(unittest.TestCase):
             ):
                 self.assertTrue((share / "install" / step).is_file(), step)
             self.assertIn("sudo haprion-setup", postinst)
+
+    def configure(self, *, current: bool, marker: bool) -> str:
+        """The package's postinst run for real, its fixed paths moved into a directory."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            here = Path(raw)
+            script = (
+                TOOL.POSTINST.replace(TOOL.UPDATE_MARKER, f"{here}/marker")
+                .replace(TOOL.ROOT, f"{here}/opt")
+                .replace(f"/{TOOL.LIB}", f"{here}/lib")
+                .replace(f"/{TOOL.SHARE}", f"{here}/share")
+            )
+            (here / "lib").mkdir()
+            (here / "lib/PAYLOAD").write_text("RELEASE_ID=0.1.0-0123456789ab\n")
+            release = here / "opt/releases/0.1.0-0123456789ab"
+            release.mkdir(parents=True)
+            (here / "opt/releases/0.0.9-ba9876543210").mkdir()
+            (here / "opt/current").symlink_to(
+                release if current else here / "opt/releases/0.0.9-ba9876543210"
+            )
+            if marker:
+                (here / "marker").write_text(
+                    "RELEASE=0.1.0-0123456789ab\nPREVIOUS=0.0.9-ba9876543210\n"
+                )
+            update = here / "share/install/platform/update-platform-release"
+            update.parent.mkdir(parents=True)
+            update.write_text('#!/bin/sh\necho "updating to $1"\n')
+            update.chmod(0o755)
+            done = subprocess.run(  # fixed interpreter, the package's own script
+                ["/bin/sh", "-c", script, "postinst", "configure"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        return done.stdout
+
+    def test_an_update_under_way_is_run_again_with_its_release_current(self) -> None:
+        """Review 26-10-29, A02: `dpkg --configure -a` after a failed restore said "already current"."""
+
+        self.assertEqual(
+            self.configure(current=True, marker=False),
+            "haprion-ui: release 0.1.0-0123456789ab is already current\n",
+        )
+        self.assertEqual(
+            self.configure(current=True, marker=True), "updating to 0.1.0-0123456789ab\n"
+        )
+        self.assertEqual(
+            self.configure(current=False, marker=False), "updating to 0.1.0-0123456789ab\n"
+        )
+        update = (BASE / "install/platform/update-platform-release").read_text()
+        self.assertEqual(TOOL.UPDATE_MARKER, f"{accounts.UI_DATA}/platform-update/update")
+        self.assertIn('state="${UI_DATA}/platform-update"\nmarker="${state}/update"\n', update)
 
     def test_what_the_manager_steps_read_beside_them_is_carried(self) -> None:
         carried = {relative for relative, _ in TOOL.shared_files(BASE)}

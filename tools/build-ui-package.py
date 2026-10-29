@@ -197,6 +197,14 @@ COMMANDS = (
     "web",
 )
 #
+# What `update-platform-release` leaves while an update is under way: until it
+# is proved, or the previous release runs again. With its release current
+# already, the update is run again all the same - an update stopped between
+# the switch and the proof, by a rollback that failed or by a power cut, was
+# otherwise taken as done (review 26-10-29, A02).
+#
+UPDATE_MARKER = "/var/lib/haprion-ui/platform-update/update"
+#
 # The archive is unpacked beside the releases and moved into place whole, so
 # an interrupted unpack never leaves a directory that looks like a release.
 # Its digest is checked first: PAYLOAD came in the same package, and a damaged
@@ -219,7 +227,7 @@ if [ "$1" = configure ]; then
         mv -T "$unpack{ROOT}/releases/$RELEASE_ID" "$release"
         rm -rf "$unpack"
     fi
-    if [ "$(readlink {ROOT}/current || true)" = "$release" ]; then
+    if [ "$(readlink {ROOT}/current || true)" = "$release" ] && [ ! -e {UPDATE_MARKER} ]; then
         echo "haprion-ui: release $RELEASE_ID is already current"
     elif [ -L {ROOT}/current ]; then
         /{SHARE}/install/platform/update-platform-release "$RELEASE_ID"

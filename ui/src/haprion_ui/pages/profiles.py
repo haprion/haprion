@@ -266,8 +266,8 @@ def build_router(config: Config) -> APIRouter:
                 session,
                 form,
                 existing=existing,
-                problem="This installation has no DNS profile key; see the installation "
-                "guide, 1.4.5.",
+                problem="This installation has no DNS profile key; "
+                "see The DNS profile key pair in the user manual.",
             )
         revision = existing.revision + 1 if existing else 1
         with request.app.state.pool.connection() as connection:
@@ -716,8 +716,8 @@ def build_router(config: Config) -> APIRouter:
                 session,
                 form,
                 existing=existing,
-                problem="This installation has no certificate profile key; see the installation "
-                "guide, 1.4.8.",
+                problem="This installation has no profile key; "
+                "see The DNS profile key pair in the user manual.",
             )
         servers, servers_problem = _ndes_servers()
         if servers is None or form.values.get("endpoint") not in servers:

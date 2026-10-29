@@ -52,6 +52,36 @@ class NoPageSendsAReaderToADocumentThatIsGone(unittest.TestCase):
         ]
         self.assertEqual(found, [])
 
+    def test_no_message_names_the_old_guide_s_numbers(self) -> None:
+        """Review 2026-10-29: the profile forms' refusals, written in Python, still did."""
+
+        root = Path(__file__).resolve().parents[2]
+        found = [
+            str(path.relative_to(root))
+            for tree in ("ui/src/haprion_ui", "src/haprion")
+            for path in sorted((root / tree).rglob("*.py"))
+            if re.search(r"installation\s+\"?\s*\"?guide,\s*\"?\s*\"?1\.\d", path.read_text())
+        ]
+        self.assertEqual(found, [])
+
+    def test_a_section_a_message_names_is_a_heading_in_the_manual(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        headings = {
+            line.lstrip("#").strip()
+            for line in (root / "docs/user-manual.md").read_text().splitlines()
+            if line.startswith("#")
+        }
+        named = [
+            each
+            for tree in ("ui/src/haprion_ui", "src/haprion")
+            for path in sorted((root / tree).rglob("*.py"))
+            for each in re.findall(r"see ([A-Z][^;.\"]+) in the user manual", path.read_text())
+        ]
+        self.assertGreaterEqual(len(named), 3)
+        for each in named:
+            with self.subTest(section=each):
+                self.assertIn(each, headings)
+
     def test_a_section_a_page_names_is_a_heading_in_the_manual(self) -> None:
         root = Path(__file__).resolve().parents[2]
         headings = {

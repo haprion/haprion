@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import stat
 import subprocess
 import tempfile
@@ -213,11 +214,16 @@ class OneRunAtATime(unittest.TestCase):
     def test_a_held_lock_is_waited_for_and_then_named(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "lock"
+            #
+            # A group of its own, stopped whole: flock runs sleep as its child,
+            # and killing flock alone left sleep running past the module
+            # (26-10-29, the gate's check of what a module leaves running).
+            #
             holder = subprocess.Popen(  # noqa: S603 - fixed program
-                ["/usr/bin/flock", str(lock), "/usr/bin/sleep", "5"]
+                ["/usr/bin/flock", str(lock), "/usr/bin/sleep", "5"], start_new_session=True
             )
             self.addCleanup(holder.wait)
-            self.addCleanup(holder.kill)
+            self.addCleanup(os.killpg, holder.pid, signal.SIGKILL)
             for _ in range(50):
                 if lock.exists():
                     break

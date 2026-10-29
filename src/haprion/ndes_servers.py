@@ -540,14 +540,21 @@ def _remove(
 
 
 def profiles_using(directory: Path, endpoint: str) -> tuple[str, ...]:
-    """The materialized profiles whose address is this server's."""
+    """The materialized profiles whose address is this server's.
+
+    A record that cannot be read may be any server's, so it holds each of them,
+    by its file's name - as `ndes_profiles.pending_requests` counts a request
+    it cannot read as bound (review 2026-10-29, B10).
+    """
 
     found = []
     for record in sorted(directory.glob("*.json")) if directory.is_dir() else ():
         try:
             row = json.loads(record.read_text())
         except (OSError, ValueError):
-            continue
-        if isinstance(row, dict) and row.get("endpoint") == endpoint:
+            row = None
+        if not isinstance(row, dict):
+            found.append(record.stem)
+        elif row.get("endpoint") == endpoint:
             found.append(str(row.get("profile_id") or record.stem))
     return tuple(found)

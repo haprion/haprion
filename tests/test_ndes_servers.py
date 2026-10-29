@@ -540,6 +540,16 @@ class ThePolicy(unittest.TestCase):
         (records / "other.json").write_text(f'{{"profile_id": "other", "endpoint": "{OTHER}"}}')
         self.assertEqual(ndes_servers.profiles_using(records, ENDPOINT), ("internal-ca",))
 
+    def test_a_profile_record_that_cannot_be_read_holds_every_server(self) -> None:
+        """Review 2026-10-29, B10: it was skipped, where pending_requests counts one as bound."""
+
+        records = self.root / "ndes-profiles"
+        records.mkdir()
+        (records / "broken.json").write_text("{not json")
+        (records / "listed.json").write_text("[]")
+        (records / "other.json").write_text(f'{{"profile_id": "other", "endpoint": "{OTHER}"}}')
+        self.assertEqual(ndes_servers.profiles_using(records, ENDPOINT), ("broken", "listed"))
+
     def test_the_profiles_using_a_server_are_asked_under_the_lock(self) -> None:
         self.add()
         held = []

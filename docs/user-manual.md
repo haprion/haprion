@@ -5897,7 +5897,9 @@ other CA certificates, and confirming the new ones replaces them. Its profiles a
 The HTTPS certificate of the NDES server must be trusted by the manager's system store. A server signed by an
 internal CA needs that CA in the store, as any other internal HTTPS service does (`update-ca-certificates`).
 
-A server is removed from the same page, when no profile uses it. From the command line:
+A server is removed from the same page, when no profile uses it. The command refuses while a profile applied
+on this manager names the server, or a profile record cannot be read; the interface also refuses while a
+saved profile that has not been applied names it. From the command line:
 
 ```bash
 haprion-ndes-server list

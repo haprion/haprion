@@ -37,6 +37,28 @@ def _in_use(profile_id: str, references: tuple[str, ...]) -> tuple[str, str, int
     )
 
 
+def _waiting(references: tuple[str, ...]) -> tuple[str, str, int]:
+    """The refusal of a replacement while the CA holds a request it signed.
+
+    Not the removal's "referenced by": a certificate naming a profile never
+    stops its replacement, a waiting request does, and the reader is told
+    the way on (review 2026-10-29 again, BB06). The interface's row already
+    holds the new revision, so it is saved again once the request is gone.
+    """
+
+    names = sorted(set(references))
+    return (
+        "profile_request_waiting",
+        f"{'a request for' if len(names) == 1 else 'requests for'} {', '.join(names)} "
+        f"{'is' if len(names) == 1 else 'are'} waiting at the CA and "
+        f"{'resumes' if len(names) == 1 else 'resume'} only with the profile as it is; "
+        f"wait for {'it' if len(names) == 1 else 'them'}, or give "
+        f"{'it' if len(names) == 1 else 'them'} up with Abandon request under Certificates, "
+        "then save the profile again",
+        exit_codes.REFUSED,
+    )
+
+
 def _replaces(
     policy: NdesPolicy, opened: ndes_profiles.OpenedProfile, *, require_secure: bool
 ) -> bool:
@@ -175,7 +197,7 @@ def main(
                     else ()
                 )
                 if waiting:
-                    return refuse(*_in_use(opened.profile_id, waiting))
+                    return refuse(*_waiting(waiting))
                 # The server is checked against the policy as it is under the
                 # NDES lock, which a server's removal holds too (review
                 # 2026-10-28, F05): the reading above may already be stale.

@@ -379,8 +379,14 @@ class NdesProfileRemoval(NdesProfiles):
         ).decode()
         code, doc, _ = self._helper(json.dumps(replaced))
         self.assertEqual(code, 65)
-        self.assertEqual(doc["error"]["code"], "profile_in_use")
-        self.assertIn("web-cert", doc["error"]["message"])
+        # Review 2026-10-29 again, BB06: it said "referenced by certificate".
+        self.assertEqual(doc["error"]["code"], "profile_request_waiting")
+        self.assertEqual(
+            doc["error"]["message"],
+            "a request for web-cert is waiting at the CA and resumes only with the profile as "
+            "it is; wait for it, or give it up with Abandon request under Certificates, then "
+            "save the profile again",
+        )
         opened = ndes_profiles.resolve(self.policy, "internal-ca", require_secure=False)
         self.assertEqual(opened.revision, 2)
 

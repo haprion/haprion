@@ -447,6 +447,33 @@ class RemovingAnNdesProfile(NdesPages):
         )
         self.assertEqual(client.get("/ndes-profiles/missing/remove").status_code, 404)
 
+    def test_a_replacement_refused_for_a_waiting_request_says_so(self) -> None:
+        """Review 2026-10-29 again, BB06: the row said "Apply failed" and nothing else."""
+
+        self.rows = [
+            profile_row(
+                id="certserver1", provider_id="ndes", key_id=self.public_key.key_id, revision=2
+            )
+        ]
+        refused = queued(
+            id=42,
+            operation="ndes_profile_apply",
+            cluster=None,
+            state="failed",
+            payload={"profile": "certserver1", "revision": 2},
+            result={
+                "error": {
+                    "code": "profile_request_waiting",
+                    "message": "a request for webserver1-scep is waiting at the CA",
+                }
+            },
+        )
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[refused]):
+            page = self.writing_client().get("/ndes-profiles").text
+        self.assertIn("Apply refused", page)
+        self.assertIn('href="/jobs#job-42">· A request waits at the CA</a>', page)
+        self.assertNotIn("Apply failed", page)
+
     def test_a_refused_removal_says_why_on_the_page(self) -> None:
         self.rows = [
             profile_row(id="certserver1", provider_id="ndes", key_id=self.public_key.key_id)

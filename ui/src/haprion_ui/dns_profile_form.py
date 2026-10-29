@@ -283,6 +283,22 @@ def profile_status(
             )
         if job.state == "done":
             return ProfileStatus("Replaced; not applied", "critical", False)
+        error = job.result.get("error") if isinstance(job.result, dict) else None
+        if isinstance(error, dict) and error.get("code") == "profile_request_waiting":
+            #
+            # An NDES replacement refused while the CA holds a request the
+            # profile signed: the earlier revision is still the one in effect,
+            # and the job says what to do (review 2026-10-29 again, BB06).
+            #
+            message = error.get("message")
+            return ProfileStatus(
+                "Apply refused",
+                "critical",
+                False,
+                job.id,
+                "A request waits at the CA",
+                message if isinstance(message, str) else "",
+            )
         return ProfileStatus("Apply failed", "critical", False)
     return ProfileStatus(
         "Not applied", "muted", False, attention_job, attention_label, attention_message

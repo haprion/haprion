@@ -2239,8 +2239,9 @@ the registry's button bar, or `haprion-cert-scep --id <id> --abandon`. Both disc
 certificate removes its request state too.
 
 A waiting request is bound to its profile as it was: its revision, its server and that server's CA. A
-profile is therefore not replaced while one of its requests waits; abandon the request first. A resume that
-finds any of them changed names what changed, and is refused. The row then says **Renewal failed**, and
+profile is therefore not replaced while one of its requests waits. The profile's row then says **Apply
+refused**; abandon the request, or let it finish, and save the profile again. A resume that finds any of
+them changed names what changed, and is refused. The certificate's row then says **Renewal failed**, and
 *Abandon request…* gives the request up from there too.
 
 **Scheduled renewal.** `haprion-certbot-renew.timer` runs `haprion-cert-renew` twice a day. After

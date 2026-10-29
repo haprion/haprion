@@ -30,12 +30,13 @@ import time
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, suppress
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid5
 
 import psycopg
-from haprion import answer_receipt
+from haprion import answer_receipt, exit_codes
 
 from haprion_ui import (
     answers,
@@ -48,7 +49,7 @@ from haprion_ui import (
     recovery,
     service,
 )
-from haprion_ui.config import DEFAULT_CONFIG_PATH
+from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
 
@@ -84,6 +85,23 @@ LEASE_SECONDS = 60
 # longer - and below the age of any backup worth restoring.
 #
 MAX_PENDING_SECONDS = 2 * 60 * 60
+
+#
+# One worker, held to it by the database as the poller is (review 26-10-29,
+# Q02). A second - started by hand as the account while one runs - would
+# settle the first one's job as abandoned when a renewal came late, and run it
+# again beside a helper still at work. The poller's key and this one's differ;
+# nothing else in the installation takes an advisory lock.
+#
+WORKER_LOCK_KEY = 0x48415057
+
+#
+# How long a borrow from the pool may wait for a connection during a job: one
+# tick. The pool's own wait is 30 s, and a renewal that waited it ran past the
+# lease's margin, so the run was stopped after its lease had ended rather than
+# before (review 26-10-29, Q02).
+#
+BORROW_SECONDS = execution.TICK_SECONDS
 
 #
 # The contract's cap on stored diagnostics, applied before the write rather than
@@ -1242,53 +1260,76 @@ def main(argv: list[str] | None = None) -> int:
     listener = db.listener(config.database)
     pool.open(wait=True, timeout=10)
     try:
-        with pool.connection() as connection:
-            identity, database = db.connected_identity(connection)
         #
-        # Reported rather than assumed, on every start. Peer authentication
-        # means the role is decided by the kernel, and a worker running as the
-        # wrong role looks exactly like one running correctly until something is
-        # denied - or, worse, allowed.
+        # On its own autocommit connection for the process's life, as the
+        # poller's (`db.lock_session` says why), and taken before anything is
+        # held or claimed.
         #
-        logger.info("worker running as %s on %s", identity, database)
-
-        if not config.management_writes:
-            #
-            # Said once and then quiet. A line every thirty seconds saying
-            # nothing happened is a log nobody reads, and this is a normal state
-            # rather than a fault: turning management writes off is the
-            # documented rollback for the write path, and it leaves a worker
-            # that runs and provably claims nothing.
-            #
-            logger.info("management writes are disabled; no job will be claimed")
-
-        stopping = StopRequest(what="worker")
-        worker = worker_identity()
-        with pool.connection() as connection:
-            hold_from_before_boot(connection, worker=worker, boot=boot_time())
-        while not stopping.requested():
-            if not config.management_writes:
-                stopping.sleep(IDLE_SECONDS)
-                continue
-
-            try:
-                job = _one_turn(pool, worker, stopping.requested)
-            except psycopg.OperationalError as exc:
-                #
-                # The database went away between jobs, or under one whose end
-                # could not be written before its lease ran out: said, and the
-                # loop goes on. Exiting handed systemd a worker to kill with a
-                # root helper still at work under it (review 2026-10-22, 1B-6);
-                # a job left `running` is recovery's to settle.
-                #
-                logger.error("the database did not answer: %s", exc)
-                stopping.sleep(IDLE_SECONDS)
-                continue
-            if job is None:
-                _wait_for_work(listener, stopping, IDLE_SECONDS)
+        with db.lock_session(config.database) as lock_connection:
+            return _run(config, pool, listener, lock_connection)
     finally:
         listener.close()
         pool.close()
+
+
+def _run(config: Config, pool: Any, listener: Any, lock_connection: Any) -> int:
+    """The worker's life, while it holds `WORKER_LOCK_KEY`; its exit code."""
+
+    identity, database = db.connected_identity(lock_connection)
+    if not db.try_singleton_lock(lock_connection, WORKER_LOCK_KEY):
+        logger.error("another worker holds the lock on %s; exiting", database)
+        return exit_codes.BLOCKED
+    #
+    # Reported rather than assumed, on every start. Peer authentication
+    # means the role is decided by the kernel, and a worker running as the
+    # wrong role looks exactly like one running correctly until something is
+    # denied - or, worse, allowed.
+    #
+    logger.info("worker running as %s on %s", identity, database)
+
+    if not config.management_writes:
+        #
+        # Said once and then quiet. A line every thirty seconds saying
+        # nothing happened is a log nobody reads, and this is a normal state
+        # rather than a fault: turning management writes off is the
+        # documented rollback for the write path, and it leaves a worker
+        # that runs and provably claims nothing.
+        #
+        logger.info("management writes are disabled; no job will be claimed")
+
+    stopping = StopRequest(what="worker")
+    worker = worker_identity()
+    with pool.connection() as connection:
+        hold_from_before_boot(connection, worker=worker, boot=boot_time())
+    while not stopping.requested():
+        #
+        # Asked again every turn, as the poller asks every pass: the lock
+        # lives as long as its session, which can end on its own while the
+        # pool works on. Leaving with 75 lets systemd start a worker that
+        # takes the lock or finds it held.
+        #
+        if not db.holds_singleton_lock(lock_connection, WORKER_LOCK_KEY):
+            logger.error("the worker lock on %s was lost; exiting", database)
+            return exit_codes.BLOCKED
+        if not config.management_writes:
+            stopping.sleep(IDLE_SECONDS)
+            continue
+
+        try:
+            job = _one_turn(pool, worker, stopping.requested)
+        except psycopg.OperationalError as exc:
+            #
+            # The database went away between jobs, or under one whose end
+            # could not be written before its lease ran out: said, and the
+            # loop goes on. Exiting handed systemd a worker to kill with a
+            # root helper still at work under it (review 2026-10-22, 1B-6);
+            # a job left `running` is recovery's to settle.
+            #
+            logger.error("the database did not answer: %s", exc)
+            stopping.sleep(IDLE_SECONDS)
+            continue
+        if job is None:
+            _wait_for_work(listener, stopping, IDLE_SECONDS)
     return 0
 
 
@@ -1297,6 +1338,7 @@ def _one_turn(
 ) -> db.ClaimedJob | None:
     """Settle what dead workers left, claim one job and run it; the job, or None."""
 
+    connect = partial(pool.connection, timeout=BORROW_SECONDS)
     with pool.connection() as connection:
         #
         # Before claiming anything new. A job abandoned by a dead worker
@@ -1315,7 +1357,7 @@ def _one_turn(
             connection,
             worker=worker,
             resume=lambda job, receipt: resume_adopted(
-                connection, job, receipt, worker=worker, connect=pool.connection, stopping=stopping
+                connection, job, receipt, worker=worker, connect=connect, stopping=stopping
             ),
             lease_seconds=LEASE_SECONDS,
         )
@@ -1331,7 +1373,7 @@ def _one_turn(
         #
         connection.commit()
         if job is not None:
-            run_one_job(connection, job, worker=worker, connect=pool.connection, stopping=stopping)
+            run_one_job(connection, job, worker=worker, connect=connect, stopping=stopping)
     return job
 
 

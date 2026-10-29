@@ -7754,10 +7754,12 @@ printf '{"schema_version":1,"operation":"status","cluster":"<id>",'\
 
 If that answers `done`, the sandbox is the problem and not the environment.
 
-**One poller, enforced by the database.** The poller holds a session-level advisory lock in
+**One poller and one worker, enforced by the database.** Each holds a session-level advisory lock in
 PostgreSQL for its whole life. A second poller finds the lock taken and exits, rather than doubling
-the load on every node. The database server releases the lock when the connection dies, including
-when the process is killed without cleaning up - exactly the case a lock file gets wrong.
+the load on every node. A second worker exits the same way, rather than settling the first one's job
+as abandoned while its helper still works. The database server releases the lock when the connection
+dies, including when the process is killed without cleaning up - exactly the case a lock file gets
+wrong.
 
 ##### What the worker may run
 

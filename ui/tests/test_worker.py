@@ -22,7 +22,7 @@ from unittest import mock
 from uuid import uuid4
 
 import psycopg
-from haprion import answer_receipt
+from haprion import answer_receipt, exit_codes
 
 from haprion_ui import db, execution, operations, recovery, worker
 
@@ -1715,6 +1715,75 @@ class TheWebPoolTriesAConnectionBeforeLendingIt(unittest.TestCase):
         with mock.patch("haprion_ui.db.core.ConnectionPool") as made:
             db.pool(mock.Mock(connection_string="dbname=haprion"))
         self.assertIs(made.call_args.kwargs.get("check"), made.check_connection)
+
+
+class OneWorker(unittest.TestCase):
+    """Review 26-10-29, Q02: the poller held a lock to be the only one; the worker none.
+
+    A second worker - one started by hand as the account - could settle a job
+    as abandoned while the first one's helper still worked on it.
+    """
+
+    def main(self, *, free: bool, held: Iterator[bool] | None = None) -> tuple[int, mock.Mock]:
+        answers = held if held is not None else iter(())
+        turns = mock.Mock(return_value=None)
+        stopping = mock.Mock()
+        stopping.requested.side_effect = [False, False, True]
+        config = mock.Mock(management_writes=True)
+        with (
+            mock.patch.object(worker, "load_config", return_value=config),
+            mock.patch.object(db, "pool", return_value=mock.MagicMock()),
+            mock.patch.object(db, "listener", return_value=mock.MagicMock()),
+            mock.patch.object(db, "connected_identity", return_value=("worker", "haprion")),
+            mock.patch.object(db, "lock_session", return_value=mock.MagicMock()),
+            mock.patch.object(db, "try_singleton_lock", return_value=free) as taken,
+            mock.patch.object(
+                db, "holds_singleton_lock", side_effect=lambda *_: next(answers, True)
+            ),
+            mock.patch.object(worker, "hold_from_before_boot") as hold,
+            mock.patch.object(worker, "_one_turn", turns),
+            mock.patch.object(worker, "_wait_for_work"),
+            mock.patch.object(worker, "StopRequest", return_value=stopping),
+        ):
+            code = worker.main([])
+        self.assertEqual(taken.call_args.args[1], worker.WORKER_LOCK_KEY)
+        if not free:
+            hold.assert_not_called()
+        return code, turns
+
+    def test_a_second_worker_finds_the_lock_taken_and_runs_nothing(self) -> None:
+        code, turns = self.main(free=False)
+        self.assertEqual(code, exit_codes.BLOCKED)
+        turns.assert_not_called()
+
+    def test_the_only_worker_runs_its_turns_and_leaves_when_the_lock_is_lost(self) -> None:
+        code, turns = self.main(free=True)
+        self.assertEqual((code, turns.call_count), (0, 2))
+        code, turns = self.main(free=True, held=iter((True, False)))
+        self.assertEqual((code, turns.call_count), (exit_codes.BLOCKED, 1))
+
+    def test_the_lock_is_not_the_poller_s(self) -> None:
+        from haprion_ui import poller
+
+        self.assertNotEqual(worker.WORKER_LOCK_KEY, poller.POLLER_LOCK_KEY)
+
+
+class ALeaseIsNotWaitedOnPastItsMargin(unittest.TestCase):
+    """Review 26-10-29, Q02: a borrow from the pool waited its 30 s while the lease ran out."""
+
+    def test_a_turn_borrows_for_the_job_no_longer_than_a_tick(self) -> None:
+        pool = mock.MagicMock()
+        job = claimed()
+        with (
+            mock.patch("haprion_ui.recovery.adjudicate"),
+            mock.patch.object(db, "claim_job", return_value=job),
+            mock.patch.object(worker, "run_one_job") as run,
+        ):
+            worker._one_turn(pool, "w")
+        connect = run.call_args.kwargs["connect"]
+        pool.connection.reset_mock()
+        connect()
+        pool.connection.assert_called_once_with(timeout=execution.TICK_SECONDS)
 
 
 if __name__ == "__main__":

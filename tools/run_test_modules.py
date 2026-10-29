@@ -178,6 +178,13 @@ def session(leader: int) -> dict[int, str]:
     return found
 
 
+#
+# How long a process the module started may take to end after the module has:
+# long enough for one leaving as the module ends, short beside any test.
+#
+LEFT_RUNNING_GRACE = 1.0
+
+
 def run(module: Module, limit: float = UNTIMED) -> Outcome:
     #
     # Each module gets a temporary directory of its own and fails if anything
@@ -212,6 +219,16 @@ def run(module: Module, limit: float = UNTIMED) -> Outcome:
             returncode = TIMED_OUT
             output = f"{output or ''}\nstopped after {limit:.0f} s: a test in it did not finish\n"
         running = session(process.pid)
+        #
+        # A moment for what is on its way out: a process that has let go of
+        # its memory but is not yet a zombie reads as running, without a
+        # command line, and failed a module that left nothing (26-10-29,
+        # test_platform_backup in a full run).
+        #
+        waited = time.monotonic()
+        while running and time.monotonic() - waited < LEFT_RUNNING_GRACE:
+            time.sleep(0.05)
+            running = session(process.pid)
         if running:
             for pid in running:
                 with contextlib.suppress(ProcessLookupError):

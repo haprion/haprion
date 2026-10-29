@@ -357,6 +357,27 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertIn("ResourceWarning: unclosed file", result.stdout)
         self.assertIn("failed: demo/test_cycle.py", result.stderr)
 
+    def test_a_process_that_ends_just_after_its_module_is_not_left_running(self) -> None:
+        """26-10-29: the check read the session once, and named a process still on its way out."""
+
+        module = (
+            "import os, subprocess, unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_one(self) -> None:\n"
+            "        subprocess.run(\n"
+            "            ['sh', '-c', 'sleep 0.3 &'],\n"
+            "            stdout=subprocess.DEVNULL,\n"
+            "            stderr=subprocess.DEVNULL,\n"
+            "            check=True,\n"
+            "        )\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tests = self.suite(root, {"test_a.py": PASSING, "test_ending.py": module})
+            result = self.execute(tests, root / "durations.json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("left running", result.stdout)
+
     def test_a_module_that_leaves_something_running_in_its_session_fails(self) -> None:
         """Review 26-10-29, CCC02: what a child left behind is no child of the module's."""
 

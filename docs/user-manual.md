@@ -4510,6 +4510,9 @@ Afterwards it checks that the interface answers, and **rolls forward by itself i
 running this is already having a bad day; leaving them on a release that does not answer, with the
 rollback reported as done, is the worst outcome possible.
 
+A rollback, an update and `haprion-setup` run one at a time. One started while another runs stops at once
+and names the process that holds the lock.
+
 The sudo rules, units and site stay as the installed package wrote them; a rollback moves only the release.
 `check-compatibility` names a sudo rule for a helper the target release does not run as a warning, not a
 failure. The package's next update writes the files again.

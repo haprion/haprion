@@ -110,6 +110,8 @@ if [[ "$prepare_only" -eq 1 ]]; then
     exit 0
 fi
 
+hold_release_lock
+
 #
 # Claims paused, and the running jobs waited for, before anything is switched
 # or restarted (CR-12): a restart ends the job the worker holds, and a node

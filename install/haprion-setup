@@ -104,6 +104,7 @@ setup_check_server_name "$SERVER_NAME"
 setup_check_ports
 setup_check_clock
 setup_report_problems || exit 1
+hold_release_lock
 for note in "${SETUP_NOTES[@]}"; do
     warn "$note"
 done

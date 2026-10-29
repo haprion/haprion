@@ -20,6 +20,7 @@ source ../lib.sh
 need_root
 release_id="${1:-}"
 [[ -n "$release_id" ]] || die "usage: $(basename "$0") <release-id>"
+hold_release_lock
 
 current="${UI_ROOT}/current"
 [[ -L "$current" ]] || die "${current} is missing; use the numbered first-install steps"

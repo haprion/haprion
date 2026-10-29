@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import itertools
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -877,3 +879,82 @@ class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
             ),
             text.index('step "Pruning old releases"'),
         )
+
+
+LOCK_FUNCTION = re.compile(r"^hold_release_lock\(\) \{\n.*?^\}\n", re.M | re.S)
+LOCKED = (
+    "install/platform/update-platform-release",
+    "install/platform/install-ui-release",
+    "install/platform/bin/haprion-rollback",
+    "install/haprion-setup",
+)
+
+
+class OneReleaseChangeAtATime(unittest.TestCase):
+    """Review 26-10-29, A10: an update, a rollback and an activation took no lock."""
+
+    def function(self) -> str:
+        found = LOCK_FUNCTION.search((ROOT / "install/lib.sh").read_text())
+        if found is None:
+            self.fail("lib.sh has no hold_release_lock")
+        return found.group(0)
+
+    def test_every_copy_is_the_same(self) -> None:
+        rollback = LOCK_FUNCTION.search(
+            (ROOT / "install/platform/bin/haprion-rollback").read_text()
+        )
+        self.assertIsNotNone(rollback)
+        self.assertEqual(rollback.group(0) if rollback else "", self.function())
+        for path in ("install/lib.sh", "install/platform/bin/haprion-rollback"):
+            with self.subTest(path=path):
+                self.assertIn(
+                    "\nRELEASE_LOCK=/run/haprion/ui-release.lock\n", (ROOT / path).read_text()
+                )
+
+    def test_each_command_that_changes_the_release_holds_it(self) -> None:
+        for path in LOCKED:
+            with self.subTest(path=path):
+                self.assertIn("\nhold_release_lock\n", (ROOT / path).read_text())
+        installer = (ROOT / "install/platform/install-ui-release").read_text()
+        self.assertLess(
+            installer.index('if [[ "$prepare_only" -eq 1 ]]'),
+            installer.index("\nhold_release_lock\n"),
+        )
+        self.assertLess(installer.index("\nhold_release_lock\n"), installer.index("pause --wait"))
+        rollback = (ROOT / "install/platform/bin/haprion-rollback").read_text()
+        self.assertLess(rollback.index("    --list)"), rollback.index("\nhold_release_lock\n"))
+        self.assertLess(rollback.index("\nhold_release_lock\n"), rollback.index("pause --wait"))
+        update = (ROOT / "install/platform/update-platform-release").read_text()
+        self.assertLess(update.index("\nhold_release_lock\n"), update.index("unfinished_update\n"))
+
+    def test_a_second_change_is_refused_and_a_command_the_first_runs_is_not(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            lock = Path(raw) / "run/ui-release.lock"
+            prelude = (
+                f"RELEASE_LOCK={lock}; "
+                'die() { echo "ERROR: $*" >&2; exit 1; }; ' + self.function()
+            )
+            inner = prelude + "hold_release_lock && echo inherited"
+            outer = (
+                prelude
+                + "hold_release_lock; echo held; "
+                + f"/bin/bash -c {shlex.quote(inner)}; "
+                + f"/bin/bash -c {shlex.quote(inner)} 9>&-; "
+                + 'echo "second=$?"'
+            )
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                ["/bin/bash", "-c", outer], capture_output=True, text=True, check=False
+            )
+            self.assertEqual(done.stdout.split(), ["held", "inherited", "second=1"], done.stderr)
+            self.assertRegex(
+                done.stderr,
+                r"another change of the UI release is running \(pid [0-9]+\); "
+                "run this again when it is done",
+            )
+            again = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                ["/bin/bash", "-c", prelude + "hold_release_lock && echo free"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(again.stdout.strip(), "free", again.stderr)

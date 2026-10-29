@@ -218,6 +218,30 @@ tomllib.loads(sys.stdin.read())' \
     install_file "$file" "root:${PLATFORM_GROUP}" 640 "$content"
 }
 
+RELEASE_LOCK=/run/haprion/ui-release.lock
+#
+# One change of the UI release at a time (review 26-10-29, A10): an update,
+# a rollback, an activation or a setup run beside another paused the worker
+# twice - the first one's resume lifting the second's pause mid-restart - and
+# switched `current` in no order. Held on descriptor 9 until the command
+# exits. A command it starts inherits the descriptor, and `flock` on that same
+# descriptor succeeds where a second opening of the file fails. The same
+# function in lib.sh and haprion-rollback, held together by a test.
+#
+hold_release_lock() {
+    local holder
+    if [[ "$(readlink "/proc/$$/fd/9" 2>/dev/null || true)" == "$RELEASE_LOCK" ]] && flock -n 9; then
+        return 0
+    fi
+    mkdir -p -- "${RELEASE_LOCK%/*}"
+    exec 9>>"$RELEASE_LOCK"
+    if ! flock -n 9; then
+        holder="$(head -1 "$RELEASE_LOCK" 2>/dev/null || true)"
+        die "another change of the UI release is running (pid ${holder:-unknown}); run this again when it is done"
+    fi
+    printf '%s\n' "$$" > "$RELEASE_LOCK"
+}
+
 #
 # The import package of the UI release a Python interpreter belongs to, asked of
 # the release itself: the package behind its `haprion-worker` command. A release

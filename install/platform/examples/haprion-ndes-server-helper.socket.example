@@ -20,8 +20,9 @@ SocketMode=0660
 
 Accept=yes
 
-# One at a time: two changes of the policy's ndes block must not interleave.
-MaxConnections=1
+# A few at once: the list the NDES pages read need not wait for a fetch. Two
+# changes of the policy's ndes block are kept apart by the lock they take.
+MaxConnections=4
 
 RemoveOnStop=yes
 

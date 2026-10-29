@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from base64 import b64decode
@@ -58,7 +59,15 @@ LOCK_WAIT_SECONDS = 30
 # SCEP's GetCACert answers with the CA and the RA certificates: a few kB.
 #
 MAX_ANSWER = 256 * 1024
-TIMEOUT = 20.0
+#
+# The socket's bound on one operation - connecting, the TLS handshake, one
+# read - and the whole answer's (review 2026-10-29, B08: a server that sent a
+# byte at a time held the helper, and with it the NDES pages, for as long as
+# it liked). Together under the helper unit's RuntimeMaxSec, which is under
+# the web's wait.
+#
+TIMEOUT = 10.0
+DEADLINE = 20.0
 SHA256 = re.compile(r"[0-9a-f]{64}")
 #
 # The next line in the first column that is not the ndes block's: a key or a
@@ -118,9 +127,10 @@ def get_ca_cert(endpoint: str) -> bytes:
     """`GetCACert` over HTTPS, the server's certificate checked with the system's store."""
 
     url = endpoint + "?operation=GetCACert&message=ca"
+    deadline = time.monotonic() + DEADLINE
     try:
         with _opener().open(url, timeout=TIMEOUT) as response:
-            data = http_answer.read_body(response, MAX_ANSWER)
+            data = http_answer.read_body(response, MAX_ANSWER, deadline=deadline)
     except urllib.error.HTTPError as exc:
         # The error is the response too, and is closed (review 2026-10-28, F04).
         with exc:

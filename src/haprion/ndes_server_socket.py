@@ -18,7 +18,8 @@ from haprion.ndes_servers import NdesServerError
 
 SOCKET_PATH = "/run/haprion/ndes-server.sock"
 #
-# GetCACert is bounded at 20 s in the helper; the rest is local.
+# Over the helper unit's RuntimeMaxSec, which bounds GetCACert and the rest:
+# the helper has ended, whatever it did, before the web says it did not answer.
 #
 TIMEOUT_SECONDS = 45.0
 

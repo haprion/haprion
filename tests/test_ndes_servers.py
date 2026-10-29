@@ -12,6 +12,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import uuid
@@ -22,7 +23,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import exit_codes, ndes_servers, safe_yaml
+from haprion import exit_codes, ndes_server_socket, ndes_servers, safe_yaml
 from haprion.cli import ndes_server, ndes_server_helper
 from haprion.config import ConfigError, load_policy
 from tests.contract_schema import assert_contract
@@ -179,6 +180,31 @@ class TheFetch(unittest.TestCase):
                 self.assertEqual(refused.code, "unreachable")
                 self.assertEqual(refused.exit_code, exit_codes.UNAVAILABLE)
 
+    def test_a_server_that_answers_a_byte_at_a_time_is_given_up_on_in_time(self) -> None:
+        """Review 2026-10-29, B08: the bound was per read, so a drip held the socket for all."""
+
+        def drip(handler: http.server.BaseHTTPRequestHandler) -> None:
+            handler.send_response(200)
+            handler.send_header("Content-Length", "30")
+            handler.end_headers()
+            try:
+                for _ in range(30):
+                    handler.wfile.write(b"x")
+                    handler.wfile.flush()
+                    time.sleep(0.2)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # the fetch gave up, as it should
+
+        started = time.monotonic()
+        with (
+            mock.patch.object(ndes_servers, "TIMEOUT", 1.0),
+            mock.patch.object(ndes_servers, "DEADLINE", 1.0),
+        ):
+            refused = self.fetch(drip)
+        self.assertLess(time.monotonic() - started, 3.0)
+        self.assertEqual(refused.code, "unreachable")
+        self.assertIn("longer than", str(refused))
+
     def test_an_error_answer_is_said_and_closed_on_the_wire(self) -> None:
         def answer(handler: http.server.BaseHTTPRequestHandler) -> None:
             handler.send_response(404)
@@ -188,6 +214,20 @@ class TheFetch(unittest.TestCase):
         refused = self.fetch(answer)
         self.assertEqual(refused.code, "unreachable")
         self.assertIn("HTTP 404", str(refused))
+
+
+class TheHelperUnit(unittest.TestCase):
+    def test_systemd_ends_the_helper_before_the_web_stops_waiting(self) -> None:
+        """Review 2026-10-29, B08: no RuntimeMaxSec, and a drip held the socket past the web."""
+
+        unit = (
+            Path(__file__).resolve().parents[1]
+            / "install/platform/examples/haprion-ndes-server-helper@.service.example"
+        ).read_text()
+        self.assertIn("Type=exec", unit)
+        seconds = int(unit.split("\nRuntimeMaxSec=", 1)[1].split("\n", 1)[0])
+        self.assertLess(seconds, ndes_server_socket.TIMEOUT_SECONDS)
+        self.assertGreater(seconds, ndes_servers.DEADLINE + ndes_servers.TIMEOUT)
 
 
 class TheAuthorities(unittest.TestCase):

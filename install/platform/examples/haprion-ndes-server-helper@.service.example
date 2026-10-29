@@ -30,8 +30,13 @@ StandardOutput=socket
 StandardError=journal
 MemoryMax=256M
 MemorySwapMax=0
-# GetCACert is bounded at 20 s, the rest is local.
+# With Type=exec the start timeout ends once the helper runs; RuntimeMaxSec
+# bounds the rest. GetCACert has 20 s for its answer and 10 s for each read
+# from the socket, the rest is local; ended under the web's 45 s, so a change
+# is never made after the web has said the service did not answer (review
+# 2026-10-29, B08).
 TimeoutStartSec=60
+RuntimeMaxSec=40
 TimeoutStopSec=10
 
 NoNewPrivileges=yes

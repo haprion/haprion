@@ -13,6 +13,7 @@ hold for both, and live here once:
 from __future__ import annotations
 
 import http.client
+import time
 import urllib.request
 from typing import Any
 
@@ -30,17 +31,23 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def read_body(stream: Any, limit: int) -> bytes:
+def read_body(stream: Any, limit: int, *, deadline: float | None = None) -> bytes:
     """The body to its end, or `limit + 1` bytes when it is longer.
 
     `http.client.IncompleteRead` when the connection closed before the length
-    the answer gave.
+    the answer gave. With a `deadline` (`time.monotonic()`), `TimeoutError`
+    once it has passed: a socket's timeout bounds one read, and a server that
+    sends a byte at a time never lets one run out. Each read is then at most
+    one from the socket (`read1`), so the deadline is looked at between them.
     """
 
     chunks: list[bytes] = []
     size = 0
+    read = stream.read if deadline is None else stream.read1
     while size <= limit:
-        chunk: bytes = stream.read(min(CHUNK, limit + 1 - size))
+        if deadline is not None and time.monotonic() > deadline:
+            raise TimeoutError("the answer took longer than it may")
+        chunk: bytes = read(min(CHUNK, limit + 1 - size))
         if not chunk:
             break
         chunks.append(chunk)

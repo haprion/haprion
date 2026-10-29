@@ -23,7 +23,7 @@ every failure. See B44.
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -1520,6 +1520,10 @@ class InFlight:
     label: str
     not_finishing: str | None = None
     tone: Tone = "info"
+    #
+    # The job, for a link to it on Events → Jobs; not part of what is said.
+    #
+    job: int | None = field(default=None, compare=False)
 
     @property
     def working(self) -> bool:
@@ -1539,7 +1543,7 @@ def busy_with(job: Job, now: datetime | None = None) -> InFlight:
     moment = now or datetime.now(UTC)
     sentence = not_finishing(job, moment)
     tone: Tone = "info" if sentence is None else "warning" if job.waits_for_decision else "critical"
-    return InFlight(running_label(job, moment), sentence, tone)
+    return InFlight(running_label(job, moment), sentence, tone, job.id)
 
 
 def certificate_in_flight(jobs: Iterable[Job]) -> InFlight | None:

@@ -11,5 +11,7 @@
   The sentence a busy queue is answered with, in the tone of what holds it:
   a held job's as a warning, one no worker holds as critical, and a queue
   that is merely busy as the problem it was (review 26-10-29).
+  With `job`, its Events → Jobs leads to that job, as the restore run's
+  page does.
 #}
-{% macro queue_notice(sentence, tone=none) %}{% if tone == 'warning' %}<p class="preview-notice notice-warning"><span class="status-orb status-warning" aria-hidden="true"></span><strong>{{ sentence }}</strong></p>{% elif tone == 'critical' %}<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ sentence }}</strong></p>{% else %}<p class="preview-notice form-problem">{{ sentence }}</p>{% endif %}{% endmacro %}
+{% macro queue_notice(sentence, tone=none, job=none) %}{% if tone in ('warning', 'critical') %}{% set parts = sentence.split('Events → Jobs', 1) %}<p class="preview-notice {{ 'notice-warning' if tone == 'warning' else 'form-problem' }}"><span class="status-orb status-{{ tone }}" aria-hidden="true"></span><strong>{% if job is not none and parts | length == 2 %}{{ parts[0] }}<a href="/jobs#job-{{ job }}">Events → Jobs</a>{{ parts[1] }}{% else %}{{ sentence }}{% endif %}</strong></p>{% else %}<p class="preview-notice form-problem">{{ sentence }}</p>{% endif %}{% endmacro %}

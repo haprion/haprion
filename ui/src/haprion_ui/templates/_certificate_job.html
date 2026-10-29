@@ -1,6 +1,7 @@
+{% from "_busy.html" import queue_notice %}
 {#
   The certificates' place in the queue while a form waits for it: the job's
   name, and the caller's words for what follows when it ends - or, for a job
   that does not end by itself, why (review 26-10-29, A3).
 #}
-{% macro certificate_job_notice(job) %}{% if job.not_finishing %}<p class="preview-notice {{ 'notice-warning' if job.tone == 'warning' else 'form-problem' }}"><span class="status-orb status-{{ job.tone }}" aria-hidden="true"></span><strong>{{ job.not_finishing }}</strong></p>{% else %}<p class="preview-notice"><strong>{{ job.label }} is in progress.</strong> {{ caller() }}</p>{% endif %}{% endmacro %}
+{% macro certificate_job_notice(job) %}{% if job.not_finishing %}{{ queue_notice(job.not_finishing, job.tone, job.job) }}{% else %}<p class="preview-notice"><strong>{{ job.label }} is in progress.</strong> {{ caller() }}</p>{% endif %}{% endmacro %}

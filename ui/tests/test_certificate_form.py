@@ -388,7 +388,13 @@ class TheFormPage(CertificateFormRouteTestCase):
         )
         with mock.patch("haprion_ui.db.recent_jobs", return_value=[held]):
             page = self.writing_client().get("/certificates/new").text
-        self.assertIn(jobs.HELD_BUSY, html.unescape(page))
+        #
+        # Events → Jobs leads to the job, as the restore run's page does
+        # (review 26-10-29, rig).
+        #
+        linked = f'<a href="/jobs#job-{held.id}">Events → Jobs</a>'
+        self.assertIn(linked, html.unescape(page))
+        self.assertIn(jobs.HELD_BUSY, html.unescape(page).replace(linked, "Events → Jobs"))
         self.assertNotIn("is in progress", page)
         self.assertIn("disabled>Request the certificate", page)
         with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy(active=held)):

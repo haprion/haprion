@@ -1192,6 +1192,17 @@ def run_one(
     return True
 
 
+#
+# Where the update's marker is while it is under way (update-platform-release),
+# and the drop-in that makes the web refuse every release but one.
+#
+UPDATE_MARKER = "/var/lib/haprion-ui/platform-update/update"
+FAULT = Path("/etc/systemd/system/haprion-web.service.d/install-test-fault.conf")
+FAULT_UNIT = """[Service]
+ExecStartPre=/bin/sh -c 'case "$$(readlink -f /opt/haprion-ui/current)" in */{release}) exit 0;; esac; exit 1'
+"""
+
+
 def run_upgrade(
     distribution: Distribution, previous: Path, packages: Path, logs: Path, keep: bool
 ) -> bool:
@@ -1228,6 +1239,9 @@ def run_upgrade(
             "export DEBIAN_FRONTEND=noninteractive && "
             f"apt-get install -y -q {' '.join(shlex.quote(name) for name in names)}",
         )
+        all_configured(role, files)
+
+    def all_configured(role: str, files: list[Path]) -> None:
         _, states = run.on(role, "dpkg-query -W -f='${db:Status-Abbrev} ${Package}\\n' 'haprion*'")
         unfinished = [line for line in states.splitlines() if line.split()[0] not in ("ii", "un")]
         if unfinished:
@@ -1254,8 +1268,63 @@ def run_upgrade(
         _, link = run.on("mgr", "readlink /opt/haprion-ui/current")
         return link.strip().rsplit("/", 1)[-1]
 
+    def compatible(after: str) -> None:
+        """The manager's own check, as the manual says to run it (review 26-10-29, A04).
+
+        After a rollback over a migration it said INCOMPATIBLE, and nothing
+        here asked it (A01).
+        """
+
+        _, said = run.on(
+            "mgr", "/usr/share/haprion-ui/install/platform/check-compatibility", check=False
+        )
+        if not any(line.startswith("COMPATIBLE:") for line in said.splitlines()):
+            raise Failed(f"check-compatibility after {after} is not COMPATIBLE:\n{said[-6000:]}")
+
+    def a_failed_update_is_undone_and_run_again() -> None:
+        """The update stopped after its migration, the previous release put back, and run again.
+
+        Every step above took the way that works; the way back had never run
+        (review 26-10-29, A04). The web refuses to start on any release but
+        the previous one, so the activation fails after the migration and
+        the update restores the previous release. `dpkg --configure -a`, the
+        manual's next step, then finishes the update once the cause is gone.
+        """
+
+        previous = released[0]
+        names = [run.copy("mgr", path) for path in new_manager]
+        run.on(
+            "mgr",
+            f"mkdir -p {FAULT.parent} && cat > {FAULT} && systemctl daemon-reload",
+            stdin=FAULT_UNIT.format(release=previous),
+        )
+        code, said = run.on(
+            "mgr",
+            "export DEBIAN_FRONTEND=noninteractive && "
+            f"apt-get install -y -q {' '.join(shlex.quote(name) for name in names)}",
+            check=False,
+        )
+        if code == 0:
+            raise Failed(f"the update went through with the web refusing to start:\n{said[-6000:]}")
+        if current_ui_release() != previous:
+            raise Failed(f"a failed update left {current_ui_release()} current, not {previous}")
+        _, state = run.on("mgr", "dpkg-query -W -f='${db:Status-Abbrev}' haprion-ui")
+        if state.strip() != "iF":
+            raise Failed(f"haprion-ui is {state.strip()!r} after a failed update, not 'iF'")
+        _, marker = run.on("mgr", f"test ! -e {UPDATE_MARKER} && echo gone", check=False)
+        if "gone" not in marker:
+            raise Failed(f"a restored update left {UPDATE_MARKER} behind")
+        the_web_answers("a failed update")
+        compatible("a failed update was restored")
+        run.on("mgr", f"rm -f {FAULT} && systemctl daemon-reload")
+        run.on("mgr", "export DEBIAN_FRONTEND=noninteractive && dpkg --configure -a")
+        all_configured("mgr", new_manager)
+        if current_ui_release() == previous:
+            raise Failed(f"dpkg --configure -a left {previous} current")
+
     def the_manager_serves_after_it() -> None:
         the_web_answers("the update")
+        compatible("the update")
         output = run.deploy()
         if "RESULT: OK" not in output:
             raise Failed(f"a deploy after the update did not succeed:\n{output}")
@@ -1281,6 +1350,7 @@ def run_upgrade(
             if current_ui_release() != to:
                 raise Failed(f"haprion-rollback --to {to} left {current_ui_release()} current")
             the_web_answers(f"the rollback to {to}")
+            compatible(f"the rollback to {to}")
 
     try:
         image = step("an empty server image", run.image)
@@ -1301,7 +1371,10 @@ def run_upgrade(
         step(f"{NODES[1]} added", lambda: run.add_node(NODES[1], blocks[1]))
         step("an object published and deployed", published_and_deployed)
         released.append(current_ui_release())
-        step("the manager updated to this release with apt", lambda: upgraded("mgr", new_manager))
+        step(
+            "the manager's update failed after its migration, undone, and run again",
+            a_failed_update_is_undone_and_run_again,
+        )
         for role in NODES:
             step(
                 f"{role} updated to this release with apt",

@@ -241,6 +241,23 @@ class TheTree(unittest.TestCase):
         self.assertEqual(TOOL.UPDATE_MARKER, f"{accounts.UI_DATA}/platform-update/update")
         self.assertIn('state="${UI_DATA}/platform-update"\nmarker="${state}/update"\n', update)
 
+    def test_the_update_test_takes_the_way_back_and_asks_the_check(self) -> None:
+        """Review 26-10-29, A04: only the way that works had run, and no check after it."""
+
+        text = (BASE / "tools/install-test").read_text()
+        self.assertIn(f'UPDATE_MARKER = "{TOOL.UPDATE_MARKER}"\n', text)
+        start = text.index("def run_upgrade(")
+        body = text[start : text.index("\ndef main(", start)]
+        for after in ('compatible("the update")', 'compatible(f"the rollback to {to}")'):
+            with self.subTest(after=after):
+                self.assertIn(after, body)
+        self.assertIn('compatible("a failed update was restored")', body)
+        self.assertIn('&& dpkg --configure -a")', body)
+        self.assertLess(
+            body.index("a_failed_update_is_undone_and_run_again,"),
+            body.index("updated to this release with apt"),
+        )
+
     def test_what_the_manager_steps_read_beside_them_is_carried(self) -> None:
         carried = {relative for relative, _ in TOOL.shared_files(BASE)}
         for needed in (

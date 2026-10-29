@@ -82,8 +82,22 @@ class TheVerifyStepChecksTheKeys(unittest.TestCase):
                 (stubs / name).chmod(0o755)
             answers = root / "answers.env"
             answers.write_text(f"KEY_DIR={root}/keys\nCLUSTER_FILE={root}/clusters.yaml\n")
+            #
+            # The step's policy is this machine's, at a fixed path: a copy
+            # looks in the test's own directory instead (review 26-10-29, CC01).
+            #
+            original = (INSTALL / "05-verify").read_text()
+            step = root / "05-verify"
+            step.write_text(
+                original.replace('cd "$(dirname "$0")"', f'cd "{INSTALL}"', 1).replace(
+                    'POLICY_FILE="/etc/haprion/runtime-policy.yaml"',
+                    f'POLICY_FILE="{root}/runtime-policy.yaml"',
+                    1,
+                )
+            )
+            self.assertEqual(step.read_text().count("/etc/haprion"), 0, "a fixed path is left")
             done = subprocess.run(  # fixed interpreter, the repository's own step
-                ["/bin/bash", str(INSTALL / "05-verify"), str(answers)],
+                ["/bin/bash", str(step), str(answers)],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -102,6 +116,9 @@ class TheVerifyStepChecksTheKeys(unittest.TestCase):
         out = self.verify(sudo='[ "$1" = -n ] && shift; exec "$@"', present=present)
 
         self.assertRegex(out, r"PASS  id_ed25519_config_deploy exists")
+        # The test's own policy, which it did not write - not this machine's.
+        self.assertRegex(out, r"FAIL  runtime-policy\.yaml exists +/\S+/runtime-policy\.yaml")
+        self.assertNotIn("/etc/haprion", out)
         self.assertRegex(out, r"FAIL  id_ed25519_node_backup\.pub exists")
         self.assertNotIn("not readable from here", out)
 

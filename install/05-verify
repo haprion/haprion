@@ -21,6 +21,12 @@ require_vars CONFIG_ROOT PUBLISH_ROOT CLUSTER_FILE KEY_DIR \
              CONFIG_DEPLOY_KEY NODE_STATUS_KEY
 [[ -z "${BACKUP_ROOT:-}" ]] || require_vars NODE_BACKUP_KEY
 
+#
+# Where the software reads its policy (config.DEFAULT_POLICY_PATH) and step 2
+# writes it: fixed rather than an answer, as it is there.
+#
+POLICY_FILE="/etc/haprion/runtime-policy.yaml"
+
 PASS=0
 FAIL=0
 SKIP=0
@@ -32,7 +38,7 @@ check() { if [[ "$1" == "yes" ]]; then pass "$2" "${3:-}"; else bad "$2" "${3:-}
 
 step "Files and permissions"
 
-for path in "$CLUSTER_FILE" /etc/haprion/runtime-policy.yaml; do
+for path in "$CLUSTER_FILE" "$POLICY_FILE"; do
     if [[ -f "$path" ]]; then
         owner="$(stat -c '%U' "$path")"
         mode="$(stat -c '%a' "$path")"

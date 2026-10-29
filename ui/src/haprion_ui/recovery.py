@@ -88,6 +88,25 @@ REPEATABLE = frozenset({"deploy", "cert_deploy"})
 #
 RECORDED = frozenset({"revert", "changes_publish"})
 
+#
+# Operations whose helper keeps a receipt of its answer (`answer_receipt`), held
+# to the jobs `operations.prepare` sends to those helpers by a test.
+#
+KEEPS_ANSWER = frozenset(
+    {
+        "backup_run",
+        "backup_schedule",
+        "cert_receiver",
+        "cluster_define",
+        "cluster_node",
+        "node_restore",
+        "node_restore_discard",
+        "node_restore_prepare",
+        "node_restore_preview",
+        "node_restore_status",
+    }
+)
+
 type Verdict = Literal["requeue", "abandon", "wait", "adopt"]
 
 NO_RECEIPT = answer_receipt.Receipt("unavailable")
@@ -163,6 +182,20 @@ def judge(
             "abandon",
             "helper_silent",
             "its helper ended without an answer, so what it did is not known",
+        )
+
+    if receipt.state == "absent" and job.operation in KEEPS_ANSWER:
+        #
+        # Its helper began nowhere, or its receipt was removed: they are kept
+        # two weeks from the helper's end, and a job held for an admin waits
+        # as long as nobody answers (review 26-10-29, C03).
+        #
+        return Judgement(
+            "abandon",
+            "answer_absent",
+            "its helper kept no answer: it never began, or its answer was removed"
+            f" {answer_receipt.KEEP_SECONDS // 86400} days after it ended, so what it did is not"
+            " known",
         )
 
     if job.operation in REPEATABLE:

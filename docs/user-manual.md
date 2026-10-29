@@ -4033,7 +4033,8 @@ restarted - a UI release, `needrestart`, a reboot - does not stop them. Each kee
 `/var/lib/haprion/answers` (root's, readable by the worker, removed after two weeks). The job stays
 *running* while its helper works, and then ends on the helper's own answer, with what follows it in the
 same job: a node change's deploy runs then. A helper that ended without an answer leaves the job
-`unknown`.
+`unknown`, and so does an answer removed before the job ended: a held job nobody answered for two
+weeks ends `unknown` with the code `answer_absent`.
 
 **Jobs from before a restart or a restore.** A manager restored from an image or a backup comes up holding
 the jobs that were waiting when the backup was taken - and those ran back then. Running them again could,

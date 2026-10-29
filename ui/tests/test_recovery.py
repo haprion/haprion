@@ -7,16 +7,18 @@ is never "did the update run" but "was this decision allowed to be made".
 
 from __future__ import annotations
 
+import ast
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
 from haprion import answer_receipt
 
-from haprion_ui import db, recovery
+from haprion_ui import db, operations, recovery
 
 REQUEST = uuid4()
 EXPIRED = datetime.now(UTC) - timedelta(minutes=5)
@@ -325,10 +327,71 @@ class AHelperThatOutlivedItsWorker(unittest.TestCase):
                     recovery.judge(abandoned("deploy"), None, receipt).code,
                     "operation_repeatable",
                 )
-                self.assertEqual(
-                    recovery.judge(abandoned("cluster_node"), None, receipt).code,
-                    "operation_unknown",
-                )
+        self.assertEqual(
+            recovery.judge(
+                abandoned("cluster_node"), None, answer_receipt.Receipt("unavailable")
+            ).code,
+            "operation_unknown",
+        )
+
+    def test_an_answer_no_longer_kept_is_said_as_such(self) -> None:
+        """Review 26-10-29, C03: a held job's answer was removed after two weeks, and the
+        job ended blaming an operation that has no evidence."""
+
+        held = replace(abandoned("cluster_node"), held_since=EXPIRED)
+
+        judgement = recovery.judge(held, None, answer_receipt.Receipt("absent"))
+
+        self.assertEqual((judgement.verdict, judgement.code), ("abandon", "answer_absent"))
+        self.assertEqual(
+            judgement.reason,
+            "its helper kept no answer: it never began, or its answer was removed 14 days"
+            " after it ended, so what it did is not known",
+        )
+
+    def test_the_operations_that_keep_an_answer_are_the_ones_whose_helper_does(self) -> None:
+        """Read from `operations`: an operation whose job asks a helper that keeps receipts."""
+
+        source = ast.parse(Path(operations.__file__).read_text(encoding="utf-8"))
+        clients = {"NODE_CLIENT", "BACKUP_CLIENT", "RESTORE_CLIENT", "RECEIVER_CLIENT", "_restore"}
+        keeping: set[str] = set()
+        for node in ast.walk(source):
+            if not (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)):
+                continue
+            if not (isinstance(node.test.left, ast.Name) and node.test.left.id == "operation"):
+                continue
+            named = {
+                constant.value
+                for constant in ast.walk(node.test.comparators[0])
+                if isinstance(constant, ast.Constant) and isinstance(constant.value, str)
+            }
+            used = {
+                name.id
+                for statement in node.body
+                for name in ast.walk(statement)
+                if isinstance(name, ast.Name)
+            }
+            if used & clients:
+                keeping |= named
+        self.assertEqual(sorted(recovery.KEEPS_ANSWER), sorted(keeping))
+        #
+        # And the clients are the helpers that keep receipts: a fifth one is a
+        # fifth client to name above.
+        #
+        helpers = Path(answer_receipt.__file__).parent / "cli"
+        self.assertEqual(
+            sorted(
+                path.name
+                for path in helpers.glob("*.py")
+                if "@answer_receipt.keeps_answer" in path.read_text(encoding="utf-8")
+            ),
+            [
+                "backup_job_helper.py",
+                "cert_receiver_helper.py",
+                "node_helper.py",
+                "node_restore_helper.py",
+            ],
+        )
 
 
 class AdoptingAJob(unittest.TestCase):

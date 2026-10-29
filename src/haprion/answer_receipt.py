@@ -44,8 +44,11 @@ from haprion import atomic_file
 
 ROOT = Path("/var/lib/haprion/answers")
 #
-# How long a receipt is kept. A job is settled within minutes of its lease
-# running out; two weeks is far past any of them and keeps the directory small.
+# How long a receipt is kept, from its helper's end. A job is settled within
+# minutes of its lease running out, unless it is held for an admin's Run or
+# Discard: that waits as long as nobody answers, and a held job whose receipt
+# is gone ends `unknown` and says why (recovery, `answer_absent`). Two weeks
+# is far past an answer anybody gives and keeps the directory small.
 #
 KEEP_SECONDS = 14 * 24 * 3600
 #

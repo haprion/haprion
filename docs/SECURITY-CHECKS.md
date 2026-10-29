@@ -26,9 +26,10 @@ The repository has complementary gates. No single scanner replaces the others.
    `HAPRION_UI_PYTHON` and fail closed without it. The engine's and the interface's test modules
    run through one pool, one module per process (`tools/run_test_modules.py`), heaviest first by
    the previous run's timings. The pool fails a module that leaves a file behind in its temporary
-   directory. Every run of a suite's tests - the pool, the run again without HAProxy, the database
-   tests, and a targeted `python tools/unittest_left_open.py tests.<module>` - goes through
-   `tools/unittest_left_open.py`, which fails the run for:
+   directory, or anything still running in its session, which it then stops. Every run of a
+   suite's tests - the pool, the run again without HAProxy, the database tests, and a targeted
+   `python tools/unittest_left_open.py tests.<module>` - goes through `tools/unittest_left_open.py`,
+   which fails the run for:
    - a ResourceWarning, said while the tests ran, at import, or when the garbage collector closes
      something held in a reference cycle after them;
    - a file, socket or other descriptor still open once its tests and fixtures have ended, beyond
@@ -36,16 +37,17 @@ The repository has complementary gates. No single scanner replaces the others.
    - a reach for a path under `/etc/haprion`, the configuration of the machine the suite happens to
      run on: an opening, a listing, a stat, an existence or access check, a link read, a strict
      resolve, or a change to a path there, made from Python in the test's own process. The path
-     counts as it is written and where the links on its way lead.
+     counts as it is written and where the links on its way lead;
+   - a process it started that is still running once its tests have ended, which it then stops.
 
-   It does not see a child that starts a program - a script, a shell command, another Python - or a
-   forked child's reach, which fails the child but not the run. It does not see an opening made
-   from C (such as `ssl`'s `load_verify_locations`), a relative `os.open` from a directory
-   descriptor (counted from the working directory), a listing of `/etc`, which shows that
-   `haprion` is there, or what a child keeps open. A ResourceWarning that a test catches itself,
-   with `catch_warnings(record=True)` or `assertWarns`, is not counted. A plain
-   `python -m unittest` has none of these checks. The engine's modules run under coverage, combined
-   before the report.
+   Its reach check does not see a child that starts a program - a script, a shell command, another
+   Python - or a forked child's reach, which fails the child but not the run. Nor does it see an
+   opening made from C (such as `ssl`'s `load_verify_locations`), a relative `os.open` from a
+   directory descriptor (counted from the working directory), or a listing of `/etc`, which shows
+   that `haprion` is there. The run does not see what a child keeps open, or a process that leaves
+   the module's session, as a daemon does. A ResourceWarning that a test catches itself, with
+   `catch_warnings(record=True)` or `assertWarns`, is not counted. A plain `python -m unittest` has
+   none of these checks. The engine's modules run under coverage, combined before the report.
    `run-checks` then runs the interface's migrations and database tests against a disposable
    PostgreSQL cluster (`ui/tools/test-database`, below), and fails without PostgreSQL installed.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,

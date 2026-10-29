@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -11,6 +14,36 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parents[1]
 RUNNER = BASE / "tools" / "run_test_modules.py"
 LEFT_OPEN = BASE / "tools" / "unittest_left_open.py"
+
+#
+# Started and never stopped, its output to DEVNULL so it holds no descriptor
+# here and keeps no pipe of the run's open;
+# its number is written beside the module so the test can stop it either way.
+#
+LEFT_RUNNING = """\
+import os, subprocess, unittest
+class T(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.daemon = subprocess.Popen(
+            {command!r}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        with open(os.path.join(os.path.dirname(__file__), "pid"), "w") as kept:
+            kept.write(str(cls.daemon.pid))
+    def test_one(self) -> None:
+        pass
+"""
+
+
+def stop_what_was_left(tests: Path) -> None:
+    """The process a module wrote down, stopped if the run did not stop it."""
+
+    kept = tests / "pid"
+    if kept.exists():
+        for pid in kept.read_text(encoding="utf-8").split():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(pid), signal.SIGKILL)
+
 
 PASSING = """\
 import unittest
@@ -324,6 +357,34 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertIn("ResourceWarning: unclosed file", result.stdout)
         self.assertIn("failed: demo/test_cycle.py", result.stderr)
 
+    def test_a_module_that_leaves_something_running_in_its_session_fails(self) -> None:
+        """Review 26-10-29, CCC02: what a child left behind is no child of the module's."""
+
+        # A shell that starts it in the background and ends; the module waits for the shell.
+        module = (
+            "import os, subprocess, unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_one(self) -> None:\n"
+            "        subprocess.run(\n"
+            "            ['sh', '-c', 'sleep 60 & echo $! > pid'],\n"
+            "            cwd=os.path.dirname(__file__),\n"
+            "            stdout=subprocess.DEVNULL,\n"
+            "            stderr=subprocess.DEVNULL,\n"
+            "            check=True,\n"
+            "        )\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tests = self.suite(root, {"test_a.py": PASSING, "test_left.py": module})
+            try:
+                result = self.execute(tests, root / "durations.json")
+            finally:
+                stop_what_was_left(tests)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("left running in its session after it ended", result.stdout)
+        self.assertIn("sleep 60", result.stdout)
+        self.assertIn("failed: demo/test_left.py", result.stderr)
+
     def test_every_module_discover_would_find_is_run(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -394,6 +455,35 @@ class TargetedRunTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("ResourceWarning: unclosed file", result.stderr)
         self.assertIn("something the run opened was left to the garbage collector", result.stderr)
+
+    def test_a_process_left_running_fails_the_run(self) -> None:
+        """Review 26-10-29, CCC02: its ResourceWarning came only after the answer."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "tests").mkdir()
+            module = LEFT_RUNNING.format(command=["sleep", "60"])
+            (root / "tests" / "test_one.py").write_text(module, encoding="utf-8")
+            try:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(LEFT_OPEN),
+                        "discover",
+                        "-s",
+                        "tests",
+                        "-p",
+                        "test_one.py",
+                    ],
+                    cwd=root,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+            finally:
+                stop_what_was_left(root / "tests")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertRegex(result.stderr, r"left running after its tests ran.*\n  \d+ sleep 60\n")
 
     def test_a_resource_warning_at_import_fails_the_run(self) -> None:
         # Before unittest's own filter, which would show it, is in place.

@@ -21,6 +21,7 @@ line; the whole verbose listing of two thousand tests was never read.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -151,6 +152,32 @@ def budget(previous: float | None, floor: float = FLOOR) -> float:
     return UNTIMED if previous is None else max(floor, FACTOR * previous)
 
 
+def session(leader: int) -> dict[int, str]:
+    """What still runs in the session a module was started in, each with its command line.
+
+    Review 26-10-29, CCC02: a process one of its children left behind is no
+    child of the module's and outlives it; it stays in the session unless it
+    starts one of its own.
+    """
+
+    found = {}
+    for entry in os.scandir("/proc"):
+        try:
+            # A process's own directory is its number; the rest are not processes.
+            pid = int(entry.name)
+            text = Path(f"/proc/{entry.name}/stat").read_bytes()
+            # After the name in parentheses: state, parent, group, session.
+            fields = text[text.rindex(b")") + 2 :].split()
+            if int(fields[3]) != leader or fields[0] == b"Z":
+                continue
+            command = Path(f"/proc/{entry.name}/cmdline").read_bytes()
+            found[pid] = command.replace(b"\0", b" ").decode(errors="replace").strip()
+        except (OSError, ValueError, IndexError):
+            # Not a process, or gone while it was read.
+            continue
+    return found
+
+
 def run(module: Module, limit: float = UNTIMED) -> Outcome:
     #
     # Each module gets a temporary directory of its own and fails if anything
@@ -184,6 +211,17 @@ def run(module: Module, limit: float = UNTIMED) -> Outcome:
             output, _ = process.communicate()
             returncode = TIMED_OUT
             output = f"{output or ''}\nstopped after {limit:.0f} s: a test in it did not finish\n"
+        running = session(process.pid)
+        if running:
+            for pid in running:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+            returncode = returncode or 1
+            output += (
+                "\nleft running in its session after it ended (stopped now):\n  "
+                + "\n  ".join(f"{pid} {command}" for pid, command in sorted(running.items()))
+                + "\n"
+            )
         left = sorted(
             entry.name
             for entry in scratch.iterdir()

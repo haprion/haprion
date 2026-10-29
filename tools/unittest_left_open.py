@@ -25,6 +25,9 @@ written, and where the links on its way lead. A realpath that is not strict is
 let through as long as it follows no link there: its answer is the same
 whether the file is there or not.
 
+And for a process it started that still runs once every test has ended
+(CCC02), which is named and stopped.
+
 What it does not see:
 
 - a child that starts a program - a script, a shell command, another
@@ -35,14 +38,18 @@ What it does not see:
   directory: the event does not name the directory;
 - a listing of /etc, which shows that haprion is there;
 - what a child keeps open;
+- a process a child left behind, which is no child of this one: the pool
+  finds it in the module's session, unless it left that too, as a daemon does;
 - a ResourceWarning a test catches itself, in `catch_warnings(record=True)`
   or `assertWarns`.
 """
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import os
+import signal
 import stat
 import sys
 import threading
@@ -308,6 +315,34 @@ def left_open(started_with: dict[int, str]) -> list[str]:
     ]
 
 
+def running_children() -> dict[int, str]:
+    """The processes this one started that are still running, each with its command line.
+
+    Review 26-10-29, CCC02: a `Popen` a fixture keeps, with its output to
+    DEVNULL, holds no descriptor here, and Python says it is still running
+    only as the interpreter ends - after this has given its answer.
+    """
+
+    parent = os.getpid()
+    found = {}
+    for entry in os.scandir("/proc"):
+        try:
+            # A process's own directory is its number; the rest are not processes.
+            pid = int(entry.name)
+            with open(f"/proc/{entry.name}/stat", "rb") as status:
+                text = status.read()
+            # The name in parentheses may hold anything; state and parent follow it.
+            state, ppid = text[text.rindex(b")") + 2 :].split()[:2]
+            if int(ppid) != parent or state == b"Z":
+                continue
+            with open(f"/proc/{entry.name}/cmdline", "rb") as command:
+                found[pid] = command.read().replace(b"\0", b" ").decode(errors="replace").strip()
+        except (OSError, ValueError):
+            # Not a process, or gone while it was read.
+            continue
+    return found
+
+
 def main() -> int:
     #
     # What the process was handed: the standard streams, and whatever else a
@@ -315,6 +350,7 @@ def main() -> int:
     # a targeted run does not (review 26-10-29, CC04).
     #
     started_with = descriptors()
+    started_children = running_children()
     #
     # Where `python -m` would have put the start directory: the suites import
     # their helpers from it (`tests.spawned`), and a script's own directory
@@ -353,6 +389,22 @@ def main() -> int:
             " fixture that never closed it:\n  " + "\n  ".join(kept),
             file=sys.stderr,
         )
+        failed = True
+    left = {
+        pid: command
+        for pid, command in running_children().items()
+        if started_children.get(pid) != command
+    }
+    if left:
+        print(
+            "left running after its tests ran - a fixture or a variable that never stopped it"
+            " (stopped now):\n  "
+            + "\n  ".join(f"{pid} {command}" for pid, command in sorted(left.items())),
+            file=sys.stderr,
+        )
+        for pid in left:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
         failed = True
     return 1 if failed or not result.wasSuccessful() else 0
 

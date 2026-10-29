@@ -4480,8 +4480,8 @@ Install the retained previous package; apt then puts the older version in place.
 needs a newer engine than that package provides, apt offers to remove the interface instead. Answer no.
 The installed `haprion-ui` package names the engine it needs, and `haprion-rollback` does not change
 that: the CLI goes back past it only together with an older `haprion-ui` package. That works when no
-migration came between the two. Past one, the older package's update is refused before it changes
-anything ([What it does not do](#what-it-does-not-do)).
+migration came between the two. Past one, the older package's update is refused, and the files it
+replaced are put back ([What it does not do](#what-it-does-not-do)).
 
 ```bash
 sudo apt-get install --allow-downgrades /path/to/haprion-cli_<previous version>_all.deb
@@ -4619,9 +4619,10 @@ in the section linked.
 - **A traffic log receiver's TLS certificate is checked against the node's system trust store.** For a
   receiver with a certificate from your own CA, add that CA to the trust store on each node.
 - **An update does not take the database back past a migration.** No migration has a downgrade. An older
-  `haprion-ui` package installed over the one that migrated the database is refused before anything
-  changes. `haprion-rollback` switches to an older release that runs on the schema; for one that does not,
-  the way back is the dump taken before the update ([Rolling a release back](#rolling-a-release-back)).
+  `haprion-ui` package installed over the one that migrated the database is refused, and the files it
+  replaced are put back. Install the newer package again, then `haprion-rollback` switches to an older
+  release that runs on the schema; for one that does not, the way back is the dump taken before the update
+  ([Rolling a release back](#rolling-a-release-back)).
 - **A request the WAF engine could not read cannot be excepted.** A broken body, a malformed upload or
   arguments past the limit are judged by the object's mode, like a rule set match. But no exception lets
   one through: what was not read cannot be narrowed to a field

@@ -821,6 +821,10 @@ def past_head_refusal(
     alembic, which does not know the revision. The way back is a rollback when
     the candidate runs on that schema by the rollback's rule, and otherwise the
     dump taken before the update that migrated it.
+
+    Said under apt, where the older package is unpacked over the newer one
+    already: the newer package goes back first, and the rollback then switches
+    the release with that package's files in place (review 26-10-29, AA07).
     """
 
     if revision in candidate.database_revisions or revision <= candidate.database_head:
@@ -829,8 +833,9 @@ def past_head_refusal(
     if problem is None:
         return (
             f"{revision}, past {name}'s head {candidate.database_head}; an update does not take "
-            "the database back past a migration. Keep the haprion-ui package that migrated it, "
-            f"and switch with: sudo haprion-rollback --to {name}"
+            "the database back past a migration. Install the haprion-ui package that migrated "
+            "it again - apt list -a haprion-ui lists the versions - then switch with: "
+            f"sudo haprion-rollback --to {name}"
         )
     return (
         f"{revision}; {name} does not run on it ({problem}). An update does not take the "

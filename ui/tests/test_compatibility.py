@@ -669,6 +669,13 @@ class AnUpdateBackPastAMigration(unittest.TestCase):
             self.assertIn("FAIL  candidate schema", said)
             self.assertIn("9999, past 0.99.5-aaaa's head 0100", said)
             self.assertIn("sudo haprion-rollback --to 0.99.5-aaaa", said)
+            # AA07: under apt the older package is unpacked already; "keep" no longer can.
+            self.assertNotIn("Keep the haprion-ui package", said)
+            self.assertIn(
+                "Install the haprion-ui package that migrated it again - apt list -a haprion-ui "
+                "lists the versions - then switch with",
+                said,
+            )
             self.assertNotIn("running schema", said)
             self.assertNotIn("INCOMPATIBLE: 0 ", said)
 

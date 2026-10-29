@@ -72,17 +72,17 @@ def selection(chosen: Sequence[str], registry: Mapping[str, RegistryCertificateV
         return Renewal(row, "certbot")
     if row.source_kind == "import":
         if row.ndes_profile:
-            if row.request_pending and row.state_label == "Renewal failed":
-                # Its resume was refused; a new request is refused while it
-                # waits (review 2026-10-29 again, BB01).
-                raise SelectionProblem(
-                    f"{row.identifier} has a request the CA is still holding that can no longer "
-                    "resume; give it up with Abandon request… first."
-                )
             if row.request_pending:
+                #
+                # The engine refuses a new request while one waits. Whether
+                # the waiting one can still resume is not known here: a
+                # *Renewal failed* may be a refusal of its resume or a CA that
+                # did not answer in time, and the resume says which (review
+                # 2026-10-29, round 2, BBB02).
+                #
                 raise SelectionProblem(
-                    f"{row.identifier} has an enrollment the CA is still holding; "
-                    "resume it from its row instead of asking again."
+                    f"{row.identifier} has a request the CA is still holding; resume it from "
+                    "its row, or give it up with Abandon request… first."
                 )
             return Renewal(row, "ndes")
         return Renewal(row, "upload")

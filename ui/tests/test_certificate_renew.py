@@ -83,7 +83,8 @@ class TheWay(unittest.TestCase):
             (["nobody.example"], "not in the registry"),
             (["wait.example.net"], "still holding"),
             # Review 2026-10-29 again, BB01: asking anew was refused by the engine.
-            (["failed.example.net"], "Abandon request"),
+            # Round 2, BBB02: and the failure may be one the request survives.
+            (["failed.example.net"], "resume it from its row, or give it up with Abandon request"),
         ):
             with (
                 self.subTest(chosen=chosen),

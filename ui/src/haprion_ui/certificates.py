@@ -206,7 +206,11 @@ class RegistryCertificateView:
     # Whether the CA still holds an NDES request for this row, as the
     # listing helper read the request state itself - not the label: a
     # renewal whose resume was refused is *Renewal failed* and still has one
-    # to abandon (review 2026-10-29 again, BB01).
+    # to abandon (review 2026-10-29 again, BB01). Not the source either: a
+    # file imported over an NDES certificate leaves its request under the
+    # ID, and the row showed *Resume enrollment* without *Abandon request…*
+    # (review 2026-10-29, round 2, BBB06). Both buttons ask this, and only
+    # this.
     #
     request_pending: bool = False
     #
@@ -1221,8 +1225,8 @@ def _registry_certificate(
         valid_from=_date(entry.get("not_before")) if readable else "—",
         csr_pem=csr_pem,
         ndes_profile=_text(source.get("ndes_profile"), ""),
-        request_pending=bool(_text(source.get("ndes_profile"), ""))
-        and entry.get("request_state") == "pending",
+        request_pending=entry.get("request_state") == "pending"
+        and pending_request.get("kind") != "csr",
         interface=entry.get("interface") is True,
         exportable=entry.get("exportable") is True,
         fullchain_pem=_chain(entry.get("fullchain_pem"))

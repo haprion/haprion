@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion_ui import audit, auth, certificate_activity, certificates
+from haprion_ui import audit, auth, certificate_activity, certificate_renew, certificates
 from haprion_ui.certificates import CertificateOverview
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import node, overview, registered, registry_of, status, with_registry
@@ -476,7 +476,8 @@ class AbandoningARequest(DeleteRouteTestCase):
                     "data-pending" in page,
                     waiting,
                 )
-                self.assertNotIn(">Resume enrollment<", page)
+                # Review 2026-10-29, round 2, BBB02: the failure may be passing.
+                self.assertEqual(">Resume enrollment<" in page, waiting)
                 token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
                 response = client.post(
                     "/certificates/abandon/confirm",
@@ -496,6 +497,99 @@ class AbandoningARequest(DeleteRouteTestCase):
                 else:
                     self.assertIn("has no request waiting at the CA", response.text)
                     self.assertEqual(self.queued, [])
+
+    def test_every_state_of_an_ndes_row_has_one_rule(self) -> None:
+        """Review 2026-10-29, round 2, BBB02 and BBB06: the label and the buttons asked apart.
+
+        One table: what the listing says about a row, and what the row then
+        shows - its label, *Resume enrollment*, the box that wakes
+        *Abandon request…* - and what *Renew…* does with it. A request the CA
+        holds is one fact whatever the label is, and a row's wish to renew
+        while it waits is answered the same way each time.
+        """
+
+        failure = {
+            "attempted_at": "2026-10-29T05:00:00Z",
+            "outcome": "failed",
+            "message": "Certmonger enrollment timed out: CA_UNREACHABLE",
+        }
+        waiting = "has a request the CA is still holding; resume it from its row, or give it up"
+
+        def row(*, ndes: bool = True, request: bool = False, renewal: Any = None) -> Any:
+            entry = registered("wait.example.com", fingerprint="a" * 64, kind="import")
+            if ndes:
+                entry["source"]["ndes_profile"] = "certserver1"
+            if request:
+                entry["request_state"] = "pending"
+            if renewal is not None:
+                entry["renewal"] = renewal
+            return entry
+
+        first = registered("wait.example.com", kind="import", readable=False)
+        first.update(request_state="pending", validation_error="no material at its source yet")
+        first["source"]["ndes_profile"] = "certserver1"
+        renewed = {**failure, "outcome": "renewed", "message": ""}
+        # state: entry, label (None: the copies' own), resume and abandon, renew
+        table = (
+            ("first enrollment waits", first, "Request pending", True, waiting),
+            ("renewal waits", row(request=True), "Renewal pending", True, waiting),
+            (
+                "renewal failed, its request kept",
+                row(request=True, renewal=failure),
+                "Renewal failed",
+                True,
+                waiting,
+            ),
+            ("renewal failed, nothing kept", row(renewal=failure), "Renewal failed", False, "ndes"),
+            ("renewed by the pass", row(renewal=renewed), None, False, "ndes"),
+            ("renewed elsewhere, or abandoned", row(), None, False, "ndes"),
+            (
+                "a file imported over it, the request kept",
+                row(ndes=False, request=True),
+                "Renewal pending",
+                True,
+                "upload",
+            ),
+            ("a file imported over it", row(ndes=False), None, False, "upload"),
+        )
+        pending_labels = {"Request pending", "Renewal pending", "Renewal failed"}
+        for state, entry, label, waits, renew in table:
+            reading = with_registry(certificate_reading(), entry)
+            with (
+                self.subTest(state),
+                mock.patch("haprion_ui.db.cluster_certificates", return_value=[reading]),
+            ):
+                view = registry_of(overview(reading)).certificates[0]
+                if label is None:
+                    self.assertNotIn(view.state_label, pending_labels)
+                else:
+                    self.assertEqual(view.state_label, label)
+                self.assertEqual(view.request_pending, waits)
+                page = (
+                    self.writing_client()
+                    .get("/certificates?view=registry&open=wait.example.com")
+                    .text
+                )
+                self.assertEqual(">Resume enrollment<" in page, waits)
+                self.assertEqual(
+                    'form="certificate-selection" data-delete-pick data-pending' in page, waits
+                )
+                registry = {view.identifier: view}
+                if waits:
+                    self.assertIs(
+                        certificate_renew.waiting_selection([view.identifier], registry), view
+                    )
+                else:
+                    with self.assertRaises(certificate_renew.SelectionProblem):
+                        certificate_renew.waiting_selection([view.identifier], registry)
+                if renew in {"ndes", "upload"}:
+                    self.assertEqual(
+                        certificate_renew.selection([view.identifier], registry).way, renew
+                    )
+                else:
+                    with self.assertRaises(certificate_renew.SelectionProblem) as refused:
+                        certificate_renew.selection([view.identifier], registry)
+                    self.assertIn(renew, str(refused.exception))
 
     def test_a_row_without_a_waiting_request_is_refused(self) -> None:
         client = self.writing_client()

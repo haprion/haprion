@@ -36,7 +36,7 @@
     <li>The same <code>certbot renew</code> the renewal timer runs, forced before its time. The DNS or HTTP challenge runs again and can fail for the same reasons a first request can; certbot's own words then stand on the row.</li>
     <li>Let's Encrypt issues at most five identical certificates per week. Renewing this one now spends one of them.</li>
     {% else %}
-    <li>The same enrollment the scheduled renewal makes: a new key, a new request to the CA through the profile's challenge. If the CA holds the request for approval, the row says <em>Request pending</em> and the enrollment is resumed from there.</li>
+    <li>The same enrollment the scheduled renewal makes: a new key, a new request to the CA through the profile's challenge. If the CA holds the request for approval, the row says <em>Renewal pending</em> and the enrollment is resumed from there.</li>
     {% endif %}
     <li>The nodes reload once the certificate is published; existing connections finish on the old one.</li>
   </ul>

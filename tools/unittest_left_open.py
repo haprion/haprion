@@ -1,4 +1,4 @@
-"""`python -m unittest`, and then a failure for what the run left open.
+"""`python -m unittest`, and then a failure for what the run left open or read of this machine.
 
 The gate's runner starts each test module with this in place of `-m unittest`
 (tools/run_test_modules.py). A file or socket a test leaves to the garbage
@@ -30,6 +30,34 @@ STANDARD = frozenset({0, 1, 2})
 # does, with no audit event to say from where. No test opens it.
 #
 INTERPRETER = os.path.realpath(sys.executable)
+#
+# No test reads this machine's configuration (review 26-10-29, A09). The
+# suites run on a manager, where /etc/haprion exists, and a test that read it
+# passed here and failed in CI - twice on 2026-10-28. Every opening or listing
+# of a path there is refused before it is tried, with an error no
+# `except OSError` takes for a missing file, and named after the run: one a
+# broader handler swallowed still fails the module.
+#
+MACHINE_CONFIGURATION = "/etc/haprion"
+
+
+class MachineConfigurationRead(AssertionError):
+    """A test reached for this machine's configuration."""
+
+
+machine_reads: list[str] = []
+
+
+def _machine_configuration(event: str, args: tuple[object, ...]) -> None:
+    if event not in ("open", "os.listdir", "os.scandir") or not args:
+        return
+    path = args[0]
+    if not isinstance(path, str | bytes | os.PathLike):
+        return
+    name = os.path.normpath(os.fsdecode(path))
+    if name == MACHINE_CONFIGURATION or name.startswith(MACHINE_CONFIGURATION + "/"):
+        machine_reads.append(name)
+        raise MachineConfigurationRead(f"a test read this machine's configuration: {name}")
 
 
 def left_open() -> list[str]:
@@ -62,12 +90,20 @@ def main() -> int:
     # would be first instead.
     #
     sys.path[0] = os.getcwd()
+    sys.addaudithook(_machine_configuration)
     program = unittest.main(module=None, argv=["python -m unittest", *sys.argv[1:]], exit=False)
     result = program.result
     del program
     if result.testsRun == 0 and not result.skipped:
         # As `python -m unittest` ends a run that found nothing to run.
         return 5
+    if machine_reads:
+        print(
+            "tests read this machine's configuration:\n  "
+            + "\n  ".join(sorted(set(machine_reads))),
+            file=sys.stderr,
+        )
+        return 1
     gc.collect()
     kept = left_open()
     if kept:

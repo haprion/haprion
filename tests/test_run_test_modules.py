@@ -156,6 +156,31 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertIn("-> socket:[", result.stdout)
         self.assertIn("failed: demo/test_kept.py", result.stderr)
 
+    def test_a_module_that_reads_this_machine_s_configuration_fails(self) -> None:
+        """Review 26-10-29, A09: a test that passes on the manager by reading its policy."""
+
+        #
+        # A missing file is the same failure: the opening is refused before it
+        # is tried, and so is one a broad handler swallows.
+        #
+        reading = (
+            "import unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_read(self) -> None:\n"
+            "        try:\n"
+            "            open('/etc/haprion/runtime-policy.yaml').close()\n"
+            "        except Exception:\n"
+            "            pass\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tests = self.suite(root, {"test_a.py": PASSING, "test_read.py": reading})
+            result = self.execute(tests, root / "durations.json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("read this machine's configuration", result.stdout)
+        self.assertIn("/etc/haprion/runtime-policy.yaml", result.stdout)
+        self.assertIn("failed: demo/test_read.py", result.stderr)
+
     def test_every_module_discover_would_find_is_run(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

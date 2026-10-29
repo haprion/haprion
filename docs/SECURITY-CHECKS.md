@@ -26,7 +26,8 @@ The repository has complementary gates. No single scanner replaces the others.
    `HAPRION_UI_PYTHON` and fail closed without it. The engine's and the interface's test modules
    run through one pool, one module per process (`tools/run_test_modules.py`), heaviest first by
    the previous run's timings. A module fails when it leaves a file behind in its temporary
-   directory, or a file or socket open once its tests have ended (`tools/unittest_left_open.py`).
+   directory, a file or socket open once its tests have ended, or a reach for anything under
+   `/etc/haprion`, the configuration of the machine the suite happens to run on (`tools/unittest_left_open.py`).
    The engine's modules run under coverage, combined before the report.
    `run-checks` then runs the interface's migrations and database tests against a disposable
    PostgreSQL cluster (`ui/tools/test-database`, below), and fails without PostgreSQL installed.

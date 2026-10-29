@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import http.client
 import io
 import json
 import os
@@ -541,6 +542,74 @@ class AnErrorAnswer(unittest.TestCase):
                 stream, result = self.answer(code, body)
                 self.assertIsInstance(result, ended)
                 self.assertTrue(stream.closed)
+
+
+class ABrokenAnswer(unittest.TestCase):
+    """Review 2026-10-29, C01: a body that could not be read escaped as a raw exception."""
+
+    class Stalls(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            raise TimeoutError("timed out")
+
+    class Cut(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            raise http.client.IncompleteRead(b"{", 10)
+
+    class CutAnswer(Cut):
+        status = 200
+
+    def ask(self, **opened: Any) -> oidc.OidcError:
+        client = oidc.Client()
+        with (
+            mock.patch.object(client._opener, "open", **opened),
+            self.assertRaises(oidc.OidcError) as caught,
+        ):
+            client.request("https://idp.example.com/token", data={"grant_type": "x"})
+        return caught.exception
+
+    def error(self, body: io.BytesIO) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError("https://idp.example.com/token", 400, "", Message(), body)
+
+    def test_an_error_answer_whose_body_stalls_or_is_cut_is_unreachable(self) -> None:
+        for body in (self.Stalls(), self.Cut()):
+            with self.subTest(body=type(body).__name__):
+                refused = self.ask(side_effect=self.error(body))
+                self.assertEqual(refused.code, "unreachable")
+                self.assertTrue(body.closed)
+
+    def test_an_answer_cut_or_a_bad_status_line_is_unreachable(self) -> None:
+        for opened in (
+            {"return_value": self.CutAnswer()},
+            {"side_effect": http.client.BadStatusLine("")},
+        ):
+            with self.subTest(opened=opened):
+                self.assertEqual(self.ask(**opened).code, "unreachable")
+
+    def test_the_helper_says_so_rather_than_dying(self) -> None:
+        def stalling(**_: object) -> oidc.Client:
+            client = oidc.Client()
+            client._opener = mock.Mock(open=mock.Mock(side_effect=self.error(self.Stalls())))
+            return client
+
+        request = {
+            "schema_version": 1,
+            "operation": "oidc",
+            "cluster": None,
+            "request_id": str(uuid.uuid4()),
+            "parameters": {"action": "discover", "issuer": "https://idp.example.com"},
+        }
+        out, err = io.StringIO(), io.StringIO()
+        code = oidc_helper.main(
+            [],
+            input_stream=io.BytesIO(json.dumps(request).encode() + b"\n"),
+            output_stream=out,
+            error_stream=err,
+            client_factory=stalling,
+        )
+        self.assertEqual(code, exit_codes.UNAVAILABLE, err.getvalue())
+        self.assertEqual(
+            assert_contract("haprion-oidc", out.getvalue())["error"]["code"], "unreachable"
+        )
 
 
 class TheSealedSecret(unittest.TestCase):

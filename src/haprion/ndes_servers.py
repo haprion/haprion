@@ -37,7 +37,7 @@ from typing import Any
 
 import yaml
 
-from haprion import atomic_file, cert_lock, exit_codes, safe_yaml
+from haprion import atomic_file, cert_lock, exit_codes, http_answer, safe_yaml
 from haprion.cert_import import ImportError_, _names, _openssl, read_bytes
 from haprion.certificates import CERTIFICATE_BLOCK
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
@@ -103,13 +103,6 @@ class Authority:
         }
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """A redirect is an answer, not an instruction: it is refused, not followed."""
-
-    def redirect_request(self, *_: Any, **__: Any) -> None:
-        return None
-
-
 def _opener() -> urllib.request.OpenerDirector:
     """HTTPS checked with the system's store, straight to the server.
 
@@ -118,7 +111,7 @@ def _opener() -> urllib.request.OpenerDirector:
     HTTPS nor the server the administrator named.
     """
 
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), http_answer.NoRedirect())
 
 
 def get_ca_cert(endpoint: str) -> bytes:
@@ -127,7 +120,7 @@ def get_ca_cert(endpoint: str) -> bytes:
     url = endpoint + "?operation=GetCACert&message=ca"
     try:
         with _opener().open(url, timeout=TIMEOUT) as response:
-            data: bytes = response.read(MAX_ANSWER + 1)
+            data = http_answer.read_body(response, MAX_ANSWER)
     except urllib.error.HTTPError as exc:
         # The error is the response too, and is closed (review 2026-10-28, F04).
         with exc:
@@ -141,9 +134,11 @@ def get_ca_cert(endpoint: str) -> bytes:
             raise NdesServerError(
                 "unreachable", f"{endpoint} answered HTTP {exc.code}", exit_codes.UNAVAILABLE
             ) from None
-    except OSError as exc:
+    except http_answer.BROKEN as exc:
         raise NdesServerError(
-            "unreachable", f"{endpoint} did not answer: {exc}", exit_codes.UNAVAILABLE
+            "unreachable",
+            f"{endpoint} did not answer: {http_answer.said(exc)}",
+            exit_codes.UNAVAILABLE,
         ) from None
     if len(data) > MAX_ANSWER:
         raise NdesServerError(

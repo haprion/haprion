@@ -159,6 +159,26 @@ class TheFetch(unittest.TestCase):
         ):
             self.assertEqual(ndes_servers.get_ca_cert(url), b"ca")
 
+    def test_a_broken_answer_is_no_answer(self) -> None:
+        """Review 2026-10-29, C01: a body cut short or a status line that is none escaped raw."""
+
+        def cut(handler: http.server.BaseHTTPRequestHandler) -> None:
+            handler.send_response(200)
+            handler.send_header("Content-Length", "100")
+            handler.end_headers()
+            handler.wfile.write(b"short")
+            handler.close_connection = True
+
+        def garbled(handler: http.server.BaseHTTPRequestHandler) -> None:
+            handler.wfile.write(b"not a status line\r\n\r\n")
+            handler.close_connection = True
+
+        for answer in (cut, garbled):
+            with self.subTest(answer=answer.__name__):
+                refused = self.fetch(answer)
+                self.assertEqual(refused.code, "unreachable")
+                self.assertEqual(refused.exit_code, exit_codes.UNAVAILABLE)
+
     def test_an_error_answer_is_said_and_closed_on_the_wire(self) -> None:
         def answer(handler: http.server.BaseHTTPRequestHandler) -> None:
             handler.send_response(404)

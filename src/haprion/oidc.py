@@ -47,6 +47,7 @@ from typing import Any
 
 import jwt
 
+from haprion import http_answer
 from haprion.dns_profile_keys import (
     DnsProfilePrivateKey,
     DnsProfilePublicKey,
@@ -114,13 +115,6 @@ def issuer_url(value: object) -> str:
 # - the one way out ---------------------------------------------------------
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """A redirect is an answer, not an instruction: it is refused, not followed."""
-
-    def redirect_request(self, *_: Any, **__: Any) -> None:
-        return None
-
-
 @dataclass(frozen=True, slots=True)
 class Answer:
     status: int
@@ -167,7 +161,7 @@ class Client:
         self._opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
             urllib.request.HTTPSHandler(context=context),
-            _NoRedirect(),
+            http_answer.NoRedirect(),
         )
 
     def request(
@@ -187,7 +181,7 @@ class Client:
         )
         try:
             with self._opener.open(request, timeout=self._timeout) as response:
-                return Answer(response.status, self._read(response))
+                return Answer(response.status, self._read(response, url))
         except urllib.error.HTTPError as exc:
             # A 4xx from the token endpoint is how OAuth says no; its body says why.
             # The error is the response too, and is closed as one however it ends
@@ -197,17 +191,31 @@ class Client:
                     raise OidcError(
                         "redirected", f"{url} answered with a redirect, which is not followed"
                     ) from exc
-                return Answer(exc.code, self._read(exc))
+                return Answer(exc.code, self._read(exc, url))
         except ssl.SSLError as exc:
             raise OidcError("tls", f"{url}: TLS failed: {exc.reason or exc}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except http_answer.BROKEN as exc:
+            #
+            # URLError and timeouts are OSErrors; a status line that is not one
+            # is not (review 2026-10-29, C01).
+            #
             reason = getattr(exc, "reason", exc)
             if isinstance(reason, ssl.SSLError):
                 raise OidcError("tls", f"{url}: TLS failed: {reason.reason or reason}") from exc
-            raise OidcError("unreachable", f"{url} could not be reached: {reason}") from exc
+            text = reason if isinstance(reason, str) else http_answer.said(reason)
+            raise OidcError("unreachable", f"{url} could not be reached: {text}") from exc
 
-    def _read(self, stream: Any) -> bytes:
-        body: bytes = stream.read(self._max_bytes + 1)
+    def _read(self, stream: Any, url: str) -> bytes:
+        """The body, or `unreachable`: read inside the HTTPError branch too, which no sibling catches."""
+
+        try:
+            body = http_answer.read_body(stream, self._max_bytes)
+        except ssl.SSLError as exc:
+            raise OidcError("tls", f"{url}: TLS failed: {exc.reason or exc}") from exc
+        except http_answer.BROKEN as exc:
+            raise OidcError(
+                "unreachable", f"{url}: the answer broke off: {http_answer.said(exc)}"
+            ) from exc
         if len(body) > self._max_bytes:
             raise OidcError("too_large", f"the answer is over {self._max_bytes} bytes")
         return body

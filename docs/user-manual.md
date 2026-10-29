@@ -2939,7 +2939,8 @@ So no job queued before the manager last started runs by itself. A restored host
 and the worker holds every such job:
 
 - *Events → Jobs* shows it as *Held*, with **Run** and **Discard** for an admin, and *Needs attention*
-  says how many wait.
+  says how many wait. Until it is answered it holds its cluster's place in the queue, or the
+  certificates' place, and a new job there is refused with a sentence that says so.
 - A discarded job that waits in the queue ends *blocked* with the code `held_discarded`; nothing more
   of it ran.
 - A waiting job whose answer the manager already kept is not run again. That is a node change, for

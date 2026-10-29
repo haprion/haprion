@@ -4467,6 +4467,27 @@ class JobsFromBeforeTheBoot(unittest.TestCase):
                 taken[claimed.id] = claimed.held_decision
         self.assertEqual(taken, {run: "run", discard: "discard"})
 
+    def test_the_queue_says_a_held_job_holds_the_cluster(self) -> None:
+        """Review 26-10-29, Q07/R05: "try again when it has finished" of a job that never will."""
+
+        held, *_ = self.ids
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
+            db.hold_jobs_queued_before(connection, boot=self.BOOT)
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            with self.assertRaises(db.ClusterBusy) as refused:
+                db.queue_job(
+                    connection,
+                    operation="deploy",
+                    cluster="helda",
+                    payload={"other": True},
+                    idempotency_key=uuid4(),
+                )
+            connection.rollback()
+        active = refused.exception.active
+        self.assertEqual(active.id if active else None, held)
+        self.assertTrue(active is not None and active.waits_for_decision)
+
     def test_an_answer_holds_until_the_next_boot_not_beyond(self) -> None:
         """Logic review 26-10-22, L2: a job answered Run and still running when
         a backup was taken came back from it and ran again on the old answer."""

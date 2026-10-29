@@ -125,7 +125,15 @@ class ClusterBusy(Exception):
     Not an error in the caller's request - the request was fine, the cluster is
     not free. The two are told apart because the answer differs: this one is
     worth retrying when the running job finishes, and the one below never is.
+
+    `active` is the job that holds the cluster, when it could be read: a held
+    one, or one no worker holds, does not finish by itself, and the sentence
+    says so (review 26-10-29, Q07/R05).
     """
+
+    def __init__(self, cluster: str | None = None, *, active: Job | None = None) -> None:
+        super().__init__(*(() if cluster is None else (cluster,)))
+        self.active = active
 
 
 class CertificateBusy(Exception):
@@ -140,7 +148,13 @@ class CertificateBusy(Exception):
     certificate, which is the queue agreeing with the publisher: it takes a
     single lock across all certificate material, so two certificate jobs admitted
     at once would meet inside it with one holding a lease while it waited.
+
+    `active` as for `ClusterBusy`.
     """
+
+    def __init__(self, *, active: Job | None = None) -> None:
+        super().__init__()
+        self.active = active
 
 
 class RequestConflict(Exception):
@@ -473,11 +487,33 @@ def queue_job(
                 raise psycopg.OperationalError(
                     "the cluster conflict was lost before classification"
                 )
+            active = active_job(connection, cluster)
             if constraint == "job_one_active_certificate":
-                raise CertificateBusy() from conflict
-            raise ClusterBusy(cluster) from conflict
+                raise CertificateBusy(active=active) from conflict
+            raise ClusterBusy(cluster, active=active) from conflict
         raise RequestConflict(str(idempotency_key))
     return existing
+
+
+def active_job(connection: Connection[Any], cluster: str | None) -> Job | None:
+    """The job that holds this cluster's place in the queue, or the certificates'.
+
+    None when it ended between the refused insert and this read.
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by, "
+            "       case when state = 'running' and lease_until < statement_timestamp() "
+            "            then lease_until end as lease_lapsed_since "
+            "  from job "
+            " where cluster is not distinct from %(cluster)s "
+            "   and state in ('pending', 'running')",
+            {"cluster": cluster},
+        )
+        return cursor.fetchone()
 
 
 def job_for_key(

@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import ast
 import unittest
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from starlette.requests import Request
 
 from haprion_ui import db, refusals, views
+from tests.test_jobs import queued_job
 from tests.test_login import configuration
 
 PACKAGE = Path(views.__file__).parent
@@ -99,6 +102,34 @@ class OneAnswer(unittest.TestCase):
 
         self.assertEqual(answer.status_code, 409)
         self.assertEqual(bytes(answer.body).decode(), refusals.CONFLICT_SENTENCES[db.ClusterBusy])
+
+    def test_a_job_that_will_not_finish_by_itself_is_said_as_it_is(self) -> None:
+        """Review 26-10-29, Q07/R05: "try again when it has finished" of a held job."""
+
+        now = datetime.now(UTC)
+        held = replace(queued_job(), held_since=now)
+        gone = replace(
+            queued_job(),
+            state="running",
+            started_at=now,
+            lease_lapsed_since=now - timedelta(hours=1),
+        )
+        for refused, sentence in (
+            (db.ClusterBusy("alpha", active=held), refusals.HELD_BUSY),
+            (db.CertificateBusy(active=held), refusals.HELD_BUSY),
+            (db.ClusterBusy("alpha", active=gone), refusals.NO_WORKER_BUSY),
+            (
+                db.ClusterBusy("alpha", active=queued_job()),
+                refusals.CONFLICT_SENTENCES[db.ClusterBusy],
+            ),
+            (db.CertificateBusy(), refusals.CONFLICT_SENTENCES[db.CertificateBusy]),
+        ):
+            with self.subTest(refused=refused, active=refused.active):
+                answer = refusals.conflict_page(
+                    request("application/json"), configuration(), refused
+                )
+                self.assertEqual(bytes(answer.body).decode(), sentence)
+        self.assertIn("Run or Discard on Events", refusals.HELD_BUSY)
 
     def test_the_page_it_came_from_is_only_ever_one_of_ours(self) -> None:
         for referer, back in (

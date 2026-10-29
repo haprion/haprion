@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -23,6 +24,7 @@ from fastapi.responses import (
 from haprion_ui import (
     auth,
     db,
+    jobs,
 )
 from haprion_ui.access import current_session
 from haprion_ui.config import Config
@@ -135,6 +137,37 @@ CONFLICT_SENTENCES: dict[type[Exception], str] = {
 }
 
 
+#
+# A job that holds the place and does not finish by itself (review 26-10-29,
+# Q07/R05): "try again when it has finished" sent somebody to wait for nothing.
+#
+HELD_BUSY = (
+    "A job held after a restart or a restore holds the queue here."
+    " It waits for an admin's Run or Discard on Events → Jobs."
+)
+NO_WORKER_BUSY = (
+    "The job that holds the queue here has no worker, and does not finish by itself."
+    " Events → Jobs shows it."
+)
+
+
+def not_finishing(exc: Exception, now: datetime | None = None) -> str | None:
+    """The sentence for a busy queue whose job does not finish by itself, or None."""
+
+    if isinstance(exc, db.ClusterBusy | db.CertificateBusy) and exc.active is not None:
+        if exc.active.waits_for_decision:
+            return HELD_BUSY
+        if jobs.no_worker(exc.active, now or datetime.now(UTC)):
+            return NO_WORKER_BUSY
+    return None
+
+
+def conflict_sentence(exc: Exception) -> str:
+    """The one sentence a refusal is answered with, by what holds the queue."""
+
+    return not_finishing(exc) or CONFLICT_SENTENCES[type(exc)]
+
+
 def _from_a_browser(request: Request) -> bool:
     """A page asked for or a form posted: what is answered with a page (CR-06)."""
 
@@ -166,7 +199,7 @@ def conflict_page(request: Request, config: Config, exc: Exception) -> Response:
     """
 
     stale = isinstance(exc, db.DraftConflict)
-    message = str(exc) if stale else CONFLICT_SENTENCES[type(exc)]
+    message = str(exc) if stale else conflict_sentence(exc)
     if not _from_a_browser(request):
         return PlainTextResponse(message, status_code=409)
     return refusal_page(

@@ -88,10 +88,16 @@ class QueueConnection:
 
     autocommit = True
 
-    def __init__(self, constraint: str, existing: db.Job | None) -> None:
+    def __init__(
+        self, constraint: str, existing: db.Job | None, active: db.Job | None = None
+    ) -> None:
         self.insert = RaisingCursor(constraint)
         self.lookup = FakeCursor(existing)
-        self.cursors = iter((self.insert, self.lookup))
+        #
+        # What holds the cluster, read for the refusal's sentence (Q07).
+        #
+        self.holder = FakeCursor(active)
+        self.cursors = iter((self.insert, self.lookup, self.holder))
 
     def transaction(self) -> Any:
         return nullcontext()
@@ -149,8 +155,10 @@ class ClaimingIsOneStatement(unittest.TestCase):
 
 
 class QueueConflictsAreClassifiedAfterTheKeyLookup(unittest.TestCase):
-    def queue(self, constraint: str, existing: db.Job | None) -> db.Job:
-        connection = QueueConnection(constraint, existing)
+    def queue(
+        self, constraint: str, existing: db.Job | None, active: db.Job | None = None
+    ) -> db.Job:
+        connection = QueueConnection(constraint, existing, active)
         with mock.patch.object(psycopg.errors, "UniqueViolation", FakeUniqueViolation):
             result = db.queue_job(
                 connection,  # type: ignore[arg-type]
@@ -173,6 +181,14 @@ class QueueConflictsAreClassifiedAfterTheKeyLookup(unittest.TestCase):
     def test_a_different_request_still_reports_a_busy_cluster(self) -> None:
         with self.assertRaises(db.ClusterBusy):
             self.queue("job_one_active_per_cluster", None)
+
+    def test_a_busy_cluster_names_the_job_that_holds_it(self) -> None:
+        """Review 26-10-29, Q07/R05: a held job holds it until an admin answers."""
+
+        holder = replace(queued_job(), held_since=datetime.now(UTC))
+        with self.assertRaises(db.ClusterBusy) as refused:
+            self.queue("job_one_active_per_cluster", None, holder)
+        self.assertIs(refused.exception.active, holder)
 
 
 class WritesAreFenced(unittest.TestCase):

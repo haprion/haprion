@@ -47,6 +47,7 @@ from haprion_ui import (
     network,
     objects,
     operations,
+    refusals,
     sorting,
     traffic_logs,
     waf,
@@ -317,7 +318,8 @@ def queue_node_job(
                 if isinstance(refused, db.RequestConflict):
                     raise refused
                 return again(
-                    "A job is already running for this cluster. Try again when it has finished."
+                    refusals.not_finishing(refused)
+                    or "A job is already running for this cluster. Try again when it has finished."
                 )
         else:
             #

@@ -27,6 +27,7 @@ from haprion_ui import (
     moments,
     node_restores,
     operations,
+    refusals,
 )
 from haprion_ui.access import admin_write_gate, current_session, forbidden_page
 from haprion_ui.config import Config
@@ -233,7 +234,8 @@ def build_router(config: Config) -> APIRouter:
                     if isinstance(refused, db.RequestConflict):
                         raise refused
                     return again(
-                        f"A job is already running for {cluster}. Wait for it to finish, then ask again."
+                        refusals.not_finishing(refused)
+                        or f"A job is already running for {cluster}. Wait for it to finish, then ask again."
                     )
                 job = earlier
             else:

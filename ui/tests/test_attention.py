@@ -944,7 +944,11 @@ class TheManagersOwnServices(unittest.TestCase):
         """Review 26-10-29, Q01/R01: a worker gone leaves its job `running`, which
         silenced the row about the worker and said nothing itself."""
 
-        gone = replace(job(state="running"), id=12, lease_lapsed_since=NOW - timedelta(minutes=30))
+        gone = replace(
+            job(state="running"),
+            id=12,
+            lease_lapsed_since=NOW - jobs.NO_WORKER_AFTER - timedelta(minutes=5),
+        )
         waiting = replace(
             job(state="pending", cluster="beta"), id=13, created_at=NOW - timedelta(hours=1)
         )

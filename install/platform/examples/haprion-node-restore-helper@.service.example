@@ -22,8 +22,9 @@ MemoryMax=512M
 MemorySwapMax=0
 
 # With Type=exec this bounds the start only; systemd does not end a run that
-# has begun. What bounds a run is each of its three SSH sessions,
-# 600 s, and the agent on the target, 900 s. No RuntimeMaxSec on
+# has begun. What bounds a run is each of its SSH sessions, 600 s, four at
+# most: the target inspected, applied, given its network, and finished or put
+# back. No RuntimeMaxSec on
 # purpose: a root step stopped midway would skip its own clean-up, the
 # roll-back of a half-written target first
 # (review 2026-09-28).

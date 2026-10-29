@@ -3789,7 +3789,7 @@ box is not shown.
   - a job has been queued for ten minutes with none running while writes are on, so the worker is taking
     none - critical. A job no worker holds does not count as running, and nor is the row raised while an
     update of the manager pauses the queue;
-  - a job still *running* that no worker has held for twenty minutes, while no other job runs and writes
+  - a job still *running* that no worker has held for 35 minutes, while no other job runs and writes
     are on: the worker is stopped, hung or crashing, or waits for something that will not come by itself -
     critical. *Jobs* shows it as *No worker*, and the worker's journal says why it waits:
     `journalctl -u haprion-worker`;
@@ -4115,7 +4115,7 @@ as `unknown`. That outcome is reserved for "nobody can say whether this took eff
 retried automatically.
 
 Only a running worker settles a job. One stopped, hung or crashing leaves its job *running*: *Jobs*
-shows it as *No worker* once no worker has held it for twenty minutes and no other job runs, and *Needs
+shows it as *No worker* once no worker has held it for 35 minutes and no other job runs, and *Needs
 attention* lists it.
 So does a job whose evidence the worker waits for and cannot read.
 

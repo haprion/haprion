@@ -20,8 +20,11 @@ from uuid import UUID, uuid4
 from haprion import (
     accounts,
     cert_issue,
+    cert_lock,
     cert_receiver,
     helper_protocol,
+    node_join,
+    node_restore,
     server_state,
     state_backup,
 )
@@ -42,7 +45,7 @@ from haprion.cli import (
 )
 from haprion.status_collect import STATUS_TIMEOUT_SECONDS
 
-from haprion_ui import answers, operations, worker
+from haprion_ui import answers, jobs, operations, recovery, worker
 
 REQUEST = uuid4()
 
@@ -1362,3 +1365,67 @@ class ASocketClientAnswersBeforeTheWorkerStopsIt(unittest.TestCase):
         found = re.search(r"^TIMEOUT = (\d+)$", script.read_text(), re.MULTILINE)
         self.assertIsNotNone(found)
         self.assertGreaterEqual(node_ask.TIMEOUT_SECONDS, int(found[1]) if found else 0)
+
+
+class NoWorkerIsNotSaidOfAHelperStillAtWork(unittest.TestCase):
+    """Review 26-10-29, B5/C03: *No worker* was said 20 minutes after a lease ran
+    out, by a reckoning that read a unit's start bound and one join.
+
+    A job whose client gave up waits, its lease run out, for the answer its
+    helper keeps. The helper may work on for its longest run less the client's
+    wait, and the worker takes the answer on its next turn. Each helper's
+    longest run is the sum of the bounds of what it does, read from the code:
+    systemd bounds only a helper's start.
+    """
+
+    #
+    # What is not counted below - a publish, the probes between sessions, a key
+    # scan - is local work of seconds.
+    #
+    LOCAL = 120
+
+    def longest_runs(self) -> dict[str, tuple[float, float]]:
+        """By operation: the helper's longest run and its client's wait, in seconds."""
+
+        status = STATUS_TIMEOUT_SECONDS
+        join = node_join.JOIN_TIMEOUT_SECONDS
+        session = node_restore.SESSION_TIMEOUT
+        node = node_ask.TIMEOUT_SECONDS
+        restore = node_restore_ask.TIMEOUT_SECONDS
+        return {
+            # The registry's lock, then each of its two nodes joined and read.
+            "cluster_define": (cert_lock.LOCK_WAIT_SECONDS + 2 * (join + status), node),
+            # A change left unfinished takes the registry's lock; the cluster
+            # is read, and the node joined and read.
+            "cluster_node": (cert_lock.LOCK_WAIT_SECONDS + status + join + status, node),
+            # The cluster read; the target inspected, applied and given its
+            # network; the rollback timer waited out (`_run`) and the files put
+            # back: four sessions.
+            "node_restore": (
+                status + 4 * session + node_restore.ROLLBACK_SECONDS + 20 + 60,
+                restore,
+            ),
+            "node_restore_preview": (status + session, restore),
+            # Files of the run, and a key made on this host.
+            "node_restore_prepare": (0, restore),
+            "node_restore_status": (0, restore),
+            "node_restore_discard": (0, restore),
+            # Its budget holds the lock's wait and every node's fetch.
+            "backup_run": (state_backup.RUN_BUDGET_SECONDS, backup_job_ask.TIMEOUT_SECONDS),
+            # systemctl on this host.
+            "backup_schedule": (0, backup_job_ask.TIMEOUT_SECONDS),
+            # The registry's lock and the commands after it (`test_cert_receiver_ask`).
+            "cert_receiver": (
+                cert_lock.LOCK_WAIT_SECONDS + 4 * cert_receiver.COMMAND_TIMEOUT,
+                cert_receiver_ask.TIMEOUT_SECONDS,
+            ),
+        }
+
+    def test_every_helper_that_keeps_its_answer_has_its_longest_run_here(self) -> None:
+        self.assertEqual(set(self.longest_runs()), set(recovery.KEEPS_ANSWER))
+
+    def test_no_worker_is_said_after_the_longest_helper_has_answered(self) -> None:
+        after = jobs.NO_WORKER_AFTER.total_seconds()
+        for operation, (longest, client) in self.longest_runs().items():
+            with self.subTest(operation=operation):
+                self.assertLess(longest - client + worker.IDLE_SECONDS + self.LOCAL, after)

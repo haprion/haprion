@@ -1567,13 +1567,15 @@ HELD = "Held"
 #
 # How long a running job's lease may have run out before it is said to have
 # no worker (review 26-10-29, Q01/R01). A living worker settles a lease run
-# out on its next pass, within seconds. What it waits for longer is a helper
-# behind its socket that outlived the worker - a node change's apt run takes
-# up to 870 s, a node restore's start is bounded at 14 minutes - or evidence
-# it cannot read. Past this the worker is gone, or waits for what will not
-# come by itself.
+# out on its next turn. What it waits for longer is a helper behind its socket
+# whose client gave up - or evidence it cannot read. Such a helper works on
+# for its longest run less its client's wait: a node restore's four sessions
+# of ten minutes, a rollback's wait and a cluster read, about 31 minutes past
+# its client's 14 (review 26-10-29, B5/C03); systemd bounds only a helper's
+# start. Past this the worker is gone, or waits for what will not come by
+# itself. `test_operations` holds it to every such helper's longest run.
 #
-NO_WORKER_AFTER = timedelta(minutes=20)
+NO_WORKER_AFTER = timedelta(minutes=35)
 NO_WORKER = "No worker"
 
 

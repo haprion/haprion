@@ -1043,7 +1043,10 @@ class AJobNoWorkerHolds(LoginTestCase):
 
     def test_it_says_no_worker_rather_than_running(self) -> None:
         now = datetime.now(UTC)
-        gone = replace(job(state="running"), lease_lapsed_since=now - timedelta(minutes=30))
+        gone = replace(
+            job(state="running"),
+            lease_lapsed_since=now - jobs.NO_WORKER_AFTER - timedelta(minutes=5),
+        )
         page = self.page(gone)
         self.assertIn('status-badge-critical">No worker</span>', page)
         self.assertNotIn(">Running</span>", page)

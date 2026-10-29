@@ -6,7 +6,8 @@ a four-core host left three cores idle for five minutes. Each module here is
 started with the command the suite used before plus `-p <module>`, so
 discovery, imports and the test's working directory are what they were; only
 how many run at once changes, and `-m unittest` runs as unittest_left_open,
-which fails a module that leaves a file or socket open.
+which fails a module that leaves a file or socket open or reaches for this
+machine's configuration.
 
 Modules of both suites share one pool, heaviest first: the gate's wall time is
 bounded by its slowest module, so that module must not be the last to start.
@@ -130,8 +131,9 @@ TIMED_OUT = 124
 
 #
 # Each module runs under unittest_left_open in place of `-m unittest`: the same
-# unittest, which then fails the module for any file or socket still open once
-# its tests have ended (review 26-10-29, C02).
+# unittest, which then fails the module for a file or socket it left open - a
+# ResourceWarning among them, counted there rather than searched for in the
+# output here (review 26-10-29, CC04) - or a reach under /etc/haprion.
 #
 LEFT_OPEN = Path(__file__).resolve().with_name("unittest_left_open.py")
 
@@ -190,14 +192,6 @@ def run(module: Module, limit: float = UNTIMED) -> Outcome:
         if left:
             returncode = returncode or 1
             output += f"\nleft in its temporary directory: {', '.join(left)}\n"
-        #
-        # A socket or file a test left open is said as a ResourceWarning, which
-        # unittest shows and nothing fails: an OIDC error answer stayed open
-        # through every gate until a review read the output (26-10-28, F04).
-        #
-        if "ResourceWarning" in output:
-            returncode = returncode or 1
-            output += "\na ResourceWarning: something the module opened was left open\n"
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return Outcome(module, returncode, time.monotonic() - started, output)

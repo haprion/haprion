@@ -201,6 +201,18 @@ class ThePolicy(unittest.TestCase):
         self.assertEqual(data["ndes"]["servers"][0]["tls_ca"], f"{self.root}/tls.pem")
         self.assertEqual(data["backup_root"], f"{self.root}/backup")
 
+    def test_a_server_confirmed_again_keeps_its_tls_ca(self) -> None:
+        """Review 2026-10-29, B02: the entry was written anew, and HTTPS fell back to the system's store."""
+
+        self.add()
+        data = yaml.safe_load(self.policy.read_text())
+        data["ndes"]["servers"][0]["tls_ca"] = f"{self.root}/tls.pem"
+        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
+        self.add()
+        ndes = load_policy(self.policy, require_secure=False).ndes
+        assert ndes is not None
+        self.assertEqual(str(ndes.servers[0].tls_ca), f"{self.root}/tls.pem")
+
     def test_a_fingerprint_the_server_no_longer_gives_changes_nothing(self) -> None:
         before = self.policy.read_text()
         with self.assertRaises(ndes_servers.NdesServerError) as caught:

@@ -343,8 +343,23 @@ def add(
         text = policy_path.read_text()
         data = safe_yaml.load(text) or {}
         block = _ndes_block(data, policy_path)
-        servers = [s for s in block["servers"] if s.get("endpoint") != endpoint]
-        block["servers"] = [*servers, {"endpoint": endpoint, "issuing_ca": str(path)}]
+        entry: dict[str, Any] = {"endpoint": endpoint, "issuing_ca": str(path)}
+        #
+        # A server confirmed again keeps what the confirmation does not
+        # decide: its own HTTPS CA, which would otherwise fall back to the
+        # system's store unsaid (review 2026-10-29, B02).
+        #
+        servers = list(block["servers"])
+        place = next(
+            (i for i, s in enumerate(servers) if s.get("endpoint") == endpoint), len(servers)
+        )
+        if place < len(servers):
+            if servers[place].get("tls_ca") is not None:
+                entry["tls_ca"] = servers[place]["tls_ca"]
+            servers[place] = entry
+        else:
+            servers.append(entry)
+        block["servers"] = servers
         _write_policy(policy_path, with_ndes(text, block))
     return {
         "endpoint": endpoint,

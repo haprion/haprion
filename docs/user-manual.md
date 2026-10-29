@@ -5890,7 +5890,7 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
 When the CA is renewed with a new key, or the saved CA certificate expires, certificates from the server no
 longer chain to what was saved, and an issue or renewal fails with "issued certificate does not chain to the CA
 confirmed for the NDES server". Add the server again with the same address: the page says it is confirmed with
-other CA certificates, and confirming the new ones replaces them. Its profiles stay.
+other CA certificates, and confirming the new ones replaces them. Its profiles and its `tls_ca` stay.
 
 The HTTPS certificate of the NDES server must be trusted by the manager's system store. A server signed by an
 internal CA needs that CA in the store, as any other internal HTTPS service does (`update-ca-certificates`).

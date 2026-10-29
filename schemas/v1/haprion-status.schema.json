@@ -554,6 +554,10 @@
               "type": ["string", "null"],
               "maxLength": 64
             },
+            "configured": {
+              "description": "false while dpkg has the package unpacked but not configured - a postinst that failed (26-10-29). Present beside a version; absent where none is installed, and from a node reporting before it.",
+              "type": "boolean"
+            },
             "scripts": {
               "type": "object",
               "propertyNames": { "pattern": "^(haprion|haproxy)-[a-z0-9-]+$" },

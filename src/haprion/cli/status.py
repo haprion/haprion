@@ -215,6 +215,8 @@ def _node_package_line(installation: object, carried: object) -> str | None:
 
     reported = installation.get("version") if isinstance(installation, dict) else None
     shown = node_package.short_version(reported) if isinstance(reported, str) else None
+    if shown and isinstance(installation, dict) and installation.get("configured") is False:
+        return f"{shown}  NOT CONFIGURED - run sudo dpkg --configure -a on the node"
     standing = haproxy_versions.against_carried(installation, carried)
     if standing is None:
         if isinstance(installation, dict) and "version" in installation and reported is None:

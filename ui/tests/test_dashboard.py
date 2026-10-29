@@ -139,6 +139,16 @@ class NodePackage(unittest.TestCase):
                 "haprion-node is older than the manager's 0.99.6 (0123abcd)",
             )
 
+    def test_a_package_the_node_did_not_configure_is_named_before_its_version(self) -> None:
+        """Review 26-10-29, A06: the same version, a postinst that failed, and nothing said."""
+
+        unconfigured = {**self.installed(self.CARRIED), "configured": False}
+        node = self.nodes((unconfigured, self.installed(self.CARRIED))).nodes[0]
+        self.assertEqual(node.package_note, "Node package not configured")
+        self.assertEqual(
+            node.package_message, "haprion-node 0.99.6 (0123abcd) is installed but not configured"
+        )
+
     def test_a_newer_package_is_named_as_newer(self) -> None:
         newer = "0.99.7+git20261101090000.89abcdef0123"
         node = self.nodes((self.installed(newer), self.installed(self.CARRIED))).nodes[0]

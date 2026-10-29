@@ -43,6 +43,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.sbin.mkdir()
         self.metadata = self.root / "node-installation.json"
         self.installed: dict[str, str] = {"haprion-node": "0.99.6+git20261029120000.0123456789ab"}
+        self.configured = True
 
     def read(self) -> dict[str, Any]:
         namespace: dict[str, Any] = {
@@ -56,7 +57,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
             "SHA256": re.compile(r"^[0-9a-f]{64}$"),
             "NODE_SCRIPTS": NODE_SCRIPTS,
             "NODE_PACKAGE": "haprion-node",
-            "package_version": self.installed.get,
+            "package_state": lambda name: (self.installed.get(name), self.configured),
         }
         exec(self.source, namespace)  # noqa: S102 - verbatim function from the node script
         result: dict[str, Any] = namespace["read_installation"]()
@@ -98,6 +99,17 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.install()
         self.installed.clear()
         self.assertIsNone(self.read()["version"])
+        self.assertNotIn("configured", self.read())
+
+    def test_a_package_dpkg_did_not_finish_configuring_says_so(self) -> None:
+        """Review 26-10-29, A06: it was reported as not installed."""
+
+        self.install()
+        self.assertIs(self.read()["configured"], True)
+        self.configured = False
+        result = self.read()
+        self.assertEqual(result["version"], "0.99.6+git20261029120000.0123456789ab")
+        self.assertIs(result["configured"], False)
 
     def test_installer_and_status_attest_the_same_node_package(self) -> None:
         # Since 26-10-24 (03-01) the list is in the file step 4 and the postinst share.
@@ -243,6 +255,51 @@ class NodeInstallationReadingTests(unittest.TestCase):
             hashlib.sha256(b"installed\n").hexdigest(),
         )
         self.assertIsNone(result["scripts"]["haprion-node-status"]["expected_sha256"])
+
+
+PACKAGE_STATE = re.compile(
+    r"^CONFIGURED_STATES = .*?(?=^def read_waf_engine\()", re.DOTALL | re.MULTILINE
+)
+
+
+class PackageStateTests(unittest.TestCase):
+    """dpkg's `want eflag status`, read for its status alone (review 26-10-29, A06).
+
+    A package on hold - `apt-mark hold haprion-node`, to update one node at a
+    time - is `hold ok installed`, and was reported as not installed.
+    """
+
+    def state(self, status: str, version: str = "0.99.6+git1.0123456789ab") -> Any:
+        found = PACKAGE_STATE.search(SCRIPT.read_text())
+        assert found, "the package reader is no longer where the test extracts it from"
+        answer = subprocess.CompletedProcess([], 0 if status else 1, f"{status}\t{version}", "")
+        namespace: dict[str, Any] = {"run": lambda *argv: answer}
+        exec(found.group(0), namespace)  # noqa: S102 - verbatim functions from the node script
+        return namespace["package_state"]("haprion-node"), namespace["package_version"](
+            "haprion-node"
+        )
+
+    def test_a_held_package_is_installed(self) -> None:
+        for status in ("install ok installed", "hold ok installed", "install ok triggers-pending"):
+            with self.subTest(status=status):
+                self.assertEqual(
+                    self.state(status),
+                    (("0.99.6+git1.0123456789ab", True), "0.99.6+git1.0123456789ab"),
+                )
+
+    def test_a_package_not_configured_has_its_version_and_says_so(self) -> None:
+        for status in (
+            "install ok half-configured",
+            "hold ok unpacked",
+            "install reinstreq half-installed",
+        ):
+            with self.subTest(status=status):
+                self.assertEqual(self.state(status), (("0.99.6+git1.0123456789ab", False), None))
+
+    def test_a_package_not_there_has_no_version(self) -> None:
+        for status in ("", "deinstall ok config-files", "unknown ok not-installed"):
+            with self.subTest(status=status):
+                self.assertEqual(self.state(status), ((None, True), None))
 
 
 if __name__ == "__main__":

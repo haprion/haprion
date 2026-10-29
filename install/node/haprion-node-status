@@ -154,20 +154,23 @@ def read_installation() -> dict[str, Any]:
             ):
                 raise ValueError("invalid script metadata")
         all_current, scripts = installed_scripts(document["scripts"])
-        return {
+        reading: dict[str, Any] = {
             "node_api": document["node_api"],
             "scripts_current": all_current,
             "scripts": scripts,
-            "version": package_version(NODE_PACKAGE),
         }
     except Exception:
         _, scripts = installed_scripts()
-        return {
-            "node_api": None,
-            "scripts_current": False,
-            "scripts": scripts,
-            "version": package_version(NODE_PACKAGE),
-        }
+        reading = {"node_api": None, "scripts_current": False, "scripts": scripts}
+    #
+    # Read outside the metadata's `try`: an error reading dpkg is not a node
+    # without compatibility metadata (review 26-10-29).
+    #
+    version, configured = package_state(NODE_PACKAGE)
+    reading["version"] = version
+    if version is not None:
+        reading["configured"] = configured
+    return reading
 
 
 def step_digest(directory: Path) -> str:
@@ -278,11 +281,36 @@ WAF_PACKAGE = "haprion-coraza-spoa"
 WAF_UNIT = "coraza-spoa.service"
 
 
-def package_version(package: str) -> str | None:
+#
+# dpkg's `want eflag status`, read for the status alone (review 26-10-29, A06):
+# a package held to update one node at a time is `hold ok installed`, and was
+# reported as not installed. Unpacked or half-configured - a postinst that
+# failed - is that version's files, not yet configured.
+#
+CONFIGURED_STATES = frozenset({"installed", "triggers-awaited", "triggers-pending"})
+UNCONFIGURED_STATES = frozenset({"half-installed", "unpacked", "half-configured"})
+
+
+def package_state(package: str) -> tuple[str | None, bool]:
+    """The package's version and whether dpkg configured it; (None, True) when it is not there."""
+
     r = run("/usr/bin/dpkg-query", "-W", "-f=${Status}\t${Version}", package)
     status, _, version = r.stdout.partition("\t")
-    installed = r.returncode == 0 and status.strip() == "install ok installed"
-    return version.strip()[:64] if installed else None
+    words = status.split()
+    state = words[-1] if r.returncode == 0 and len(words) == 3 else ""
+    shown = version.strip()[:64] or None
+    if state in CONFIGURED_STATES:
+        return shown, True
+    if state in UNCONFIGURED_STATES:
+        return shown, False
+    return None, True
+
+
+def package_version(package: str) -> str | None:
+    """The version of a package dpkg configured; None for one it did not, or one not there."""
+
+    version, configured = package_state(package)
+    return version if configured else None
 
 
 def read_waf_engine() -> dict[str, Any]:

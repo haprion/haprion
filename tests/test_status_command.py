@@ -898,6 +898,37 @@ class CallerTests(HelperFixture):
             "Node package: 0.99.5 (49d2aeb2)  OLDER than this host's 0.99.6 (0123abcd)\n", out
         )
 
+    def test_a_node_package_dpkg_did_not_configure_says_what_to_run(self) -> None:
+        """Review 26-10-29, A06: a failed postinst on the node was "not installed"."""
+
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a",
+                        owner=True,
+                        release_hash=TARGET_HASH,
+                        installation={
+                            "node_api": 1,
+                            "scripts_current": True,
+                            "scripts": {},
+                            "version": CARRIED,
+                            "configured": False,
+                        },
+                    ),
+                    "node-b": node_status("node-b", owner=False, release_hash=TARGET_HASH),
+                }
+            ),
+            package_reader=lambda: CARRIED,
+        )
+        assert_contract("haprion-status", payload)
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+        self.assertIn(
+            "Node package: 0.99.6 (0123abcd)  NOT CONFIGURED - run sudo dpkg --configure -a "
+            "on the node\n",
+            out,
+        )
+
     def test_a_node_that_reports_no_package_version_is_older(self) -> None:
         """A status from before the field: older than any release that names one."""
 

@@ -771,11 +771,53 @@ def first_install_error(args: argparse.Namespace) -> str | None:
     return None
 
 
+def past_head_refusal(
+    name: str, candidate: Requirements, carriers: Iterable[Requirements], revision: str
+) -> str | None:
+    """Why an update cannot take the database back to `name`, or None (B388, review 26-10-29, A05).
+
+    A schema past the candidate's head is one a newer release migrated to. No
+    migration goes back (B360): the update would stop in the candidate's own
+    alembic, which does not know the revision. The way back is a rollback when
+    the candidate runs on that schema by the rollback's rule, and otherwise the
+    dump taken before the update that migrated it.
+    """
+
+    if revision in candidate.database_revisions or revision <= candidate.database_head:
+        return None
+    problem = schema_problem(candidate, carriers, revision)
+    if problem is None:
+        return (
+            f"{revision}, past {name}'s head {candidate.database_head}; an update does not take "
+            "the database back past a migration. Keep the haprion-ui package that migrated it, "
+            f"and switch with: sudo haprion-rollback --to {name}"
+        )
+    return (
+        f"{revision}; {name} does not run on it ({problem}). An update does not take the "
+        f"database back past a migration; the way back is the dump taken before the update "
+        f"to {revision}"
+    )
+
+
 def check_schema_transition(
-    report: Report, platform_root: Path, requirements: Requirements, revision: str
+    report: Report,
+    platform_root: Path,
+    requirements: Requirements,
+    revision: str,
+    *,
+    name: str,
+    packaged: str | None,
 ) -> None:
     """The running UI over the schema now, and over this release's head after migrating."""
 
+    try:
+        refusal = past_head_refusal(name, requirements, owners(platform_root, packaged), revision)
+    except OSError as exc:
+        report.fail("candidate schema", f"cannot read the releases on disk: {exc}")
+        return
+    if refusal is not None:
+        report.fail("candidate schema", refusal)
+        return
     try:
         active_release = current_release(platform_root, "UI")
         active_requirements = ui_requirements(active_release)
@@ -913,7 +955,14 @@ def main(argv: list[str] | None = None) -> int:
             if refusal is not None:
                 report.fail("schema revision", refusal)
             elif args.upgrade_from_current:
-                check_schema_transition(report, args.platform_root, requirements, revision)
+                check_schema_transition(
+                    report,
+                    args.platform_root,
+                    requirements,
+                    revision,
+                    name=ui_release.name,
+                    packaged=args.packaged,
+                )
             elif revision in requirements.database_revisions:
                 report.pass_("schema revision", revision)
             else:

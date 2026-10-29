@@ -614,6 +614,83 @@ class TheCheckAfterARollback(unittest.TestCase):
             self.assertIn("no release on this machine declares schema 9999 safe", line)
 
 
+class AnUpdateBackPastAMigration(unittest.TestCase):
+    """B388 (review 26-10-29, A05): an update never takes the database back past a migration.
+
+    `apt install --allow-downgrades` of an older haprion-ui ran its update,
+    which passed the check and stopped in `./migrate` on alembic's "Can't
+    locate revision". The check refuses it first, and names the way that
+    works: `haprion-rollback` when the older release runs on the schema, the
+    dump taken before the update when it does not.
+    """
+
+    def transition(self, root: Path, candidate: str, revision: str) -> str:
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(compatibility, "cli_metadata", return_value={}),
+            mock.patch.object(compatibility, "database_revision", return_value=revision),
+            mock.patch.object(compatibility, "check_cluster_nodes"),
+            contextlib.redirect_stdout(io.StringIO()) as printed,
+        ):
+            (root / "cli/releases/r1").mkdir(parents=True, exist_ok=True)
+            if not (root / "cli/current").is_symlink():
+                (root / "cli/current").symlink_to(root / "cli/releases/r1")
+            compatibility.main(
+                [
+                    "--platform-root", str(root),
+                    "--cli-root", str(root / "cli"),
+                    "--database", "haprion",
+                    "--database-role", "migrate",
+                    "--clusters",
+                    "--runtime-policy", str(root / "runtime-policy.yaml"),
+                    "--collector-config", str(root / "traffic-collector.json"),
+                    "--sudoers-root", str(root / "sudoers.d"),
+                    "--systemd-root", str(root / "systemd"),
+                    "--ui-release", candidate,
+                    "--packaged", candidate,
+                    "--upgrade-from-current",
+                    "--skip-services",
+                ]
+            )  # fmt: skip
+        return printed.getvalue()
+
+    def machine(self, root: Path, safe_from: str) -> None:
+        release_on_disk(root, "0.99.5-aaaa", "0100", "0100")
+        release_on_disk(root, "0.99.6-bbbb", "9999", safe_from)
+        (root / "current").symlink_to(root / "releases/0.99.6-bbbb")
+
+    def test_an_older_release_that_runs_on_the_schema_is_switched_to_by_the_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.machine(root, "0100")
+            said = self.transition(root, "0.99.5-aaaa", "9999")
+            self.assertIn("FAIL  candidate schema", said)
+            self.assertIn("9999, past 0.99.5-aaaa's head 0100", said)
+            self.assertIn("sudo haprion-rollback --to 0.99.5-aaaa", said)
+            self.assertNotIn("running schema", said)
+            self.assertNotIn("INCOMPATIBLE: 0 ", said)
+
+    def test_an_older_release_that_does_not_run_on_it_is_sent_to_the_dump(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.machine(root, "9999")
+            said = self.transition(root, "0.99.5-aaaa", "9999")
+            self.assertIn("FAIL  candidate schema", said)
+            self.assertIn("0.99.5-aaaa does not run on it", said)
+            self.assertIn("the dump taken before the update to 9999", said)
+            self.assertNotIn("haprion-rollback", said)
+
+    def test_an_update_forward_is_not_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            release_on_disk(root, "0.99.5-aaaa", "0100", "0100")
+            release_on_disk(root, "0.99.6-bbbb", "9999", "0100")
+            (root / "current").symlink_to(root / "releases/0.99.5-aaaa")
+            said = self.transition(root, "0.99.6-bbbb", "0100")
+            self.assertNotIn("candidate schema", said)
+            self.assertIn("PASS  running schema", said)
+
+
 class UpgradeFailureTests(unittest.TestCase):
     def requirements(self, *, head: str, accepts: tuple[str, ...]) -> compatibility.Requirements:
         return compatibility.Requirements(

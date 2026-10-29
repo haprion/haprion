@@ -5919,8 +5919,9 @@ alike.
 
 A server is removed from the same page, when no profile uses it. The command refuses while a profile applied
 on this manager names the server, or a profile record cannot be read; the interface also refuses while a
-saved profile that has not been applied names it. Each change is recorded in the activity log, and the helper
-writes a line of it to the journal. A change the service did not answer is recorded as asked for, since it may
+saved profile that has not been applied names it. Each change made in the interface is recorded in the activity
+log, and the helper writes a line of it to the journal; a change made with the command leaves sudo's own line.
+A change the service did not answer is recorded as asked for, since it may
 have been made. From the command line:
 
 ```bash

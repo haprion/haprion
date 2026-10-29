@@ -254,7 +254,8 @@ def authorities(
         endpoint = check_endpoint(endpoint)
     except ProfileError:
         raise NdesServerError(
-            "bad_input", "the address must be an HTTPS URL without credentials or query"
+            "bad_input",
+            "the address must be an HTTPS URL without credentials, query, fragment, quotes or spaces",
         ) from None
     try:
         certificates, _keys = read_bytes(fetch(endpoint, trust))

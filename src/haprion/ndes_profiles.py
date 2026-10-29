@@ -76,7 +76,9 @@ def check_endpoint(value: object) -> str:
         # query is added to the address (review 2026-10-29, B13).
         or any(ord(c) <= 32 or ord(c) >= 127 or c in "\\\"'?#" for c in value)
     ):
-        raise ProfileError("endpoint must be an HTTPS URL without credentials or query")
+        raise ProfileError(
+            "endpoint must be an HTTPS URL without credentials, query, fragment, quotes or spaces"
+        )
     return value
 
 

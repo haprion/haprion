@@ -1049,7 +1049,7 @@ class AHeldJob(LoginTestCase):
     def test_it_is_held_and_an_admin_is_offered_run_and_discard(self) -> None:
         page = self.admin().get("/jobs").text
         self.assertIn(">Held</span>", page)
-        self.assertIn("Queued before the manager last started.", page)
+        self.assertIn("Held after a restart or a restore. It may have run already.", page)
         self.assertIn('action="/jobs/19/held"', page)
         self.assertIn('name="decision" value="run">Run</button>', page)
         self.assertIn('name="decision" value="discard">Discard</button>', page)
@@ -1063,7 +1063,7 @@ class AHeldJob(LoginTestCase):
             page = self.admin().get("/jobs").text
         self.assertIn(">Held</span>", page)
         self.assertIn(
-            "Running when the manager last started. It may have finished before a restore;"
+            "Held after a restart or a restore while it ran. It may have finished;"
             " Discard keeps what it did and runs nothing more.",
             page,
         )

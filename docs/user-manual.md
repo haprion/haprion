@@ -3779,7 +3779,7 @@ box is not shown.
   - a job still *running* that no worker has held for twenty minutes: the worker is stopped, hung or
     crashing, or waits for something that will not come by itself - critical. *Jobs* shows it as
     *No worker*, and the worker's journal says why it waits: `journalctl -u haprion-worker`;
-  - jobs queued before the manager last started, waiting for an admin to choose *Run* or *Discard*
+  - jobs held after a restart or a restore, waiting for an admin to choose *Run* or *Discard*
     ([The worker](#the-worker)) - a warning;
   - the nightly maintenance (`haprion-retention`) has not run: the daily partitions it makes ahead of time
     fall more than a day short (a warning), or there are none at all (critical); or it has run but not

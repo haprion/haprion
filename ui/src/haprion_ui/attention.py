@@ -766,7 +766,8 @@ def from_manager(
         )
     #
     # A held job waits for an admin, not for the worker (0082): it is its own
-    # row, and never the worker's silence.
+    # row, and never the worker's silence. Held at the worker's start or by
+    # `haprion-backup after-restore`, which starts nothing (review 26-10-29, R04).
     #
     held = [job for job in rows if job.waits_for_decision]
     if held:
@@ -776,7 +777,7 @@ def from_manager(
                 severity="warning",
                 cluster=None,
                 subject="held jobs",
-                message=f"{labels.counted(len(held), 'job')} queued before the manager started {'waits' if len(held) == 1 else 'wait'} for Run or Discard",
+                message=f"{labels.counted(len(held), 'job')} held after a restart or a restore {'waits' if len(held) == 1 else 'wait'} for Run or Discard",
                 since=min(job.held_since for job in held if job.held_since is not None),
                 link="/jobs",
             )

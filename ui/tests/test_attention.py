@@ -991,7 +991,13 @@ class TheManagersOwnServices(unittest.TestCase):
         self.assertEqual(
             (item.subject, item.severity, item.link), ("held jobs", "warning", "/jobs")
         )
-        self.assertIn("1 job queued before the manager started waits", item.message)
+        #
+        # Held after a restart or a restore (review 26-10-29, R04): a restored
+        # database's jobs are held without any start.
+        #
+        self.assertEqual(
+            item.message, "1 job held after a restart or a restore waits for Run or Discard"
+        )
         #
         # Answered, it is the worker's again.
         #

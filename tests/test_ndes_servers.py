@@ -230,6 +230,66 @@ class TheHelperUnit(unittest.TestCase):
         self.assertGreater(seconds, ndes_servers.DEADLINE + ndes_servers.TIMEOUT)
 
 
+def pkcs7(*pems: Path) -> bytes:
+    """GetCACert's answer: these certificates, PKCS#7 DER."""
+
+    with tempfile.TemporaryDirectory() as raw:
+        bundle = Path(raw) / "bundle.pem"
+        bundle.write_text("".join(each.read_text() for each in pems))
+        return subprocess.run(
+            [OPENSSL, "crl2pkcs7", "-nocrl", "-certfile", str(bundle), "-outform", "DER"],
+            capture_output=True,
+            check=True,
+        ).stdout
+
+
+class AChainWithoutItsRoot(unittest.TestCase):
+    """Review 2026-10-29, B09 (B388): a chain short of its root was confirmed, and failed at issue."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.answer = Answer(self.root)
+        pki = self.answer.pki
+        self.short = pkcs7(pki.intermediate, pki.leaf)
+        other = Pki(self.root / "other", names=("other.example.com",))
+        self.store = self.root / "store.pem"
+        self.store.write_text(other.root.read_text() + pki.root.read_text())
+
+    def test_a_chain_with_its_root_is_not_completed(self) -> None:
+        found = ndes_servers.authorities(
+            ENDPOINT, fetch=self.answer, trust=self.root / "no-store.pem"
+        )
+        self.assertEqual([a.from_store for a in found], [False, False])
+
+    def test_the_root_is_taken_from_the_store_and_confirmed_with_the_rest(self) -> None:
+        found = ndes_servers.authorities(ENDPOINT, fetch=lambda _: self.short, trust=self.store)
+        root = self.answer.sha256(self.answer.pki.root)
+        self.assertEqual(
+            [(a.subject, a.from_store) for a in found],
+            [("CN=Test Issuing CA", False), ("CN=Test Root", True)],
+        )
+        self.assertEqual(found[1].sha256, root)
+        self.assertTrue(found[1].summary()["from_store"])
+
+    def test_a_root_the_store_does_not_have_is_refused(self) -> None:
+        self.store.write_text(Pki(self.root / "third", names=("x.example.com",)).root.read_text())
+        with self.assertRaises(ndes_servers.NdesServerError) as caught:
+            ndes_servers.authorities(ENDPOINT, fetch=lambda _: self.short, trust=self.store)
+        self.assertEqual(caught.exception.code, "no_root")
+        self.assertIn("gives no root CA", str(caught.exception))
+
+    def test_a_name_alone_does_not_make_a_root(self) -> None:
+        # Another CA under the same name, not the one that signed the chain.
+        (self.root / "impostor").mkdir()
+        impostor = Pki(self.root / "impostor" / "pki", names=("x.example.com",))
+        self.store.write_text(impostor.root.read_text())
+        with self.assertRaises(ndes_servers.NdesServerError) as caught:
+            ndes_servers.authorities(ENDPOINT, fetch=lambda _: self.short, trust=self.store)
+        self.assertEqual(caught.exception.code, "no_root")
+
+
 class TheAuthorities(unittest.TestCase):
     def test_the_cas_the_issuing_one_first_and_never_the_ra(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -689,6 +749,23 @@ class TheHelperAndTheCommand(unittest.TestCase):
             self.assertIn(each, self.journal)
         self.ask(action="remove", endpoint=ENDPOINT)
         self.assertIn(f"removed {ENDPOINT}", self.journal)
+
+    def test_a_chain_completed_from_the_store_is_confirmed_and_saved_whole(self) -> None:
+        pki = self.answer.pki
+        short = pkcs7(pki.intermediate, pki.leaf)
+        store = self.root / "store.pem"
+        store.write_text(pki.root.read_text())
+        with mock.patch.object(ndes_server_helper, "SYSTEM_TRUST", store):
+            self.answer.der = short
+            _code, fetched = self.ask(action="fetch", endpoint=ENDPOINT)
+            self.assertEqual(
+                [a["from_store"] for a in fetched["result"]["authorities"]], [False, True]
+            )
+            said = self.command("add", ENDPOINT, root=False)[1]
+            self.assertIn("CN=Test Root (CA, from this manager's certificate store)", said)
+            code, added = self.ask(action="add", endpoint=ENDPOINT, sha256=self.chain)
+        self.assertEqual(code, 0, added)
+        self.assertIn(pki.root.read_text(), Path(added["result"]["issuing_ca"]).read_text())
 
     def renewed(self) -> list[str]:
         """The server's CA renewed with a new key: another chain at the same address."""

@@ -5885,7 +5885,10 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
    its SHA-256 and its SHA-1 thumbprint - the thumbprint Windows shows in the certificate's details. It asks
    the server directly, without a proxy, and does not follow a redirect: it names the address to give instead.
 2. Compare them with the CA's own certificates. The one marked *issues for NDES* is the CA the server enrolls
-   for; the others are the rest of its chain.
+   for; the others are the rest of its chain. A server that gives its chain without the root CA has it
+   completed from the manager's certificate store - the store its HTTPS is checked against - and the root is
+   marked *from this manager's certificate store*. When the store has no CA that issued the chain, the server
+   is refused; add its root CA to the store first.
 3. Choose *Confirm this CA*, or *Confirm these CAs* when there are several. The manager asks the server again
    and adds it only if it still gives exactly these certificates. All of them are saved for the server.
 

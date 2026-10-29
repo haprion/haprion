@@ -24,7 +24,7 @@ from typing import Any, BinaryIO, TextIO
 
 from haprion import exit_codes, ndes_servers
 from haprion.cli import cert_job
-from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
+from haprion.config import DEFAULT_POLICY_PATH, SYSTEM_TRUST, ConfigError, load_policy
 from haprion.envelope import envelope
 from haprion.helper_protocol import HelperProtocolError, write_document
 
@@ -76,10 +76,15 @@ def perform(
             ]
         }
     endpoint = _string(parameters, "endpoint")
+    policy = load_policy(policy_path).ndes if action in ("fetch", "add") else None
+    server = policy.server(endpoint) if policy is not None else None
+    #
+    # A chain short of its root is completed from the store the server's
+    # HTTPS is checked against: its own tls_ca, or the system's (B388).
+    #
+    trust = server.tls_ca if server is not None else SYSTEM_TRUST
     if action == "fetch":
-        found = ndes_servers.authorities(endpoint, fetch=fetch)
-        policy = load_policy(policy_path).ndes
-        server = policy.server(endpoint) if policy is not None else None
+        found = ndes_servers.authorities(endpoint, fetch=fetch, trust=trust)
         return {
             "endpoint": endpoint,
             "authorities": [authority.summary() for authority in found],
@@ -89,7 +94,7 @@ def perform(
         }
     if action == "add":
         return ndes_servers.add(
-            endpoint, _fingerprints(parameters), policy_path=policy_path, fetch=fetch
+            endpoint, _fingerprints(parameters), policy_path=policy_path, fetch=fetch, trust=trust
         )
 
     def used_by() -> tuple[str, ...]:

@@ -11,7 +11,7 @@
     "state": "new",
     "authorities": [
       { "subject": "CN=Example Issuing CA", "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "sha1": "0123456789abcdef0123456789abcdef01234567", "issues_ra": true },
-      { "subject": "CN=Example Root CA", "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", "sha1": "fedcba9876543210fedcba9876543210fedcba98", "issues_ra": false }
+      { "subject": "CN=Example Root CA", "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", "sha1": "fedcba9876543210fedcba9876543210fedcba98", "issues_ra": false, "from_store": true }
     ]
   },
   "error": null

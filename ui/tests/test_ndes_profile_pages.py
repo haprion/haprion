@@ -266,6 +266,26 @@ class TheNdesServers(NdesRoutes):
         self.assertEqual(self.audited[-1]["action"], "ndes_server_added")
         self.assertEqual(self.servers, [ENDPOINT])
 
+    def test_a_root_completed_from_the_store_is_shown_and_confirmed_with_the_rest(self) -> None:
+        other = "https://ca2.example.com/certsrv/mscep/mscep.dll"
+        self.authorities.append(
+            {
+                "subject": "CN=Example Root CA",
+                "sha256": "d" * 64,
+                "sha1": "e" * 40,
+                "issues_ra": False,
+                "from_store": True,
+            }
+        )
+        client = self.writing_client()
+        csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        shown = client.post(
+            "/ndes-profiles/servers/new", data={"csrf_token": csrf, "endpoint": other}
+        ).text
+        self.assertIn("CN=Example Root CA · from this manager's certificate store", shown)
+        self.assertNotIn("CN=Example Issuing CA · issues for NDES · from", shown)
+        self.assertIn(f'name="sha256" value="{"d" * 64}"', shown)
+
     def test_a_ca_that_changed_is_said_and_nothing_is_added(self) -> None:
         other = "https://ca2.example.com/certsrv/mscep/mscep.dll"
         client = self.writing_client()

@@ -62,6 +62,8 @@ def _text(action: str, result: dict[str, Any], out: TextIO) -> None:
     elif action == "fetch":
         for authority in result["authorities"]:
             role = "issues for NDES" if authority["issues_ra"] else "CA"
+            if authority.get("from_store"):
+                role += ", from this manager's certificate store"
             out.write(
                 f"{authority['subject']} ({role})\n"
                 f"  SHA-256  {authority['sha256']}\n"

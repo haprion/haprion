@@ -67,7 +67,11 @@
               "subject": { "type": "string", "maxLength": 1024 },
               "sha256": { "$ref": "#/$defs/sha256" },
               "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-              "issues_ra": { "type": "boolean" }
+              "issues_ra": { "type": "boolean" },
+              "from_store": {
+                "description": "Taken from the manager's certificate store, to complete a chain the server gave without its root (B388).",
+                "type": "boolean"
+              }
             },
             "additionalProperties": false
           }

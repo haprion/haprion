@@ -26,6 +26,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -39,9 +41,10 @@ from typing import Any
 import yaml
 
 from haprion import atomic_file, cert_lock, exit_codes, http_answer, safe_yaml
-from haprion.cert_import import ImportError_, _names, _openssl, read_bytes
+from haprion.cert_import import ImportError_, _names, _openssl, read_bytes, split_blocks
+from haprion.cert_inventory import OPENSSL, OPENSSL_TIMEOUT
 from haprion.certificates import CERTIFICATE_BLOCK
-from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
+from haprion.config import DEFAULT_POLICY_PATH, SYSTEM_TRUST, ConfigError, load_policy
 from haprion.dns_profiles import ProfileError
 from haprion.ndes_profiles import check_endpoint
 
@@ -69,6 +72,11 @@ MAX_ANSWER = 256 * 1024
 TIMEOUT = 10.0
 DEADLINE = 20.0
 SHA256 = re.compile(r"[0-9a-f]{64}")
+#
+# How many CA certificates a chain may take from the store: a root, and the
+# intermediates between it and what the server gave.
+#
+MAX_COMPLETION = 4
 #
 # The next line in the first column that is not the ndes block's: a key or a
 # document marker. A comment or a sequence item there can still be the block's.
@@ -102,6 +110,11 @@ class Authority:
     # enrolls for.
     #
     issues_ra: bool
+    #
+    # Taken from the manager's certificate store, to complete a chain the
+    # server gave without its root (B388).
+    #
+    from_store: bool = False
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -109,6 +122,7 @@ class Authority:
             "sha256": self.sha256,
             "sha1": self.sha1,
             "issues_ra": self.issues_ra,
+            "from_store": self.from_store,
         }
 
 
@@ -168,8 +182,16 @@ def _der(pem: str) -> bytes:
     return b64decode("".join(match.group(1).split()))
 
 
-def authorities(endpoint: str, *, fetch: Fetch = get_ca_cert) -> tuple[Authority, ...]:
-    """The CA certificates the server gives, the one that issued its RA certificate first."""
+def authorities(
+    endpoint: str, *, fetch: Fetch = get_ca_cert, trust: Path = SYSTEM_TRUST
+) -> tuple[Authority, ...]:
+    """The CA certificates the server gives, the one that issued its RA certificate first.
+
+    A chain that does not reach a self-signed root is completed from `trust` -
+    the store the server's HTTPS is checked against - and refused when it
+    cannot be: a certificate issued from it would not verify (review
+    2026-10-29, B09, decided in B388).
+    """
 
     try:
         endpoint = check_endpoint(endpoint)
@@ -179,51 +201,141 @@ def authorities(endpoint: str, *, fetch: Fetch = get_ca_cert) -> tuple[Authority
         ) from None
     try:
         certificates, _keys = read_bytes(fetch(endpoint))
+        issuers = set()
+        authority_pems = []
+        for certificate in certificates:
+            constraints = _openssl(
+                ["x509", "-noout", "-ext", "basicConstraints"],
+                stdin=certificate,
+                what="read a certificate from the NDES server",
+            )
+            subject, issuer = _names(certificate)
+            if "CA:TRUE" in constraints.replace(" ", ""):
+                authority_pems.append((subject, issuer, certificate))
+            else:
+                issuers.add(issuer)
+        if not authority_pems:
+            raise NdesServerError(
+                "bad_answer", f"{endpoint} answered with no CA certificate", exit_codes.UNAVAILABLE
+            )
+        completed = _completed(authority_pems, trust)
+        if completed is None:
+            raise NdesServerError(
+                "no_root",
+                f"{endpoint} gives no root CA, and none in the manager's certificate store "
+                "issues its CA; add the root CA to the store",
+            )
+        found = [
+            _authority(certificate, subject, issues_ra=subject in issuers)
+            for subject, _issuer, certificate in authority_pems
+        ] + [
+            _authority(certificate, subject, from_store=True) for subject, certificate in completed
+        ]
     except ImportError_ as exc:
         raise NdesServerError(
             "bad_answer", f"{endpoint} answered with no CA: {exc}", exit_codes.UNAVAILABLE
         ) from None
-    found: list[Authority] = []
-    issuers = set()
-    authority_pems = []
-    for certificate in certificates:
-        constraints = _openssl(
-            ["x509", "-noout", "-ext", "basicConstraints"],
-            stdin=certificate,
-            what="read a certificate from the NDES server",
-        )
-        subject, issuer = _names(certificate)
-        if "CA:TRUE" in constraints.replace(" ", ""):
-            authority_pems.append((subject, certificate))
-        else:
-            issuers.add(issuer)
-    for subject, certificate in authority_pems:
-        der = _der(certificate)
-        #
-        # The SHA-1 is shown, never decided on: the thumbprint Windows and
-        # certutil show, read as openssl prints a certificate's fingerprint.
-        # What is confirmed is the SHA-256 (review 2026-10-28: CodeQL took a
-        # SHA-1 of a certificate in this process for a weak hash of a secret).
-        #
-        thumbprint = _openssl(
-            ["x509", "-noout", "-fingerprint", "-sha1"],
-            stdin=certificate,
-            what="read a certificate's thumbprint from the NDES server",
-        )
-        found.append(
-            Authority(
-                subject=subject,
-                sha256=hashlib.sha256(der).hexdigest(),
-                sha1=thumbprint.partition("=")[2].strip().replace(":", "").lower(),
-                pem=certificate,
-                issues_ra=subject in issuers,
-            )
-        )
-    if not found:
-        raise NdesServerError(
-            "bad_answer", f"{endpoint} answered with no CA certificate", exit_codes.UNAVAILABLE
-        )
     return tuple(sorted(found, key=lambda authority: not authority.issues_ra))
+
+
+def _authority(
+    certificate: str, subject: str, *, issues_ra: bool = False, from_store: bool = False
+) -> Authority:
+    #
+    # The SHA-1 is shown, never decided on: the thumbprint Windows and
+    # certutil show, read as openssl prints a certificate's fingerprint.
+    # What is confirmed is the SHA-256 (review 2026-10-28: CodeQL took a
+    # SHA-1 of a certificate in this process for a weak hash of a secret).
+    #
+    thumbprint = _openssl(
+        ["x509", "-noout", "-fingerprint", "-sha1"],
+        stdin=certificate,
+        what="read a certificate's thumbprint from the NDES server",
+    )
+    return Authority(
+        subject=subject,
+        sha256=hashlib.sha256(_der(certificate)).hexdigest(),
+        sha1=thumbprint.partition("=")[2].strip().replace(":", "").lower(),
+        pem=certificate,
+        issues_ra=issues_ra,
+        from_store=from_store,
+    )
+
+
+def _completed(chain: Sequence[tuple[str, str, str]], trust: Path) -> list[tuple[str, str]] | None:
+    """The CA certificates from `trust` that take the chain to a self-signed root.
+
+    None when it cannot be taken there. A candidate has the issuer's name -
+    by openssl's name hash - and must have signed the certificate it is to
+    issue: a name alone is not a CA.
+    """
+
+    subjects = {subject for subject, _issuer, _pem in chain}
+    tops = [(issuer, pem) for subject, issuer, pem in chain if issuer != subject]
+    dangling = [(issuer, pem) for issuer, pem in tops if issuer not in subjects]
+    if not dangling:
+        return []
+    try:
+        pool = split_blocks(trust.read_text(encoding="ascii", errors="replace"))[0]
+    except OSError:
+        return None
+    hashes: list[str] | None = None
+    added: list[tuple[str, str]] = []
+    while dangling:
+        issuer, child = dangling.pop()
+        if issuer in subjects:
+            continue
+        if len(added) == MAX_COMPLETION:
+            return None
+        if hashes is None:
+            hashes = [_name_hash(pem, "-subject_hash") for pem in pool]
+        wanted = _name_hash(child, "-issuer_hash")
+        parent = next(
+            (
+                pem
+                for pem, hashed in zip(pool, hashes, strict=True)
+                if hashed == wanted and _signed(child, pem)
+            ),
+            None,
+        )
+        if parent is None:
+            return None
+        subject, its_issuer = _names(parent)
+        added.append((subject, parent))
+        subjects.add(subject)
+        if its_issuer != subject:
+            dangling.append((its_issuer, parent))
+    return added
+
+
+def _name_hash(certificate: str, which: str) -> str:
+    try:
+        return _openssl(
+            ["x509", "-noout", which], stdin=certificate, what="read a CA certificate's name"
+        ).strip()
+    except ImportError_:
+        # A block in a store openssl cannot read is no candidate.
+        return ""
+
+
+def _signed(child: str, parent: str) -> bool:
+    """Whether `parent` signed `child`, as openssl verifies it with `parent` as the anchor."""
+
+    with tempfile.TemporaryDirectory() as raw:
+        anchor = Path(raw) / "anchor.pem"
+        anchor.write_text(parent)
+        try:
+            verified = subprocess.run(  # noqa: S603 - fixed binary, a private temporary file
+                [OPENSSL, "verify", "-partial_chain", "-CAfile", str(anchor)],
+                input=child,
+                capture_output=True,
+                text=True,
+                timeout=OPENSSL_TIMEOUT,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    return verified.returncode == 0
 
 
 def saved_fingerprints(path: Path) -> frozenset[str]:
@@ -423,6 +535,7 @@ def add(
     policy_path: Path = DEFAULT_POLICY_PATH,
     ca_directory: Path | None = None,
     fetch: Fetch = get_ca_cert,
+    trust: Path = SYSTEM_TRUST,
 ) -> dict[str, Any]:
     """Confirm the server whose CA certificates have these SHA-256s, and write it into the policy.
 
@@ -434,7 +547,7 @@ def add(
     if not fingerprints or any(SHA256.fullmatch(each) is None for each in fingerprints):
         raise NdesServerError("bad_input", "each fingerprint must be a SHA-256 in hexadecimal")
     _require_profile_key(policy_path)
-    found = authorities(endpoint, fetch=fetch)
+    found = authorities(endpoint, fetch=fetch, trust=trust)
     endpoint = check_endpoint(endpoint)
     if {authority.sha256 for authority in found} != set(fingerprints):
         raise NdesServerError(

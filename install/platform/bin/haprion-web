@@ -23,7 +23,7 @@ python="${release}/venv/bin/python"
 # the release itself: the package behind its `haprion-worker` command. A release
 # this one replaces or rolls back to may call its package something else; the
 # command is what every release has. The same function in lib.sh,
-# haprion-rollback and haprion-web, held together by a test.
+# haprion-backup, haprion-rollback and haprion-web, held together by a test.
 #
 release_module() {
     "$1" -I -c 'from importlib.metadata import entry_points

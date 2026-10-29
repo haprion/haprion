@@ -309,7 +309,13 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
     """
 
     def restore(
-        self, *, active: str, connections: str = "0", restored: bool = True
+        self,
+        *,
+        active: str,
+        connections: str = "0",
+        restored: bool = True,
+        plan: str | None = "same 0102 new",
+        migrated: bool = True,
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         source = SCRIPT.read_text()
         units = re.search(r"^RESTORE_UNITS=\(\n.*?^\)\n", source, re.MULTILINE | re.DOTALL)
@@ -323,6 +329,16 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
             steps.mkdir()
             (steps / "03-verify").write_text('#!/bin/sh\necho "03-verify" >> "$CALLS"\n')
             (steps / "03-verify").chmod(0o755)
+            (steps / "migrate").write_text(
+                f'#!/bin/sh\necho "migrate $*" >> "$CALLS"\nexit {0 if migrated else 1}\n'
+            )
+            (steps / "migrate").chmod(0o755)
+            retention = here / "haprion-retention"
+            retention.write_text('#!/bin/sh\necho "retention $*" >> "$CALLS"\n')
+            retention.chmod(0o755)
+            timer = here / "haprion-retention.timer"
+            timer.write_text("")
+            refused = "the dump is at schema 0103 and new at 0102: it comes from a newer release"
             config = here / "traffic-collector.json"
             config.write_text("{}")
             collector = here / "collector"
@@ -331,21 +347,30 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
             calls = here / "calls"
             program = (
                 "set -Eeuo pipefail\n"
-                'log() { :; }; warn() { echo "WARNING: $*" >&2; }; step_log() { :; }\n'
+                'log() { echo "$*"; }; warn() { echo "WARNING: $*" >&2; }; step_log() { :; }\n'
                 'die() { echo "ERROR: $*" >&2; exit 1; }\n'
                 'record() { echo "$*" >> "$CALLS"; }\n'
                 f'systemctl() {{ case "$1" in is-active) [[ " {active} " == *" $3 "* ]] ;;'
                 ' show) echo _haprion-collector ;; *) record "systemctl $*" ;; esac; }\n'
                 f"psql_scratch() {{ echo {connections}; }}\n"
                 f'sudo() {{ record "$* <$(cat)"; {"true" if restored else "false"}; }}\n'
-                "pg_restore() { :; }\n"
-                'runuser() { record "runuser $*"; }\n'
+                # The dump's alembic_version, as `pg_restore --data-only` writes it.
+                'pg_restore() { [[ " $* " != *" --table=alembic_version "* ]]'
+                " || printf 'COPY public.alembic_version (version_num) FROM stdin;\\n0101\\n\\\\.\\n'; }\n"
+                + (
+                    f'schema_plan() {{ record "plan $1"; echo "{plan}"; }}\n'
+                    if plan is not None
+                    else f'schema_plan() {{ record "plan $1"; echo "{refused}" >&2; return 1; }}\n'
+                )
+                + 'runuser() { record "runuser $*"; }\n'
                 'do_after_restore() { record "after-restore"; }\n'
                 "DB_NAME=haprion\n"
                 + re.search(r"^counted\(\) .*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
                 + units.group(0)
                 + f'PLATFORM_STEPS="{steps}"\nCOLLECTOR_CONFIG="{config}"\n'
+                f'RETENTION_COMMAND="{retention}"\nRETENTION_TIMER="{timer}"\n'
                 f'COLLECTOR_COMMAND="{collector}"\n'
+                + function("dump_revision", source)
                 + function("do_restore", source)
                 + function("start_units", source)
                 + 'do_restore "$1"\n'
@@ -368,6 +393,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         self.assertEqual(
             said,
             [
+                "plan 0101",
                 "systemctl stop haprion-traffic-collector.timer",
                 "systemctl stop haprion-web.socket",
                 "systemctl stop haprion-worker.service",
@@ -382,6 +408,42 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 " <here>/traffic-collector.json",
             ],
         )
+
+    def test_an_older_dump_is_migrated_before_its_privileges_are_proved(self) -> None:
+        """Review 26-10-29, A1: a dump from before 0102 stopped on 03-verify, services down."""
+
+        done, said = self.restore(active=self.ACTIVE, plan="migrate 0102 new")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        restored = said.index(
+            "-u postgres pg_restore -d postgres --clean --create --if-exists --exit-on-error <dump"
+        )
+        self.assertEqual(
+            said[restored + 1 : restored + 5],
+            ["migrate --release new", "retention horizon", "03-verify", "after-restore"],
+        )
+        self.assertIn("the dump is at 0101; migrated to 0102", done.stdout)
+
+    def test_a_dump_the_release_cannot_take_stops_nothing(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, plan=None)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("the dump is at schema 0103 and new at 0102", done.stderr)
+        self.assertIn("nothing was stopped or restored", done.stderr)
+        self.assertEqual(said, ["plan 0101"])
+
+    def test_a_failed_migration_leaves_the_services_stopped_and_holds_nothing(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, plan="migrate 0102 new", migrated=False)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("the migration from 0101 stopped; the services stay stopped", done.stderr)
+        self.assertFalse(any(line.startswith("systemctl start") for line in said))
+        self.assertNotIn("03-verify", said)
+        self.assertNotIn("after-restore", said)
+
+    def test_a_failed_proof_says_to_hold_the_jobs_before_anything_starts(self) -> None:
+        """Review 26-10-29, B1: started by hand, the restored jobs ran unheld."""
+
+        source = SCRIPT.read_text()
+        proof = source[source.index("./03-verify)") :]
+        self.assertIn("sudo haprion-backup after-restore", proof[: proof.index("\n\n")])
 
     def test_a_connection_left_restores_nothing_and_starts_what_it_stopped(self) -> None:
         done, said = self.restore(active=self.ACTIVE, connections="1")
@@ -401,6 +463,57 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         source = SCRIPT.read_text()
         self.assertIn("#     haprion-backup restore <dump>", source)
         self.assertIn('restore)        take_lock; do_restore "$1" ;;', source)
+
+
+class TheWeeklyCheckAsksWhatARestoreAsks(unittest.TestCase):
+    """Review 26-10-29, B1: `verified` was said of dumps `restore` then stopped on."""
+
+    def takes(self, *, revision: str, plan: str | None) -> subprocess.CompletedProcess[str]:
+        source = SCRIPT.read_text()
+        rows = f"printf '%s\\n' {revision}; " if revision else ""
+        program = (
+            "set -Eeuo pipefail\n"
+            'log() { echo "$*"; }\n'
+            'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+            "pg_restore() { echo 'COPY public.alembic_version (version_num) FROM stdin;'; "
+            + rows
+            + "printf '%s\\n' '\\.'; }\n"
+            + (
+                f'schema_plan() {{ echo "{plan}"; }}\n'
+                if plan is not None
+                else 'schema_plan() { echo "past the head" >&2; return 1; }\n'
+            )
+            + function("dump_revision", source)
+            + function("restore_takes", source)
+            + "restore_takes /dumps/haprion-20261029.dump\n"
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program], capture_output=True, text=True, check=False
+        )
+
+    def test_an_older_dump_is_verified_as_one_a_restore_migrates(self) -> None:
+        done = self.takes(revision="0101", plan="migrate 0102 new")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("schema 0101; a restore migrates it to 0102 (new)", done.stdout)
+
+    def test_a_dump_at_the_head_is_verified_as_it_is(self) -> None:
+        done = self.takes(revision="0102", plan="same 0102 new")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("schema 0102, the head of new", done.stdout)
+
+    def test_a_dump_a_restore_refuses_fails_the_check(self) -> None:
+        done = self.takes(revision="0103", plan=None)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("past the head", done.stderr)
+        self.assertIn("haprion-backup restore refuses this dump at schema 0103", done.stderr)
+
+    def test_a_dump_without_a_revision_fails_the_check(self) -> None:
+        done = self.takes(revision="", plan="same 0102 new")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("holds no schema revision", done.stderr)
+
+    def test_the_weekly_check_asks_it(self) -> None:
+        self.assertIn('restore_takes "$archive"', function("do_verify_restore", SCRIPT.read_text()))
 
 
 class HoldingAfterARestore(unittest.TestCase):

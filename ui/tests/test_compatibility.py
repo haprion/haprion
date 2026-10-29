@@ -550,6 +550,76 @@ class RollbackSchemaCommandTests(unittest.TestCase):
             self.assertEqual(self.ask(root, "0.99.4-cccc", "0079", "0.99.2-aaaa")[0], 0)
 
 
+class RestoreSchemaCommandTests(unittest.TestCase):
+    """`python -m haprion_ui.restore_schema`, as `haprion-backup restore` asks it (26-10-29, A1)."""
+
+    def ask(self, root: Path, revision: str, packaged: str = "new") -> tuple[int, str]:
+        from haprion_ui import restore_schema
+
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = restore_schema.main(
+                ["--platform-root", str(root), "--packaged", packaged, "--revision", revision]
+            )
+        return code, out.getvalue() + err.getvalue()
+
+    def installed(self, root: Path, *, current: str = "new", safe_from: str = "0100") -> None:
+        release_on_disk(root, "new", "0102", safe_from)
+        release_on_disk(root, "old", "0101", "0100")
+        (root / "current").symlink_to(root / "releases" / current)
+
+    def test_a_dump_at_the_head_is_restored_as_it_is_and_an_older_one_migrated(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.installed(root)
+            self.assertEqual(self.ask(root, "0102"), (0, "same 0102 new\n"))
+            self.assertEqual(self.ask(root, "0101"), (0, "migrate 0102 new\n"))
+            self.assertEqual(self.ask(root, "0100"), (0, "migrate 0102 new\n"))
+
+    def test_after_a_rollback_the_head_the_package_s_03_verify_proves_is_the_goal(self) -> None:
+        """`current` at 0101 after a rollback: migrated to 0102, which it runs on, as before."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.installed(root, current="old")
+            self.assertEqual(self.ask(root, "0101"), (0, "migrate 0102 new\n"))
+            self.assertEqual(self.ask(root, "0102"), (0, "same 0102 new\n"))
+
+    def test_a_head_the_running_release_does_not_run_on_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.installed(root, current="old", safe_from="0102")
+            code, said = self.ask(root, "0101")
+            self.assertEqual(code, 1)
+            self.assertIn("the dump is at schema 0101 and new at 0102", said)
+            self.assertIn("old, which runs, would not run on 0102", said)
+
+    def test_a_dump_past_the_head_or_unknown_to_it_is_refused_with_both_revisions(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.installed(root)
+            code, said = self.ask(root, "0103")
+            self.assertEqual(code, 1)
+            self.assertIn("the dump is at schema 0103 and new at 0102", said)
+            self.assertIn("newer release, and no migration goes back", said)
+            code, said = self.ask(root, "abc")
+            self.assertEqual(code, 1)
+            self.assertIn("which has no migration from abc", said)
+            self.assertEqual(self.ask(root, "0102", packaged="missing")[0], 1)
+
+    def test_a_dump_from_before_the_baseline_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.installed(root)
+            manifest = next((root / "releases/new").glob("venv/lib/*/site-packages"))
+            document = json.loads((manifest / "haprion_ui/compatibility.json").read_text())
+            document["requires"]["database_baseline"] = "0100"
+            (manifest / "haprion_ui/compatibility.json").write_text(json.dumps(document))
+            code, said = self.ask(root, "0099")
+            self.assertEqual(code, 1)
+            self.assertIn("from before this release's baseline 0100", said)
+
+
 class TheCheckAfterARollback(unittest.TestCase):
     """Review 26-10-29, A01: the check holds a release to the rule the rollback used.
 

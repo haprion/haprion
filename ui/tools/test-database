@@ -100,6 +100,8 @@ export HAPRION_UI_TEST_WEB_ROLE=hm_test_web
 export HAPRION_UI_TEST_WORKER_ROLE=hm_test_worker
 export HAPRION_UI_TEST_POLLER_ROLE=hm_test_poller
 export HAPRION_UI_TEST_COLLECTOR_ROLE=hm_test_collector
+# The server's own pg_dump and psql, for a check of a dump restored (26-10-29).
+export HAPRION_UI_TEST_PG_BINDIR="$pg_bindir"
 
 (cd "${root}/ui" && "${python_bin%/python}/alembic" upgrade head)
 #

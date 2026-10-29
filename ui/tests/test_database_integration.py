@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -8827,3 +8828,178 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
 
         owned = ((), ("*.apps.example.com", "!grafana.apps.example.com"))
         self.assertEqual(self.paths(owned=owned), ["/Shop.Apps.Example.com:80"])
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class ADumpFromBeforeTheHead(unittest.TestCase):
+    """Review 26-10-29, A1/B1: a dump from before 0102 stopped `restore` on 03-verify.
+
+    `haprion-backup restore` itself, stubbed only where it reaches the machine:
+    the units, sudo, the release on disk, and `migrate` and `03-verify`, which
+    run alembic and 03-verify's own grant list against a database of their own.
+    """
+
+    NAME = "haprion_restore_check_a1"
+    REPOSITORY = Path(__file__).resolve().parents[2]
+    GRANTS = (
+        "select grantee, table_name, privilege_type,"
+        "       string_agg(column_name, ', ' order by column_name)"
+        "  from information_schema.column_privileges"
+        " where table_schema = 'public' and grantee like 'app\\_%'"
+        " group by grantee, table_name, privilege_type"
+        " order by grantee, table_name, privilege_type"
+    )
+
+    def setUp(self) -> None:
+        self.bindir = os.environ["HAPRION_UI_TEST_PG_BINDIR"]
+        self.socket = os.environ["HAPRION_UI_TEST_DATABASE_SOCKET"]
+        self.role = os.environ["HAPRION_UI_TEST_MIGRATION_ROLE"]
+        self.directory = Path(tempfile.mkdtemp(prefix="restore-"))
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.superuser(f'drop database if exists "{self.NAME}"')
+        self.superuser(f'create database "{self.NAME}" owner "{self.role}"')
+        self.addCleanup(self.superuser, f'drop database if exists "{self.NAME}" with (force)')
+        with psycopg.connect(f"dbname={self.NAME} host={self.socket}", autocommit=True) as c:
+            c.execute("create extension pg_trgm")
+        verify = (self.REPOSITORY / "install/platform/03-verify").read_text()
+        listed = re.search(r"^expected_grants=\$\(cat <<'EOF'\n(.*?)^EOF$", verify, re.M | re.S)
+        if listed is None:
+            self.fail("03-verify no longer lists its grants in the shape this reads")
+        self.expected = listed.group(1).strip()
+
+    def superuser(self, statement: str) -> None:
+        with psycopg.connect(DSN, autocommit=True) as connection:
+            connection.execute(statement)
+
+    def alembic(self, *arguments: str) -> None:
+        subprocess.run(  # noqa: S603 - this environment's alembic, fixed arguments
+            [sys.executable, "-m", "alembic", *arguments],
+            cwd=self.REPOSITORY / "ui",
+            env={
+                **os.environ,
+                "HAPRION_UI_DATABASE_URL": (
+                    f"postgresql+psycopg://{self.role}@/{self.NAME}?host={self.socket}"
+                ),
+            },
+            check=True,
+            capture_output=True,
+        )
+
+    def scratch(self) -> psycopg.Connection:
+        return psycopg.connect(f"dbname={self.NAME} host={self.socket} user={self.role}")
+
+    def granted(self) -> str:
+        with self.scratch() as connection, connection.cursor() as cursor:
+            cursor.execute(self.GRANTS)
+            return "\n".join("\t".join(row) for row in cursor.fetchall())
+
+    def step(self, name: str, body: str) -> None:
+        path = self.directory / "steps" / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(f"#!/bin/bash\nset -e\n{body}")
+        path.chmod(0o755)
+
+    def restore(self, dump: Path) -> subprocess.CompletedProcess[str]:
+        source = (self.REPOSITORY / "install/platform/bin/haprion-backup").read_text()
+
+        def function(name: str) -> str:
+            found = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", source, re.M | re.S)
+            if found is None:
+                self.fail(f"haprion-backup has no {name}")
+            return found.group(0)
+
+        units = re.search(r"^RESTORE_UNITS=\(\n.*?^\)\n", source, re.M | re.S)
+        if units is None:
+            self.fail("haprion-backup has no RESTORE_UNITS")
+        root = self.directory / "platform"
+        site = root / "releases/new/venv/lib/python3/site-packages"
+        (site / "haprion_ui").mkdir(parents=True)
+        shutil.copy(self.REPOSITORY / "ui/src/haprion_ui/compatibility.json", site / "haprion_ui")
+        (site / "haprion_ui-0.1.0.dist-info").mkdir()
+        (site / "haprion_ui-0.1.0.dist-info/entry_points.txt").write_text(
+            "[console_scripts]\nhaprion-worker = haprion_ui.worker:_entry\n"
+        )
+        (root / "current").symlink_to(root / "releases/new")
+        expected = self.directory / "expected-grants"
+        expected.write_text(self.expected)
+        self.step(
+            "migrate",
+            f'echo "migrate $*"\ncd {self.REPOSITORY / "ui"}\nexport HAPRION_UI_DATABASE_URL='
+            f"postgresql+psycopg://{self.role}@/{self.NAME}?host={self.socket}\n"
+            f"exec {sys.executable} -m alembic upgrade head\n",
+        )
+        self.step(
+            "03-verify",
+            f'actual="$(psql -U {self.role} -d {self.NAME} -qtAX -F "$(printf "\\t")" '
+            f'-c "{self.GRANTS}")"\n'
+            f'[[ "$actual" == "$(cat {expected})" ]] || {{ echo "grants differ" >&2; exit 1; }}\n',
+        )
+        program = (
+            "set -Eeuo pipefail\n"
+            'log() { echo "$*"; }; warn() { echo "WARNING: $*" >&2; }; step_log() { :; }\n'
+            'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+            # Nothing runs, and the dump is opened by this account, not by postgres.
+            'systemctl() { [[ "$1" != is-active ]] || return 1; }\n'
+            'sudo() { shift 2; "$@"; }\n'
+            f"schema_plan() {{ {sys.executable} -m haprion_ui.restore_schema --platform-root {root}"
+            ' --packaged new --revision "$1"; }\n'
+            f"DB_NAME={self.NAME}\nDB_ROLE={self.role}\n"
+            + "".join(
+                re.search(rf"^{name}\(\) .*\n", source, re.M).group(0)  # type: ignore[union-attr]
+                for name in ("counted", "psql_as", "psql_scratch")
+            )
+            + units.group(0)
+            + f"PLATFORM_STEPS={self.directory / 'steps'}\n"
+            f"COLLECTOR_CONFIG={self.directory / 'none'}\nCOLLECTOR_COMMAND=/bin/false\n"
+            f"RETENTION_COMMAND=/bin/false\nRETENTION_TIMER={self.directory / 'none'}\n"
+            + "".join(
+                function(name)
+                for name in ("dump_revision", "do_after_restore", "do_restore", "start_units")
+            )
+            + 'do_restore "$1"\n'
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program, "bash", str(dump)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "PATH": f"{self.bindir}:{os.environ['PATH']}",
+                "PGHOST": self.socket,
+            },
+        )
+
+    def test_a_dump_at_0101_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.alembic("upgrade", "0101")
+        with self.scratch() as connection:
+            connection.execute(
+                "insert into job (operation, cluster, payload, idempotency_key)"
+                " values ('deploy', 'alpha', '{}', %s)",
+                (uuid4(),),
+            )
+            connection.commit()
+        self.assertNotEqual(self.granted(), self.expected, "0101 already grants what 0102 does")
+        dump = self.directory / "before-0102.dump"
+        subprocess.run(  # noqa: S603 - this cluster's pg_dump, fixed arguments
+            [f"{self.bindir}/pg_dump", "-h", self.socket, "-U", self.role, "-d", self.NAME,
+             "--format=custom", f"--file={dump}"],
+            check=True,
+        )  # fmt: skip
+        self.alembic("upgrade", "head")
+        self.assertEqual(self.granted(), self.expected)
+
+        done = self.restore(dump)
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        head = json.loads((self.REPOSITORY / "ui/src/haprion_ui/compatibility.json").read_text())
+        head = head["requires"]["database_head"]
+        self.assertIn(f"the dump is at 0101; migrated to {head}", done.stdout)
+        self.assertEqual(self.granted(), self.expected)
+        with self.scratch() as connection, connection.cursor() as cursor:
+            cursor.execute("select version_num from alembic_version")
+            self.assertEqual(_first(cursor), head)
+            cursor.execute("select count(*) from job where held_since is null")
+            self.assertEqual(_first(cursor), 0)
+            cursor.execute("select count(*) from audit_event where action = 'jobs_held'")
+            self.assertEqual(_first(cursor), 1)

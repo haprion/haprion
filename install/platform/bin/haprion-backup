@@ -141,6 +141,54 @@ archive_counts() {
 }
 
 #
+# The schema revision a dump holds: the one row of its alembic_version, read
+# from the archive without a database, like the counts above.
+#
+dump_revision() {
+    local archive="$1" revision
+    revision="$(pg_restore --data-only --table=alembic_version --file=- "$archive" \
+                | awk '/^COPY /{rows=1; next} /^\\\.$/{rows=0} rows')"
+    [[ "$revision" =~ ^[0-9A-Za-z_]{1,32}$ ]] \
+        || die "$(basename "$archive") holds no schema revision; it is not a dump of this database"
+    echo "$revision"
+}
+
+#
+# The import package of the UI release a Python interpreter belongs to, asked of
+# the release itself: the package behind its `haprion-worker` command. A release
+# this one replaces or rolls back to may call its package something else; the
+# command is what every release has. The same function in lib.sh,
+# haprion-backup, haprion-rollback and haprion-web, held together by a test.
+#
+release_module() {
+    "$1" -I -c 'from importlib.metadata import entry_points
+print(entry_points(group="console_scripts")["haprion-worker"].module.partition(".")[0])'
+}
+
+UI_PLATFORM_ROOT=/opt/haprion-ui
+UI_PAYLOAD=/usr/lib/haprion/ui/PAYLOAD
+
+#
+# Where a dump at `revision` goes once restored (review 26-10-29, A1): `same
+# <head> <release>`, or `migrate <head> <release>` for an older one, else the
+# reason on stderr. Asked of the release this package installed, whose head the
+# package's 03-verify proves: the release `current` points at, except after a
+# rollback, when `current` is an older release that runs on that head
+# (haprion_ui.restore_schema).
+#
+schema_plan() {
+    local revision="$1" packaged python
+    packaged="$(sed -n 's/^RELEASE_ID=//p' "$UI_PAYLOAD" 2>/dev/null || true)"
+    python="${UI_PLATFORM_ROOT}/releases/${packaged}/venv/bin/python"
+    if [[ ! "$packaged" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ || ! -x "$python" ]]; then
+        echo "the release this package installed (${UI_PAYLOAD}) is not on disk; reinstall the haprion-ui package" >&2
+        return 1
+    fi
+    "$python" -I -m "$(release_module "$python").restore_schema" \
+        --platform-root "$UI_PLATFORM_ROOT" --packaged "$packaged" --revision "$revision"
+}
+
+#
 # A row count of zero everywhere would compare equal against an empty restore,
 # so the restore must bring back the schema's version: every migrated
 # database holds exactly one row in alembic_version, the newest installation
@@ -264,6 +312,23 @@ restored_hash_intact() {
     log "  ok       a restored password hash is intact"
 }
 
+#
+# Whether `restore` takes the dump, asked as it asks (review 26-10-29, B1):
+# this check said `verified` of the dumps from before an update that migrated,
+# and `restore` stopped on each of them.
+#
+restore_takes() {
+    local archive="$1" revision plan verdict head release
+    revision="$(dump_revision "$archive")"
+    plan="$(schema_plan "$revision")" || die "haprion-backup restore refuses this dump at schema ${revision}"
+    read -r verdict head release <<<"$plan"
+    if [[ "$verdict" == migrate ]]; then
+        log "  ok       schema ${revision}; a restore migrates it to ${head} (${release})"
+    else
+        log "  ok       schema ${revision}, the head of ${release}"
+    fi
+}
+
 do_verify_restore() {
     local newest
     newest="$(find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" -printf '%f\n' \
@@ -337,6 +402,8 @@ do_verify_restore() {
     restore_brought_back "$restored"
 
     restored_hash_intact "$scratch"
+
+    restore_takes "$archive"
 
     [[ "$mismatch" -eq 0 ]] || die "the restore does not match the archive"
 
@@ -432,13 +499,26 @@ RESTORE_UNITS=(
 PLATFORM_STEPS="${HAPRION_PLATFORM_STEPS:-/usr/share/haprion-ui/install/platform}"
 COLLECTOR_CONFIG=/etc/haprion/traffic-collector.json
 COLLECTOR_COMMAND=/opt/haprion/current/bin/haprion-traffic-collector
+RETENTION_COMMAND=/usr/sbin/haprion-retention
+RETENTION_TIMER=/etc/systemd/system/haprion-retention.timer
 
 do_restore() {
-    local dump="$1" unit connections collector
+    local dump="$1" unit connections collector revision plan verdict head release
     local -a stopped=()
     [[ -f "$dump" && -r "$dump" ]] || die "cannot read the dump ${dump}"
     pg_restore --list "$dump" >/dev/null 2>&1 || die "${dump} is not a dump pg_restore can read"
     [[ -x "${PLATFORM_STEPS}/03-verify" ]] || die "${PLATFORM_STEPS}/03-verify is missing"
+    #
+    # The dump's schema, before anything stops (review 26-10-29, A1). 03-verify
+    # proves the database at the package's head, and a dump taken before an
+    # update that migrated is older: restored as it was, it failed there with
+    # the services stopped. An older one is migrated after it is restored; one
+    # the release cannot take is refused here, with nothing changed.
+    #
+    revision="$(dump_revision "$dump")"
+    plan="$(schema_plan "$revision")" \
+        || die "nothing was stopped or restored; the dump is at schema ${revision}"
+    read -r verdict head release <<<"$plan"
 
     step_log "Stopping what writes the database"
     for unit in "${RESTORE_UNITS[@]}"; do
@@ -470,9 +550,28 @@ do_restore() {
     fi
     log "  restored ${DB_NAME} from $(basename "$dump")"
 
+    #
+    # By the release's own migrations; the release that runs was asked by the
+    # rollback's rule whether it runs on that head, and does, as it did before
+    # the restore. The partitions ahead follow, as after an update's
+    # migration: one may have added a partitioned table.
+    #
+    if [[ "$verdict" == migrate ]]; then
+        step_log "Migrating ${revision} -> ${head}"
+        (cd "$PLATFORM_STEPS" && ./migrate --release "$release") \
+            || die "the migration from ${revision} stopped; the services stay stopped: ${stopped[*]:-none}.
+  Correct what it names and run this again."
+        log "  the dump is at ${revision}; migrated to ${head}"
+        if [[ -e "$RETENTION_TIMER" ]]; then
+            "$RETENTION_COMMAND" horizon \
+                || warn "the partitions ahead could not be made; the nightly haprion-retention will try again"
+        fi
+    fi
+
     step_log "Proving the database's privileges"
     (cd "$PLATFORM_STEPS" && ./03-verify) \
-        || die "the restored database does not grant what the contract says; the services stay stopped: ${stopped[*]:-none}"
+        || die "the restored database does not grant what the contract says; the services stay stopped: ${stopped[*]:-none}.
+  Before starting any of them, hold the restored jobs: sudo haprion-backup after-restore"
 
     step_log "Holding waiting jobs and ending sessions"
     do_after_restore

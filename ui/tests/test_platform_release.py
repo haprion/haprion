@@ -1247,6 +1247,7 @@ class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
 
     COPIES = (
         "install/lib.sh",
+        "install/platform/bin/haprion-backup",
         "install/platform/bin/haprion-rollback",
         "install/platform/bin/haprion-web",
     )

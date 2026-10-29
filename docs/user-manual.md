@@ -2913,7 +2913,8 @@ overwrite something real. Then it compares the result with what the archive hold
   against it would fail on a perfect restore. The live count is printed beside each table, to show how
   far the installation has moved since.
 - **The schema version.** The restored database must hold it. It is the one row every installation
-  has, including a new one with no account yet.
+  has, including a new one with no account yet. A dump `haprion-backup restore` would refuse fails the
+  check, and one it would migrate says so.
 - **One row read back in full.** The oldest local account's password hash must still be a valid
   Argon2id hash, because counts can match while the contents are unusable. OIDC accounts have no hash
   and are not read.
@@ -2982,7 +2983,9 @@ It stops everything that writes the database - the web and its socket, the worke
 traffic collector and the timers - and refuses while a connection to the database remains. It then
 makes the database again from the dump, checks its privileges with `03-verify`, holds the waiting jobs
 and ends the sessions (`after-restore`), starts what it stopped, and replays the traffic log (below).
-If the restore itself fails, the services stay stopped and the command says so.
+A dump from before an update that changed the schema is migrated to the installed release's schema
+before that check; one the release cannot take, such as one from a newer release, is refused before
+anything stops. If the restore itself fails, the services stay stopped and the command says so.
 
 `after-restore` holds every waiting or running job in the same way, and ends every session: the
 restored sessions include ones that were signed out or revoked since. Run on its own, it does the same
@@ -4566,7 +4569,8 @@ interface down, for three reasons, none of them visible from the symlink:
   schema. An older release runs on it only when every migration since its own schema is declared safe for
   it. The release that carries the schema answers that, from its migrations' declarations. With no such
   release on disk, or a target older than they are safe for, the rollback is refused. The way back is then
-  the dump taken before the update.
+  the dump taken before the update. `haprion-backup restore` migrates a dump to the installed release's
+  schema, so it does not by itself take the database back past a migration.
 
 So the command checks all three against the target *before* switching. It asks the target's own
 validator, because the answer is whatever that release says rather than what the script believes.

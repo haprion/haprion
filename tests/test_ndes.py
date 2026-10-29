@@ -266,6 +266,28 @@ class EnrollmentStaging(unittest.TestCase):
         self.assertFalse(instance.called)
 
 
+class ThePolicysAddress(unittest.TestCase):
+    def test_the_address_rule_is_the_profiles_own(self) -> None:
+        """Review 2026-10-29, B13: a copy let quotes and backslashes, an empty ? and # through."""
+
+        policy = NdesPolicy(
+            servers=(),
+            client_root=Path("/nonexistent"),
+            state_root=Path("/nonexistent"),
+            profiles=DnsProfilesPolicy(directory=Path("/nonexistent"), private_keys=()),
+        )
+        for endpoint in (
+            "https://ca.example.com/certsrv/mscep/mscep.dll?",
+            "https://ca.example.com/certsrv/mscep/mscep.dll#",
+            'https://ca.example.com/certsrv/"mscep.dll',
+            "https://ca.example.com/certsrv\\mscep.dll",
+        ):
+            server = NdesServer(endpoint=endpoint, issuing_ca=Path("/nonexistent"))
+            with self.subTest(endpoint=endpoint), self.assertRaises(ndes.NdesError) as caught:
+                ndes.validate_policy(policy, server, require_secure=False)
+            self.assertEqual(caught.exception.code, "bad_input")
+
+
 class IssuedCertificate(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()

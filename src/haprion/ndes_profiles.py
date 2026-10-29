@@ -71,7 +71,9 @@ def check_endpoint(value: object) -> str:
         or parsed.fragment
         or not parsed.path.startswith("/")
         or port == 0
-        or any(ord(c) <= 32 or ord(c) >= 127 or c in "\\\"'" for c in value)
+        # An empty query or fragment parses as none, and GetCACert's own
+        # query is added to the address (review 2026-10-29, B13).
+        or any(ord(c) <= 32 or ord(c) >= 127 or c in "\\\"'?#" for c in value)
     ):
         raise ProfileError("endpoint must be an HTTPS URL without credentials or query")
     return value

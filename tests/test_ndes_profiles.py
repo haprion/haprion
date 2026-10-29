@@ -115,6 +115,10 @@ class NdesProfiles(unittest.TestCase):
             "https://example-value@ca.example.com/",
             "https://ca.example.com/?challenge=example-value",
             "https://ca.example.com:bad/",
+            # Review 2026-10-29, B13: an empty query or fragment parsed as none.
+            "https://ca.example.com/certsrv/mscep/mscep.dll?",
+            "https://ca.example.com/certsrv/mscep/mscep.dll#",
+            "https://ca.example.com/certsrv/mscep/mscep.dll#example-value",
         ):
             with self.subTest(endpoint=endpoint), self.assertRaises(ProfileError) as caught:
                 ndes_profiles.check_endpoint(endpoint)

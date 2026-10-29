@@ -21,13 +21,12 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from haprion import exit_codes
 from haprion.cert_import import Material, assemble, check, split_blocks
 from haprion.config import CERTIFICATE_ID, HOSTNAME, SYSTEM_TRUST, NdesPolicy, NdesServer
 from haprion.dns_profiles import ProfileError
-from haprion.ndes_profiles import OpenedProfile, check_challenge, secure_directory
+from haprion.ndes_profiles import OpenedProfile, check_challenge, check_endpoint, secure_directory
 from haprion.ndes_state import remove_request, request_directory
 
 MAX_BYTES = 1024 * 1024
@@ -65,19 +64,13 @@ def names(values: Sequence[str]) -> tuple[str, ...]:
 
 
 def validate_policy(policy: NdesPolicy, server: NdesServer, *, require_secure: bool = True) -> None:
-    endpoint = urlsplit(server.endpoint)
-    if (
-        endpoint.scheme != "https"
-        or not endpoint.hostname
-        or endpoint.username is not None
-        or endpoint.password is not None
-        or endpoint.query
-        or endpoint.fragment
-        or any(c.isspace() for c in server.endpoint)
-    ):
+    # The address rule is the profiles' own, not a copy (review 2026-10-29, B13).
+    try:
+        check_endpoint(server.endpoint)
+    except ProfileError:
         raise NdesError(
             "bad_input", "NDES endpoint must be an HTTPS URL without credentials or query"
-        )
+        ) from None
     for path in (server.tls_ca, server.issuing_ca):
         secure_file(path, require_secure=require_secure)
     for name in ("certmonger", "getcert", "scep-submit"):

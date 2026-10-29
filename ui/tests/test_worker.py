@@ -1439,6 +1439,36 @@ class ARequestThatRanAfterTheDump(NodeChangeCase):
         self.assertEqual(calls, [])
         self.assertEqual(self.finished, [])
 
+    def test_the_end_says_its_helper_was_not_asked_again(self) -> None:
+        """Review 26-10-29, B3: it ended as a run now does, and nothing said otherwise."""
+
+        for decision, answers in (("run", [self.ran("deploy")]), ("discard", [])):
+            with self.subTest(decision):
+                self.finished.clear()
+                self.audited.clear()
+                job = replace(self.job("remove"), held_decision=decision, held_decided_by="admin")
+                self.receipts.return_value = self.kept(job)
+
+                self.run_job(job, answers)
+
+                (finished,) = self.finished
+                self.assertIn(
+                    "answer_kept", [entry["code"] for entry in finished["result"]["warnings"]]
+                )
+                (audited,) = self.audited
+                self.assertIn("answer_kept", audited["detail"]["warning_codes"])
+
+    def test_a_kept_answer_without_a_document_is_not_waited_for(self) -> None:
+        job = replace(self.job("remove"), held_decision="run", held_decided_by="admin")
+        self.receipts.return_value = answer_receipt.Receipt("answered", stdout="", exit_code=1)
+
+        calls = self.run_job(job, [])
+
+        self.assertEqual(calls, [])
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "unknown")
+        self.receipts.assert_called_once_with(str(job.request_id))
+
     def test_a_request_never_asked_runs(self) -> None:
         job = self.job("remove")
 
@@ -1446,6 +1476,7 @@ class ARequestThatRanAfterTheDump(NodeChangeCase):
 
         self.assertEqual(len(calls), 2)
         self.assertEqual(self.finished[0]["state"], "done")
+        self.assertEqual(self.finished[0]["result"]["warnings"], [])
 
     def test_a_job_whose_helper_keeps_no_answer_reads_none(self) -> None:
         job = claimed()

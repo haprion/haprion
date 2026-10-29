@@ -740,6 +740,7 @@ def run_one_job(
                 worker=worker,
                 connect=connect,
                 stopping=stopping,
+                asked_before=True,
             )
             return
 
@@ -897,17 +898,19 @@ def _conclude(
     connect: Callable[[], AbstractContextManager[Any]] | None,
     stopping: Callable[[], bool],
     adopted: bool = False,
+    asked_before: bool = False,
 ) -> None:
     """Judge a job's own run, run what follows it in the job, and write the end.
 
     `adopted`: the run is the answer its helper kept, and there is nothing
-    more to wait for.
+    more to wait for. `asked_before`: so is it, found when the job was taken
+    up, and the end says so.
     """
 
     envelope = _envelope(completed.stdout, job) if completed.stdout_error is None else None
     if _stopped_under_it(stopping, envelope, job, job.operation):
         return
-    if not adopted and _answer_still_to_come(completed, envelope, job):
+    if not (adopted or asked_before) and _answer_still_to_come(completed, envelope, job):
         return
     state, outcome, result = _judge_run(completed, envelope)
 
@@ -940,6 +943,18 @@ def _conclude(
             if followed is None:
                 return
             state, outcome, result, exit_code, stderr = followed
+    if asked_before:
+        #
+        # Done in seconds on Run, as a run now would be: in the trail and on
+        # Jobs it read as one, while the node changed when the helper ran it
+        # (review 26-10-29, B3). Recovery's adoption has `job_adopted`.
+        #
+        result = _with_warning(
+            result,
+            "answer_kept",
+            "its helper had answered this request before and was not asked again;"
+            " the job ends on that answer",
+        )
 
     _finish_on(
         connection,

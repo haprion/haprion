@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import unittest
 from dataclasses import replace
@@ -605,6 +606,39 @@ class TheErrorCodeReachesThePage(LoginTestCase):
         #
         quiet = job(state="done", outcome="done", result=warned, operation="cert_issue")
         self.assertNotIn("vip_not_owned", self.page([replace(quiet, cluster=None)]))
+
+    def test_what_the_worker_says_about_the_job_is_shown_whatever_its_step(self) -> None:
+        """Review 26-10-29, B3 and O08: written by the worker and stored, and never drawn."""
+
+        for operation, code, state in (
+            ("cluster_node", "answer_kept", "done"),
+            ("cluster_node", "answer_kept", "unknown"),
+            ("dns_profile_apply", "profile_row_changed", "done"),
+        ):
+            with self.subTest(code=code, state=state):
+                said = {
+                    "warnings": [
+                        {"code": "vip_not_owned", "message": "a helper's own"},
+                        {"code": code, "message": "the worker's sentence"},
+                    ]
+                }
+                row = job(state=state, outcome=state, result=said, operation=operation)
+                body = self.page([row])
+                self.assertIn(f"Warning:</span> <code>{code}</code>", body)
+                self.assertIn("— the worker&#39;s sentence", body)
+                self.assertNotIn("a helper&#39;s own", body)
+
+    def test_every_warning_the_worker_adds_is_one_the_page_shows(self) -> None:
+        tree = ast.parse(Path(worker.__file__).read_text(encoding="utf-8"))
+        added = {
+            node.args[1].value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_with_warning"
+            and isinstance(node.args[1], ast.Constant)
+        }
+        self.assertEqual(added, jobs.WORKER_WARNINGS)
 
     def test_a_partial_run_across_the_nodes_is_not_called_failed(self) -> None:
         partial = job(state="partial", outcome="partial", result={"warnings": []})

@@ -2955,7 +2955,7 @@ and the worker holds every such job:
   of it ran.
 - A waiting job whose answer the manager already kept is not run again. That is a node change, for
   example, that ran after the backup was taken. **Run** and **Discard** end it on that answer, as for a
-  running job below.
+  running job below. Its row on *Jobs* and its audit entry carry the warning `answer_kept`.
 - A job that was *running* when the host went down or was backed up is held too; stopping only the
   manager's services holds nothing. Its own step may have finished: a node change, for example, whose
   answer the manager kept. **Run** goes on with what follows it in the job, such as the deploy after a

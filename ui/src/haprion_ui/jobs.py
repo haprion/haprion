@@ -768,6 +768,15 @@ def ran(job: Job) -> bool:
     return not (job.state == "blocked" and error_code(job) == DISCARDED)
 
 
+#
+# The warnings the worker adds to a job's result, about the job rather than
+# about what its helper found: ended on an answer its helper gave before
+# (`answer_kept`), and a removed profile whose row was kept
+# (`profile_row_changed`).
+#
+WORKER_WARNINGS = frozenset({"answer_kept", "profile_row_changed"})
+
+
 def warnings_of(job: Job) -> tuple[tuple[str, str], ...]:
     """The code and sentence of each warning the job's result carries, in order."""
 
@@ -1087,13 +1096,15 @@ def _view(
     # Every warning of a partial run; of a completed one only a deploy's, whose
     # warnings are each about the cluster (deploy_run). Other helpers' warnings
     # on success are not measured, and a note under every green row would bury
-    # the ones that mean something, as the diagnostics comment below says.
+    # the ones that mean something, as the diagnostics comment below says. What
+    # the worker says of the job itself is shown whatever the step (review
+    # 26-10-29, B3 and O08).
     #
     warned = (
         warnings_of(job)
         if job.state == "partial"
         or (job.state == "done" and ending_step(job) in {"deploy", "cert_deploy"})
-        else ()
+        else tuple(entry for entry in warnings_of(job) if entry[0] in WORKER_WARNINGS)
     )
     return JobView(
         id=job.id,

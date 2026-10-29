@@ -1,10 +1,12 @@
 """A socket helper's answer, kept where the worker can read it after a restart (B367).
 
 The helpers behind the manager's sockets (`Accept=yes`) run in systemd units of
-their own. A stop or restart of the worker - a UI release, needrestart, a
-reboot - ends the worker's client and not the helper: the operation goes on as
-root and its answer reaches a closed connection. Recovery then had nothing to
-read and wrote `unknown` while a node restore was still running.
+their own. A stop or restart of the worker on its own - a UI release,
+needrestart - ends the worker's client and not the helper: the operation goes
+on as root and its answer reaches a closed connection. Recovery then had
+nothing to read and wrote `unknown` while a node restore was still running. A
+reboot ends the helper too, and its receipt, let go with no answer in it, is
+read as silent.
 
 So the helper keeps a receipt, one file per request under ROOT:
 

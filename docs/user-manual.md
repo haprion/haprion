@@ -4035,12 +4035,13 @@ widen what may be run; only that file does.
 
 **A helper that outlives a stopped worker.** The helpers behind sockets - node and cluster changes,
 node backups and restores, receivers - run in systemd units of their own. A worker that is stopped or
-restarted - a UI release, `needrestart`, a reboot - does not stop them. Each keeps its answer in
-`/var/lib/haprion/answers` (root's, readable by the worker, removed after two weeks). The job stays
-*running* while its helper works, and then ends on the helper's own answer, with what follows it in the
-same job: a node change's deploy runs then. A helper that ended without an answer leaves the job
-`unknown`, and so does an answer removed before the job ended: a held job nobody answered for two
-weeks ends `unknown` with the code `answer_absent`.
+restarted on its own - a UI release, `needrestart` - does not stop them; a reboot does. Each keeps its
+answer in `/var/lib/haprion/answers` (root's, readable by the worker). The job stays *running* while its
+helper works, and then ends on the helper's own answer, with what follows it in the same job: a node
+change's deploy runs then. A helper that ended without an answer leaves the job `unknown`, and so does
+one a reboot ended mid-work. An answer is kept two weeks from its helper's end. A held job whose answer
+is gone by then ends `unknown` with the code `answer_absent`: when nobody answered in time, or after the
+host was restored from an image older than that.
 
 **Jobs from before a restart or a restore.** A manager restored from an image or a backup comes up holding
 the jobs that were waiting when the backup was taken - and those ran back then. Running them again could,

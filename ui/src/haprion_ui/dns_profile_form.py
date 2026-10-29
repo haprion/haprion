@@ -30,6 +30,8 @@ from haprion.dns_provider_catalog import (
     provider_by_id,
 )
 
+from haprion_ui import jobs as queue
+
 MAX_VALUE = 4096
 MAX_JSON_VALUE = 16384
 MAX_LIST_ITEMS = 32
@@ -251,6 +253,13 @@ def profile_status(
         job_revision = job.payload.get("revision")
         removing = job.payload.get("remove") is True
         if job.state in {"pending", "running"}:
+            #
+            # A held job, or one no worker holds, says so: "Applying" kept the
+            # list refreshing until somebody answered it (review 26-10-29).
+            #
+            state = queue.busy_with(job)
+            if not state.working:
+                return ProfileStatus(state.label, state.tone, False)
             return ProfileStatus("Removing" if removing else "Applying", "info", False)
         if removing:
             error = job.result.get("error") if isinstance(job.result, dict) else None

@@ -21,7 +21,8 @@ from uuid import UUID, uuid4
 from haprion.dns_profile_keys import generate, render_public_key
 from haprion.dns_profiles import open_profile
 
-from haprion_ui import auth, db, dns_profile_form
+from haprion_ui import auth, db, dns_profile_form, jobs
+from tests.test_busy_clusters import held_job, workerless_job
 from tests.test_login import LoginTestCase, configuration
 from tests.test_queue_route import queued
 
@@ -172,6 +173,17 @@ class TheFormModule(unittest.TestCase):
             status("cf-main", 1, [queued(operation="cert_issue", cluster=None)]).label,
             "Not applied",
         )
+        #
+        # Review 26-10-29 (rig): a held apply said "Applying" and kept the list
+        # refreshing until somebody answered it.
+        #
+        for stuck, label, tone in (
+            (held_job, jobs.HELD, "warning"),
+            (workerless_job, jobs.NO_WORKER, "critical"),
+        ):
+            with self.subTest(state=stuck.__name__):
+                said = status("cf-main", 1, [stuck(job("pending", 1))])
+                self.assertEqual((said.label, said.tone, said.usable), (label, tone, False))
 
 
 class ProfileRouteTestCase(LoginTestCase):
@@ -416,6 +428,20 @@ class SavingAProfile(ProfileRouteTestCase):
         response = self.post(self.writing_client())
         self.assertEqual(response.status_code, 303)
         self.assertEqual(self.state_reads, 3)
+
+    def test_a_held_apply_job_does_not_keep_the_list_refreshing(self) -> None:
+        self.rows = [profile_row()]
+        held = held_job(
+            queued(
+                operation="dns_profile_apply",
+                cluster=None,
+                payload={"profile": "cf-main", "revision": 1},
+            )
+        )
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[held]):
+            page = self.writing_client().get("/dns-profiles").text
+        self.assertIn(">Held<", page)
+        self.assertNotIn('name="haproxy-live"', page)
 
     def test_a_slow_apply_job_is_left_to_the_list_s_own_refresh(self) -> None:
         self.job_states = ["running"]

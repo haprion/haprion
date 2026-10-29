@@ -17,7 +17,8 @@ from uuid import uuid4
 
 from haprion.cert_receiver import crypt
 
-from haprion_ui import auth, certificate_receivers
+from haprion_ui import auth, certificate_receivers, jobs
+from tests.test_busy_clusters import held_job, workerless_job
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered
@@ -748,3 +749,38 @@ class TheJobs(ReceiverRouteTestCase):
             page,
         )
         self.assertNotIn("receiver-ghost", page)
+
+
+class AJobThatDoesNotFinishByItself(ReceiverRouteTestCase):
+    """Review 26-10-29 (rig): a held job spun on its row and the pages redrew every 3 s."""
+
+    def test_the_row_says_held_or_no_worker_without_the_spinner(self) -> None:
+        removing = queued(
+            operation="cert_receiver",
+            cluster=None,
+            state="running",
+            payload={"receiver": "lb-02.example.net", "action": "remove"},
+        )
+        for stuck, label, tone in (
+            (held_job, jobs.HELD, "warning"),
+            (workerless_job, jobs.NO_WORKER, "critical"),
+        ):
+            with self.subTest(state=stuck.__name__):
+                (item,) = certificate_receivers.recent_activity([stuck(removing)])
+                self.assertEqual((item.badge, item.tone), (label, tone))
+                self.assertTrue(item.busy)
+                self.assertFalse(item.working)
+                self.activity = [replace(stuck(removing), id=8)]
+                page = self.writing_client().get("/certificates/receivers").text
+                self.assertIn(f'data-busy="lb-02.example.net"><span>{label}</span>', page)
+
+    def test_neither_page_redraws_itself_for_a_held_certificate_job(self) -> None:
+        held = held_job(queued(operation="cert_issue", cluster=None, payload={}))
+        running = queued(operation="cert_issue", cluster=None, state="running", payload={})
+        for path in ("/certificates/receivers", "/settings"):
+            with self.subTest(path):
+                with mock.patch("haprion_ui.db.recent_jobs", return_value=[running]):
+                    self.assertIn('name="haproxy-live"', self.writing_client().get(path).text)
+                with mock.patch("haprion_ui.db.recent_jobs", return_value=[held]):
+                    page = self.writing_client().get(path).text
+                self.assertNotIn('name="haproxy-live"', page)

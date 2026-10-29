@@ -33,6 +33,8 @@ from typing import Any
 from haprion.cert_receiver import HTTPS_PREFIX
 from haprion.config import RECEIVER_ID, RECEIVER_TRANSPORTS, check_allow_entries
 
+from haprion_ui import jobs as queue
+
 # The key file the instructions name on the receiving host. A name, not a
 # path the manager decides: the host's operator may keep it elsewhere and
 # edits one line.
@@ -329,16 +331,27 @@ class Activity:
     tone: str
     message: str
     finished_at: datetime | None = None
+    #
+    # *Held* or *No worker* for a job that does not finish by itself; it holds
+    # the row as a running one does, without the spinner (review 26-10-29).
+    #
+    stuck: str = ""
 
     @property
     def busy(self) -> bool:
-        return self.tone == "info"
+        return self.tone == "info" or bool(self.stuck)
+
+    @property
+    def working(self) -> bool:
+        return self.busy and not self.stuck
 
     @property
     def badge(self) -> str:
         """The label on the row, where the receiver's name is already there."""
 
         busy, done, failed = WORDS.get(self.action, WORDS["add"])
+        if self.stuck:
+            return self.stuck
         if self.busy:
             return busy
         if self.tone == "healthy":
@@ -421,6 +434,13 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
         target = f"for {receiver}" if action in ("secret", "key") else receiver
         finished = getattr(job, "finished_at", None)
         if job.state in {"pending", "running"}:
+            state = queue.busy_with(job)
+            if not state.working:
+                label = f"{state.label}: {verb} {target}"
+                activity.append(
+                    Activity(job.id, receiver, action, label, state.tone, "", stuck=state.label)
+                )
+                continue
             activity.append(Activity(job.id, receiver, action, f"{verb} {target}", "info", ""))
             continue
         envelope = job.result if isinstance(job.result, Mapping) else {}

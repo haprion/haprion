@@ -2952,8 +2952,8 @@ and the worker holds every such job:
 - *Events → Jobs* shows it as *Held*, with **Run** and **Discard** for an admin, and *Needs attention*
   says how many wait. Until it is answered it holds its cluster's place in the queue, or the
   certificates' place. A new job there is refused with a sentence that says so, a certificate form says
-  so before it is sent, and the cluster's badge and the certificate's row say *Held* in amber, without
-  the spinner of a job that runs; the page does not refresh for it. A job no worker holds is said the
+  so before it is sent, and every badge or row that names the job says *Held* in amber, without the
+  spinner of a job that runs; the page does not refresh for it. A job no worker holds is said the
   same way, as *No worker* in red.
 - A discarded job that waits in the queue ends *blocked* with the code `held_discarded`; nothing more
   of it ran.

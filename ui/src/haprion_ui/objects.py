@@ -37,7 +37,7 @@ from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
 from haprion_ui.db import ClusterObjects, Job
 from haprion_ui.history import VersionView
-from haprion_ui.jobs import ATTENTION, deploys, error_code, published
+from haprion_ui.jobs import ATTENTION, InFlight, busy_with, deploys, error_code, published
 from haprion_ui.proxies import ProxyView, Tone
 
 #
@@ -511,8 +511,8 @@ def stored_only(
 OBJECT_PUBLISHES = frozenset({"changes_publish"})
 
 
-def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
-    """Objects with a publish job that has not finished.
+def names_being_published(jobs: Iterable[Job]) -> dict[str, InFlight]:
+    """Objects with a publish job that has not finished, and how that job is drawn.
 
     Read from the payload rather than from a column, because the job table has
     no notion of what an operation is about - which is deliberate: the worker
@@ -521,17 +521,21 @@ def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
 
     `pending` and `running` only. A publish that finished is answered by the
     objects cache instead, and one that failed must not leave a row spinning
-    forever as though it were still trying.
+    forever as though it were still trying. Nor does one held after a restart
+    or one no worker holds: it says so (review 26-10-29).
     """
 
-    waiting: set[str] = set()
+    waiting: dict[str, InFlight] = {}
     for job in jobs:
         if job.operation not in OBJECT_PUBLISHES or job.state not in {"pending", "running"}:
             continue
         named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
         if isinstance(named, Mapping):
-            waiting.update(name for name in named if isinstance(name, str))
-    return frozenset(waiting)
+            state = busy_with(job)
+            for name in named:
+                if isinstance(name, str):
+                    waiting.setdefault(name, state)
+    return waiting
 
 
 def carried_since_deploy(jobs: Iterable[Job]) -> frozenset[str]:

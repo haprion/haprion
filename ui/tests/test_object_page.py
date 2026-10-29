@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 
 from haprion_ui import demo, metrics, search_index
 from haprion_ui.db import Job, ProxyDraft
+from tests.test_busy_clusters import held_job, workerless_job
 from tests.test_cluster_traffic import measurement
 from tests.test_login import LoginTestCase, configuration
 
@@ -572,6 +573,18 @@ class ADraftOnItsWay(DraftReading):
         """
 
         self.assertIn("waiting.js", self.listing([self.job("pending")]))
+
+    def test_a_publish_that_does_not_finish_by_itself_is_not_waited_for(self) -> None:
+        """Review 26-10-29 (rig): a held publish spun "Waiting for publish" until answered."""
+
+        for stuck, drawn in (
+            (held_job, 'status-badge-warning waiting-badge">Held<'),
+            (workerless_job, 'status-badge-critical waiting-badge">No worker<'),
+        ):
+            with self.subTest(state=stuck.__name__):
+                body = self.listing([stuck(self.job("pending"))])
+                self.assertNotIn("Waiting for publish", body)
+                self.assertIn(drawn, body)
 
     def test_a_running_publish_says_the_same(self) -> None:
         self.assertIn("Waiting for publish", self.listing([self.job("running")]))

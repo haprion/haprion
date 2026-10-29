@@ -1,3 +1,4 @@
+{% from "_busy.html" import busy_badge %}
 {#
   The rows of one cluster's proxy table, in one place because they are rendered
   from two: the page, and the refresh that replaces them while something is on
@@ -9,7 +10,7 @@
   shape of "Reconfigured · deploy to activate" (B257). `stored` is whether the
   object is published already: a saved object that is not is new.
 #}
-{% macro draft_badge(draft, queued, failed, stored=true) %}{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
+{% macro draft_badge(draft, queued, failed, stored=true) %}{% if draft.object_id in queued and not queued[draft.object_id].working %}{{ busy_badge(queued[draft.object_id], extra="waiting-badge") }}{% elif draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
         A publish that was refused used to leave this row saying "Draft" and
         nothing else. The row stopped spinning, the work stayed, and the reason
         was on the jobs page behind a click nobody had a reason to make - so

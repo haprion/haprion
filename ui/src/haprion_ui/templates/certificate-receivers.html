@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% from "_back.html" import back_button %}
 {% block title %}Receivers — Haprion{% endblock %}
-{% block head_extra %}{% if certificate_job %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block head_extra %}{% if certificate_job and certificate_job.working %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {#
   Who fetches certificates from this manager (B142). A row is a host, how it
@@ -21,7 +21,7 @@
 {% endif %}
 
 {% macro job_badge(item) -%}
-<span class="status-badge status-badge-{{ item.tone }} receiver-job-badge"{% if item.busy %} data-busy="{{ item.receiver }}"{% endif %}>{% if item.busy %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}<span>{{ item.badge }}</span><span aria-hidden="true">·</span><a href="/jobs#job-{{ item.job_id }}">Job {{ item.job_id }}</a></span>{% if item.message %} <small class="receiver-job-message">{{ item.message }}</small>{% endif %}
+<span class="status-badge status-badge-{{ item.tone }} receiver-job-badge"{% if item.busy %} data-busy="{{ item.receiver }}"{% endif %}>{% if item.working %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}<span>{{ item.badge }}</span><span aria-hidden="true">·</span><a href="/jobs#job-{{ item.job_id }}">Job {{ item.job_id }}</a></span>{% if item.message %} <small class="receiver-job-message">{{ item.message }}</small>{% endif %}
 {%- endmacro %}
 
 <section class="cluster-card">

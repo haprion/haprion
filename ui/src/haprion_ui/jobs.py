@@ -1578,11 +1578,16 @@ NO_WORKER = "No worker"
 
 
 def no_worker(job: Job, now: datetime) -> bool:
-    """Running, not held, and no worker has held its lease for `NO_WORKER_AFTER`."""
+    """Running, not held, and no worker has held its lease for `NO_WORKER_AFTER`.
+
+    Nor any other job meanwhile: a worker that runs one under a living lease is
+    alive, and settles this one when that one ends (review 26-10-29, A2).
+    """
 
     return (
         job.state == "running"
         and not job.waits_for_decision
+        and not job.worker_busy
         and job.lease_lapsed_since is not None
         and now - job.lease_lapsed_since > NO_WORKER_AFTER
     )

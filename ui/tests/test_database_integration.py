@@ -247,8 +247,18 @@ class ARealDatabase(unittest.TestCase):
         if lapsed is not None:
             self.assertLess(lapsed, datetime.now(UTC) - timedelta(minutes=29))
         self.assertIsNone(rows[held].lease_lapsed_since)
+        #
+        # A job under a living lease is a worker alive: every row says so, and
+        # the one it lapsed beside is not said to have none (review 26-10-29, A2).
+        #
+        self.assertTrue(rows[gone].worker_busy)
 
         self.forget_job(held)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            (alone,) = [job for job in db.recent_jobs(connection, limit=1000) if job.id == gone]
+            active = db.active_job(connection, "alpha")
+        self.assertFalse(alone.worker_busy)
+        self.assertEqual((active.id, active.worker_busy) if active else None, (gone, False))
         self.assertEqual(self.drain("pause", "--wait", "3").returncode, 0)
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             pause = db.claim_pause(connection)

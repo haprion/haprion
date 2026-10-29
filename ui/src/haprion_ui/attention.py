@@ -791,10 +791,11 @@ def from_manager(
     #
     # A running job whose lease ran out long ago: its worker is stopped, hung
     # or crashing, or waits for what will not come by itself (review 26-10-29,
-    # Q01/R01). By job, so an acknowledgement names that job alone.
+    # Q01/R01). By job, so an acknowledgement names that job alone. Not with
+    # writes off, when no job moves on purpose, as the worker's row (A2).
     #
     for job in rows:
-        if jobs_module.no_worker(job, now):
+        if writes and jobs_module.no_worker(job, now):
             items.append(
                 Item(
                     kind="manager",

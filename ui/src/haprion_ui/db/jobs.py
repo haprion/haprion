@@ -43,10 +43,16 @@ class Job:
     #
     # When the lease of a running job ran out, by the database's clock; None
     # while a worker holds it, and for a job not running. Read by
-    # `recent_jobs` alone (review 26-10-29, Q01): a worker stopped or hung
-    # leaves its job `running`, and only a living worker settles it.
+    # `recent_jobs` and `active_job` (review 26-10-29, Q01): a worker stopped
+    # or hung leaves its job `running`, and only a living worker settles it.
     #
     lease_lapsed_since: datetime | None = None
+    #
+    # Whether some job runs under a living lease as this row is read: a worker
+    # alive and busy, which settles a lease run out when its own job ends
+    # (review 26-10-29, A2). The same for every row of one read.
+    #
+    worker_busy: bool = False
 
     @property
     def waits_for_decision(self) -> bool:
@@ -167,6 +173,20 @@ class RequestConflict(Exception):
     """
 
 
+#
+# A running job's lease as the web reads it: when it ran out, and whether any
+# job runs under a living one. The web holds `select` on `lease_until`, not on
+# the claim's token; `jobs.no_worker` reads both.
+#
+_LEASE_COLUMNS = (
+    "case when state = 'running' and lease_until < statement_timestamp() "
+    "     then lease_until end as lease_lapsed_since, "
+    "exists (select 1 from job living "
+    "         where living.state = 'running' "
+    "           and living.lease_until >= statement_timestamp()) as worker_busy"
+)
+
+
 def recent_jobs(
     connection: Connection[Any], *, cluster: str | None = None, limit: int = 20
 ) -> list[Job]:
@@ -186,11 +206,10 @@ def recent_jobs(
 
     with connection.cursor(row_factory=class_row(Job)) as cursor:
         cursor.execute(
-            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "select id, request_id, operation, cluster, payload, state, created_at, "  # noqa: S608 - constant
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
             "       idempotency_key, attempts, held_since, held_decision, held_decided_by, "
-            "       case when state = 'running' and lease_until < statement_timestamp() "
-            "            then lease_until end as lease_lapsed_since "
+            f"       {_LEASE_COLUMNS} "
             "  from job "
             " where (%(cluster)s::text is null or cluster = %(cluster)s) "
             "   and (state in ('pending', 'running') "
@@ -503,11 +522,10 @@ def active_job(connection: Connection[Any], cluster: str | None) -> Job | None:
 
     with connection.cursor(row_factory=class_row(Job)) as cursor:
         cursor.execute(
-            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "select id, request_id, operation, cluster, payload, state, created_at, "  # noqa: S608 - constant
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
             "       idempotency_key, attempts, held_since, held_decision, held_decided_by, "
-            "       case when state = 'running' and lease_until < statement_timestamp() "
-            "            then lease_until end as lease_lapsed_since "
+            f"       {_LEASE_COLUMNS} "
             "  from job "
             " where cluster is not distinct from %(cluster)s "
             "   and state in ('pending', 'running')",

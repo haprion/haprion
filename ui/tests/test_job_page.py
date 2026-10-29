@@ -1052,6 +1052,12 @@ class AJobNoWorkerHolds(LoginTestCase):
         #
         recent = replace(gone, lease_lapsed_since=now - timedelta(minutes=2))
         self.assertIn(">Running</span>", self.page(recent))
+        #
+        # Nor while another job runs under a living lease: its worker lives,
+        # and settles this one when that job ends (review 26-10-29, A2).
+        #
+        busy = replace(gone, worker_busy=True)
+        self.assertIn(">Running</span>", self.page(busy))
 
     def test_a_release_s_pause_is_said_above_the_jobs(self) -> None:
         """Review 26-10-29, Q06: the queue waits for the release, not for the worker."""

@@ -972,6 +972,19 @@ class TheManagersOwnServices(unittest.TestCase):
         (only,) = self.items(rows=[held])
         self.assertEqual(only.subject, "held jobs")
 
+    def test_a_living_worker_busy_with_another_job_or_writes_off_is_no_worker_gone(self) -> None:
+        """Review 26-10-29, A2: the worker settles a lapsed lease when its turn ends, and
+        with writes off no job moves on purpose."""
+
+        lapsed = NOW - jobs.NO_WORKER_AFTER - timedelta(minutes=5)
+        gone = replace(job(state="running"), id=12, lease_lapsed_since=lapsed)
+        busy = replace(gone, worker_busy=True)
+        other = replace(job(state="running", cluster="beta"), id=13, worker_busy=True)
+        self.assertEqual(self.items(rows=[busy, other]), [])
+        self.assertEqual(self.items(rows=[gone], writes=False), [])
+        (item,) = self.items(rows=[gone])
+        self.assertEqual(item.subject, "job 12")
+
     def test_jobs_a_release_holds_are_not_the_worker_s_silence(self) -> None:
         """Review 26-10-29, Q06: the claims are paused, and the worker does as it should."""
 

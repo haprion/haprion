@@ -193,9 +193,8 @@ def judge(
         return Judgement(
             "abandon",
             "answer_absent",
-            "its helper kept no answer: it never began, or its answer was removed"
-            f" {answer_receipt.KEEP_SECONDS // 86400} days after it ended, so what it did is not"
-            " known",
+            "its helper kept no answer: it never began, or its answer was removed after it was"
+            f" kept {answer_receipt.KEEP_SECONDS // 86400} days, so what it did is not known",
         )
 
     if job.operation in REPEATABLE:

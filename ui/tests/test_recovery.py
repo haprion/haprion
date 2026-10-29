@@ -345,8 +345,8 @@ class AHelperThatOutlivedItsWorker(unittest.TestCase):
         self.assertEqual((judgement.verdict, judgement.code), ("abandon", "answer_absent"))
         self.assertEqual(
             judgement.reason,
-            "its helper kept no answer: it never began, or its answer was removed 14 days"
-            " after it ended, so what it did is not known",
+            "its helper kept no answer: it never began, or its answer was removed after it"
+            " was kept 14 days, so what it did is not known",
         )
 
     def test_the_operations_that_keep_an_answer_are_the_ones_whose_helper_does(self) -> None:

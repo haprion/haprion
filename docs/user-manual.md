@@ -7958,7 +7958,8 @@ that address.
 **Pausing the worker for a release.** Activating a UI release, and `haprion-rollback`, restart the
 worker. So both first pause its claims (`haprion-drain`) and wait until no job is running - fifteen
 minutes at most (`DRAIN_SECONDS`). After that they stop without switching anything and lift the
-pause. A pause left behind by a killed run ends by itself five minutes after its wait would have.
+pause. An update of the UI package pauses before it dumps and migrates the database, so one that stops
+there leaves the schema as it was. A pause left behind by a killed run ends by itself five minutes after its wait would have.
 While the pause holds, *Jobs* says until when.
 
 Step 07 installs both sockets wherever it installs a worker. `haprion-node-restore` and

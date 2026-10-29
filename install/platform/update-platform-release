@@ -261,6 +261,13 @@ on_exit() {
         settle_files "$base"
     fi
     #
+    # The pause this run took before the dump, lifted however it ends. One a
+    # killed run leaves ends by itself.
+    #
+    if [[ "${paused:-no}" == yes ]]; then
+        /usr/sbin/haprion-drain resume || warn "the worker's claims were not resumed; run: sudo haprion-drain resume"
+    fi
+    #
     # The copy and the marker go once the update is proved or the release last
     # proved runs again with its files. An unproved release left running with
     # its files keeps the marker and the copy of the release last proved. A
@@ -346,6 +353,19 @@ step "Checking prerequisites and rollback-safe schema transition"
 # as unneeded. On a running cluster this changes nothing else.
 #
 ./ensure-postgresql
+
+#
+# Claims paused, and the running jobs waited for, before the dump and the
+# migration (review 26-10-29, Q04). install-ui-release pauses again before its
+# switch, and a job that outlasted the wait refused the update there - after
+# the schema had moved. Refused here, nothing has: the platform files go back
+# and the release that runs carries on. Only once a worker is installed.
+#
+if systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
+    step "Holding the worker's claims"
+    /usr/sbin/haprion-drain pause --wait "${DRAIN_SECONDS:-900}"
+    paused=yes
+fi
 
 #
 # A dump before a schema change, by the release's own alembic (logic review

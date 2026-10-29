@@ -132,6 +132,19 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertLess(dump, migrate)
         self.assertIn('if [[ "$schema_now" != "$schema_next" ]]; then', self.update)
 
+    def test_claims_are_held_before_the_dump_and_the_migration(self) -> None:
+        """Review 26-10-29, Q04: a job longer than the wait refused the update after the
+        schema had moved; now before, when nothing has."""
+
+        pause = self.update.index("/usr/sbin/haprion-drain pause --wait")
+        self.assertLess(self.update.index("--before-migration"), pause)
+        self.assertLess(pause, self.update.index("haprion-backup dump-before-migration"))
+        self.assertLess(pause, self.update.index('./migrate --release "$release_id"\n'))
+        ending = self.update[self.update.index("\non_exit() {") :]
+        ending = ending[: ending.index("\n}\n")]
+        self.assertIn('if [[ "${paused:-no}" == yes ]]; then', ending)
+        self.assertIn("/usr/sbin/haprion-drain resume", ending)
+
     def test_claims_are_held_before_anything_is_switched_or_restarted(self) -> None:
         """CR-12: the pause and the wait come before `current` moves and the worker restarts.
 

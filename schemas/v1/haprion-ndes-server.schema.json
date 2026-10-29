@@ -38,7 +38,12 @@
             "required": ["endpoint", "issuing_ca"],
             "properties": {
               "endpoint": { "$ref": "#/$defs/endpoint" },
-              "issuing_ca": { "type": "string", "pattern": "^/" }
+              "issuing_ca": { "type": "string", "pattern": "^/" },
+              "expires": {
+                "description": "When the first of the server's saved CA certificates expires, ISO 8601 UTC; null when the file cannot be read. Absent from a helper older than the field (B389).",
+                "type": ["string", "null"],
+                "maxLength": 32
+              }
             },
             "additionalProperties": false
           }

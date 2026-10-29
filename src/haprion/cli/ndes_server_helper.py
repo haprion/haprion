@@ -71,7 +71,11 @@ def perform(
         ndes = load_policy(policy_path).ndes
         return {
             "servers": [
-                {"endpoint": server.endpoint, "issuing_ca": str(server.issuing_ca)}
+                {
+                    "endpoint": server.endpoint,
+                    "issuing_ca": str(server.issuing_ca),
+                    "expires": ndes_servers.ca_expires(server.issuing_ca),
+                }
                 for server in (ndes.servers if ndes is not None else ())
             ]
         }

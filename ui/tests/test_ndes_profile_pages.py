@@ -42,6 +42,7 @@ class NdesRoutes(ProfileRouteTestCase):
         #
         self.servers = [ENDPOINT]
         self.states: dict[str, str] = {}
+        self.expires: dict[str, str | None] = {}
         self.asked: list[tuple[str, dict[str, Any]]] = []
         self.authorities: list[dict[str, Any]] = [
             {
@@ -58,7 +59,11 @@ class NdesRoutes(ProfileRouteTestCase):
             if action == "list":
                 return {
                     "servers": [
-                        {"endpoint": e, "issuing_ca": "/etc/haprion/ndes-ca/0.pem"}
+                        {
+                            "endpoint": e,
+                            "issuing_ca": "/etc/haprion/ndes-ca/0.pem",
+                            "expires": self.expires.get(e),
+                        }
                         for e in self.servers
                     ]
                 }
@@ -192,6 +197,22 @@ class NdesPages(NdesRoutes):
 
 class TheNdesServers(NdesRoutes):
     """B383, B385: a profile chooses among servers each confirmed from its CA."""
+
+    def test_the_server_list_says_when_each_confirmed_ca_expires(self) -> None:
+        """B389: a CA running out is seen before the renewals fail on it."""
+
+        other = "https://ca2.example.com/certsrv/mscep/mscep.dll"
+        self.servers = [ENDPOINT, other]
+        soon = datetime.now(UTC) + timedelta(days=10, hours=1)
+        self.expires = {ENDPOINT: soon.isoformat(timespec="seconds").replace("+00:00", "Z")}
+        client = self.writing_client()
+        page = client.get("/ndes-profiles").text
+        self.assertIn('<th scope="col" class="expires-column">CA expires</th>', page)
+        self.assertIn(f'<span class="certificate-date">{soon:%y-%m-%d}</span>', page)
+        self.assertIn('<span class="status-badge status-badge-warning">in 10 days</span>', page)
+        row = page[page.index(f'value="{other}"') :]
+        row = row[: row.index("</tr>")]
+        self.assertIn('<td class="expires-column" data-label="CA expires">—</td>', row)
 
     def test_without_a_server_no_profile_is_offered_or_taken(self) -> None:
         self.servers = []

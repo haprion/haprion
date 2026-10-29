@@ -407,6 +407,18 @@ def _expiry_state(
     return date, _remaining(expires_at, now), "healthy"
 
 
+def expiry_column(value: Any, *, now: datetime) -> tuple[str, str, Tone]:
+    """The registry's expiry column for an ISO time, elsewhere a CA's (B389): date, phrase, tone.
+
+    Nothing to say - "—" and no phrase - for a time that is missing or unreadable.
+    """
+
+    expires_at = _expiry(value)
+    if expires_at is None:
+        return "—", "", "unknown"
+    return _expiry_state(expires_at, lifecycle="static", now=now)
+
+
 def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
     entry = _mapping(value)
     identifier = _text(entry.get("id"), "")

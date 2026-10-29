@@ -42,8 +42,8 @@ import yaml
 
 from haprion import atomic_file, cert_lock, exit_codes, http_answer, safe_yaml
 from haprion.cert_import import ImportError_, _names, _openssl, read_bytes, split_blocks
-from haprion.cert_inventory import OPENSSL, OPENSSL_TIMEOUT
-from haprion.certificates import CERTIFICATE_BLOCK
+from haprion.cert_inventory import OPENSSL, OPENSSL_TIMEOUT, describe
+from haprion.certificates import CERTIFICATE_BLOCK, CertificateError
 from haprion.config import DEFAULT_POLICY_PATH, SYSTEM_TRUST, ConfigError, load_policy
 from haprion.dns_profiles import ProfileError
 from haprion.ndes_profiles import check_endpoint
@@ -349,6 +349,29 @@ def saved_fingerprints(path: Path) -> frozenset[str]:
         hashlib.sha256(b64decode("".join(match.group(1).split()))).hexdigest()
         for match in CERTIFICATE_BLOCK.finditer(text)
     )
+
+
+def ca_expires(path: Path) -> str | None:
+    """When the first of a server's saved CA certificates expires, as an ISO time (B389).
+
+    The chain ends with its shortest-lived certificate: from then on every
+    certificate the server issues is refused. None when the file cannot be
+    read, holds no certificate, or one of them cannot be read.
+    """
+
+    try:
+        text = path.read_text(encoding="ascii")
+    except (OSError, UnicodeError):
+        return None
+    ends = []
+    for match in CERTIFICATE_BLOCK.finditer(text):
+        try:
+            ends.append(describe(match.group(0)).not_after)
+        except CertificateError:
+            return None
+    if not ends:
+        return None
+    return min(ends).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def confirmation(found: Sequence[Authority], saved: Path | None) -> str:

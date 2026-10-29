@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from time import monotonic, sleep
 from typing import Annotated
 from urllib.parse import urlencode
@@ -452,18 +453,26 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
-    def _ndes_servers() -> tuple[list[str] | None, str]:
-        """The NDES servers the runtime policy names, or why they cannot be listed.
-
-        A profile's address must be one of them (B385). Each is added on its
-        own page, from its CA, so the form chooses among them.
-        """
+    def _ndes_server_listing() -> tuple[list[dict[str, object]] | None, str]:
+        """The NDES servers the runtime policy names, as the helper lists them, or why it cannot."""
 
         try:
             listed = ndes_server_socket.ask("list")
         except NdesServerError as exc:
             return None, str(exc)
-        return [str(server["endpoint"]) for server in listed.get("servers", [])], ""
+        return [server for server in listed.get("servers", []) if isinstance(server, dict)], ""
+
+    def _ndes_servers() -> tuple[list[str] | None, str]:
+        """The NDES servers' addresses, or why they cannot be listed.
+
+        A profile's address must be one of them (B385). Each is added on its
+        own page, from its CA, so the form chooses among them.
+        """
+
+        listing, problem = _ndes_server_listing()
+        if listing is None:
+            return None, problem
+        return [str(server["endpoint"]) for server in listing], ""
 
     @router.get("/ndes-profiles", response_class=HTMLResponse)
     def ndes_profile_list(request: Request) -> Response:
@@ -474,7 +483,17 @@ def build_router(config: Config) -> APIRouter:
             profiles = db.ndes_profiles(connection)
             recent = db.profile_jobs(connection, "ndes_profile_apply")
         manager = read_manager_certificates(request, config)
-        servers, servers_problem = _ndes_servers()
+        listing, servers_problem = _ndes_server_listing()
+        servers = None if listing is None else [str(server["endpoint"]) for server in listing]
+        #
+        # When each server's confirmed CA runs out, as the registry says it of
+        # a certificate (B389): the renewals through it fail from that day.
+        #
+        now = datetime.now(UTC)
+        expiry = {
+            str(server["endpoint"]): certificates.expiry_column(server.get("expires"), now=now)
+            for server in listing or []
+        }
         references = certificates.profile_references(manager, field="ndes_profile")
         statuses = {
             p.id: dns_profile_form.without_stale_refusal(
@@ -496,6 +515,7 @@ def build_router(config: Config) -> APIRouter:
                 "servers": servers,
                 "servers_problem": servers_problem,
                 "servers_in_use": {p.endpoint for p in profiles if p.endpoint},
+                "server_expiry": expiry,
                 "server_problem": request.query_params.get("server_problem", "")[:300],
                 "refresh": any(p.label in {"Applying", "Removing"} for p in statuses.values()),
                 "section": "certificates",

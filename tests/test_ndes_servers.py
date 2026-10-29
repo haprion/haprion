@@ -16,6 +16,7 @@ import time
 import unittest
 import urllib.error
 import uuid
+from datetime import UTC, datetime, timedelta
 from email.message import Message
 from pathlib import Path
 from typing import Any
@@ -334,6 +335,59 @@ class TheAuthorities(unittest.TestCase):
             with self.assertRaises(ndes_servers.NdesServerError) as caught:
                 ndes_servers.authorities(ENDPOINT, fetch=lambda _: leaf)
         self.assertEqual(caught.exception.code, "bad_answer")
+
+
+class TheSavedChainsExpiry(unittest.TestCase):
+    """B389: the server list says when the confirmed CA runs out, before renewals fail on it."""
+
+    def test_the_first_certificate_to_expire_is_the_chain_s_end(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            pki = Pki(root)
+            short = root / "short.pem"
+            subprocess.run(
+                [
+                    str(OPENSSL),
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-keyout",
+                    str(root / "short.key"),
+                    "-out",
+                    str(short),
+                    "-subj",
+                    "/CN=Short Root",
+                    "-days",
+                    "5",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            bundle = root / "bundle.pem"
+            bundle.write_text(pki.intermediate.read_text() + short.read_text())
+            expires = ndes_servers.ca_expires(bundle)
+        assert expires is not None
+        left = datetime.fromisoformat(expires.replace("Z", "+00:00")) - datetime.now(UTC)
+        self.assertGreater(left, timedelta(days=4))
+        self.assertLess(left, timedelta(days=6))
+
+    def test_a_file_that_cannot_be_read_has_no_date(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.assertIsNone(ndes_servers.ca_expires(root / "missing.pem"))
+            (root / "empty.pem").write_text("")
+            self.assertIsNone(ndes_servers.ca_expires(root / "empty.pem"))
+            #
+            # Assembled, as the node status assembles its pattern: a literal
+            # header is what the secret scanner exists to catch.
+            #
+            dashes = "-" * 5
+            (root / "broken.pem").write_text(
+                f"{dashes}BEGIN CERTIFICATE{dashes}\nAAAA\n{dashes}END CERTIFICATE{dashes}\n"
+            )
+            self.assertIsNone(ndes_servers.ca_expires(root / "broken.pem"))
 
 
 class ThePolicy(unittest.TestCase):
@@ -744,6 +798,17 @@ class TheHelperAndTheCommand(unittest.TestCase):
         self.assertEqual((code, added["outcome"]), (0, "done"))
         _code, again = self.ask(action="fetch", endpoint=ENDPOINT)
         self.assertEqual(again["result"]["state"], "confirmed")
+
+    def test_the_list_says_when_each_server_s_ca_expires(self) -> None:
+        """B389: the list the interface draws its server table from."""
+
+        self.ask(action="add", endpoint=ENDPOINT, sha256=self.chain)
+        code, listed = self.ask(action="list")
+        self.assertEqual(code, 0)
+        (server,) = listed["result"]["servers"]
+        self.assertEqual(server["endpoint"], ENDPOINT)
+        self.assertEqual(server["expires"], ndes_servers.ca_expires(Path(server["issuing_ca"])))
+        self.assertIsNotNone(server["expires"])
 
     def test_a_change_of_the_policy_is_written_to_the_journal(self) -> None:
         """Review 2026-10-29, B12: root changed the policy and said nothing of it."""

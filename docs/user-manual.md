@@ -5896,6 +5896,9 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
 3. Choose *Confirm this CA*, or *Confirm these CAs* when there are several. The manager asks the server again
    and adds it only if it still gives exactly these certificates. All of them are saved for the server.
 
+The server list shows when each server's saved CA expires - the first of its certificates to run out - in the
+same colours as the certificate registry, so a CA about to expire is seen before renewals fail on it.
+
 When the CA is renewed with a new key, or the saved CA certificate expires, certificates from the server no
 longer chain to what was saved, and an issue or renewal fails with "issued certificate does not chain to the CA
 confirmed for the NDES server". Add the server again with the same address: the page says it is confirmed with

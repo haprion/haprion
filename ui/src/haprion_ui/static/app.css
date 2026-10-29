@@ -1594,6 +1594,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 @media (min-width: 1050px) {
   .ndes-server-table th.select-column, .ndes-server-table td.select-column { width: 44px; padding-left: 18px; padding-right: 0; }
   .ndes-server-table th.server-column, .ndes-server-table td.server-column { width: auto; padding-left: 8px; }
+  .ndes-server-table th.expires-column, .ndes-server-table td.expires-column { width: 24ch; }
+  .ndes-server-table th.profiles-column, .ndes-server-table td.profiles-column { width: 12ch; }
 }
 .certificate-form .receiver-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .certificate-form .receiver-heading .field-title { color: var(--text-secondary); font-weight: 620; }

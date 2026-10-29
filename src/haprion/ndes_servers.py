@@ -235,8 +235,30 @@ def locked(path: Path | None = None) -> Iterator[None]:
         yield
 
 
-def ca_file(endpoint: str, directory: Path = CA_DIRECTORY) -> Path:
-    return directory / f"{hashlib.sha256(endpoint.encode()).hexdigest()[:16]}.pem"
+def ca_file(endpoint: str, content: bytes, directory: Path = CA_DIRECTORY) -> Path:
+    """Named by the server and by what it holds (review 2026-10-29, B03).
+
+    A new CA goes to a file of its own, so a policy that is refused leaves the
+    file the old one names as it was; the old file goes once the new policy is
+    in place.
+    """
+
+    server = hashlib.sha256(endpoint.encode()).hexdigest()[:16]
+    return directory / f"{server}-{hashlib.sha256(content).hexdigest()[:16]}.pem"
+
+
+def _forget_ca(previous: object, servers: Sequence[Any], directory: Path) -> None:
+    """Remove a CA file no server names any more, when the manager wrote it.
+
+    Only a file in the manager's own directory: a policy from before B385
+    names its CA file where the installation put it.
+    """
+
+    if not isinstance(previous, str) or Path(previous).parent != directory:
+        return
+    if any(isinstance(s, dict) and s.get("issuing_ca") == previous for s in servers):
+        return
+    Path(previous).unlink(missing_ok=True)
 
 
 def _ndes_block(data: dict[str, Any], policy_path: Path) -> dict[str, Any]:
@@ -336,31 +358,41 @@ def add(
             "changed",
             f"{endpoint} no longer gives the CA certificates confirmed; fetch them again and compare",
         )
-    path = ca_file(endpoint, ca_directory)
+    content = "".join(a.pem for a in found).encode()
+    path = ca_file(endpoint, content, ca_directory)
     with locked():
         ca_directory.mkdir(mode=0o755, exist_ok=True)
-        atomic_file.write(path, "".join(a.pem for a in found).encode(), mode=0o644)
-        text = policy_path.read_text()
-        data = safe_yaml.load(text) or {}
-        block = _ndes_block(data, policy_path)
-        entry: dict[str, Any] = {"endpoint": endpoint, "issuing_ca": str(path)}
-        #
-        # A server confirmed again keeps what the confirmation does not
-        # decide: its own HTTPS CA, which would otherwise fall back to the
-        # system's store unsaid (review 2026-10-29, B02).
-        #
-        servers = list(block["servers"])
-        place = next(
-            (i for i, s in enumerate(servers) if s.get("endpoint") == endpoint), len(servers)
-        )
-        if place < len(servers):
-            if servers[place].get("tls_ca") is not None:
-                entry["tls_ca"] = servers[place]["tls_ca"]
-            servers[place] = entry
-        else:
-            servers.append(entry)
-        block["servers"] = servers
-        _write_policy(policy_path, with_ndes(text, block))
+        existed = path.exists()
+        atomic_file.write(path, content, mode=0o644)
+        try:
+            text = policy_path.read_text()
+            data = safe_yaml.load(text) or {}
+            block = _ndes_block(data, policy_path)
+            entry: dict[str, Any] = {"endpoint": endpoint, "issuing_ca": str(path)}
+            #
+            # A server confirmed again keeps what the confirmation does not
+            # decide: its own HTTPS CA, which would otherwise fall back to the
+            # system's store unsaid (review 2026-10-29, B02).
+            #
+            servers = list(block["servers"])
+            place = next(
+                (i for i, s in enumerate(servers) if s.get("endpoint") == endpoint), len(servers)
+            )
+            previous = None
+            if place < len(servers):
+                previous = servers[place].get("issuing_ca")
+                if servers[place].get("tls_ca") is not None:
+                    entry["tls_ca"] = servers[place]["tls_ca"]
+                servers[place] = entry
+            else:
+                servers.append(entry)
+            block["servers"] = servers
+            _write_policy(policy_path, with_ndes(text, block))
+        except BaseException:
+            if not existed:
+                path.unlink(missing_ok=True)
+            raise
+        _forget_ca(previous, servers, ca_directory)
     return {
         "endpoint": endpoint,
         "issuing_ca": str(path),
@@ -373,6 +405,7 @@ def remove(
     *,
     used_by: Callable[[], Sequence[str]],
     policy_path: Path = DEFAULT_POLICY_PATH,
+    ca_directory: Path | None = None,
 ) -> dict[str, Any]:
     """Take the server out of the policy, unless a profile still uses it.
 
@@ -381,10 +414,17 @@ def remove(
     """
 
     with locked():
-        return _remove(endpoint, used_by=used_by(), policy_path=policy_path)
+        return _remove(
+            endpoint,
+            used_by=used_by(),
+            policy_path=policy_path,
+            ca_directory=CA_DIRECTORY if ca_directory is None else ca_directory,
+        )
 
 
-def _remove(endpoint: str, *, used_by: Sequence[str], policy_path: Path) -> dict[str, Any]:
+def _remove(
+    endpoint: str, *, used_by: Sequence[str], policy_path: Path, ca_directory: Path
+) -> dict[str, Any]:
     if used_by:
         raise NdesServerError(
             "in_use", f"{endpoint} is used by the NDES profile {', '.join(sorted(used_by))}"
@@ -397,7 +437,8 @@ def _remove(endpoint: str, *, used_by: Sequence[str], policy_path: Path) -> dict
         )
     block = _ndes_block(data, policy_path)
     servers = [s for s in block["servers"] if s.get("endpoint") != endpoint]
-    if len(servers) == len(block["servers"]):
+    gone = [s for s in block["servers"] if s.get("endpoint") == endpoint]
+    if not gone:
         raise NdesServerError(
             "not_found", f"{endpoint} is not an NDES server here", exit_codes.NOT_FOUND
         )
@@ -410,6 +451,8 @@ def _remove(endpoint: str, *, used_by: Sequence[str], policy_path: Path) -> dict
         _write_policy(policy_path, with_ndes(text, block))
     else:
         _write_policy(policy_path, without_ndes(text))
+    for entry in gone:
+        _forget_ca(entry.get("issuing_ca"), servers, ca_directory)
     return {"endpoint": endpoint}
 
 

@@ -5924,7 +5924,7 @@ with the last one. Its fields:
 ndes:
   servers:
     - endpoint: https://ndes.example.com/certsrv/mscep/mscep.dll
-      issuing_ca: /etc/haprion/ndes-ca/0123456789abcdef.pem
+      issuing_ca: /etc/haprion/ndes-ca/0123456789abcdef-fedcba9876543210.pem
   client_root: /opt/haprion-scep/current
   state_root: /etc/haprion/ndes-requests
   profiles:

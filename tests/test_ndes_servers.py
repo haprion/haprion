@@ -22,7 +22,7 @@ import yaml
 
 from haprion import exit_codes, ndes_servers, safe_yaml
 from haprion.cli import ndes_server, ndes_server_helper
-from haprion.config import load_policy
+from haprion.config import ConfigError, load_policy
 from tests.contract_schema import assert_contract
 from tests.test_cert_import import OPENSSL, Pki
 
@@ -212,6 +212,68 @@ class ThePolicy(unittest.TestCase):
         ndes = load_policy(self.policy, require_secure=False).ndes
         assert ndes is not None
         self.assertEqual(str(ndes.servers[0].tls_ca), f"{self.root}/tls.pem")
+
+    def test_a_refused_policy_leaves_the_server_s_ca_as_it_was(self) -> None:
+        """Review 2026-10-29, B03: the CA file was replaced before the policy was read back."""
+
+        saved = Path(str(self.add()["issuing_ca"]))
+        before = saved.read_bytes()
+        (self.root / "renewed").mkdir()
+        self.answer = Answer(self.root / "renewed")
+        chain = [
+            self.answer.sha256(self.answer.pki.intermediate),
+            self.answer.sha256(self.answer.pki.root),
+        ]
+        with (
+            mock.patch.object(ndes_servers, "load_policy", side_effect=ConfigError("refused")),
+            self.assertRaises(ndes_servers.NdesServerError),
+        ):
+            self.add(fingerprints=chain)
+        self.assertEqual(saved.read_bytes(), before)
+        self.assertEqual(list(self.cas.iterdir()), [saved])
+
+    def test_a_ca_replaced_or_removed_takes_its_file_with_it(self) -> None:
+        first = Path(str(self.add()["issuing_ca"]))
+        (self.root / "renewed").mkdir()
+        self.answer = Answer(self.root / "renewed")
+        second = Path(
+            str(
+                self.add(
+                    fingerprints=[
+                        self.answer.sha256(self.answer.pki.intermediate),
+                        self.answer.sha256(self.answer.pki.root),
+                    ]
+                )["issuing_ca"]
+            )
+        )
+        self.assertNotEqual(first, second)
+        self.assertEqual(list(self.cas.iterdir()), [second])
+        ndes_servers.remove(
+            ENDPOINT, used_by=lambda: (), policy_path=self.policy, ca_directory=self.cas
+        )
+        self.assertEqual(list(self.cas.iterdir()), [])
+
+    def test_a_ca_file_outside_the_manager_s_directory_is_never_removed(self) -> None:
+        # A policy from before B385 names its CA file where the installation put it.
+        own = self.root / "issuing-ca.pem"
+        own.write_text(self.answer.pki.intermediate.read_text())
+        with self.policy.open("a") as policy:
+            policy.write(
+                "ndes:\n"
+                f"  endpoint: {ENDPOINT}\n"
+                f"  issuing_ca: {own}\n"
+                "  client_root: /opt/haprion-scep/current\n"
+                "  state_root: /etc/haprion/ndes-requests\n"
+                "  profiles:\n"
+                "    directory: /etc/haprion/ndes-profiles\n"
+                "    private_keys: [/etc/haprion/keys/0123456789abcdef.key]\n"
+            )
+        self.add()
+        self.assertTrue(own.exists())
+        ndes_servers.remove(
+            ENDPOINT, used_by=lambda: (), policy_path=self.policy, ca_directory=self.cas
+        )
+        self.assertTrue(own.exists())
 
     def test_a_fingerprint_the_server_no_longer_gives_changes_nothing(self) -> None:
         before = self.policy.read_text()

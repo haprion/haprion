@@ -136,6 +136,40 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(self.drain("resume").returncode, 0)
         self.assertIsNone(self.paused_until())
 
+    def test_the_web_sees_a_lease_that_ran_out_and_a_release_s_pause(self) -> None:
+        """Review 26-10-29, Q01/Q06: a job no worker holds, and a queue a release holds."""
+
+        gone = self.running("backup_run", "-30 minutes")
+        held = self.running("deploy", "1 minute", cluster="beta")
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            rows = {job.id: job for job in db.recent_jobs(connection, limit=1000)}
+            self.assertIsNone(db.claim_pause(connection))
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("select claim_token from job")
+            connection.rollback()
+        lapsed = rows[gone].lease_lapsed_since
+        self.assertIsNotNone(lapsed)
+        if lapsed is not None:
+            self.assertLess(lapsed, datetime.now(UTC) - timedelta(minutes=29))
+        self.assertIsNone(rows[held].lease_lapsed_since)
+
+        self.forget_job(held)
+        self.assertEqual(self.drain("pause", "--wait", "3").returncode, 0)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            pause = db.claim_pause(connection)
+        self.assertIsNotNone(pause)
+        if pause is not None:
+            self.assertTrue(pause.by.startswith("release on "), pause.by)
+            self.assertGreater(pause.until, datetime.now(UTC))
+        #
+        # A pause past its end holds nothing, as the worker's claim reads it.
+        #
+        with self.connect() as connection:
+            connection.execute("update job_claim_gate set paused_until = now() - interval '1 s'")
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertIsNone(db.claim_pause(connection))
+
     def test_a_paused_gate_stops_the_worker_s_claim_and_resume_lets_it_go(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(

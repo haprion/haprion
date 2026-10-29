@@ -109,6 +109,8 @@
   <div>{% if paging.page > 1 %}<a class="secondary-button" href="/jobs?{{ dict(kept, page=paging.page - 1) | urlencode }}">Previous</a>{% else %}<button class="secondary-button" type="button" disabled>Previous</button>{% endif %}{% if paging.page < paging.pages %}<a class="secondary-button" href="/jobs?{{ dict(kept, page=paging.page + 1) | urlencode }}">Next</a>{% else %}<button class="secondary-button" type="button" disabled>Next</button>{% endif %}</div>
 </nav>{% endif %}
 {% else %}
+{# A release holds the queue while it restarts the worker (Q06, 26-10-29); the pause ends by itself. #}
+{% if claim_pause %}<p class="preview-notice"><span class="status-orb status-warning" aria-hidden="true"></span><strong>No job is started while a {{ claim_pause.by }} pauses the queue, until <time datetime="{{ claim_pause.until.isoformat() }}">{{ claim_pause.until | shown_at }}</time>.</strong></p>{% endif %}
 
 {% if not_held %}<p class="preview-notice"><strong>Job {{ not_held }} no longer waits for Run or Discard; nothing was changed.</strong></p>{% endif %}
 <section class="metric-grid activity-summary" aria-label="Job summary">

@@ -40,6 +40,13 @@ class Job:
     held_since: datetime | None = None
     held_decision: str | None = None
     held_decided_by: str | None = None
+    #
+    # When the lease of a running job ran out, by the database's clock; None
+    # while a worker holds it, and for a job not running. Read by
+    # `recent_jobs` alone (review 26-10-29, Q01): a worker stopped or hung
+    # leaves its job `running`, and only a living worker settles it.
+    #
+    lease_lapsed_since: datetime | None = None
 
     @property
     def waits_for_decision(self) -> bool:
@@ -167,7 +174,9 @@ def recent_jobs(
         cursor.execute(
             "select id, request_id, operation, cluster, payload, state, created_at, "
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
-            "       idempotency_key, attempts, held_since, held_decision, held_decided_by "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by, "
+            "       case when state = 'running' and lease_until < statement_timestamp() "
+            "            then lease_until end as lease_lapsed_since "
             "  from job "
             " where (%(cluster)s::text is null or cluster = %(cluster)s) "
             "   and (state in ('pending', 'running') "
@@ -179,6 +188,31 @@ def recent_jobs(
             {"cluster": cluster, "limit": limit},
         )
         return cursor.fetchall()
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimPause:
+    """A release holding the worker's claims (`haprion-drain pause`) until `until`."""
+
+    until: datetime
+    by: str
+
+
+def claim_pause(connection: Connection[Any]) -> ClaimPause | None:
+    """The release's pause on the queue while it holds, by the database's clock.
+
+    The clock the worker's claim reads it by. A pause carries its end, so one
+    a killed release left behind lets the queue go by itself (review 26-10-29,
+    Q06: jobs it held back were blamed on the worker).
+    """
+
+    with connection.cursor(row_factory=class_row(ClaimPause)) as cursor:
+        cursor.execute(
+            "select paused_until as until, coalesce(paused_by, 'release') as by "
+            "  from job_claim_gate "
+            " where paused_until > statement_timestamp()"
+        )
+        return cursor.fetchone()
 
 
 def attention_evidence(connection: Connection[Any]) -> list[Job]:

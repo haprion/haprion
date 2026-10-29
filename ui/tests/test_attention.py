@@ -14,7 +14,7 @@ from unittest import mock
 
 from haprion import address_ranges
 
-from haprion_ui import attention, auth, dashboard, health, jobs, operations
+from haprion_ui import attention, auth, dashboard, db, health, jobs, operations
 from haprion_ui.db import StatusAccess
 from tests.test_job_page import job
 from tests.test_login import LoginTestCase, configuration
@@ -939,6 +939,45 @@ class TheManagersOwnServices(unittest.TestCase):
             [],
         )
         self.assertEqual(self.items(rows=[waiting], writes=False), [])
+
+    def test_a_job_no_worker_holds_is_listed_and_hides_no_silent_worker(self) -> None:
+        """Review 26-10-29, Q01/R01: a worker gone leaves its job `running`, which
+        silenced the row about the worker and said nothing itself."""
+
+        gone = replace(job(state="running"), id=12, lease_lapsed_since=NOW - timedelta(minutes=30))
+        waiting = replace(
+            job(state="pending", cluster="beta"), id=13, created_at=NOW - timedelta(hours=1)
+        )
+        listed = {item.subject: item for item in self.items(rows=[gone, waiting])}
+        self.assertEqual(sorted(listed), ["job 12", "worker"])
+        item = listed["job 12"]
+        self.assertEqual(
+            (item.kind, item.severity, item.cluster, item.link, item.since),
+            ("manager", "critical", "alpha", "/jobs#job-12", gone.lease_lapsed_since),
+        )
+        self.assertEqual(item.message, "running, but no worker has held it since")
+        #
+        # A lease just run out is a worker restarting or a helper finishing
+        # behind its socket; a living lease still holds the worker's row back.
+        #
+        recent = replace(gone, lease_lapsed_since=NOW - timedelta(minutes=2))
+        self.assertEqual(self.items(rows=[recent]), [])
+        self.assertEqual(self.items(rows=[job(state="running"), waiting]), [])
+        #
+        # A held one is the held row's, and waits for an admin.
+        #
+        held = replace(gone, held_since=NOW - timedelta(minutes=40))
+        (only,) = self.items(rows=[held])
+        self.assertEqual(only.subject, "held jobs")
+
+    def test_jobs_a_release_holds_are_not_the_worker_s_silence(self) -> None:
+        """Review 26-10-29, Q06: the claims are paused, and the worker does as it should."""
+
+        waiting = replace(job(state="pending"), created_at=NOW - timedelta(minutes=11))
+        pause = db.ClaimPause(until=NOW + timedelta(minutes=5), by="release on mgr")
+        self.assertEqual(self.items(rows=[waiting], claim_pause=pause), [])
+        (item,) = self.items(rows=[waiting], claim_pause=None)
+        self.assertEqual(item.subject, "worker")
 
     def test_a_held_job_waits_for_an_admin_not_for_the_worker(self) -> None:
         """0082: a job queued before the boot is its own row, never the worker's silence."""

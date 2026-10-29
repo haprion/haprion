@@ -995,6 +995,42 @@ class AFailedCertificateIssue(LoginTestCase):
         self.assertNotIn("Cloudflare", page)
 
 
+class AJobNoWorkerHolds(LoginTestCase):
+    """Review 26-10-29, Q01/R01: a lease long run out is not a job at work."""
+
+    def page(self, *rows: db.Job, pause: db.ClaimPause | None = None) -> str:
+        with (
+            mock.patch("haprion_ui.db.recent_jobs", return_value=list(rows)),
+            mock.patch("haprion_ui.db.claim_pause", return_value=pause),
+        ):
+            client = self.client()
+            self.sign_in(client)
+            return client.get("/jobs").text
+
+    def test_it_says_no_worker_rather_than_running(self) -> None:
+        now = datetime.now(UTC)
+        gone = replace(job(state="running"), lease_lapsed_since=now - timedelta(minutes=30))
+        page = self.page(gone)
+        self.assertIn('status-badge-critical">No worker</span>', page)
+        self.assertNotIn(">Running</span>", page)
+        #
+        # Just run out: a worker restarting, or a helper finishing behind its socket.
+        #
+        recent = replace(gone, lease_lapsed_since=now - timedelta(minutes=2))
+        self.assertIn(">Running</span>", self.page(recent))
+
+    def test_a_release_s_pause_is_said_above_the_jobs(self) -> None:
+        """Review 26-10-29, Q06: the queue waits for the release, not for the worker."""
+
+        until = datetime.now(UTC) + timedelta(minutes=5)
+        page = self.page(
+            job(state="pending"), pause=db.ClaimPause(until=until, by="release on mgr")
+        )
+        self.assertIn("No job is started while a release on mgr pauses the queue, until", page)
+        self.assertIn(f'datetime="{until.isoformat()}"', page)
+        self.assertNotIn("pauses the queue", self.page(job(state="pending")))
+
+
 class AHeldJob(LoginTestCase):
     """0082, review 2026-10-20 R1: queued before the manager started, it waits for Run or Discard."""
 

@@ -692,6 +692,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
             horizons=db.partition_horizons(connection, attention.MAINTENANCE_AHEAD),
             now=now,
             maintained_at=db.retention_completed(connection),
+            claim_pause=db.claim_pause(connection),
         )
         items += attention.from_packages(db.package_waiting(connection))
         if config.traffic_logs.enabled:

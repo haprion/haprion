@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import exit_codes, node_enrollment, server_names
@@ -1080,6 +1080,8 @@ def _view(
     held = job.waits_for_decision
     if held:
         label, tone = "Held", "warning"
+    elif no_worker(job, now):
+        label, tone = NO_WORKER, "critical"
     ended_badly = job.state in ATTENTION
     #
     # Every warning of a partial run; of a completed one only a deploy's, whose
@@ -1546,6 +1548,29 @@ PUBLISH_AND_DEPLOY = "Publishing and deploying"
 
 
 HELD = "Held"
+
+#
+# How long a running job's lease may have run out before it is said to have
+# no worker (review 26-10-29, Q01/R01). A living worker settles a lease run
+# out on its next pass, within seconds. What it waits for longer is a helper
+# behind its socket that outlived the worker - a node change's apt run takes
+# up to 870 s, a node restore's start is bounded at 14 minutes - or evidence
+# it cannot read. Past this the worker is gone, or waits for what will not
+# come by itself.
+#
+NO_WORKER_AFTER = timedelta(minutes=20)
+NO_WORKER = "No worker"
+
+
+def no_worker(job: Job, now: datetime) -> bool:
+    """Running, not held, and no worker has held its lease for `NO_WORKER_AFTER`."""
+
+    return (
+        job.state == "running"
+        and not job.waits_for_decision
+        and job.lease_lapsed_since is not None
+        and now - job.lease_lapsed_since > NO_WORKER_AFTER
+    )
 
 
 def running_label(job: Job) -> str:

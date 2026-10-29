@@ -815,6 +815,7 @@ def build_router(config: Config) -> APIRouter:
                 #
                 diagnostics=session.role == "admin",
             )
+            claim_pause = db.claim_pause(connection)
         not_held = request.query_params.get("not_held", "")
         by_job = {row.id: queued_by.get(row.request_id, "") for row in listed}
         overview = replace(
@@ -828,6 +829,7 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "jobs": overview,
+                "claim_pause": claim_pause,
                 "management_writes": config.management_writes,
                 "not_held": int(not_held) if not_held.isdigit() and len(not_held) < 19 else None,
                 "section": "jobs",

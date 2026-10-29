@@ -30,7 +30,7 @@ from haprion.node_package import short_version
 
 from haprion_ui import jobs as jobs_module
 from haprion_ui import labels
-from haprion_ui.db import Job, PackageWaiting
+from haprion_ui.db import ClaimPause, Job, PackageWaiting
 
 type Severity = Literal["critical", "warning"]
 SEVERITIES: tuple[Severity, ...] = ("critical", "warning")
@@ -738,14 +738,15 @@ def from_manager(
     horizons: Mapping[str, date | None],
     now: datetime,
     maintained_at: datetime | None = None,
+    claim_pause: ClaimPause | None = None,
 ) -> list[Item]:
     """The manager's own services, read from what they leave in the database.
 
     The interface cannot ask systemd (it runs without that right), so each
     service is judged by its trace (review 2026-10-18 S1/A8, B333): the poller
     writes the cluster list on every pass; the worker takes a queued job within
-    seconds while writes are on; `haprion-retention` creates daily partitions
-    ahead of time every night.
+    seconds while writes are on, and keeps the lease of the one it runs;
+    `haprion-retention` creates daily partitions ahead of time every night.
     """
 
     items: list[Item] = []
@@ -780,9 +781,35 @@ def from_manager(
                 link="/jobs",
             )
         )
+    #
+    # A running job whose lease ran out long ago: its worker is stopped, hung
+    # or crashing, or waits for what will not come by itself (review 26-10-29,
+    # Q01/R01). By job, so an acknowledgement names that job alone.
+    #
+    for job in rows:
+        if jobs_module.no_worker(job, now):
+            items.append(
+                Item(
+                    kind="manager",
+                    severity="critical",
+                    cluster=job.cluster,
+                    subject=f"job {job.id}",
+                    message="running, but no worker has held it since",
+                    since=job.lease_lapsed_since,
+                    link=f"/jobs#job-{job.id}",
+                )
+            )
+    #
+    # Only a job under a living lease holds the worker's row back: a job its
+    # worker left is what a worker that died leaves. Nor is it raised while a
+    # release pauses the claims (Q06): the worker then does as it should.
+    #
     waiting = [job for job in rows if job.state == "pending" and not job.waits_for_decision]
-    running = any(job.state == "running" and not job.waits_for_decision for job in rows)
-    if writes and waiting and not running:
+    running = any(
+        job.state == "running" and not job.waits_for_decision and job.lease_lapsed_since is None
+        for job in rows
+    )
+    if writes and waiting and not running and claim_pause is None:
         oldest = min(job.created_at for job in waiting)
         if now - oldest > WORKER_WAITING:
             items.append(

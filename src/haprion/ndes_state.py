@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import stat
 from collections.abc import Mapping
@@ -23,10 +24,26 @@ MAX_RECORD_BYTES = 64 * 1024
 TARGETS_FILE = "targets.json"
 
 
+REQUEST_NAME = re.compile(r"[0-9a-f]{24}")
+
+
 def request_directory(state_root: Path, certificate_id: str) -> Path:
     """Where one certificate's request state lives: hashed, so an ID is never a path."""
 
     return state_root / hashlib.sha256(certificate_id.encode()).hexdigest()[:24]
+
+
+def request_entries(state_root: Path) -> list[Path]:
+    """The entries under the state root whose name can be a request's.
+
+    The one rule for both readers that walk the state root. The renewal
+    records' directory and the enrollment locks live beside the requests,
+    and counting `renewals/` as a request held every NDES profile after the
+    first renewal (review 2026-10-29 again, BB02). Raises OSError when the
+    root cannot be listed; the caller decides what that means.
+    """
+
+    return sorted(entry for entry in state_root.iterdir() if REQUEST_NAME.fullmatch(entry.name))
 
 
 def request_is_pending(state_root: Path, certificate_id: str) -> bool:
@@ -189,7 +206,7 @@ def pending_requests(state_root: Path) -> tuple[PendingRequest, ...]:
 
     found: list[PendingRequest] = []
     try:
-        entries = sorted(state_root.iterdir())
+        entries = request_entries(state_root)
     except OSError:
         return ()
     for entry in entries:

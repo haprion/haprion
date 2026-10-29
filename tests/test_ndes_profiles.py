@@ -10,13 +10,14 @@ import os
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import yaml
 
-from haprion import dns_profiles, exit_codes, ndes_profiles, ndes_servers
+from haprion import dns_profiles, exit_codes, ndes_profiles, ndes_renew, ndes_servers, ndes_state
 from haprion.cli import ndes_profile_apply_helper
 from haprion.config import (
     SYSTEM_TRUST,
@@ -327,7 +328,7 @@ class NdesProfileRemoval(NdesProfiles):
     def test_removal_is_refused_while_an_enrollment_is_pending(self) -> None:
         self._policy_file()
         self._helper(self._request(remove=False))
-        request_dir = self.policy.state_root / "abc123"
+        request_dir = ndes_state.request_directory(self.policy.state_root, "web-cert")
         request_dir.mkdir(mode=0o700)
         (request_dir / "request.json").write_text(
             json.dumps({"certificate": "web-cert", "profile": "internal-ca"})
@@ -348,7 +349,7 @@ class NdesProfileRemoval(NdesProfiles):
         (request_dir / "request.json").write_text("{broken")
         self.assertEqual(
             ndes_profiles.pending_requests(self.policy, "internal-ca", require_secure=False),
-            ("abc123",),
+            (request_dir.name,),
         )
 
     def test_a_replacement_is_refused_while_an_enrollment_is_pending(self) -> None:
@@ -356,7 +357,7 @@ class NdesProfileRemoval(NdesProfiles):
 
         self._policy_file()
         self._helper(self._request(remove=False))
-        request_dir = self.policy.state_root / "abc123"
+        request_dir = ndes_state.request_directory(self.policy.state_root, "web-cert")
         request_dir.mkdir(mode=0o700)
         (request_dir / "request.json").write_text(
             json.dumps({"certificate": "web-cert", "profile": "internal-ca"})
@@ -382,6 +383,63 @@ class NdesProfileRemoval(NdesProfiles):
         self.assertIn("web-cert", doc["error"]["message"])
         opened = ndes_profiles.resolve(self.policy, "internal-ca", require_secure=False)
         self.assertEqual(opened.revision, 2)
+
+    def _replacement(self) -> str:
+        replaced = json.loads(self._request(remove=False))
+        replaced["parameters"]["revision"] = 3
+        replaced["parameters"]["ciphertext"] = base64.b64encode(
+            ndes_profiles.seal_profile(
+                self.public,
+                profile_id="internal-ca",
+                endpoint=ENDPOINT,
+                challenge="another-challenge",
+                revision=3,
+            )
+        ).decode()
+        return json.dumps(replaced)
+
+    def test_the_renewal_records_are_no_request(self) -> None:
+        """Review 2026-10-29 (again), BB02: `renewals/` bound every profile.
+
+        The state root of a manager that has renewed once already holds the
+        directory with records in it; nothing is moved, it is only not a
+        request.
+        """
+
+        self._policy_file()
+        self._helper(self._request(remove=False))
+        for certificate, outcome in (("web-cert", "renewed"), ("api-cert", "failed")):
+            ndes_renew.write_record(
+                self.policy.state_root,
+                ndes_renew.Outcome(certificate, outcome, "example"),
+                now=datetime(2026, 10, 29, tzinfo=UTC),
+            )
+        self.assertTrue(ndes_state.records_directory(self.policy.state_root).is_dir())
+        (self.policy.state_root / "not-a-request").mkdir(mode=0o700)
+        self.assertEqual(
+            ndes_profiles.pending_requests(self.policy, "internal-ca", require_secure=False), ()
+        )
+        code, doc, errors = self._helper(self._replacement())
+        self.assertEqual(code, 0, (doc, errors))
+        self.assertEqual(
+            ndes_profiles.resolve(self.policy, "internal-ca", require_secure=False).revision, 3
+        )
+        self.assertEqual(
+            len(list(ndes_state.records_directory(self.policy.state_root).iterdir())), 2
+        )
+        # A request directory that cannot be read still holds the profile.
+        broken = ndes_state.request_directory(self.policy.state_root, "web-cert")
+        broken.mkdir(mode=0o700)
+        removal = json.loads(self._replacement())
+        removal["parameters"]["remove"] = True
+        code, doc, _ = self._helper(json.dumps(removal))
+        self.assertEqual(code, 65)
+        self.assertEqual(doc["error"]["code"], "profile_in_use")
+        self.assertNotIn("renewals", doc["error"]["message"])
+        broken.rmdir()
+        code, doc, errors = self._helper(json.dumps(removal))
+        self.assertEqual(code, 0, (doc, errors))
+        self.assertFalse(ndes_profiles.record_path(self.policy, "internal-ca").exists())
 
     def test_removal_is_refused_while_the_registry_names_the_profile(self) -> None:
         self._policy_file()

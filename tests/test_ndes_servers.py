@@ -702,6 +702,13 @@ class TheHelperAndTheCommand(unittest.TestCase):
             ),
             mock.patch.object(ndes_servers, "CA_DIRECTORY", self.root / "ndes-ca"),
             mock.patch.object(ndes_servers, "LOCK_PATH", self.root / "ndes-policy.lock"),
+            #
+            # A first server makes the block with the product's directories,
+            # which a removal then reads: here, the test's own (review
+            # 26-10-29, A09 - it read this machine's profile records).
+            #
+            mock.patch.object(ndes_servers, "PROFILE_DIRECTORY", str(self.root / "ndes-profiles")),
+            mock.patch.object(ndes_servers, "STATE_ROOT", str(self.root / "ndes-requests")),
         ):
             patch.start()
             self.addCleanup(patch.stop)

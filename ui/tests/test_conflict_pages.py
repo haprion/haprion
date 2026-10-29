@@ -33,6 +33,7 @@ CAUGHT = {
     ("pages/certificates.py", "certificate_retarget_confirm"): "the question is drawn again",
     ("pages/certificates.py", "_queue_receiver_job"): "the receiver's form is drawn again",
     ("pages/certificates.py", "certificate_delete_confirm"): "the question is drawn again",
+    ("pages/certificates.py", "certificate_abandon_confirm"): "the question is drawn again",
     ("pages/profiles.py", "_dns_profile_submit"): "the form is drawn again as it was typed",
     ("pages/profiles.py", "_ndes_profile_submit"): "the form is drawn again as it was typed",
     ("pages/settings.py", "cluster_settings_save"): "the form is drawn again as it was typed",

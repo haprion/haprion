@@ -3740,6 +3740,7 @@ box is not shown.
   critical.
 - **Jobs**: the latest job of an operation on a cluster that failed, partly worked, was blocked or ended
   *unknown* - until a later run of the same operation on the same thing works, however long that takes.
+  A blocked job changed nothing and is a warning.
   A job on several certificates is settled certificate by certificate: when its answer says which ones
   it did not finish, only those wait for a later run. A certificate that was issued or imported but
   not distributed says so, and a later publish of it, or a certificate deploy of each cluster it missed,

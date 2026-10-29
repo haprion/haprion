@@ -1343,6 +1343,9 @@ def failure_label(job: Job, operation: str | None = None, state: str | None = No
     # Not failed: it may have worked (R2, F19 - a backup that was taken read *Backup failed*).
     if state == "unknown" and label.endswith(" failed"):
         return f"{label.removesuffix(' failed')}: outcome unknown"
+    if state == "blocked" and label.endswith(" failed"):
+        ending = "was not run" if error_code(job) in NOT_RUN else "was refused"
+        return f"{label.removesuffix(' failed')} {ending}"
     return label
 
 
@@ -1404,7 +1407,19 @@ PARTIAL_LABELS = {
     "backup_run": "Backup reached only some nodes",
     "deploy": "Deploy reached only some nodes",
     "cert_deploy": "Certificate deploy reached only some nodes",
+    "server_state": "Server state reached only some nodes",
+    "dynamic_unblock": "Unblock reached only some nodes",
+    "cert_scep": "Certificate enrollment waits for the CA",
+    "cert_delete": "Some certificates were not deleted",
+    "cert_publish": "Some certificates were not distributed",
+    "cert_target": "Some certificate targets were not changed",
+    "cert_receiver": "Receiver removed; its account or directory is left",
 }
+#
+# A refusal changed nothing (review 26-10-29, O04), and a request that waited
+# too long never ran.
+#
+NOT_RUN = frozenset({"request_expired"})
 FAILURE_LABELS = {
     "backup_run": "Backup failed",
     "backup_schedule": "Schedule change failed",

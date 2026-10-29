@@ -287,7 +287,10 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
         items.append(
             Item(
                 kind="job",
-                severity="warning" if waiting else "critical",
+                #
+                # A refusal changed nothing (26-10-29, O04).
+                #
+                severity="warning" if waiting or state == "blocked" else "critical",
                 cluster=cluster,
                 subject=f"job {job.id}",
                 message=label,

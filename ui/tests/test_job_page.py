@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from haprion import exit_codes
 
-from haprion_ui import attention, db, jobs
+from haprion_ui import attention, db, jobs, worker
 from tests.test_dashboard import reading as status_reading
 from tests.test_login import LoginTestCase, configuration
 
@@ -605,6 +605,38 @@ class TheErrorCodeReachesThePage(LoginTestCase):
         self.assertEqual(
             attention.from_jobs([partial])[0].message, "Deploy reached only some nodes"
         )
+
+    def test_every_operation_that_can_end_partial_has_its_own_word(self) -> None:
+        """Review 26-10-29, O03: six of them were called *... failed*."""
+
+        partial = {
+            operation
+            for operation, outcomes in worker._OPERATION_OUTCOMES.items()
+            if "partial" in outcomes
+        }
+        self.assertEqual(set(jobs.PARTIAL_LABELS), partial)
+        for operation, label in jobs.PARTIAL_LABELS.items():
+            with self.subTest(operation):
+                self.assertNotIn("failed", label)
+
+    def test_a_refusal_is_not_called_failed_and_is_a_warning(self) -> None:
+        """Review 26-10-29, O04: nothing changed, and it read *Deploy failed* in red."""
+
+        locked = job(
+            state="blocked",
+            outcome="blocked",
+            result={"error": {"code": "operation_locked", "message": "m"}},
+        )
+        self.assertEqual(jobs.failure_label(locked), "Deploy was refused")
+        [item] = attention.from_jobs([locked])
+        self.assertEqual((item.severity, item.message), ("warning", "Deploy was refused"))
+        expired = replace(locked, result={"error": {"code": "request_expired", "message": "m"}})
+        self.assertEqual(jobs.failure_label(expired), "Deploy was not run")
+        added = replace(
+            job(state="blocked", outcome="blocked", operation="cluster_node"),
+            payload={"action": "add"},
+        )
+        self.assertEqual(jobs.failure_label(added), "Adding the node was refused")
 
     def test_an_unknown_outcome_is_not_called_failed(self) -> None:
         """R2 26-10-27 (F19): *Backup failed* for a backup that had been taken."""

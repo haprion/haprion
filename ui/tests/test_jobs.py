@@ -514,7 +514,7 @@ class WhatTheLastJobLeftBehind(unittest.TestCase):
         )
 
         self.assertEqual(set(verdicts), {"beta"})
-        self.assertEqual(verdicts["beta"].label, "Publish failed")
+        self.assertEqual(verdicts["beta"].label, "Publish was refused")
 
     def test_a_publish_and_deploy_that_published_failed_its_deploy(self) -> None:
         published = replace(
@@ -530,7 +530,7 @@ class WhatTheLastJobLeftBehind(unittest.TestCase):
         verdicts = jobs.last_failure([published, refused])
 
         self.assertEqual(verdicts["alpha"], jobs.Failure("Deploy failed", "node_unreachable"))
-        self.assertEqual(verdicts["beta"].label, "Publish failed")
+        self.assertEqual(verdicts["beta"].label, "Publish was refused")
 
 
 class WhatAFailureIsAllowedToSay(unittest.TestCase):
@@ -875,7 +875,9 @@ class AJobInTwoStepsIsToldOneWay(unittest.TestCase):
 
         dashboard, listed, note = self.told(refused)
 
-        self.assertEqual((dashboard, listed, note), ("Publish failed", "Publish failed", None))
+        self.assertEqual(
+            (dashboard, listed, note), ("Publish was refused", "Publish was refused", None)
+        )
 
 
 class ThePublishAnswerIsReadInOnePlace(unittest.TestCase):

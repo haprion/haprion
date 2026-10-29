@@ -196,18 +196,19 @@ last_proved_current() {
 #
 # The previous release back, with its files, and proved. Returns 2 when it is
 # back and the check after it fails, 1 when it is not back, rather than dying:
-# the caller, or the trap, says the last words. A
-# rollback that refused - its drain timed out - or switched back by itself -
-# the previous release did not answer - leaves the candidate current, and the
-# previous release's files under it are the worst of both: the candidate's go
-# back in place, with the previous release's kept for the next run (review
-# 26-10-29, A02).
+# the caller, or the trap, says the last words. A rollback that refused - its
+# drain timed out - or switched back by itself - the previous release did not
+# answer - leaves the candidate current, and the previous release's files
+# under it are the worst of both: the candidate's go back in place, with the
+# previous release's kept for the next run (review 26-10-29, A02). The release
+# last proved, installed again over an unproved one, runs already: its files
+# back, nothing is switched (it was "could not be restored; it runs").
 #
 restore_previous() {
     restore_tried=yes
     settle_files 0
     warn "restoring UI release ${previous_id}"
-    if "$rollback" --to "$previous_id"; then
+    if last_proved_current || "$rollback" --to "$previous_id"; then
         ./check-compatibility && return 0
         return 2
     fi

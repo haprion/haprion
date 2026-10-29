@@ -667,16 +667,19 @@ def check_cluster_nodes(
                 if installed
                 else "haprion-node"
             )
-            carried = node_package.short_version(str(carried_version))
             if standing.kind == "not configured":
                 said = (
                     f"{shown} is installed but not configured - "
                     f"{haproxy_versions.CONFIGURE_ON_THE_NODE}"
                 )
-            elif standing.kind == "newer":
-                said = f"{shown}, newer than the CLI release's {carried}"
             else:
-                said = f"{shown}, older than the CLI release's {carried} - install it on the node"
+                carried = node_package.short_version(str(carried_version))
+                if standing.kind == "newer":
+                    said = f"{shown}, newer than the CLI release's {carried}"
+                else:
+                    said = (
+                        f"{shown}, older than the CLI release's {carried} - install it on the node"
+                    )
             report.warn(subject, said)
         #
         # The scripts, when the package is the release's: a package of another

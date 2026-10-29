@@ -271,6 +271,29 @@ class CoordinatedUpdateTests(unittest.TestCase):
                 )
                 self.assertNotIn("ERROR", done.stderr)
 
+    def test_an_update_to_the_release_last_proved_is_not_rolled_back_to_itself(self) -> None:
+        """Review 26-10-29, a's cosmetics: "prev could not be restored; prev runs".
+
+        The release last proved installed again over an unproved one: after
+        its switch it is the release to go back to, and it runs. Its files
+        back, the check decides.
+        """
+
+        for check, status in (("", 0), ("exit 1", 2)):
+            with self.subTest(check=check):
+                done, here = self.restoring(
+                    'release_id=prev; ln -sfn "$PWD/releases/prev" current; '
+                    'restore_previous; echo "rc=$? settled=$files_settled"',
+                    rollback=self.REFUSED,
+                    check=check,
+                )
+                self.assertIn(f"rc={status} settled=yes", done.stdout)
+                self.assertEqual(
+                    (here / "log").read_text().splitlines(),
+                    [f"refresh --restore {here}/kept --from 0", "check"],
+                )
+                self.assertNotIn("could not be restored", done.stderr)
+
     def test_a_way_out_whose_rollback_fails_keeps_the_marker_and_says_so(self) -> None:
         """Ctrl-C between the switch and the proof: `restore_previous || warn` hid the failure."""
 

@@ -311,6 +311,9 @@ class TheTree(unittest.TestCase):
         self.assertIn("failed after its activation", body)
         self.assertIn('"/usr/share/haprion-ui/install/platform/migrate "', body)
         self.assertIn('f"--release {shlex.quote(release)} current 2>/dev/null "', body)
+        # Review 26-10-29, a's cosmetics: a reading that failed was an empty schema.
+        start = body.index("    def schema(")
+        self.assertIn('"set -o pipefail; "', body[start : body.index("\n    def ", start + 1)])
 
     def test_a_failed_update_whose_rollback_fails_too_is_kept_and_finished(self) -> None:
         """AA05: the way the marker exists for - the previous release not restored - never ran.

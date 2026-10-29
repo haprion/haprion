@@ -1290,6 +1290,7 @@ def run_upgrade(
 
         _, said = run.on(
             "mgr",
+            "set -o pipefail; "
             "/usr/share/haprion-ui/install/platform/migrate "
             f"--release {shlex.quote(release)} current 2>/dev/null "
             "| grep -Eo '^[0-9A-Za-z_]+' | tail -1",

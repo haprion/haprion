@@ -331,7 +331,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertIn("could not be restored, and ${running} is not proved", body)
 
     def unfinished(
-        self, marker: str | None, *, dpkg: bool = False
+        self, marker: str | None, *, dpkg: bool = False, release: str = "next"
     ) -> subprocess.CompletedProcess[str]:
         lib = (ROOT / "install/lib.sh").read_text()
         start = lib.index("read_admin_file() {")
@@ -345,7 +345,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
             [
                 "/bin/bash",
                 "-c",
-                f'UI_ROOT="$1"; marker="$1/update"; previous_id=cand; '
+                f'UI_ROOT="$1"; marker="$1/update"; previous_id=cand; release_id={release}; '
                 f'warn() {{ echo "WARNING: $*" >&2; }}; die() {{ echo "ERROR: $*" >&2; exit 1; }}; '
                 f'{reader}{self.functions("unfinished_update")}unfinished_update; echo "$previous_id"',
                 "-",
@@ -388,6 +388,28 @@ class CoordinatedUpdateTests(unittest.TestCase):
                         refused.stderr,
                         r"If cand is the release to keep, remove \S+/update, " + then,
                     )
+
+    def test_the_way_out_says_to_check_the_release_dpkg_takes_as_current(self) -> None:
+        """Review 26-10-29, AAA05: with the package's own release current, the postinst
+        calls it current, and nothing checked it after the switch."""
+
+        for dpkg, release, checked in (
+            (True, "cand", True),
+            (True, "next", False),
+            (False, "cand", False),
+        ):
+            with self.subTest(dpkg=dpkg, release=release):
+                refused = self.unfinished("not a plain assignment\n", dpkg=dpkg, release=release)
+                self.assertEqual(refused.returncode, 1)
+                check = "cand was not proved, so check it with: sudo "
+                if checked:
+                    self.assertRegex(
+                        refused.stderr,
+                        r"then: sudo dpkg --configure -a; cand was not proved, so check it with: "
+                        r"sudo /\S+/check-compatibility\n",
+                    )
+                else:
+                    self.assertNotIn(check, refused.stderr)
 
     def test_the_copy_and_the_marker_are_on_disk_and_root_s_alone(self) -> None:
         """Review 26-10-29, A03: the copy was in /tmp, a tmpfs a restart empties."""

@@ -49,12 +49,18 @@ kept="${state}/kept"
 # or purged by a package that left the marker behind - is the operator's to
 # end: only they know whether the running release is the one to keep. Said
 # with the way out; every apt run stopped on it without one (review 26-10-29,
-# AA04).
+# AA04). Run again, the update proves the release it installs. Under dpkg with
+# the package's own release running, the postinst calls it current and checks
+# nothing, so the check is said with it (review 26-10-29, AAA05).
 #
 unfinished_update() {
     local RELEASE="" PREVIOUS="" again="then run the update again"
     [[ -f "$marker" ]] || return 0
-    [[ -z "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]] || again="then: sudo dpkg --configure -a"
+    if [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]]; then
+        again="then: sudo dpkg --configure -a"
+        [[ "$previous_id" != "$release_id" ]] \
+            || again+="; ${previous_id} was not proved, so check it with: sudo $(pwd)/check-compatibility"
+    fi
     local way_out="If ${previous_id} is the release to keep, remove ${marker}, ${again}"
     read_admin_file "$marker" RELEASE PREVIOUS || die "${marker} cannot be read. ${way_out}"
     [[ -n "$PREVIOUS" && -d "${UI_ROOT}/releases/${PREVIOUS}" ]] \

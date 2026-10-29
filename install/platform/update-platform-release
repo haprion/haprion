@@ -164,8 +164,9 @@ last_proved_current() {
 }
 
 #
-# The previous release back, with its files, and proved. Says what failed and
-# returns 1 rather than dying: the caller, or the trap, says the last words. A
+# The previous release back, with its files, and proved. Returns 2 when it is
+# back and the check after it fails, 1 when it is not back, rather than dying:
+# the caller, or the trap, says the last words. A
 # rollback that refused - its drain timed out - or switched back by itself -
 # the previous release did not answer - leaves the candidate current, and the
 # previous release's files under it are the worst of both: the candidate's go
@@ -178,8 +179,7 @@ restore_previous() {
     warn "restoring UI release ${previous_id}"
     if "$rollback" --to "$previous_id"; then
         ./check-compatibility && return 0
-        warn "release ${previous_id} was restored but the installation is not compatible"
-        return 1
+        return 2
     fi
     candidate_current || return 1
     if ./refresh-platform-files "$release_id" "$kept"; then
@@ -189,6 +189,20 @@ restore_previous() {
     fi
     files_settled=candidate
     return 1
+}
+
+#
+# The last words of a failure after the switch, once: restored, restored with
+# the check after it failing, or not restored. A restore whose check failed
+# said "was restored but not compatible" and then "could not be restored"
+# (review 26-10-29).
+#
+undo_and_die() {
+    local status=0
+    restore_previous || status=$?
+    (( status != 0 )) || die "$1; UI release ${previous_id} was restored"
+    (( status != 2 )) || die "$1; UI release ${previous_id} was restored, but the check after it failed"
+    die "$1, and UI release ${previous_id} could not be restored"
 }
 
 #
@@ -336,8 +350,7 @@ step "Checking the complete candidate before activation"
 step "Activating ${release_id}"
 if ! ./install-ui-release "$release_id"; then
     if candidate_current; then
-        restore_previous && die "activation failed; UI release ${previous_id} was restored"
-        die "activation failed, and UI release ${previous_id} could not be restored"
+        undo_and_die "activation failed"
     fi
     die "activation stopped before the switch; $(basename "$(readlink -f "$current")") kept running"
 fi
@@ -359,8 +372,7 @@ fi
 
 step "Proving the running installation"
 if ! ./check-compatibility; then
-    restore_previous && die "the final compatibility check failed; UI release ${previous_id} was restored"
-    die "the final compatibility check failed, and UI release ${previous_id} could not be restored"
+    undo_and_die "the final compatibility check failed"
 fi
 files_settled=yes
 proved=yes

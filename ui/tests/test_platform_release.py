@@ -181,9 +181,9 @@ class CoordinatedUpdateTests(unittest.TestCase):
                     )
 
     def test_both_post_switch_failures_restore_the_previous_release(self) -> None:
-        self.assertEqual(self.update.count("    restore_previous && die "), 2)
+        self.assertEqual(self.update.count('    undo_and_die "'), 2)
         self.assertIn('"$rollback" --to "$previous_id"', self.update)
-        self.assertIn("was restored but the installation is not compatible", self.update)
+        self.assertIn("was restored, but the check after it failed", self.update)
 
     def functions(self, *names: str) -> str:
         text = ""
@@ -193,7 +193,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         return text
 
     def restoring(
-        self, script: str, *, rollback: str, settled: str = "no"
+        self, script: str, *, rollback: str, settled: str = "no", check: str = ""
     ) -> tuple[subprocess.CompletedProcess[str], Path]:
         """The update's own restore and exit, with a rollback, a check and a file step stubbed.
 
@@ -213,7 +213,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         (here / "update").write_text("RELEASE=cand\nPREVIOUS=prev\n")
         for name, body in (
             ("refresh-platform-files", 'echo "refresh $*" >> "$LOG"'),
-            ("check-compatibility", 'echo check >> "$LOG"'),
+            ("check-compatibility", f'echo check >> "$LOG"\n{check}'),
             ("rollback", rollback),
         ):
             (here / name).write_text(f"#!/bin/bash\n{body}\n")
@@ -226,11 +226,13 @@ class CoordinatedUpdateTests(unittest.TestCase):
                 f'rollback="$1/rollback"; release_id=cand; previous_id=prev; '
                 f"files_settled={settled}; restore_tried=no; proved=no; base=0; found_marker=; "
                 'warn() { echo "WARNING: $*" >&2; }; where_it_stands() { echo said; }; '
+                'die() { echo "ERROR: $*" >&2; exit 1; }; '
                 + self.functions(
                     "settle_files",
                     "candidate_current",
                     "last_proved_current",
                     "restore_previous",
+                    "undo_and_die",
                     "on_exit",
                 )
                 + script,
@@ -280,6 +282,30 @@ class CoordinatedUpdateTests(unittest.TestCase):
                 self.assertNotIn("check", (here / "log").read_text())
                 self.assertTrue((here / "update").exists())
                 self.assertTrue((here / "kept").exists())
+
+    def test_the_last_words_say_once_whether_the_previous_release_was_restored(self) -> None:
+        """Review 26-10-29, a's cosmetics: "was restored but not compatible", then "could not be restored"."""
+
+        for rollback, check, said in (
+            (self.RESTORED, "", "activation failed; UI release prev was restored"),
+            (
+                self.RESTORED,
+                "exit 1",
+                "activation failed; UI release prev was restored, but the check after it failed",
+            ),
+            (self.REFUSED, "", "activation failed, and UI release prev could not be restored"),
+        ):
+            with self.subTest(rollback=rollback, check=check):
+                done, _ = self.restoring(
+                    'trap on_exit EXIT; undo_and_die "activation failed"',
+                    rollback=rollback,
+                    check=check,
+                )
+                self.assertEqual(done.returncode, 1)
+                errors = [line for line in done.stderr.splitlines() if "ERROR" in line]
+                self.assertEqual(errors, [f"ERROR: {said}"])
+                if check:
+                    self.assertNotIn("could not be restored", done.stderr)
 
     def test_a_restore_that_worked_ends_the_update_s_state(self) -> None:
         done, here = self.restoring("(exit 1); on_exit", rollback=self.RESTORED)
@@ -470,7 +496,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
             self.update.index('if ! ./install-ui-release "$release_id"; then') :
         ]
         activation = activation[: activation.index("\nfi\n")]
-        self.assertLess(activation.index("candidate_current"), activation.index("restore_previous"))
+        self.assertLess(activation.index("candidate_current"), activation.index("undo_and_die"))
         self.assertIn(
             'activation stopped before the switch; $(basename "$(readlink -f "$current")") kept '
             "running",
@@ -676,8 +702,7 @@ class UpdatesOverAnUnprovedRelease(unittest.TestCase):
             "after": (
                 'ln -sfn "$UI_ROOT/releases/$release_id" "$current.new"; mv -T "$current.new" "$current"\n'
                 "if ! false; then\n"
-                '    restore_previous && die "activation failed; UI release ${previous_id} was restored"\n'
-                '    die "activation failed, and UI release ${previous_id} could not be restored"\n'
+                '    undo_and_die "activation failed"\n'
                 "fi\n"
             ),
             "none": (
@@ -1015,7 +1040,8 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
                 arguments = self.recorded()
                 self.assertEqual(arguments[0], str(self.root / "current/venv/bin/python"))
                 self.assertNotIn("--packaged", arguments)
-                self.assertIn("is not on disk", errors)
+                # Review 26-10-29, a's cosmetics: "the release it names" of a file not there.
+                self.assertIn("is missing" if payload is None else "is not on disk", errors)
 
     def test_a_first_installation_is_checked_without_what_step_07_installs(self) -> None:
         code, errors = self.check("--release", "candidate", "--first-install", module="new")

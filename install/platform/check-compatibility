@@ -99,8 +99,10 @@ packaged="$(sed -n 's/^RELEASE_ID=//p' "$UI_PAYLOAD" 2>/dev/null || true)"
 if [[ "$packaged" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ && -x "${UI_ROOT}/releases/${packaged}/venv/bin/python" ]]; then
     checker_root="${UI_ROOT}/releases/${packaged}"
     checker_args+=(--packaged "$packaged")
+elif [[ ! -e "$UI_PAYLOAD" ]]; then
+    warn "${UI_PAYLOAD} is missing; the checked release's own code checks it"
 else
-    warn "the release ${UI_PAYLOAD} names is not on disk; the checked release's own code checks it"
+    warn "the release ${UI_PAYLOAD} names (${packaged:-none}) is not on disk; the checked release's own code checks it"
 fi
 checker_module="$(release_module "${checker_root}/venv/bin/python")" \
     || die "cannot tell which package the release this package installed is"

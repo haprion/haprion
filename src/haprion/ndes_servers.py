@@ -32,6 +32,7 @@ import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from base64 import b64decode
 from collections.abc import Callable, Iterator, Sequence
@@ -140,6 +141,15 @@ def _opener(trust: Path) -> urllib.request.OpenerDirector:
     """
 
     context = ssl.create_default_context(cafile=str(trust))
+    #
+    # No stricter than the enrollment, which reaches the same server with
+    # Certmonger's `scep-submit`: libcurl over OpenSSL with peer and host
+    # checks and its CA file, and no strict X.509 mode (read in its source
+    # and measured with curl 26-10-29). Python turns strict mode on, and it
+    # refused a CA without key usage that the enrollment takes (review
+    # 2026-10-29, round 2, BBB05).
+    #
+    context.verify_flags &= ~ssl.VERIFY_X509_STRICT
     return urllib.request.build_opener(
         urllib.request.ProxyHandler({}),
         urllib.request.HTTPSHandler(context=context),
@@ -160,6 +170,39 @@ def _tls_said(error: ssl.SSLError) -> str:
         if isinstance(words, str) and words:
             return words
     return http_answer.said(error)
+
+
+#
+# OpenSSL's codes for a certificate whose issuer the store does not hold
+# (`X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT`, `..._DEPTH_ZERO_SELF_SIGNED_CERT`,
+# `..._SELF_SIGNED_CERT_IN_CHAIN`, `..._UNABLE_TO_GET_ISSUER_CERT_LOCALLY`,
+# `..._UNABLE_TO_VERIFY_LEAF_SIGNATURE`), one past its date, one not valid
+# yet, and one for another name.
+#
+ISSUER_MISSING = frozenset({2, 18, 19, 20, 21})
+EXPIRED, NOT_YET_VALID, HOST_MISMATCH = 10, 9, 62
+
+
+def _untrusted(endpoint: str, error: ssl.SSLCertVerificationError, trust: Path) -> str:
+    """Why the server's HTTPS certificate failed, and the way on when there is one.
+
+    "Add the CA that issued it to the store" was said for every failure,
+    also for a certificate for another name or past its date, whose CA the
+    store already held (review 2026-10-29, round 2, BBB05).
+    """
+
+    code = getattr(error, "verify_code", None)
+    if code == HOST_MISMATCH:
+        host = urllib.parse.urlsplit(endpoint).hostname or "the address"
+        return f"its HTTPS certificate is not for {host}; give the address its certificate names"
+    if code == EXPIRED:
+        return "its HTTPS certificate has expired"
+    if code == NOT_YET_VALID:
+        return "its HTTPS certificate is not valid yet"
+    said = f"its HTTPS certificate is not trusted by {_store(trust)} ({_tls_said(error)})"
+    if code in ISSUER_MISSING:
+        return said + "; add the CA that issued it to the store"
+    return said
 
 
 def get_ca_cert(endpoint: str, trust: Path = SYSTEM_TRUST) -> bytes:
@@ -206,8 +249,7 @@ def get_ca_cert(endpoint: str, trust: Path = SYSTEM_TRUST) -> bytes:
         if isinstance(reason, ssl.SSLCertVerificationError):
             raise NdesServerError(
                 "tls",
-                f"{endpoint}: its HTTPS certificate is not trusted by {_store(trust)} "
-                f"({_tls_said(reason)}); add the CA that issued it to the store",
+                f"{endpoint}: {_untrusted(endpoint, reason, trust)}",
                 exit_codes.UNAVAILABLE,
             ) from None
         if isinstance(reason, ssl.SSLError):

@@ -116,6 +116,26 @@ class Served:
         self.thread.join(5)
 
 
+class ServedOverTls(Served):
+    """The same server over HTTPS, with the certificate chain a test gives it."""
+
+    def __init__(self, chain: Path, key: Path) -> None:
+        def answer(handler: http.server.BaseHTTPRequestHandler) -> None:
+            handler.send_response(200)
+            handler.send_header("Content-Length", "2")
+            handler.end_headers()
+            handler.wfile.write(b"ca")
+
+        super().__init__(answer)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(chain, key)
+        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
+
+    def __enter__(self) -> str:
+        self.thread.start()
+        return f"https://localhost:{self.server.server_address[1]}/certsrv/mscep/mscep.dll"
+
+
 class TheFetch(unittest.TestCase):
     """`get_ca_cert` against a local server, through urllib as it runs."""
 
@@ -607,6 +627,63 @@ class TheAuthorities(unittest.TestCase):
             ndes_servers.get_ca_cert(ENDPOINT, SYSTEM_TRUST)
         self.assertEqual(caught.exception.code, "tls")
         self.assertIn("TLS failed", str(caught.exception))
+
+    def test_each_https_failure_is_given_its_own_way_out(self) -> None:
+        """Review 2026-10-29, round 2, BBB05: every failure was told to add a CA to the store.
+
+        Over real HTTPS on this host. A certificate for another name, one past
+        its date and one from a CA the store does not hold each say what is
+        wrong; and a CA that Python's strict mode alone refuses - this test
+        PKI's root has no key usage - is accepted, as the enrollment's
+        libcurl accepts it.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            here = Pki(root / "here", names=("localhost",))
+            other = Pki(root / "other", names=("other.example.com",))
+            stranger = Pki(root / "stranger", names=("localhost",))
+            expired = here.directory / "expired.pem"
+            subprocess.run(
+                [OPENSSL, "x509", "-req", "-in", str(here.directory / "localhost.csr")]
+                + ["-CA", str(here.intermediate), "-CAkey", str(here.intermediate_key)]
+                + ["-not_before", "20200101000000Z", "-not_after", "20200201000000Z"]
+                + ["-extfile", str(here.directory / "localhost.ext"), "-out", str(expired)],
+                capture_output=True,
+                check=True,
+            )
+            chains = {}
+            for name, leaf, key, pki in (
+                ("here", here.leaf, here.leaf_key, here),
+                ("other", other.leaf, other.leaf_key, other),
+                ("expired", expired, here.leaf_key, here),
+            ):
+                chain = root / f"{name}-chain.pem"
+                chain.write_text(leaf.read_text() + pki.intermediate.read_text())
+                chains[name] = (chain, key, pki.root)
+            for name, trust, words in (
+                (
+                    "other",
+                    other.root,
+                    "its HTTPS certificate is not for localhost; give the address its certificate names",
+                ),
+                ("expired", here.root, "its HTTPS certificate has expired"),
+                ("here", stranger.root, "add the CA that issued it to the store"),
+            ):
+                chain, key, _ = chains[name]
+                with (
+                    self.subTest(name),
+                    ServedOverTls(chain, key) as url,
+                    self.assertRaises(ndes_servers.NdesServerError) as caught,
+                ):
+                    ndes_servers.get_ca_cert(url, trust)
+                self.assertEqual(caught.exception.code, "tls")
+                self.assertIn(words, str(caught.exception))
+                if name != "here":
+                    self.assertNotIn("add the CA", str(caught.exception))
+            chain, key, trust = chains["here"]
+            with ServedOverTls(chain, key) as url:
+                self.assertEqual(ndes_servers.get_ca_cert(url, trust), b"ca")
 
     def test_an_address_that_is_not_https_is_refused_before_anything_is_asked(self) -> None:
         asked: list[str] = []

@@ -753,10 +753,10 @@ def run_one_job(
         #
         logger.info("job %s was held and discarded by %s", job.id, job.held_decided_by)
         message = (
-            f"it had begun before the manager last started; {job.held_decided_by}"
+            f"it had begun before a restart or a restore; {job.held_decided_by}"
             " decided it should not run again"
             if job.attempts > 1
-            else f"queued before the manager last started; {job.held_decided_by}"
+            else f"held after a restart or a restore; {job.held_decided_by}"
             " decided it should not run"
         )
         end_before_the_run(

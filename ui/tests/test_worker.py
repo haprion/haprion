@@ -634,7 +634,7 @@ class JobsHeldSinceTheBoot(WorkerTestCase):
         self.assertEqual(finished["result"]["error"]["code"], "held_discarded")
         self.assertEqual(
             finished["result"]["error"]["message"],
-            "it had begun before the manager last started; admin decided it should not run again",
+            "it had begun before a restart or a restore; admin decided it should not run again",
         )
 
     def test_a_job_an_admin_let_run_is_not_held_to_the_two_hours(self) -> None:
@@ -836,7 +836,9 @@ class ASocketHelperThatOutlivesItsClient(WorkerTestCase):
 
         self.receipts.return_value = answer_receipt.Receipt("answered", stdout="", exit_code=1)
         with mock.patch.object(execution, "run", side_effect=AssertionError("nothing runs")):
-            worker.resume_adopted(self.connection, self.add(), self.receipts.return_value, worker=WORKER)
+            worker.resume_adopted(
+                self.connection, self.add(), self.receipts.return_value, worker=WORKER
+            )
 
         (finished,) = self.finished
         self.assertEqual(finished["state"], "unknown")

@@ -174,7 +174,7 @@ def judge(
             return Judgement(
                 "adopt",
                 "answer_kept",
-                "its helper ended after the worker stopped and kept its answer; the job ends on it",
+                "its helper ended and kept its answer; the job ends on it",
             )
         #
         # Adopted twice, and what follows the answer - a node change's deploy -

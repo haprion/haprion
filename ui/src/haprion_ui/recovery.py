@@ -340,8 +340,9 @@ def adjudicate(
             # the job - a node change's deploy - is new work, and a job held
             # since the manager started runs nothing new before an admin's
             # Run (review 2026-10-28, F01). Discard ends it on that answer.
+            # Not said every pass: Jobs and Needs attention say it (26-10-29).
             #
-            logger.info("job %s is held: its kept answer waits for Run or Discard", job.id)
+            logger.debug("job %s is held: its kept answer waits for Run or Discard", job.id)
             connection.rollback()
             continue
 

@@ -179,6 +179,38 @@ class GoodAnswers(WorkerTestCase):
         delete.assert_called_once_with(self.connection, "cf-main", 4)
         self.assertEqual(self.audited[0]["detail"]["removed_profile"], "cf-main")
 
+    def test_a_removal_whose_row_changed_ends_done_and_says_so(self) -> None:
+        """Review 26-10-29, O08: the job was left running and ended unknown, files removed."""
+
+        job = replace(
+            claimed(
+                operation="dns_profile_apply",
+                payload={"profile": "cf-main", "revision": 4, "remove": True},
+            ),
+            cluster=None,
+        )
+        with mock.patch.object(db, "delete_dns_profile", return_value=False):
+            finished = worker._finish(
+                self.connection,
+                job,
+                state="done",
+                outcome="done",
+                exit_code=0,
+                result=result_document(job),
+                stderr_excerpt=None,
+                worker=WORKER,
+            )
+
+        self.assertTrue(finished)
+        (stored,) = self.finished
+        self.assertEqual(stored["state"], "done")
+        self.assertEqual(
+            [warning["code"] for warning in stored["result"]["warnings"]], ["profile_row_changed"]
+        )
+        detail = self.audited[0]["detail"]
+        self.assertNotIn("removed_profile", detail)
+        self.assertEqual(detail["warning_codes"], ["profile_row_changed"])
+
     def test_done_ndes_profile_removal_deletes_its_own_table_row(self) -> None:
         job = replace(
             claimed(

@@ -248,6 +248,18 @@ def _warning_codes(result: dict[str, Any] | None) -> list[str]:
     return list(dict.fromkeys(codes))
 
 
+def _with_warning(result: dict[str, Any] | None, code: str, message: str) -> dict[str, Any]:
+    """The result with one warning more, in the envelope's own list."""
+
+    ended = dict(result or {})
+    listed = ended.get("warnings")
+    ended["warnings"] = [
+        *(listed if isinstance(listed, list) else ()),
+        {"code": code, "message": message},
+    ]
+    return ended
+
+
 def _finish(
     connection: Any,
     job: db.ClaimedJob,
@@ -279,19 +291,6 @@ def _finish(
     # 26-10-25, 5-02).
     #
     result = diagnostics.redact_result(result)
-    if not db.finish_job(
-        connection,
-        job_id=job.id,
-        claim_token=job.claim_token,
-        state=state,
-        exit_code=exit_code,
-        outcome=outcome,
-        result=result,
-        stderr_excerpt=stderr_excerpt,
-    ):
-        logger.error("job %s could not be finished; its lease was gone", job.id)
-        connection.rollback()
-        return False
 
     removed_profile: str | None = None
     if (
@@ -307,14 +306,39 @@ def _finish(
             else db.delete_ndes_profile
         )
         if (
-            not isinstance(profile, str)
-            or type(revision) is not int
-            or not delete_row(connection, profile, revision)
+            isinstance(profile, str)
+            and type(revision) is int
+            and delete_row(connection, profile, revision)
         ):
+            removed_profile = profile
+        else:
+            #
+            # The files are gone and the row changed since it was queued: the
+            # removal is done, and the row is kept for a person. Left without
+            # an end, the job stood `running` and recovery ended it `unknown`
+            # (review 26-10-29, O08).
+            #
             logger.error("job %s removed profile files but its fenced database row changed", job.id)
-            connection.rollback()
-            return False
-        removed_profile = profile
+            result = _with_warning(
+                result,
+                "profile_row_changed",
+                "the profile's files were removed; its row changed after the removal was asked"
+                " for and was kept",
+            )
+
+    if not db.finish_job(
+        connection,
+        job_id=job.id,
+        claim_token=job.claim_token,
+        state=state,
+        exit_code=exit_code,
+        outcome=outcome,
+        result=result,
+        stderr_excerpt=stderr_excerpt,
+    ):
+        logger.error("job %s could not be finished; its lease was gone", job.id)
+        connection.rollback()
+        return False
 
     #
     # A publish that renamed a pool keeps its history under the new name

@@ -19,14 +19,24 @@ A run fails for a file or socket it left open, seen two ways:
   measured to silence every such warning for the whole module (C02).
 
 And for a reach under /etc/haprion, made from Python in this process (A09,
-CC01): an opening, a listing, a stat, an existence or access check, a link
-read, or a change to a path there. A realpath of one is let through as long as
-it follows no link there.
+CC01, CCC01): an opening, a listing, a stat, an existence or access check, a
+link read, a strict resolve, or a change to a path there - as the path is
+written, and where the links on its way lead. A realpath that is not strict is
+let through as long as it follows no link there: its answer is the same
+whether the file is there or not.
 
-What it does not see: a child that starts a program - a script, a shell
-command, another Python - as the hook and the wrappers end with the exec; an
-opening made from C, such as ssl's `load_verify_locations`; and what a child
-keeps open.
+What it does not see:
+
+- a child that starts a program - a script, a shell command, another
+  Python - as the hook and the wrappers end with the exec;
+- a forked child that does not: the refusal fails the child, not the run;
+- an opening made from C, such as ssl's `load_verify_locations`;
+- a relative `os.open(..., dir_fd=)`, which is counted from the working
+  directory: the event does not name the directory;
+- a listing of /etc, which shows that haprion is there;
+- what a child keeps open;
+- a ResourceWarning a test catches itself, in `catch_warnings(record=True)`
+  or `assertWarns`.
 """
 
 from __future__ import annotations
@@ -57,31 +67,40 @@ INTERPRETER = os.path.realpath(sys.executable)
 #
 MACHINE_CONFIGURATION = "/etc/haprion"
 #
-# The audit events that name a path, and which of their arguments are paths.
-# A symlink's target is only text until something follows it.
+# The audit events that name a path: for each path, its argument, the argument
+# holding the directory descriptor it is relative to, and whether the call
+# follows a link in its last part. Every directory on the way is followed by
+# any call. A symlink's target is only text: making a link there is no reach.
+# `open` names no descriptor, so a relative `os.open(..., dir_fd=)` is counted
+# from the working directory.
 #
-PATH_EVENTS = {
-    "open": (0,),
-    "os.listdir": (0,),
-    "os.scandir": (0,),
-    "os.chdir": (0,),
-    "os.mkdir": (0,),
-    "os.rmdir": (0,),
-    "os.remove": (0,),
-    "os.rename": (0, 1),
-    "os.link": (0, 1),
-    "os.symlink": (1,),
-    "os.chmod": (0,),
-    "os.chown": (0,),
-    "os.utime": (0,),
-    "os.truncate": (0,),
+PATH_EVENTS: dict[str, tuple[tuple[int, int | None, bool], ...]] = {
+    "open": ((0, None, True),),
+    "os.listdir": ((0, None, True),),
+    "os.scandir": ((0, None, True),),
+    "os.chdir": ((0, None, True),),
+    "os.truncate": ((0, None, True),),
+    "os.mkdir": ((0, 2, False),),
+    "os.rmdir": ((0, 1, False),),
+    "os.remove": ((0, 1, False),),
+    "os.rename": ((0, 2, False), (1, 3, False)),
+    "os.link": ((0, 2, False), (1, 3, False)),
+    "os.symlink": ((1, 2, False),),
+    #
+    # These follow a link unless told not to, and the event does not say
+    # which: copystat sets a copied link's own times with them.
+    #
+    "os.chmod": ((0, 2, False),),
+    "os.chown": ((0, 3, False),),
+    "os.utime": ((0, 3, False),),
 }
 #
 # And the calls that have no audit event at all (26-10-29, AA08): every
 # `exists`, `is_file`, `is_dir`, `lexists` and `is_symlink`, in os.path and
-# pathlib alike, is one of these underneath.
+# pathlib alike, is one of these underneath. Whether each follows a link in
+# its last part by default.
 #
-UNAUDITED = ("stat", "lstat", "access", "readlink")
+UNAUDITED = {"stat": True, "lstat": False, "access": True, "readlink": False}
 
 
 class MachineConfigurationRead(AssertionError):
@@ -95,37 +114,84 @@ resource_warnings: list[str] = []
 # no file, and the policy loader resolves every path a policy names - its
 # defaults under /etc/haprion among them - so those are let through while it
 # walks. A link it would follow is not: what it reads there differs by machine.
+# Every reach is resolved the same way to see where it leads, which cost the
+# suites 4 % more module time (measured 26-10-29, 1438 s against 1495 s).
 #
 _resolving = threading.local()
+_readlink = os.readlink
+_realpath = os.path.realpath
 
 
-def _reach(path: object) -> None:
+def _refuse(name: str, written: str) -> None:
+    # normpath keeps two leading slashes, which POSIX lets mean another root.
+    if name.startswith("//") and not name.startswith("///"):
+        name = name[1:]
+    if name == MACHINE_CONFIGURATION or name.startswith(MACHINE_CONFIGURATION + "/"):
+        reached = name if name == written else f"{name} (through {written})"
+        machine_reads.append(reached)
+        raise MachineConfigurationRead(
+            f"a test reached for this machine's configuration: {reached}"
+        )
+
+
+def _walk(name: str) -> str:
+    _resolving.depth = getattr(_resolving, "depth", 0) + 1
+    try:
+        return _realpath(name)
+    finally:
+        _resolving.depth -= 1
+
+
+def _reach(path: object, directory: object = None, follow: bool = True) -> None:
+    """Refuse a path under /etc/haprion: as it is written, and where its links lead.
+
+    Review 26-10-29, CCC01: a link into it, `..` through one, and a path
+    relative to a directory descriptor went through.
+    """
+
     if not isinstance(path, str | bytes | os.PathLike):
         return
     try:
         name = os.fsdecode(path)
         if not os.path.isabs(name):
-            name = os.path.join(os.getcwd(), name)
+            # An event says -1 for none; below zero is the working directory.
+            if isinstance(directory, int) and directory >= 0:
+                base = _readlink(f"/proc/self/fd/{directory}")
+            else:
+                base = os.getcwd()
+            name = os.path.join(base, name)
     except (OSError, TypeError, ValueError):
         return
-    name = os.path.normpath(name)
-    if name == MACHINE_CONFIGURATION or name.startswith(MACHINE_CONFIGURATION + "/"):
-        machine_reads.append(name)
-        raise MachineConfigurationRead(f"a test reached for this machine's configuration: {name}")
+    written = os.path.normpath(name)
+    _refuse(written, written)
+    if getattr(_resolving, "depth", 0) > 0:
+        # A part of realpath's own walk, already resolved as far as it goes.
+        return
+    head, tail = os.path.split(name)
+    try:
+        if follow or tail in ("", ".", ".."):
+            where = _walk(name)
+        else:
+            where = os.path.join(_walk(head), tail)
+    except (OSError, RuntimeError, ValueError):
+        # The call itself fails the same way.
+        return
+    _refuse(where, written)
 
 
 def _machine_configuration(event: str, args: tuple[object, ...]) -> None:
-    for index in PATH_EVENTS.get(event, ()):
+    for index, directory, follow in PATH_EVENTS.get(event, ()):
         if index < len(args):
-            _reach(args[index])
+            fd = args[directory] if directory is not None and directory < len(args) else None
+            _reach(args[index], fd, follow)
 
 
-def _guarded(original: Callable[..., Any]) -> Callable[..., Any]:
+def _guarded(original: Callable[..., Any], follows: bool) -> Callable[..., Any]:
     walked = original is os.lstat
 
     def guarded(path: Any, *args: Any, **kwargs: Any) -> Any:
         if not (walked and getattr(_resolving, "depth", 0) > 0):
-            _reach(path)
+            _reach(path, kwargs.get("dir_fd"), kwargs.get("follow_symlinks", follows))
         return original(path, *args, **kwargs)
 
     guarded.__name__ = original.__name__
@@ -135,9 +201,9 @@ def _guarded(original: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def _guard_unaudited() -> None:
-    for name in UNAUDITED:
+    for name, follows in UNAUDITED.items():
         original = getattr(os, name)
-        guarded = _guarded(original)
+        guarded = _guarded(original, follows)
         #
         # shutil and os choose their fd-based paths by these sets (rmtree's
         # symlink-safe one among them): the wrapper stands where the call did.
@@ -151,12 +217,18 @@ def _guard_unaudited() -> None:
             if original in supported:
                 supported.add(guarded)
         setattr(os, name, guarded)
-    realpath = os.path.realpath
 
     def resolved(path: Any, *args: Any, **kwargs: Any) -> Any:
+        #
+        # A strict one fails where the path is missing: here it succeeds, in
+        # CI it does not (CCC01). Any true value - ALLOW_MISSING among them,
+        # which still fails on a directory it may not enter.
+        #
+        if kwargs.get("strict"):
+            _reach(path)
         _resolving.depth = getattr(_resolving, "depth", 0) + 1
         try:
-            return realpath(path, *args, **kwargs)
+            return _realpath(path, *args, **kwargs)
         finally:
             _resolving.depth -= 1
 

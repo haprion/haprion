@@ -34,12 +34,18 @@ The repository has complementary gates. No single scanner replaces the others.
    - a file, socket or other descriptor still open once its tests and fixtures have ended, beyond
      those the process was started with;
    - a reach for a path under `/etc/haprion`, the configuration of the machine the suite happens to
-     run on: an opening, a listing, a stat, an existence or access check, a link read, or a change
-     to a path there, made from Python in the test's own process.
+     run on: an opening, a listing, a stat, an existence or access check, a link read, a strict
+     resolve, or a change to a path there, made from Python in the test's own process. The path
+     counts as it is written and where the links on its way lead.
 
-   It does not see a child that starts a program - a script, a shell command, another Python - an
-   opening made from C (such as `ssl`'s `load_verify_locations`), or what a child keeps open. A plain `python -m unittest`
-   has none of these checks. The engine's modules run under coverage, combined before the report.
+   It does not see a child that starts a program - a script, a shell command, another Python - or a
+   forked child's reach, which fails the child but not the run. It does not see an opening made
+   from C (such as `ssl`'s `load_verify_locations`), a relative `os.open` from a directory
+   descriptor (counted from the working directory), a listing of `/etc`, which shows that
+   `haprion` is there, or what a child keeps open. A ResourceWarning that a test catches itself,
+   with `catch_warnings(record=True)` or `assertWarns`, is not counted. A plain
+   `python -m unittest` has none of these checks. The engine's modules run under coverage, combined
+   before the report.
    `run-checks` then runs the interface's migrations and database tests against a disposable
    PostgreSQL cluster (`ui/tools/test-database`, below), and fails without PostgreSQL installed.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,

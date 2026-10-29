@@ -230,6 +230,64 @@ class RunTestModulesTests(unittest.TestCase):
             self.assertIn(f"/etc/haprion/{path}\n", result.stdout)
         self.assertIn("failed: demo/test_look.py", result.stderr)
 
+    def test_a_way_there_that_is_not_written_there_fails(self) -> None:
+        """Review 26-10-29, CCC01: the path was compared as it was written, not where it led."""
+
+        #
+        # Each test lets the refusal through, so each is named a failure of
+        # its own; on a machine without /etc/haprion every one is refused too.
+        #
+        leading = (
+            "import os, pathlib, tempfile, unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def setUp(self) -> None:\n"
+            "        self.root = pathlib.Path(tempfile.mkdtemp())\n"
+            "        (self.root / 'there').symlink_to('/etc/haprion')\n"
+            "        (self.root / 'etc').symlink_to('/etc')\n"
+            "        (self.root / 'policy').symlink_to('/etc/haprion/runtime-policy.yaml')\n"
+            "    def tearDown(self) -> None:\n"
+            "        for name in ('there', 'etc', 'policy'):\n"
+            "            (self.root / name).unlink()\n"
+            "        self.root.rmdir()\n"
+            "    def test_exists_through_a_link(self) -> None:\n"
+            "        (self.root / 'there' / 'ui.toml').exists()\n"
+            "    def test_listing_through_a_link(self) -> None:\n"
+            "        os.listdir(self.root / 'there')\n"
+            "    def test_opening_a_link(self) -> None:\n"
+            "        open(self.root / 'policy').close()\n"
+            "    def test_up_through_a_link(self) -> None:\n"
+            "        os.path.isdir(f'{self.root}/etc/../etc/haprion/keys')\n"
+            "    def test_strict_resolve(self) -> None:\n"
+            "        pathlib.Path('/etc/haprion/registry').resolve(strict=True)\n"
+            "    def test_two_slashes(self) -> None:\n"
+            "        os.path.exists('//etc/haprion/current')\n"
+            "    def test_from_a_directory(self) -> None:\n"
+            "        directory = os.open('/etc', os.O_RDONLY)\n"
+            "        try:\n"
+            "            os.stat('haprion', dir_fd=directory)\n"
+            "        finally:\n"
+            "            os.close(directory)\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tests = self.suite(root, {"test_a.py": PASSING, "test_lead.py": leading})
+            result = self.execute(tests, root / "durations.json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for name in (
+            "exists_through_a_link",
+            "listing_through_a_link",
+            "opening_a_link",
+            "up_through_a_link",
+            "strict_resolve",
+            "two_slashes",
+            "from_a_directory",
+        ):
+            self.assertIn(f"FAIL: test_{name} ", result.stdout)
+        self.assertIn("reached for this machine's configuration", result.stdout)
+        # Named where it led, and by the way it was written.
+        self.assertRegex(result.stdout, r"/etc/haprion \(through /\S+/there\)\n")
+        self.assertIn("failed: demo/test_lead.py", result.stderr)
+
     def test_a_path_there_resolved_but_not_read_passes(self) -> None:
         # As the policy loader resolves a policy's default directories.
         resolving = (

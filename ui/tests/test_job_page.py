@@ -47,6 +47,15 @@ def job(
     )
 
 
+def newest_first(rows: list[db.Job]) -> list[db.Job]:
+    """The rows as the database returns them: each a minute older than the one before."""
+
+    return [
+        replace(row, id=100 - number, created_at=row.created_at - timedelta(minutes=number))
+        for number, row in enumerate(rows)
+    ]
+
+
 class JobOverviewTests(unittest.TestCase):
     def test_every_terminal_state_has_an_honest_label_and_counter(self) -> None:
         rows = [
@@ -58,6 +67,7 @@ class JobOverviewTests(unittest.TestCase):
             job(state="failed", outcome="failed"),
             job(state="unknown", outcome="unknown"),
         ]
+        rows = newest_first(rows)
 
         overview = jobs.build_job_overview(rows, now=datetime.now(UTC))
 
@@ -475,7 +485,7 @@ class WhatStillNeedsReview(unittest.TestCase):
             job(state="unknown", outcome="unknown"),
         ]
 
-        self.assertEqual(jobs.build_job_overview(rows).attention_count, 0)
+        self.assertEqual(jobs.build_job_overview(newest_first(rows)).attention_count, 0)
 
     def test_a_cluster_whose_latest_job_failed_is_counted_once(self) -> None:
         rows = [

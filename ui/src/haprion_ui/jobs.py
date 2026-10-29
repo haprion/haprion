@@ -1161,41 +1161,27 @@ def _exit_meaning(code: int | None) -> str:
 
 
 def _unresolved(rows: list[Job]) -> int:
-    """Clusters whose newest finished job ended badly.
+    """Clusters with a job that Needs attention lists.
 
     Not a tally of every bad outcome in the list. That number only ever grows,
     cannot be cleared, and answers no question a reader can act on - a failure
     from yesterday that a later run replaced is history, not work. Asked on the
-    page as "what needs review?", the honest answer is: the clusters where the
-    last thing we did did not work.
+    page as "what needs review?", the honest answer is the clusters where
+    something done did not work and nothing since has settled it.
 
-    A queued or running job is skipped rather than counted, and the cluster is
-    then judged on the newest job that did finish. So a re-run in flight neither
-    clears the warning nor replaces it: what is still known about that cluster
-    is that the last completed attempt failed, and it stays known until an
-    attempt completes differently.
-
-    That is deliberate, and it is the opposite of what this docstring claimed
-    until 2026-08-31, when the code review measured the function against its own
-    description. Counting only finished jobs and then letting a running one
-    silence the tally would let an operation in progress hide a warning, which
-    is the wrong direction to be wrong in.
+    Counted by Needs attention's own reading (`attention.from_jobs`), by step
+    and subject: read by the cluster's newest job alone, a failed deploy
+    followed by a backup that worked counted nothing while Needs attention
+    listed the deploy (review 26-10-29, O05). A queued or running job settles
+    nothing there either. Certificate jobs have no cluster and are not counted.
     """
 
-    latest: dict[str, str] = {}
-    for job in rows:
-        #
-        # Skipped, not counted under a placeholder. This and the two summaries
-        # below answer questions about clusters - what is busy, what last failed,
-        # how many want attention - and a job with no cluster has no answer to
-        # contribute. Letting one in would file it under a cluster that does not
-        # exist, which is the shape of a warning nobody can act on.
-        #
-        if job.cluster is None:
-            continue
-        if job.cluster not in latest and ran(job):
-            latest[job.cluster] = job.state
-    return sum(state in ATTENTION for state in latest.values())
+    #
+    # Imported here: `attention` imports this module.
+    #
+    from haprion_ui import attention
+
+    return len({item.cluster for item in attention.from_jobs(rows) if item.cluster is not None})
 
 
 def build_job_overview(
@@ -1449,6 +1435,12 @@ FAILURE_LABELS = {
 }
 
 
+#
+# The steps that publish or roll out a cluster's configuration.
+#
+CONFIGURATION_STEPS = frozenset({"deploy", "cert_deploy", "changes_publish", "revert"})
+
+
 @dataclass(frozen=True, slots=True)
 class Failure:
     """A cluster's newest job, when it ended badly."""
@@ -1470,17 +1462,18 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
     attempt fixed is history, and showing it would send somebody after a
     problem that is already gone.
 
-    A node restore neither sets nor ends the verdict. Its jobs carry the
-    cluster only to hold the cluster's lock; they act on a VM, not on the
-    cluster's configuration, and a preview blocked by a VM that is not empty
-    is the check working. Their state is on the run's own page.
+    Only a step that publishes or rolls out the configuration sets or ends
+    the verdict: it is the deploy cell's, and a backup after a failed deploy
+    ended it while Needs attention still listed the deploy, and a failed
+    server state stood as the cluster's deployment (review 26-10-29, O05). A
+    node restore's jobs carry the cluster only to hold its lock.
     """
 
     verdicts: dict[str, Failure] = {}
     for job in jobs:
         if job.cluster is None or job.cluster in verdicts or not ran(job):
             continue
-        if job.operation in RESTORE_OPERATIONS:
+        if ending_step(job) not in CONFIGURATION_STEPS:
             continue
         #
         # A Publish & deploy whose publish recorded its version and whose

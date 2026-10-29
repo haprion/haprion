@@ -17,7 +17,7 @@ import re
 import unittest
 from contextlib import nullcontext
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -349,8 +349,8 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
                 payload = {"action": action}
                 busy = jobs.in_flight([self.job("alpha", operation, "running", payload)])
                 self.assertEqual(busy, {"alpha": running})
-                failure = jobs.last_failure([self.job("alpha", operation, "failed", payload)])
-                self.assertEqual(failure["alpha"].label, failed)
+                failure = jobs.failure_label(self.job("alpha", operation, "failed", payload))
+                self.assertEqual(failure, failed)
 
     def test_an_abandoned_ndes_request_is_named_so_not_an_enrollment(self) -> None:
         """B388: the abandon runs as cert_scep, and was drawn "Enrolling certificate"."""
@@ -504,6 +504,28 @@ class WhatTheLastJobLeftBehind(unittest.TestCase):
             ]
         )
         self.assertEqual(verdicts["alpha"].code, "deploy_refused")
+
+    def test_the_deploy_cell_is_told_by_the_configuration_s_jobs_alone(self) -> None:
+        """Review 26-10-29, O05: a backup after a failed deploy ended its verdict."""
+
+        failed = self.job("alpha", "deploy", "failed", "deploy_refused")
+        backup = replace(self.job("alpha", "backup_run", "done"), id=2)
+        self.assertEqual(jobs.last_failure([backup, failed])["alpha"].code, "deploy_refused")
+        self.assertEqual(
+            jobs.last_failure([self.job("alpha", "server_state", "failed", "node_unreachable")]),
+            {},
+        )
+
+    def test_need_review_counts_what_needs_attention_lists(self) -> None:
+        failed = self.job("alpha", "deploy", "failed", "deploy_refused")
+        backup = replace(
+            self.job("alpha", "backup_run", "done"),
+            id=2,
+            created_at=failed.created_at + timedelta(minutes=1),
+        )
+        rows = [backup, failed]
+        self.assertEqual([item.cluster for item in attention.from_jobs(rows)], ["alpha"])
+        self.assertEqual(jobs.build_job_overview(rows).attention_count, 1)
 
     def test_another_cluster_s_failure_stays_with_that_cluster(self) -> None:
         verdicts = jobs.last_failure(

@@ -201,6 +201,43 @@ class ThePolicy(unittest.TestCase):
         self.assertEqual(data["ndes"]["servers"][0]["tls_ca"], f"{self.root}/tls.pem")
         self.assertEqual(data["backup_root"], f"{self.root}/backup")
 
+    def test_the_comments_after_the_block_stay(self) -> None:
+        """Review 2026-10-29, B04: a comment before the next key was taken as the block's."""
+
+        self.add()
+        with self.policy.open("a") as policy:
+            policy.write(f"# The backup settings\nbackup_root: {self.root}/backup\n")
+        self.add(OTHER)
+        self.assertIn("\n# The backup settings\nbackup_root:", self.policy.read_text())
+        ndes_servers.remove(OTHER, used_by=lambda: (), policy_path=self.policy)
+        self.assertIn("\n# The backup settings\nbackup_root:", self.policy.read_text())
+        ndes_servers.remove(ENDPOINT, used_by=lambda: (), policy_path=self.policy)
+        text = self.policy.read_text()
+        self.assertIn("\n# The backup settings\nbackup_root:", text)
+        self.assertNotIn("ndes", yaml.safe_load(text))
+
+    def test_a_comment_inside_the_block_goes_with_it_and_one_at_the_end_stays(self) -> None:
+        with self.policy.open("a") as policy:
+            policy.write(
+                "ndes:\n"
+                "# confirmed by hand\n"
+                f"  endpoint: {ENDPOINT}\n"
+                f"  issuing_ca: {self.root}/ca.pem\n"
+                "  client_root: /opt/haprion-scep/current\n"
+                "  state_root: /etc/haprion/ndes-requests\n"
+                "  profiles:\n"
+                "    directory: /etc/haprion/ndes-profiles\n"
+                "    private_keys: [/etc/haprion/keys/0123456789abcdef.key]\n"
+                "\n# The end of the policy\n"
+            )
+        self.add(OTHER)
+        text = self.policy.read_text()
+        self.assertEqual(self.servers(), [ENDPOINT, OTHER])
+        self.assertNotIn("confirmed by hand", text)
+        self.assertTrue(text.endswith("\n\n# The end of the policy\n"), text)
+        self.add(OTHER)
+        self.assertEqual(self.policy.read_text(), text)
+
     def test_a_server_confirmed_again_keeps_its_tls_ca(self) -> None:
         """Review 2026-10-29, B02: the entry was written anew, and HTTPS fell back to the system's store."""
 

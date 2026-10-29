@@ -60,7 +60,11 @@ LOCK_WAIT_SECONDS = 30
 MAX_ANSWER = 256 * 1024
 TIMEOUT = 20.0
 SHA256 = re.compile(r"[0-9a-f]{64}")
-TOP_LEVEL = re.compile(r"^[A-Za-z_][\w-]*:", re.MULTILINE)
+#
+# The next line in the first column that is not the ndes block's: a key or a
+# document marker. A comment or a sequence item there can still be the block's.
+#
+TOP_LEVEL = re.compile(r"^(?!-\s|#)\S", re.MULTILINE)
 
 type Fetch = Callable[[str], bytes]
 
@@ -293,28 +297,51 @@ def _ndes_block(data: dict[str, Any], policy_path: Path) -> dict[str, Any]:
     return block
 
 
+def _block(text: str) -> tuple[int, int] | None:
+    """Where the policy's ndes block starts and ends.
+
+    The comments in the first column right before what follows - the next key,
+    or the end of the file - are what follows them, and stay (review
+    2026-10-29, B04: the regex ended the block at the next key, so a comment
+    above it went with the block).
+    """
+
+    start = re.search(r"^ndes:", text, re.MULTILINE)
+    if start is None:
+        return None
+    following = TOP_LEVEL.search(text, start.end())
+    end = following.start() if following else len(text)
+    cut = position = end
+    for line in reversed(text[start.end() : end].splitlines(keepends=True)[1:]):
+        if line.startswith("#"):
+            position -= len(line)
+            cut = position
+        elif not line.strip():
+            position -= len(line)
+        else:
+            break
+    return start.start(), cut
+
+
 def with_ndes(text: str, block: dict[str, Any]) -> str:
     """The policy's text with its ndes block replaced, or added at its end."""
 
     rendered = yaml.safe_dump({"ndes": block}, sort_keys=False, default_flow_style=False)
-    start = re.search(r"^ndes:", text, re.MULTILINE)
-    if start is None:
+    found = _block(text)
+    if found is None:
         return text.rstrip("\n") + "\n\n" + rendered
-    following = TOP_LEVEL.search(text, start.end())
-    end = following.start() if following else len(text)
-    return text[: start.start()] + rendered + ("\n" if following else "") + text[end:]
+    start, end = found
+    rest = text[end:]
+    return text[:start] + rendered + ("\n" if rest else "") + rest
 
 
 def without_ndes(text: str) -> str:
-    start = re.search(r"^ndes:", text, re.MULTILINE)
-    if start is None:
+    found = _block(text)
+    if found is None:
         return text
-    following = TOP_LEVEL.search(text, start.end())
-    return (
-        text[: start.start()].rstrip("\n")
-        + "\n"
-        + ("\n" + text[following.start() :] if following else "")
-    )
+    start, end = found
+    rest = text[end:]
+    return text[:start].rstrip("\n") + "\n" + ("\n" + rest if rest else "")
 
 
 def _write_policy(policy_path: Path, text: str) -> None:

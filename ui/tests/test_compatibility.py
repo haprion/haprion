@@ -911,6 +911,74 @@ class FrozenSchemaTests(unittest.TestCase):
         self.assertIn("WARN  node/alpha/node-a", printed.getvalue())
         self.assertIn("not this release's node package: haprion-node-status", printed.getvalue())
 
+    def test_a_node_on_another_node_package_version_is_said_as_the_dashboard_says_it(
+        self,
+    ) -> None:
+        """Review 26-10-29, A07: the check compared digests only, the dashboard versions only.
+
+        A release that changes no node script left a node on an older package
+        current here and older on the dashboard.
+        """
+
+        carried = "0.99.6+git20261029120000.0123abcd4567"
+
+        def entry(version: str) -> dict[str, object]:
+            return {
+                "name": "node-a",
+                "status": {
+                    "installation": {
+                        "node_api": 1,
+                        "scripts_current": True,
+                        "scripts": {"haprion-node-status": {"installed_sha256": "a" * 64}},
+                        "version": version,
+                    }
+                },
+            }
+
+        for version, said in (
+            (
+                "0.99.5+git20261028210223.49d2aeb20207",
+                "haprion-node 0.99.5 (49d2aeb2), older than the CLI release's 0.99.6 (0123abcd)"
+                " - install it on the node",
+            ),
+            (
+                "0.99.7+git20261101090000.89abcdef0123",
+                "haprion-node 0.99.7 (89abcdef), newer than the CLI release's 0.99.6 (0123abcd)",
+            ),
+        ):
+            with self.subTest(version=version):
+                report = compatibility.Report()
+                answer = json.dumps({"result": {"nodes": [entry(version)]}})
+                with (
+                    mock.patch.object(
+                        compatibility, "_command", return_value=SimpleNamespace(stdout=answer)
+                    ),
+                    contextlib.redirect_stdout(io.StringIO()) as printed,
+                ):
+                    compatibility.check_cluster_nodes(
+                        report,
+                        cluster="alpha",
+                        helper=Path("/x"),
+                        required_api=1,
+                        expected_scripts={"haprion-node-status": "a" * 64},
+                        carried_version=carried,
+                    )
+                self.assertEqual(report.failures, 0)
+                self.assertIn("WARN  node/alpha/node-a", printed.getvalue())
+                self.assertIn(said, printed.getvalue())
+        report = compatibility.Report()
+        answer = json.dumps({"result": {"nodes": [entry(carried)]}})
+        with (
+            mock.patch.object(
+                compatibility, "_command", return_value=SimpleNamespace(stdout=answer)
+            ),
+            contextlib.redirect_stdout(io.StringIO()) as printed,
+        ):
+            compatibility.check_cluster_nodes(
+                report, cluster="alpha", helper=Path("/x"), required_api=1, carried_version=carried
+            )
+        self.assertNotIn("WARN", printed.getvalue())
+
     def nodes_checked(self, *entries: dict[str, object]) -> tuple[int, str]:
         report = compatibility.Report()
         answer = json.dumps({"result": {"nodes": list(entries)}})

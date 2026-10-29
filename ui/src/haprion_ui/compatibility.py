@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from haprion import accounts, node_package
+from haprion import accounts, haproxy_versions, node_package
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     load_policy,
@@ -594,8 +594,16 @@ def check_cluster_nodes(
     helper: Path,
     required_api: int,
     expected_scripts: Mapping[str, str] | None = None,
+    carried_version: str | None = None,
 ) -> None:
     """Each node's API and scripts, and whether they are the CLI release's node package.
+
+    Whether they are is asked two ways, both warnings: the package's version
+    against the carried one's, as the dashboard and `haprion-status` ask it,
+    and each script's bytes against the carried package's - a script changed
+    by hand under the right version (review 26-10-29, A07: the check knew only
+    the bytes, and a release that changed no script left an older package
+    current here and older on the dashboard).
 
     A node's own `scripts_current` compares its files with the record its own
     package left, so a node still on an older package looks current against
@@ -649,6 +657,23 @@ def check_cluster_nodes(
             report.fail(subject, f"node API {api}, installed script digests differ")
         else:
             report.pass_(subject, f"node API {api}, script digests current")
+        status = entry.get("status") if isinstance(entry, dict) else None
+        installation = status.get("installation") if isinstance(status, dict) else None
+        standing = haproxy_versions.against_carried(installation, carried_version)
+        if standing is not None and carried_version is not None:
+            installed, order = standing
+            shown = (
+                f"haprion-node {node_package.short_version(installed)}"
+                if installed
+                else "haprion-node"
+            )
+            carried = node_package.short_version(carried_version)
+            report.warn(
+                subject,
+                f"{shown}, newer than the CLI release's {carried}"
+                if order > 0
+                else f"{shown}, older than the CLI release's {carried} - install it on the node",
+            )
         if expected_scripts:
             behind = _scripts_behind(entry, expected_scripts)
             if behind:
@@ -1037,6 +1062,7 @@ def main(argv: list[str] | None = None) -> int:
             helper=helper,
             required_api=requirements.node_api,
             expected_scripts=carried.scripts if carried is not None else None,
+            carried_version=carried.version if carried is not None else None,
         )
 
     print()

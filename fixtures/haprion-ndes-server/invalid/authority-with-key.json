@@ -8,7 +8,7 @@
   "outcome": "done",
   "result": {
     "endpoint": "https://ca.example.com/certsrv/mscep/mscep.dll",
-    "confirmed": false,
+    "state": "new",
     "authorities": [
       { "subject": "CN=Example Issuing CA", "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "sha1": "0123456789abcdef0123456789abcdef01234567", "issues_ra": true, "pem": "not given out" }
     ]

@@ -1394,6 +1394,34 @@ class OneReleaseChangeAtATime(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertEqual(lock.stat().st_mode & 0o777, 0o600)
 
+    def test_a_new_lock_is_never_open_to_others(self) -> None:
+        """Review 26-10-29, AAA03: made 0644 and changed a program later, after every boot.
+
+        Any account could open it in between and hold the descriptor past
+        the `chmod`. The mode the file has when the `chmod` comes is the mode
+        it was made with.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            lock = Path(raw) / "run/ui-release.lock"
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                [
+                    "/bin/bash",
+                    "-c",
+                    f"RELEASE_LOCK={lock}; umask 022; "
+                    'die() { echo "ERROR: $*" >&2; exit 1; }; '
+                    'chmod() { stat -c "made %a" "$RELEASE_LOCK"; command chmod "$@"; }; '
+                    + self.function()
+                    + 'hold_release_lock; echo "umask $(umask)"',
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(done.stdout.splitlines(), ["made 600", "umask 0022"])
+            self.assertEqual(lock.stat().st_mode & 0o777, 0o600)
+
     def test_under_dpkg_the_way_to_run_it_again_is_dpkg_s(self) -> None:
         """Review 26-10-29, a's cosmetics: under apt, "this" is `dpkg --configure -a`."""
 

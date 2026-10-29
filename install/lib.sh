@@ -229,17 +229,23 @@ RELEASE_LOCK=/run/haprion/ui-release.lock
 # function in lib.sh and haprion-rollback, held together by a test.
 #
 hold_release_lock() {
-    local holder again="run this again when it is done"
+    local holder mask again="run this again when it is done"
     if [[ "$(readlink "/proc/$$/fd/9" 2>/dev/null || true)" == "$RELEASE_LOCK" ]] && flock -n 9; then
         return 0
     fi
     mkdir -p -- "${RELEASE_LOCK%/*}"
-    exec 9>>"$RELEASE_LOCK"
     #
     # Root's alone: `flock` takes a file opened for reading too, and so any
     # account that could read it held every change off (review 26-10-29,
-    # AA06). Set on the file each time, since one made 0644 is there already.
+    # AA06). Made 0600: /run is emptied at every boot, and a `chmod` after
+    # making it left a moment any account could open it in, the descriptor
+    # outliving the `chmod` (AAA03). Set on the file each time too, for one an
+    # older release made 0644.
     #
+    mask="$(umask)"
+    umask 077
+    exec 9>>"$RELEASE_LOCK"
+    umask "$mask"
     chmod 600 -- "$RELEASE_LOCK"
     if ! flock -n 9; then
         holder="$(head -1 "$RELEASE_LOCK" 2>/dev/null || true)"

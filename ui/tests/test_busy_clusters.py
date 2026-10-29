@@ -4,6 +4,7 @@ import re
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -227,6 +228,24 @@ class AJobThatDoesNotFinishByItselfIsNotDrawnAsWorking(BusyPagesTestCase, BadgeR
         ):
             answer = client.get("/clusters/busy").json()
         self.assertEqual(answer["busy"], {"alpha": job_states.HELD})
+
+
+class NoPageDrawsAQueueBadgeOfItsOwn(unittest.TestCase):
+    def test_a_running_badge_is_drawn_only_by_the_macro(self) -> None:
+        """Review 26-10-29 (rig): eight pages each wrote the badge with its spinner,
+        so a held job spun on all of them. `_busy.html` is the one place; the
+        draft's *Waiting for publish* is the one copy left, behind `.working`."""
+
+        templates = Path(job_states.__file__).parent / "templates"
+        hand_drawn = re.compile(
+            r'status-badge status-badge-info[^"]*"[^>]*><span class="badge-spinner"'
+        )
+        drawing = sorted(
+            path.name for path in templates.glob("*.html") if hand_drawn.search(path.read_text())
+        )
+        self.assertEqual(drawing, ["_proxy-rows.html"])
+        rows = (templates / "_proxy-rows.html").read_text()
+        self.assertIn("not queued[draft.object_id].working %}{{ busy_badge(", rows)
 
 
 if __name__ == "__main__":

@@ -556,6 +556,43 @@ class TheConfirmationChecksWhatIssuanceChecks(unittest.TestCase):
         )
 
 
+class ACaWithAnRsaPssKey(unittest.TestCase):
+    def test_it_is_confirmed_as_issuance_takes_it(self) -> None:
+        """Review 2026-10-29, round 3: "is not one this check can verify under"."""
+
+        from haprion import ndes
+        from haprion.cert_import import assemble
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            ca, ca_key = root / "ca.pem", root / "ca.key"
+            leaf, key, request = root / "leaf.pem", root / "leaf.key", root / "leaf.csr"
+            (root / "leaf.ext").write_text(
+                "basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\n"
+                "extendedKeyUsage=serverAuth\nsubjectAltName=DNS:web.example.com\n"
+            )
+            for arguments in (
+                ["req", "-x509", "-newkey", "rsa-pss", "-pkeyopt", "rsa_keygen_bits:2048"]
+                + ["-nodes", "-keyout", str(ca_key), "-out", str(ca), "-subj", "/CN=Pss Root"]
+                + ["-days", "30", "-addext", "basicConstraints=critical,CA:TRUE"]
+                + ["-addext", "keyUsage=critical,keyCertSign,cRLSign"],
+                ["req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key)]
+                + ["-subj", "/CN=web.example.com", "-out", str(request)],
+                ["x509", "-req", "-in", str(request), "-CA", str(ca), "-CAkey", str(ca_key)]
+                + ["-set_serial", "2", "-days", "5", "-extfile", str(root / "leaf.ext")]
+                + ["-out", str(leaf)],
+            ):
+                subprocess.run([OPENSSL, *arguments], capture_output=True, check=True)
+            pem = ca.read_text()
+            authority = ndes_servers.Authority(
+                subject="CN=Pss Root", sha256="", sha1="", pem=pem, issues_ra=True
+            )
+            self.assertIsNone(ndes_servers._chain_problem([authority], [pem]))
+            (root / "issuing-ca.pem").write_text(pem)
+            material = assemble([leaf.read_text(), pem], [key.read_text()])
+            ndes.validate_certificate(material, ["web.example.com"], root)
+
+
 class TheNamesAreCheckedAsIssuanceChecksThem(unittest.TestCase):
     """Review 2026-10-29, round 3, B3-04: a name outside the CA's constraints.
 

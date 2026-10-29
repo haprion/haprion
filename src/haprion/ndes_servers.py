@@ -446,6 +446,8 @@ def _probe(directory: Path, saved: Path, issuing: str) -> str | None:
     kind = algorithm.group(1) if algorithm else ""
     if kind == "rsaEncryption":
         generate = ["-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048"]
+    elif kind == "rsassaPss":
+        generate = ["-algorithm", "RSA-PSS", "-pkeyopt", "rsa_keygen_bits:2048"]
     elif kind == "id-ecPublicKey" and curve is not None:
         generate = ["-algorithm", "EC", "-pkeyopt", f"ec_paramgen_curve:{curve.group(1)}"]
     elif kind in {"ED25519", "ED448"}:

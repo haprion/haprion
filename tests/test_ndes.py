@@ -276,6 +276,30 @@ class EnrollmentStaging(unittest.TestCase):
             (self.directory / "issuing-ca.pem").read_text(), "other example CA material"
         )
 
+    def test_names_outside_the_ca_s_constraints_are_refused_before_the_ca_is_asked(self) -> None:
+        """Review 2026-10-29, round 3, B3-04: the CA issued, and issuance said "renewed"."""
+
+        from tests.test_ndes_servers import CA, EcPki
+
+        pki = EcPki(self.root / "pki")
+        pki.root.mkdir()
+        root = pki.make("Root", CA)
+        issuing = pki.make(
+            "Issuing", CA + "\nnameConstraints=critical,permitted;DNS:example.org", root
+        )
+        self.policy.servers[0].issuing_ca.write_text(issuing[0].read_text() + root[0].read_text())
+        with (
+            mock.patch.object(ndes, "command") as command,
+            self.assertRaises(ndes.NdesError) as caught,
+        ):
+            self.enroll()
+        self.assertEqual(caught.exception.code, "bad_input")
+        self.assertIn(
+            "the names asked for are outside what the CA may issue for", str(caught.exception)
+        )
+        self.assertFalse(command.called)
+        self.assertFalse(self.directory.exists())
+
     def test_a_profile_on_a_server_not_confirmed_is_refused(self) -> None:
         self.profile = replace(
             self.profile, endpoint="https://ca3.example.com/certsrv/mscep/mscep.dll"

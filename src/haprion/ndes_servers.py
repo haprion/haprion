@@ -521,6 +521,215 @@ def _verify_problem(returncode: int, said: str) -> str | None:
     return None if seen else "verification failed"
 
 
+#
+# OpenSSL's codes for a name outside a CA's name constraints, or a constraint
+# it cannot apply (`X509_V_ERR_PERMITTED_VIOLATION`, `..._EXCLUDED_VIOLATION`,
+# `..._SUBTREE_MINMAX`, `..._UNSUPPORTED_CONSTRAINT_TYPE`,
+# `..._UNSUPPORTED_CONSTRAINT_SYNTAX`, `..._UNSUPPORTED_NAME_SYNTAX`).
+#
+NAME_CONSTRAINT_CODES = frozenset({47, 48, 49, 51, 52, 53})
+NAMES_OUTSIDE = "the names asked for are outside what the CA may issue for (its name constraints)"
+
+
+def name_constraint_problem(said: str) -> str | None:
+    """OpenSSL's reason when `openssl verify` refused names under a name constraint."""
+
+    for line in said.splitlines():
+        match = VERIFY_ERROR.fullmatch(line)
+        if match is not None and int(match.group(1)) in NAME_CONSTRAINT_CODES:
+            return match.group(3)
+    return None
+
+
+def names_problem(saved: str, requested: Sequence[str]) -> str | None:
+    """Why the CA certificates in `saved` would refuse a certificate for `requested`, by name.
+
+    The confirmation cannot judge names: a server is confirmed before any
+    certificate is asked for, and its probe stops at its own signature
+    before OpenSSL reaches the name constraints. Issuance judges them after
+    the CA has issued, and failed with "if the CA was renewed" (review
+    2026-10-29, round 3, B3-04). This is the same `openssl verify` with
+    the names a request is about to ask for, before it is sent.
+
+    Each CA certificate is made again under a throwaway key - its names,
+    dates and extensions as they are, signed by its issuer's throwaway key -
+    so every signature holds and OpenSSL goes on to the constraints. A leaf
+    for exactly the names issuance demands is signed under the issuing CA's.
+    Only a name-constraint failure is said: everything else about the chain
+    was confirmed with the real signatures, and issuance judges it again.
+    None also when the check cannot be made; issuance is still the answer.
+    """
+
+    blocks, _keys = split_blocks(saved)
+    if not blocks or not requested:
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as raw:
+            return _names_problem(Path(raw), blocks, requested)
+    except (ImportError_, OSError, subprocess.SubprocessError):
+        return None
+
+
+def _names_problem(directory: Path, blocks: Sequence[str], requested: Sequence[str]) -> str | None:
+    def run(*arguments: str) -> None:
+        subprocess.run(  # noqa: S603 - fixed binary, a private temporary directory
+            [OPENSSL, *arguments], capture_output=True, timeout=OPENSSL_TIMEOUT, check=True
+        )
+
+    def identifier(text: str, header: str) -> str | None:
+        lines = text.splitlines()
+        for number, line in enumerate(lines[:-1]):
+            if line.strip().startswith(header):
+                found = KEY_IDENTIFIER.search(lines[number + 1])
+                return found.group(0) if found else None
+        return None
+
+    cas: list[_Replica] = []
+    for number, pem in enumerate(dict.fromkeys(blocks)):
+        subject, issuer = _names(pem)
+        ids = _openssl(
+            ["x509", "-noout", "-ext", "subjectKeyIdentifier,authorityKeyIdentifier"],
+            stdin=pem,
+            what="read a CA certificate",
+        )
+        original = directory / f"ca-{number}.pem"
+        original.write_text(pem)
+        cas.append(
+            _Replica(
+                original=original,
+                subject=subject,
+                issuer=issuer,
+                ski=identifier(ids, "X509v3 Subject Key Identifier"),
+                akid=identifier(ids, "X509v3 Authority Key Identifier"),
+                public=_openssl(["x509", "-noout", "-pubkey"], stdin=pem, what="read a CA"),
+            )
+        )
+    #
+    # One throwaway key for each key in the set, so two certificates of one
+    # key - a CA renewed with it - are still signed alike.
+    #
+    keys: dict[str, Path] = {}
+    for ca in cas:
+        if ca.public not in keys:
+            key = directory / f"key-{len(keys)}.pem"
+            run(
+                "genpkey",
+                "-algorithm",
+                "EC",
+                "-pkeyopt",
+                "ec_paramgen_curve:P-256",
+                "-out",
+                str(key),
+            )
+            keys[ca.public] = key
+        ca.key = keys[ca.public]
+    #
+    # Roots first, then each certificate whose issuer is made; one whose
+    # issuer is not in the set is on no path issuance would build.
+    #
+    made: list[_Replica] = []
+    waiting = list(cas)
+    while waiting:
+        ready = [ca for ca in waiting if ca.signs(ca) or any(done.signs(ca) for done in made)]
+        if not ready:
+            break
+        for ca in ready:
+            ca.replica = directory / f"replica-{len(made)}.pem"
+            keep = ["-preserve_dates", "-out", str(ca.replica)]
+            if ca.signs(ca):
+                run("x509", "-in", str(ca.original), "-key", str(ca.key), *keep)
+            else:
+                parent = next(done for done in made if done.signs(ca))
+                public = directory / f"public-{len(made)}.pem"
+                run("pkey", "-in", str(ca.key), "-pubout", "-out", str(public))
+                run(
+                    "x509",
+                    "-in",
+                    str(ca.original),
+                    "-CA",
+                    str(parent.replica),
+                    "-CAkey",
+                    str(parent.key),
+                    "-force_pubkey",
+                    str(public),
+                    *keep,
+                )
+            made.append(ca)
+            waiting.remove(ca)
+    replicas = directory / "replicas.pem"
+    replicas.write_text("".join(ca.replica.read_text() for ca in made if ca.replica))
+    #
+    # The issuing CA is one that issues no other CA in the set, as
+    # `authorities` finds it without an RA certificate.
+    #
+    issuing = [ca for ca in made if not any(ca.signs(other) for other in made if other is not ca)]
+    key, request, leaf = directory / "leaf.key", directory / "leaf.csr", directory / "leaf.pem"
+    run("genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", str(key))
+    run("req", "-new", "-key", str(key), "-subj", f"/CN={requested[0]}", "-out", str(request))
+    first: str | None = None
+    for ca in issuing:
+        (directory / "leaf.ext").write_text(
+            "[v]\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\n"
+            "extendedKeyUsage=serverAuth\nsubjectAltName="
+            + ",".join(f"DNS:{name}" for name in requested)
+            + ("\nauthorityKeyIdentifier=keyid\n" if ca.ski else "\nauthorityKeyIdentifier=none\n")
+        )
+        run(
+            "x509",
+            "-req",
+            "-in",
+            str(request),
+            "-CA",
+            str(ca.replica),
+            "-CAkey",
+            str(ca.key),
+            "-extfile",
+            str(directory / "leaf.ext"),
+            "-extensions",
+            "v",
+            "-days",
+            "1",
+            "-set_serial",
+            "1",
+            "-out",
+            str(leaf),
+        )
+        # As `ndes.validate_certificate` asks, the chain first.
+        verified = subprocess.run(  # noqa: S603 - fixed binary, a private temporary directory
+            [OPENSSL, "verify", "-CAfile", str(replicas), "-untrusted", str(replicas), str(leaf)],
+            capture_output=True,
+            text=True,
+            timeout=OPENSSL_TIMEOUT,
+            check=False,
+        )
+        problem = name_constraint_problem(verified.stderr)
+        if problem is None:
+            return None
+        first = first or problem
+    return first
+
+
+@dataclass
+class _Replica:
+    """A CA certificate of the saved set, and the same certificate under a throwaway key."""
+
+    original: Path
+    subject: str
+    issuer: str
+    ski: str | None
+    akid: str | None
+    public: str
+    key: Path | None = None
+    replica: Path | None = None
+
+    def signs(self, child: _Replica) -> bool:
+        """Whether this CA issued `child`, by its name and its key identifier."""
+
+        return self.subject == child.issuer and (
+            child.akid is None or self.ski is None or self.ski == child.akid
+        )
+
+
 def _authority(
     certificate: str, subject: str, *, issues_ra: bool = False, from_store: bool = False
 ) -> Authority:

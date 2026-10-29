@@ -5934,6 +5934,11 @@ longer chain to what was saved, and an issue or renewal fails with "issued certi
 confirmed for the NDES server". Add the server again with the same address: the page says it is confirmed with
 other CA certificates, and confirming the new ones replaces them. Its profiles and its `tls_ca` stay.
 
+A CA may be limited to some names (its name constraints). Confirming the server cannot check them, since no
+names are known then. Each enrollment checks its names against them before it asks the CA. A name outside
+them is refused with "the names asked for are outside what the CA may issue for", and so is a certificate the
+CA issues for one.
+
 The HTTPS certificate of the NDES server must be trusted by the manager's system store. A server signed by an
 internal CA needs that CA in the store, as any other internal HTTPS service does (`update-ca-certificates`).
 When it is not, *Fetch the CA* says the server's HTTPS certificate is not trusted. A server with its own

@@ -27,6 +27,7 @@ from haprion.cert_import import Material, assemble, check, split_blocks
 from haprion.config import CERTIFICATE_ID, HOSTNAME, SYSTEM_TRUST, NdesPolicy, NdesServer
 from haprion.dns_profiles import ProfileError
 from haprion.ndes_profiles import OpenedProfile, check_challenge, check_endpoint, secure_directory
+from haprion.ndes_servers import NAMES_OUTSIDE, name_constraint_problem, names_problem
 from haprion.ndes_state import forget_renewal, remove_request, request_directory
 
 MAX_BYTES = 1024 * 1024
@@ -316,6 +317,20 @@ def _enroll(
             exit_code=exit_codes.CONFIG,
         )
     validate_policy(policy, server, require_secure=require_secure)
+    if not resume:
+        #
+        # The names against the CA's name constraints, as issuance will judge
+        # them, before the CA is asked: after it, the answer comes with a
+        # certificate issued for nothing (B3-04).
+        #
+        outside = names_problem(
+            secure_file(server.issuing_ca, require_secure=require_secure).decode(
+                "utf-8", "replace"
+            ),
+            requested,
+        )
+        if outside is not None:
+            raise NdesError("bad_input", f"{NAMES_OUTSIDE}: {outside}")
     directory = request_directory(policy.state_root, certificate_id)
     if directory.is_symlink() or policy.state_root.is_symlink():
         raise NdesError("bad_input", "NDES state directories cannot be symlinks")
@@ -661,8 +676,23 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
         # a saved one that has expired, fails only the first, and is fixed
         # where the server was confirmed (review 2026-10-29, B01).
         #
-        verified = subprocess.run(arguments, capture_output=True, timeout=15, check=False)  # noqa: S603 - protected staging, fixed verification grammar
+        verified = subprocess.run(  # noqa: S603 - protected staging, fixed verification grammar
+            arguments, capture_output=True, text=True, timeout=15, check=False
+        )
         if verified.returncode:
+            #
+            # A name outside the CA's name constraints is not a CA renewed:
+            # confirming the server again would not help (review 2026-10-29,
+            # round 3, B3-04). Enrollment asks this before the request is
+            # sent; a CA whose constraints changed since meets it here.
+            #
+            outside = name_constraint_problem(verified.stderr)
+            if outside is not None:
+                raise NdesError(
+                    "untrusted_certificate",
+                    f"{NAMES_OUTSIDE}: {outside}",
+                    exit_code=exit_codes.FAILED,
+                )
             raise NdesError(
                 "untrusted_certificate",
                 "issued certificate does not chain to the CA confirmed for the NDES server; "
@@ -670,8 +700,8 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
                 exit_code=exit_codes.FAILED,
             )
         purpose = [*arguments[:2], "-purpose", "sslserver", *arguments[2:]]
-        verified = subprocess.run(purpose, capture_output=True, timeout=15, check=False)  # noqa: S603 - protected staging, fixed verification grammar
-        if verified.returncode:
+        purposed = subprocess.run(purpose, capture_output=True, timeout=15, check=False)  # noqa: S603 - protected staging, fixed verification grammar
+        if purposed.returncode:
             raise NdesError(
                 "untrusted_certificate",
                 "issued certificate chain is not valid for a server",

@@ -556,6 +556,90 @@ class TheConfirmationChecksWhatIssuanceChecks(unittest.TestCase):
         )
 
 
+class TheNamesAreCheckedAsIssuanceChecksThem(unittest.TestCase):
+    """Review 2026-10-29, round 3, B3-04: a name outside the CA's constraints.
+
+    The confirmation cannot judge names - a server is confirmed before any
+    certificate is asked for - so the enrollment asks before the request is
+    sent, and issuance stays the answer key: for each shape, the check
+    before and the verification after must agree, and both say it is the
+    names, not a CA renewed.
+    """
+
+    def test_the_check_before_the_request_and_issuance_agree(self) -> None:
+        from haprion import ndes
+        from haprion.cert_import import assemble
+
+        permitted_org = "\nnameConstraints=critical,permitted;DNS:example.org"
+        permitted_com = "\nnameConstraints=critical,permitted;DNS:example.com"
+        excluded_com = "\nnameConstraints=critical,excluded;DNS:example.com"
+        # name: (root's constraint, issuing CA's, the names, whether issuance issues)
+        shapes = {
+            "no constraints": ("", "", ("web.example.com",), True),
+            "the issuing CA's cover the name": ("", permitted_com, ("web.example.com",), True),
+            "the issuing CA's do not": ("", permitted_org, ("web.example.com",), False),
+            "the root's do not": (permitted_org, "", ("web.example.com",), False),
+            "one name of two is excluded": (
+                "",
+                excluded_com,
+                ("web.example.org", "web.example.com"),
+                False,
+            ),
+            "a wildcard inside them": (
+                "",
+                permitted_org,
+                ("web.example.org", "*.example.org"),
+                True,
+            ),
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            for number, (name, (above, below, names, issues)) in enumerate(shapes.items()):
+                pki = EcPki(Path(raw) / str(number))
+                pki.root.mkdir()
+                root = pki.make("Root", CA + above)
+                issuing = pki.make("Issuing", CA + below, root)
+                ra = pki.make("RA", RA, issuing)
+                answer = pkcs7(issuing[0], root[0], ra[0])
+                found = ndes_servers.authorities(
+                    ENDPOINT,
+                    fetch=lambda *_, given=answer: given,
+                    trust=pki.root / "none.pem",
+                )
+                leaf, key = pki.make(
+                    names[0],
+                    "basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\n"
+                    "extendedKeyUsage=serverAuth\nsubjectAltName="
+                    + ",".join(f"DNS:{each}" for each in names),
+                    issuing,
+                )
+                saved = "".join(authority.pem for authority in found)
+                directory = pki.root / "staging"
+                directory.mkdir()
+                (directory / "issuing-ca.pem").write_text(saved)
+                material = assemble(
+                    [leaf.read_text(), *[authority.pem for authority in found]], [key.read_text()]
+                )
+                with self.subTest(name):
+                    issued: str | None = None
+                    try:
+                        ndes.validate_certificate(material, names, directory)
+                    except ndes.NdesError as exc:
+                        issued = str(exc)
+                    self.assertEqual(issued is None, issues, issued)
+                    if not issues:
+                        self.assertNotIn("if the CA was renewed", str(issued))
+                        self.assertIn("names asked for are outside", str(issued))
+                        self.assertIn("subtree violation", str(issued))
+                    before = ndes_servers.names_problem(saved, names)
+                    self.assertEqual(before is None, issues, before)
+                    if not issues:
+                        self.assertIn("subtree violation", str(before))
+
+    def test_a_set_it_cannot_read_leaves_it_to_issuance(self) -> None:
+        self.assertIsNone(ndes_servers.names_problem("example CA material", ["web.example.com"]))
+        self.assertIsNone(ndes_servers.names_problem("", ["web.example.com"]))
+
+
 class TheAuthorities(unittest.TestCase):
     def test_the_cas_the_issuing_one_first_and_never_the_ra(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

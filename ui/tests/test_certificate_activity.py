@@ -530,7 +530,7 @@ class AbandoningARequest(DeleteRouteTestCase):
         first["source"]["ndes_profile"] = "certserver1"
         renewed = {**failure, "outcome": "renewed", "message": ""}
         # state: entry, label (None: the copies' own), resume and abandon, renew
-        table = (
+        table: tuple[tuple[Any, ...], ...] = (
             ("first enrollment waits", first, "Request pending", True, waiting),
             ("renewal waits", row(request=True), "Renewal pending", True, waiting),
             (
@@ -552,19 +552,47 @@ class AbandoningARequest(DeleteRouteTestCase):
             ),
             ("a file imported over it", row(ndes=False), None, False, "upload"),
         )
+        #
+        # A job running on a waiting row (review 2026-10-29, round 3, B3-01):
+        # the row says the job's word, and *Resume enrollment* is not drawn
+        # beside the spinner - pressed again it would only meet the queue's
+        # refusal of a second certificate job.
+        #
+        running = (
+            ("a resume running", {"id": "wait.example.com", "resume": True}, "Enrolling"),
+            (
+                "an abandon running",
+                {"id": "wait.example.com", "action": "abandon"},
+                "Abandoning",
+            ),
+        )
+        busy = "has a job running; wait for its row to settle"
+        table += tuple(
+            (state, row(request=True), label, False, busy, payload)
+            for state, payload, label in running
+        )
         pending_labels = {"Request pending", "Renewal pending", "Renewal failed"}
-        for state, entry, label, waits, renew in table:
+        for state, entry, label, waits, renew, *job in table:
             reading = with_registry(certificate_reading(), entry)
+            jobs = [
+                queued(operation="cert_scep", cluster=None, state="running", payload=payload)
+                for payload in job
+            ]
             with (
                 self.subTest(state),
                 mock.patch("haprion_ui.db.cluster_certificates", return_value=[reading]),
+                mock.patch("haprion_ui.db.recent_jobs", return_value=jobs),
             ):
-                view = registry_of(overview(reading)).certificates[0]
+                view = registry_of(
+                    certificates.with_deletion_states(
+                        overview(reading), certificate_activity.deletion_states(jobs)
+                    )
+                ).certificates[0]
                 if label is None:
                     self.assertNotIn(view.state_label, pending_labels)
                 else:
                     self.assertEqual(view.state_label, label)
-                self.assertEqual(view.request_pending, waits)
+                self.assertEqual(view.request_pending, waits or bool(job))
                 page = (
                     self.writing_client()
                     .get("/certificates?view=registry&open=wait.example.com")
@@ -572,10 +600,15 @@ class AbandoningARequest(DeleteRouteTestCase):
                 )
                 self.assertEqual(">Resume enrollment<" in page, waits)
                 self.assertEqual(
-                    'form="certificate-selection" data-delete-pick data-pending' in page, waits
+                    'form="certificate-selection" data-delete-pick data-pending' in page,
+                    view.request_pending,
                 )
                 registry = {view.identifier: view}
-                if waits:
+                if job:
+                    with self.assertRaises(certificate_renew.SelectionProblem) as refused:
+                        certificate_renew.waiting_selection([view.identifier], registry)
+                    self.assertIn(busy, str(refused.exception))
+                elif waits:
                     self.assertIs(
                         certificate_renew.waiting_selection([view.identifier], registry), view
                     )

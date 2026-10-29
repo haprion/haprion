@@ -4483,6 +4483,37 @@ class JobsFromBeforeTheBoot(unittest.TestCase):
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class ARestoreRunReadsItsHold(unittest.TestCase):
+    """Review 26-10-29, C06: the restore page reads whether its job is held, as the web."""
+
+    def test_the_web_reads_the_hold_of_a_run_s_jobs(self) -> None:
+        run = "r260101-0000cccc"
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}") as owner:
+            job = db.queue_job(
+                owner,
+                operation="node_restore_prepare",
+                cluster="alpha",
+                payload={"run": run},
+                idempotency_key=uuid4(),
+            )
+            owner.execute("update job set held_since = now() where id = %s", (job.id,))
+            owner.commit()
+            try:
+                with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_WEB_ROLE']}") as web:
+                    (read,) = db.restore_jobs(web, run)
+                    listed = [
+                        found
+                        for found in db.operation_jobs(web, "node_restore_prepare")
+                        if found.id == job.id
+                    ]
+                self.assertTrue(read.waits_for_decision)
+                self.assertTrue(listed[0].waits_for_decision)
+            finally:
+                owner.execute("delete from job where id = %s", (job.id,))
+                owner.commit()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheBackupsHashCheck(unittest.TestCase):
     """Review 2026-10-20, R2: the restore check's query against the real schema."""
 

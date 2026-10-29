@@ -161,6 +161,34 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertLess(rollback.index("pause --wait"), rollback.index('step "Switching"'))
         self.assertNotIn("Checking that no node restore or backup is running", self.update)
 
+    def test_the_pause_is_lifted_on_the_way_out_from_before_it_is_asked_for(self) -> None:
+        """Review 26-10-29, A5: an update stopped during the wait left the queue paused.
+
+        `paused=yes`, or the trap that resumes, came after `haprion-drain pause`
+        had returned, so a way out during its wait lifted nothing.
+        """
+
+        for path, lifted, pause in (
+            (
+                "install/platform/update-platform-release",
+                "    paused=yes\n",
+                "    /usr/sbin/haprion-drain pause --wait",
+            ),
+            (
+                "install/platform/install-ui-release",
+                'resume || true" EXIT\n',
+                '    "${drain[@]}" pause --wait',
+            ),
+            (
+                "install/platform/bin/haprion-rollback",
+                "    trap '\"$drain\" resume || true' EXIT\n",
+                '    "$drain" pause --wait',
+            ),
+        ):
+            with self.subTest(path=path):
+                text = (ROOT / path).read_text()
+                self.assertLess(text.index(lifted), text.index(pause))
+
     def test_the_rollback_says_the_same_in_either_direction(self) -> None:
         """R2 26-10-27 (F13): *rolled back to* and *Roll forward with* after a step forward."""
 

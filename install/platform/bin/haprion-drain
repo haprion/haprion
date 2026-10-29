@@ -14,8 +14,9 @@
 # in between (review 2026-10-04, CR-12).
 #
 # `pause` stops new claims and then waits until no job is running, or refuses
-# after `--wait` seconds (default 900) and lifts the pause again. `resume` lifts
-# it. The pause carries an end time - the wait and five minutes more - so a run
+# after `--wait` seconds (default 900) and lifts the pause again, as it does when
+# the wait is stopped. `resume` lifts it. The pause carries an end time - the
+# wait and five minutes more, counted again from the end of the wait - so a run
 # killed before it could resume does not stop the queue for good.
 #
 # The pause is set holding a SHARE lock on the job table, which every claim's
@@ -146,6 +147,14 @@ update job_claim_gate
 commit;
 SQL
 log "  claims paused"
+#
+# A wait stopped by Ctrl-C, a dropped session or a kill lifts the pause too
+# (review 26-10-29, A5): the caller's way out had not been told of it yet, and
+# the queue stood still for the wait and five minutes more.
+#
+trap 'resume || true; exit 130' INT
+trap 'resume || true; exit 143' TERM
+trap 'resume || true; exit 129' HUP
 
 deadline=$((SECONDS + wait_seconds))
 said=""
@@ -162,4 +171,13 @@ while :; do
     fi
     sleep 2
 done
+#
+# The margin from here, where the dump and the migration begin: counted from
+# the start of the wait, a long wait spent it, and claims came back mid-update
+# (review 26-10-29, A5). A pause lifted meanwhile stays lifted.
+#
+psql_as -c "update job_claim_gate
+               set paused_until = statement_timestamp() + make_interval(secs => ${wait_seconds} + 300)
+             where paused_until is not null" >/dev/null
+trap - INT TERM HUP
 log "  no job is running"

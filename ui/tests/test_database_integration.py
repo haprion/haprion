@@ -9,9 +9,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -126,6 +128,69 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(answer.returncode, 75, answer.stderr)
         self.assertIn(f"node_restore (job {job})", answer.stderr)
         self.assertIsNone(self.paused_until())
+
+    def waiting_drain(self, seconds: int) -> subprocess.Popen[str]:
+        """`haprion-drain pause --wait` started, and returned once it has paused."""
+
+        directory = Path(tempfile.mkdtemp(prefix="drain-"))
+        self.addCleanup(shutil.rmtree, directory)
+        (directory / "ui-admin.conf").write_text(
+            f"DB_NAME={os.environ['HAPRION_UI_TEST_DATABASE_NAME']}\n"
+            f"DB_ROLE={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}\n"
+        )
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-drain"
+        drain = subprocess.Popen(  # noqa: S603 - fixed interpreter, the repository's script
+            ["/bin/bash", str(script), "pause", "--wait", str(seconds)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={
+                **os.environ,
+                "HAPRION_UI_DRAIN_CONFIG": str(directory),
+                "PGHOST": os.environ["HAPRION_UI_TEST_DATABASE_SOCKET"],
+            },
+            # A group of its own, as a terminal's job is: Ctrl-C reaches all of it.
+            start_new_session=True,
+        )
+        self.addCleanup(drain.communicate)
+        if drain.stdout is None:
+            self.fail("no output from haprion-drain")
+        while "waiting for" not in drain.stdout.readline():
+            if drain.poll() is not None:
+                self.fail("haprion-drain ended before it waited")
+        return drain
+
+    def test_a_pause_stopped_during_its_wait_is_lifted(self) -> None:
+        """Review 26-10-29, A5: Ctrl-C during the wait left the queue paused up to 20 min."""
+
+        self.running("node_restore", "10 minutes")
+        drain = self.waiting_drain(60)
+        self.assertIsNotNone(self.paused_until())
+
+        os.killpg(drain.pid, signal.SIGINT)
+
+        self.assertNotEqual(drain.wait(timeout=20), 0)
+        self.assertIsNone(self.paused_until())
+
+    def test_the_pause_s_margin_is_counted_from_the_end_of_its_wait(self) -> None:
+        """Review 26-10-29, A5: set when the wait began, a long wait spent the margin
+        the dump and the migration have before claims start again."""
+
+        job = self.running("node_restore", "10 minutes")
+        drain = self.waiting_drain(60)
+        time.sleep(6)
+        with self.connect() as connection:
+            connection.execute(
+                "update job set lease_until = now() - interval '1 second' where id = %s", (job,)
+            )
+            connection.commit()
+        self.assertEqual(drain.wait(timeout=30), 0)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select extract(epoch from paused_until - statement_timestamp()) from job_claim_gate"
+            )
+            left = float(_first(cursor))
+        self.assertGreater(left, 60 + 300 - 3)
 
     def test_a_job_whose_lease_ran_out_is_not_waited_for(self) -> None:
         self.running("backup_run", "-1 minute")

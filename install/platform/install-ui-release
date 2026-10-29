@@ -122,9 +122,10 @@ hold_release_lock
 if systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
     step "Holding the worker's claims"
     drain=(/usr/sbin/haprion-drain)
-    "${drain[@]}" pause --wait "${DRAIN_SECONDS:-900}"
+    # Before the call: a way out during its wait lifts it too (review 26-10-29, A5).
     # shellcheck disable=SC2064 # the command is fixed now, not when the trap runs
     trap "$(printf '%q ' "${drain[@]}") resume || true" EXIT
+    "${drain[@]}" pause --wait "${DRAIN_SECONDS:-900}"
 fi
 
 step "Activating"

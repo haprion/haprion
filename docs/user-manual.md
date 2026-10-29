@@ -7973,7 +7973,8 @@ that address.
 worker. So both first pause its claims (`haprion-drain`) and wait until no job is running - fifteen
 minutes at most (`DRAIN_SECONDS`). After that they stop without switching anything and lift the
 pause. An update of the UI package pauses before it dumps and migrates the database, so one that stops
-there leaves the schema as it was. A pause left behind by a killed run ends by itself five minutes after its wait would have.
+there leaves the schema as it was. Once no job runs, the pause holds for the wait and five minutes
+more. A run stopped during its wait lifts it, and one left behind by a killed run ends by itself.
 While the pause holds, *Jobs* says until when.
 
 Step 07 installs both sockets wherever it installs a worker. `haprion-node-restore` and

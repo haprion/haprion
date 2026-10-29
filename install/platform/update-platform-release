@@ -363,8 +363,9 @@ step "Checking prerequisites and rollback-safe schema transition"
 #
 if systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
     step "Holding the worker's claims"
-    /usr/sbin/haprion-drain pause --wait "${DRAIN_SECONDS:-900}"
+    # Before the call: a way out during its wait lifts it too (review 26-10-29, A5).
     paused=yes
+    /usr/sbin/haprion-drain pause --wait "${DRAIN_SECONDS:-900}"
 fi
 
 #

@@ -284,8 +284,9 @@ step "Holding the worker's claims"
 #
 drain=/usr/sbin/haprion-drain
 if [[ -x "$drain" ]]; then
-    "$drain" pause --wait "${DRAIN_SECONDS:-900}"
+    # Before the call: a way out during its wait lifts it too (review 26-10-29, A5).
     trap '"$drain" resume || true' EXIT
+    "$drain" pause --wait "${DRAIN_SECONDS:-900}"
 else
     warn "  ${drain} is missing; the worker restarts without waiting for its jobs"
 fi

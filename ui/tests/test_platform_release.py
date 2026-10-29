@@ -224,10 +224,11 @@ class CoordinatedUpdateTests(unittest.TestCase):
                 "-c",
                 f'UI_ROOT="$1"; current="$1/current"; kept="$1/kept"; marker="$1/update"; '
                 f'rollback="$1/rollback"; release_id=cand; previous_id=prev; '
-                f"files_settled={settled}; restore_tried=no; proved=no; base=0; found_marker=; "
+                f"files_settled={settled}; restore_tried=no; proved=no; base=0; "
                 'warn() { echo "WARNING: $*" >&2; }; where_it_stands() { echo said; }; '
                 'die() { echo "ERROR: $*" >&2; exit 1; }; '
                 + self.functions(
+                    "mark_update",
                     "settle_files",
                     "candidate_current",
                     "last_proved_current",
@@ -421,7 +422,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
                         "/bin/bash",
                         "-c",
                         f"files_settled={settled}; kept=/nonexistent; restore_tried=no; "
-                        "proved=no; marker=/nonexistent/update; base=0; found_marker=; "
+                        "proved=no; marker=/nonexistent/update; base=0; "
                         "warn() { :; }; restore_previous() { echo restore; }; "
                         f"candidate_current() {{ {switched}; }}; where_it_stands() {{ echo said; }}; "
                         f"last_proved_current() {{ ! {switched}; }}; "
@@ -453,7 +454,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
                 "/bin/bash",
                 "-c",
                 f'files_settled=no; kept="$1"; marker="$1/../update"; restore_tried=no; '
-                f'proved=no; base=0; found_marker=; warn() {{ echo "WARNING: $*" >&2; }}; '
+                f'proved=no; base=0; warn() {{ echo "WARNING: $*" >&2; }}; '
                 "restore_previous() { settle_files 0; }; candidate_current() { false; }; "
                 "last_proved_current() { true; }; "
                 f"where_it_stands() {{ echo said; }}; {functions}(exit 3); on_exit",
@@ -709,6 +710,12 @@ class UpdatesOverAnUnprovedRelease(unittest.TestCase):
                 'ln -sfn "$UI_ROOT/releases/$release_id" "$current.new"; mv -T "$current.new" "$current"\n'
                 "files_settled=yes\nproved=yes\n"
             ),
+            # A power cut: no trap runs, before the switch or after it.
+            "cut before": "kill -KILL $$\n",
+            "cut after": (
+                'ln -sfn "$UI_ROOT/releases/$release_id" "$current.new"; mv -T "$current.new" "$current"\n'
+                "kill -KILL $$\n"
+            ),
         }
         start = text.index("\nstate=")
         state = text[start : text.index("\nunfinished_update\n", start)]
@@ -751,7 +758,7 @@ class UpdatesOverAnUnprovedRelease(unittest.TestCase):
         self.update("B", fails="after", rollback="refused")
         self.assertEqual(self.running, "B")
         self.assertEqual(self.rule.read_text(), "B's rule\n")
-        self.assertEqual(self.marker, "RELEASE=B\nPREVIOUS=A\n")
+        self.assertEqual(self.marker, "RELEASE=B\nPREVIOUS=A\nRUNNING=B\nFROM=1\n")
         self.assertEqual(self.kept, ["A's rule"])
 
     def test_a_failure_before_the_next_release_s_switch_leaves_what_it_found(self) -> None:
@@ -760,14 +767,14 @@ class UpdatesOverAnUnprovedRelease(unittest.TestCase):
         self.assertIn("the update to B did not complete; this one goes on from A", said)
         self.assertEqual(self.running, "B")
         self.assertEqual(self.rule.read_text(), "B's rule\n")
-        self.assertEqual(self.marker, "RELEASE=B\nPREVIOUS=A\n")
+        self.assertEqual(self.marker, "RELEASE=C\nPREVIOUS=A\nRUNNING=B\nFROM=1\n")
         self.assertEqual(self.kept, ["A's rule"])
         self.assertIn("B is not proved; the next update goes on from A", said)
 
         # Any number of them, and the one after still goes back to A.
         self.update("C", fails="before")
         self.update("D", fails="before")
-        self.assertEqual(self.marker, "RELEASE=B\nPREVIOUS=A\n")
+        self.assertEqual(self.marker, "RELEASE=D\nPREVIOUS=A\nRUNNING=B\nFROM=1\n")
         self.assertEqual(self.kept, ["A's rule"])
         self.update("D", fails="after", rollback="restored")
         self.assertEqual(self.running, "A")
@@ -789,7 +796,7 @@ class UpdatesOverAnUnprovedRelease(unittest.TestCase):
         self.update("C", fails="after", rollback="refused")
         self.assertEqual(self.running, "C")
         self.assertEqual(self.rule.read_text(), "C's rule\n")
-        self.assertEqual(self.marker, "RELEASE=C\nPREVIOUS=A\n")
+        self.assertEqual(self.marker, "RELEASE=C\nPREVIOUS=A\nRUNNING=C\nFROM=1\n")
         self.assertEqual(self.kept, ["A's rule"])
 
     def test_the_next_release_proved_ends_the_unfinished_update(self) -> None:
@@ -824,6 +831,70 @@ class UpdatesOverAnUnprovedRelease(unittest.TestCase):
         self.assertEqual(self.running, "B")
         self.assertEqual(self.rule.read_text(), "B's rule\n")
         self.assertIsNone(self.marker)
+
+    def test_a_power_cut_before_the_next_release_s_switch_is_put_back_by_the_run_after(
+        self,
+    ) -> None:
+        """Review 26-10-29, AAA01: the cut run's lines were counted as the release last proved's.
+
+        C's files stayed under B after the next failure before a switch, C's
+        own run again or D's.
+        """
+
+        for again in ("C", "D"):
+            with self.subTest(again=again):
+                self.setUp()
+                self.b_falls_unproved()
+                self.update("C", fails="cut before")
+                self.assertEqual(self.rule.read_text(), "C's rule\n")
+                said = self.update(again, fails="before")
+                self.assertEqual(self.running, "B")
+                self.assertEqual(self.rule.read_text(), "B's rule\n")
+                self.assertEqual(self.marker, f"RELEASE={again}\nPREVIOUS=A\nRUNNING=B\nFROM=1\n")
+                self.assertEqual(self.kept, ["A's rule"])
+                self.assertIn("B is not proved; the next update goes on from A", said)
+
+                # Cut once more, and the way back to A is still whole.
+                self.update("D", fails="cut before")
+                self.update("D", fails="after", rollback="restored")
+                self.assertEqual(self.running, "A")
+                self.assertEqual(self.rule.read_text(), "A's rule\n")
+                self.assertIsNone(self.marker)
+
+    def test_a_power_cut_after_the_next_release_s_switch_leaves_it_its_own_files(self) -> None:
+        """AAA01's other side: C switched before the cut, and runs with C's files."""
+
+        self.b_falls_unproved()
+        self.update("C", fails="cut after")
+        self.update("D", fails="before")
+        self.assertEqual(self.running, "C")
+        self.assertEqual(self.rule.read_text(), "C's rule\n")
+        self.assertEqual(self.marker, "RELEASE=D\nPREVIOUS=A\nRUNNING=C\nFROM=2\n")
+        self.assertEqual(self.kept, ["A's rule", "B's rule"])
+        self.update("D", fails="after", rollback="refused")
+        self.assertEqual(self.running, "D")
+        self.assertEqual(self.rule.read_text(), "D's rule\n")
+        self.update("D", fails="after", rollback="restored")
+        self.assertEqual(self.running, "A")
+        self.assertEqual(self.rule.read_text(), "A's rule\n")
+        self.assertIsNone(self.marker)
+
+    def test_a_restore_that_failed_is_put_back_by_the_run_after(self) -> None:
+        """AAA01: a restore that stopped half-way left its lines to be counted as A's."""
+
+        self.b_falls_unproved()
+        self.rule.parent.chmod(0o555)
+        try:
+            said = self.update("C", fails="before")
+        finally:
+            self.rule.parent.chmod(0o755)
+        self.assertIn("could not all be put back", said)
+        self.assertEqual(self.rule.read_text(), "C's rule\n")
+        self.update("D", fails="before")
+        self.assertEqual(self.running, "B")
+        self.assertEqual(self.rule.read_text(), "B's rule\n")
+        self.assertEqual(self.marker, "RELEASE=D\nPREVIOUS=A\nRUNNING=B\nFROM=1\n")
+        self.assertEqual(self.kept, ["A's rule"])
 
     def test_a_copy_without_its_marker_is_not_taken_for_one(self) -> None:
         """A copy left beside no marker - removed by hand - names no release to go back to."""

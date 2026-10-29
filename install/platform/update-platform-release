@@ -121,29 +121,53 @@ settle_files() {
 }
 
 #
-# Where this run's lines in the copy's manifest begin. An update run over an
-# unfinished one - the same release again, or the next one over a release that
-# fell unproved - adds to the copy the unfinished one left, and the lines
-# before `base` keep the platform files of the release last proved: only a
-# restore of that release puts them back. A failure before this run's switch
-# puts back its own lines, and the unproved release runs on as the run found
-# it, its marker and the copy kept: the next run still goes on from the
-# release last proved (review 26-10-29, AA01). Without a marker a copy names
-# no release to go back to, and the copy begins afresh.
+# The marker: this run's release, the release last proved, and the line of the
+# copy's manifest after which the copy puts back the files of the release that
+# runs - RUNNING, with FROM. Written before anything is replaced, and again
+# when the candidate keeps running with its own files.
+#
+mark_update() {
+    printf 'RELEASE=%s\nPREVIOUS=%s\nRUNNING=%s\nFROM=%s\n' \
+        "$release_id" "$previous_id" "$1" "$2" > "${marker}.new"
+    mv -f -- "${marker}.new" "$marker"
+}
+
+#
+# Where the lines that put back the running release's files begin. An update
+# run over an unfinished one - the same release again, or the next one over a
+# release that fell unproved - adds to the copy the unfinished one left, and
+# the lines before `base` keep the platform files of the release last proved:
+# only a restore of that release puts them back. A failure before this run's
+# switch puts back what is after `base`, and the unproved release runs on with
+# its own files, its marker and the copy kept: the next run still goes on from
+# the release last proved (review 26-10-29, AA01). Without a marker a copy
+# names no release to go back to, and the copy begins afresh.
+#
+# `base` is the marker's FROM while the release it names still runs. A run cut
+# off before its switch - a power cut, a kill - or whose restore stopped
+# half-way left lines of its own after FROM, and they go back too; counted as
+# the release last proved's, its files stayed under the unproved release
+# (review 26-10-29, AAA01). When another release runs - the cut run's own,
+# switched to before the cut, or one switched to by hand - its files are the
+# ones on disk, and `base` is the end of the copy.
 #
 base=0
-found_marker=""
 begin_update() {
+    local RUNNING="" FROM="" running lines=0
+    running="$(basename "$(readlink -f "$current")")"
     if [[ -f "$marker" ]]; then
-        found_marker="$(cat -- "$marker")"
+        read_admin_file "$marker" RUNNING FROM
     else
         rm -rf -- "$kept"
     fi
     mkdir -p -- "$kept"
     chmod 700 -- "$state" "$kept"
-    [[ ! -f "${kept}/manifest" ]] || base="$(wc -l < "${kept}/manifest")"
-    printf 'RELEASE=%s\nPREVIOUS=%s\n' "$release_id" "$previous_id" > "${marker}.new"
-    mv -f -- "${marker}.new" "$marker"
+    [[ ! -f "${kept}/manifest" ]] || lines="$(wc -l < "${kept}/manifest")"
+    base="$lines"
+    if [[ "$RUNNING" == "$running" && "$FROM" =~ ^(0|[1-9][0-9]*)$ ]] && (( FROM <= lines )); then
+        base="$FROM"
+    fi
+    mark_update "$running" "$base"
 }
 
 #
@@ -188,6 +212,7 @@ restore_previous() {
         warn "release ${previous_id} could not be restored; ${release_id} runs, without all its platform files"
     fi
     files_settled=candidate
+    mark_update "$release_id" "$(wc -l < "${kept}/manifest" 2>/dev/null || echo 0)"
     return 1
 }
 
@@ -230,19 +255,16 @@ on_exit() {
     fi
     #
     # The copy and the marker go once the update is proved or the release last
-    # proved runs again with its files. An unproved release left running as
-    # this run found it keeps the marker it found and the copy of the release
-    # last proved. A copy that could not be put back stays, root's alone, for
-    # the run where_it_stands names; this trap tries no second round, and the
-    # update does not end 0.
+    # proved runs again with its files. An unproved release left running with
+    # its files keeps the marker and the copy of the release last proved. A
+    # copy that could not be put back stays, root's alone, for the run
+    # where_it_stands names; this trap tries no second round, and the update
+    # does not end 0.
     #
     if [[ "$files_settled" == yes ]]; then
         if [[ "$proved" == yes ]] || last_proved_current; then
             rm -rf -- "$kept"
             rm -f -- "$marker"
-        elif [[ -n "$found_marker" ]]; then
-            printf '%s\n' "$found_marker" > "${marker}.new"
-            mv -f -- "${marker}.new" "$marker"
         fi
     elif (( status == 0 )); then
         status=1

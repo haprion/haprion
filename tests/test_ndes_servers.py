@@ -783,6 +783,14 @@ class TheHelperAndTheCommand(unittest.TestCase):
         self.assertEqual(self.command("add", ENDPOINT, *renewed.split())[0], 0)
         self.assertIn("confirmed already", self.command("add", ENDPOINT, root=False)[1])
 
+    def test_the_command_takes_as_many_fingerprints_as_the_helper(self) -> None:
+        """Review 2026-10-29: past 16 the helper's refusal escaped the command as a traceback."""
+
+        many = [arg for _ in range(17) for arg in ("--sha256", "0" * 64)]
+        code, said = self.command("add", ENDPOINT, *many)
+        self.assertEqual(code, exit_codes.REFUSED)
+        self.assertIn("ERROR: parameters.sha256", said)
+
     def test_the_command_answers_in_the_helper_s_contract(self) -> None:
         code, said = self.command("add", ENDPOINT, "--json", root=False)
         self.assertEqual(code, 0)

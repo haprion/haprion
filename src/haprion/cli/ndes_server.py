@@ -28,7 +28,7 @@ from haprion.cli.arguments import ArgumentParser
 from haprion.cli.ndes_server_helper import OPERATION, perform
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError
 from haprion.envelope import envelope, failure
-from haprion.helper_protocol import write_document
+from haprion.helper_protocol import HelperProtocolError, write_document
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -117,6 +117,9 @@ def main(
             result = perform(parameters, policy_path=path, fetch=fetch)
         except ndes_servers.NdesServerError as exc:
             code, message, exit_code = exc.code, str(exc), exc.exit_code
+        except HelperProtocolError as exc:
+            # The helper's own bounds, the same for both (review 2026-10-29).
+            code, message, exit_code = "bad_input", str(exc), exc.exit_code
         except ConfigError as exc:
             code, message, exit_code = "bad_policy", str(exc), exit_codes.CONFIG
     if code:

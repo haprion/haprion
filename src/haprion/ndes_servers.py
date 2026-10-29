@@ -144,10 +144,19 @@ def _opener(trust: Path) -> urllib.request.OpenerDirector:
     #
     # No stricter than the enrollment, which reaches the same server with
     # Certmonger's `scep-submit`: libcurl over OpenSSL with peer and host
-    # checks and its CA file, and no strict X.509 mode (read in its source
-    # and measured with curl 26-10-29). Python turns strict mode on, and it
-    # refused a CA without key usage that the enrollment takes (review
-    # 2026-10-29, round 2, BBB05).
+    # checks, and no strict X.509 mode (read in its source and measured
+    # with curl 26-10-29). Python turns strict mode on, and it refused a CA
+    # without key usage that the enrollment takes (review 2026-10-29, round
+    # 2, BBB05).
+    #
+    # Not the same store, though. `scep-submit` gives its `-R` file only to
+    # its first request, GetCACaps, where libcurl's own CA path, the system
+    # store, is read beside it. The request itself and its polls go with no
+    # CA file, so libcurl's defaults alone: the system store (`scep.c` in
+    # Certmonger 0.79.21, and measured 26-10-29: code 60 on PKCSReq with
+    # `-R` holding the server's root). A `tls_ca` is trusted here alone; an
+    # enrollment trusts the system store whatever it holds (review
+    # 2026-10-29, round 3, B3-02).
     #
     context.verify_flags &= ~ssl.VERIFY_X509_STRICT
     return urllib.request.build_opener(
@@ -208,9 +217,9 @@ def _untrusted(endpoint: str, error: ssl.SSLCertVerificationError, trust: Path) 
 def get_ca_cert(endpoint: str, trust: Path = SYSTEM_TRUST) -> bytes:
     """`GetCACert` over HTTPS, the server's certificate checked with `trust`.
 
-    The store is the one enrollment checks the server with - its `tls_ca`,
-    or the system's - and the one a chain short of its root is completed
-    from (review 2026-10-29 again, BB07).
+    The store is the server's `tls_ca`, or the system's, and the one a
+    chain short of its root is completed from (review 2026-10-29 again,
+    BB07). The enrollment does not keep to it: see `_opener`.
     """
 
     url = endpoint + "?operation=GetCACert&message=ca"

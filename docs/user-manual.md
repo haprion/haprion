@@ -5911,7 +5911,7 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
    confirmed, its `tls_ca` when it has one), and shows each one with
    its SHA-256 and its SHA-1 thumbprint - the thumbprint Windows shows in the certificate's details. It asks
    the server directly, without a proxy, and does not follow a redirect: it names the address to give instead.
-   The HTTPS check is as strict as the enrollment's, no stricter. A certificate that fails it is named for
+   Against the system store, the HTTPS check is as strict as the enrollment's, no stricter. A certificate that fails it is named for
    what is wrong: another name, past its date, or a CA the store does not hold.
 2. Compare them with the CA's own certificates. The one marked *issues for NDES* is the CA the server enrolls
    for; the others are the rest of its chain. A server that gives its chain without the root CA has it
@@ -5936,8 +5936,10 @@ other CA certificates, and confirming the new ones replaces them. Its profiles a
 The HTTPS certificate of the NDES server must be trusted by the manager's system store. A server signed by an
 internal CA needs that CA in the store, as any other internal HTTPS service does (`update-ca-certificates`).
 When it is not, *Fetch the CA* says the server's HTTPS certificate is not trusted. A server with its own
-`tls_ca` is checked against that file instead, by the fetch, the completion of its chain and the enrollment
-alike.
+`tls_ca` is checked against that file instead, by the fetch and the completion of its chain. The enrollment
+is not: Certmonger's `scep-submit` checks only its first question to the server against `tls_ca`, beside the
+system store, and the request itself against the system store alone. An enrollment therefore needs the
+server's HTTPS CA in the system store, whatever `tls_ca` holds.
 
 A server is removed from the same page, when no profile uses it. The command refuses while a profile applied
 on this manager names the server, or a profile record cannot be read; the interface also refuses while a
@@ -5963,7 +5965,7 @@ with the last one. Its fields:
 
 | Field | What it is |
 |---|---|
-| `servers` | the confirmed servers: each `endpoint` (the HTTPS address), `issuing_ca` (the file with the CA certificates it gave) and optionally `tls_ca` (a CA file its HTTPS is checked against; the system store when left out) |
+| `servers` | the confirmed servers: each `endpoint` (the HTTPS address), `issuing_ca` (the file with the CA certificates it gave) and optionally `tls_ca` (a CA file the fetch checks its HTTPS against; the system store when left out; an enrollment checks the system store either way) |
 | `client_root` | where the SCEP client is installed: `/opt/haprion-scep/current` |
 | `state_root` | where enrollment requests are kept: `/etc/haprion/ndes-requests` |
 | `profiles` | `directory` (where profile records are kept: `/etc/haprion/ndes-profiles`); the keys the profiles are sealed with are `acme.dns_profiles.private_keys`, unless the block lists `private_keys` of its own |
@@ -6061,8 +6063,8 @@ need not change for this request type.
 
 - Serve the SCEP endpoint at `https://<ndes-fqdn>/certsrv/mscep/mscep.dll`, with a server certificate that
   matches the endpoint's DNS name.
-- The manager must trust that HTTPS chain (`tls_ca`), and separately validates the certificate the CA
-  issues (`issuing_ca`).
+- The manager's system store must trust that HTTPS chain; an enrollment checks it there, `tls_ca` or not.
+  The manager separately validates the certificate the CA issues (`issuing_ca`).
 - Provide the trust anchors explicitly. SCEP `GetCACert` fetches the protocol's CA and RA certificates, but
   does not by itself establish trust.
 - HAProxy is served the issued certificate plus any intermediate certificates; leave the root out of the

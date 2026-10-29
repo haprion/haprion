@@ -223,6 +223,34 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             outside.check()
             self.assertTrue(export.is_disabled())
 
+    def test_abandon_wakes_at_one_waiting_row_and_no_other(self) -> None:
+        """B388: only a request the CA still holds can be given up."""
+
+        from tests.test_certificates import reading, registered, with_registry
+
+        waiting = registered(fingerprint="a" * 64, kind="import")
+        waiting["source"]["ndes_profile"] = "certserver1"
+        waiting["renewal"] = {"attempted_at": "2026-09-15T05:00:00Z", "outcome": "pending"}
+        other = registered("other.example.com", fingerprint="b" * 64, kind="import")
+        rows = [with_registry(reading(), waiting, other)]
+        with (
+            mock.patch("haprion_ui.features.is_on", return_value=True),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=rows),
+            self.signed_in("?view=registry") as page,
+        ):
+            abandon = page.get_by_role("button", name="Abandon request…")
+            outside = page.locator("[data-delete-pick]:not([data-pending])").first
+            inside = page.locator("[data-delete-pick][data-pending]")
+
+            self.assertTrue(abandon.is_disabled())
+            outside.check()
+            self.assertTrue(abandon.is_disabled())
+            outside.uncheck()
+            inside.check()
+            self.assertFalse(abandon.is_disabled())
+            outside.check()
+            self.assertTrue(abandon.is_disabled())
+
     def test_the_switch_stays_on_screen_while_the_page_scrolls(self) -> None:
         with self.signed_in("?view=registry") as page:
             page.set_viewport_size({"width": 1000, "height": 300})

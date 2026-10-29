@@ -212,7 +212,7 @@ class RestoreRun:
 
     ``working``            a job is queued or running; the page refreshes
     ``held``               that job waits for an admin's Run or Discard on Jobs
-                           (`waiting_job`), queued before the manager last started
+                           (`waiting_job`), held after a restart or a restore
     ``no_worker``          that job is running and no worker holds it (`waiting_job`)
     ``prepare_failed``     the run was never created on the manager
     ``fingerprint``        paste the line on the target, then enter its fingerprint
@@ -429,8 +429,8 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
     waiting_job = None
     if stage == "working":
         #
-        # The one job of the run the queue holds active, held since the
-        # manager last started: it waits for an admin, not for a worker
+        # The one job of the run the queue holds active, held after a restart
+        # or a restore: it waits for an admin, not for a worker
         # (review 26-10-29, C06). Or one no worker holds, by the rule Jobs
         # says it by (B2): the page said working, and refreshed, for ever.
         #

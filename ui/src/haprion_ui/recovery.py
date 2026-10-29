@@ -228,7 +228,7 @@ def judge(
             "abandon",
             "operation_unknown",
             "its helper's receipt could not be read, so what it did is not known"
-            if job.operation in KEEPS_ANSWER
+            if job.operation in KEEPS_ANSWER and receipt.state == "unavailable"
             else f"there is no completion evidence defined for {job.operation}",
         )
 

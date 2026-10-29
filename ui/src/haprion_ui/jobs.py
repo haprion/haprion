@@ -109,8 +109,8 @@ class JobView:
     #
     note: str | None = None
     #
-    # Queued before the manager last started, and waiting for an admin's Run
-    # or Discard (0082). The worker takes nothing held until then.
+    # Held after a restart or a restore, and waiting for an admin's Run or
+    # Discard (0082). The worker takes nothing held until then.
     #
     held: bool = False
     #

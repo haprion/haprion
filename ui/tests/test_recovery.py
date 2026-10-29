@@ -380,7 +380,7 @@ class AHelperThatOutlivedItsWorker(unittest.TestCase):
             abandoned("cluster_node"), None, answer_receipt.Receipt("unavailable")
         )
         self.assertEqual(unread.code, "operation_unknown")
-        # Its evidence is defined; it could not be read (review 26-10-29, b).
+        # Its evidence is the receipt, which could not be read (review 26-10-29).
         self.assertEqual(
             unread.reason, "its helper's receipt could not be read, so what it did is not known"
         )

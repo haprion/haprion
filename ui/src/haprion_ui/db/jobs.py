@@ -34,7 +34,7 @@ class Job:
     idempotency_key: UUID | None
     attempts: int
     #
-    # Held since the manager last started (0082): waiting for an admin's
+    # Held after a restart or a restore (0082): waiting for an admin's
     # `run` or `discard`. Read by the Jobs page; other readers leave them out.
     #
     held_since: datetime | None = None
@@ -89,7 +89,7 @@ class AbandonedJob:
     attempts: int
     lease_until: datetime
     #
-    # Held since the manager last started, and the admin's answer if any: an
+    # Held after a restart or a restore, and the admin's answer if any: an
     # adoption waits for it (review 2026-10-28, F01).
     #
     held_since: datetime | None = None

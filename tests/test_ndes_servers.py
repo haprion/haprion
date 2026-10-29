@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import http.server
 import io
 import json
 import multiprocessing
 import os
 import subprocess
 import tempfile
+import threading
 import unittest
 import urllib.error
 import uuid
@@ -84,6 +86,90 @@ class Answer:
         return hashlib.sha256(der).hexdigest()
 
 
+class Served:
+    """A local HTTP server whose one handler answers as a test says (no NDES server is asked)."""
+
+    def __init__(self, answer: Any) -> None:
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                answer(self)
+
+            def log_message(self, *_: Any) -> None:
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self) -> str:
+        self.thread.start()
+        return f"http://127.0.0.1:{self.server.server_address[1]}/certsrv/mscep/mscep.dll"
+
+    def __exit__(self, *_: object) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(5)
+
+
+class TheFetch(unittest.TestCase):
+    """`get_ca_cert` against a local server, through urllib as it runs."""
+
+    def fetch(self, answer: Any) -> ndes_servers.NdesServerError:
+        with Served(answer) as url, self.assertRaises(ndes_servers.NdesServerError) as caught:
+            ndes_servers.get_ca_cert(url)
+        return caught.exception
+
+    def test_a_redirect_is_said_not_followed(self) -> None:
+        """Review 2026-10-29, B07: a redirect to http was followed, and the CA read in the clear."""
+
+        asked: list[str] = []
+
+        def answer(handler: http.server.BaseHTTPRequestHandler) -> None:
+            asked.append(handler.path)
+            if handler.path.startswith("/elsewhere"):
+                handler.send_response(200)
+                handler.send_header("Content-Length", "2")
+                handler.end_headers()
+                handler.wfile.write(b"ca")
+                return
+            handler.send_response(302)
+            handler.send_header("Location", f"http://{handler.headers['Host']}/elsewhere")
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+
+        refused = self.fetch(answer)
+        self.assertEqual(refused.code, "redirected")
+        self.assertRegex(str(refused), r"redirected to http://127\.0\.0\.1:\d+/elsewhere;")
+        self.assertEqual(len(asked), 1)
+
+    def test_a_proxy_in_the_environment_is_not_taken(self) -> None:
+        def answer(handler: http.server.BaseHTTPRequestHandler) -> None:
+            handler.send_response(200)
+            handler.send_header("Content-Length", "2")
+            handler.end_headers()
+            handler.wfile.write(b"ca")
+
+        unused = "http://192.0.2.1:9"
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"http_proxy": unused, "https_proxy": unused, "HTTP_PROXY": unused},
+            ),
+            Served(answer) as url,
+        ):
+            self.assertEqual(ndes_servers.get_ca_cert(url), b"ca")
+
+    def test_an_error_answer_is_said_and_closed_on_the_wire(self) -> None:
+        def answer(handler: http.server.BaseHTTPRequestHandler) -> None:
+            handler.send_response(404)
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+
+        refused = self.fetch(answer)
+        self.assertEqual(refused.code, "unreachable")
+        self.assertIn("HTTP 404", str(refused))
+
+
 class TheAuthorities(unittest.TestCase):
     def test_the_cas_the_issuing_one_first_and_never_the_ra(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -105,8 +191,9 @@ class TheAuthorities(unittest.TestCase):
 
         stream = io.BytesIO(b"not here")
         error = urllib.error.HTTPError(ENDPOINT, 404, "", Message(), stream)
+        opener = mock.Mock(open=mock.Mock(side_effect=error))
         with (
-            mock.patch("urllib.request.urlopen", side_effect=error),
+            mock.patch.object(ndes_servers, "_opener", return_value=opener),
             self.assertRaises(ndes_servers.NdesServerError) as caught,
         ):
             ndes_servers.get_ca_cert(ENDPOINT)

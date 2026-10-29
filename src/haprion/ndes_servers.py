@@ -103,16 +103,41 @@ class Authority:
         }
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, not an instruction: it is refused, not followed."""
+
+    def redirect_request(self, *_: Any, **__: Any) -> None:
+        return None
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    """HTTPS checked with the system's store, straight to the server.
+
+    Review 2026-10-29, B07: `urlopen` followed a redirect to http and took a
+    proxy from the environment, so the CA shown could come over neither the
+    HTTPS nor the server the administrator named.
+    """
+
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+
+
 def get_ca_cert(endpoint: str) -> bytes:
     """`GetCACert` over HTTPS, the server's certificate checked with the system's store."""
 
     url = endpoint + "?operation=GetCACert&message=ca"
     try:
-        with urllib.request.urlopen(url, timeout=TIMEOUT) as response:  # noqa: S310 - checked https
+        with _opener().open(url, timeout=TIMEOUT) as response:
             data: bytes = response.read(MAX_ANSWER + 1)
     except urllib.error.HTTPError as exc:
         # The error is the response too, and is closed (review 2026-10-28, F04).
         with exc:
+            if 300 <= exc.code < 400:
+                location = exc.headers.get("Location", "")[:300] or "another address"
+                raise NdesServerError(
+                    "redirected",
+                    f"{endpoint} redirected to {location}; give the address it redirects to",
+                    exit_codes.UNAVAILABLE,
+                ) from None
             raise NdesServerError(
                 "unreachable", f"{endpoint} answered HTTP {exc.code}", exit_codes.UNAVAILABLE
             ) from None

@@ -5882,7 +5882,8 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
 
 1. Enter the server's `mscep.dll` address and choose *Fetch the CA*. The manager asks the server for its CA
    certificates over HTTPS, checked against the manager's system certificate store, and shows each one with
-   its SHA-256 and its SHA-1 thumbprint - the thumbprint Windows shows in the certificate's details.
+   its SHA-256 and its SHA-1 thumbprint - the thumbprint Windows shows in the certificate's details. It asks
+   the server directly, without a proxy, and does not follow a redirect: it names the address to give instead.
 2. Compare them with the CA's own certificates. The one marked *issues for NDES* is the CA the server enrolls
    for; the others are the rest of its chain.
 3. Choose *Confirm this CA*, or *Confirm these CAs* when there are several. The manager asks the server again

@@ -170,9 +170,7 @@ class ThePolicy(unittest.TestCase):
         self.assertEqual(self.servers(), [ENDPOINT])
         ndes = yaml.safe_load(text)["ndes"]
         self.assertEqual(ndes["client_root"], "/opt/haprion-scep/current")
-        self.assertEqual(
-            ndes["profiles"]["private_keys"], [f"{self.root}/keys/0123456789abcdef.key"]
-        )
+        self.assertEqual(ndes["profiles"], {"directory": "/etc/haprion/ndes-profiles"})
         written = Path(str(added["issuing_ca"]))
         self.assertEqual(written.parent, self.cas)
         self.assertIn(self.answer.pki.intermediate.read_text(), written.read_text())
@@ -200,6 +198,48 @@ class ThePolicy(unittest.TestCase):
         data = yaml.safe_load(self.policy.read_text())
         self.assertEqual(data["ndes"]["servers"][0]["tls_ca"], f"{self.root}/tls.pem")
         self.assertEqual(data["backup_root"], f"{self.root}/backup")
+
+    def test_the_profile_keys_are_the_dns_profiles_own(self) -> None:
+        """Review 2026-10-29, B05: a copy of the keys did not follow a rotation."""
+
+        self.add()
+        text = self.policy.read_text()
+        rotated = f"    - {self.root}/keys/fedcba9876543210.key\n"
+        anchor = f"    - {self.root}/keys/0123456789abcdef.key\n"
+        self.policy.write_text(text.replace(anchor, anchor + rotated, 1))
+        ndes = load_policy(self.policy, require_secure=False).ndes
+        assert ndes is not None
+        self.assertEqual(
+            [str(key) for key in ndes.profiles.private_keys],
+            [f"{self.root}/keys/0123456789abcdef.key", f"{self.root}/keys/fedcba9876543210.key"],
+        )
+
+    def test_a_block_with_keys_of_its_own_keeps_them(self) -> None:
+        own = f"{self.root}/keys/aaaaaaaaaaaaaaaa.key"
+        with self.policy.open("a") as policy:
+            policy.write(
+                "ndes:\n"
+                "  servers: []\n"
+                "  client_root: /opt/haprion-scep/current\n"
+                "  state_root: /etc/haprion/ndes-requests\n"
+                "  profiles:\n"
+                "    directory: /etc/haprion/ndes-profiles\n"
+                f"    private_keys: [{own}]\n"
+            )
+        self.add()
+        ndes = load_policy(self.policy, require_secure=False).ndes
+        assert ndes is not None
+        self.assertEqual([str(key) for key in ndes.profiles.private_keys], [own])
+
+    def test_without_a_profile_key_nothing_is_asked(self) -> None:
+        self.policy.write_text(POLICY.format(root=self.root).partition("acme:")[0])
+        before = self.policy.read_text()
+        with self.assertRaises(ndes_servers.NdesServerError) as caught:
+            self.add()
+        self.assertEqual(caught.exception.code, "no_profile_key")
+        self.assertIn("no profile key", str(caught.exception))
+        self.assertEqual(self.answer.asked, [])
+        self.assertEqual(self.policy.read_text(), before)
 
     def test_the_comments_after_the_block_stay(self) -> None:
         """Review 2026-10-29, B04: a comment before the next key was taken as the block's."""

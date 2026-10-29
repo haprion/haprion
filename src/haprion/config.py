@@ -1279,9 +1279,7 @@ def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
     endpoints = [server.endpoint for server in servers]
     if len(set(endpoints)) != len(endpoints):
         raise ConfigError(f"{location}.servers names an address twice")
-    profiles = _dns_profiles_policy({"dns_profiles": entry.get("profiles")}, f"{location}.profiles")
-    if profiles is None:
-        raise ConfigError(f"{location}.profiles must be configured")
+    profiles = _ndes_profiles(entry.get("profiles"), data, f"{location}.profiles")
     return NdesPolicy(
         servers=servers,
         client_root=_absolute_path(
@@ -1292,6 +1290,42 @@ def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
         ),
         profiles=profiles,
         renew_days=renew_days,
+    )
+
+
+def _ndes_profiles(raw: object, data: Mapping[str, Any], location: str) -> DnsProfilesPolicy:
+    """The NDES profiles' directory, and the keys they are sealed with.
+
+    The keys are the DNS profiles' own (`ndes_profiles`: the web seals both
+    with one public key), so a block that lists none reads them from
+    `acme.dns_profiles`: one list, which a rotation changes once (review
+    2026-10-29, B05). A block that lists its own is read as it says.
+    """
+
+    if raw is None:
+        raise ConfigError(f"{location} must be configured")
+    entry = _mapping(raw, location)
+    own = (
+        _dns_profiles_policy({"dns_profiles": entry}, location) if "private_keys" in entry else None
+    )
+    if own is not None:
+        return own
+    _only_keys(entry, {"directory"}, location)
+    acme = data.get("acme")
+    dns = (
+        _dns_profiles_policy(acme, "runtime policy.acme.dns_profiles")
+        if isinstance(acme, Mapping)
+        else None
+    )
+    if dns is None:
+        raise ConfigError(
+            f"{location} lists no private_keys, and there is no acme.dns_profiles to take them from"
+        )
+    return DnsProfilesPolicy(
+        directory=_absolute_path(
+            _required_string(entry, "directory", location), f"{location}.directory"
+        ),
+        private_keys=dns.private_keys,
     )
 
 

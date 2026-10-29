@@ -86,14 +86,34 @@ step "The runtime policy"
 # Not edited here: the policy is the operator's file. What the helper needs is the profile directory and every
 # private key a stored profile may have been sealed against.
 #
-if [[ -f "$POLICY" ]] && grep -Eq "^\s*dns_profiles:\s*$" "$POLICY"; then
+#
+# NDES profiles are sealed with the same keys and read them from
+# acme.dns_profiles, unless the ndes block lists its own: then that list must
+# name every key as well, and is not taken for the first one (review
+# 2026-10-29, B05).
+#
+ndes_block="" outside_ndes=""
+if [[ -f "$POLICY" ]]; then
+    ndes_block="$(awk '/^ndes:/ {inside = 1; next} inside && /^[^[:space:]#]/ {inside = 0} inside' "$POLICY")"
+    outside_ndes="$(awk '/^ndes:/ {inside = 1; next} inside && /^[^[:space:]#]/ {inside = 0} !inside' "$POLICY")"
+fi
+if [[ -f "$POLICY" ]] && grep -Eq "^\s*dns_profiles:\s*$" <<<"$outside_ndes"; then
     for file in "${PRIVATE_DIR}"/*.key; do
-        if grep -Eq "^\s*-\s*${file}\s*$" "$POLICY"; then
+        if grep -Eq "^\s*-\s*${file}\s*$" <<<"$outside_ndes"; then
             log "  ok       ${POLICY} lists ${file}"
         else
             warn "${POLICY} does not list ${file} under acme.dns_profiles.private_keys"
         fi
     done
+    if grep -Eq "^\s*private_keys:" <<<"$ndes_block"; then
+        for file in "${PRIVATE_DIR}"/*.key; do
+            if grep -Fq -- "$file" <<<"$ndes_block"; then
+                log "  ok       ${POLICY} lists ${file} under ndes.profiles"
+            else
+                warn "${POLICY} does not list ${file} under ndes.profiles.private_keys"
+            fi
+        done
+    fi
 elif [[ -f "$POLICY" ]]; then
     warn "${POLICY} has no acme.dns_profiles block. Add, under acme:"
     warn "    dns_profiles:"

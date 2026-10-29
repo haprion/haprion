@@ -5830,7 +5830,8 @@ the installed engine refuses a key it does not know.
 
 **Replacing the key.** Run the step with `ROTATE=1`: it adds a second pair beside the first. Then:
 
-1. List both private keys in the runtime policy.
+1. List both private keys under `acme.dns_profiles.private_keys` in the runtime policy, and under
+   `ndes.profiles.private_keys` too if the `ndes` block lists keys of its own.
 2. Point `ui.toml` at the new public key, and restart the web service.
 3. Re-enter each profile, so it is encrypted with the new key. A profile encrypted with a key the policy no
    longer lists cannot be used until it is re-entered.
@@ -5917,7 +5918,7 @@ with the last one. Its fields:
 | `servers` | the confirmed servers: each `endpoint` (the HTTPS address), `issuing_ca` (the file with the CA certificates it gave) and optionally `tls_ca` (a CA file its HTTPS is checked against; the system store when left out) |
 | `client_root` | where the SCEP client is installed: `/opt/haprion-scep/current` |
 | `state_root` | where enrollment requests are kept: `/etc/haprion/ndes-requests` |
-| `profiles` | `directory` (where profile records are kept: `/etc/haprion/ndes-profiles`) and `private_keys`, the DNS profile key pair's private key |
+| `profiles` | `directory` (where profile records are kept: `/etc/haprion/ndes-profiles`); the keys the profiles are sealed with are `acme.dns_profiles.private_keys`, unless the block lists `private_keys` of its own |
 | `renew_days` | optional; renew this many days before expiry (1-3650, default 30) |
 
 ```yaml
@@ -5929,12 +5930,26 @@ ndes:
   state_root: /etc/haprion/ndes-requests
   profiles:
     directory: /etc/haprion/ndes-profiles
-    private_keys:
-      - /etc/haprion/ui-secrets/dns-profile-keys/0123456789abcdef.key
 ```
 
 A block with one `endpoint`, `tls_ca` and `issuing_ca` beside the other fields is read as one server. The
-manager rewrites only the `ndes` block; the rest of the file and its comments stay. The two `/etc/haprion`
+manager rewrites only the `ndes` block; the rest of the file and its comments stay.
+
+An earlier release may read only that one-server form, with `profiles.private_keys` listed. A rollback it
+cannot read the policy for is refused and names the key. Before going back, write the block with the one server
+it should keep and the keys it should read:
+
+```yaml
+ndes:
+  endpoint: https://ndes.example.com/certsrv/mscep/mscep.dll
+  issuing_ca: /etc/haprion/ndes-ca/0123456789abcdef-fedcba9876543210.pem
+  client_root: /opt/haprion-scep/current
+  state_root: /etc/haprion/ndes-requests
+  profiles:
+    directory: /etc/haprion/ndes-profiles
+    private_keys:
+      - /etc/haprion/ui-secrets/dns-profile-keys/0123456789abcdef.key
+``` The two `/etc/haprion`
 directories are root-owned with mode `0700`; the records and keys in them have mode `0600`.
 
 **The client comes in the `haprion-scep` package.** `haprion-ui` depends on it, so it is installed with the

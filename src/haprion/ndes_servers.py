@@ -265,28 +265,36 @@ def _forget_ca(previous: object, servers: Sequence[Any], directory: Path) -> Non
     Path(previous).unlink(missing_ok=True)
 
 
+def _dns_keys(data: dict[str, Any]) -> list[Any] | None:
+    acme = data.get("acme")
+    dns = acme.get("dns_profiles") if isinstance(acme, dict) else None
+    keys = dns.get("private_keys") if isinstance(dns, dict) else None
+    return keys if isinstance(keys, list) and keys else None
+
+
 def _ndes_block(data: dict[str, Any], policy_path: Path) -> dict[str, Any]:
     """The policy's ndes block in the form with servers; a new one with the defaults."""
 
     raw = data.get("ndes")
     if raw is None:
-        acme = data.get("acme")
-        if not isinstance(acme, dict):
-            acme = {}
-        dns = acme.get("dns_profiles") or {}
+        #
+        # The profiles' keys are the DNS profiles' own, read from there
+        # (review 2026-10-29, B05).
+        #
         return {
             "servers": [],
             "client_root": CLIENT_ROOT,
             "state_root": STATE_ROOT,
-            "profiles": {
-                "directory": PROFILE_DIRECTORY,
-                "private_keys": list(dns.get("private_keys") or []),
-            },
+            "profiles": {"directory": PROFILE_DIRECTORY},
         }
     if not isinstance(raw, dict):
         raise NdesServerError(
             "bad_policy", f"{policy_path}: ndes is not a mapping", exit_codes.CONFIG
         )
+    #
+    # A block that lists keys of its own keeps them: an engine before B05
+    # reads only those (review 2026-10-29, B05).
+    #
     block = dict(raw)
     if "endpoint" in block:
         server = {"endpoint": block.pop("endpoint"), "issuing_ca": block.pop("issuing_ca", None)}
@@ -361,6 +369,23 @@ def _write_policy(policy_path: Path, text: str) -> None:
         staged.unlink(missing_ok=True)
 
 
+def _require_profile_key(policy_path: Path) -> None:
+    """A server is for profiles, and a profile is sealed with a key the policy lists."""
+
+    data = safe_yaml.load(policy_path.read_text()) or {}
+    ndes = data.get("ndes") if isinstance(data, dict) else None
+    profiles = ndes.get("profiles") if isinstance(ndes, dict) else None
+    if isinstance(profiles, dict) and profiles.get("private_keys"):
+        return
+    if isinstance(data, dict) and _dns_keys(data) is not None:
+        return
+    raise NdesServerError(
+        "no_profile_key",
+        "This installation has no profile key; see The DNS profile key pair in the user manual.",
+        exit_codes.CONFIG,
+    )
+
+
 def add(
     endpoint: str,
     fingerprints: Sequence[str],
@@ -378,6 +403,7 @@ def add(
     ca_directory = CA_DIRECTORY if ca_directory is None else ca_directory
     if not fingerprints or any(SHA256.fullmatch(each) is None for each in fingerprints):
         raise NdesServerError("bad_input", "each fingerprint must be a SHA-256 in hexadecimal")
+    _require_profile_key(policy_path)
     found = authorities(endpoint, fetch=fetch)
     endpoint = check_endpoint(endpoint)
     if {authority.sha256 for authority in found} != set(fingerprints):

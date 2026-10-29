@@ -119,12 +119,12 @@ class Served:
 class ServedOverTls(Served):
     """The same server over HTTPS, with the certificate chain a test gives it."""
 
-    def __init__(self, chain: Path, key: Path) -> None:
+    def __init__(self, chain: Path, key: Path, body: bytes = b"ca") -> None:
         def answer(handler: http.server.BaseHTTPRequestHandler) -> None:
             handler.send_response(200)
-            handler.send_header("Content-Length", "2")
+            handler.send_header("Content-Length", str(len(body)))
             handler.end_headers()
-            handler.wfile.write(b"ca")
+            handler.wfile.write(body)
 
         super().__init__(answer)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -321,8 +321,10 @@ class AChainWithoutItsRoot(unittest.TestCase):
             ndes_servers.authorities(ENDPOINT, fetch=lambda *_: self.short, trust=self.store)
         self.assertEqual(caught.exception.code, "no_root")
         self.assertIn("gives no root CA", str(caught.exception))
-        # The store it was completed from, not always the manager's (round 2, cosmetic).
-        self.assertIn(f"none in the server's tls_ca {self.store} issues", str(caught.exception))
+        self.assertIn(
+            "none in this manager's system certificate store issues", str(caught.exception)
+        )
+        self.assertIn("update-ca-certificates", str(caught.exception))
 
     def test_a_name_alone_does_not_make_a_root(self) -> None:
         # Another CA under the same name, not the one that signed the chain.
@@ -709,7 +711,7 @@ class TheAuthorities(unittest.TestCase):
         self.assertTrue(stream.closed)
 
     def test_https_is_checked_against_the_store_it_is_given(self) -> None:
-        """Review 2026-10-29 again, BB07: always the system's, while Certmonger used `tls_ca`."""
+        """The system store, or a test's own in its place."""
 
         opener = mock.Mock(open=mock.Mock(side_effect=OSError("stop")))
         own = Path("/nonexistent/tls.pem")
@@ -728,10 +730,7 @@ class TheAuthorities(unittest.TestCase):
                 1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
             )
         )
-        for trust, store in (
-            (SYSTEM_TRUST, "this manager's certificate store"),
-            (Path("/nonexistent/tls.pem"), "the server's tls_ca /nonexistent/tls.pem"),
-        ):
+        for trust in (SYSTEM_TRUST, Path("/nonexistent/tls.pem")):
             opener = mock.Mock(open=mock.Mock(side_effect=untrusted))
             with (
                 self.subTest(trust=trust),
@@ -740,7 +739,10 @@ class TheAuthorities(unittest.TestCase):
             ):
                 ndes_servers.get_ca_cert(ENDPOINT, trust)
             self.assertEqual(caught.exception.code, "tls")
-            self.assertIn(f"its HTTPS certificate is not trusted by {store}", str(caught.exception))
+            self.assertIn(
+                "its HTTPS certificate is not trusted by this manager's system certificate store",
+                str(caught.exception),
+            )
             self.assertNotIn("did not answer", str(caught.exception))
         opener = mock.Mock(open=mock.Mock(side_effect=ssl.SSLError(1, "handshake failure")))
         with (
@@ -807,7 +809,11 @@ class TheAuthorities(unittest.TestCase):
                 ),
                 ("expired", here.root, "a certificate in its HTTPS chain has expired"),
                 ("lapsed CA", here.root, "a certificate in its HTTPS chain has expired"),
-                ("here", stranger.root, "add the CA that issued it to the store"),
+                (
+                    "here",
+                    stranger.root,
+                    "add the CA that issued it to the store with update-ca-certificates",
+                ),
             ):
                 chain, key, _ = chains[name]
                 with (
@@ -1042,17 +1048,16 @@ class ThePolicy(unittest.TestCase):
         self.add(OTHER)
         self.assertEqual(self.policy.read_text(), text)
 
-    def test_a_server_confirmed_again_keeps_its_tls_ca(self) -> None:
-        """Review 2026-10-29, B02: the entry was written anew, and HTTPS fell back to the system's store."""
+    def test_a_server_confirmed_again_is_written_without_its_tls_ca(self) -> None:
+        """B392: nothing trusts a `tls_ca`, so the confirmation does not carry one on."""
 
         self.add()
         data = yaml.safe_load(self.policy.read_text())
         data["ndes"]["servers"][0]["tls_ca"] = f"{self.root}/tls.pem"
         self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
         self.add()
-        ndes = load_policy(self.policy, require_secure=False).ndes
-        assert ndes is not None
-        self.assertEqual(str(ndes.servers[0].tls_ca), f"{self.root}/tls.pem")
+        data = yaml.safe_load(self.policy.read_text())
+        self.assertNotIn("tls_ca", data["ndes"]["servers"][0])
 
     def test_a_refused_policy_leaves_the_server_s_ca_as_it_was(self) -> None:
         """Review 2026-10-29, B03: the CA file was replaced before the policy was read back."""
@@ -1094,16 +1099,42 @@ class ThePolicy(unittest.TestCase):
         )
         self.assertEqual(list(self.cas.iterdir()), [])
 
-    def test_a_ca_file_a_server_trusts_for_its_https_stays(self) -> None:
+    def test_a_ca_file_another_server_names_as_its_tls_ca_stays(self) -> None:
         """Review 2026-10-29 again, BB05: only `issuing_ca` was counted as a reference.
 
-        Written the way a hand edit may name it (`./`), which the comparison
-        of the policy's string missed too.
+        A `tls_ca` is trusted by nothing (B392), but a policy that names it is
+        one an engine before B392 reads, and it refuses a file that is gone.
+        Written the way a hand edit may name it (`./`), and through a link
+        (round 2, cosmetic), which the comparison of the policy's string missed.
         """
 
         first = Path(str(self.add()["issuing_ca"]))
+        link = self.root / "tls-link.pem"
+        link.symlink_to(first)
+        for named in (f"{first.parent}/./{first.name}", str(link)):
+            with self.subTest(named=named):
+                self.add()
+                data = yaml.safe_load(self.policy.read_text())
+                data["ndes"]["servers"].append(
+                    {"endpoint": OTHER, "issuing_ca": str(self.root / "other.pem"), "tls_ca": named}
+                )
+                self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
+                ndes_servers.remove(
+                    ENDPOINT, used_by=lambda: (), policy_path=self.policy, ca_directory=self.cas
+                )
+                self.assertTrue(first.exists())
+                ndes_servers.remove(
+                    OTHER, used_by=lambda: (), policy_path=self.policy, ca_directory=self.cas
+                )
+                # A link names a file outside the manager's directory, which stays.
+                self.assertEqual(first.exists(), named == str(link))
+
+    def test_a_server_confirmed_again_lets_go_of_the_file_its_tls_ca_named(self) -> None:
+        """B392: its old CA file was held by its own `tls_ca`, which the new entry no longer has."""
+
+        first = Path(str(self.add()["issuing_ca"]))
         data = yaml.safe_load(self.policy.read_text())
-        data["ndes"]["servers"][0]["tls_ca"] = f"{first.parent}/./{first.name}"
+        data["ndes"]["servers"][0]["tls_ca"] = str(first)
         self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
         (self.root / "renewed").mkdir()
         self.answer = Answer(self.root / "renewed")
@@ -1112,39 +1143,7 @@ class ThePolicy(unittest.TestCase):
             self.answer.sha256(self.answer.pki.root),
         ]
         second = Path(str(self.add(fingerprints=renewed)["issuing_ca"]))
-        self.assertTrue(first.exists())
-        # Another server that borrows the file keeps it past this one's removal.
-        data = yaml.safe_load(self.policy.read_text())
-        del data["ndes"]["servers"][0]["tls_ca"]
-        data["ndes"]["servers"].append(
-            {"endpoint": OTHER, "issuing_ca": str(second), "tls_ca": str(first)}
-        )
-        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
-        data["ndes"]["servers"][0]["issuing_ca"] = str(first)
-        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
-        ndes_servers.remove(
-            ENDPOINT, used_by=lambda: (), policy_path=self.policy, ca_directory=self.cas
-        )
-        self.assertTrue(first.exists())
-        self.assertTrue(second.exists())
-
-    def test_a_ca_file_a_server_trusts_through_a_link_stays(self) -> None:
-        """Review 2026-10-29, round 2, cosmetic: a `tls_ca` linked to the file did not hold it."""
-
-        first = Path(str(self.add()["issuing_ca"]))
-        link = self.root / "tls-link.pem"
-        link.symlink_to(first)
-        data = yaml.safe_load(self.policy.read_text())
-        data["ndes"]["servers"][0]["tls_ca"] = str(link)
-        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
-        (self.root / "renewed").mkdir()
-        self.answer = Answer(self.root / "renewed")
-        renewed = [
-            self.answer.sha256(self.answer.pki.intermediate),
-            self.answer.sha256(self.answer.pki.root),
-        ]
-        self.add(fingerprints=renewed)
-        self.assertTrue(first.exists())
+        self.assertEqual(list(self.cas.iterdir()), [second])
 
     def test_a_ca_file_outside_the_manager_s_directory_is_never_removed(self) -> None:
         # A policy from before B385 names its CA file where the installation put it.
@@ -1322,7 +1321,9 @@ class TheHelperAndTheCommand(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def ask(self, **parameters: object) -> tuple[int, dict[str, Any]]:
+    def ask(
+        self, fetch: ndes_servers.Fetch | None = None, **parameters: object
+    ) -> tuple[int, dict[str, Any]]:
         request = {
             "schema_version": 1,
             "operation": "ndes_server",
@@ -1337,14 +1338,14 @@ class TheHelperAndTheCommand(unittest.TestCase):
             output_stream=out,
             error_stream=err,
             policy_path=self.policy,
-            fetch=self.answer,
+            fetch=self.answer if fetch is None else fetch,
             require_root=False,
         )
         self.journal = err.getvalue()
         return code, assert_contract("haprion-ndes-server", out.getvalue())
 
-    def test_a_known_server_is_asked_over_the_https_its_tls_ca_trusts(self) -> None:
-        """Review 2026-10-29 again, BB07: the fetch and the completion use one store."""
+    def test_a_known_server_is_asked_over_the_system_store_whatever_its_tls_ca(self) -> None:
+        """B392: the fetch trusted a server's `tls_ca`, which the enrollment does not."""
 
         self.ask(action="add", endpoint=ENDPOINT, sha256=self.chain)
         self.assertEqual(self.answer.trusted[-1], SYSTEM_TRUST)
@@ -1355,7 +1356,114 @@ class TheHelperAndTheCommand(unittest.TestCase):
         self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
         code, _ = self.ask(action="fetch", endpoint=ENDPOINT)
         self.assertEqual(code, 0)
-        self.assertEqual(self.answer.trusted[-1], own)
+        self.assertEqual(self.answer.trusted[-1], SYSTEM_TRUST)
+
+    def served(self) -> ServedOverTls:
+        """The NDES answer over real HTTPS on this host, under a root no system store holds."""
+
+        https = Pki(self.root / "https", names=("localhost",))
+        chain = self.root / "https-chain.pem"
+        chain.write_text(https.leaf.read_text() + https.intermediate.read_text())
+        self.https_root = https.root
+        return ServedOverTls(chain, https.leaf_key, body=self.answer.der)
+
+    def name_tls_ca(self, endpoint: str, tls_ca: Path | None) -> None:
+        data = yaml.safe_load(self.policy.read_text())
+        (server,) = [s for s in data["ndes"]["servers"] if s["endpoint"] == endpoint]
+        server.pop("tls_ca", None)
+        if tls_ca is not None:
+            server["tls_ca"] = str(tls_ca)
+        self.policy.write_text(yaml.safe_dump(data, sort_keys=False))
+
+    def test_a_server_trusted_only_by_its_tls_ca_is_refused_at_the_fetch(self) -> None:
+        """B392 (B3-02): it was confirmed, and its enrollment then failed on the system store."""
+
+        with self.served() as url:
+            self.ask(action="add", endpoint=url, sha256=self.chain)
+            self.name_tls_ca(url, self.https_root)
+            for parameters in (
+                {"action": "fetch"},
+                {"action": "add", "sha256": self.chain},
+            ):
+                with self.subTest(**parameters):
+                    code, refused = self.ask(
+                        fetch=ndes_servers.get_ca_cert, endpoint=url, **parameters
+                    )
+                    self.assertNotEqual(code, 0)
+                    self.assertEqual(refused["error"]["code"], "tls")
+                    said = refused["error"]["message"]
+                    self.assertIn("not trusted by this manager's system certificate store", said)
+                    self.assertIn("update-ca-certificates", said)
+                    self.assertNotIn("tls_ca", said)
+
+    def test_a_server_the_system_store_trusts_is_confirmed_with_or_without_a_tls_ca(self) -> None:
+        """B392: the system store decides; a `tls_ca`, there or not, is not read."""
+
+        with self.served() as url:
+            self.ask(action="add", endpoint=url, sha256=self.chain)
+            stranger = Pki(self.root / "stranger", names=("localhost",)).root
+            for tls_ca in (None, stranger, self.root / "nonexistent.pem"):
+                self.name_tls_ca(url, tls_ca)
+                with (
+                    self.subTest(tls_ca=tls_ca),
+                    mock.patch.object(ndes_server_helper, "SYSTEM_TRUST", self.https_root),
+                ):
+                    code, fetched = self.ask(
+                        fetch=ndes_servers.get_ca_cert, action="fetch", endpoint=url
+                    )
+                    self.assertEqual(code, 0, fetched)
+                    self.assertEqual(fetched["result"]["state"], "confirmed")
+                    code, added = self.ask(
+                        fetch=ndes_servers.get_ca_cert,
+                        action="add",
+                        endpoint=url,
+                        sha256=self.chain,
+                    )
+                    self.assertEqual(code, 0, added)
+                    data = yaml.safe_load(self.policy.read_text())
+                    self.assertNotIn("tls_ca", data["ndes"]["servers"][0])
+
+    def test_the_one_server_form_with_a_tls_ca_outside_the_manager_s_directory_works(
+        self,
+    ) -> None:
+        """B392: as a policy from before B385 names it - `tls_ca` and `issuing_ca` one file,
+        where the installation put it - it is read, its CA confirmed, and confirming it
+        again writes the form with servers and leaves that file."""
+
+        own = self.root / "installed" / "ndes-ca.pem"
+        own.parent.mkdir()
+        own.write_text(self.answer.pki.intermediate.read_text() + self.answer.pki.root.read_text())
+        with self.served() as url:
+            with self.policy.open("a") as policy:
+                policy.write(
+                    "ndes:\n"
+                    f"  endpoint: {url}\n"
+                    f"  tls_ca: {own}\n"
+                    f"  issuing_ca: {own}\n"
+                    f"  client_root: {self.root}/client\n"
+                    f"  state_root: {self.root}/ndes-requests\n"
+                    "  profiles:\n"
+                    f"    directory: {self.root}/ndes-profiles\n"
+                )
+            ndes = load_policy(self.policy, require_secure=False).ndes
+            assert ndes is not None
+            self.assertEqual([(s.endpoint, s.issuing_ca) for s in ndes.servers], [(url, own)])
+            with mock.patch.object(ndes_server_helper, "SYSTEM_TRUST", self.https_root):
+                code, fetched = self.ask(
+                    fetch=ndes_servers.get_ca_cert, action="fetch", endpoint=url
+                )
+                self.assertEqual(code, 0, fetched)
+                self.assertEqual(fetched["result"]["state"], "confirmed")
+                code, added = self.ask(
+                    fetch=ndes_servers.get_ca_cert, action="add", endpoint=url, sha256=self.chain
+                )
+            self.assertEqual(code, 0, added)
+        data = yaml.safe_load(self.policy.read_text())
+        self.assertEqual(
+            data["ndes"]["servers"],
+            [{"endpoint": url, "issuing_ca": added["result"]["issuing_ca"]}],
+        )
+        self.assertTrue(own.exists())
 
     def test_fetch_shows_the_cas_and_add_confirms_one(self) -> None:
         code, fetched = self.ask(action="fetch", endpoint=ENDPOINT)

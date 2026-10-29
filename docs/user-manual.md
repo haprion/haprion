@@ -4631,6 +4631,9 @@ in the section linked.
   Then move the sites to objects one at a time.
 - **A traffic log receiver's TLS certificate is checked against the node's system trust store.** For a
   receiver with a certificate from your own CA, add that CA to the trust store on each node.
+- **An NDES server's HTTPS is checked against the manager's system trust store only.** The SCEP client
+  checks its requests there, so a CA file of the server's own cannot stand in for it. Add the CA that issued
+  the server's HTTPS certificate to the manager's store (`update-ca-certificates`).
 - **An update does not take the database back past a migration.** No migration has a downgrade. An older
   `haprion-ui` package installed over the one that migrated the database is refused, and the files it
   replaced are put back. Install the newer package again, then `haprion-rollback` switches to an older
@@ -5907,18 +5910,17 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
 *Certificates → NDES profiles* with *Add NDES server*:
 
 1. Enter the server's `mscep.dll` address and choose *Fetch the CA*. The manager asks the server for its CA
-   certificates over HTTPS, checked against the manager's system certificate store (or, for a server already
-   confirmed, its `tls_ca` when it has one), and shows each one with
+   certificates over HTTPS, checked against the manager's system certificate store, and shows each one with
    its SHA-256 and its SHA-1 thumbprint - the thumbprint Windows shows in the certificate's details. It asks
    the server directly, without a proxy, and does not follow a redirect: it names the address to give instead.
-   Against the system store, the HTTPS check is as strict as the enrollment's, no stricter. A certificate
+   The HTTPS check is the enrollment's: the same store, as strict and no stricter. A certificate
    that fails it is named for what is wrong: another name, a certificate on the path past its date, or a CA
    the store does not hold.
 2. Compare them with the CA's own certificates. The one marked *issues for NDES* is the CA the server enrolls
    for; the others are the rest of its chain. A server that gives its chain without the root CA has it
-   completed from the manager's certificate store - the store its HTTPS is checked against - and the root is
-   marked *from this manager's certificate store*. When the store has no CA that issued the chain, the server
-   is refused; add its root CA to the store first. The chain is checked as an issue checks it: a server
+   completed from the manager's system certificate store, and the root is marked *from this manager's
+   certificate store*. When the store has no CA that issued the chain, the server is refused; add its root
+   CA to the store first. The chain is checked as an issue checks it: a server
    certificate from the issuing CA must verify against the saved certificates, for a server. A chain that
    does not - a root with the right name but another key, a CA on the path past its date, a path length or
    purpose that leaves no room for a server certificate - is refused too, with OpenSSL's reason, since every
@@ -5932,20 +5934,17 @@ same colours as the certificate registry, so a CA about to expire is seen before
 When the CA is renewed with a new key, or the saved CA certificate expires, certificates from the server no
 longer chain to what was saved, and an issue or renewal fails with "issued certificate does not chain to the CA
 confirmed for the NDES server". Add the server again with the same address: the page says it is confirmed with
-other CA certificates, and confirming the new ones replaces them. Its profiles and its `tls_ca` stay.
+other CA certificates, and confirming the new ones replaces them. Its profiles stay.
 
 A CA may be limited to some names (its name constraints). Confirming the server cannot check them, since no
 names are known then. Each enrollment checks its names against them before it asks the CA. A name outside
 them is refused with "the names asked for are outside what the CA may issue for", and so is a certificate the
 CA issues for one.
 
-The HTTPS certificate of the NDES server must be trusted by the manager's system store. A server signed by an
-internal CA needs that CA in the store, as any other internal HTTPS service does (`update-ca-certificates`).
-When it is not, *Fetch the CA* says the server's HTTPS certificate is not trusted. A server with its own
-`tls_ca` is checked against that file instead, by the fetch and the completion of its chain. The enrollment
-is not: Certmonger's `scep-submit` checks only its first question to the server against `tls_ca`, beside the
-system store, and the request itself against the system store alone. An enrollment therefore needs the
-server's HTTPS CA in the system store, whatever `tls_ca` holds.
+The HTTPS certificate of the NDES server must be trusted by the manager's system store, both when the server
+is confirmed and at each issue. A server signed by an internal CA needs that CA in the store, as any other
+internal HTTPS service does (`update-ca-certificates`). When it is not, *Fetch the CA* says the server's HTTPS
+certificate is not trusted.
 
 A server is removed from the same page, when no profile uses it. The command refuses while a profile applied
 on this manager names the server, or a profile record cannot be read; the interface also refuses while a
@@ -5971,7 +5970,7 @@ with the last one. Its fields:
 
 | Field | What it is |
 |---|---|
-| `servers` | the confirmed servers: each `endpoint` (the HTTPS address), `issuing_ca` (the file with the CA certificates it gave) and optionally `tls_ca` (a CA file the fetch checks its HTTPS against; the system store when left out; an enrollment checks the system store either way) |
+| `servers` | the confirmed servers: each `endpoint` (the HTTPS address) and `issuing_ca` (the file with the CA certificates it gave) |
 | `client_root` | where the SCEP client is installed: `/opt/haprion-scep/current` |
 | `state_root` | where enrollment requests are kept: `/etc/haprion/ndes-requests` |
 | `profiles` | `directory` (where profile records are kept: `/etc/haprion/ndes-profiles`); the keys the profiles are sealed with are `acme.dns_profiles.private_keys`, unless the block lists `private_keys` of its own |
@@ -5988,8 +5987,10 @@ ndes:
     directory: /etc/haprion/ndes-profiles
 ```
 
-A block with one `endpoint`, `tls_ca` and `issuing_ca` beside the other fields is read as one server. The
-manager rewrites only the `ndes` block; the rest of the file and its comments stay.
+A block with one `endpoint` and `issuing_ca` beside the other fields is read as one server. A `tls_ca` in an
+older policy is accepted and not used: the server's HTTPS is checked against the system store, and confirming
+the server again writes it without one. The manager rewrites only the `ndes` block; the rest of the file and
+its comments stay.
 
 An earlier release may read only that one-server form, with `profiles.private_keys` listed. A rollback it
 cannot read the policy for is refused and names the key. Before going back, write the block with the one server
@@ -6069,7 +6070,7 @@ need not change for this request type.
 
 - Serve the SCEP endpoint at `https://<ndes-fqdn>/certsrv/mscep/mscep.dll`, with a server certificate that
   matches the endpoint's DNS name.
-- The manager's system store must trust that HTTPS chain; an enrollment checks it there, `tls_ca` or not.
+- The manager's system store must trust that HTTPS chain (`update-ca-certificates`).
   The manager separately validates the certificate the CA issues (`issuing_ca`).
 - Provide the trust anchors explicitly. SCEP `GetCACert` fetches the protocol's CA and RA certificates, but
   does not by itself establish trust.

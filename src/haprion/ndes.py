@@ -64,7 +64,6 @@ RESUME_FIELDS = {
     "key_id": "the profile's key",
     "endpoint": "the NDES server",
     "issuing_ca_sha256": "the NDES server's CA",
-    "tls_ca_sha256": "the NDES server's HTTPS CA",
     "domains": "the DNS names",
 }
 
@@ -91,7 +90,7 @@ def validate_policy(policy: NdesPolicy, server: NdesServer, *, require_secure: b
             "NDES endpoint must be an HTTPS URL with a path, in ASCII, without credentials, query, "
             "fragment, quotes, backslashes or spaces",
         ) from None
-    for path in (server.tls_ca, server.issuing_ca):
+    for path in (SYSTEM_TRUST, server.issuing_ca):
         secure_file(path, require_secure=require_secure)
     for name in ("certmonger", "getcert", "scep-submit"):
         binary = (policy.client_root / "bin" / name).resolve()
@@ -364,12 +363,11 @@ def _enroll(
             secure_file(server.issuing_ca, require_secure=require_secure)
         ).hexdigest(),
         #
-        # The system's store changes with every ca-certificates update; a
-        # request waiting for the CA must still resume after one (B385).
+        # The system's store, always (B392), and by name: it changes with
+        # every ca-certificates update, and a request waiting for the CA must
+        # still resume after one (B385).
         #
-        "tls_ca_sha256": "system"
-        if server.tls_ca == SYSTEM_TRUST
-        else hashlib.sha256(secure_file(server.tls_ca, require_secure=require_secure)).hexdigest(),
+        "tls_ca_sha256": "system",
         "domains": list(requested),
     }
     if resume:
@@ -377,6 +375,12 @@ def _enroll(
             existing = json.loads(secure_file(record, require_secure=require_secure, secret=True))
         except (ValueError, UnicodeError):
             raise NdesError("bad_input", "NDES request record is unreadable") from None
+        #
+        # A request made while a `tls_ca` was trusted holds its digest; it is
+        # bound to nothing that trusts it now (B392).
+        #
+        if isinstance(existing, dict) and "tls_ca_sha256" in existing:
+            existing = {**existing, "tls_ca_sha256": "system"}
         if existing != expected:
             changed = [
                 words
@@ -404,7 +408,12 @@ def _enroll(
         fd = os.open(record, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as handle:
             json.dump(expected, handle)
-    for source, filename in ((server.tls_ca, "tls-ca.pem"), (server.issuing_ca, "issuing-ca.pem")):
+    #
+    # `scep-submit` checks its first question against its `-R` file and the
+    # rest against the system's store; given that store, it checks them all
+    # against one (B392).
+    #
+    for source, filename in ((SYSTEM_TRUST, "tls-ca.pem"), (server.issuing_ca, "issuing-ca.pem")):
         content = secure_file(source, require_secure=require_secure)
         destination = directory / filename
         fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)

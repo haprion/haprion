@@ -229,16 +229,16 @@ SYSTEM_TRUST = Path("/etc/ssl/certs/ca-certificates.crt")
 
 @dataclass(frozen=True, slots=True)
 class NdesServer:
-    """One NDES server: its address, the CA it issues from, and what its HTTPS is trusted with."""
+    """One NDES server: its address and the CA it issues from.
+
+    Its HTTPS is checked against the system's store, by the confirmation and
+    by the enrollment alike (B392). A `tls_ca` in the policy is read as a
+    path and kept nowhere: Certmonger's `scep-submit` checks all but its
+    first question against the system's store, whatever it is given.
+    """
 
     endpoint: str
     issuing_ca: Path
-    #
-    # The CA bundle its HTTPS certificate is checked against; the system's
-    # store when the policy names none (B381: a server the manager's store
-    # already trusts needs nothing more).
-    #
-    tls_ca: Path = SYSTEM_TRUST
 
 
 @dataclass(frozen=True, slots=True)
@@ -1342,13 +1342,9 @@ def _ndes_server(entry: Mapping[str, Any], location: str) -> NdesServer:
     issuing_ca = _absolute_path(
         _required_string(entry, "issuing_ca", location), f"{location}.issuing_ca"
     )
-    if entry.get("tls_ca") is None:
-        return NdesServer(endpoint=endpoint, issuing_ca=issuing_ca)
-    return NdesServer(
-        endpoint=endpoint,
-        issuing_ca=issuing_ca,
-        tls_ca=_absolute_path(_required_string(entry, "tls_ca", location), f"{location}.tls_ca"),
-    )
+    if entry.get("tls_ca") is not None:
+        _absolute_path(_required_string(entry, "tls_ca", location), f"{location}.tls_ca")
+    return NdesServer(endpoint=endpoint, issuing_ca=issuing_ca)
 
 
 def _acme_policy(data: Mapping[str, Any]) -> AcmePolicy | None:

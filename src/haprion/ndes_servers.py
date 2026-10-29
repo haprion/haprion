@@ -149,14 +149,13 @@ def _opener(trust: Path) -> urllib.request.OpenerDirector:
     # without key usage that the enrollment takes (review 2026-10-29, round
     # 2, BBB05).
     #
-    # Not the same store, though. `scep-submit` gives its `-R` file only to
-    # its first request, GetCACaps, where libcurl's own CA path, the system
-    # store, is read beside it. The request itself and its polls go with no
-    # CA file, so libcurl's defaults alone: the system store (`scep.c` in
-    # Certmonger 0.79.21, and measured 26-10-29: code 60 on PKCSReq with
-    # `-R` holding the server's root). A `tls_ca` is trusted here alone; an
-    # enrollment trusts the system store whatever it holds (review
-    # 2026-10-29, round 3, B3-02).
+    # And the same store: the system's. `scep-submit` gives its `-R` file
+    # only to its first request, GetCACaps; the request itself and its polls
+    # go with libcurl's defaults, the system store (`scep.c` in Certmonger
+    # 0.79.21, and measured 26-10-29: code 60 on PKCSReq with `-R` holding
+    # the server's root). A server whose CA only a `tls_ca` held was
+    # confirmed and could never be issued from, so neither trusts one
+    # (review 2026-10-29, round 3, B3-02; B392).
     #
     context.verify_flags &= ~ssl.VERIFY_X509_STRICT
     return urllib.request.build_opener(
@@ -166,10 +165,8 @@ def _opener(trust: Path) -> urllib.request.OpenerDirector:
     )
 
 
-def _store(trust: Path) -> str:
-    if trust == SYSTEM_TRUST:
-        return "this manager's certificate store"
-    return f"the server's tls_ca {trust}"
+# The store the fetch and the completion use (B392).
+STORE = "this manager's system certificate store"
 
 
 def _tls_said(error: ssl.SSLError) -> str:
@@ -192,7 +189,7 @@ ISSUER_MISSING = frozenset({2, 18, 19, 20, 21})
 EXPIRED, NOT_YET_VALID, HOST_MISMATCH = 10, 9, 62
 
 
-def _untrusted(endpoint: str, error: ssl.SSLCertVerificationError, trust: Path) -> str:
+def _untrusted(endpoint: str, error: ssl.SSLCertVerificationError) -> str:
     """Why the server's HTTPS certificate failed, and the way on when there is one.
 
     "Add the CA that issued it to the store" was said for every failure,
@@ -212,18 +209,18 @@ def _untrusted(endpoint: str, error: ssl.SSLCertVerificationError, trust: Path) 
         return "a certificate in its HTTPS chain has expired"
     if code == NOT_YET_VALID:
         return "a certificate in its HTTPS chain is not valid yet"
-    said = f"its HTTPS certificate is not trusted by {_store(trust)} ({_tls_said(error)})"
+    said = f"its HTTPS certificate is not trusted by {STORE} ({_tls_said(error)})"
     if code in ISSUER_MISSING:
-        return said + "; add the CA that issued it to the store"
+        return said + "; add the CA that issued it to the store with update-ca-certificates"
     return said
 
 
 def get_ca_cert(endpoint: str, trust: Path = SYSTEM_TRUST) -> bytes:
     """`GetCACert` over HTTPS, the server's certificate checked with `trust`.
 
-    The store is the server's `tls_ca`, or the system's, and the one a
-    chain short of its root is completed from (review 2026-10-29 again,
-    BB07). The enrollment does not keep to it: see `_opener`.
+    `trust` is the system's store, as the enrollment's is (B392), and the one
+    a chain short of its root is completed from (review 2026-10-29 again,
+    BB07); a test gives its own.
     """
 
     url = endpoint + "?operation=GetCACert&message=ca"
@@ -233,7 +230,7 @@ def get_ca_cert(endpoint: str, trust: Path = SYSTEM_TRUST) -> bytes:
     except (OSError, ssl.SSLError) as exc:
         raise NdesServerError(
             "tls",
-            f"{_store(trust)} cannot be read: {http_answer.said(exc)}",
+            f"{STORE} ({trust}) cannot be read: {http_answer.said(exc)}",
             exit_codes.CONFIG,
         ) from None
     try:
@@ -262,7 +259,7 @@ def get_ca_cert(endpoint: str, trust: Path = SYSTEM_TRUST) -> bytes:
         if isinstance(reason, ssl.SSLCertVerificationError):
             raise NdesServerError(
                 "tls",
-                f"{endpoint}: {_untrusted(endpoint, reason, trust)}",
+                f"{endpoint}: {_untrusted(endpoint, reason)}",
                 exit_codes.UNAVAILABLE,
             ) from None
         if isinstance(reason, ssl.SSLError):
@@ -300,7 +297,7 @@ def authorities(
     """The CA certificates the server gives, the one that issued its RA certificate first.
 
     A chain that does not reach a self-signed root is completed from `trust` -
-    the store the server's HTTPS is checked against - and refused when it
+    the system's store, which the server's HTTPS is checked against - and refused when it
     cannot be: a certificate issued from it would not verify (review
     2026-10-29, B09, decided in B388). A set under which a server
     certificate would not verify, as issuance verifies one, is refused as
@@ -338,8 +335,8 @@ def authorities(
         if completed is None:
             raise NdesServerError(
                 "no_root",
-                f"{endpoint} gives no root CA, and none in {_store(trust)} "
-                "issues its CA; add the root CA to the store",
+                f"{endpoint} gives no root CA, and none in {STORE} issues its CA; "
+                "add the root CA to the store with update-ca-certificates",
             )
         found = [
             _authority(certificate, subject, issues_ra=subject in issuers)
@@ -915,9 +912,11 @@ def _forget_ca(previous: object, servers: Sequence[Any], directory: Path) -> Non
 
     Only a file in the manager's own directory: a policy from before B385
     names its CA file where the installation put it. A server names a file
-    as its `issuing_ca` or as its `tls_ca` - the same root may issue both -
-    and the names are compared as the files they lead to, not as the policy
-    spells them (review 2026-10-29 again, BB05; a link, round 2).
+    as its `issuing_ca` or as its `tls_ca` - the same root may issue both;
+    a `tls_ca` is trusted by nothing (B392), but an engine from before reads
+    it and refuses a file that is gone - and the names are compared as the
+    files they lead to, not as the policy spells them (review 2026-10-29
+    again, BB05; a link, round 2).
     """
 
     if not isinstance(previous, str):
@@ -1094,21 +1093,19 @@ def add(
             text = policy_path.read_text()
             data = safe_yaml.load(text) or {}
             block = _ndes_block(data, policy_path)
+            #
+            # What the confirmation decides, and nothing more: a `tls_ca` a
+            # server was confirmed with before is trusted by nothing, and is
+            # not carried on (B392).
+            #
             entry: dict[str, Any] = {"endpoint": endpoint, "issuing_ca": str(path)}
-            #
-            # A server confirmed again keeps what the confirmation does not
-            # decide: its own HTTPS CA, which would otherwise fall back to the
-            # system's store unsaid (review 2026-10-29, B02).
-            #
             servers = list(block["servers"])
             place = next(
                 (i for i, s in enumerate(servers) if s.get("endpoint") == endpoint), len(servers)
             )
-            previous = None
+            previous: list[object] = []
             if place < len(servers):
-                previous = servers[place].get("issuing_ca")
-                if servers[place].get("tls_ca") is not None:
-                    entry["tls_ca"] = servers[place]["tls_ca"]
+                previous = [servers[place].get("issuing_ca"), servers[place].get("tls_ca")]
                 servers[place] = entry
             else:
                 servers.append(entry)
@@ -1118,7 +1115,8 @@ def add(
             if not existed:
                 path.unlink(missing_ok=True)
             raise
-        _forget_ca(previous, servers, ca_directory)
+        for each in previous:
+            _forget_ca(each, servers, ca_directory)
     return {
         "endpoint": endpoint,
         "issuing_ca": str(path),

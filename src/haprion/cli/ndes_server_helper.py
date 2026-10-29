@@ -83,10 +83,11 @@ def perform(
     policy = load_policy(policy_path).ndes if action in ("fetch", "add") else None
     server = policy.server(endpoint) if policy is not None else None
     #
-    # A chain short of its root is completed from the store the server's
-    # HTTPS is checked against: its own tls_ca, or the system's (B388).
+    # The system's store, the one the enrollment trusts, whatever `tls_ca`
+    # the policy names (B392); a chain short of its root is completed from it
+    # (B388).
     #
-    trust = server.tls_ca if server is not None else SYSTEM_TRUST
+    trust = SYSTEM_TRUST
     if action == "fetch":
         found = ndes_servers.authorities(endpoint, fetch=fetch, trust=trust)
         return {

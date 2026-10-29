@@ -32,7 +32,7 @@ class EnrollmentStaging(unittest.TestCase):
         ca = self.root / "ca.pem"
         ca.write_text("example CA material")
         self.policy = NdesPolicy(
-            (NdesServer(ENDPOINT, ca, ca),),
+            (NdesServer(ENDPOINT, ca),),
             self.root / "client",
             state,
             DnsProfilesPolicy(self.root / "profiles", ()),
@@ -93,6 +93,42 @@ class EnrollmentStaging(unittest.TestCase):
         self.assertNotIn("DNS names", said)
         self.assertIn("haprion-cert-scep --id service.example.com --abandon", said)
         self.assertIn("Abandon request", said)
+
+    def test_the_enrollment_trusts_the_system_store_whatever_tls_ca_said(self) -> None:
+        """B392: `scep-submit` was given the server's `tls_ca`, for its first question only."""
+
+        added: list[list[str]] = []
+        with (
+            mock.patch.object(ndes, "command", side_effect=lambda p, d, a: added.append(list(a))),
+            mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+            mock.patch.object(
+                ndes,
+                "secure_file",
+                side_effect=lambda path, **_: (
+                    path.read_bytes() if path != SYSTEM_TRUST else b"system store"
+                ),
+            ),
+        ):
+            self.enroll()
+        helper = next(arguments for arguments in added if arguments[0] == "add-ca")[-1]
+        self.assertIn(f"-R {self.directory / 'tls-ca.pem'}", helper)
+        self.assertEqual((self.directory / "tls-ca.pem").read_bytes(), b"system store")
+        record = json.loads((self.directory / "request.json").read_text())
+        self.assertEqual(record["tls_ca_sha256"], "system")
+
+    def test_a_request_recorded_with_a_tls_ca_resumes(self) -> None:
+        """B392: a request made while a `tls_ca` was trusted is bound to nothing it held."""
+
+        with (
+            mock.patch.object(ndes, "command"),
+            mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+        ):
+            self.enroll()
+            record = self.directory / "request.json"
+            made = json.loads(record.read_text())
+            made["tls_ca_sha256"] = hashlib.sha256(b"a CA no longer named").hexdigest()
+            record.write_text(json.dumps(made))
+            self.assertEqual(self.enroll(resume=True).state, "pending")
 
     def test_the_caller_s_own_failure_is_its_own_not_the_lock_s(self) -> None:
         """Review 2026-10-22, 4-4: a disk-full import was told "NDES state is unavailable"."""

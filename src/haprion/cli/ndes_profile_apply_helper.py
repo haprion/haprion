@@ -152,6 +152,13 @@ def main(
         return refuse("busy", "another NDES profile apply is running", exit_codes.BLOCKED)
     except ndes_servers.NdesServerError as exc:
         return refuse("busy", str(exc), exc.exit_code)
+    except ndes_profiles.UnconfirmedServer:
+        # Removed between the form and this job (review 2026-10-29, B11).
+        return refuse(
+            "ndes_server_unconfirmed",
+            "the profile's NDES server is no longer confirmed; add it again or choose another",
+            exit_codes.CONFIG,
+        )
     except (ProfileError, OSError, ConfigError):
         return refuse(
             "dependency_unavailable",

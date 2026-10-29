@@ -47,6 +47,13 @@ class OpenedProfile:
     challenge: str = field(repr=False)
 
 
+class UnconfirmedServer(ProfileError):
+    """The profile's address is not a server the runtime policy confirms."""
+
+    def __init__(self) -> None:
+        super().__init__("NDES endpoint is not a server confirmed in the runtime policy")
+
+
 def check_endpoint(value: object) -> str:
     if not isinstance(value, str) or len(value) > 2048:
         raise ProfileError("endpoint must be an HTTPS URL")
@@ -207,7 +214,7 @@ def resolve(policy: NdesPolicy, profile_id: str, *, require_secure: bool = True)
         raise ProfileError("NDES profile key ID is invalid")
     endpoint = check_endpoint(row["endpoint"])
     if policy.server(endpoint) is None:
-        raise ProfileError("NDES endpoint is not a server confirmed in the runtime policy")
+        raise UnconfirmedServer
     return OpenedProfile(
         profile_id,
         endpoint,
@@ -223,7 +230,7 @@ def materialize(policy: NdesPolicy, opened: OpenedProfile, *, require_secure: bo
     check_revision(opened.revision)
     check_challenge(opened.challenge)
     if policy.server(check_endpoint(opened.endpoint)) is None:
-        raise ProfileError("NDES endpoint is not a server confirmed in the runtime policy")
+        raise UnconfirmedServer
     path = record_path(policy, opened.profile_id)
     # Callers serialize profile applies with the certificate operation lock.
     if path.exists() or path.is_symlink():

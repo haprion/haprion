@@ -305,6 +305,20 @@ class NdesProfileRemoval(NdesProfiles):
         code, _, errors = self._helper(self._request(remove=False))
         self.assertEqual(code, 0, errors)
 
+    def test_a_profile_whose_server_is_not_confirmed_says_so(self) -> None:
+        """Review 2026-10-29, B11: it was "check protected policy and state"."""
+
+        self._policy_file()
+        policy = self.root / "runtime.yaml"
+        policy.write_text(
+            policy.read_text().replace(ENDPOINT, "https://ca9.example.com/certsrv/mscep/mscep.dll")
+        )
+        code, doc, _ = self._helper(self._request(remove=False))
+        self.assertEqual(code, exit_codes.CONFIG)
+        self.assertEqual(doc["error"]["code"], "ndes_server_unconfirmed")
+        self.assertIn("no longer confirmed", doc["error"]["message"])
+        self.assertFalse(ndes_profiles.record_path(self.policy, "internal-ca").exists())
+
     def test_removal_is_refused_while_an_enrollment_is_pending(self) -> None:
         self._policy_file()
         self._helper(self._request(remove=False))

@@ -654,14 +654,29 @@ class TheAuthorities(unittest.TestCase):
                 capture_output=True,
                 check=True,
             )
+            #
+            # The issuing CA past its date, with the same key, under a valid
+            # leaf: OpenSSL's code is the leaf's, and it says nothing of
+            # which one (review 2026-10-29, round 3, B3-03).
+            #
+            lapsed = here.directory / "lapsed-ca.pem"
+            subprocess.run(
+                [OPENSSL, "x509", "-req", "-in", str(here.directory / "Test Issuing CA.csr")]
+                + ["-CA", str(here.root), "-CAkey", str(here.root_key)]
+                + ["-not_before", "20200101000000Z", "-not_after", "20210101000000Z"]
+                + ["-extfile", str(here.directory / "Test Issuing CA.ext"), "-out", str(lapsed)],
+                capture_output=True,
+                check=True,
+            )
             chains = {}
-            for name, leaf, key, pki in (
-                ("here", here.leaf, here.leaf_key, here),
-                ("other", other.leaf, other.leaf_key, other),
-                ("expired", expired, here.leaf_key, here),
+            for name, leaf, key, pki, issuer in (
+                ("here", here.leaf, here.leaf_key, here, here.intermediate),
+                ("other", other.leaf, other.leaf_key, other, other.intermediate),
+                ("expired", expired, here.leaf_key, here, here.intermediate),
+                ("lapsed CA", here.leaf, here.leaf_key, here, lapsed),
             ):
                 chain = root / f"{name}-chain.pem"
-                chain.write_text(leaf.read_text() + pki.intermediate.read_text())
+                chain.write_text(leaf.read_text() + issuer.read_text())
                 chains[name] = (chain, key, pki.root)
             for name, trust, words in (
                 (
@@ -669,7 +684,8 @@ class TheAuthorities(unittest.TestCase):
                     other.root,
                     "its HTTPS certificate is not for localhost; give the address its certificate names",
                 ),
-                ("expired", here.root, "its HTTPS certificate has expired"),
+                ("expired", here.root, "a certificate in its HTTPS chain has expired"),
+                ("lapsed CA", here.root, "a certificate in its HTTPS chain has expired"),
                 ("here", stranger.root, "add the CA that issued it to the store"),
             ):
                 chain, key, _ = chains[name]
@@ -683,6 +699,7 @@ class TheAuthorities(unittest.TestCase):
                 self.assertIn(words, str(caught.exception))
                 if name != "here":
                     self.assertNotIn("add the CA", str(caught.exception))
+                self.assertNotIn("its HTTPS certificate has expired", str(caught.exception))
             chain, key, trust = chains["here"]
             with ServedOverTls(chain, key) as url:
                 self.assertEqual(ndes_servers.get_ca_cert(url, trust), b"ca")

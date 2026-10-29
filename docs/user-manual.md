@@ -5911,8 +5911,9 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
    confirmed, its `tls_ca` when it has one), and shows each one with
    its SHA-256 and its SHA-1 thumbprint - the thumbprint Windows shows in the certificate's details. It asks
    the server directly, without a proxy, and does not follow a redirect: it names the address to give instead.
-   Against the system store, the HTTPS check is as strict as the enrollment's, no stricter. A certificate that fails it is named for
-   what is wrong: another name, past its date, or a CA the store does not hold.
+   Against the system store, the HTTPS check is as strict as the enrollment's, no stricter. A certificate
+   that fails it is named for what is wrong: another name, a certificate on the path past its date, or a CA
+   the store does not hold.
 2. Compare them with the CA's own certificates. The one marked *issues for NDES* is the CA the server enrolls
    for; the others are the rest of its chain. A server that gives its chain without the root CA has it
    completed from the manager's certificate store - the store its HTTPS is checked against - and the root is

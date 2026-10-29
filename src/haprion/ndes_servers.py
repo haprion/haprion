@@ -204,10 +204,14 @@ def _untrusted(endpoint: str, error: ssl.SSLCertVerificationError, trust: Path) 
     if code == HOST_MISMATCH:
         host = urllib.parse.urlsplit(endpoint).hostname or "the address"
         return f"its HTTPS certificate is not for {host}; give the address its certificate names"
+    #
+    # A date is any certificate's on the path, the leaf's or a CA's, and the
+    # error does not say which (review 2026-10-29, round 3, B3-03).
+    #
     if code == EXPIRED:
-        return "its HTTPS certificate has expired"
+        return "a certificate in its HTTPS chain has expired"
     if code == NOT_YET_VALID:
-        return "its HTTPS certificate is not valid yet"
+        return "a certificate in its HTTPS chain is not valid yet"
     said = f"its HTTPS certificate is not trusted by {_store(trust)} ({_tls_said(error)})"
     if code in ISSUER_MISSING:
         return said + "; add the CA that issued it to the store"

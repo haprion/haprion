@@ -3,10 +3,16 @@
 # Read all independently installed parts as one compatibility report.
 #
 #     sudo ./check-compatibility [--release <release-id>] [--before-migration | --first-install]
+#                                [--rollback-to <release-id>]
 #
 # --first-install is the check before a first installation's release is
 # activated: the worker unit, sudo rules and helper sockets come from step 07,
 # after activation, and are left to the check that follows it.
+#
+# --rollback-to, with --before-migration, names the release a failure after
+# the switch goes back to, when it is not the running one: the release last
+# proved, under an unproved one an earlier update left (review 26-10-29,
+# AA01). The candidate's head is weighed against both.
 #
 # This changes nothing. Requirements come from either the running UI release or
 # an explicitly named prepared release, never from the checkout containing this
@@ -23,6 +29,7 @@ need_root
 release_id=""
 before_migration=0
 first_install=0
+rollback_to=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --release)
@@ -38,13 +45,20 @@ while [[ $# -gt 0 ]]; do
             first_install=1
             shift
             ;;
-        *) die "usage: $(basename "$0") [--release <release-id>] [--before-migration | --first-install]" ;;
+        --rollback-to)
+            [[ -n "${2:-}" ]] || die "--rollback-to needs a release id"
+            rollback_to="$2"
+            shift 2
+            ;;
+        *) die "usage: $(basename "$0") [--release <release-id>] [--before-migration | --first-install] [--rollback-to <release-id>]" ;;
     esac
 done
 [[ "$before_migration" -eq 0 || -n "$release_id" ]] \
     || die "--before-migration requires --release"
 [[ "$first_install" -eq 0 || ( -n "$release_id" && "$before_migration" -eq 0 ) ]] \
     || die "--first-install requires --release and excludes --before-migration"
+[[ -z "$rollback_to" || "$before_migration" -eq 1 ]] \
+    || die "--rollback-to requires --before-migration"
 
 python_root="${UI_ROOT}/current"
 extra_args=()
@@ -56,6 +70,13 @@ if [[ -n "$release_id" ]]; then
 fi
 if [[ "$before_migration" -eq 1 ]]; then
     extra_args+=(--upgrade-from-current)
+fi
+if [[ -n "$rollback_to" ]]; then
+    [[ "$rollback_to" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+        || die "invalid release id: ${rollback_to}"
+    if [[ "$(readlink -f "${UI_ROOT}/current" 2>/dev/null || true)" != "${UI_ROOT}/releases/${rollback_to}" ]]; then
+        extra_args+=(--rollback-to "$rollback_to")
+    fi
 fi
 if [[ "$first_install" -eq 1 ]]; then
     extra_args+=(--first-install)

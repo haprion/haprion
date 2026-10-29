@@ -4,7 +4,7 @@
 # each one replaces.
 #
 #     sudo ./refresh-platform-files <release-id> <keep-dir>
-#     sudo ./refresh-platform-files --restore <keep-dir>
+#     sudo ./refresh-platform-files --restore <keep-dir> [--from <line>]
 #
 # What `update-platform-release` runs before it checks a candidate (review
 # 2026-10-22, 6-5). Only the web unit used to follow an update: the worker's
@@ -22,6 +22,10 @@
 # Kept under <keep-dir>: each file replaced, and the name of each file that is
 # new, so that `--restore` puts back what the previous release ran with. The
 # sudo rules are checked exactly, and a newer list fails an older release.
+# With `--from`, only what the manifest lists after that line goes back, and
+# the lines before it stay: an update run over an unfinished one puts back
+# what it replaced itself, and leaves the copy of the release last proved
+# (review 26-10-29, AA01).
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -52,7 +56,7 @@ TIMERS=(haprion-backup haprion-restore-check haprion-retention haprion-retention
 #
 declare -A TIMER_STEP=([haprion-retention-budget]=haprion-retention)
 
-usage() { die "usage: $(basename "$0") <release-id> <keep-dir> | --restore <keep-dir>"; }
+usage() { die "usage: $(basename "$0") <release-id> <keep-dir> | --restore <keep-dir> [--from <line>]"; }
 
 #
 # One line a file, in the order written: its kind, its path, and the copy of
@@ -61,7 +65,7 @@ usage() { die "usage: $(basename "$0") <release-id> <keep-dir> | --restore <keep
 manifest() { echo "${keep}/manifest"; }
 
 restore() {
-    local kind path saved reload=0 site=0
+    local from="$1" kind path saved reload=0 site=0
     local -a sockets=() timers=()
     [[ -f "$(manifest)" ]] || return 0
     step "Putting back the platform files the update replaced"
@@ -96,7 +100,7 @@ restore() {
         if [[ -n "$saved" && "$kind" == timer && "$path" == *.timer ]]; then
             timers+=("${path##*/}")
         fi
-    done < <(tac "$(manifest)")
+    done < <(tail -n +"$((from + 1))" "$(manifest)" | tac)
     (( reload == 0 )) || systemctl daemon-reload
     (( ${#sockets[@]} == 0 )) || systemctl restart "${sockets[@]}"
     (( ${#timers[@]} == 0 )) || systemctl restart "${timers[@]}"
@@ -104,7 +108,8 @@ restore() {
         nginx -t 2>&1 | sed 's/^/  /'
         systemctl reload nginx
     fi
-    : > "$(manifest)"
+    head -n "$from" "$(manifest)" > "$(manifest).new"
+    mv -f -- "$(manifest).new" "$(manifest)"
 }
 
 #
@@ -151,13 +156,14 @@ socket_pair() {
         "$(render_example "examples/${name}.socket.example")"
 }
 
-[[ $# -eq 2 ]] || usage
-if [[ "$1" == --restore ]]; then
+if [[ "${1:-}" == --restore ]]; then
+    [[ $# -eq 2 || ( $# -eq 4 && "$3" == --from && "$4" =~ ^(0|[1-9][0-9]*)$ ) ]] || usage
     keep="$2"
     [[ -d "$keep" ]] || die "${keep} is not a directory"
-    restore
+    restore "${4:-0}"
     exit 0
 fi
+[[ $# -eq 2 ]] || usage
 release_id="$1"
 keep="$2"
 [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid release id: ${release_id}"

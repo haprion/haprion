@@ -98,9 +98,11 @@ ensure_identity_directories
 files_settled=no
 restore_tried=no
 proved=no
+settled_from=0
 settle_files() {
     if [[ "$files_settled" == no ]]; then
-        if ./refresh-platform-files --restore "$kept"; then
+        settled_from="$1"
+        if ./refresh-platform-files --restore "$kept" --from "$settled_from"; then
             files_settled=yes
         else
             files_settled=failed
@@ -110,12 +112,46 @@ settle_files() {
 }
 
 #
+# Where this run's lines in the copy's manifest begin. An update run over an
+# unfinished one - the same release again, or the next one over a release that
+# fell unproved - adds to the copy the unfinished one left, and the lines
+# before `base` keep the platform files of the release last proved: only a
+# restore of that release puts them back. A failure before this run's switch
+# puts back its own lines, and the unproved release runs on as the run found
+# it, its marker and the copy kept: the next run still goes on from the
+# release last proved (review 26-10-29, AA01). Without a marker a copy names
+# no release to go back to, and the copy begins afresh.
+#
+base=0
+found_marker=""
+begin_update() {
+    if [[ -f "$marker" ]]; then
+        found_marker="$(cat -- "$marker")"
+    else
+        rm -rf -- "$kept"
+    fi
+    mkdir -p -- "$kept"
+    chmod 700 -- "$state" "$kept"
+    [[ ! -f "${kept}/manifest" ]] || base="$(wc -l < "${kept}/manifest")"
+    printf 'RELEASE=%s\nPREVIOUS=%s\n' "$release_id" "$previous_id" > "${marker}.new"
+    mv -f -- "${marker}.new" "$marker"
+}
+
+#
 # Whether the switch happened. A failure before it leaves the previous release
 # running with nothing to put back, and says so once (R2, F8: "was restored"
 # and "no UI rollback is needed" twice, for an update that never switched).
 #
 candidate_current() {
     [[ "$(readlink -f "$current" 2>/dev/null || true)" == "${UI_ROOT}/releases/${release_id}" ]]
+}
+
+#
+# Whether the release this update goes back to runs: then no release runs
+# unproved, and nothing of the update need stay.
+#
+last_proved_current() {
+    [[ "$(readlink -f "$current" 2>/dev/null || true)" == "${UI_ROOT}/releases/${previous_id}" ]]
 }
 
 #
@@ -129,7 +165,7 @@ candidate_current() {
 #
 restore_previous() {
     restore_tried=yes
-    settle_files
+    settle_files 0
     warn "restoring UI release ${previous_id}"
     if "$rollback" --to "$previous_id"; then
         ./check-compatibility && return 0
@@ -159,17 +195,31 @@ on_exit() {
     if [[ "$files_settled" == no && "$restore_tried" == no ]] && candidate_current; then
         restore_previous || true
     fi
-    settle_files
     #
-    # The copy goes only with the files proved in place, and the marker with it
-    # once the update is proved or the previous release runs again. A copy that
-    # could not be put back stays, root's alone, for the run where_it_stands
-    # names; this trap tries no second round, and the update does not end 0.
+    # Otherwise no switch to undo. Under the release last proved, every file
+    # the copy holds goes back; under one that runs unproved, only what this
+    # run replaced (AA01).
+    #
+    if last_proved_current; then
+        settle_files 0
+    else
+        settle_files "$base"
+    fi
+    #
+    # The copy and the marker go once the update is proved or the release last
+    # proved runs again with its files. An unproved release left running as
+    # this run found it keeps the marker it found and the copy of the release
+    # last proved. A copy that could not be put back stays, root's alone, for
+    # the run where_it_stands names; this trap tries no second round, and the
+    # update does not end 0.
     #
     if [[ "$files_settled" == yes ]]; then
-        rm -rf -- "$kept"
-        if [[ "$proved" == yes ]] || ! candidate_current; then
+        if [[ "$proved" == yes ]] || last_proved_current; then
+            rm -rf -- "$kept"
             rm -f -- "$marker"
+        elif [[ -n "$found_marker" ]]; then
+            printf '%s\n' "$found_marker" > "${marker}.new"
+            mv -f -- "${marker}.new" "$marker"
         fi
     elif (( status == 0 )); then
         status=1
@@ -204,10 +254,16 @@ where_it_stands() {
         fi
         if [[ "${files_settled:-}" == failed ]]; then
             echo "The platform files the update replaced are kept in ${kept}, listed in its manifest."
-            echo "Put them back with: sudo $(pwd)/refresh-platform-files --restore ${kept}"
+            if (( ${settled_from:-0} > 0 )); then
+                echo "Put them back with: sudo $(pwd)/refresh-platform-files --restore ${kept} --from ${settled_from}"
+            else
+                echo "Put them back with: sudo $(pwd)/refresh-platform-files --restore ${kept}"
+            fi
         elif [[ "${files_settled:-}" == candidate ]]; then
             echo "${previous_id} could not be restored, and ${running} is not proved."
             echo "The platform files of ${previous_id} are kept in ${kept}; the next run goes on from them."
+        elif [[ "$running" != "$previous_id" && "$running" != "$release_id" ]]; then
+            echo "${running} is not proved; the next update goes on from ${previous_id}, the release last proved."
         fi
         if [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]]; then
             echo "Correct what the lines above name, then: sudo dpkg --configure -a"
@@ -216,15 +272,16 @@ where_it_stands() {
         fi
     } >&2
 }
-mkdir -p -- "$kept"
-chmod 700 -- "$state" "$kept"
-printf 'RELEASE=%s\nPREVIOUS=%s\n' "$release_id" "$previous_id" > "${marker}.new"
-mv -f -- "${marker}.new" "$marker"
+begin_update
 trap on_exit EXIT
 ./refresh-platform-files "$release_id" "$kept"
 
 step "Checking prerequisites and rollback-safe schema transition"
-./check-compatibility --release "$release_id" --before-migration
+#
+# Against the running release, which serves until the switch, and the release
+# last proved, which a failure after it goes back to (AA01).
+#
+./check-compatibility --release "$release_id" --before-migration --rollback-to "$previous_id"
 #
 # This package no longer names PostgreSQL as a dependency (26-10-17); the
 # server it brought is marked as installed by hand before apt can count it
@@ -273,7 +330,7 @@ if ! ./install-ui-release "$release_id"; then
         restore_previous && die "activation failed; UI release ${previous_id} was restored"
         die "activation failed, and UI release ${previous_id} could not be restored"
     fi
-    die "activation stopped before the switch; ${previous_id} kept running"
+    die "activation stopped before the switch; $(basename "$(readlink -f "$current")") kept running"
 fi
 #
 # The site refresh-platform-files proved, now that the web listens where it

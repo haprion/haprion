@@ -200,9 +200,15 @@ class CoordinatedUpdateTests(unittest.TestCase):
                 "-c",
                 f'UI_ROOT="$1"; current="$1/current"; kept="$1/kept"; marker="$1/update"; '
                 f'rollback="$1/rollback"; release_id=cand; previous_id=prev; '
-                f"files_settled={settled}; restore_tried=no; proved=no; "
+                f"files_settled={settled}; restore_tried=no; proved=no; base=0; found_marker=; "
                 'warn() { echo "WARNING: $*" >&2; }; where_it_stands() { echo said; }; '
-                + self.functions("settle_files", "candidate_current", "restore_previous", "on_exit")
+                + self.functions(
+                    "settle_files",
+                    "candidate_current",
+                    "last_proved_current",
+                    "restore_previous",
+                    "on_exit",
+                )
                 + script,
                 "-",
                 raw,
@@ -230,7 +236,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
                 self.assertIn("rc=1 settled=candidate", done.stdout)
                 self.assertEqual(
                     (here / "log").read_text().splitlines(),
-                    [f"refresh --restore {here}/kept", f"refresh cand {here}/kept"],
+                    [f"refresh --restore {here}/kept --from 0", f"refresh cand {here}/kept"],
                 )
                 self.assertIn(
                     "prev could not be restored; cand runs, with its own platform files",
@@ -255,7 +261,8 @@ class CoordinatedUpdateTests(unittest.TestCase):
         done, here = self.restoring("(exit 1); on_exit", rollback=self.RESTORED)
         self.assertEqual(done.returncode, 1)
         self.assertEqual(
-            (here / "log").read_text().splitlines(), [f"refresh --restore {here}/kept", "check"]
+            (here / "log").read_text().splitlines(),
+            [f"refresh --restore {here}/kept --from 0", "check"],
         )
         self.assertFalse((here / "update").exists())
         self.assertFalse((here / "kept").exists())
@@ -342,9 +349,10 @@ class CoordinatedUpdateTests(unittest.TestCase):
                         "/bin/bash",
                         "-c",
                         f"files_settled={settled}; kept=/nonexistent; restore_tried=no; "
-                        "proved=no; marker=/nonexistent/update; "
+                        "proved=no; marker=/nonexistent/update; base=0; found_marker=; "
                         "warn() { :; }; restore_previous() { echo restore; }; "
                         f"candidate_current() {{ {switched}; }}; where_it_stands() {{ echo said; }}; "
+                        f"last_proved_current() {{ ! {switched}; }}; "
                         f"settle_files() {{ echo settle; files_settled=yes; }}; {body}on_exit",
                     ],
                     capture_output=True,
@@ -373,8 +381,9 @@ class CoordinatedUpdateTests(unittest.TestCase):
                 "/bin/bash",
                 "-c",
                 f'files_settled=no; kept="$1"; marker="$1/../update"; restore_tried=no; '
-                f'proved=no; warn() {{ echo "WARNING: $*" >&2; }}; '
-                "restore_previous() { settle_files; }; candidate_current() { false; }; "
+                f'proved=no; base=0; found_marker=; warn() {{ echo "WARNING: $*" >&2; }}; '
+                "restore_previous() { settle_files 0; }; candidate_current() { false; }; "
+                "last_proved_current() { true; }; "
                 f"where_it_stands() {{ echo said; }}; {functions}(exit 3); on_exit",
                 "-",
                 str(kept),
@@ -404,6 +413,8 @@ class CoordinatedUpdateTests(unittest.TestCase):
         body = self.update[start : self.update.index("\n}\n", start) + 3]
         self.assertIn('if [[ "${files_settled:-}" == failed ]]; then', body)
         self.assertIn("refresh-platform-files --restore ${kept}", body)
+        # AA01: a restore of this run's lines alone names where they begin.
+        self.assertIn("--restore ${kept} --from ${settled_from}", body)
 
     def test_an_activation_that_never_switched_says_so_once(self) -> None:
         """R2 26-10-27 (F8): *was restored* and *no UI rollback is needed* twice."""
@@ -415,7 +426,9 @@ class CoordinatedUpdateTests(unittest.TestCase):
         activation = activation[: activation.index("\nfi\n")]
         self.assertLess(activation.index("candidate_current"), activation.index("restore_previous"))
         self.assertIn(
-            "activation stopped before the switch; ${previous_id} kept running", activation
+            'activation stopped before the switch; $(basename "$(readlink -f "$current")") kept '
+            "running",
+            activation,
         )
 
     def where_it_stands(self, *, dpkg: bool) -> str:
@@ -513,6 +526,245 @@ class CoordinatedUpdateTests(unittest.TestCase):
             with self.subTest(script=script):
                 text = (ROOT / "install/platform" / script).read_text()
                 self.assertNotIn("load_answers", text)
+
+
+def script_functions(text: str, *names: str) -> str:
+    found = ""
+    for name in names:
+        start = text.index(f"{name}() {{")
+        found += text[start : text.index("\n}\n", start) + 3]
+    return found
+
+
+class UpdatesOverAnUnprovedRelease(unittest.TestCase):
+    """Review 26-10-29, AA01: the next release over one that fell unproved.
+
+    B's update failed after its switch and its rollback failed too: B runs,
+    unproved, the marker names A, and the copy holds A's platform files. C's
+    update went on from A - but a failure before C's switch put A's files
+    under B, and took the marker and the copy away, so nothing remembered B
+    was never proved and the next update started from B.
+
+    The updates run here are the script's own functions, its start and its
+    end, with the real `refresh-platform-files --restore`; the release's
+    platform file is one hook file, written as `put` writes it, and the steps
+    between are a failure before the switch, one after it, or none.
+    """
+
+    def setUp(self) -> None:
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw)
+        self.here = Path(raw)
+        for release in ("A", "B", "C", "D"):
+            (self.here / "releases" / release).mkdir(parents=True)
+        (self.here / "current").symlink_to(self.here / "releases/A")
+        (self.here / "etc").mkdir()
+        self.rule.write_text("A's rule\n")
+        platform = self.here / "platform"
+        platform.mkdir()
+        refresh = (ROOT / "install/platform/refresh-platform-files").read_text()
+        shutil.copy(ROOT / "install/platform/refresh-platform-files", platform / "refreshing")
+        (self.here / "lib.sh").write_text(
+            "need_root() { :; }; step() { :; }; log() { :; }\n"
+            'warn() { echo "WARNING: $*" >&2; }; die() { echo "ERROR: $*" >&2; exit 1; }\n'
+        )
+        for name, body in (
+            #
+            # The restore is the script's own; installing a release's files
+            # is its `put`, with one file for every file the steps installed.
+            #
+            (
+                "refresh-platform-files",
+                'if [[ "$1" == --restore ]]; then exec ./refreshing "$@"; fi\n'
+                "source ../lib.sh\nchown() { :; }\n"
+                + script_functions(refresh, "manifest", "put")
+                + 'keep="$2"; touch "$(manifest)"; changed=()\n'
+                + 'put hook "$RULE" 644 "$1\'s rule"\n',
+            ),
+            ("check-compatibility", "exit 0"),
+            (
+                "rollback",
+                'if [[ "$ROLLBACK" == restored ]]; then\n'
+                '    ln -sfn "$UI_ROOT/releases/$2" "$UI_ROOT/current.new"\n'
+                '    mv -T "$UI_ROOT/current.new" "$UI_ROOT/current"\n'
+                "else\n"
+                "    exit 75\n"
+                "fi",
+            ),
+        ):
+            (platform / name).write_text(f"#!/bin/bash\nset -Eeuo pipefail\n{body}\n")
+            (platform / name).chmod(0o755)
+
+    @property
+    def rule(self) -> Path:
+        return self.here / "etc/rule"
+
+    @property
+    def running(self) -> str:
+        return (self.here / "current").resolve().name
+
+    @property
+    def marker(self) -> str | None:
+        path = self.here / "platform-update/update"
+        return path.read_text() if path.exists() else None
+
+    @property
+    def kept(self) -> list[str]:
+        """What the copy would put back, in the order its manifest lists it."""
+
+        manifest = self.here / "platform-update/kept/manifest"
+        if not manifest.exists():
+            return []
+        return [
+            Path(line.split("\t")[2]).read_text().strip()
+            for line in manifest.read_text().splitlines()
+        ]
+
+    def update(self, release: str, *, fails: str, rollback: str = "refused") -> str:
+        """`update-platform-release <release>`, failing `before` or `after` its switch, or not."""
+
+        text = (ROOT / "install/platform/update-platform-release").read_text()
+        lib = (ROOT / "install/lib.sh").read_text()
+        steps = {
+            "before": "false\n",
+            "after": (
+                'ln -sfn "$UI_ROOT/releases/$release_id" "$current.new"; mv -T "$current.new" "$current"\n'
+                "if ! false; then\n"
+                '    restore_previous && die "activation failed; UI release ${previous_id} was restored"\n'
+                '    die "activation failed, and UI release ${previous_id} could not be restored"\n'
+                "fi\n"
+            ),
+            "none": (
+                'ln -sfn "$UI_ROOT/releases/$release_id" "$current.new"; mv -T "$current.new" "$current"\n'
+                "files_settled=yes\nproved=yes\n"
+            ),
+        }
+        start = text.index("\nstate=")
+        state = text[start : text.index("\nunfinished_update\n", start)]
+        start = text.index("\nfiles_settled=no\n")
+        settling = text[start : text.index("\nschema_now=", start)]
+        start = text.index("\nschema_now=")
+        ending = text[start : text.index("\ntrap on_exit EXIT\n", start)]
+        script = (
+            "set -Eeuo pipefail\n"
+            'UI_ROOT="$1"; UI_DATA="$1"; current="$1/current"; rollback="$PWD/rollback"\n'
+            'previous_id="$(basename "$(readlink -f "$current")")"\n'
+            f"release_id={release}\n"
+            + script_functions(lib, "read_admin_file")
+            + 'warn() { echo "WARNING: $*" >&2; }; die() { echo "ERROR: $*" >&2; exit 1; }\n'
+            + state
+            + "\nunfinished_update\n"
+            + settling
+            + ending
+            + "\ntrap on_exit EXIT\n"
+            + './refresh-platform-files "$release_id" "$kept"\n'
+            + steps[fails]
+        )
+        done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own lines
+            ["/bin/bash", "-c", script, "-", str(self.here)],
+            cwd=self.here / "platform",
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "UI_ROOT": str(self.here),
+                "RULE": str(self.rule),
+                "ROLLBACK": rollback,
+            },
+        )
+        self.assertEqual(done.returncode != 0, fails != "none", done.stderr)
+        return done.stderr.replace(str(self.here), "<root>")
+
+    def b_falls_unproved(self) -> None:
+        self.update("B", fails="after", rollback="refused")
+        self.assertEqual(self.running, "B")
+        self.assertEqual(self.rule.read_text(), "B's rule\n")
+        self.assertEqual(self.marker, "RELEASE=B\nPREVIOUS=A\n")
+        self.assertEqual(self.kept, ["A's rule"])
+
+    def test_a_failure_before_the_next_release_s_switch_leaves_what_it_found(self) -> None:
+        self.b_falls_unproved()
+        said = self.update("C", fails="before")
+        self.assertIn("the update to B did not complete; this one goes on from A", said)
+        self.assertEqual(self.running, "B")
+        self.assertEqual(self.rule.read_text(), "B's rule\n")
+        self.assertEqual(self.marker, "RELEASE=B\nPREVIOUS=A\n")
+        self.assertEqual(self.kept, ["A's rule"])
+        self.assertIn("B is not proved; the next update goes on from A", said)
+
+        # Any number of them, and the one after still goes back to A.
+        self.update("C", fails="before")
+        self.update("D", fails="before")
+        self.assertEqual(self.marker, "RELEASE=B\nPREVIOUS=A\n")
+        self.assertEqual(self.kept, ["A's rule"])
+        self.update("D", fails="after", rollback="restored")
+        self.assertEqual(self.running, "A")
+        self.assertEqual(self.rule.read_text(), "A's rule\n")
+        self.assertIsNone(self.marker)
+        self.assertFalse((self.here / "platform-update/kept").exists())
+
+    def test_a_failure_after_the_next_release_s_switch_goes_back_to_the_release_last_proved(
+        self,
+    ) -> None:
+        self.b_falls_unproved()
+        self.update("C", fails="after", rollback="restored")
+        self.assertEqual(self.running, "A")
+        self.assertEqual(self.rule.read_text(), "A's rule\n")
+        self.assertIsNone(self.marker)
+
+    def test_a_rollback_that_fails_again_keeps_the_release_last_proved(self) -> None:
+        self.b_falls_unproved()
+        self.update("C", fails="after", rollback="refused")
+        self.assertEqual(self.running, "C")
+        self.assertEqual(self.rule.read_text(), "C's rule\n")
+        self.assertEqual(self.marker, "RELEASE=C\nPREVIOUS=A\n")
+        self.assertEqual(self.kept, ["A's rule"])
+
+    def test_the_next_release_proved_ends_the_unfinished_update(self) -> None:
+        self.b_falls_unproved()
+        self.update("C", fails="before")
+        self.update("C", fails="none")
+        self.assertEqual(self.running, "C")
+        self.assertEqual(self.rule.read_text(), "C's rule\n")
+        self.assertIsNone(self.marker)
+        self.assertFalse((self.here / "platform-update/kept").exists())
+
+    def test_a_release_proved_over_an_unproved_one_needs_no_failure_first(self) -> None:
+        self.b_falls_unproved()
+        self.update("C", fails="none")
+        self.assertEqual(self.running, "C")
+        self.assertEqual(self.rule.read_text(), "C's rule\n")
+        self.assertIsNone(self.marker)
+        self.assertFalse((self.here / "platform-update/kept").exists())
+
+    def test_a_failure_before_the_switch_gives_the_release_last_proved_its_files(self) -> None:
+        """The copy a failed restore left, with A running again: all of it goes back."""
+
+        self.update("B", fails="none")
+        self.rule.write_text("B's rule, half put back\n")
+        (self.here / "platform-update/kept").mkdir(parents=True)
+        (self.here / "platform-update/kept/1").write_text("B's rule\n")
+        (self.here / "platform-update/kept/manifest").write_text(
+            f"hook\t{self.rule}\t{self.here}/platform-update/kept/1\n"
+        )
+        (self.here / "platform-update/update").write_text("RELEASE=C\nPREVIOUS=B\n")
+        self.update("C", fails="before")
+        self.assertEqual(self.running, "B")
+        self.assertEqual(self.rule.read_text(), "B's rule\n")
+        self.assertIsNone(self.marker)
+
+    def test_a_copy_without_its_marker_is_not_taken_for_one(self) -> None:
+        """A copy left beside no marker - removed by hand - names no release to go back to."""
+
+        (self.here / "platform-update/kept").mkdir(parents=True)
+        (self.here / "platform-update/kept/1").write_text("an older release's rule\n")
+        (self.here / "platform-update/kept/manifest").write_text(
+            f"hook\t{self.rule}\t{self.here}/platform-update/kept/1\n"
+        )
+        self.update("B", fails="after", rollback="restored")
+        self.assertEqual(self.running, "A")
+        self.assertEqual(self.rule.read_text(), "A's rule\n")
 
 
 if __name__ == "__main__":
@@ -665,6 +917,28 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         for flag in ("--ui-release", "--skip-services", "--upgrade-from-current"):
             self.assertIn(flag, arguments)
         self.assertNotIn("--environment", arguments)
+
+    def test_the_release_last_proved_is_handed_on_when_it_is_not_the_running_one(self) -> None:
+        """Review 26-10-29, AA01: an update over an unproved release goes back past it."""
+
+        (self.root / "releases/proved/venv/bin").mkdir(parents=True)
+        before = ("--release", "candidate", "--before-migration")
+        code, errors = self.check(*before, "--rollback-to", "proved", module="new")
+        self.assertEqual(code, 0, errors)
+        arguments = self.recorded()
+        self.assertEqual(arguments[arguments.index("--rollback-to") + 1], "proved")
+        code, errors = self.check(*before, "--rollback-to", "current-release", module="new")
+        self.assertEqual(code, 0, errors)
+        self.assertNotIn("--rollback-to", self.recorded())
+        for refused in (
+            ("--release", "candidate", "--rollback-to", "proved"),
+            (*before, "--rollback-to", "../proved"),
+            (*before, "--rollback-to"),
+        ):
+            with self.subTest(refused=refused):
+                code, errors = self.check(*refused, module="new")
+                self.assertEqual(code, 1)
+                self.assertIn("ERROR", errors)
 
     def test_the_release_the_package_installed_checks_the_current_one(self) -> None:
         """Review 26-10-29, A01: after a rollback the current release is older.

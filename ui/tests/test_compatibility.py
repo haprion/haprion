@@ -693,6 +693,93 @@ class AnUpdateBackPastAMigration(unittest.TestCase):
             self.assertIn("PASS  running schema", said)
 
 
+class TheCheckBeforeAMigrationOverAnUnprovedRelease(unittest.TestCase):
+    """Review 26-10-29, AA01: the update goes back to the release last proved, not to `current`.
+
+    B fell unproved and runs; C's update goes on from A, and a failure after
+    C's switch restores A. The check before C's migration weighed C's head
+    against B alone: a migration B runs on and A does not passed, and the
+    restore to A was then refused on the schema.
+    """
+
+    def transition(self, root: Path, *extra: str) -> str:
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(compatibility, "cli_metadata", return_value={}),
+            mock.patch.object(compatibility, "database_revision", return_value="0101"),
+            mock.patch.object(compatibility, "check_cluster_nodes"),
+            contextlib.redirect_stdout(io.StringIO()) as printed,
+        ):
+            (root / "cli/releases/r1").mkdir(parents=True, exist_ok=True)
+            if not (root / "cli/current").is_symlink():
+                (root / "cli/current").symlink_to(root / "cli/releases/r1")
+            compatibility.main(
+                [
+                    "--platform-root", str(root),
+                    "--cli-root", str(root / "cli"),
+                    "--database", "haprion",
+                    "--database-role", "migrate",
+                    "--clusters",
+                    "--runtime-policy", str(root / "runtime-policy.yaml"),
+                    "--collector-config", str(root / "traffic-collector.json"),
+                    "--sudoers-root", str(root / "sudoers.d"),
+                    "--systemd-root", str(root / "systemd"),
+                    "--ui-release", "0.99.7-cccc",
+                    "--packaged", "0.99.7-cccc",
+                    "--upgrade-from-current",
+                    "--skip-services",
+                    *extra,
+                ]
+            )  # fmt: skip
+        return printed.getvalue()
+
+    def machine(self, root: Path, candidate_safe_from: str) -> None:
+        release_on_disk(root, "0.99.5-aaaa", "0100", "0100")
+        release_on_disk(root, "0.99.6-bbbb", "0101", "0100")
+        release_on_disk(root, "0.99.7-cccc", "0102", candidate_safe_from)
+        (root / "current").symlink_to(root / "releases/0.99.6-bbbb")
+
+    def test_a_migration_the_release_last_proved_does_not_run_on_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.machine(root, "0101")
+            said = self.transition(root, "--rollback-to", "0.99.5-aaaa")
+            self.assertIn("PASS  running schema", said)
+            self.assertIn("0101, accepted by 0.99.6-bbbb", said)
+            self.assertIn("PASS  migrated schema", said)
+            self.assertIn("FAIL  rollback schema", said)
+            self.assertIn(
+                "candidate head 0102; 0.99.5-aaaa, the release last proved, does not run on it",
+                said,
+            )
+
+    def test_one_it_runs_on_passes_and_says_where_the_rollback_goes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.machine(root, "0100")
+            said = self.transition(root, "--rollback-to", "0.99.5-aaaa")
+            self.assertIn("PASS  migrated schema", said)
+            self.assertIn("PASS  rollback schema", said)
+            self.assertIn("0.99.5-aaaa stands at 0100", said)
+
+    def test_the_running_release_as_the_target_is_checked_as_before(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.machine(root, "0101")
+            for extra in ((), ("--rollback-to", "0.99.6-bbbb")):
+                with self.subTest(extra=extra):
+                    said = self.transition(root, *extra)
+                    self.assertIn("PASS  rollback schema", said)
+                    self.assertNotIn("migrated schema", said)
+
+    def test_a_target_not_on_disk_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.machine(root, "0100")
+            said = self.transition(root, "--rollback-to", "0.99.4-gone")
+            self.assertIn("FAIL  rollback schema", said)
+
+
 class UpgradeFailureTests(unittest.TestCase):
     def requirements(self, *, head: str, accepts: tuple[str, ...]) -> compatibility.Requirements:
         return compatibility.Requirements(

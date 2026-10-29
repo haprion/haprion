@@ -769,6 +769,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-services", action="store_true")
     parser.add_argument("--upgrade-from-current", action="store_true")
     #
+    # The release an update goes back to when it is not the one running: the
+    # release last proved, under an unproved one an earlier update left
+    # (review 26-10-29, AA01).
+    #
+    parser.add_argument("--rollback-to")
+    #
     # A first installation, checked before its release is activated: the worker
     # unit, the sudo rules and the helper sockets come from platform step 07,
     # which runs after activation, so they are left to the check after it.
@@ -832,8 +838,15 @@ def check_schema_transition(
     *,
     name: str,
     packaged: str | None,
+    rollback_to: str | None = None,
 ) -> None:
-    """The running UI over the schema now, and over this release's head after migrating."""
+    """The running UI over the schema now, and over this release's head after migrating.
+
+    The release a failure after the switch goes back to is the running one,
+    or `rollback_to` when the update goes on from an earlier release: the
+    running release serves on the candidate's head until the switch, and the
+    rollback target runs on it after.
+    """
 
     try:
         refusal = past_head_refusal(name, requirements, owners(platform_root, packaged), revision)
@@ -863,20 +876,56 @@ def check_schema_transition(
             "running schema",
             f"{revision}; running {active_release.name} does not accept it",
         )
+    elsewhere = rollback_to is not None and rollback_to != active_release.name
     if not any("candidate head" in failure for failure in transition_failures):
         report.pass_(
-            "rollback schema",
-            f"{requirements.database_head}, accepted by {active_release.name}"
-            if requirements.database_head in active_requirements.database_revisions
-            else f"{requirements.database_head}, rollback-safe from "
-            f"{requirements.rollback_safe_from} by its migrations; "
-            f"{active_release.name} stands at {active_requirements.database_head}",
+            "migrated schema" if elsewhere else "rollback schema",
+            head_accepted(requirements, active_release.name, active_requirements),
         )
-    else:
+    elif not elsewhere:
         report.fail(
             "rollback schema",
             f"candidate head {requirements.database_head}; running "
             f"{active_release.name} does not accept it",
+        )
+    else:
+        report.fail(
+            "migrated schema",
+            f"candidate head {requirements.database_head}; {active_release.name}, which runs "
+            "until the switch, does not accept it",
+        )
+    if elsewhere and rollback_to is not None:
+        check_rollback_target(report, platform_root, requirements, rollback_to)
+
+
+def head_accepted(candidate: Requirements, name: str, target: Requirements) -> str:
+    """How the release `name` runs on the candidate's head, for a PASS line."""
+
+    if candidate.database_head in target.database_revisions:
+        return f"{candidate.database_head}, accepted by {name}"
+    return (
+        f"{candidate.database_head}, rollback-safe from {candidate.rollback_safe_from} by its "
+        f"migrations; {name} stands at {target.database_head}"
+    )
+
+
+def check_rollback_target(
+    report: Report, platform_root: Path, candidate: Requirements, name: str
+) -> None:
+    """The release last proved, where a failure after the switch goes back to, on the head."""
+
+    try:
+        target = ui_requirements(named_release(platform_root, name, "UI"))
+    except CompatibilityError as exc:
+        report.fail("rollback schema", f"{name}, the release last proved: {exc}")
+        return
+    if candidate.database_head in target.database_revisions or declared_safe(target, candidate):
+        report.pass_("rollback schema", head_accepted(candidate, name, target))
+    else:
+        report.fail(
+            "rollback schema",
+            f"candidate head {candidate.database_head}; {name}, the release last proved, "
+            "does not run on it",
         )
 
 
@@ -987,6 +1036,7 @@ def main(argv: list[str] | None = None) -> int:
                     revision,
                     name=ui_release.name,
                     packaged=args.packaged,
+                    rollback_to=args.rollback_to,
                 )
             elif revision in requirements.database_revisions:
                 report.pass_("schema revision", revision)

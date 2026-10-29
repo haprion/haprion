@@ -18,7 +18,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haprion_ui import auth, db, node_restores
+from haprion_ui import auth, db, jobs, node_restores
 from tests.test_backups import reading
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_queue_route import queued
@@ -199,7 +199,7 @@ class TheRunPage(unittest.TestCase):
                 held = replace(job("node_restore", state, number=3), held_since=PREPARED.created_at)
                 restore = self.view(PREPARED, PREVIEWED, held)
                 self.assertEqual(restore.stage, "held")
-                self.assertEqual(restore.held_job, 3)
+                self.assertEqual(restore.waiting_job, 3)
                 self.assertTrue(restore.active)
                 self.assertFalse(restore.discardable)
                 self.assertEqual(
@@ -212,6 +212,32 @@ class TheRunPage(unittest.TestCase):
             held_decision="run",
         )
         self.assertEqual(self.view(PREPARED, PREVIEWED, answered).stage, "working")
+
+    def test_a_job_no_worker_holds_is_said_so_and_names_the_job(self) -> None:
+        """Review 26-10-29, B2: the page said working, and refreshed, for ever."""
+
+        now = PREPARED.created_at + timedelta(hours=1)
+        gone = replace(
+            job("node_restore", "running", number=3),
+            lease_lapsed_since=now - jobs.NO_WORKER_AFTER - timedelta(minutes=5),
+        )
+        restore = node_restores.run_view(RUN, [PREPARED, PREVIEWED, gone], now=now)
+        self.assertIsNotNone(restore)
+        if restore is not None:
+            self.assertEqual((restore.stage, restore.waiting_job), ("no_worker", 3))
+            self.assertTrue(restore.active)
+            self.assertEqual(
+                node_restores.step_states(restore),
+                {"prepare": "done", "preview": "done", "run": "current"},
+            )
+            self.assertEqual(node_restores.STAGE_LABELS["no_worker"][0], jobs.NO_WORKER)
+        #
+        # Beside a job a worker runs, or just run out, it is working.
+        #
+        for still in (replace(gone, worker_busy=True), replace(gone, lease_lapsed_since=now)):
+            with self.subTest(still=still):
+                working = node_restores.run_view(RUN, [PREPARED, PREVIEWED, still], now=now)
+                self.assertEqual(working.stage if working else None, "working")
 
     def test_prepared_asks_for_the_fingerprint_with_the_line_to_paste(self) -> None:
         restore = self.view(PREPARED)
@@ -674,6 +700,21 @@ class FollowingARun(RestoreRouteTestCase):
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
         self.assertIn(
             'Held until an admin answers on <a href="/jobs#job-4">Events → Jobs</a>.', page
+        )
+        self.assertNotIn("Preparing restore.", page)
+
+    def test_a_run_no_worker_holds_says_where_its_job_is(self) -> None:
+        """Review 26-10-29, B2."""
+
+        self.runs = [
+            replace(
+                job("node_restore_prepare", "running", number=4),
+                lease_lapsed_since=datetime.now(UTC) - jobs.NO_WORKER_AFTER - timedelta(minutes=1),
+            ),
+        ]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn(
+            'No worker holds this job; see <a href="/jobs#job-4">Events → Jobs</a>.', page
         )
         self.assertNotIn("Preparing restore.", page)
 

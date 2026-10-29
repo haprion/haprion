@@ -37,12 +37,17 @@ from haprion.cli.node_restore_helper import DISCARD, PREPARE, PREVIEW, RUN, STAT
 from haprion_ui import moments
 
 from .db import Job
-from .jobs import RUNNING_LABELS
+from .jobs import NO_WORKER, RUNNING_LABELS, no_worker
 
 OPERATIONS = (PREPARE, PREVIEW, RUN, DISCARD, STATUS)
 MODES = ("new_vm", "test")
 ACTIVE_STATES = frozenset({"pending", "running"})
 EXPIRES_AFTER = timedelta(seconds=node_restore.START_WINDOW)
+#
+# The stages with a job of the run still in the queue: the page refreshes
+# until it ends, and the step it is at is the current one.
+#
+WAITING = frozenset({"working", "held", "no_worker"})
 #
 # What Discard is offered for: every stage but one that is working, one that
 # restored the node, and one already discarded.
@@ -207,7 +212,8 @@ class RestoreRun:
 
     ``working``            a job is queued or running; the page refreshes
     ``held``               that job waits for an admin's Run or Discard on Jobs
-                           (`held_job`), queued before the manager last started
+                           (`waiting_job`), queued before the manager last started
+    ``no_worker``          that job is running and no worker holds it (`waiting_job`)
     ``prepare_failed``     the run was never created on the manager
     ``fingerprint``        paste the line on the target, then enter its fingerprint
     ``confirm``            the preview found no problems; type the node's name
@@ -253,8 +259,8 @@ class RestoreRun:
     overwrite: Mapping[str, Any] | None = None
     # With stage `unknown`: what the last question found, or "" before one was asked.
     standing: str = ""
-    # With stage `held`: the job that waits for Run or Discard.
-    held_job: int | None = None
+    # With stage `held` or `no_worker`: the job the run waits on.
+    waiting_job: int | None = None
 
     @property
     def backup_failed(self) -> bool:
@@ -272,7 +278,7 @@ class RestoreRun:
 
     @property
     def active(self) -> bool:
-        return self.stage in {"working", "held"}
+        return self.stage in WAITING
 
     @property
     def askable(self) -> bool:
@@ -420,16 +426,20 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         else:
             error = _error(discard)
 
-    held_job = None
+    waiting_job = None
     if stage == "working":
         #
         # The one job of the run the queue holds active, held since the
         # manager last started: it waits for an admin, not for a worker
-        # (review 26-10-29, C06).
+        # (review 26-10-29, C06). Or one no worker holds, by the rule Jobs
+        # says it by (B2): the page said working, and refreshed, for ever.
         #
         held = [job for job in jobs if job.state in ACTIVE_STATES and job.waits_for_decision]
+        gone = [job for job in jobs if now is not None and no_worker(job, now)]
         if held:
-            stage, held_job = "held", held[-1].id
+            stage, waiting_job = "held", held[-1].id
+        elif gone:
+            stage, waiting_job = "no_worker", gone[-1].id
 
     target_facts = preview.get("target") if isinstance(preview.get("target"), dict) else None
     return RestoreRun(
@@ -447,7 +457,7 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         profile=test if isinstance(test, dict) else None,
         stage=stage,
         working=working,
-        held_job=held_job,
+        waiting_job=waiting_job,
         paste=str(_body(prepared).get("paste") or ""),
         plan=plan,
         target_facts=target_facts,
@@ -504,7 +514,7 @@ def step_states(restore: RestoreRun) -> dict[str, str]:
     """Where each of the three steps stands: done, current, failed or waiting."""
 
     order = ("prepare", "preview", "run")
-    if restore.stage in {"working", "held"} and restore.jobs[-1].operation != DISCARD:
+    if restore.stage in WAITING and restore.jobs[-1].operation != DISCARD:
         latest = restore.jobs[-1].operation
         at = {PREPARE: 0, PREVIEW: 1, RUN: 2, STATUS: 2}[latest]
         return {
@@ -538,6 +548,7 @@ def usable_run(run: str) -> bool:
 STAGE_LABELS: dict[str, tuple[str, str]] = {
     "working": ("Running", "info"),
     "held": ("Held", "warning"),
+    "no_worker": (NO_WORKER, "critical"),
     "prepare_failed": ("Not prepared", "critical"),
     "fingerprint": ("Waiting for the fingerprint", "warning"),
     "confirm": ("Waiting for confirmation", "warning"),

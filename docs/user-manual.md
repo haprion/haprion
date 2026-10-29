@@ -3121,7 +3121,8 @@ Each step is one job - `node_restore_prepare`, `node_restore_preview`, `node_res
 worker through the root helper on `node-restore.sock`, with the same engine as the command. The page is
 drawn from those jobs alone; nothing else is stored. While a job runs, it holds the cluster's job slot,
 so a deploy to that cluster waits. A job held since the manager last started shows as *Held*, with a
-link to it on *Events → Jobs*, where an admin answers it. *Discard this run* on the run's page is the
+link to it on *Events → Jobs*, where an admin answers it. A job no worker holds shows as *No worker*,
+with the same link ([The worker](#the-worker)). *Discard this run* on the run's page is the
 fourth job, `node_restore_discard`.
 
 **When the run's job loses its answer.** The job ends `unknown`, because the helper may have carried on

@@ -4734,6 +4734,40 @@ class ARestoreRunReadsItsHold(unittest.TestCase):
                 owner.execute("delete from job where id = %s", (job.id,))
                 owner.commit()
 
+    def test_the_web_reads_when_a_run_s_job_lost_its_worker(self) -> None:
+        """Review 26-10-29, B2: the restore page said working for a job no worker held."""
+
+        run = "r260101-0000dddd"
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}") as owner:
+            job = db.queue_job(
+                owner,
+                operation="node_restore",
+                cluster="alpha",
+                payload={"run": run},
+                idempotency_key=uuid4(),
+            )
+            owner.execute(
+                "update job set state = 'running', claim_token = %s, worker_id = 'w', "
+                "started_at = now() - interval '1 hour', lease_until = now() - interval '50 minutes' "
+                " where id = %s",
+                (uuid4(), job.id),
+            )
+            owner.commit()
+            try:
+                with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_WEB_ROLE']}") as web:
+                    (read,) = db.restore_jobs(web, run)
+                    (listed,) = [
+                        found
+                        for found in db.operation_jobs(web, "node_restore")
+                        if found.id == job.id
+                    ]
+                for found in (read, listed):
+                    self.assertIsNotNone(found.lease_lapsed_since)
+                    self.assertFalse(found.worker_busy)
+            finally:
+                owner.execute("delete from job where id = %s", (job.id,))
+                owner.commit()
+
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheBackupsHashCheck(unittest.TestCase):

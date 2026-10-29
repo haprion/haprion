@@ -43,8 +43,9 @@ class Job:
     #
     # When the lease of a running job ran out, by the database's clock; None
     # while a worker holds it, and for a job not running. Read by
-    # `recent_jobs` and `active_job` (review 26-10-29, Q01): a worker stopped
-    # or hung leaves its job `running`, and only a living worker settles it.
+    # `recent_jobs`, `active_job`, `restore_jobs` and `operation_jobs` (review
+    # 26-10-29, Q01, B2): a worker stopped or hung leaves its job `running`,
+    # and only a living worker settles it.
     #
     lease_lapsed_since: datetime | None = None
     #
@@ -315,9 +316,10 @@ def operation_jobs(connection: Connection[Any], operation: str, *, limit: int = 
 
     with connection.cursor(row_factory=class_row(Job)) as cursor:
         cursor.execute(
-            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "select id, request_id, operation, cluster, payload, state, created_at, "  # noqa: S608 - constant
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
-            "       idempotency_key, attempts, held_since, held_decision, held_decided_by "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by, "
+            f"       {_LEASE_COLUMNS} "
             "  from job "
             " where operation = %(operation)s "
             " order by created_at desc, id desc "
@@ -366,9 +368,10 @@ def restore_jobs(connection: Connection[Any], run: str) -> list[Job]:
 
     with connection.cursor(row_factory=class_row(Job)) as cursor:
         cursor.execute(
-            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "select id, request_id, operation, cluster, payload, state, created_at, "  # noqa: S608 - constant
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
-            "       idempotency_key, attempts, held_since, held_decision, held_decided_by "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by, "
+            f"       {_LEASE_COLUMNS} "
             "  from job "
             " where operation in ('node_restore_prepare', 'node_restore_preview', "
             "                     'node_restore', 'node_restore_discard', "

@@ -28,7 +28,9 @@
 {% if restore.stage == 'working' %}
 <p class="preview-notice"><span class="badge-spinner" aria-hidden="true"></span><strong>{{ restore.working }}.</strong> This page refreshes by itself.</p>
 {% elif restore.stage == 'held' %}
-<p class="preview-notice notice-warning"><span class="status-orb status-warning" aria-hidden="true"></span><strong>Held until an admin answers on <a href="/jobs#job-{{ restore.held_job }}">Events → Jobs</a>.</strong></p>
+<p class="preview-notice notice-warning"><span class="status-orb status-warning" aria-hidden="true"></span><strong>Held until an admin answers on <a href="/jobs#job-{{ restore.waiting_job }}">Events → Jobs</a>.</strong></p>
+{% elif restore.stage == 'no_worker' %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>No worker holds this job; see <a href="/jobs#job-{{ restore.waiting_job }}">Events → Jobs</a>.</strong></p>
 {% elif restore.stage == 'prepare_failed' %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore could not be prepared: {{ restore.error }}</strong></p>
 {% elif restore.stage == 'done' %}

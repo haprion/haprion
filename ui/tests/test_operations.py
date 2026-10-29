@@ -27,13 +27,16 @@ from haprion import (
 )
 from haprion import cert_publish as cert_publish_model
 from haprion.cli import (
+    backup_job_ask,
     backup_job_helper,
     cert_publish,
+    cert_receiver_ask,
     cert_receiver_helper,
     changes_publish,
     deploy,
     deploy_helper,
     node_ask,
+    node_restore_ask,
     server_state_helper,
     socket_ask,
 )
@@ -1333,3 +1336,29 @@ class TheDeployAnswersBeforeTheWorkerStopsIt(unittest.TestCase):
             deploy_helper.BUDGET.node_step,
             deploy_helper.TRIGGER_TIMEOUT_SECONDS + STATUS_TIMEOUT_SECONDS,
         )
+
+
+class ASocketClientAnswersBeforeTheWorkerStopsIt(unittest.TestCase):
+    """Review 26-10-29, O01: the node client gave up on a join after 120 s.
+
+    A client's silence leaves the job to the answer its helper keeps; within
+    the worker's bound the client is the one that says so, and a join behind a
+    slow mirror is answered while the worker still waits.
+    """
+
+    def test_each_client_waits_less_than_the_worker_does(self) -> None:
+        clients = {
+            operations.NODE_CLIENT: node_ask.TIMEOUT_SECONDS,
+            operations.RECEIVER_CLIENT: cert_receiver_ask.TIMEOUT_SECONDS,
+            operations.BACKUP_CLIENT: backup_job_ask.TIMEOUT_SECONDS,
+            operations.RESTORE_CLIENT: node_restore_ask.TIMEOUT_SECONDS,
+        }
+        for argv, seconds in clients.items():
+            with self.subTest(client=argv[-1]):
+                self.assertLess(seconds, operations.TIMEOUT_SECONDS)
+
+    def test_the_node_client_waits_as_long_as_the_node_gives_a_join(self) -> None:
+        script = Path(__file__).resolve().parents[2] / "install/node/haprion-node-join"
+        found = re.search(r"^TIMEOUT = (\d+)$", script.read_text(), re.MULTILINE)
+        self.assertIsNotNone(found)
+        self.assertGreaterEqual(node_ask.TIMEOUT_SECONDS, int(found[1]) if found else 0)

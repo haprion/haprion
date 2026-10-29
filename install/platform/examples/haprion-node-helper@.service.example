@@ -53,8 +53,9 @@ StandardError=journal
 MemoryMax=256M
 MemorySwapMax=0
 
-# Bounds the start only. What bounds a run is the node's status read, sixty
-# seconds; no RuntimeMaxSec, because a run stopped between writing and putting
+# Bounds the start only. What bounds a run is its SSH to the node: a join's,
+# apt included, 870 seconds, and a status read's sixty; no RuntimeMaxSec,
+# because a run stopped between writing and putting
 # back would leave the files half-changed until the next run puts them back
 # from /var/lib/haprion/change-journal.json, which ProtectSystem=yes
 # leaves writable.

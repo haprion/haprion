@@ -4050,11 +4050,12 @@ explained in the unit file beside it. The real limit is not the sandbox but
 `/etc/sudoers.d/haprion-worker`. It names each helper and permits no arguments. Widening the unit does not
 widen what may be run; only that file does.
 
-**A helper that outlives a stopped worker.** The helpers behind sockets - node and cluster changes,
+**A helper that outlives its worker.** The helpers behind sockets - node and cluster changes,
 node backups and restores, receivers - run in systemd units of their own. A worker that is stopped or
-restarted on its own - a UI release, `needrestart` - does not stop them; a reboot does. Each keeps its
-answer in `/var/lib/haprion/answers` (root's, readable by the worker). The job stays *running* while its
-helper works, and then ends on the helper's own answer, with what follows it in the same job: a node
+restarted on its own - a UI release, `needrestart` - does not stop them; a reboot does. Nor does a client
+that stops waiting: a node's join runs apt, and a slow mirror can keep it past the 15 minutes a
+worker waits. Each helper keeps its answer in `/var/lib/haprion/answers` (root's, readable by the
+worker). The job stays *running* while its helper works, and then ends on the helper's own answer, with what follows it in the same job: a node
 change's deploy runs then. A helper that ended without an answer leaves the job `unknown`, and so does
 one a reboot ended mid-work. An answer is kept two weeks from its helper's end. A held job whose answer
 is gone by then ends `unknown` with the code `answer_absent`: when nobody answered in time, or after the
@@ -7869,8 +7870,8 @@ request, closes its write side and passes the answer through untouched.
 - When nothing listens, the answer is an envelope that says so (`dependency_unavailable`), never
   `unknown`.
 - A helper that was asked and went quiet leaves the job `unknown` (see the backup and restore
-  helpers below). When the worker was stopped, the job ends on the helper's kept answer instead
-  ([The worker](#the-worker)).
+  helpers below). While it is still at work, or when the worker was stopped, the job ends on the
+  helper's kept answer instead ([The worker](#the-worker)).
 - A request is carried out once. Asked again with the same request ID, the helper gives the answer it
   kept and does nothing; with no answer kept, it refuses.
 
@@ -7929,9 +7930,9 @@ exactly as it runs the receiver client. Two answers differ from a helper that ra
 - **Nothing listening** is an envelope that says so (`dependency_unavailable`, `failed`): nothing
   ran.
 - **A helper that was asked and then went quiet** - the client's time ran out, or the connection
-  dropped - is **no** envelope, and the job ends `unknown`. The root service carries on without the
-  client and may have finished. When the worker itself was stopped, the job waits and ends on the
-  answer the service kept ([The worker](#the-worker)).
+  dropped - is **no** envelope. The root service carries on without the client. While it is still at
+  work, or has answered since, the job waits and ends on the answer the service kept
+  ([The worker](#the-worker)); one that ended without an answer leaves the job `unknown`.
 
 The client's sentence is in the job's stderr excerpt. The helper's own lines are in the journal
 (`journalctl -u 'haprion-node-restore-helper@*'`).

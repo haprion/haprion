@@ -841,6 +841,7 @@ def resume_adopted(
         worker=worker,
         connect=connect,
         stopping=stopping,
+        adopted=True,
     )
 
 
@@ -853,11 +854,18 @@ def _conclude(
     worker: str,
     connect: Callable[[], AbstractContextManager[Any]] | None,
     stopping: Callable[[], bool],
+    adopted: bool = False,
 ) -> None:
-    """Judge a job's own run, run what follows it in the job, and write the end."""
+    """Judge a job's own run, run what follows it in the job, and write the end.
+
+    `adopted`: the run is the answer its helper kept, and there is nothing
+    more to wait for.
+    """
 
     envelope = _envelope(completed.stdout, job) if completed.stdout_error is None else None
     if _stopped_under_it(stopping, envelope, job, job.operation):
+        return
+    if not adopted and _answer_still_to_come(completed, envelope, job):
         return
     state, outcome, result = _judge_run(completed, envelope)
 
@@ -991,6 +999,39 @@ def _stopped_under_it(
         return False
     logger.warning(
         "job %s: the worker was stopped during its %s; recovery settles it", job.id, operation
+    )
+    return True
+
+
+def _answer_still_to_come(
+    completed: execution.Completed, envelope: dict[str, Any] | None, job: db.ClaimedJob
+) -> bool:
+    """Whether a socket helper is still to answer a client that stopped waiting for it.
+
+    The helpers behind the manager's sockets run in units of their own and keep
+    their answer (B367). A client that gave up on one - its own bound, or the
+    worker's on the client - left a root helper at work: a node's join runs
+    apt for up to fourteen minutes, a cluster's two. Written `unknown` then,
+    the job said "may have acted" of a node the helper added, and what follows
+    in the job never ran; `haprion-node add` from a terminal waits and ends on
+    the answer. So the job is left `running`, as for a stop under it, and
+    recovery ends it on the answer kept, with what follows (26-10-29, O01).
+    Left only while a receipt says an answer is coming or has come: with
+    none, nothing will, and the job ends `unknown` now.
+    """
+
+    if job.operation not in recovery.KEEPS_ANSWER or envelope is not None:
+        return False
+    if completed.stdout_error is not None:
+        return False
+    if completed.ending != "timeout" and completed.stdout.strip():
+        return False
+    if answer_receipt.read(str(job.request_id)).state not in ("running", "answered"):
+        return False
+    logger.warning(
+        "job %s: its %s helper is still to answer; recovery ends the job on the answer it keeps",
+        job.id,
+        job.operation,
     )
     return True
 

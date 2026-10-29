@@ -24,7 +24,7 @@ from uuid import uuid4
 import psycopg
 from haprion import answer_receipt
 
-from haprion_ui import db, execution, operations, worker
+from haprion_ui import db, execution, operations, recovery, worker
 
 TOKEN = uuid4()
 WORKER = "mgr/4242"
@@ -120,7 +120,8 @@ class WorkerTestCase(unittest.TestCase):
         sudo.start()
         self.addCleanup(sudo.stop)
 
-        # Nor the machine's receipts; `ARequestThatRanAfterTheDump` keeps its own.
+        # Nor the machine's receipts; `ARequestThatRanAfterTheDump` and
+        # `ASocketHelperThatOutlivesItsClient` keep their own.
         self.receipts = mock.patch.object(
             answer_receipt, "read", return_value=answer_receipt.Receipt("absent")
         ).start()
@@ -723,6 +724,87 @@ class StoppedUnderARun(WorkerTestCase):
     def test_without_a_stop_a_silent_helper_is_still_unknown(self) -> None:
         with mock.patch.object(execution, "run", return_value=completed(exit_code=-15)):
             worker.run_one_job(self.connection, claimed(), worker=WORKER)
+
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "unknown")
+
+
+class ASocketHelperThatOutlivesItsClient(WorkerTestCase):
+    """Review 26-10-29, O01: a join past the client's bound was `unknown` once the node was added.
+
+    A helper behind a socket runs in a unit of its own and keeps its answer
+    (B367). Its client giving up, or the worker stopping that client at its
+    bound, says nothing about what the helper did: the job is left `running`,
+    and recovery ends it on the answer the helper keeps - as `haprion-node add`
+    from a terminal ends on the same answer.
+    """
+
+    SILENT = completed(
+        exit_code=1,
+        stderr="ERROR: [helper_silent] The node service did not answer in time."
+        " It may still be working; its outcome is unknown.\n",
+    )
+
+    def add(self) -> db.ClaimedJob:
+        return claimed(
+            operation="cluster_node",
+            payload={"action": "add", "block": "block", "host": "node-c.example.com"},
+        )
+
+    def test_a_client_that_gave_up_leaves_the_job_to_the_answer_kept(self) -> None:
+        for ending in (self.SILENT, completed(ending="timeout", exit_code=None)):
+            for state in ("running", "answered"):
+                with self.subTest(ending=ending.ending, receipt=state):
+                    self.finished.clear()
+                    self.receipts.return_value = answer_receipt.Receipt(state)
+                    with mock.patch.object(execution, "run", return_value=ending):
+                        worker.run_one_job(self.connection, self.add(), worker=WORKER)
+
+                    self.assertEqual(self.finished, [])
+
+    def test_every_socket_operation_is_left_the_same_way(self) -> None:
+        self.receipts.return_value = answer_receipt.Receipt("running")
+        for operation in sorted(recovery.KEEPS_ANSWER):
+            with self.subTest(operation):
+                self.finished.clear()
+                job = claimed(operation=operation)
+                worker._conclude(
+                    self.connection,
+                    job,
+                    self.SILENT,
+                    worker._Lease(self.connection, job, None),
+                    worker=WORKER,
+                    connect=None,
+                    stopping=lambda: False,
+                )
+
+                self.assertEqual(self.finished, [])
+
+    def test_with_no_answer_to_wait_for_it_is_unknown_now(self) -> None:
+        for state in ("unavailable", "absent", "silent"):
+            with self.subTest(receipt=state):
+                self.finished.clear()
+                self.receipts.return_value = answer_receipt.Receipt(state)
+                with mock.patch.object(execution, "run", return_value=self.SILENT):
+                    worker.run_one_job(self.connection, self.add(), worker=WORKER)
+
+                (finished,) = self.finished
+                self.assertEqual(finished["state"], "unknown")
+
+    def test_a_helper_run_through_sudo_is_not_waited_for(self) -> None:
+        self.receipts.return_value = answer_receipt.Receipt("running")
+        with mock.patch.object(execution, "run", return_value=self.SILENT):
+            worker.run_one_job(self.connection, claimed(), worker=WORKER)
+
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "unknown")
+
+    def test_an_adopted_answer_that_is_empty_ends_the_job(self) -> None:
+        """Adopted, there is nothing more to wait for: left again, it would be adopted again."""
+
+        self.receipts.return_value = answer_receipt.Receipt("answered", stdout="", exit_code=1)
+        with mock.patch.object(execution, "run", side_effect=AssertionError("nothing runs")):
+            worker.resume_adopted(self.connection, self.add(), self.receipts.return_value, worker=WORKER)
 
         (finished,) = self.finished
         self.assertEqual(finished["state"], "unknown")

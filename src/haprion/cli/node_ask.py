@@ -16,10 +16,13 @@ SERVICE = Service(
     command="haprion-node-ask",
     socket_path="/run/haprion/cluster-node.sock",
     #
-    # Six small files and one status read of the node, whose own bound is sixty
-    # seconds. The margin is for a node that connects and then says nothing.
+    # Under the worker's 900 s, so a run that goes long is answered by this
+    # client rather than cut off. A removal is six files and a status read of
+    # sixty seconds; a join runs apt on the node, seconds or a few minutes
+    # (`node_join.JOIN_TIMEOUT_SECONDS`), and a cluster has two. One that
+    # outlasts this ends on the answer the helper keeps (26-10-29, O01).
     #
-    timeout=120.0,
+    timeout=840.0,
     what="the node service",
     install="Install haprion-node-helper.socket (07-platform-services).",
     #

@@ -381,3 +381,49 @@ class ThePostinstAsksWhetherTheStepRan(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCarriedVersion(unittest.TestCase):
+    """26-10-29: what the nodes' haprion-node is read against."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.release = Path(temporary.name)
+
+    def record(self, document: object) -> None:
+        (self.release / "INSTALLATION.json").write_text(json.dumps(document))
+
+    def test_the_record_names_the_version(self) -> None:
+        version = "0.99.6+git20261029120000.0123456789ab"
+        self.record({"node_package": {"file": "haprion-node.deb", "version": version}})
+        self.assertEqual(node_package.carried_version(self.release), version)
+
+    def test_a_release_without_a_package_or_a_record_names_none(self) -> None:
+        self.assertIsNone(node_package.carried_version(self.release))
+        self.record({"version": "0.99.6"})
+        self.assertIsNone(node_package.carried_version(self.release))
+
+    def test_an_unreadable_record_names_none_rather_than_failing(self) -> None:
+        (self.release / "INSTALLATION.json").write_text("{")
+        self.assertIsNone(node_package.carried_version(self.release))
+        self.record({"node_package": "haprion-node.deb"})
+        self.assertIsNone(node_package.carried_version(self.release))
+        self.record({"node_package": {"version": "anything"}})
+        self.assertIsNone(node_package.carried_version(self.release))
+
+
+class AShortVersion(unittest.TestCase):
+    def test_a_build_s_version_is_its_release_and_its_commit(self) -> None:
+        """The full one did not fit the row (26-10-23): the time and the distribution say nothing."""
+
+        for full, shown in (
+            ("0.99.0+git20261101120000.0123456789ab~ubuntu26.04", "0.99.0 (01234567)"),
+            ("0.9.2+git20261022062952.7163b160d187", "0.9.2 (7163b160)"),
+            ("0.99.0", "0.99.0"),
+            ("0.99.0~debian13", "0.99.0"),
+            ("0.9.1-1", "0.9.1-1"),
+            ("2026.10.17", "2026.10.17"),
+        ):
+            with self.subTest(full):
+                self.assertEqual(node_package.short_version(full), shown)

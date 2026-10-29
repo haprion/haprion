@@ -17,6 +17,10 @@ the second node gets it - is told apart from the other until both match. They
 are compared as dpkg orders versions, the whole version and not its upstream
 part: a security update often changes only the revision (`3.0.13-0ubuntu3.4`
 to `3.0.13-0ubuntu3.5`), and a PPA rebuild only its suffix.
+
+And haprion-node itself (26-10-29), against the node package the manager's
+release carries rather than against the other nodes: the release says which
+one the nodes should run.
 """
 
 from __future__ import annotations
@@ -29,7 +33,15 @@ from haprion.digits import is_digits
 
 UPSTREAM = re.compile(r"\d+(?:\.\d+)*")
 
-__all__ = ["PACKAGES", "compare", "notes", "package_notes", "packages_behind", "upstream"]
+__all__ = [
+    "PACKAGES",
+    "against_carried",
+    "compare",
+    "notes",
+    "package_notes",
+    "packages_behind",
+    "upstream",
+]
 
 #
 # The node status's `packages` keys, and how a note names each.
@@ -197,3 +209,26 @@ def notes(
         )
         said[name] = " · ".join([said[name], *lines] if name in said else lines)
     return said
+
+
+def against_carried(installation: object, carried: object) -> tuple[str | None, int] | None:
+    """How a node's haprion-node stands against the one the manager's release carries.
+
+    `installation` is the node status's `installation`, `carried` the status
+    summary's `node_package_version`. None when the two are the same, or when
+    nothing can be said: the manager names no package, or dpkg on the node
+    says none is installed. Otherwise the node's version and -1 or 1, older or
+    newer, as dpkg orders them. A node that reports no version at all predates
+    the field, and so runs an older package than any release that names one:
+    that is (None, -1).
+    """
+
+    if not isinstance(carried, str) or not carried:
+        return None
+    if not isinstance(installation, Mapping) or "version" not in installation:
+        return None, -1
+    installed = installation["version"]
+    if not isinstance(installed, str) or not installed:
+        return None
+    order = compare(installed, carried)
+    return (installed, order) if order else None

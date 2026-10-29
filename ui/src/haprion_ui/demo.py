@@ -61,6 +61,14 @@ PACKAGES = {
 }
 
 
+#
+# The haprion-node the manager's release carries, and the one service-b was
+# left on: an upgrade round that has not reached it yet (26-10-29).
+#
+NODE_PACKAGE = "0.99.6+git20261029120000.0123abcd4567"
+OLDER_NODE_PACKAGE = "0.99.5+git20261028210223.49d2aeb20207"
+
+
 def _node(
     name: str,
     *,
@@ -74,6 +82,7 @@ def _node(
     blocked: dict[str, Any] | None = None,
     forwarding: dict[str, Any] | None = None,
     waiting: dict[str, str] | None = None,
+    node_package: str = NODE_PACKAGE,
 ) -> dict[str, Any]:
     # A node with 1 GiB; `memory` is the share in use (B239).
     total = 1_048_576
@@ -104,6 +113,12 @@ def _node(
             "config_validation": {"valid": True},
             "stats_ok": True,
             "runtime": {"version": "3.2", "uptime_sec": 272_400},
+            "installation": {
+                "node_api": 1,
+                "scripts_current": True,
+                "scripts": {},
+                "version": node_package,
+            },
             "resources": {
                 "cpu": {"total": 34_000_000, "idle": 33_000_000},
                 "memory": {"total_kb": total, "available_kb": total * (100 - memory) // 100},
@@ -190,6 +205,7 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
                     "vip_owners": ["edge-a"],
                     "target": {"version": 24},
                     "release_state": "converged",
+                    "node_package_version": NODE_PACKAGE,
                 },
             },
             warnings=[],
@@ -215,6 +231,7 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
                             "dnsdist": "2.1.2-1pdns.ubuntu26.04",
                             "openssl": "3.5.5-1ubuntu3.7",
                         },
+                        node_package=OLDER_NODE_PACKAGE,
                     ),
                 ],
                 "summary": {
@@ -224,6 +241,7 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
                     "vip_owners": ["service-a"],
                     "target": {"version": 24},
                     "release_state": "behind",
+                    "node_package_version": NODE_PACKAGE,
                 },
             },
             warnings=[],

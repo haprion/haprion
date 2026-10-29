@@ -34,7 +34,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import exit_codes
+from haprion import exit_codes, node_package
 from haprion.candidate_validation import validator_version
 from haprion.config import (
     DEFAULT_POLICY_PATH,
@@ -77,6 +77,7 @@ def main(
     require_root: bool = True,
     node_reader: ReadNode | None = None,
     version_reader: Callable[[], str | None] | None = None,
+    package_reader: Callable[[], str | None] | None = None,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -169,6 +170,13 @@ def main(
     # nodes run, so a validator newer than a node is visible where the nodes are.
     #
     report.result["summary"]["validator_version"] = (version_reader or validator_version)()
+    #
+    # And the node package this host's release carries, which the nodes should
+    # run: a node left on an older one shows where the nodes are (26-10-29).
+    #
+    report.result["summary"]["node_package_version"] = (
+        package_reader or node_package.carried_version
+    )()
     return write_document(
         writer, report.as_envelope(request.cluster, request_id=request.request_id), report.exit_code
     )

@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import ipaddress
 import json
-import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import address_ranges, log_forwarding
+from haprion.node_package import short_version
 
 from haprion_ui import jobs as jobs_module
 from haprion_ui import labels
@@ -192,6 +192,7 @@ PAGES = {
     "forwarding": "Logs & metrics",
     "manager": "Dashboard",
     "preparation": "Dashboard",
+    "node_package": "Dashboard",
 }
 KINDS = tuple(PAGES)
 
@@ -367,6 +368,23 @@ def from_dashboard(
                         subject=node.name,
                         message="the node package changed what its preparation sets up:"
                         " run  sudo haprion-node-prepare  on the node",
+                        since=None,
+                        link=card_link(cluster.cluster),
+                    )
+                )
+            #
+            # Its own kind too: a node left on an older haprion-node than the
+            # manager's release carries (26-10-29). Updating it is `apt upgrade`
+            # on the node, which nothing here can do for it.
+            #
+            if node.package_message:
+                items.append(
+                    Item(
+                        kind="node_package",
+                        severity="warning",
+                        cluster=cluster.cluster,
+                        subject=node.name,
+                        message=node.package_message,
                         since=None,
                         link=card_link(cluster.cluster),
                     )
@@ -650,26 +668,6 @@ def from_log_forwarding(status_rows: Iterable[Any], *, now: datetime) -> list[It
                     )
                 )
     return items
-
-
-#
-# A build's package version (`build-release-packages`): the release, then
-# `+git<UTC time>.<commit>` for a build between releases, then `~<distribution>`
-# for the interface's and certbot's packages.
-#
-BUILD_VERSION = re.compile(
-    r"^(?P<release>[^+~]+)(?:\+git\d{14}\.(?P<commit>[0-9a-f]{8})[0-9a-f]*)?(?:~.*)?$"
-)
-
-
-def short_version(version: str) -> str:
-    """A package version as a person tells two apart: `0.99.0 (0123abcd)`; any other as it is."""
-
-    found = BUILD_VERSION.fullmatch(version)
-    if found is None:
-        return version
-    commit = found.group("commit")
-    return f"{found.group('release')} ({commit})" if commit else found.group("release")
 
 
 def from_packages(rows: Sequence[PackageWaiting]) -> list[Item]:

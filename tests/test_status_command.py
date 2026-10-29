@@ -29,6 +29,7 @@ from tests.contract_schema import assert_contract
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "55555555-5555-4555-8555-555555555555"
 TARGET_HASH = "c" * 40
+CARRIED = "0.99.6+git20261029120000.0123abcd4567"
 
 
 def request(cluster: str = "alpha", **overrides: object) -> bytes:
@@ -87,9 +88,11 @@ def node_status(
     ipvs: dict[str, object] | None = None,
     forward_file: dict[str, object] | None = None,
     preparation: dict[str, object] | None = None,
+    installation: dict[str, object] | None = None,
 ) -> str:
     return json.dumps(
         {
+            **({} if installation is None else {"installation": installation}),
             **({} if forward_file is None else {"forward_file": forward_file}),
             **({} if preparation is None else {"preparation": preparation}),
             **({} if waf_engine is None else {"waf_engine": waf_engine}),
@@ -244,6 +247,7 @@ class HelperFixture(unittest.TestCase):
     ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         version_reader = overrides.pop("version_reader", lambda: "3.2.9-1")
+        package_reader = overrides.pop("package_reader", lambda: None)
         code = status_helper.main(
             [],
             policy_path=policy_path or self.runtime(**overrides),
@@ -253,6 +257,7 @@ class HelperFixture(unittest.TestCase):
             require_secure=False,
             require_root=False,
             version_reader=version_reader,
+            package_reader=package_reader,
             node_reader=node_reader
             or self.reader(
                 **{
@@ -342,6 +347,18 @@ class HelperReadingTests(HelperFixture):
         self.assertEqual(code, 0)
         self.assertIsNone(
             assert_contract("haprion-status", out)["result"]["summary"]["validator_version"]
+        )
+
+    def test_the_node_package_this_host_carries_is_in_the_summary(self) -> None:
+        """26-10-29: what the nodes' haprion-node is read against."""
+
+        code, out, _ = self.run_helper(request(), package_reader=lambda: CARRIED)
+        self.assertEqual(code, 0)
+        summary = assert_contract("haprion-status", out)["result"]["summary"]
+        self.assertEqual(summary["node_package_version"], CARRIED)
+        code, out, _ = self.run_helper(request())
+        self.assertIsNone(
+            assert_contract("haprion-status", out)["result"]["summary"]["node_package_version"]
         )
 
     def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
@@ -848,6 +865,71 @@ class CallerTests(HelperFixture):
         self.assertIn("HAProxy ver:  3.4.6-1\n", out)
         self.assertIn("HAProxy ver:  3.4.4-1  (Older than 3.4.6)", out)
         self.assertIn("Validator:      3.4.4-1 (this host)", out)
+
+    def test_each_node_package_is_read_against_the_one_this_host_carries(self) -> None:
+        """26-10-29: a node left on an older haprion-node is named, and one on the same is quiet."""
+
+        def installed(version: str | None) -> dict[str, object]:
+            return {"node_api": 1, "scripts_current": True, "scripts": {}, "version": version}
+
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a",
+                        owner=True,
+                        release_hash=TARGET_HASH,
+                        installation=installed(CARRIED),
+                    ),
+                    "node-b": node_status(
+                        "node-b",
+                        owner=False,
+                        release_hash=TARGET_HASH,
+                        installation=installed("0.99.5+git20261028210223.49d2aeb20207"),
+                    ),
+                }
+            ),
+            package_reader=lambda: CARRIED,
+        )
+        assert_contract("haprion-status", payload)
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+        self.assertIn("Node package: 0.99.6 (0123abcd)\n", out)
+        self.assertIn(
+            "Node package: 0.99.5 (49d2aeb2)  OLDER than this host's 0.99.6 (0123abcd)\n", out
+        )
+
+    def test_a_node_that_reports_no_package_version_is_older(self) -> None:
+        """A status from before the field: older than any release that names one."""
+
+        payload = self.envelope(package_reader=lambda: CARRIED)
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+        self.assertEqual(out.count("Node package: OLDER than this host's 0.99.6 (0123abcd)\n"), 2)
+
+    def test_without_a_carried_package_the_node_package_line_is_only_what_the_node_says(
+        self,
+    ) -> None:
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a",
+                        owner=True,
+                        release_hash=TARGET_HASH,
+                        installation={
+                            "node_api": 1,
+                            "scripts_current": True,
+                            "scripts": {},
+                            "version": None,
+                        },
+                    ),
+                    "node-b": node_status("node-b", owner=False, release_hash=TARGET_HASH),
+                }
+            )
+        )
+        assert_contract("haprion-status", payload)
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+        self.assertEqual(out.count("Node package:"), 1)
+        self.assertIn("Node package: not installed\n", out)
 
     def test_the_waf_engine_is_read_against_whether_the_release_has_rules(self) -> None:
         stopped = self.engines(b_active=False)

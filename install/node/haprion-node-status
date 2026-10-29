@@ -63,6 +63,11 @@ SBIN = Path("/usr/sbin")
 NODE_STEP = Path("/usr/share/haprion-node/install")
 NODE_PREPARED = Path("/var/lib/haprion-node/prepared")
 MAX_INSTALLATION_BYTES = 64 * 1024
+#
+# The package the scripts came with, whose version the manager holds against
+# the node package its own release carries (26-10-29).
+#
+NODE_PACKAGE = "haprion-node"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 NODE_SCRIPTS = (
     "haprion-pull-deploy",
@@ -97,7 +102,7 @@ MAX_CERTIFICATE_BYTES = 1024 * 1024
 
 
 def read_installation() -> dict[str, Any]:
-    """The installed node package's declared API and whether its bytes still match.
+    """The installed node package's declared API, version and whether its bytes still match.
 
     The metadata is written by 04-node-prepare from the same source files it
     installs. The status command recomputes every digest: a copied marker beside
@@ -153,10 +158,16 @@ def read_installation() -> dict[str, Any]:
             "node_api": document["node_api"],
             "scripts_current": all_current,
             "scripts": scripts,
+            "version": package_version(NODE_PACKAGE),
         }
     except Exception:
         _, scripts = installed_scripts()
-        return {"node_api": None, "scripts_current": False, "scripts": scripts}
+        return {
+            "node_api": None,
+            "scripts_current": False,
+            "scripts": scripts,
+            "version": package_version(NODE_PACKAGE),
+        }
 
 
 def step_digest(directory: Path) -> str:

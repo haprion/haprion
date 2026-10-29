@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import unittest
 
-from haprion.haproxy_versions import compare, notes, package_notes, upstream
+from haprion.haproxy_versions import against_carried, compare, notes, package_notes, upstream
 
 
 class TheUpstreamPart(unittest.TestCase):
@@ -140,3 +140,25 @@ class ThePackageNotes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ANodeAgainstTheCarriedPackage(unittest.TestCase):
+    CARRIED = "0.99.6+git20261029120000.0123456789ab"
+
+    def test_the_same_version_says_nothing(self) -> None:
+        self.assertIsNone(against_carried({"version": self.CARRIED}, self.CARRIED))
+
+    def test_older_and_newer_are_ordered_as_dpkg_orders_them(self) -> None:
+        older = "0.99.5+git20261028210223.49d2aeb20207"
+        newer = "0.99.10+git20261101090000.89abcdef0123"
+        self.assertEqual(against_carried({"version": older}, self.CARRIED), (older, -1))
+        self.assertEqual(against_carried({"version": newer}, self.CARRIED), (newer, 1))
+
+    def test_a_node_reporting_no_version_runs_an_older_package(self) -> None:
+        self.assertEqual(against_carried({"node_api": 1}, self.CARRIED), (None, -1))
+        self.assertEqual(against_carried(None, self.CARRIED), (None, -1))
+
+    def test_nothing_is_said_without_a_carried_version_or_an_installed_package(self) -> None:
+        self.assertIsNone(against_carried({"version": self.CARRIED}, None))
+        self.assertIsNone(against_carried(None, None))
+        self.assertIsNone(against_carried({"version": None}, self.CARRIED))

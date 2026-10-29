@@ -92,6 +92,72 @@ class HaproxyVersions(unittest.TestCase):
         self.assertEqual(cluster.label, "Healthy")
 
 
+class NodePackage(unittest.TestCase):
+    """26-10-29: a node's haprion-node, read against the one the manager's release carries."""
+
+    CARRIED = "0.99.6+git20261029120000.0123abcd4567"
+    OLDER = "0.99.5+git20261028210223.49d2aeb20207"
+
+    def nodes(self, installations: tuple[object, object], carried: object = CARRIED) -> Any:
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        for node, installation in zip(nodes, installations, strict=True):
+            node["status"] = {
+                key: value for key, value in node["status"].items() if key != "installation"
+            }
+            if installation is not None:
+                node["status"]["installation"] = installation
+        result["nodes"] = nodes
+        result["summary"] = {**result["summary"], "node_package_version": carried}
+        return build_dashboard(
+            ("alpha",), (replace(status, result=result),), now=NOW, stale_after=timedelta(120)
+        ).clusters[0]
+
+    @staticmethod
+    def installed(version: str | None) -> dict[str, object]:
+        return {"node_api": 1, "scripts_current": True, "scripts": {}, "version": version}
+
+    def test_the_same_package_says_nothing_and_an_older_one_is_named(self) -> None:
+        cluster = self.nodes((self.installed(self.CARRIED), self.installed(self.OLDER)))
+        current, older = cluster.nodes
+        self.assertIsNone(current.package_note)
+        self.assertIsNone(current.package_message)
+        self.assertEqual(older.package_note, "Older node package")
+        self.assertEqual(
+            older.package_message,
+            "haprion-node 0.99.5 (49d2aeb2) is installed; the manager's is 0.99.6 (0123abcd)",
+        )
+        self.assertEqual(cluster.label, "Healthy")
+
+    def test_a_node_reporting_no_version_runs_an_older_package(self) -> None:
+        cluster = self.nodes(({"node_api": 1, "scripts_current": True, "scripts": {}}, None))
+        for node in cluster.nodes:
+            self.assertEqual(node.package_note, "Older node package")
+            self.assertEqual(
+                node.package_message,
+                "haprion-node is older than the manager's 0.99.6 (0123abcd)",
+            )
+
+    def test_a_newer_package_is_named_as_newer(self) -> None:
+        newer = "0.99.7+git20261101090000.89abcdef0123"
+        node = self.nodes((self.installed(newer), self.installed(self.CARRIED))).nodes[0]
+        self.assertEqual(node.package_note, "Newer node package")
+        self.assertEqual(
+            node.package_message,
+            "haprion-node 0.99.7 (89abcdef) is installed, newer than the manager's 0.99.6 (0123abcd)",
+        )
+
+    def test_nothing_is_said_without_a_carried_package_or_an_installed_one(self) -> None:
+        for installations, carried in (
+            ((self.installed(self.OLDER), None), None),
+            ((self.installed(None), self.installed(None)), self.CARRIED),
+        ):
+            with self.subTest(carried=carried):
+                cluster = self.nodes(installations, carried)
+                self.assertEqual([node.package_note for node in cluster.nodes], [None, None])
+
+
 class HealthDerivation(unittest.TestCase):
     def dashboard(self, status: ClusterStatus) -> DashboardView:
         return build_dashboard(("alpha",), (status,), now=NOW, stale_after=timedelta(seconds=120))

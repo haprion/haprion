@@ -40,10 +40,21 @@ def cluster(name: str = "alpha", **fields: Any) -> Any:
 
 
 def node(
-    name: str, tone: str, label: str = "Down", detail: str = "", *, prepare_pending: bool = False
+    name: str,
+    tone: str,
+    label: str = "Down",
+    detail: str = "",
+    *,
+    prepare_pending: bool = False,
+    package_message: str | None = None,
 ) -> Any:
     return SimpleNamespace(
-        name=name, tone=tone, label=label, detail=detail, prepare_pending=prepare_pending
+        name=name,
+        tone=tone,
+        label=label,
+        detail=detail,
+        prepare_pending=prepare_pending,
+        package_message=package_message,
     )
 
 
@@ -223,6 +234,29 @@ class EachKindComesAndGoes(unittest.TestCase):
         self.assertIn("sudo haprion-node-prepare", items[0].message)
         self.assertEqual(items[0].link, "/#cluster-alpha")
         self.assertNotEqual(items[1].key, items[2].key)
+
+    def test_a_node_on_another_node_package_than_the_managers_is_its_own_row(self) -> None:
+        """26-10-29: which nodes an upgrade round has not reached yet."""
+
+        said = "haprion-node 0.99.5 (49d2aeb2) is installed; the manager's is 0.99.6 (0123abcd)"
+        items = attention.from_dashboard(
+            [
+                cluster(
+                    "alpha",
+                    nodes=(
+                        node("node-a", "healthy", "Online"),
+                        node("node-b", "healthy", "Online", package_message=said),
+                    ),
+                )
+            ],
+            drift_label="Behind",
+        )
+        self.assertEqual(
+            [(item.kind, item.subject, item.severity, item.message) for item in items],
+            [("node_package", "node-b", "warning", said)],
+        )
+        self.assertEqual(items[0].link, "/#cluster-alpha")
+        self.assertEqual(items[0].page, "Dashboard")
 
     def test_a_node_waiting_for_its_deploy_is_not_listed(self) -> None:
         items = attention.from_dashboard(
@@ -910,6 +944,19 @@ class TheDashboardBox(LoginTestCase):
         self.assertIn("Deploy failed", drawn)
         self.assertNotIn("Needs attention", empty)
 
+    def test_a_node_on_an_older_node_package_says_so_in_its_row_and_in_the_box(self) -> None:
+        """26-10-29: the demo's service-b, left behind by an upgrade round."""
+
+        from haprion_ui import demo
+
+        client = self.client(replace(configuration(), demo_fixture=True, clusters=demo.CLUSTERS))
+        self.sign_in(client)
+        page = client.get("/").text
+        said = "haprion-node 0.99.5 (49d2aeb2) is installed; the manager&#39;s is 0.99.6 (0123abcd)"
+        self.assertEqual(page.count(f'<small class="warning-text" title="{said}">'), 1)
+        self.assertIn("Older node package</small>", page)
+        self.assertIn(f"service-b · {said}", page)
+
     def test_a_settings_row_is_text_while_management_writes_are_off(self) -> None:
         """Review 26-10-24, 04-02: the link answered "Not found" in read-only mode."""
 
@@ -969,20 +1016,6 @@ class AFixWaitingInTheRepository(unittest.TestCase):
         )
         self.assertEqual(item.message, "waits in the repository; 0.99.0 is installed")
         self.assertEqual(attention.from_packages([]), [])
-
-    def test_a_build_s_version_is_its_release_and_its_commit(self) -> None:
-        """The full one did not fit the row (26-10-23): the time and the distribution say nothing."""
-
-        for full, shown in (
-            ("0.99.0+git20261101120000.0123456789ab~ubuntu26.04", "0.99.0 (01234567)"),
-            ("0.9.2+git20261022062952.7163b160d187", "0.9.2 (7163b160)"),
-            ("0.99.0", "0.99.0"),
-            ("0.99.0~debian13", "0.99.0"),
-            ("0.9.1-1", "0.9.1-1"),
-            ("2026.10.17", "2026.10.17"),
-        ):
-            with self.subTest(full):
-                self.assertEqual(attention.short_version(full), shown)
 
 
 class TheAcknowledgement(LoginTestCase):

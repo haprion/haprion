@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from haprion import haproxy_versions, node_resources
+from haprion import haproxy_versions, node_package, node_resources
 from haprion.cluster_status import (
     BEHIND_RELEASE,
     ahead_of,
@@ -61,6 +61,13 @@ class NodeView:
     # not say, which an older node is.
     #
     prepare_pending: bool = False
+    #
+    # The node's haprion-node is not the one the manager's release carries
+    # (26-10-29): the Runtime cell's note, and the sentence that is its hover
+    # and Needs attention's row. None when they match or nothing can be said.
+    #
+    package_note: str | None = None
+    package_message: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,8 +306,37 @@ def observation_label(observed_at: datetime, now: datetime) -> str:
     return f"Observed {relative_age(observed_at, now).lower()}"
 
 
+def node_package_words(installation: object, carried: object) -> tuple[str, str] | None:
+    """The Runtime cell's note and Needs attention's sentence for a node's haprion-node.
+
+    Read against the node package the manager's release carries, the one the
+    nodes should run (26-10-29). None when they match or nothing can be said.
+    """
+
+    standing = haproxy_versions.against_carried(installation, carried)
+    if standing is None:
+        return None
+    installed, order = standing
+    manager = node_package.short_version(str(carried))
+    if order > 0:
+        return (
+            "Newer node package",
+            f"haprion-node {node_package.short_version(str(installed))} is installed,"
+            f" newer than the manager's {manager}",
+        )
+    if installed is None:
+        return "Older node package", f"haprion-node is older than the manager's {manager}"
+    return (
+        "Older node package",
+        f"haprion-node {node_package.short_version(installed)} is installed; the manager's is {manager}",
+    )
+
+
 def _node_view(
-    value: Any, target_hash: str | None = None, target_version: object = None
+    value: Any,
+    target_hash: str | None = None,
+    target_version: object = None,
+    carried: object = None,
 ) -> NodeView:
     node = _mapping(value)
     name = _text(node.get("name"), "Unnamed node")
@@ -357,6 +393,10 @@ def _node_view(
 
     status = _mapping(node["status"])
     prepare_pending = _mapping(status.get("preparation")).get("current") is False
+    package_note, package_message = node_package_words(status.get("installation"), carried) or (
+        None,
+        None,
+    )
     haproxy = _mapping(status.get("haproxy"))
     keepalived = _mapping(status.get("keepalived"))
     vip = _mapping(status.get("vip"))
@@ -438,6 +478,8 @@ def _node_view(
             stats="",
             current=current,
             prepare_pending=prepare_pending,
+            package_note=package_note,
+            package_message=package_message,
         )
 
     return NodeView(
@@ -455,6 +497,8 @@ def _node_view(
         release_behind=current is False
         and behind_part(status, target_hash) in (None, BEHIND_RELEASE),
         prepare_pending=prepare_pending,
+        package_note=package_note,
+        package_message=package_message,
     )
 
 
@@ -611,7 +655,12 @@ def _cluster_view(
     target_version = _mapping(summary.get("target")).get("version")
     nodes = (
         tuple(
-            _node_view(value, target_hash if isinstance(target_hash, str) else None, target_version)
+            _node_view(
+                value,
+                target_hash if isinstance(target_hash, str) else None,
+                target_version,
+                summary.get("node_package_version"),
+            )
             for value in node_values
         )
         if isinstance(node_values, list)

@@ -8,7 +8,7 @@
       "0100",
       "0101"
     ],
-    "engine_api": 35,
+    "engine_api": 36,
     "node_api": 1,
     "poller_helpers": [
       "haprion-status-helper",

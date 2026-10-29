@@ -42,6 +42,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.sbin = self.root / "sbin"
         self.sbin.mkdir()
         self.metadata = self.root / "node-installation.json"
+        self.installed: dict[str, str] = {"haprion-node": "0.99.6+git20261029120000.0123456789ab"}
 
     def read(self) -> dict[str, Any]:
         namespace: dict[str, Any] = {
@@ -54,6 +55,8 @@ class NodeInstallationReadingTests(unittest.TestCase):
             "MAX_INSTALLATION_BYTES": 64 * 1024,
             "SHA256": re.compile(r"^[0-9a-f]{64}$"),
             "NODE_SCRIPTS": NODE_SCRIPTS,
+            "NODE_PACKAGE": "haprion-node",
+            "package_version": self.installed.get,
         }
         exec(self.source, namespace)  # noqa: S102 - verbatim function from the node script
         result: dict[str, Any] = namespace["read_installation"]()
@@ -77,6 +80,24 @@ class NodeInstallationReadingTests(unittest.TestCase):
         result = self.read()
         self.assertEqual(result["node_api"], 1)
         self.assertIs(result["scripts_current"], True)
+
+    def test_the_node_package_version_is_reported_beside_the_scripts(self) -> None:
+        """26-10-29: the manager compares it with the node package its release carries."""
+
+        self.install()
+        self.assertEqual(self.read()["version"], "0.99.6+git20261029120000.0123456789ab")
+
+    def test_the_version_is_reported_without_usable_metadata_too(self) -> None:
+        self.install()
+        self.metadata.write_text("{}")
+        result = self.read()
+        self.assertIsNone(result["node_api"])
+        self.assertEqual(result["version"], "0.99.6+git20261029120000.0123456789ab")
+
+    def test_a_node_without_the_package_reports_no_version(self) -> None:
+        self.install()
+        self.installed.clear()
+        self.assertIsNone(self.read()["version"])
 
     def test_installer_and_status_attest_the_same_node_package(self) -> None:
         # Since 26-10-24 (03-01) the list is in the file step 4 and the postinst share.

@@ -30,6 +30,16 @@ class DemoFixtureTests(unittest.TestCase):
         self.assertEqual(dashboard.attention_clusters, 0)
         self.assertEqual(dashboard.behind_clusters, 1)
         self.assertEqual(tuple(len(cluster.proxies) for cluster in proxies.clusters), (2, 2))
+        #
+        # And one node the last upgrade round has not reached (26-10-29).
+        #
+        notes = {
+            node.name: node.package_note for cluster in dashboard.clusters for node in cluster.nodes
+        }
+        self.assertEqual(
+            notes,
+            {"edge-a": None, "edge-b": None, "service-a": None, "service-b": "Older node package"},
+        )
 
     def test_the_version_fixture_shows_both_a_published_and_a_waiting_cluster(self) -> None:
         #

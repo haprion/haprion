@@ -549,6 +549,11 @@
           "properties": {
             "node_api": { "type": ["integer", "null"], "minimum": 1 },
             "scripts_current": { "type": "boolean" },
+            "version": {
+              "description": "The haprion-node package's installed version, as dpkg reports it; null where it is not installed. Absent from a node reporting before it (26-10-29), which runs an older node package than any manager that reads it.",
+              "type": ["string", "null"],
+              "maxLength": 64
+            },
             "scripts": {
               "type": "object",
               "propertyNames": { "pattern": "^(haprion|haproxy)-[a-z0-9-]+$" },
@@ -717,6 +722,11 @@
           "description": "The HAProxy version the management host validates candidates with, as `haproxy -v` names it; null when it could not be read. Absent from an engine older than the field.",
           "type": ["string", "null"],
           "maxLength": 128
+        },
+        "node_package_version": {
+          "description": "The version of the haprion-node package the management host's release carries, the one its nodes should run; null when the release carries none or its record cannot be read. Absent from an engine older than the field (26-10-29).",
+          "type": ["string", "null"],
+          "maxLength": 64
         }
       },
       "additionalProperties": true

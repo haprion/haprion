@@ -402,6 +402,26 @@ def release_package(release: Path | None = None) -> ReleasePackage | None:
     """
 
     release = release or Path(__file__).resolve().parents[2]
+    record = _release_record(release)
+    if record is None:
+        return None
+    expected = record.get("sha256")
+    if record.get("file") != RELEASE_PACKAGE or not isinstance(expected, str):
+        raise PackageError(f"{release / 'INSTALLATION.json'} has an unusable node_package record")
+    path = release / RELEASE_PACKAGE
+    facts = verify_package(path, expected)
+    return ReleasePackage(
+        path=path,
+        version=facts.version,
+        commit=facts.commit,
+        sha256=facts.sha256,
+        scripts=facts.scripts,
+    )
+
+
+def _release_record(release: Path) -> dict[str, object] | None:
+    """The release's `node_package` record in INSTALLATION.json; None when there is none."""
+
     installation = release / "INSTALLATION.json"
     if not installation.is_file():
         return None
@@ -412,21 +432,48 @@ def release_package(release: Path | None = None) -> ReleasePackage | None:
     record = document.get("node_package") if isinstance(document, dict) else None
     if record is None:
         return None
-    if (
-        not isinstance(record, dict)
-        or record.get("file") != RELEASE_PACKAGE
-        or not isinstance(record.get("sha256"), str)
-    ):
+    if not isinstance(record, dict):
         raise PackageError(f"{installation} has an unusable node_package record")
-    path = release / RELEASE_PACKAGE
-    facts = verify_package(path, record["sha256"])
-    return ReleasePackage(
-        path=path,
-        version=facts.version,
-        commit=facts.commit,
-        sha256=facts.sha256,
-        scripts=facts.scripts,
-    )
+    return record
+
+
+def carried_version(release: Path | None = None) -> str | None:
+    """The version of the node package the running release carries, as its record names it.
+
+    What the nodes should run (26-10-29). Read from the record the release
+    installer wrote after verifying the package, not from the package: the
+    status helper asks on every poll, and the record is the installer's
+    verified answer. None when the release carries no package or the record
+    cannot be read - the status then says nothing about the nodes' packages
+    rather than failing.
+    """
+
+    try:
+        record = _release_record(release or Path(__file__).resolve().parents[2])
+    except PackageError:
+        return None
+    version = record.get("version") if record is not None else None
+    return version if isinstance(version, str) and VERSION.fullmatch(version) else None
+
+
+#
+# A build's package version (`build-release-packages`): the release, then
+# `+git<UTC time>.<commit>` for a build between releases, then `~<distribution>`
+# for the interface's and certbot's packages.
+#
+BUILD_VERSION = re.compile(
+    r"^(?P<release>[^+~]+)(?:\+git\d{14}\.(?P<commit>[0-9a-f]{8})[0-9a-f]*)?(?:~.*)?$"
+)
+
+
+def short_version(version: str) -> str:
+    """A package version as a person tells two apart: `0.99.0 (0123abcd)`; any other as it is."""
+
+    found = BUILD_VERSION.fullmatch(version)
+    if found is None:
+        return version
+    commit = found.group("commit")
+    return f"{found.group('release')} ({commit})" if commit else found.group("release")
 
 
 def parser() -> argparse.ArgumentParser:

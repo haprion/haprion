@@ -208,6 +208,7 @@ One word per thing, the same on every page:
 | Behind | a cluster or node that does not run the published version; *Deploy configuration* is green there | the dashboard, *Network* |
 | Unknown version | a node on a version past the published one, which this manager has no record of - as after the manager was restored from older state. A deploy puts the published, older version on it; `haprion-status` says *AHEAD* | the dashboard, *Needs attention* |
 | Older package | a node whose packages are older than another node's | the dashboard's *Runtime* cell |
+| Older node package | a node whose `haprion-node` is older than the one the manager's release carries | the dashboard's *Runtime* cell, *Needs attention* |
 | Reconfigured · deploy to activate | a published change to a proxy the nodes do not serve yet | *Proxies*, *Network* |
 | Waiting for deploy | how far a proxy's newest version has come | the proxy's page |
 | DNS profile, NDES profile | the credentials a certificate is requested with; *provider* is the company | *Certificates* |
@@ -3722,6 +3723,9 @@ box is not shown.
   behind the published version is not listed: that is a publish waiting for its deploy.
 - **A node to prepare again**, as a warning, when its node package brings a changed preparation step:
   run `sudo haprion-node-prepare` on it ([Installing and changing node scripts](#installing-and-changing-node-scripts)).
+- **A node on another node package than the manager's**, as a warning: its `haprion-node` is older than
+  the one the manager's release carries, or newer. It is a node an upgrade has not reached yet;
+  `apt upgrade` on the node clears it.
 - **Objects whose servers are not up**, as their lamp on *Proxies* says it. Critical when no node reaches
   any of them; a warning when some are down, or down on one node only. An object without a health check
   has no lamp and is not listed.
@@ -6621,6 +6625,10 @@ last:
 haprion-status -c alpha                                  # on the manager: which node holds the VIP
 sudo apt update && sudo apt upgrade                      # on that cluster's other node, then the holder
 ```
+
+The dashboard shows which nodes an upgrade has not reached. Such a node says *Older node package* in its
+*Runtime* cell, and pointing at it gives both versions. *Needs attention* lists it until it runs the
+package the manager's release carries. `haprion-status` says the same on the node's `Node package:` line.
 
 On a node that is already joined, the package replaces the node scripts and records their digests
 again; it changes nothing else. It does not run `04-node-prepare`, the step that sets up what the

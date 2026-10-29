@@ -24,7 +24,7 @@ import sys
 from collections.abc import Callable
 from typing import Any, TextIO
 
-from haprion import haproxy_versions, log_forwarding, node_resources
+from haprion import haproxy_versions, log_forwarding, node_package, node_resources
 from haprion.cli.caller import usage, without_answer
 from haprion.cluster_status import (
     StatusError,
@@ -206,6 +206,25 @@ def _forward_file_line(status: dict[str, Any]) -> str | None:
     return "BEHIND the release - run haprion-deploy"
 
 
+def _node_package_line(installation: object, carried: object) -> str | None:
+    """The node's haprion-node, read against the one this host's release carries (26-10-29).
+
+    None for a node that reports no version while this host names none: there
+    is nothing to say about it.
+    """
+
+    reported = installation.get("version") if isinstance(installation, dict) else None
+    shown = node_package.short_version(reported) if isinstance(reported, str) else None
+    standing = haproxy_versions.against_carried(installation, carried)
+    if standing is None:
+        if isinstance(installation, dict) and "version" in installation and reported is None:
+            return "not installed"
+        return shown
+    words = "OLDER" if standing[1] < 0 else "NEWER"
+    said = f"{words} than this host's {node_package.short_version(str(carried))}"
+    return f"{shown}  {said}" if shown else said
+
+
 def _waf_engine_line(engine: object, published: object) -> str | None:
     """The node's WAF engine, read against whether the release has rules (review 2026-10-04 F3).
 
@@ -274,6 +293,11 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         note = behind.get(str(node["name"]))
         writer.write(f"  HAProxy ver:  {running}{f'  ({note})' if note else ''}\n")
         writer.write(f"  Version:      {_release_line(node, (target or {}).get('version'))}\n")
+        package = _node_package_line(
+            status.get("installation"), summary.get("node_package_version")
+        )
+        if package is not None:
+            writer.write(f"  Node package: {package}\n")
         addresses = _addresses_line(status)
         if addresses is not None:
             writer.write(f"  Addresses:    {addresses}\n")

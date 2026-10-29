@@ -82,6 +82,11 @@ def _queued(detail: Mapping[str, Any]) -> str:
     if operation == "dynamic_unblock":
         addresses = ", ".join(_list(detail, "addresses")) or "addresses"
         return f"Unblocked {addresses} on {_text(detail, 'object', '?')}{numbered}"
+    if operation == "cert_scep" and detail.get("abandon") is True:
+        return (
+            "Queued the abandon of the NDES request for "
+            f"{_text(detail, 'certificate', 'a certificate')}{numbered}"
+        )
     name = OPERATION_NAMES.get(operation, operation or "a job")
     subject = _text(detail, "certificate") or _text(detail, "object")
     about = f" of {subject}" if subject else ""

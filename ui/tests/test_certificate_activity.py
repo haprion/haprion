@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion_ui import auth, certificate_activity, certificates
+from haprion_ui import audit, auth, certificate_activity, certificates
 from haprion_ui.certificates import CertificateOverview
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import node, overview, registered, registry_of, status, with_registry
@@ -377,6 +377,106 @@ class ResumingAnEnrollment(DeleteRouteTestCase):
             data={
                 "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
                 auth.CSRF_FIELD: token,
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.queued, [])
+
+
+class AbandoningARequest(DeleteRouteTestCase):
+    """B388: a request the CA holds is given up from the list, as `--abandon` does it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.audited: list[dict[str, Any]] = []
+        patch = mock.patch(
+            "haprion_ui.db.record_audit_event",
+            side_effect=lambda _c, **fields: self.audited.append(fields),
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def pending_reading(self) -> Any:
+        pending = registered("wait.example.com", kind="import", clusters=("alpha",), readable=False)
+        pending["request_state"] = "pending"
+        pending["validation_error"] = "no material at its source yet"
+        pending["source"]["ndes_profile"] = "certserver1"
+        return with_registry(certificate_reading(), pending)
+
+    def test_the_bar_offers_it_on_a_pending_row_and_the_confirmation_queues_it(self) -> None:
+        with mock.patch(
+            "haprion_ui.db.cluster_certificates", return_value=[self.pending_reading()]
+        ):
+            client = self.writing_client()
+            page = client.get("/certificates?view=registry").text
+            self.assertIn('formaction="/certificates/abandon" data-pending-submit disabled>', page)
+            self.assertIn(
+                'value="wait.example.com" form="certificate-selection" data-delete-pick data-pending',
+                page,
+            )
+            token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+            review = client.post(
+                "/certificates/abandon",
+                data={"certificate": "wait.example.com", auth.CSRF_FIELD: token},
+            )
+            self.assertEqual(review.status_code, 200)
+            self.assertIn("Abandon request", review.text)
+            self.assertIn('action="/certificates/abandon/confirm"', review.text)
+            self.assertEqual(self.queued, [])
+            response = client.post(
+                "/certificates/abandon/confirm",
+                data={
+                    "certificate": "wait.example.com",
+                    "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    auth.CSRF_FIELD: token,
+                },
+                follow_redirects=False,
+            )
+        self.assertEqual(response.status_code, 303)
+        (job,) = self.queued
+        self.assertEqual(job["operation"], "cert_scep")
+        self.assertEqual(job["payload"], {"id": "wait.example.com", "action": "abandon"})
+        event = next(e for e in self.audited if e["action"] == "queue_job")
+        self.assertEqual(
+            audit.ACTIVITY_PHRASES["queue_job"](event["detail"]),
+            "Queued the abandon of the NDES request for wait.example.com (job 7)",
+        )
+
+    def test_a_row_without_a_waiting_request_is_refused(self) -> None:
+        client = self.writing_client()
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        response = client.post(
+            "/certificates/abandon/confirm",
+            data={
+                "certificate": "old.example.com",
+                "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                auth.CSRF_FIELD: token,
+            },
+        )
+        self.assertIn("has no request waiting at the CA", response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_it_has_the_form_s_gates(self) -> None:
+        reader = self.writing_client(role="reader")
+        token = auth.csrf_token(reader.cookies[auth.SESSION_COOKIE])
+        for path in ("/certificates/abandon", "/certificates/abandon/confirm"):
+            with self.subTest(path=path):
+                response = reader.post(
+                    path,
+                    data={
+                        "certificate": "wait.example.com",
+                        "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                        auth.CSRF_FIELD: token,
+                    },
+                )
+                self.assertEqual(response.status_code, 403)
+        writer = self.writing_client()
+        response = writer.post(
+            "/certificates/abandon/confirm",
+            data={
+                "certificate": "wait.example.com",
+                "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                auth.CSRF_FIELD: "x",
             },
         )
         self.assertEqual(response.status_code, 403)

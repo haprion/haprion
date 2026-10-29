@@ -311,7 +311,11 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
     """
 
     def job(
-        self, cluster: str, operation: str, state: str, payload: dict[str, Any] | None = None
+        self,
+        cluster: str | None,
+        operation: str,
+        state: str,
+        payload: dict[str, Any] | None = None,
     ) -> Job:
         return Job(
             id=1,
@@ -347,6 +351,17 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
                 self.assertEqual(busy, {"alpha": running})
                 failure = jobs.last_failure([self.job("alpha", operation, "failed", payload)])
                 self.assertEqual(failure["alpha"].label, failed)
+
+    def test_an_abandoned_ndes_request_is_named_so_not_an_enrollment(self) -> None:
+        """B388: the abandon runs as cert_scep, and was drawn "Enrolling certificate"."""
+
+        payload = {"id": "web.example.com", "action": "abandon"}
+        running = self.job(None, "cert_scep", "running", payload)
+        self.assertEqual(jobs.certificate_in_flight([running]), "Abandoning request")
+        unknown = self.job(None, "cert_scep", "unknown", payload)
+        self.assertNotIn("issued", jobs.unknown_note(unknown) or "")
+        enrolling = self.job(None, "cert_scep", "running", {"id": "x"})
+        self.assertEqual(jobs.certificate_in_flight([enrolling]), "Enrolling certificate")
 
     def test_without_an_action_the_operation_names_it(self) -> None:
         busy = jobs.in_flight([self.job("alpha", "cluster_node", "running")])

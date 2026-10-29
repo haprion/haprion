@@ -1,0 +1,46 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}Abandon request — Haprion{% endblock %}
+{% block content %}
+{#
+  B388: a request the CA still holds, given up as `haprion-cert-scep --abandon`
+  gives it up - its key and its state go, and the certificate can be asked
+  for again.
+#}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button(back, 'Certificates') }}<h1>Abandon request{% if row %} for {{ row.identifier }}{% endif %}</h1></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if row %}
+<div class="refusal-card deletion-card">
+  <div class="table-scroll"><table class="node-table deletion-table">
+    <thead><tr><th>Certificate</th><th>Source</th><th>Names</th><th>State</th></tr></thead>
+    <tbody><tr class="deletion-row">
+      <td data-label="Certificate"><strong>{{ row.identifier }}</strong></td>
+      <td data-label="Source">{{ row.source_label }}</td>
+      <td data-label="Names">{% if row.sans %}{{ row.sans | join(', ') }}{% else %}—{% endif %}</td>
+      <td data-label="State">{{ row.state_label }}</td>
+    </tr></tbody>
+  </table></div>
+  <ul class="removal-consequences">
+    <li>The key the request was made with is discarded; a certificate the CA issues for it later cannot be used.</li>
+    <li>The certificate can be enrolled again afterwards, with a new key and a new request.</li>
+  </ul>
+  {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before abandoning.</p>{% endif %}
+  <form method="post" action="/certificates/abandon/confirm" class="editor-actions editor-submit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    <input type="hidden" name="certificate" value="{{ row.identifier }}">
+    <div class="form-buttons"><a class="secondary-button" href="{{ back }}">Cancel</a><button class="danger-button" type="submit"{% if certificate_job %} disabled{% endif %}>Abandon request</button></div>
+  </form>
+</div>
+{% else %}
+<div class="refusal-card">
+  <p class="refusal-hint"><a class="secondary-button" href="/certificates?view=registry">Back to the registry</a></p>
+</div>
+{% endif %}
+{% endblock %}

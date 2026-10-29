@@ -909,6 +909,8 @@ def unknown_note(job: Job) -> str | None:
     # Asked of the step that gave no answer: a Publish & deploy whose publish
     # never answered points at Versions, not at the nodes (1B-2).
     #
+    if action_names(job) == ACTION_NAMES[("cert_scep", "abandon")]:
+        return _CERTIFICATE
     return UNKNOWN_NEXT.get(
         ending_step(job), "It may have taken effect. Check what it changes before trying again."
     )
@@ -1235,6 +1237,11 @@ ACTION_NAMES: dict[tuple[str, str], tuple[str, str, str]] = {
         "Removing cluster",
         "Removing the cluster failed",
     ),
+    ("cert_scep", "abandon"): (
+        "Abandon NDES request",
+        "Abandoning request",
+        "Abandoning the request failed",
+    ),
 }
 
 
@@ -1405,7 +1412,7 @@ def certificate_in_flight(jobs: Iterable[Job]) -> str | None:
 
     for job in jobs:
         if job.cluster is None and job.state in {"pending", "running"}:
-            return RUNNING_LABELS.get(job.operation, job.operation)
+            return running_label(job)
     return None
 
 

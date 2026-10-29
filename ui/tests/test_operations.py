@@ -1137,6 +1137,28 @@ class EnrollingOverNdes(unittest.TestCase):
             },
         )
 
+    def test_an_abandon_names_only_the_certificate(self) -> None:
+        """B388: the interface's Abandon request is the command's --abandon."""
+
+        prepared = operations.prepare(
+            operation="cert_scep",
+            cluster=None,
+            request_id=uuid4(),
+            payload={"id": "example.com", "action": "abandon"},
+        )
+        self.assertEqual(
+            json.loads(prepared.request)["parameters"], {"id": "example.com", "abandon": True}
+        )
+        for payload in (
+            {"id": "example.com", "action": "remove"},
+            {"id": "example.com", "action": "abandon", "resume": True},
+            {"id": "example.com", "action": "abandon", "profile": "certserver1"},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="cert_scep", cluster=None, request_id=uuid4(), payload=payload
+                )
+
     def test_a_resume_names_only_the_certificate(self) -> None:
         prepared = operations.prepare(
             operation="cert_scep",

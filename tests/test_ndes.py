@@ -75,6 +75,25 @@ class EnrollmentStaging(unittest.TestCase):
         self.assertIn("-R", calls[1].args[2])
         self.assertNotIn("example-challenge", repr(calls))
 
+    def test_a_resume_that_differs_names_what_changed_and_how_to_give_it_up(self) -> None:
+        """Review 2026-10-29, B06 (B388): "resume must use the original endpoint, trust and DNS names"."""
+
+        with (
+            mock.patch.object(ndes, "command"),
+            mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+        ):
+            self.enroll()
+        self.profile = replace(self.profile, revision=2)
+        (self.root / "ca.pem").write_text("renewed CA material")
+        with self.assertRaises(ndes.NdesError) as caught:
+            self.enroll(resume=True)
+        said = str(caught.exception)
+        self.assertIn("the profile's revision", said)
+        self.assertIn("the NDES server's CA", said)
+        self.assertNotIn("DNS names", said)
+        self.assertIn("haprion-cert-scep --id service.example.com --abandon", said)
+        self.assertIn("Abandon request", said)
+
     def test_the_caller_s_own_failure_is_its_own_not_the_lock_s(self) -> None:
         """Review 2026-10-22, 4-4: a disk-full import was told "NDES state is unavailable"."""
 

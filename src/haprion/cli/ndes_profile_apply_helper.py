@@ -12,7 +12,7 @@ from typing import BinaryIO, TextIO
 
 from haprion import exit_codes, labels, ndes_profiles, ndes_servers
 from haprion.cli import cert_job
-from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_registry
+from haprion.config import DEFAULT_POLICY_PATH, ConfigError, NdesPolicy, load_policy, load_registry
 from haprion.dns_profile_keys import KeyFileError, read_private_key
 from haprion.dns_profiles import ProfileError, check_profile_id, check_revision
 from haprion.envelope import envelope
@@ -23,6 +23,35 @@ HELPER = ndes_profiles.HELPER
 PARAMETERS = frozenset(
     {"profile", "provider", "profile_schema_version", "key_id", "revision", "ciphertext", "remove"}
 )
+
+
+def _in_use(profile_id: str, references: tuple[str, ...]) -> tuple[str, str, int]:
+    """The refusal of a change to a profile that certificates still need as it is."""
+
+    return (
+        "profile_in_use",
+        f"profile {profile_id!r} is referenced by "
+        f"{labels.noun(len(set(references)), 'certificate')}: "
+        + ", ".join(sorted(set(references))),
+        exit_codes.REFUSED,
+    )
+
+
+def _replaces(
+    policy: NdesPolicy, opened: ndes_profiles.OpenedProfile, *, require_secure: bool
+) -> bool:
+    """Whether applying `opened` changes the profile's record: not a retry of the same one."""
+
+    path = ndes_profiles.record_path(policy, opened.profile_id)
+    if not (path.exists() or path.is_symlink()):
+        return False
+    try:
+        return (
+            ndes_profiles.resolve(policy, opened.profile_id, require_secure=require_secure)
+            != opened
+        )
+    except ProfileError:
+        return True
 
 
 def main(
@@ -127,17 +156,26 @@ def main(
                         if entry.source.ndes_profile == opened.profile_id
                     )
                 if references:
-                    return refuse(
-                        "profile_in_use",
-                        f"profile {opened.profile_id!r} is referenced by "
-                        f"{labels.noun(len(set(references)), 'certificate')}: "
-                        + ", ".join(sorted(set(references))),
-                        exit_codes.REFUSED,
-                    )
+                    return refuse(*_in_use(opened.profile_id, references))
                 ndes_profiles.remove_materialized(
                     policy.ndes, opened.profile_id, require_secure=require_secure
                 )
             else:
+                #
+                # A request the CA still holds is bound to the profile as it
+                # was - revision, server, challenge - and a replacement would
+                # leave it nothing to resume with (review 2026-10-29, B06,
+                # decided in B388). A retry of the same revision is no change.
+                #
+                waiting = (
+                    ndes_profiles.pending_requests(
+                        policy.ndes, opened.profile_id, require_secure=require_secure
+                    )
+                    if _replaces(policy.ndes, opened, require_secure=require_secure)
+                    else ()
+                )
+                if waiting:
+                    return refuse(*_in_use(opened.profile_id, waiting))
                 # The server is checked against the policy as it is under the
                 # NDES lock, which a server's removal holds too (review
                 # 2026-10-28, F05): the reading above may already be stale.

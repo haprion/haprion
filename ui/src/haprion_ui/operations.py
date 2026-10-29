@@ -440,10 +440,29 @@ def _certificate_operation(
             "resume",
             "interface",
             "exportable",
+            "action",
         )
         certificate_id = payload.get("id")
         if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
             raise BadPayload("id must be a certificate ID")
+        #
+        # An abandon names the certificate and nothing else, as the terminal
+        # command's --abandon does (B388).
+        #
+        if "action" in payload:
+            if payload["action"] != "abandon":
+                raise BadPayload("action must be abandon")
+            _only(payload, "id", "action")
+            return Prepared(
+                argv=(cert_scep_helper.SUDO, *SUDO_FLAGS, cert_scep_helper.HELPER),
+                request=cert_scep_helper.build_request(
+                    str(request_id),
+                    certificate_id=certificate_id,
+                    profile_id="",
+                    domains=(),
+                    abandon=True,
+                ),
+            )
         resume = _flag(payload, "resume", default=False)
         #
         # A resume names the certificate and nothing else: the request's own

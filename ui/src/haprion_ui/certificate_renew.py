@@ -115,3 +115,24 @@ def payload(renewal: Renewal) -> tuple[str, dict[str, Any]]:
             body["interface"] = True
         return "cert_scep", body
     raise SelectionProblem("This certificate is renewed with a file, not a job.")
+
+
+def waiting_selection(
+    chosen: Sequence[str], registry: Mapping[str, RegistryCertificateView]
+) -> RegistryCertificateView:
+    """The one row whose NDES request the CA still holds, for *Abandon request…* (B388)."""
+
+    names = tuple(dict.fromkeys(name for name in chosen if name))
+    if len(names) != 1:
+        raise SelectionProblem("Select the one certificate whose request to abandon.")
+    row = registry.get(names[0])
+    if (
+        row is None
+        or row.placeholder
+        or not row.ndes_profile
+        or row.state_label not in {"Request pending", "Renewal pending"}
+    ):
+        raise SelectionProblem(f"{names[0]} has no request waiting at the CA.")
+    if row.state_active:
+        raise SelectionProblem(f"{row.identifier} has a job running; wait for its row to settle.")
+    return row

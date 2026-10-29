@@ -89,6 +89,8 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/certificates/{certificate_id}/resume": Command(
         "haprion-cert-scep --resume", "haprion-cert-scep"
     ),
+    "/certificates/abandon": Command("haprion-cert-scep --abandon", "haprion-cert-scep"),
+    "/certificates/abandon/confirm": Command("haprion-cert-scep --abandon", "haprion-cert-scep"),
     "/certificates/{certificate_id}/publish": Command(
         "haprion-cert-publish --certificate", "haprion-cert-publish"
     ),

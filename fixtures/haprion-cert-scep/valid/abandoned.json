@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_scep",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "id": "web-cert",
+    "state": "abandoned"
+  },
+  "warnings": [],
+  "error": null
+}

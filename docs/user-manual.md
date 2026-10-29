@@ -2234,9 +2234,13 @@ the normal import and publish path. Only then is the certificate registered and 
 
 **When a request ends without a certificate.** A request the CA rejects, or one Certmonger never took,
 removes its own state, so the same ID can be requested again. A request that is neither answered nor
-rejected - the approval is not coming, or the process died - is given up with
-`haprion-cert-scep --id <id> --abandon`, which discards the key. Deleting the certificate removes its
-request state too.
+rejected - the approval is not coming, or the process died - is given up with *Abandon request…* in
+the registry's button bar, or `haprion-cert-scep --id <id> --abandon`. Both discard the key. Deleting the
+certificate removes its request state too.
+
+A waiting request is bound to its profile as it was: its revision, its server and that server's CA. A
+profile is therefore not replaced while one of its requests waits; abandon the request first. A resume that
+finds any of them changed names what changed, and is refused.
 
 **Scheduled renewal.** `haprion-certbot-renew.timer` runs `haprion-cert-renew` twice a day. After
 certbot's renewals, it makes an NDES pass. It renews every registered certificate whose source names an

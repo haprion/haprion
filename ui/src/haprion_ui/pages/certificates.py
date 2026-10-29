@@ -1264,6 +1264,128 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/settings", status_code=303)
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
+    # - Abandon request… (B388) -------------------------------------------
+
+    def _certificate_abandon_page(
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        chosen: Sequence[str],
+        problem: str = "",
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        row: certificates.RegistryCertificateView | None = None
+        try:
+            row = certificate_renew.waiting_selection(chosen, _registry_views(request, config))
+        except certificate_renew.SelectionProblem as refused:
+            problem = problem or str(refused)
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-abandon.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "row": row,
+                "back": f"/certificates?view=registry&open={row.identifier}"
+                if row is not None
+                else "/certificates?view=registry",
+                "problem": problem,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+            },
+        )
+
+    @router.post("/certificates/abandon", response_class=HTMLResponse)
+    def certificate_abandon_review(
+        request: Request,
+        certificate: Sequence[str] = Form(default=()),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """The page behind *Abandon request…*: the one row, and what giving it up means."""
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        return _certificate_abandon_page(request, gate, chosen=tuple(certificate))
+
+    @router.post("/certificates/abandon/confirm", response_class=HTMLResponse)
+    def certificate_abandon_confirm(
+        request: Request,
+        certificate: Sequence[str] = Form(default=()),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue `haprion-cert-scep --abandon` for the row, through the worker's helper."""
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        try:
+            row = certificate_renew.waiting_selection(
+                tuple(certificate), _registry_views(request, config)
+            )
+        except certificate_renew.SelectionProblem as refused:
+            return _certificate_abandon_page(
+                request, gate, chosen=tuple(certificate), problem=str(refused)
+            )
+        payload = {"id": row.identifier, "action": "abandon"}
+        try:
+            operations.prepare(
+                operation="cert_scep", cluster=None, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload:
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cert_scep",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return _certificate_abandon_page(
+                    request,
+                    gate,
+                    chosen=tuple(certificate),
+                    problem="A certificate job is already running. Wait for it to finish on "
+                    "the Jobs page, then ask again.",
+                )
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={
+                    "operation": "cert_scep",
+                    "job": job.id,
+                    "certificate": row.identifier,
+                    "abandon": True,
+                },
+            )
+            connection.commit()
+        return RedirectResponse(
+            "/certificates?view=registry&open=" + row.identifier, status_code=303
+        )
+
     # - Publish to… / Remove from… (2026-09-15) ---------------------------
 
     def _certificate_retarget_page(

@@ -9,7 +9,8 @@ root-only profile record by ID, the same way the terminal command does.
 
 What the caller may decide: a certificate ID, a profile ID, the DNS names,
 targets the registry already knows, and whether this is a resume of a request
-the CA is still holding.
+the CA is still holding - or its abandon, which names the certificate alone
+and runs the terminal command's own `--abandon` (B388).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haprion.cli import cert_job
 from haprion.cli.cert_publish import default_deployer
-from haprion.cli.cert_scep import OPERATION, ScepRefusal, enroll
+from haprion.cli.cert_scep import OPERATION, ScepRefusal, abandon, enroll
 from haprion.config import DEFAULT_POLICY_PATH
 from haprion.dns_profiles import ProfileError, check_profile_id
 from haprion.helper_protocol import HelperProtocolError, write_document
@@ -41,6 +42,7 @@ PARAMETERS = frozenset(
         "resume",
         "interface",
         "exportable",
+        "abandon",
     }
 )
 HELPER = "/opt/haprion/current/bin/haprion-cert-scep-helper"
@@ -61,9 +63,21 @@ def build_request(
     formats: Mapping[str, str] | None = None,
     interface: bool = False,
     exportable: bool = False,
+    abandon: bool = False,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
+    if abandon:
+        return json.dumps(
+            {
+                "schema_version": 1,
+                "operation": OPERATION,
+                "cluster": None,
+                "request_id": request_id,
+                "parameters": {"id": certificate_id, "abandon": True},
+            },
+            separators=(",", ":"),
+        )
     parameters: dict[str, Any] = {
         "id": certificate_id,
         "profile": profile_id,
@@ -123,6 +137,28 @@ def main(
         return exc.exit_code
 
     refuse = cert_job.Refuse(OPERATION, request, writer, errors)
+    if "abandon" in request.parameters:
+        try:
+            certificate_id = cert_job.certificate(request.parameters, "id")
+            if request.parameters["abandon"] is not True or set(request.parameters) != {
+                "id",
+                "abandon",
+            }:
+                raise HelperProtocolError(
+                    "parameters.abandon is true, beside the certificate ID alone",
+                    exit_code=exit_codes.REFUSED,
+                )
+            document, exit_code = abandon(
+                certificate_id=certificate_id,
+                request_id=request.request_id,
+                policy_path=policy_path,
+                require_secure=require_secure,
+            )
+        except HelperProtocolError as exc:
+            return refuse("bad_input", str(exc), exit_codes.REFUSED)
+        except ScepRefusal as exc:
+            return refuse(exc.code, str(exc), exc.exit_code)
+        return write_document(writer, document, exit_code)
     try:
         certificate_id = cert_job.certificate(request.parameters, "id")
         resume = request.parameters.get("resume", False)

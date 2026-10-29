@@ -819,6 +819,11 @@ def check_cert_scep_semantics(document: dict[str, object], path: Path) -> None:
             raise AssertionError(f"{path}: a done or pending cert_scep carries a result")
         return
     assert isinstance(result, dict)
+    # An abandoned request is the end of it: done, with nothing to publish (B388).
+    if result["state"] == "abandoned":
+        if document["outcome"] != "done":
+            raise AssertionError(f"{path}: an abandoned request is done")
+        return
     # The wildcard is a SAN beside its base name; the CN is never a wildcard
     # (the engine refuses the request before Certmonger starts).
     if str(result["domains"][0]).startswith("*."):
@@ -1351,7 +1356,10 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
     elif operation == "cert_delete":
         result["removed"] = ["a-certificate-no-row-names"]
     elif operation == "cert_scep":
-        result["domains"] = ["*." + str(result["domains"][0])]
+        if result["state"] == "abandoned":
+            invalid["outcome"] = "failed"
+        else:
+            result["domains"] = ["*." + str(result["domains"][0])]
     elif operation == "backup_run":
         result["nodes"][0]["outcome"] = "failed"
     elif operation == "backup_schedule":

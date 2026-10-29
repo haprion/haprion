@@ -51,6 +51,23 @@ class NdesError(Exception):
         self.discard = discard
 
 
+#
+# What a request waiting at the CA is bound to, as its refused resume says it
+# (review 2026-10-29, B06: "the original endpoint, trust and DNS names" named
+# neither the profile nor what had changed).
+#
+RESUME_FIELDS = {
+    "certificate": "the certificate ID",
+    "profile": "the profile",
+    "revision": "the profile's revision",
+    "key_id": "the profile's key",
+    "endpoint": "the NDES server",
+    "issuing_ca_sha256": "the NDES server's CA",
+    "tls_ca_sha256": "the NDES server's HTTPS CA",
+    "domains": "the DNS names",
+}
+
+
 def names(values: Sequence[str]) -> tuple[str, ...]:
     if not values or len(values) > 32:
         raise NdesError("bad_input", "specify between one and 32 DNS names")
@@ -344,8 +361,23 @@ def _enroll(
         except (ValueError, UnicodeError):
             raise NdesError("bad_input", "NDES request record is unreadable") from None
         if existing != expected:
+            changed = [
+                words
+                for key, words in RESUME_FIELDS.items()
+                if not isinstance(existing, dict) or existing.get(key) != expected[key]
+            ]
             raise NdesError(
-                "bad_input", "resume must use the original endpoint, trust and DNS names"
+                "bad_input",
+                (
+                    ", ".join(changed[:-1]) + " and " + changed[-1]
+                    if len(changed) > 1
+                    else changed[0]
+                    if changed
+                    else "what it is bound to"
+                )
+                + " changed since the request waiting at the CA was made, and it resumes only "
+                "as it was made. Give it up with Abandon request under Certificates, or "
+                f"haprion-cert-scep --id {certificate_id} --abandon",
             )
     elif record.exists():
         raise NdesError(

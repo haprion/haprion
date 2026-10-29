@@ -20,6 +20,7 @@ from haprion.ndes_state import (
     request_targets,
     write_targets,
 )
+from tests.contract_schema import assert_contract
 from tests.test_cert_import import ImportFixture
 
 ENDPOINT = "https://ca.example.com/certsrv/mscep/mscep.dll"
@@ -339,6 +340,8 @@ class HelperBoundary(ScepFixture):
         )
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output.getvalue())["result"]["state"], "abandoned")
+        # Review 2026-10-29: the document was outside the command's own schema.
+        assert_contract("haprion-cert-scep", output.getvalue())
         self.assertFalse(directory.exists())
         code = cert_scep.main(
             ["--id", "web.example.com", "--abandon", "--json"],
@@ -358,6 +361,40 @@ class HelperBoundary(ScepFixture):
             require_root=False,
         )
         self.assertEqual(code, 65)
+
+    def test_the_helper_abandons_as_the_command_does(self) -> None:
+        """B388: the interface's Abandon request runs the command's own abandon, as root."""
+
+        self.pending("web.example.com")
+        directory = request_directory(self.ndes_policy.state_root, "web.example.com")
+        with mock.patch.object(ndes, "enroll") as engine:
+            for parameters in (
+                {"id": "web.example.com", "abandon": "yes"},
+                {"id": "web.example.com", "abandon": True, "resume": True},
+                {"id": "web.example.com", "abandon": True, "profile": "certserver1"},
+            ):
+                with self.subTest(parameters=parameters):
+                    code, doc, _ = self.helper(parameters)
+                    self.assertEqual((code, doc["error"]["code"]), (65, "bad_input"))
+            self.assertTrue(directory.exists())
+            code, doc, errors = self.helper({"id": "web.example.com", "abandon": True})
+        engine.assert_not_called()
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(doc["result"], {"id": "web.example.com", "state": "abandoned"})
+        assert_contract("haprion-cert-scep", json.dumps(doc))
+        self.assertFalse(directory.exists())
+        code, doc, _ = self.helper({"id": "web.example.com", "abandon": True})
+        self.assertEqual((code, doc["error"]["code"]), (65, "bad_input"))
+        request = json.loads(
+            cert_scep_helper.build_request(
+                REQUEST_ID,
+                certificate_id="web.example.com",
+                profile_id="",
+                domains=(),
+                abandon=True,
+            )
+        )
+        self.assertEqual(request["parameters"], {"id": "web.example.com", "abandon": True})
 
     def test_a_resume_names_only_the_certificate_and_takes_the_rest_from_the_record(
         self,

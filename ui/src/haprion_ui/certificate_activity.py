@@ -168,6 +168,8 @@ def _enrollment_state_of(job: Job, now: datetime) -> DeletionState | None:
     placeholder row until the pending request is listed.
     """
 
+    if job.payload.get("action") == "abandon":
+        return _abandon_state_of(job, now)
     placeholder = _scep_placeholder(job.payload)
     if job.state in {"pending", "running"}:
         return DeletionState(
@@ -196,6 +198,22 @@ def _enrollment_state_of(job: Job, now: datetime) -> DeletionState | None:
             placeholder_only=True,
         )
     return _verdict(job, "Enrollment", "The enrollment job failed", placeholder)
+
+
+def _abandon_state_of(job: Job, now: datetime) -> DeletionState | None:
+    """A request being given up, or just given up: until the listing reads it gone (B388)."""
+
+    if job.state in {"pending", "running"}:
+        return DeletionState("Abandoning", "The request is being given up", "info", True)
+    if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
+        return None
+    if job.state == "done":
+        if job.finished_at is not None and now - job.finished_at > FOLLOW_UP:
+            return None
+        return DeletionState(
+            "Abandoned", "Given up; the listing reads it at the next poll", "info", True
+        )
+    return _verdict(job, "Abandon", "The abandon job failed")
 
 
 def _import_state_of(job: Job, now: datetime) -> DeletionState | None:

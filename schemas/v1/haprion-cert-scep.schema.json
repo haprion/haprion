@@ -9,10 +9,10 @@
         "operation": { "const": "cert_scep" },
         "cluster": { "type": "null" },
         "outcome": { "enum": ["done", "partial", "failed", "blocked"] },
-        "result": { "oneOf": [{ "$ref": "#/$defs/scep_result" }, { "type": "null" }] }
+        "result": { "oneOf": [{ "$ref": "#/$defs/scep_result" }, { "$ref": "#/$defs/abandoned_result" }, { "type": "null" }] }
       },
       "allOf": [
-        { "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/issued_result" } } } },
+        { "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "oneOf": [{ "$ref": "#/$defs/issued_result" }, { "$ref": "#/$defs/abandoned_result" }] } } } },
         { "if": { "properties": { "outcome": { "const": "partial" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/pending_result" } } } }
       ]
     }
@@ -20,6 +20,16 @@
   "additionalProperties": true,
   "$defs": {
     "scep_result": { "oneOf": [{ "$ref": "#/$defs/issued_result" }, { "$ref": "#/$defs/pending_result" }] },
+    "abandoned_result": {
+      "description": "A request the CA had not answered, given up with --abandon: its key and its state are gone (B388).",
+      "type": "object",
+      "required": ["id", "state"],
+      "properties": {
+        "id": { "$ref": "haprion-cert-publish.schema.json#/$defs/certificate_id" },
+        "state": { "const": "abandoned" }
+      },
+      "additionalProperties": false
+    },
     "binding": {
       "type": "object",
       "required": ["id", "profile", "domains", "state"],

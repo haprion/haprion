@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import fcntl
 import io
 import json
@@ -349,6 +350,38 @@ class NdesProfileRemoval(NdesProfiles):
             ndes_profiles.pending_requests(self.policy, "internal-ca", require_secure=False),
             ("abc123",),
         )
+
+    def test_a_replacement_is_refused_while_an_enrollment_is_pending(self) -> None:
+        """Review 2026-10-29, B06 (B388): the request it signed could never be resumed again."""
+
+        self._policy_file()
+        self._helper(self._request(remove=False))
+        request_dir = self.policy.state_root / "abc123"
+        request_dir.mkdir(mode=0o700)
+        (request_dir / "request.json").write_text(
+            json.dumps({"certificate": "web-cert", "profile": "internal-ca"})
+        )
+        os.chmod(request_dir / "request.json", 0o600)
+        # A retry of the same revision changes nothing, and stays possible.
+        code, _doc, errors = self._helper(self._request(remove=False))
+        self.assertEqual(code, 0, errors)
+        replaced = json.loads(self._request(remove=False))
+        replaced["parameters"]["revision"] = 3
+        replaced["parameters"]["ciphertext"] = base64.b64encode(
+            ndes_profiles.seal_profile(
+                self.public,
+                profile_id="internal-ca",
+                endpoint=ENDPOINT,
+                challenge="another-challenge",
+                revision=3,
+            )
+        ).decode()
+        code, doc, _ = self._helper(json.dumps(replaced))
+        self.assertEqual(code, 65)
+        self.assertEqual(doc["error"]["code"], "profile_in_use")
+        self.assertIn("web-cert", doc["error"]["message"])
+        opened = ndes_profiles.resolve(self.policy, "internal-ca", require_secure=False)
+        self.assertEqual(opened.revision, 2)
 
     def test_removal_is_refused_while_the_registry_names_the_profile(self) -> None:
         self._policy_file()

@@ -9,6 +9,9 @@ page and each state of it.
 
 from __future__ import annotations
 
+import atexit
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,47 @@ from tests import well_formed
 # default, the policy is now a file no machine has.
 #
 config.load_policy.__defaults__ = (Path("/nonexistent/haprion-test/runtime-policy.yaml"),)
+
+#
+# And a grid rather than a default (review 26-10-29, A09): code that binds the
+# policy's path at import, or names another file under /etc/haprion, went
+# past the default - `compatibility.main` read this machine's policy in a test
+# that passed. Every opening of a path there fails the test that made it, with
+# an error no `except OSError` takes for a missing file; one caught by a
+# broader handler still fails the run, named, when the interpreter exits.
+#
+MACHINE_CONFIGURATION = "/etc/haprion"
+
+
+class MachineConfigurationRead(AssertionError):
+    """A test reached for this machine's configuration."""
+
+
+machine_reads: list[str] = []
+
+
+def _machine_configuration(event: str, args: tuple[Any, ...]) -> None:
+    if event not in ("open", "os.listdir", "os.scandir") or not args:
+        return
+    path = args[0]
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        return
+    name = os.path.normpath(os.fsdecode(path))
+    if name == MACHINE_CONFIGURATION or name.startswith(MACHINE_CONFIGURATION + "/"):
+        machine_reads.append(name)
+        raise MachineConfigurationRead(f"a test read this machine's configuration: {name}")
+
+
+def _report_machine_reads() -> None:
+    if machine_reads:
+        print("tests read this machine's configuration:", file=sys.stderr)
+        for name in sorted(set(machine_reads)):
+            print(f"  {name}", file=sys.stderr)
+        os._exit(1)
+
+
+sys.addaudithook(_machine_configuration)
+atexit.register(_report_machine_reads)
 
 _render = templates.TimedTemplates.TemplateResponse
 

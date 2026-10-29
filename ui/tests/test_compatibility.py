@@ -301,6 +301,8 @@ class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
                         "--database", "haprion",
                         "--database-role", "migrate",
                         "--clusters",
+                        "--runtime-policy", str(root / "runtime-policy.yaml"),
+                        "--collector-config", str(root / "traffic-collector.json"),
                         "--sudoers-root", str(root / "sudoers.d"),
                         "--systemd-root", str(root / "systemd"),
                         "--ui-release", "new",

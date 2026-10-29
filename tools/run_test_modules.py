@@ -3,9 +3,10 @@
 
 The gate's two suites are CPU-bound and were run one test at a time, which on
 a four-core host left three cores idle for five minutes. Each module here is
-started with exactly the command the suite used before plus `-p <module>`, so
+started with the command the suite used before plus `-p <module>`, so
 discovery, imports and the test's working directory are what they were; only
-how many run at once changes.
+how many run at once changes, and `-m unittest` runs as unittest_left_open,
+which fails a module that leaves a file or socket open.
 
 Modules of both suites share one pool, heaviest first: the gate's wall time is
 bounded by its slowest module, so that module must not be the last to start.
@@ -127,6 +128,23 @@ UNTIMED = 900.0
 TIMED_OUT = 124
 
 
+#
+# Each module runs under unittest_left_open in place of `-m unittest`: the same
+# unittest, which then fails the module for any file or socket still open once
+# its tests have ended (review 26-10-29, C02).
+#
+LEFT_OPEN = Path(__file__).resolve().with_name("unittest_left_open.py")
+
+
+def gated(command: tuple[str, ...]) -> list[str]:
+    """The suite's command, with `-m unittest` run as unittest_left_open."""
+
+    for index in range(len(command) - 1):
+        if command[index : index + 2] == ("-m", "unittest"):
+            return [*command[:index], str(LEFT_OPEN), *command[index + 2 :]]
+    raise SystemExit(f"run-test-modules: the command does not run -m unittest: {command}")
+
+
 def budget(previous: float | None, floor: float = FLOOR) -> float:
     return UNTIMED if previous is None else max(floor, FACTOR * previous)
 
@@ -147,7 +165,7 @@ def run(module: Module, limit: float = UNTIMED) -> Outcome:
         # would keep the reading below waiting as the test did.
         #
         process = subprocess.Popen(  # noqa: S603 - the gate's own suite commands
-            [*module.command, "-p", module.name],
+            [*gated(module.command), "-p", module.name],
             cwd=module.directory.parent,
             env={**os.environ, "TMPDIR": str(scratch)},
             stdin=subprocess.DEVNULL,

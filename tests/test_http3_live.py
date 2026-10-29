@@ -136,6 +136,7 @@ class AVipServesHttp3BesideTcp(unittest.TestCase):
             process.wait(timeout=5)
         for server in cls.servers:
             server.shutdown()
+            server.server_close()
         cls.directory.cleanup()
 
     def over_http3(self, host: str) -> tuple[int, str]:

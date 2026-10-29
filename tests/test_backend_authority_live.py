@@ -111,6 +111,7 @@ class APoolIsTrustedThroughTheClustersOwnCa(unittest.TestCase):
             process.terminate()
             process.wait(timeout=5)
         cls.server.shutdown()
+        cls.server.server_close()
         cls.directory.cleanup()
 
     def serving(self, verify: str, ca_file: Path | None) -> int:

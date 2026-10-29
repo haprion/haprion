@@ -94,11 +94,11 @@ class RunTestModulesTests(unittest.TestCase):
 
     def test_a_module_that_leaves_a_temporary_file_fails_and_names_it(self) -> None:
         leaking = (
-            "import tempfile, unittest\n"
+            "import os, tempfile, unittest\n"
             "class T(unittest.TestCase):\n"
             "    def test_leak(self) -> None:\n"
             "        tempfile.mkdtemp(prefix='forgotten-')\n"
-            "        tempfile.mkstemp(prefix='.org.chromium.Chromium.')\n"
+            "        os.close(tempfile.mkstemp(prefix='.org.chromium.Chromium.')[0])\n"
         )
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -124,6 +124,37 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("ResourceWarning: unclosed file", result.stdout)
         self.assertIn("failed: demo/test_open.py", result.stderr)
+
+    def test_a_module_that_keeps_a_file_open_until_it_exits_fails(self) -> None:
+        """Review 26-10-29, C02: what is let go after the run was never warned about."""
+
+        #
+        # With a thread still blocked in accept(), which was measured to keep
+        # Python from saying anything at exit.
+        #
+        keeping = (
+            "import socket, threading, unittest\n"
+            "KEPT = []\n"
+            "class T(unittest.TestCase):\n"
+            "    @classmethod\n"
+            "    def setUpClass(cls) -> None:\n"
+            "        cls.stream = open(__file__)\n"
+            "        cls.listener = socket.socket()\n"
+            "        cls.listener.bind(('127.0.0.1', 0))\n"
+            "        cls.listener.listen(1)\n"
+            "        threading.Thread(target=cls.listener.accept, daemon=True).start()\n"
+            "    def test_kept(self) -> None:\n"
+            "        KEPT.append(open(__file__))\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tests = self.suite(root, {"test_a.py": PASSING, "test_kept.py": keeping})
+            result = self.execute(tests, root / "durations.json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("left open after its tests ran", result.stdout)
+        self.assertEqual(result.stdout.count("tests/test_kept.py\n"), 2, result.stdout)
+        self.assertIn("-> socket:[", result.stdout)
+        self.assertIn("failed: demo/test_kept.py", result.stderr)
 
     def test_every_module_discover_would_find_is_run(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

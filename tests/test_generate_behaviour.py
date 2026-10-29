@@ -467,6 +467,7 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         cls.haproxy.wait(timeout=5)
         for server in cls.servers.values():
             server.shutdown()
+            server.server_close()
         for sock in cls.dead:
             sock.close()
         cls.directory.cleanup()
@@ -779,6 +780,7 @@ class TlsIsServedTheWayTheObjectAsksFor(unittest.TestCase):
         cls.haproxy.terminate()
         cls.haproxy.wait(timeout=5)
         cls.server.shutdown()
+        cls.server.server_close()
         cls.directory.cleanup()
 
     def test_plain_http_is_redirected_and_serves_nothing(self) -> None:
@@ -925,6 +927,7 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
         cls.haproxy.terminate()
         cls.haproxy.wait(timeout=5)
         cls.server.shutdown()
+        cls.server.server_close()
         cls.directory.cleanup()
 
     def headers(
@@ -1016,6 +1019,7 @@ class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
         cls.haproxy.terminate()
         cls.haproxy.wait(timeout=5)
         cls.server.shutdown()
+        cls.server.server_close()
         cls.directory.cleanup()
 
     def status(self) -> int:
@@ -1094,6 +1098,7 @@ class AMonitorsAnsweredRequestsAreNotLogged(unittest.TestCase):
         cls.haproxy.terminate()
         cls.haproxy.wait(timeout=5)
         cls.server.shutdown()
+        cls.server.server_close()
         cls.sink.close()
         cls.directory.cleanup()
 
@@ -1172,6 +1177,7 @@ class HeaderEditsReachTheTraffic(unittest.TestCase):
         cls.haproxy.terminate()
         cls.haproxy.wait(timeout=5)
         cls.server.shutdown()
+        cls.server.server_close()
         cls.directory.cleanup()
 
     def exchange(self, sent: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
@@ -1269,6 +1275,7 @@ class ARawPortIsForwardedAsItArrives(unittest.TestCase):
         cls.haproxy.terminate()
         cls.haproxy.wait(timeout=5)
         cls.server.shutdown()
+        cls.server.server_close()
         cls.directory.cleanup()
 
     def test_the_stream_reaches_the_pool_untouched(self) -> None:
@@ -1477,6 +1484,7 @@ class ReachingAPoolOverTls(unittest.TestCase):
             process.wait(timeout=5)
         for server in cls.servers:
             server.shutdown()
+            server.server_close()
         cls.directory.cleanup()
 
     def reach(self, *, verify: str, expired: bool) -> int:
@@ -1620,6 +1628,7 @@ class CheckingATlsPoolOnAnotherPort(unittest.TestCase):
             process.wait(timeout=5)
         for server in cls.servers:
             server.shutdown()
+            server.server_close()
         cls.directory.cleanup()
 
     def test_the_pool_is_served_because_the_check_speaks_tls_too(self) -> None:
@@ -2469,6 +2478,7 @@ class AdvancedConfigDoesWhatItsPlacementSays(unittest.TestCase):
         cls.haproxy.terminate()
         cls.haproxy.wait(timeout=5)
         cls.server.shutdown()
+        cls.server.server_close()
         cls.directory.cleanup()
 
     def get(self, host: str, path: str) -> tuple[int, str]:
@@ -2674,6 +2684,7 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
         cls.haproxy.wait(timeout=5)
         for server in cls.servers:
             server.shutdown()
+            server.server_close()
         cls.directory.cleanup()
 
     def ask(
@@ -2972,6 +2983,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             cls.engine.wait(timeout=5)
         for server in cls.servers:
             server.shutdown()
+            server.server_close()
         cls.directory.cleanup()
 
     def ask(

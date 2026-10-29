@@ -101,6 +101,7 @@ class ASubdomainStandsForOneLabelAndYieldsToExactNames(unittest.TestCase):
         cls.haproxy.wait(timeout=5)
         for server in cls.servers:
             server.shutdown()
+            server.server_close()
         cls.directory.cleanup()
 
     def get(self, host: str) -> tuple[int, str]:

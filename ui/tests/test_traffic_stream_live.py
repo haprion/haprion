@@ -135,6 +135,7 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
         backend = getattr(cls, "backend", None)
         if backend is not None:
             backend.shutdown()
+            backend.server_close()
         cls.directory.cleanup()
 
     @classmethod

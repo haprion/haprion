@@ -999,9 +999,7 @@ def add(
         if isinstance(exc, ReceiverError) and not left:
             raise
         code, exit_code = (
-            (exc.code, exc.exit_code)
-            if isinstance(exc, ReceiverError)
-            else ("write_failed", exit_codes.IO_ERROR)
+            (exc.code, exc.exit_code) if isinstance(exc, ReceiverError) else _write_refusal(exc)
         )
         message = str(exc)
         if left:
@@ -1014,6 +1012,19 @@ def add(
         ) from exc
 
     return Result(receiver_id, "added", tuple(layers), instructions(receiver, locations))
+
+
+def _write_refusal(exc: OSError | cert_registry.RegistryError) -> tuple[str, int]:
+    """The code and exit code a file or registry error is answered with.
+
+    A registry another run held past the wait is that, and not a write that
+    failed (review 26-10-29, O06). `failed` rather than `blocked`: the
+    receiver's contract has no `blocked`.
+    """
+
+    if isinstance(exc, cert_registry.RegistryError) and exc.code == "operation_locked":
+        return exc.code, exit_codes.FAILED
+    return "write_failed", exit_codes.IO_ERROR
 
 
 def _entry_fields(receiver: Receiver) -> dict[str, Any]:
@@ -1423,10 +1434,11 @@ def remove(
         # rightly, and a second attempt finishes it, but what this one took
         # away is gone and the answer says so (review 26-10-24, 13-08).
         #
+        code, exit_code = _write_refusal(exc)
         raise ReceiverError(
-            "write_failed",
+            code,
             str(exc),
-            exit_code=exit_codes.IO_ERROR,
+            exit_code=exit_code,
             details={"removed": [layer.as_dict() for layer in layers]},
         ) from exc
     return Result(receiver_id, "removed", tuple(layers))

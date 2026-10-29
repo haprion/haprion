@@ -377,6 +377,23 @@ class AddingAReceiver(ReceiverFixture):
         self.assertFalse(self.locations.nginx_snippet.exists())
         self.assertTrue(registry_file.exists())
 
+    def test_a_registry_held_by_another_run_is_said_as_that(self) -> None:
+        """Review 26-10-29, O06: the lock not let go in time was reported as a write that failed."""
+
+        held = cert_registry.RegistryError(
+            "operation_locked", "another run holds the registry", exit_code=exit_codes.BLOCKED
+        )
+        with (
+            mock.patch.object(cert_receiver, "_own"),
+            mock.patch.object(cert_registry, "set_receiver", side_effect=held),
+            self.assertRaises(ReceiverError) as caught,
+        ):
+            self.add(transport="https", public_key=None, owner=None, allow=["192.0.2.0/24"])
+
+        self.assertEqual(caught.exception.code, "operation_locked")
+        self.assertEqual(caught.exception.exit_code, exit_codes.FAILED)
+        self.assertFalse(cert_receiver.secret_file("lb-02.example.net", self.locations).exists())
+
     def test_what_could_not_be_undone_is_named_and_the_rest_is_still_undone(self) -> None:
         """Review 2026-10-22, 4-12: each undo step ran under `suppress(Exception)`."""
 

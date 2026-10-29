@@ -49,10 +49,13 @@
     "fetched": {
       "description": "The CA certificates the server gives with GetCACert, the one that issued its RA certificate first (B383, B385).",
       "type": "object",
-      "required": ["endpoint", "authorities", "confirmed"],
+      "required": ["endpoint", "authorities", "state"],
       "properties": {
         "endpoint": { "$ref": "#/$defs/endpoint" },
-        "confirmed": { "type": "boolean" },
+        "state": {
+          "description": "new: not in the policy; confirmed: the CA certificates saved for it are the ones it gives; changed: it is in the policy with others, and is confirmed again with add (review 2026-10-29, B01).",
+          "enum": ["new", "confirmed", "changed"]
+        },
         "authorities": {
           "type": "array",
           "minItems": 1,

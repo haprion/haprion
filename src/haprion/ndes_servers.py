@@ -192,6 +192,33 @@ def authorities(endpoint: str, *, fetch: Fetch = get_ca_cert) -> tuple[Authority
     return tuple(sorted(found, key=lambda authority: not authority.issues_ra))
 
 
+def saved_fingerprints(path: Path) -> frozenset[str]:
+    """The SHA-256s of the CA certificates saved for a server; none when the file cannot be read."""
+
+    try:
+        text = path.read_text(encoding="ascii")
+    except (OSError, UnicodeError):
+        return frozenset()
+    return frozenset(
+        hashlib.sha256(b64decode("".join(match.group(1).split()))).hexdigest()
+        for match in CERTIFICATE_BLOCK.finditer(text)
+    )
+
+
+def confirmation(found: Sequence[Authority], saved: Path | None) -> str:
+    """`new`, `confirmed` (the saved chain is the one given now) or `changed`.
+
+    Review 2026-10-29, B01: a server in the policy was "confirmed" whatever it
+    gave, so a CA renewed with a new key could not be confirmed again.
+    """
+
+    if saved is None:
+        return "new"
+    if saved_fingerprints(saved) == {authority.sha256 for authority in found}:
+        return "confirmed"
+    return "changed"
+
+
 @contextmanager
 def locked(path: Path | None = None) -> Iterator[None]:
     """Hold the NDES policy lock around a read-modify-write of the `ndes:` block.

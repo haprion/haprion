@@ -3,7 +3,8 @@
 The web asks over `/run/haprion/ndes-server.sock`, one request per connection:
 
     list     the servers the runtime policy names
-    fetch    the CA certificates the server gives (`GetCACert`), to show
+    fetch    the CA certificates the server gives (`GetCACert`), to show, and
+             whether they are the ones saved for it (`new`, `confirmed`, `changed`)
     add      write the server into the runtime policy, if it still gives exactly
              the CA certificates with the given SHA-256s
     remove   take it out, unless a profile on this manager uses it
@@ -78,10 +79,13 @@ def perform(
     if action == "fetch":
         found = ndes_servers.authorities(endpoint, fetch=fetch)
         policy = load_policy(policy_path).ndes
+        server = policy.server(endpoint) if policy is not None else None
         return {
             "endpoint": endpoint,
             "authorities": [authority.summary() for authority in found],
-            "confirmed": policy is not None and policy.server(endpoint) is not None,
+            "state": ndes_servers.confirmation(
+                found, server.issuing_ca if server is not None else None
+            ),
         }
     if action == "add":
         return ndes_servers.add(

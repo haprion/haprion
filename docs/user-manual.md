@@ -5887,6 +5887,11 @@ A profile enrolls with one of the NDES servers the manager has confirmed. Add a 
 3. Choose *Confirm this CA*, or *Confirm these CAs* when there are several. The manager asks the server again
    and adds it only if it still gives exactly these certificates. All of them are saved for the server.
 
+When the CA is renewed with a new key, or the saved CA certificate expires, certificates from the server no
+longer chain to what was saved, and an issue or renewal fails with "issued certificate does not chain to the CA
+confirmed for the NDES server". Add the server again with the same address: the page says it is confirmed with
+other CA certificates, and confirming the new ones replaces them. Its profiles stay.
+
 The HTTPS certificate of the NDES server must be trusted by the manager's system store. A server signed by an
 internal CA needs that CA in the store, as any other internal HTTPS service does (`update-ca-certificates`).
 
@@ -5899,8 +5904,8 @@ sudo haprion-ndes-server add https://ndes.example.com/certsrv/mscep/mscep.dll --
 sudo haprion-ndes-server remove https://ndes.example.com/certsrv/mscep/mscep.dll
 ```
 
-`add` without `--sha256` shows the CA certificates and changes nothing. To confirm, give one `--sha256` for each
-certificate shown.
+`add` without `--sha256` shows the CA certificates and changes nothing, and says whether the server is
+confirmed with these or with other CA certificates. To confirm, give one `--sha256` for each certificate shown.
 
 ##### Manager configuration and packaging
 

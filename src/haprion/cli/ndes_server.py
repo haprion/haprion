@@ -67,9 +67,11 @@ def _text(action: str, result: dict[str, Any], out: TextIO) -> None:
                 f"  SHA-256  {authority['sha256']}\n"
                 f"  SHA-1    {authority['sha1']}  (the thumbprint Windows shows)\n"
             )
-        if result["confirmed"]:
+        if result["state"] == "confirmed":
             out.write("This server is confirmed already.\n")
         else:
+            if result["state"] == "changed":
+                out.write("This server is confirmed with other CA certificates.\n")
             confirm = " ".join(f"--sha256 {a['sha256']}" for a in result["authorities"])
             out.write(
                 "Nothing was changed. Compare with the CA, then confirm every certificate shown:\n"

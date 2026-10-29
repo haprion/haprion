@@ -510,6 +510,7 @@ def build_router(config: Config) -> APIRouter:
         *,
         endpoint: str = "",
         authorities: Sequence[dict[str, object]] = (),
+        changed: bool = False,
         problem: str = "",
     ) -> Response:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -522,6 +523,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "endpoint": endpoint,
                 "authorities": authorities,
+                "changed": changed,
                 "problem": problem,
                 "section": "certificates",
                 "management_writes": config.management_writes,
@@ -554,10 +556,19 @@ def build_router(config: Config) -> APIRouter:
             fetched = ndes_server_socket.ask("fetch", endpoint=endpoint)
         except NdesServerError as exc:
             return _ndes_server_page(request, gate, endpoint=endpoint, problem=str(exc))
-        if fetched.get("confirmed") is True:
+        #
+        # A server confirmed with other CA certificates is confirmed again the
+        # way it was added: its CA renewed, the saved one no longer issues
+        # (review 2026-10-29, B01).
+        #
+        if fetched.get("state") == "confirmed":
             return RedirectResponse("/ndes-profiles", status_code=303)
         return _ndes_server_page(
-            request, gate, endpoint=endpoint, authorities=fetched.get("authorities") or []
+            request,
+            gate,
+            endpoint=endpoint,
+            authorities=fetched.get("authorities") or [],
+            changed=fetched.get("state") == "changed",
         )
 
     @router.post("/ndes-profiles/servers/confirm")

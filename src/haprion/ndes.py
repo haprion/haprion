@@ -621,23 +621,30 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w") as handle:
             handle.write(content)
-    arguments = [
-        "/usr/bin/openssl",
-        "verify",
-        "-purpose",
-        "sslserver",
-        "-CAfile",
-        str(directory / "issuing-ca.pem"),
-    ]
+    arguments = ["/usr/bin/openssl", "verify", "-CAfile", str(directory / "issuing-ca.pem")]
     if material.chain:
         arguments.extend(["-untrusted", str(chain)])
     arguments.append(str(leaf))
     try:
+        #
+        # The chain first, then the purpose: a CA renewed with a new key, or
+        # a saved one that has expired, fails only the first, and is fixed
+        # where the server was confirmed (review 2026-10-29, B01).
+        #
         verified = subprocess.run(arguments, capture_output=True, timeout=15, check=False)  # noqa: S603 - protected staging, fixed verification grammar
         if verified.returncode:
             raise NdesError(
                 "untrusted_certificate",
-                "issued certificate chain or server purpose is invalid",
+                "issued certificate does not chain to the CA confirmed for the NDES server; "
+                "if the CA was renewed, confirm the server's new CA under NDES profiles",
+                exit_code=exit_codes.FAILED,
+            )
+        purpose = [*arguments[:2], "-purpose", "sslserver", *arguments[2:]]
+        verified = subprocess.run(purpose, capture_output=True, timeout=15, check=False)  # noqa: S603 - protected staging, fixed verification grammar
+        if verified.returncode:
+            raise NdesError(
+                "untrusted_certificate",
+                "issued certificate chain is not valid for a server",
                 exit_code=exit_codes.FAILED,
             )
 

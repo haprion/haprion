@@ -37,7 +37,7 @@
   <input type="hidden" name="endpoint" value="{{ endpoint }}">
   {% for authority in authorities %}<input type="hidden" name="sha256" value="{{ authority.sha256 }}">{% endfor %}
   <section class="cluster-card">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ 'The CA certificates the server gives' if authorities | length > 1 else 'The CA the server gives' }}</h3><p>Compare with the CA's {{ 'certificates' if authorities | length > 1 else 'certificate' }} before you confirm.</p></div></div></header>
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ 'The CA certificates the server gives' if authorities | length > 1 else 'The CA the server gives' }}</h3><p>{% if changed %}This server is confirmed with other CA certificates. {% endif %}Compare with the CA's {{ 'certificates' if authorities | length > 1 else 'certificate' }} before you confirm.</p></div></div></header>
     {% for authority in authorities %}
     <div class="registry-detail-grid ndes-authority">
       <div class="registry-detail-wide"><strong>Certificate</strong><span>{{ authority.subject }}{% if authority.issues_ra %} · issues for NDES{% endif %}</span></div>

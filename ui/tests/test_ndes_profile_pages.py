@@ -41,6 +41,7 @@ class NdesRoutes(ProfileRouteTestCase):
         # The root helper behind /run/haprion/ndes-server.sock, as the web asks it.
         #
         self.servers = [ENDPOINT]
+        self.states: dict[str, str] = {}
         self.asked: list[tuple[str, dict[str, Any]]] = []
         self.authorities: list[dict[str, Any]] = [
             {
@@ -64,13 +65,17 @@ class NdesRoutes(ProfileRouteTestCase):
             if action == "fetch":
                 return {
                     "endpoint": endpoint,
-                    "confirmed": endpoint in self.servers,
+                    "state": self.states.get(
+                        endpoint, "confirmed" if endpoint in self.servers else "new"
+                    ),
                     "authorities": self.authorities,
                 }
             if action == "add":
                 if sorted(parameters["sha256"]) != sorted(a["sha256"] for a in self.authorities):
                     raise NdesServerError("changed", f"{endpoint} no longer gives that CA")
-                self.servers.append(endpoint)
+                if endpoint not in self.servers:
+                    self.servers.append(endpoint)
+                self.states.pop(endpoint, None)
                 return {
                     "endpoint": endpoint,
                     "issuing_ca": "/etc/haprion/ndes-ca/1.pem",
@@ -225,6 +230,41 @@ class TheNdesServers(NdesRoutes):
         self.assertIn(other, self.servers)
         self.assertEqual(self.audited[-1]["action"], "ndes_server_added")
         self.assertIn(other, client.get("/ndes-profiles/new").text)
+
+    def test_a_confirmed_server_is_not_shown_again(self) -> None:
+        client = self.writing_client()
+        csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        response = client.post(
+            "/ndes-profiles/servers/new",
+            data={"csrf_token": csrf, "endpoint": ENDPOINT},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+
+    def test_a_server_whose_ca_changed_is_confirmed_again(self) -> None:
+        """Review 2026-10-29, B01: a server in the policy went back to the list, whatever its CA."""
+
+        self.states[ENDPOINT] = "changed"
+        self.rows = [profile_row(id="internal-ca", provider_id="ndes", endpoint=ENDPOINT)]
+        client = self.writing_client()
+        csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        shown = client.post(
+            "/ndes-profiles/servers/new", data={"csrf_token": csrf, "endpoint": ENDPOINT}
+        )
+        self.assertEqual(shown.status_code, 200)
+        self.assertIn("confirmed with other CA certificates", shown.text)
+        self.assertIn("a" * 64, shown.text)
+        self.assertIn("Confirm this CA", shown.text)
+
+        confirmed = client.post(
+            "/ndes-profiles/servers/confirm",
+            data={"csrf_token": csrf, "endpoint": ENDPOINT, "sha256": "a" * 64},
+            follow_redirects=False,
+        )
+        self.assertEqual(confirmed.status_code, 303)
+        self.assertEqual(self.asked[-1], ("add", {"endpoint": ENDPOINT, "sha256": ["a" * 64]}))
+        self.assertEqual(self.audited[-1]["action"], "ndes_server_added")
+        self.assertEqual(self.servers, [ENDPOINT])
 
     def test_a_ca_that_changed_is_said_and_nothing_is_added(self) -> None:
         other = "https://ca2.example.com/certsrv/mscep/mscep.dll"

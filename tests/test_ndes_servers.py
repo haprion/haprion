@@ -314,10 +314,6 @@ class ThePolicy(unittest.TestCase):
         self.assertEqual(sorted(self.servers()), sorted([ENDPOINT, OTHER]))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheHelperAndTheCommand(unittest.TestCase):
     """The web's socket and the operator's command: one module, one contract (CLI parity)."""
 
@@ -365,13 +361,46 @@ class TheHelperAndTheCommand(unittest.TestCase):
     def test_fetch_shows_the_cas_and_add_confirms_one(self) -> None:
         code, fetched = self.ask(action="fetch", endpoint=ENDPOINT)
         self.assertEqual(code, 0)
-        self.assertFalse(fetched["result"]["confirmed"])
+        self.assertEqual(fetched["result"]["state"], "new")
         self.assertEqual(fetched["result"]["authorities"][0]["sha256"], self.issuing)
 
         code, added = self.ask(action="add", endpoint=ENDPOINT, sha256=self.chain)
         self.assertEqual((code, added["outcome"]), (0, "done"))
         _code, again = self.ask(action="fetch", endpoint=ENDPOINT)
-        self.assertTrue(again["result"]["confirmed"])
+        self.assertEqual(again["result"]["state"], "confirmed")
+
+    def renewed(self) -> list[str]:
+        """The server's CA renewed with a new key: another chain at the same address."""
+
+        (self.root / "renewed").mkdir()
+        self.answer = Answer(self.root / "renewed")
+        return [
+            self.answer.sha256(self.answer.pki.intermediate),
+            self.answer.sha256(self.answer.pki.root),
+        ]
+
+    def test_a_confirmed_server_whose_ca_changed_is_confirmed_again(self) -> None:
+        """Review 2026-10-29, B01: the fetch said "confirmed" for any chain, so none could replace it."""
+
+        self.assertEqual(self.ask(action="fetch", endpoint=ENDPOINT)[1]["result"]["state"], "new")
+        self.ask(action="add", endpoint=ENDPOINT, sha256=self.chain)
+        records = self.root / "ndes-profiles"
+        records.mkdir()
+        (records / "internal-ca.json").write_text(
+            json.dumps({"profile_id": "internal-ca", "endpoint": ENDPOINT})
+        )
+        chain = self.renewed()
+
+        _code, fetched = self.ask(action="fetch", endpoint=ENDPOINT)
+        self.assertEqual(fetched["result"]["state"], "changed")
+        self.assertEqual(fetched["result"]["authorities"][0]["sha256"], chain[0])
+        code, added = self.ask(action="add", endpoint=ENDPOINT, sha256=chain)
+        self.assertEqual((code, added["result"]["sha256"]), (0, chain))
+        saved = Path(added["result"]["issuing_ca"]).read_text()
+        self.assertIn(self.answer.pki.intermediate.read_text(), saved)
+        self.assertEqual(
+            self.ask(action="fetch", endpoint=ENDPOINT)[1]["result"]["state"], "confirmed"
+        )
 
     def test_a_changed_ca_and_a_bad_action_are_refused_by_the_contract(self) -> None:
         code, refused = self.ask(action="add", endpoint=ENDPOINT, sha256=["0" * 64])
@@ -418,6 +447,21 @@ class TheHelperAndTheCommand(unittest.TestCase):
         self.assertEqual(code, 0, said)
         self.assertIn("No NDES server", self.command("list")[1])
 
+    def test_the_command_offers_to_confirm_a_changed_ca_again(self) -> None:
+        confirm = [arg for each in self.chain for arg in ("--sha256", each)]
+        self.assertEqual(self.command("add", ENDPOINT, *confirm)[0], 0)
+        self.assertIn("confirmed already", self.command("add", ENDPOINT, root=False)[1])
+        chain = self.renewed()
+
+        code, said = self.command("add", ENDPOINT, root=False)
+        self.assertEqual(code, 0)
+        self.assertNotIn("confirmed already", said)
+        self.assertIn("confirmed with other CA certificates", said)
+        renewed = " ".join(f"--sha256 {each}" for each in chain)
+        self.assertIn(f"add {ENDPOINT} {renewed}", said)
+        self.assertEqual(self.command("add", ENDPOINT, *renewed.split())[0], 0)
+        self.assertIn("confirmed already", self.command("add", ENDPOINT, root=False)[1])
+
     def test_the_command_answers_in_the_helper_s_contract(self) -> None:
         code, said = self.command("add", ENDPOINT, "--json", root=False)
         self.assertEqual(code, 0)
@@ -426,3 +470,7 @@ class TheHelperAndTheCommand(unittest.TestCase):
         code, said = self.command("remove", ENDPOINT, "--json", root=False)
         self.assertEqual(code, exit_codes.NOT_ROOT)
         self.assertEqual(assert_contract("haprion-ndes-server", said)["error"]["code"], "not_root")
+
+
+if __name__ == "__main__":
+    unittest.main()

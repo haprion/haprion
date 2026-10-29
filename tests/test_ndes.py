@@ -316,6 +316,19 @@ class IssuedCertificate(unittest.TestCase):
         with self.assertRaisesRegex(ndes.NdesError, "chain"):
             ndes.validate_certificate(self.material, DOMAINS, self.root)
 
+    def test_a_certificate_from_a_ca_other_than_the_one_confirmed_points_to_the_server(
+        self,
+    ) -> None:
+        """Review 2026-10-29, B01: a renewed CA failed every renewal as "chain or server purpose"."""
+
+        other = Pki(self.root / "renewed", names=("other.example.com",))
+        (self.root / "issuing-ca.pem").write_text(other.root.read_text())
+        with self.assertRaises(ndes.NdesError) as caught:
+            ndes.validate_certificate(self.material, DOMAINS, self.root)
+        self.assertEqual(caught.exception.code, "untrusted_certificate")
+        self.assertIn("confirm the server's new CA under NDES profiles", str(caught.exception))
+        self.assertNotIn("purpose", str(caught.exception))
+
     def test_leaf_without_basic_constraints_passes_as_ad_cs_issues_it(self) -> None:
         # The first live NDES issuance (2026-09-15) came back without the
         # extension and was refused as "not an end-entity certificate".

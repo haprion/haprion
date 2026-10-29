@@ -308,7 +308,13 @@ where_it_stands() {
             echo "${previous_id} could not be restored, and ${running} is not proved."
             echo "The platform files of ${previous_id} are kept in ${kept}; the next run goes on from them."
         elif [[ "$running" != "$previous_id" && "$running" != "$release_id" ]]; then
-            echo "${running} is not proved; the next update goes on from ${previous_id}, the release last proved."
+            #
+            # Whatever stopped this run, the way on from the release that runs:
+            # a release whose migration the one last proved cannot run on is
+            # refused on every run until then (review 26-10-29, AAA02).
+            #
+            echo "${running} is not proved; the next update goes on from ${previous_id}, the release last proved." \
+                 "To keep ${running} instead, and go on from it, remove ${marker}."
         fi
         if [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]]; then
             echo "Correct what the lines above name, then: sudo dpkg --configure -a"

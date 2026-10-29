@@ -504,7 +504,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
             activation,
         )
 
-    def where_it_stands(self, *, dpkg: bool) -> str:
+    def where_it_stands(self, *, dpkg: bool, previous: str = "0.99.1-aaaa") -> str:
         start = self.update.index("where_it_stands() {")
         body = self.update[start : self.update.index("\n}\n", start) + 3]
         with tempfile.TemporaryDirectory() as raw:
@@ -521,6 +521,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
                     "/bin/bash",
                     "-c",
                     f'root="$1"; current="$1/current"; release_id=0.99.2-bbbb; schema_now=0100; '
+                    f'previous_id={previous}; marker="$1/platform-update/update"; '
                     f'admin_value() {{ echo "$root/dumps"; }}; {body}where_it_stands',
                     "-",
                     raw,
@@ -549,6 +550,25 @@ class CoordinatedUpdateTests(unittest.TestCase):
         )
         self.assertIn("then: sudo dpkg --configure -a", said)
         self.assertIn("then run the update again", self.where_it_stands(dpkg=False))
+
+    def test_an_unproved_release_left_running_is_said_with_the_way_to_keep_it(self) -> None:
+        """Review 26-10-29, AAA02: a release the one last proved cannot run on was refused
+        on every run, and nothing said how to go on from the unproved one instead."""
+
+        for dpkg, then in (
+            (True, "then: sudo dpkg --configure -a"),
+            (False, "then run the update again."),
+        ):
+            with self.subTest(dpkg=dpkg):
+                said = self.where_it_stands(dpkg=dpkg, previous="0.99.0-cccc")
+                self.assertIn(
+                    "0.99.1-aaaa is not proved; the next update goes on from 0.99.0-cccc, the "
+                    "release last proved. To keep 0.99.1-aaaa instead, and go on from it, remove "
+                    "<root>/platform-update/update.\n",
+                    said,
+                )
+                self.assertTrue(said.endswith(f"Correct what the lines above name, {then}\n"))
+        self.assertNotIn("To keep", self.where_it_stands(dpkg=True))
 
     def test_a_failed_nginx_reload_does_not_end_the_update_unproved(self) -> None:
         self.assertIn("if systemctl reload nginx; then", self.update)

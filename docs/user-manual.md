@@ -4462,7 +4462,9 @@ release is still running, with the files it ran with. Correct what the output na
 again with `sudo dpkg --configure -a`. If the previous release could not be put back either, the output
 says so: the new release runs, not yet proved. Every later update, of that release or a newer one, goes
 on from the release last proved, and goes back to it if it fails after its switch. Until then the update
-keeps what it goes back to in `/var/lib/haprion-ui/platform-update`.
+keeps what it goes back to in `/var/lib/haprion-ui/platform-update`. A release whose migration the
+release last proved cannot run on is refused for that reason. To keep the unproved release instead, and
+go on from it, remove `/var/lib/haprion-ui/platform-update/update`, then run `sudo dpkg --configure -a`.
 
 A newer certbot that fails its trial renewal is not made current. The update says so, the previous
 certbot keeps renewing, and the update goes on.

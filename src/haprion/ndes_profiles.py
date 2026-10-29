@@ -27,7 +27,7 @@ from haprion.dns_profile_keys import (
     seal,
 )
 from haprion.dns_profiles import ProfileError, check_profile_id, check_revision
-from haprion.ndes_state import request_entries
+from haprion.ndes_state import request_entries, waits_at_ca
 
 OPERATION = "ndes_profile_apply"
 HELPER = "/opt/haprion/current/bin/haprion-ndes-profile-apply-helper"
@@ -269,16 +269,21 @@ def pending_requests(
     A request directory under the state root holds the key of a request the
     CA has not answered yet, and its record names the profile whose challenge
     signed it. Removing that profile would strand the request: a resume would
-    have no challenge to open. A request directory without a readable record
-    is counted too - what cannot be read cannot be shown to be finished. What
-    is not named as a request directory is not one (`ndes_state.request_entries`).
+    have no challenge to open. Which directories are waiting is the listing's
+    rule too (`ndes_state.request_entries`, `ndes_state.waits_at_ca`); a
+    waiting request whose record cannot be read is counted - what cannot be
+    read cannot be shown to be another profile's.
     """
 
     check_profile_id(profile_id)
     secure_directory(policy.state_root, require_secure=require_secure)
     bound: list[str] = []
     for entry in request_entries(policy.state_root):
-        if entry.is_symlink() or not entry.is_dir():
+        try:
+            if not waits_at_ca(entry):
+                continue
+        except OSError:
+            bound.append(entry.name)
             continue
         try:
             record = json.loads(secure_read(entry / "request.json", require_secure=require_secure))

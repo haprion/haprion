@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import stat
@@ -46,21 +47,36 @@ def request_entries(state_root: Path) -> list[Path]:
     return sorted(entry for entry in state_root.iterdir() if REQUEST_NAME.fullmatch(entry.name))
 
 
-def request_is_pending(state_root: Path, certificate_id: str) -> bool:
-    """Whether a request for this ID is still waiting on the CA.
+def waits_at_ca(directory: Path) -> bool:
+    """Whether a request directory is one the CA still holds: its record, and no certificate.
 
-    The directory outlives a successful enrollment by nothing - it is removed
-    once the material is imported - so its record, without material beside
-    it, is exactly a request in flight. Read as root by the listing helper;
-    anything unreadable is not pending, because "pending" is a claim.
+    The one rule for every reader that asks - the listing, the profile's
+    removal and replacement, the pass. A directory with the certificate
+    beside its record is a request the CA has answered (an import that
+    failed after the issue leaves one), and one without a record is no
+    request at all; the profile counted both as waiting while the listing
+    showed neither, and its refusal pointed at a button the row did not
+    have (review 2026-10-29, round 2, BBB03). A record that is there but
+    cannot be read is still a record: what it binds is each reader's to
+    say. Raises OSError when the directory cannot be looked at.
     """
 
-    directory = request_directory(state_root, certificate_id)
-    record = directory / "request.json"
+    if directory.is_symlink() or not directory.is_dir():
+        return False
+    return os.path.lexists(directory / "request.json") and not os.path.lexists(
+        directory / "cert.pem"
+    )
+
+
+def request_is_pending(state_root: Path, certificate_id: str) -> bool:
+    """Whether a request for this ID is still waiting on the CA (`waits_at_ca`).
+
+    Read as root by the listing helper; a directory that cannot be looked at
+    is not pending, because "pending" is a claim.
+    """
+
     try:
-        if directory.is_symlink() or not record.is_file():
-            return False
-        return not (directory / "cert.pem").exists()
+        return waits_at_ca(request_directory(state_root, certificate_id))
     except OSError:
         return False
 
@@ -211,7 +227,7 @@ def pending_requests(state_root: Path) -> tuple[PendingRequest, ...]:
         return ()
     for entry in entries:
         try:
-            if entry.is_symlink() or not entry.is_dir() or (entry / "cert.pem").exists():
+            if not waits_at_ca(entry):
                 continue
         except OSError:
             continue

@@ -433,19 +433,58 @@ class NdesProfileRemoval(NdesProfiles):
         self.assertEqual(
             len(list(ndes_state.records_directory(self.policy.state_root).iterdir())), 2
         )
-        # A request directory that cannot be read still holds the profile.
+        # A request whose record cannot be read still holds the profile.
         broken = ndes_state.request_directory(self.policy.state_root, "web-cert")
         broken.mkdir(mode=0o700)
+        (broken / "request.json").write_text("{broken")
         removal = json.loads(self._replacement())
         removal["parameters"]["remove"] = True
         code, doc, _ = self._helper(json.dumps(removal))
         self.assertEqual(code, 65)
         self.assertEqual(doc["error"]["code"], "profile_in_use")
         self.assertNotIn("renewals", doc["error"]["message"])
+        (broken / "request.json").unlink()
         broken.rmdir()
         code, doc, errors = self._helper(json.dumps(removal))
         self.assertEqual(code, 0, (doc, errors))
         self.assertFalse(ndes_profiles.record_path(self.policy, "internal-ca").exists())
+
+    def test_a_request_the_ca_has_answered_holds_nothing(self) -> None:
+        """Review 2026-10-29, round 2, BBB03: the profile and the listing asked two questions.
+
+        A directory with its certificate beside the record is a request the
+        CA has answered - an import that failed after the issue leaves one -
+        and one with no record is no request. The listing shows neither as
+        waiting, so neither may hold the profile behind a refusal that
+        points at a button the row does not have.
+        """
+
+        self._policy_file()
+        self._helper(self._request(remove=False))
+        answered = ndes_state.request_directory(self.policy.state_root, "web-cert")
+        answered.mkdir(mode=0o700)
+        (answered / "request.json").write_text(
+            json.dumps({"certificate": "web-cert", "profile": "internal-ca"})
+        )
+        (answered / "cert.pem").write_text("issued, the import failed after it")
+        ndes_state.request_directory(self.policy.state_root, "api-cert").mkdir(mode=0o700)
+        for certificate in ("web-cert", "api-cert"):
+            self.assertFalse(
+                ndes_state.request_is_pending(self.policy.state_root, certificate), certificate
+            )
+        self.assertEqual(ndes_state.pending_requests(self.policy.state_root), ())
+        self.assertEqual(
+            ndes_profiles.pending_requests(self.policy, "internal-ca", require_secure=False), ()
+        )
+        code, doc, errors = self._helper(self._replacement())
+        self.assertEqual(code, 0, (doc, errors))
+        # Without its certificate the same directory is a request again, for every reader.
+        (answered / "cert.pem").unlink()
+        self.assertTrue(ndes_state.request_is_pending(self.policy.state_root, "web-cert"))
+        self.assertEqual(
+            ndes_profiles.pending_requests(self.policy, "internal-ca", require_secure=False),
+            ("web-cert",),
+        )
 
     def test_removal_is_refused_while_the_registry_names_the_profile(self) -> None:
         self._policy_file()

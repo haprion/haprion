@@ -102,6 +102,10 @@ export HAPRION_UI_TEST_POLLER_ROLE=hm_test_poller
 export HAPRION_UI_TEST_COLLECTOR_ROLE=hm_test_collector
 
 (cd "${root}/ui" && "${python_bin%/python}/alembic" upgrade head)
-(cd "${root}/ui" && "$python_bin" -m unittest -v tests.test_database_integration)
+#
+# Through the gate's runner, as every other test module: a file, socket or
+# connection left open, or a reach under /etc/haprion, fails it here too.
+#
+(cd "${root}/ui" && "$python_bin" "${root}/tools/unittest_left_open.py" -v tests.test_database_integration)
 
 echo "database integration: OK (disposable cluster removed)"

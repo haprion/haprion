@@ -27,10 +27,11 @@ from tests import well_formed
 config.load_policy.__defaults__ = (Path("/nonexistent/haprion-test/runtime-policy.yaml"),)
 
 #
-# And a grid rather than a default (review 26-10-29, A09): every opening of a
-# path under /etc/haprion fails the module that made it. It is in the gate's
-# runner, `tools/unittest_left_open.py`, which the engine's suite passes
-# through too.
+# And a grid rather than a default (review 26-10-29, A09): a reach for a path
+# under /etc/haprion fails the module that made it. It is in the gate's
+# runner, `tools/unittest_left_open.py`, which every run of either suite in the
+# gate goes through - the pool, the database tests, the run without HAProxy -
+# and a targeted run names; a plain `python -m unittest` has none of it.
 #
 
 _render = templates.TimedTemplates.TemplateResponse

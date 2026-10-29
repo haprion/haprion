@@ -25,10 +25,21 @@ The repository has complementary gates. No single scanner replaces the others.
    gate that passes because it could not import what it was meant to check is not a gate. Both need
    `HAPRION_UI_PYTHON` and fail closed without it. The engine's and the interface's test modules
    run through one pool, one module per process (`tools/run_test_modules.py`), heaviest first by
-   the previous run's timings. A module fails when it leaves a file behind in its temporary
-   directory, a file or socket open once its tests have ended, or a reach for anything under
-   `/etc/haprion`, the configuration of the machine the suite happens to run on (`tools/unittest_left_open.py`).
-   The engine's modules run under coverage, combined before the report.
+   the previous run's timings. The pool fails a module that leaves a file behind in its temporary
+   directory. Every run of a suite's tests - the pool, the run again without HAProxy, the database
+   tests, and a targeted `python tools/unittest_left_open.py tests.<module>` - goes through
+   `tools/unittest_left_open.py`, which fails the run for:
+   - a ResourceWarning, said while the tests ran, at import, or when the garbage collector closes
+     something held in a reference cycle after them;
+   - a file, socket or other descriptor still open once its tests and fixtures have ended, beyond
+     those the process was started with;
+   - a reach for a path under `/etc/haprion`, the configuration of the machine the suite happens to
+     run on: an opening, a listing, a stat, an existence or access check, a link read, or a change
+     to a path there, made from Python in the test's own process.
+
+   It does not see a child that starts a program - a script, a shell command, another Python - an
+   opening made from C (such as `ssl`'s `load_verify_locations`), or what a child keeps open. A plain `python -m unittest`
+   has none of these checks. The engine's modules run under coverage, combined before the report.
    `run-checks` then runs the interface's migrations and database tests against a disposable
    PostgreSQL cluster (`ui/tools/test-database`, below), and fails without PostgreSQL installed.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,

@@ -345,5 +345,27 @@ class TargetedRunTests(unittest.TestCase):
         self.assertIn("something the run opened was left to the garbage collector", result.stderr)
 
 
+class EveryRunGoesThroughTheGateTests(unittest.TestCase):
+    """Review 26-10-29, CC02: the database tests and the run without HAProxy bypassed it."""
+
+    SCRIPTS = ("run-tests", "ui/run-tests", "ui/tools/test-database")
+
+    def test_no_script_runs_plain_unittest(self) -> None:
+        for name in self.SCRIPTS:
+            for number, line in enumerate((BASE / name).read_text().splitlines(), 1):
+                with self.subTest(script=name, line=number):
+                    if "-m unittest" in line:
+                        # A pool suite's command, which the runner rewrites (gated()).
+                        self.assertIn("--suite", line)
+
+    def test_each_script_names_the_gate(self) -> None:
+        for name in self.SCRIPTS:
+            with self.subTest(script=name):
+                text = (BASE / name).read_text()
+                self.assertTrue(
+                    "tools/unittest_left_open.py" in text or "tools/run_test_modules.py" in text
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

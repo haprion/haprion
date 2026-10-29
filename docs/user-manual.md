@@ -209,6 +209,7 @@ One word per thing, the same on every page:
 | Unknown version | a node on a version past the published one, which this manager has no record of - as after the manager was restored from older state. A deploy puts the published, older version on it; `haprion-status` says *AHEAD* | the dashboard, *Needs attention* |
 | Older package | a node whose packages are older than another node's | the dashboard's *Runtime* cell |
 | Older node package | a node whose `haprion-node` is older than the one the manager's release carries | the dashboard's *Runtime* cell, *Needs attention* |
+| Newer node package | a node whose `haprion-node` is newer than the one the manager's release carries | the dashboard's *Runtime* cell, *Needs attention* |
 | Node package not configured | a node whose `haprion-node` install script failed; `sudo dpkg --configure -a` on the node finishes it | the dashboard's *Runtime* cell, *Needs attention* |
 | Reconfigured · deploy to activate | a published change to a proxy the nodes do not serve yet | *Proxies*, *Network* |
 | Waiting for deploy | how far a proxy's newest version has come | the proxy's page |
@@ -3725,8 +3726,8 @@ box is not shown.
 - **A node to prepare again**, as a warning, when its node package brings a changed preparation step:
   run `sudo haprion-node-prepare` on it ([Installing and changing node scripts](#installing-and-changing-node-scripts)).
 - **A node on another node package than the manager's**, as a warning: its `haprion-node` is older than
-  the one the manager's release carries, or newer. It is a node an upgrade has not reached yet;
-  `apt upgrade` on the node clears it.
+  the one the manager's release carries, or newer. Older: an upgrade has not reached the node yet, and
+  `apt upgrade` on it clears it. Newer: the manager has not been updated yet, or its CLI was rolled back.
 - **A node package not configured**, as a warning: its install script failed on the node.
   `sudo dpkg --configure -a` there finishes it, and `haprion-status` says the same.
 - **Objects whose servers are not up**, as their lamp on *Proxies* says it. Critical when no node reaches

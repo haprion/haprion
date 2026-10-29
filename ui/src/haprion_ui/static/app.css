@@ -2112,8 +2112,10 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * belongs to, and clipped. The values reserve nine digits - a month at 385
  * requests a second, two orders of magnitude above what this pair serves - and
  * anything past that is shortened rather than allowed to widen the column.
+ * It shrinks only on a card narrower than that, alone on its line: at 390 it
+ * stood 34px out of the card (26-10-29).
  */
-.traffic-readings { display: flex; flex: 0 0 380px; min-width: 0; flex-direction: column; }
+.traffic-readings { display: flex; flex: 0 1 380px; min-width: 0; flex-direction: column; }
 .traffic-figures { display: grid; grid-template-columns: repeat(3, minmax(56px, auto)); gap: 12px 20px; margin: 0; flex: 0 0 auto; }
 /*
  * B95 on the figures: a value that rewrites itself gets a box wide enough for

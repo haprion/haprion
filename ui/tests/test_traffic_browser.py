@@ -361,3 +361,24 @@ class WhatAHoverAnswers(TheChartInABrowser):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OnAPhone(TheChartInABrowser):
+    def test_the_readings_fit_the_card_at_390(self) -> None:
+        """Rig 26-10-29: the readings kept 380px and stood 34px out of the card."""
+
+        with self.signed_in() as page:
+            page.set_viewport_size({"width": 390, "height": 800})
+            page.reload()
+            page.wait_for_selector(".traffic-readings")
+            sticking_out = page.evaluate(
+                """() => Array.from(document.querySelectorAll('.traffic-readings'), (r) => {
+                    const card = r.closest('.traffic-card').getBoundingClientRect();
+                    return r.getBoundingClientRect().right - card.right;
+                })"""
+            )
+            self.assertTrue(sticking_out)
+            self.assertLessEqual(max(sticking_out), 0)
+            self.assertLessEqual(
+                page.evaluate("document.documentElement.scrollWidth"), 390, "no sideways scroll"
+            )

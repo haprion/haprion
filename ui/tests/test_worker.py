@@ -783,15 +783,37 @@ class ASocketHelperThatOutlivesItsClient(WorkerTestCase):
             payload={"action": "add", "block": "block", "host": "node-c.example.com"},
         )
 
+    def asked(self, during: answer_receipt.State) -> None:
+        """No receipt before the run, as for a request asked now; `during` after it.
+
+        Answered alike both times, the receipt ended the job before the run on
+        R02's reading, and these tests never reached the branch they are for
+        (review 26-10-29, B4).
+        """
+
+        self.receipts.reset_mock()
+        self.receipts.side_effect = [
+            answer_receipt.Receipt("absent"),
+            answer_receipt.Receipt(during),
+        ]
+
     def test_a_client_that_gave_up_leaves_the_job_to_the_answer_kept(self) -> None:
-        for ending in (self.SILENT, completed(ending="timeout", exit_code=None)):
+        endings = (
+            self.SILENT,
+            completed(ending="timeout", exit_code=None),
+            # Stopped by the worker part-way through a line: still to come.
+            completed(ending="timeout", exit_code=None, stdout='{"schema_version"'),
+        )
+        for ending in endings:
             for state in ("running", "answered"):
-                with self.subTest(ending=ending.ending, receipt=state):
+                with self.subTest(ending=ending.ending, stdout=ending.stdout, receipt=state):
                     self.finished.clear()
-                    self.receipts.return_value = answer_receipt.Receipt(state)
-                    with mock.patch.object(execution, "run", return_value=ending):
+                    self.asked(state)
+                    with mock.patch.object(execution, "run", return_value=ending) as run:
                         worker.run_one_job(self.connection, self.add(), worker=WORKER)
 
+                    run.assert_called_once()
+                    self.assertEqual(self.receipts.call_count, 2)
                     self.assertEqual(self.finished, [])
 
     def test_every_socket_operation_is_left_the_same_way(self) -> None:
@@ -814,14 +836,16 @@ class ASocketHelperThatOutlivesItsClient(WorkerTestCase):
 
     def test_with_no_answer_to_wait_for_it_is_unknown_now(self) -> None:
         for state in ("unavailable", "absent", "silent"):
-            with self.subTest(receipt=state):
-                self.finished.clear()
-                self.receipts.return_value = answer_receipt.Receipt(state)
-                with mock.patch.object(execution, "run", return_value=self.SILENT):
-                    worker.run_one_job(self.connection, self.add(), worker=WORKER)
+            for ending in (self.SILENT, completed(ending="timeout", exit_code=None)):
+                with self.subTest(receipt=state, ending=ending.ending):
+                    self.finished.clear()
+                    self.asked(state)
+                    with mock.patch.object(execution, "run", return_value=ending) as run:
+                        worker.run_one_job(self.connection, self.add(), worker=WORKER)
 
-                (finished,) = self.finished
-                self.assertEqual(finished["state"], "unknown")
+                    run.assert_called_once()
+                    (finished,) = self.finished
+                    self.assertEqual(finished["state"], "unknown")
 
     def test_a_helper_run_through_sudo_is_not_waited_for(self) -> None:
         self.receipts.return_value = answer_receipt.Receipt("running")

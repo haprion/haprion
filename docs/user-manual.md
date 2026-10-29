@@ -2952,9 +2952,9 @@ and ends the sessions (`after-restore`), starts what it stopped, and replays the
 If the restore itself fails, the services stay stopped and the command says so.
 
 `after-restore` holds every waiting or running job in the same way, and ends every session: the
-restored sessions include ones that were signed out or revoked since. Run on its own, with the worker
-stopped, it does the same for a database restored some other way. Both actions are in the audit
-record. After a host restore, end the sessions yourself: *Settings → Users*, the account,
+restored sessions include ones that were signed out or revoked since. Run on its own, it does the same
+for a database restored some other way, and refuses while the worker runs: stop the worker first. Both
+actions are in the audit record. After a host restore, end the sessions yourself: *Settings → Users*, the account,
 **End sessions**.
 
 Apart from the hold, the worker never runs a job that has waited more than two hours unless an admin

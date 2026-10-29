@@ -397,5 +397,35 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         self.assertIn('restore)        take_lock; do_restore "$1" ;;', source)
 
 
+class HoldingAfterARestore(unittest.TestCase):
+    """Review 26-10-29, C05: `after-restore` held a job a running worker went on with."""
+
+    def after_restore(self, *, active: bool) -> subprocess.CompletedProcess[str]:
+        source = SCRIPT.read_text()
+        program = (
+            "set -Eeuo pipefail\n"
+            'log() { echo "$*"; }\n'
+            'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f"systemctl() {{ [[ $1 == is-active ]] && {'true' if active else 'false'}; }}\n"
+            "psql_as() { cat >/dev/null; printf '[7]\\n2\\n'; }\n"
+            "DB_NAME=haprion\n" + function("do_after_restore", source) + "do_after_restore\n"
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program], capture_output=True, text=True, check=False
+        )
+
+    def test_it_refuses_while_the_worker_runs_and_holds_nothing(self) -> None:
+        done = self.after_restore(active=True)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("haprion-worker.service is running; stop it first", done.stderr)
+        self.assertNotIn("held for an admin", done.stdout)
+
+    def test_with_the_worker_stopped_it_holds_and_ends_the_sessions(self) -> None:
+        done = self.after_restore(active=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("held for an admin on Jobs: [7]", done.stdout)
+        self.assertIn("sessions ended: 2", done.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

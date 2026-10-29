@@ -360,8 +360,16 @@ do_verify_restore() {
 # backup's, and ran then; an answer given before is cleared (0085) - and every session is ended: the restored ones
 # include sessions signed out since. Both are written to the audit record.
 #
+# Refused while the worker runs (review 26-10-29, C05): a job it is running
+# would be held as well, and an admin's Discard is read when a job is taken,
+# not while it runs - so the job would go on with what follows it. `restore`
+# has stopped the worker before it gets here.
+#
 do_after_restore() {
     local answer
+    if systemctl is-active --quiet haprion-worker.service; then
+        die "haprion-worker.service is running; stop it first: sudo systemctl stop haprion-worker.service"
+    fi
     answer="$(psql_as -d "$DB_NAME" <<'SQL'
 begin;
 with held as (

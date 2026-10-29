@@ -659,22 +659,31 @@ def check_cluster_nodes(
             report.pass_(subject, f"node API {api}, script digests current")
         status = entry.get("status") if isinstance(entry, dict) else None
         installation = status.get("installation") if isinstance(status, dict) else None
-        standing = haproxy_versions.against_carried(installation, carried_version)
-        if standing is not None and carried_version is not None:
-            installed, order = standing
+        standing = haproxy_versions.node_package_standing(installation, carried_version)
+        if standing is not None:
+            installed = standing.installed
             shown = (
                 f"haprion-node {node_package.short_version(installed)}"
                 if installed
                 else "haprion-node"
             )
-            carried = node_package.short_version(carried_version)
-            report.warn(
-                subject,
-                f"{shown}, newer than the CLI release's {carried}"
-                if order > 0
-                else f"{shown}, older than the CLI release's {carried} - install it on the node",
-            )
-        if expected_scripts:
+            carried = node_package.short_version(str(carried_version))
+            if standing.kind == "not configured":
+                said = (
+                    f"{shown} is installed but not configured - "
+                    f"{haproxy_versions.CONFIGURE_ON_THE_NODE}"
+                )
+            elif standing.kind == "newer":
+                said = f"{shown}, newer than the CLI release's {carried}"
+            else:
+                said = f"{shown}, older than the CLI release's {carried} - install it on the node"
+            report.warn(subject, said)
+        #
+        # The scripts, when the package is the release's: a package of another
+        # version, or one not configured, has its own scripts, and the line
+        # above already says what to do (review 26-10-29, AA03).
+        #
+        if expected_scripts and standing is None:
             behind = _scripts_behind(entry, expected_scripts)
             if behind:
                 report.warn(

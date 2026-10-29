@@ -1066,6 +1066,103 @@ class FrozenSchemaTests(unittest.TestCase):
             )
         self.assertNotIn("WARN", printed.getvalue())
 
+    def test_a_node_package_dpkg_did_not_configure_is_said_as_the_dashboard_says_it(
+        self,
+    ) -> None:
+        """Review 26-10-29, AA03: the right version, not configured, passed here unsaid."""
+
+        carried = "0.99.6+git20261029120000.0123abcd4567"
+        node = {
+            "name": "node-a",
+            "status": {
+                "installation": {
+                    "node_api": 1,
+                    "scripts_current": True,
+                    "scripts": {"haprion-node-status": {"installed_sha256": "b" * 64}},
+                    "version": carried,
+                    "configured": False,
+                }
+            },
+        }
+        report = compatibility.Report()
+        answer = json.dumps({"result": {"nodes": [node]}})
+        with (
+            mock.patch.object(
+                compatibility, "_command", return_value=SimpleNamespace(stdout=answer)
+            ),
+            contextlib.redirect_stdout(io.StringIO()) as printed,
+        ):
+            compatibility.check_cluster_nodes(
+                report,
+                cluster="alpha",
+                helper=Path("/x"),
+                required_api=1,
+                expected_scripts={"haprion-node-status": "a" * 64},
+                carried_version=carried,
+            )
+        self.assertEqual(report.failures, 0)
+        warnings = [line for line in printed.getvalue().splitlines() if "WARN" in line]
+        # One line a node: the scripts of a package not configured are its own to differ.
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn(
+            "haprion-node 0.99.6 (0123abcd) is installed but not configured - run sudo dpkg "
+            "--configure -a on the node",
+            warnings[0],
+        )
+
+    def test_the_dashboard_the_status_and_the_check_read_a_node_package_alike(self) -> None:
+        """AA03: one reading, `node_package_standing`, said in each one's words."""
+
+        from haprion.cli.status import _node_package_line
+
+        from haprion_ui.dashboard import node_package_words
+
+        carried = "0.99.6+git20261029120000.0123abcd4567"
+        older = "0.99.5+git20261028210223.49d2aeb20207"
+        newer = "0.99.7+git20261101090000.89abcdef0123"
+        for installation, kind in (
+            ({"version": carried, "configured": False}, "not configured"),
+            ({"version": older, "configured": False}, "not configured"),
+            ({"version": older}, "older"),
+            ({"version": newer, "configured": True}, "newer"),
+            ({"version": carried, "configured": True}, None),
+        ):
+            with self.subTest(installation=installation):
+                words = node_package_words(installation, carried)
+                line = _node_package_line(installation, carried) or ""
+                report = compatibility.Report()
+                node = {"name": "node-a", "status": {"installation": {
+                    "node_api": 1, "scripts_current": True, **installation,
+                }}}  # fmt: skip
+                with (
+                    mock.patch.object(
+                        compatibility,
+                        "_command",
+                        return_value=SimpleNamespace(
+                            stdout=json.dumps({"result": {"nodes": [node]}})
+                        ),
+                    ),
+                    contextlib.redirect_stdout(io.StringIO()) as printed,
+                ):
+                    compatibility.check_cluster_nodes(
+                        report,
+                        cluster="alpha",
+                        helper=Path("/x"),
+                        required_api=1,
+                        carried_version=carried,
+                    )
+                checked = [line for line in printed.getvalue().splitlines() if "WARN" in line]
+                if kind is None:
+                    self.assertIsNone(words)
+                    self.assertNotIn("  ", line)
+                    self.assertEqual(checked, [])
+                    continue
+                self.assertIsNotNone(words)
+                self.assertIn(kind, (words or ("", ""))[0].lower())
+                self.assertIn(kind.upper(), line)
+                self.assertEqual(len(checked), 1)
+                self.assertIn(kind, checked[0])
+
     def nodes_checked(self, *entries: dict[str, object]) -> tuple[int, str]:
         report = compatibility.Report()
         answer = json.dumps({"result": {"nodes": list(entries)}})

@@ -7,7 +7,14 @@ import shutil
 import subprocess
 import unittest
 
-from haprion.haproxy_versions import against_carried, compare, notes, package_notes, upstream
+from haprion.haproxy_versions import (
+    against_carried,
+    compare,
+    node_package_standing,
+    notes,
+    package_notes,
+    upstream,
+)
 
 
 class TheUpstreamPart(unittest.TestCase):
@@ -144,10 +151,6 @@ class ThePackageNotes(unittest.TestCase):
         self.assertEqual(said, {"b": "HAProxy package older than 3.4.6-1ppa2~resolute"})
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ANodeAgainstTheCarriedPackage(unittest.TestCase):
     CARRIED = "0.99.6+git20261029120000.0123456789ab"
 
@@ -168,3 +171,55 @@ class ANodeAgainstTheCarriedPackage(unittest.TestCase):
         self.assertIsNone(against_carried({"version": self.CARRIED}, None))
         self.assertIsNone(against_carried(None, None))
         self.assertIsNone(against_carried({"version": None}, self.CARRIED))
+
+
+class HowANodePackageStands(unittest.TestCase):
+    """Review 26-10-29, AA03: one reading for the dashboard, `haprion-status` and the check.
+
+    Each read `configured` its own way, and the check not at all: a package
+    dpkg did not configure, at the right version, passed it unsaid.
+    """
+
+    CARRIED = "0.99.6+git20261029120000.0123456789ab"
+
+    def test_a_package_dpkg_did_not_configure_comes_before_its_version(self) -> None:
+        older = "0.99.5+git20261028210223.49d2aeb20207"
+        for version in (self.CARRIED, older):
+            with self.subTest(version=version):
+                standing = node_package_standing(
+                    {"version": version, "configured": False}, self.CARRIED
+                )
+                self.assertIsNotNone(standing)
+                if standing is not None:
+                    self.assertEqual(
+                        (standing.kind, standing.installed), ("not configured", version)
+                    )
+        self.assertEqual(
+            node_package_standing({"version": self.CARRIED, "configured": False}, None),
+            node_package_standing({"version": self.CARRIED, "configured": False}, self.CARRIED),
+        )
+
+    def test_otherwise_it_is_the_order_against_the_carried_package(self) -> None:
+        older = "0.99.5+git20261028210223.49d2aeb20207"
+        newer = "0.99.10+git20261101090000.89abcdef0123"
+        for installation, expected in (
+            ({"version": older, "configured": True}, ("older", older)),
+            ({"version": newer}, ("newer", newer)),
+            ({"node_api": 1}, ("older", None)),
+        ):
+            with self.subTest(installation=installation):
+                standing = node_package_standing(installation, self.CARRIED)
+                self.assertEqual(
+                    (standing.kind, standing.installed) if standing else None, expected
+                )
+        unsaid: tuple[dict[str, object], ...] = (
+            {"version": self.CARRIED},
+            {"version": None, "configured": False},
+        )
+        for same in unsaid:
+            with self.subTest(installation=same):
+                self.assertIsNone(node_package_standing(same, self.CARRIED))
+
+
+if __name__ == "__main__":
+    unittest.main()

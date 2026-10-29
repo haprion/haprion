@@ -313,22 +313,18 @@ def node_package_words(installation: object, carried: object) -> tuple[str, str]
     nodes should run (26-10-29). None when they match or nothing can be said.
     """
 
-    version = installation.get("version") if isinstance(installation, dict) else None
-    if (
-        isinstance(installation, dict)
-        and isinstance(version, str)
-        and installation.get("configured") is False
-    ):
-        return (
-            "Node package not configured",
-            f"haprion-node {node_package.short_version(version)} is installed but not configured",
-        )
-    standing = haproxy_versions.against_carried(installation, carried)
+    standing = haproxy_versions.node_package_standing(installation, carried)
     if standing is None:
         return None
-    installed, order = standing
+    installed = standing.installed
+    if standing.kind == "not configured":
+        return (
+            "Node package not configured",
+            f"haprion-node {node_package.short_version(str(installed))} is installed but not "
+            "configured",
+        )
     manager = node_package.short_version(str(carried))
-    if order > 0:
+    if standing.kind == "newer":
         return (
             "Newer node package",
             f"haprion-node {node_package.short_version(str(installed))} is installed,"

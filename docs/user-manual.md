@@ -3739,7 +3739,7 @@ box is not shown.
   the one the manager's release carries, or newer. Older: an upgrade has not reached the node yet, and
   `apt upgrade` on it clears it. Newer: the manager has not been updated yet, or its CLI was rolled back.
 - **A node package not configured**, as a warning: its install script failed on the node.
-  `sudo dpkg --configure -a` there finishes it, and `haprion-status` says the same.
+  `sudo dpkg --configure -a` there finishes it. `haprion-status` and `check-compatibility` say the same.
 - **Objects whose servers are not up**, as their lamp on *Proxies* says it. Critical when no node reaches
   any of them; a warning when some are down, or down on one node only. An object without a health check
   has no lamp and is not listed.

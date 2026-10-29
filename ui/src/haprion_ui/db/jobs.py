@@ -797,7 +797,13 @@ def adopt_expired(
 
 
 def abandon_expired(
-    connection: Connection[Any], *, job_id: int, attempts: int, code: str, message: str
+    connection: Connection[Any],
+    *,
+    job_id: int,
+    attempts: int,
+    code: str,
+    message: str,
+    answer: dict[str, Any] | None = None,
 ) -> bool:
     """End one abandoned job as `unknown`, atomically.
 
@@ -808,8 +814,14 @@ def abandon_expired(
 
     Guarded exactly as `requeue_expired` is, and for the same reason: the
     adjudication read the row a moment ago, and only a row that has not moved
-    since may be written.
+    since may be written. A helper's `answer` that was kept, when there is one,
+    is stored beside the error, as the worker keeps an answer it could not
+    record as done (`exit_mismatch`).
     """
+
+    result: dict[str, Any] = {"error": {"code": code, "message": message}}
+    if answer is not None:
+        result["answer"] = answer
 
     with connection.cursor() as cursor:
         cursor.execute(
@@ -829,7 +841,7 @@ def abandon_expired(
             {
                 "job_id": job_id,
                 "attempts": attempts,
-                "result": Jsonb({"error": {"code": code, "message": message}}),
+                "result": Jsonb(result),
             },
         )
         return cursor.fetchone() is not None

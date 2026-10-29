@@ -8,6 +8,7 @@ is never "did the update run" but "was this decision allowed to be made".
 from __future__ import annotations
 
 import ast
+import json
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -212,6 +213,10 @@ class Adjudicating(unittest.TestCase):
         patch = mock.patch("haprion_ui.db.record_audit_event", side_effect=audit)
         patch.start()
         self.addCleanup(patch.stop)
+        # Not the machine's receipts.
+        receipts = mock.patch.object(answer_receipt, "read", return_value=recovery.NO_RECEIPT)
+        receipts.start()
+        self.addCleanup(receipts.stop)
 
     def test_a_requeue_is_written_with_the_attempt_count_it_was_judged_on(self) -> None:
         """The guard against a worker claiming the row between the reading and
@@ -282,10 +287,6 @@ class Adjudicating(unittest.TestCase):
         cached.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AHelperThatOutlivedItsWorker(unittest.TestCase):
     """The helpers behind sockets keep a receipt of their answer (B367)."""
 
@@ -305,14 +306,62 @@ class AHelperThatOutlivedItsWorker(unittest.TestCase):
 
         self.assertEqual((judgement.verdict, judgement.code), ("adopt", "answer_kept"))
 
-    def test_a_job_adopted_once_too_often_is_given_up(self) -> None:
+    def test_a_job_adopted_once_too_often_is_given_up_and_says_its_helper_answered(
+        self,
+    ) -> None:
+        """Review 26-10-29, R03: it said "answered neither time" of a helper that answered."""
+
         answered = answer_receipt.Receipt("answered", stdout="{}", exit_code=0)
 
         judgement = recovery.judge(
             abandoned("cluster_node", attempts=recovery.MAX_ATTEMPTS + 1), None, answered
         )
 
-        self.assertEqual((judgement.verdict, judgement.code), ("abandon", "attempts_exhausted"))
+        self.assertEqual((judgement.verdict, judgement.code), ("abandon", "follow_up_exhausted"))
+        self.assertEqual(
+            judgement.reason,
+            "its helper answered, and the job was handed to a worker 3 times without its end"
+            " being written; what follows the answer is not run again",
+        )
+
+    def test_the_answer_of_a_job_given_up_is_kept_beside_why(self) -> None:
+        job = abandoned("cluster_node", attempts=recovery.MAX_ATTEMPTS + 1)
+        envelope = {
+            "schema_version": 1,
+            "ok": True,
+            "outcome": "done",
+            "operation": "cluster_node",
+            "cluster": "alpha",
+            "request_id": str(REQUEST),
+            "result": {"action": "added"},
+            "warnings": [],
+            "error": None,
+        }
+        connection = mock.MagicMock()
+        for stdout, kept in ((json.dumps(envelope), envelope), ("not an answer", None)):
+            receipt = answer_receipt.Receipt("answered", stdout=stdout, exit_code=0)
+            with (
+                self.subTest(kept=kept is not None),
+                mock.patch.object(db, "expired_leases", return_value=[job]),
+                mock.patch.object(db, "abandon_expired", return_value=True) as abandon,
+                mock.patch.object(db, "record_audit_event"),
+            ):
+                recovery.adjudicate(
+                    connection,
+                    worker=WORKER,
+                    resume=mock.Mock(),
+                    receipts=mock.Mock(return_value=receipt),
+                )
+
+            self.assertEqual(abandon.call_args.kwargs["code"], "follow_up_exhausted")
+            self.assertEqual(abandon.call_args.kwargs["answer"], kept)
+
+    def test_an_answer_is_adopted_only_for_a_helper_that_keeps_one(self) -> None:
+        answered = answer_receipt.Receipt("answered", stdout="{}", exit_code=0)
+
+        self.assertEqual(
+            recovery.judge(abandoned("deploy"), None, answered).code, "operation_repeatable"
+        )
 
     def test_a_helper_that_ended_without_an_answer_is_unknown(self) -> None:
         judgement = recovery.judge(abandoned("backup_run"), None, answer_receipt.Receipt("silent"))
@@ -483,3 +532,7 @@ class AdoptingAJob(unittest.TestCase):
         self.assertEqual(moved, 0)
         adopt.assert_not_called()
         self.assertEqual(self.audited, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

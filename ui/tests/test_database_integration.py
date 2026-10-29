@@ -254,6 +254,38 @@ class ARealDatabase(unittest.TestCase):
             {run: "run", discard: "discard"},
         )
 
+    def test_a_job_given_up_keeps_its_helper_s_answer_beside_why(self) -> None:
+        """Review 26-10-29, R03: the answer a helper kept was thrown away."""
+
+        job = self.running("cluster_node", "-1 minute")
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
+            attempts = worker.execute("select attempts from job where id = %s", (job,)).fetchone()
+            self.assertTrue(
+                db.abandon_expired(
+                    worker,
+                    job_id=job,
+                    attempts=int(attempts[0]) if attempts else -1,
+                    code="follow_up_exhausted",
+                    message="its helper answered",
+                    answer={"outcome": "done"},
+                )
+            )
+            worker.commit()
+        with self.connect() as connection:
+            row = connection.execute(
+                "select state, result from job where id = %s", (job,)
+            ).fetchone()
+        self.assertEqual(
+            row,
+            (
+                "unknown",
+                {
+                    "error": {"code": "follow_up_exhausted", "message": "its helper answered"},
+                    "answer": {"outcome": "done"},
+                },
+            ),
+        )
+
     def test_an_adoption_waits_while_a_release_has_paused_claims(self) -> None:
         """Review 2026-10-28, F03: the pause stopped a claim and not an adoption."""
 

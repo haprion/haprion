@@ -4058,7 +4058,8 @@ helper works, and then ends on the helper's own answer, with what follows it in 
 change's deploy runs then. A helper that ended without an answer leaves the job `unknown`, and so does
 one a reboot ended mid-work. An answer is kept two weeks from its helper's end. A held job whose answer
 is gone by then ends `unknown` with the code `answer_absent`: when nobody answered in time, or after the
-host was restored from an image older than that.
+host was restored from an image older than that. A job whose helper answered, but whose deploy after it
+was stopped twice, ends `unknown` with the code `follow_up_exhausted` and the helper's answer kept with it.
 
 **Jobs from before a restart or a restore.** A manager restored from an image or a backup comes up holding
 the jobs that were waiting when the backup was taken - and those ran back then. Running them again could,

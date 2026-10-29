@@ -62,7 +62,7 @@ from typing import Any, Literal
 
 from haprion import answer_receipt
 
-from haprion_ui import db
+from haprion_ui import answers, db, diagnostics
 
 logger = logging.getLogger("haprion_ui.recovery")
 
@@ -169,11 +169,23 @@ def judge(
             "helper_running",
             "its helper is still running; the job ends on the answer it keeps",
         )
-    if receipt.state == "answered" and job.attempts <= MAX_ATTEMPTS:
+    if receipt.state == "answered" and job.operation in KEEPS_ANSWER:
+        if job.attempts <= MAX_ATTEMPTS:
+            return Judgement(
+                "adopt",
+                "answer_kept",
+                "its helper ended after the worker stopped and kept its answer; the job ends on it",
+            )
+        #
+        # Adopted twice, and what follows the answer - a node change's deploy -
+        # stopped each time. The helper did answer, and its answer is kept
+        # with the job; it said "answered neither time" (review 26-10-29, R03).
+        #
         return Judgement(
-            "adopt",
-            "answer_kept",
-            "its helper ended after the worker stopped and kept its answer; the job ends on it",
+            "abandon",
+            "follow_up_exhausted",
+            f"its helper answered, and the job was handed to a worker {job.attempts} times"
+            " without its end being written; what follows the answer is not run again",
         )
 
     if job.attempts >= MAX_ATTEMPTS:
@@ -288,6 +300,25 @@ def judge(
     )
 
 
+def _kept_answer(job: db.AbandonedJob, receipt: answer_receipt.Receipt) -> dict[str, Any] | None:
+    """The helper's answer a job given up on keeps beside why, when it is this job's envelope.
+
+    Any outcome the contract has: kept as evidence for a person, and judged
+    by nobody - the job is `unknown` either way.
+    """
+
+    if receipt.state != "answered":
+        return None
+    envelope = answers.accepted(
+        receipt.stdout,
+        operation=job.operation,
+        cluster=job.cluster,
+        request_id=str(job.request_id),
+        outcomes=frozenset({"done", "partial", "failed", "blocked"}),
+    )
+    return diagnostics.redact_result(envelope) if envelope is not None else None
+
+
 type Resume = Callable[[db.ClaimedJob, answer_receipt.Receipt], None]
 
 
@@ -297,7 +328,7 @@ def adjudicate(
     worker: str,
     resume: Resume | None = None,
     lease_seconds: int = 60,
-    receipts: Callable[[str], answer_receipt.Receipt] = answer_receipt.read,
+    receipts: Callable[[str], answer_receipt.Receipt] | None = None,
 ) -> int:
     """Judge every abandoned job once, and act on the ones that can be settled.
 
@@ -324,7 +355,7 @@ def adjudicate(
             if job.operation in RECORDED and job.cluster is not None
             else None
         )
-        receipt = receipts(str(job.request_id))
+        receipt = (receipts or answer_receipt.read)(str(job.request_id))
         judgement = judge(job, history, receipt)
 
         if judgement.verdict == "adopt" and resume is None:
@@ -373,6 +404,7 @@ def adjudicate(
                 attempts=job.attempts,
                 code=judgement.code,
                 message=judgement.reason,
+                answer=_kept_answer(job, receipt),
             )
             action = "job_abandoned"
 

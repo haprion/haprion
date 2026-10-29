@@ -270,6 +270,8 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
             unsettled.setdefault((job.id, operation), (cluster, job))
     items = []
     for (_id, operation), (cluster, job) in unsettled.items():
+        if operation == job.operation and _distributed_since(job, newest):
+            continue
         state = dict(jobs_module.step_states(job))[operation]
         waiting = (
             jobs_module.waiting_for(job)
@@ -294,6 +296,39 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
             )
         )
     return items
+
+
+def _distributed_since(
+    job: Job, newest: Mapping[tuple[str | None, str, str], tuple[Job, str]]
+) -> bool:
+    """Whether a later run took up an issued or imported certificate's distribution (O02).
+
+    Keyed on the issue as before, so a second issue of the name still ends it;
+    and also ended by what distributes it: a later publish of the certificate,
+    or, when only a rollout failed, a later certificate deploy of each cluster
+    it failed on. One of those that failed is listed itself (26-10-29).
+    """
+
+    left = jobs_module.undistributed(job)
+    if left is None:
+        return False
+
+    def later(key: tuple[str | None, str, str]) -> Job | None:
+        found = newest.get(key)
+        if found is None or (found[0].created_at, found[0].id) <= (job.created_at, job.id):
+            return None
+        return found[0]
+
+    published = later((None, "cert_publish", left.certificate))
+    if published is not None:
+        payload = published.payload if isinstance(published.payload, dict) else {}
+        if payload.get("deploy") is not False or not left.clusters:
+            return True
+    return (
+        not left.unwritten
+        and bool(left.clusters)
+        and all(later((name, "cert_deploy", "")) is not None for name in left.clusters)
+    )
 
 
 def from_dashboard(

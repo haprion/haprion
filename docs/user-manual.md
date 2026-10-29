@@ -3741,7 +3741,9 @@ box is not shown.
 - **Jobs**: the latest job of an operation on a cluster that failed, partly worked, was blocked or ended
   *unknown* - until a later run of the same operation on the same thing works, however long that takes.
   A job on several certificates is settled certificate by certificate: when its answer says which ones
-  it did not finish, only those wait for a later run. A removed cluster's jobs are not listed.
+  it did not finish, only those wait for a later run. A certificate that was issued or imported but
+  not distributed says so, and a later publish of it, or a certificate deploy of each cluster it missed,
+  settles it. A removed cluster's jobs are not listed.
 - **Clusters** with a fault no single node shows: a VIP in split brain or with no owner while every node
   reports Online, or a status reading that failed or returned no node.
 - **Nodes** that are down or have a warning - for example *Counters not shared*. A node that is only

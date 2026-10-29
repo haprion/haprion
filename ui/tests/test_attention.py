@@ -96,6 +96,81 @@ class EachKindComesAndGoes(unittest.TestCase):
         done_x = issue(3, "x.example.com", "done", 10)
         self.assertEqual(attention.from_jobs([failed_x, done_y, done_x]), [])
 
+    def test_a_certificate_that_was_issued_and_not_distributed_says_so(self) -> None:
+        """Review 26-10-29, O02: it read *Certificate issue failed* until a second issue."""
+
+        def ended(job_id: int, operation: str, minutes: int, **fields: Any) -> Any:
+            row = job(state=fields.pop("state", "done"), operation=operation, cluster=None)
+            return replace(
+                row,
+                id=job_id,
+                outcome=row.state,
+                created_at=NOW - timedelta(minutes=minutes),
+                **fields,
+            )
+
+        def distribution(deployed: dict[str, int], failed: bool = False) -> dict[str, Any]:
+            return {
+                "certificates": [
+                    {"id": "example.com", "status": "failed" if failed else "published"}
+                ],
+                "changed_clusters": list(deployed),
+                "deployments": [
+                    {"cluster": name, "exit_code": code} for name, code in deployed.items()
+                ],
+            }
+
+        for operation, payload, body in (
+            ("cert_issue", {"domain": "example.com"}, {"id": "example.com"}),
+            ("cert_import", {"id": "example.com"}, {"certificate": "example.com"}),
+        ):
+            with self.subTest(operation):
+
+                def undistributed(
+                    operation: str = operation,
+                    payload: dict[str, Any] = payload,
+                    body: dict[str, Any] = body,
+                    **publish: Any,
+                ) -> Any:
+                    return ended(
+                        1,
+                        operation,
+                        30,
+                        state="failed",
+                        payload=payload,
+                        result={
+                            "outcome": "failed",
+                            "result": {**body, "publish": distribution(**publish)},
+                            "error": {"code": "publish_failed", "message": "not deployed: alpha"},
+                        },
+                    )
+
+                failed = undistributed(deployed={"alpha": 1})
+                verb = "issued" if operation == "cert_issue" else "imported"
+                [item] = attention.from_jobs([failed])
+                self.assertEqual(item.message, f"Certificate {verb}; distribution failed")
+                self.assertEqual(jobs.failure_label(failed), item.message)
+                self.assertIn("Certificates", jobs.build_job_overview([failed]).jobs[0].note or "")
+
+                published = ended(2, "cert_publish", 20, payload={"certificates": ["example.com"]})
+                self.assertEqual(attention.from_jobs([failed, published]), [])
+                deployed = replace(
+                    ended(3, "cert_deploy", 20, payload={"allow_vip_unknown": False}),
+                    cluster="alpha",
+                )
+                self.assertEqual(attention.from_jobs([failed, deployed]), [])
+                elsewhere = replace(deployed, cluster="beta")
+                self.assertEqual(len(attention.from_jobs([failed, elsewhere])), 1)
+
+                # A file not written is not mended by a rollout of the cluster.
+                unwritten = undistributed(deployed={}, failed=True)
+                self.assertEqual(len(attention.from_jobs([unwritten, deployed])), 1)
+                self.assertEqual(attention.from_jobs([unwritten, published]), [])
+
+                # Published again before it: still the job to open.
+                earlier = replace(published, created_at=NOW - timedelta(minutes=40))
+                self.assertEqual(len(attention.from_jobs([failed, earlier])), 1)
+
     def test_a_server_state_on_one_object_does_not_end_another_s_failure(self) -> None:
         def state(job_id: int, name: str, outcome: str, minutes: int) -> Any:
             row = job(state=outcome, outcome=outcome, operation="server_state")

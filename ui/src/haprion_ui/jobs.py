@@ -435,6 +435,77 @@ def step_note(job: Job) -> str | None:
     return f"{stands}; the {_STEP_NOUNS[step]} {_STEP_ENDINGS[job.state]}."
 
 
+#
+# Where an issue's or import's answer keeps its certificate's publish report:
+# the engine's `cert_publish.Report`, not a publish of saved changes, whose
+# answer `publish_answer` alone reads.
+#
+_CERTIFICATE_REPORT = "publish"
+
+
+@dataclass(frozen=True, slots=True)
+class Undistributed:
+    """What an issued or imported certificate's distribution left undone."""
+
+    certificate: str
+    #
+    # A target whose file was not written: a publish writes it again, a
+    # rollout of the cluster does not.
+    #
+    unwritten: bool
+    #
+    # The clusters whose rollout did not answer 0.
+    #
+    clusters: frozenset[str]
+
+
+def undistributed(job: Job) -> Undistributed | None:
+    """An issue or import that registered its certificate and did not distribute it; else None.
+
+    The helper's own sentence for it is `publish_failed`: issued and
+    registered, not fully published (`cert_issue.result_envelope`). Read
+    defensively, as every stored helper document is.
+    """
+
+    if job.operation not in DISTRIBUTION_LABELS or job.state != "failed":
+        return None
+    if error_code(job) != "publish_failed":
+        return None
+    envelope = job.result if isinstance(job.result, dict) else {}
+    body = envelope.get("result")
+    body = body if isinstance(body, dict) else {}
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    certificate = body.get("id") if job.operation == "cert_issue" else payload.get("id")
+    if not isinstance(certificate, str) or not certificate:
+        return None
+    report = body.get(_CERTIFICATE_REPORT)
+    report = report if isinstance(report, dict) else {}
+    entries = report.get("certificates")
+    deployments = report.get("deployments")
+    return Undistributed(
+        certificate=certificate,
+        unwritten=any(
+            isinstance(entry, dict) and entry.get("status") == "failed"
+            for entry in (entries if isinstance(entries, list) else ())
+        ),
+        clusters=frozenset(
+            str(entry["cluster"])
+            for entry in (deployments if isinstance(deployments, list) else ())
+            if isinstance(entry, dict)
+            and isinstance(entry.get("cluster"), str)
+            and entry.get("exit_code") != 0
+        ),
+    )
+
+
+def distribution_note(job: Job) -> str | None:
+    """What stands when an issued or imported certificate was not distributed, or None."""
+
+    if undistributed(job) is None:
+        return None
+    return "The certificate is registered; publish or deploy it from Certificates."
+
+
 def awaiting_deployment(statuses: list[ClusterStatus]) -> frozenset[str]:
     """Clusters whose newest reading says they are not on their target.
 
@@ -1064,7 +1135,8 @@ def _view(
                 unknown_note(job)
                 or deletion_note(job)
                 or publication_note(job)
-                or unresolved_note(job),
+                or unresolved_note(job)
+                or distribution_note(job),
             )
             if text
         )
@@ -1262,6 +1334,8 @@ def failure_label(job: Job, operation: str | None = None, state: str | None = No
     state = state or job.state
     if operation == job.operation and (named := action_names(job)):
         label = named[2]
+    elif operation == job.operation and state == "failed" and undistributed(job) is not None:
+        return DISTRIBUTION_LABELS[operation]
     elif state == "partial" and operation in PARTIAL_LABELS:
         return PARTIAL_LABELS[operation]
     else:
@@ -1317,6 +1391,15 @@ RUNNING_LABELS = {
 # A run across the nodes that ended `partial` reached some of them, which is
 # not what "failed" says (review 26-10-24, 02-03).
 #
+#
+# A certificate issued or imported and registered whose publish or rollout did
+# not finish (`publish_failed`). It exists, so "issue failed" sent somebody to
+# issue it a second time (review 26-10-29, O02).
+#
+DISTRIBUTION_LABELS = {
+    "cert_issue": "Certificate issued; distribution failed",
+    "cert_import": "Certificate imported; distribution failed",
+}
 PARTIAL_LABELS = {
     "backup_run": "Backup reached only some nodes",
     "deploy": "Deploy reached only some nodes",

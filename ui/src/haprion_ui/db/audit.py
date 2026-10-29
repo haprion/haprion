@@ -390,17 +390,40 @@ def record_audit_event(
     takes connections instead of opening them: an audit row that commits
     separately from the thing it describes is a history that can disagree with
     what happened.
+
+    A job is recorded as queued once (review 26-10-29, Q05). A form sent again
+    under its key gets back the job the first send queued, and every route that
+    queues wrote the record a second time, saying it was queued twice. Asked
+    here rather than in each route, so a route added later cannot forget it.
+    The first send's row is committed with its job before the second is
+    answered, since the second's insert waits on the key the first holds.
     """
 
+    values = {
+        "actor": actor,
+        "action": action,
+        "cluster": cluster,
+        "request_id": request_id,
+        "detail": Jsonb(dict(detail or {})),
+    }
     with connection.cursor() as cursor:
+        if action == "queue_job" and request_id is not None:
+            cursor.execute(
+                "insert into audit_event (actor, action, cluster, request_id, detail) "
+                "select %(actor)s::text, %(action)s::text, %(cluster)s::text, "
+                "       %(request_id)s::uuid, %(detail)s::jsonb "
+                " where not exists (select 1 from audit_event "
+                "                    where action = 'queue_job' "
+                "                      and request_id = %(request_id)s::uuid)",
+                values,
+            )
+            return
+        #
+        # A statement of its own: the worker, which may not read the record,
+        # is refused one that names it in a read, whether or not it is run.
+        #
         cursor.execute(
             "insert into audit_event (actor, action, cluster, request_id, detail) "
             "values (%(actor)s, %(action)s, %(cluster)s, %(request_id)s, %(detail)s)",
-            {
-                "actor": actor,
-                "action": action,
-                "cluster": cluster,
-                "request_id": request_id,
-                "detail": Jsonb(dict(detail or {})),
-            },
+            values,
         )

@@ -136,6 +136,35 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(self.drain("resume").returncode, 0)
         self.assertIsNone(self.paused_until())
 
+    def test_a_form_sent_again_is_one_queued_job_in_the_record(self) -> None:
+        """Review 26-10-29, Q05: the second send returned the first job and wrote a second row."""
+
+        key = uuid4()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            for _ in range(2):
+                job = db.queue_job(
+                    connection, operation="deploy", cluster="qfive", payload={}, idempotency_key=key
+                )
+                db.record_audit_event(
+                    connection,
+                    actor="admin",
+                    action="queue_job",
+                    cluster="qfive",
+                    request_id=job.request_id,
+                    detail={"operation": "deploy", "job": job.id},
+                )
+                connection.commit()
+        self.addCleanup(self.forget_job, job.id)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select action from audit_event where request_id = %s order by id",
+                (job.request_id,),
+            )
+            rows = [action for (action,) in cursor.fetchall()]
+            cursor.execute("delete from audit_event where request_id = %s", (job.request_id,))
+            connection.commit()
+        self.assertEqual(rows, ["queue_job"])
+
     def test_the_web_sees_a_lease_that_ran_out_and_a_release_s_pause(self) -> None:
         """Review 26-10-29, Q01/Q06: a job no worker holds, and a queue a release holds."""
 

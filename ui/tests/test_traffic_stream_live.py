@@ -17,6 +17,7 @@ about the configuration is the suite's; it is the generator's output.
 from __future__ import annotations
 
 import ctypes
+import re
 import shutil
 import signal
 import socket
@@ -31,13 +32,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from haprion.config import Vip
-from haprion.generate import generate
+from haprion.generate import TRAFFIC_LOG_SOCKET, generate
 from haprion.proxy_model import load_proxy
-
-from haprion_ui.traffic_logs import parse
+from haprion.traffic_collector import _database_row
 
 ROOT = Path(__file__).resolve().parents[2]
 ENABLE = ROOT / "install" / "node" / "haprion-traffic-log-enable"
+NODE_PREPARE = ROOT / "install" / "04-node-prepare"
 HOSTNAME = "shop.example.com"
 NODE_LOG_ROOT = "/var/log/haprion/"
 _PR_SET_PDEATHSIG = 1
@@ -60,6 +61,17 @@ backends:
       - host: 127.0.0.1
         port: {web}
 """
+
+
+def traffic_input(socket_path: Path) -> str:
+    """What 04-node-prepare writes for HAProxy's own socket: its input and the origin mark."""
+
+    found = re.search(
+        r"TRAFFIC_INPUT=.*?<<'CONF'\n(.*?)\nCONF\n", NODE_PREPARE.read_text(), re.DOTALL
+    )
+    if found is None:
+        raise AssertionError("04-node-prepare writes no traffic input")
+    return found.group(1).replace("@SOCKET@", str(socket_path))
 
 
 def die_with_the_test_run() -> None:
@@ -154,6 +166,7 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
             'module(load="imuxsock" SysSock.Use="off")\n'
             f'input(type="imuxsock" Socket="{cls.socket()}" CreatePath="on"'
             ' RateLimit.Interval="0")\n'
+            f"{traffic_input(cls.traffic_socket())}\n"
             f"{rule}\n"
             #
             # Everything the rule did not stop: the classic stream, as the
@@ -174,6 +187,7 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
             preexec_fn=die_with_the_test_run,
         )
         wait_until(cls.socket().exists, "the rig's log socket")
+        wait_until(cls.traffic_socket().exists, "the rig's traffic socket")
 
     @classmethod
     def start_haproxy(cls) -> None:
@@ -205,12 +219,14 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
         )
         targets = 0
         for name, content in layer.configuration.items():
-            targets += content.count("log /dev/log")
+            targets += content.count(f"log {TRAFFIC_LOG_SOCKET} ")
             (release / "conf.d" / name).write_text(
-                content.replace("log /dev/log", f"log {cls.socket()}")
+                content.replace(f"log {TRAFFIC_LOG_SOCKET} ", f"log {cls.traffic_socket()} ")
             )
         if targets != 1:
-            raise AssertionError("the generator no longer logs the profile to /dev/log once")
+            raise AssertionError(
+                f"the generator no longer logs the profile to {TRAFFIC_LOG_SOCKET} once"
+            )
         binary = shutil.which("haproxy")
         if binary is None:
             raise AssertionError("haproxy disappeared after the skip check")
@@ -232,6 +248,10 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
     @classmethod
     def socket(cls) -> Path:
         return cls.root / "log"
+
+    @classmethod
+    def traffic_socket(cls) -> Path:
+        return cls.root / "haprion-traffic"
 
     @classmethod
     def classic(cls) -> Path:
@@ -279,10 +299,11 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
         self.assertTrue(lines[0].startswith(b"{"), lines[0])
         self.assertNotIn(b"must-not-appear", lines[0])
 
-        entry = parse(lines[0], "alpha", "node-a")
-        self.assertEqual((entry.host, entry.path, entry.status), (HOSTNAME, "/", 200))
-        self.assertEqual(entry.client, "127.0.0.1")
-        self.assertTrue(entry.backend and entry.server, entry)
+        entry = _database_row("alpha", "node-a", lines[0])
+        host, path, status = entry[7], entry[8], entry[12]
+        self.assertEqual((host, path, status), (HOSTNAME, "/", 200))
+        self.assertEqual(entry[5], "127.0.0.1")
+        self.assertTrue(entry[10] and entry[11], entry)
 
         classic = self.classic_text()
         self.assertNotIn('{"schema"', classic)

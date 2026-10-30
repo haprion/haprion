@@ -50,6 +50,7 @@ from haprion.traffic_collector import (
 )
 
 NOW = datetime(2026, 9, 8, 12, tzinfo=UTC)
+REAL_INGEST = traffic_collector._ingest_database
 
 
 def no_waf(_target: NodeTarget, _cursor: str) -> bytes:
@@ -142,7 +143,24 @@ class TrafficCollectorTests(unittest.TestCase):
             mirror=self.mirror,
             staging=self.staging,
             nodes=(self.target,),
+            database="haprion_ui",
+            database_socket="/run/postgresql",
         )
+        #
+        # No database and no node here: what a run imports and what it asks a
+        # node's WAF journal are each the subject of tests that say so.
+        #
+        replaced: list[tuple[str, Any]] = [
+            ("haprion.traffic_collector._ingest_database", lambda _config: (0, 0, {})),
+            (
+                "haprion.traffic_collector.ssh_fetch_waf",
+                lambda _config, node, cursor: no_waf(node, cursor),
+            ),
+        ]
+        for target, replacement in replaced:
+            patcher = patch(target, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def response(self, wanted: date, offset: int, payload: bytes, **flags: Any) -> Response:
         return Response(
@@ -335,14 +353,7 @@ class TrafficCollectorTests(unittest.TestCase):
         """Fas 16 punkt 1: a run takes as long as its slowest node, not their sum."""
 
         other = NodeTarget("alpha", "node-b", "node-b.example.com")
-        configured = CollectorConfig(
-            user="svc-logread",
-            key=self.config.key,
-            known_hosts=self.config.known_hosts,
-            mirror=self.mirror,
-            staging=self.staging,
-            nodes=(self.target, other),
-        )
+        configured = dataclasses.replace(self.config, nodes=(self.target, other))
         # The first fetch of each node waits for the other's; in series the
         # first node would wait alone and the barrier would break.
         together = threading.Barrier(2, timeout=5)
@@ -364,13 +375,13 @@ class TrafficCollectorTests(unittest.TestCase):
         with patch("sys.stderr", errors):
             self.assertEqual(collect(configured, now=NOW, fetch=fetch), 1)
 
-        self.assertTrue((self.mirror / "alpha--node-a.jsonl").exists())
+        self.assertTrue((self.mirror / "alpha--node-a.meta.json").exists())
         self.assertIn("alpha/node-b: node-b did not answer", errors.getvalue())
         meta = json.loads((self.mirror / "alpha--node-b.meta.json").read_text())
         self.assertIsNone(meta["last_success"])
         self.assertNotEqual(meta["outcome"], "ok")
 
-    def test_new_data_is_fsynced_to_a_part_then_atomically_assembled(self) -> None:
+    def test_new_data_is_fsynced_to_a_part(self) -> None:
         calls: list[tuple[date, int]] = []
 
         def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
@@ -380,7 +391,7 @@ class TrafficCollectorTests(unittest.TestCase):
 
         self.assertEqual(collect(self.config, now=NOW, fetch=fetch), 0)
         self.assertEqual(
-            (self.mirror / "alpha--node-a.jsonl").read_bytes(),
+            (self.staging / "alpha--node-a--2026-09-08.jsonl").read_bytes(),
             b'{"schema":1,"path":"/"}\n',
         )
         meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
@@ -453,7 +464,7 @@ class TrafficCollectorTests(unittest.TestCase):
 
         self.assertEqual(collect(self.config, now=NOW, fetch=fetch), 0)
         self.assertEqual(collect(self.config, now=NOW, fetch=fetch), 0)
-        self.assertEqual((self.mirror / "alpha--node-a.jsonl").read_bytes(), line)
+        self.assertEqual((self.staging / "alpha--node-a--2026-09-08.jsonl").read_bytes(), line)
 
     def test_growing_current_data_and_older_backlog_both_advance_with_two_calls(self) -> None:
         calls: list[tuple[date, int]] = []
@@ -662,23 +673,14 @@ class TrafficCollectorTests(unittest.TestCase):
 
         later = datetime(2026, 9, 8, 12, 1, tzinfo=UTC)
         self.assertEqual(collect(self.config, now=later, fetch=failed), 1)
-        self.assertEqual((self.mirror / "alpha--node-a.jsonl").read_bytes(), line)
+        self.assertEqual((self.staging / "alpha--node-a--2026-09-08.jsonl").read_bytes(), line)
         meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
         self.assertEqual(meta["last_success"], NOW.isoformat())
         self.assertEqual(meta["last_attempt"], later.isoformat())
         self.assertEqual(meta["outcome"], "ssh")
 
     def test_database_failure_is_visible_without_erasing_mirror_success(self) -> None:
-        configured = CollectorConfig(
-            self.config.user,
-            self.config.key,
-            self.config.known_hosts,
-            self.config.mirror,
-            self.config.staging,
-            self.config.nodes,
-            "haprion_ui",
-            "/run/postgresql",
-        )
+        configured = self.config
 
         def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
             return self.response(wanted, offset, b"")
@@ -695,16 +697,7 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(meta["last_success"], NOW.isoformat())
 
     def database_configured(self) -> CollectorConfig:
-        return CollectorConfig(
-            self.config.user,
-            self.config.key,
-            self.config.known_hosts,
-            self.config.mirror,
-            self.config.staging,
-            self.config.nodes,
-            "haprion_ui",
-            "/run/postgresql",
-        )
+        return self.config
 
     def test_a_lone_surrogate_or_an_oversized_request_is_an_unusable_record(self) -> None:
         """Review 2026-10-30, E1: `json.loads` hands on `\\ud800`, which COPY
@@ -734,6 +727,7 @@ class TrafficCollectorTests(unittest.TestCase):
         connection = _Connection(refuse_nodes=("node-a",))
         stderr = StringIO()
         with (
+            patch("haprion.traffic_collector._ingest_database", REAL_INGEST),
             patch("haprion.traffic_collector.psycopg.connect", return_value=connection),
             patch(
                 "haprion.traffic_collector._database_days",
@@ -804,7 +798,6 @@ class TrafficCollectorTests(unittest.TestCase):
         # history into one file nobody reads once PostgreSQL is the reader.
         #
         line = b'{"schema":1,"path":"/"}\n'
-        (self.mirror / "alpha--node-a.jsonl").write_bytes(b"left from schema 1\n")
         imported: list[bytes] = []
 
         def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
@@ -817,10 +810,7 @@ class TrafficCollectorTests(unittest.TestCase):
                 imported.append(part.read_bytes())
             return 0, 0, {}
 
-        with (
-            patch("haprion.traffic_collector._ingest_database", side_effect=ingest),
-            patch("haprion.traffic_collector._assemble") as assemble,
-        ):
+        with patch("haprion.traffic_collector._ingest_database", side_effect=ingest):
             self.assertEqual(
                 collect(self.database_configured(), now=NOW, fetch=fetch, fetch_waf_page=no_waf), 0
             )
@@ -828,16 +818,12 @@ class TrafficCollectorTests(unittest.TestCase):
                 collect(self.database_configured(), now=NOW, fetch=fetch, fetch_waf_page=no_waf), 0
             )
 
-        assemble.assert_not_called()
-        self.assertFalse((self.mirror / "alpha--node-a.jsonl").exists(), "the old one is gone")
+        self.assertFalse(
+            (self.mirror / "alpha--node-a.jsonl").exists(), "no joined file is written"
+        )
         self.assertIn(line, imported, "the import still reads the day part in staging")
         meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
         self.assertEqual((meta["outcome"], meta["last_success"]), ("ok", NOW.isoformat()))
-
-    def test_without_the_database_the_mirror_is_still_joined(self) -> None:
-        with patch("haprion.traffic_collector._assemble") as assemble:
-            collect(self.config, now=NOW, fetch=lambda _t, d, o: self.response(d, o, b""))
-        assemble.assert_called_once()
 
     def test_remote_reset_discards_the_local_day_without_advancing_a_cursor(self) -> None:
         part = self.staging / "alpha--node-a--2026-09-08.jsonl"
@@ -848,21 +834,42 @@ class TrafficCollectorTests(unittest.TestCase):
 
         self.assertEqual(collect(self.config, now=NOW, fetch=reset), 0)
         self.assertEqual(part.read_bytes(), b"")
-        self.assertEqual((self.mirror / "alpha--node-a.jsonl").read_bytes(), b"")
 
     def test_configuration_refuses_duplicate_destinations_and_relative_paths(self) -> None:
         path = Path(self.temporary.name) / "collector.json"
         value = {
-            "schema_version": 1,
+            "schema_version": 2,
             "user": "svc-logread",
             "key": "/etc/key",
             "known_hosts": "/etc/known_hosts",
             "mirror": "relative",
             "staging": "/srv/logs/staging",
             "nodes": [{"cluster": "alpha", "node": "node-a", "host": "node-a.example.com"}],
+            "database": "haprion_ui",
+            "database_socket": "/run/postgresql",
         }
         path.write_text(json.dumps(value))
         with self.assertRaisesRegex(CollectorError, "mirror must be absolute"):
+            load_config(path, require_secure=False)
+
+    def test_a_configuration_without_a_database_is_refused(self) -> None:
+        """Schema 1 was the mirror alone; the database is the reader now."""
+
+        path = Path(self.temporary.name) / "collector.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "user": "svc-logread",
+                    "key": "/etc/key",
+                    "known_hosts": "/etc/known_hosts",
+                    "mirror": "/srv/logs/mirror",
+                    "staging": "/srv/logs/staging",
+                    "nodes": [],
+                }
+            )
+        )
+        with self.assertRaisesRegex(CollectorError, "schema_version must be 2"):
             load_config(path, require_secure=False)
 
     def test_configuration_refuses_names_that_carry_the_file_separator(self) -> None:
@@ -1013,18 +1020,6 @@ class TrafficCollectorTests(unittest.TestCase):
         (self.staging / ".x.jsonl.database-offset").symlink_to(self.staging / "elsewhere")
         with self.assertRaises(CollectorError):
             forget_database_positions(self.config)
-
-    def test_a_replay_without_a_database_is_refused(self) -> None:
-        errors = StringIO()
-        with (
-            patch.object(sys, "argv", ["collector", "--replay-database", "/etc/config.json"]),
-            patch("haprion.traffic_collector.load_config", return_value=self.config),
-            redirect_stderr(errors),
-            self.assertRaises(SystemExit) as stopped,
-        ):
-            _entry()
-        self.assertEqual(stopped.exception.code, 65)
-        self.assertIn("nothing to replay", errors.getvalue())
 
 
 REQUEST_ID = "shop.0b5e3c1a-7d42-4f0e-9c1b-2a6d8e4f7a90"
@@ -1421,24 +1416,6 @@ class WafJournalCollectorTests(unittest.TestCase):
             ssh_fetch_waf(self.config, self.target, journal_cursor(1))
         self.assertEqual(str(raised.exception), "SSH request failed with exit 255")
         self.assertEqual(ssh.call_args.args[0][-1], f"waf {journal_cursor(1)}")
-
-    def test_without_a_database_no_journal_is_asked_for(self) -> None:
-        mirror_only = CollectorConfig(
-            "svc-logread",
-            self.config.key,
-            self.config.known_hosts,
-            self.mirror,
-            self.staging,
-            (self.target,),
-        )
-        asked: list[str] = []
-        code = collect(
-            mirror_only,
-            now=NOW,
-            fetch=lambda _t, _d, offset: Response(offset, offset, 0, True, False, 0, b""),
-            fetch_waf_page=lambda _t, cursor: asked.append(cursor) or b"",  # type: ignore[func-returns-value]
-        )
-        self.assertEqual((code, asked), (0, []))
 
     def test_a_cursor_this_collector_did_not_write_starts_over(self) -> None:
         self.cursor_file.write_text("not a cursor\n")

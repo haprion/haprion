@@ -103,8 +103,8 @@ class CollectorConfig:
     mirror: Path
     staging: Path
     nodes: tuple[NodeTarget, ...]
-    database: str | None = None
-    database_socket: str | None = None
+    database: str
+    database_socket: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +159,7 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
         value = json.loads(path.read_bytes())
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise CollectorError(f"cannot read collector configuration: {exc}") from exc
-    base_fields = {
+    expected = {
         "schema_version",
         "user",
         "key",
@@ -167,28 +167,32 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
         "mirror",
         "staging",
         "nodes",
+        "database",
+        "database_socket",
     }
     if not isinstance(value, dict):
         raise CollectorError("collector configuration has unexpected or missing fields")
+    #
+    # Schema 2 only: the database is the reader, so a configuration without
+    # one is not an installation that runs (platform step 13 writes it so).
+    #
     schema_version = value.get("schema_version")
-    expected = base_fields if schema_version == 1 else base_fields | {"database", "database_socket"}
+    if type(schema_version) is int and schema_version == 1:
+        raise CollectorError("collector configuration schema_version must be 2")
     if set(value) != expected:
         raise CollectorError("collector configuration has unexpected or missing fields")
-    if type(schema_version) is not int or schema_version not in {1, 2}:
-        raise CollectorError("collector configuration schema_version must be 1 or 2")
-    database: str | None = None
-    database_socket: str | None = None
-    if schema_version == 2:
-        database = value["database"]
-        database_socket = value["database_socket"]
-        if not isinstance(database, str) or DATABASE.fullmatch(database) is None:
-            raise CollectorError("collector database is invalid")
-        if (
-            not isinstance(database_socket, str)
-            or not Path(database_socket).is_absolute()
-            or ".." in Path(database_socket).parts
-        ):
-            raise CollectorError("collector database_socket is invalid")
+    if type(schema_version) is not int or schema_version != 2:
+        raise CollectorError("collector configuration schema_version must be 2")
+    database = value["database"]
+    database_socket = value["database_socket"]
+    if not isinstance(database, str) or DATABASE.fullmatch(database) is None:
+        raise CollectorError("collector database is invalid")
+    if (
+        not isinstance(database_socket, str)
+        or not Path(database_socket).is_absolute()
+        or ".." in Path(database_socket).parts
+    ):
+        raise CollectorError("collector database_socket is invalid")
     user = value["user"]
     if not isinstance(user, str) or USER.fullmatch(user) is None:
         raise CollectorError("collector user is invalid")
@@ -440,37 +444,6 @@ def _catch_up(
     return complete, remaining
 
 
-def _assemble(config: CollectorConfig, target: NodeTarget, days: tuple[date, ...]) -> None:
-    destination = config.mirror / f"{target.cluster}--{target.node}.jsonl"
-    #
-    # Beside the destination, never in staging. `rename` is atomic within one
-    # filesystem, and the two directories deliberately share a parent - but the
-    # unit hands each of them to systemd as its own `ReadWritePaths` entry, and
-    # systemd bind-mounts each entry separately. A rename between two bind
-    # mounts is EXDEV even when one filesystem backs both, which is exactly how
-    # this failed on the first real run: four nodes fetched, four mirrors
-    # refused with "Invalid cross-device link". Staging a temporary file in the
-    # directory it will be renamed into is the ordinary idiom anyway, and it is
-    # what `atomic_file` does.
-    #
-    with atomic_file.replacing(destination, mode=0o640) as output:
-        for wanted in days:
-            path = _part(config, target, wanted)
-            if not path.exists() and not path.is_symlink():
-                continue
-            _regular(path)
-            with path.open("rb") as source:
-                while chunk := source.read(1024 * 1024):
-                    output.write(chunk)
-
-
-def _drop_mirror(config: CollectorConfig, target: NodeTarget) -> None:
-    destination = config.mirror / f"{target.cluster}--{target.node}.jsonl"
-    if destination.exists() or destination.is_symlink():
-        _regular(destination)
-        destination.unlink()
-
-
 def _meta_path(config: CollectorConfig, target: NodeTarget) -> Path:
     return config.mirror / f"{target.cluster}--{target.node}.meta.json"
 
@@ -638,19 +611,6 @@ def collect_node(
             #
             if time.monotonic() >= deadline:
                 break
-        #
-        # The joined file is for a reader of files. With the database as the
-        # reader (schema 2) nothing reads it: the interface asks PostgreSQL and
-        # looks at the metadata beside it for freshness, and the import reads
-        # the day parts in staging. Joining every retained day into it on every
-        # run rewrote the whole history once a minute for no one (review
-        # 2026-09-30, R2), so it is not written, and one left from before is
-        # removed.
-        #
-        if config.database is None:
-            _assemble(config, target, days)
-        else:
-            _drop_mirror(config, target)
         pending_days = sum(
             not (config.staging / f"{prefix}{wanted.isoformat()}.done").exists()
             for wanted in days[:-1]
@@ -783,7 +743,7 @@ def _staging_budget(config: CollectorConfig, *, today: date) -> bool:
             break
         for part, size in sorted(days[day]):
             checkpoint = _database_checkpoint(config, part)
-            ingested = config.database is None or _checkpoint_offset(checkpoint, size=size) == size
+            ingested = _checkpoint_offset(checkpoint, size=size) == size
             _replace(part.with_name(part.name[: -len(".jsonl")] + ".done"), b"", 0o600)
             part.unlink()
             if checkpoint.exists() or checkpoint.is_symlink():
@@ -1178,8 +1138,6 @@ def _mirror_window(config: CollectorConfig, *, now: datetime) -> int:
     setting rather than a hole in the history.
     """
 
-    if config.database is None or config.database_socket is None:
-        return RETENTION_DAYS
     try:
         with psycopg.connect(
             f"dbname={config.database} host={config.database_socket}"
@@ -1224,8 +1182,6 @@ def _ingest_database(
     reached or asked at all stops the whole import.
     """
 
-    if config.database is None or config.database_socket is None:
-        return 0, 0, {}
     skipped = 0
     expired = 0
     failed: dict[NodeTarget, str] = {}
@@ -1540,7 +1496,7 @@ def _ingest_waf(
         or page.skipped
         or page.cursor not in ("", _waf_cursor(config, target))
     ]
-    if config.database is None or config.database_socket is None or not pages:
+    if not pages:
         return 0, 0
     try:
         with psycopg.connect(
@@ -1681,8 +1637,6 @@ def collect(
                     collect_node(config, target, now=attempted, fetch=selected, window=window)
                 except (CollectorError, OSError) as exc:
                     problem = str(exc)
-            if config.database is None:
-                return _NodeRun(problem)
             #
             # Its own outcome, apart from the traffic log's: the page's
             # freshness is the traffic log's metadata, and a node whose WAF
@@ -1788,8 +1742,6 @@ def _entry() -> None:
             print(f"parsed {labels.counted(len(config.nodes), 'node')} as {config.user}")
             code = 0
         elif sys.argv[1] == "--replay-database":
-            if config.database is None:
-                raise CollectorError("this collector imports into no database; nothing to replay")
             dropped = forget_database_positions(config)
             print(
                 f"dropped {labels.counted(dropped, 'import position')}; the next run imports every staged day again"

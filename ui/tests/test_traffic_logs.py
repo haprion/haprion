@@ -19,15 +19,14 @@ from haprion_ui.config import TrafficLogs
 from haprion_ui.db import ClusterObjects
 from haprion_ui.templates import ZONE_COOKIE
 from haprion_ui.traffic_logs import (
-    MAX_RECORD_BYTES,
     Freshness,
     Reading,
     configured_server_addresses,
-    parse,
     read_database,
     read_freshness,
     resolve_server_addresses,
 )
+from tests.stored_entries import entry_of as parse
 from tests.test_login import LoginTestCase, configuration
 
 NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)
@@ -256,46 +255,12 @@ class TrafficLogReadingTests(unittest.TestCase):
             (node.current_complete, node.remaining_bytes, node.pending_days), (None,) * 3
         )
 
-    def test_a_mirror_without_metadata_is_reported_as_unknown(self) -> None:
-        (self.root / "alpha--node-a.jsonl").write_bytes(record())
-
-        reading = read_freshness(self.root, ("alpha",))
-
-        self.assertEqual(reading.nodes[0].outcome, "unknown")
-        self.assertIsNone(reading.nodes[0].last_attempt)
-
     def test_unreadable_metadata_never_stops_the_page(self) -> None:
         (self.root / "alpha--node-a.meta.json").write_bytes(b"{ not json")
 
         reading = read_freshness(self.root, ("alpha",))
 
         self.assertEqual(reading.nodes[0].outcome, "unknown")
-
-    def test_an_oversized_record_is_refused_rather_than_rendered(self) -> None:
-        with self.assertRaises(ValueError):
-            parse(record(path="/" + "a" * MAX_RECORD_BYTES), "alpha", "node-a")
-
-    def test_fields_that_are_not_what_they_claim_are_refused(self) -> None:
-        for overrides in (
-            {"status": "200"},
-            {"status": True},
-            {"status": 1000},
-            {"at": -1},
-            {"bytes": -1},
-            {"client": 5},
-            {"path": "a" * 9000},
-            {"request": -1},
-        ):
-            with self.subTest(overrides=overrides), self.assertRaises(ValueError):
-                parse(record(**overrides), "alpha", "node-a")
-
-    def test_a_record_from_before_the_request_counter_still_parses(self) -> None:
-        raw = json.loads(record())
-        del raw["request"]
-
-        entry = parse(json.dumps(raw).encode("utf-8"), "alpha", "node-a")
-
-        self.assertEqual(entry.request, 0)
 
     def test_a_cluster_the_deployment_does_not_name_reads_nothing(self) -> None:
         """The rows are in the table; whether they may be read is the config's call."""

@@ -7725,10 +7725,10 @@ left out, and it does not hold back the days after it.
 
 The transfer cap per response stays the same.
 
-With the database configured, the collector keeps the day files in staging and one metadata file
-per node in the mirror directory. It does not join the days into one log file per node: nothing
-reads that file, and writing it would rewrite the whole kept history once a minute. A joined file
-left from a configuration without the database is removed on the next run.
+The collector keeps the day files in staging and one metadata file per node in the mirror
+directory. It does not join the days into one log file per node: nothing reads that file, and
+writing it would rewrite the whole kept history once a minute. `traffic-collector.json` names the
+database (`schema_version` 2); a file without one is refused.
 
 **How long the database keeps traffic.** `retention_days` defaults to seven (range 1–90). The
 retention timer, which runs with privileges, creates daily partitions ahead of time and removes

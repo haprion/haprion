@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import errno
 import io
-import json
 import os
 import threading
 import time
@@ -42,17 +41,17 @@ def quietly(action: object) -> str:
 class ANodeThatCannotBeReached(ChainTestCase):
     """§6.1 - unreachable for minutes, for hours, and for longer than retention."""
 
-    def test_an_outage_holds_the_mirror_still_rather_than_emptying_it(self) -> None:
+    def test_an_outage_holds_the_database_still_rather_than_emptying_it(self) -> None:
         self.chain.node.append(self.chain.today, 20)
         self.assertEqual(self.collect(), 0)
-        before = self.chain.mirror_path().read_bytes()
+        before = self.chain.imported()
         first_success = self.chain.meta()["last_success"]
 
         with self.chain.unreachable():
             for minutes in (5, 60, 180):
                 moment = self.NOW + timedelta(minutes=minutes)
                 quietly(lambda moment=moment: self.assertEqual(self.collect(now=moment), 1))
-                self.assertEqual(self.chain.mirror_path().read_bytes(), before)
+                self.assertEqual(self.chain.imported(), before)
                 meta = self.chain.meta()
                 self.assertEqual(meta["last_success"], first_success)
                 self.assertEqual(meta["last_attempt"], moment.isoformat())
@@ -80,7 +79,7 @@ class ANodeThatCannotBeReached(ChainTestCase):
 
         #
         # Twenty days later the node's own prune has deleted every day this
-        # mirror holds. That data is gone at the source; what R3 checks is that
+        # staging holds. That data is gone at the source; what R3 checks is that
         # the manager says so instead of presenting the stale copy as current.
         #
         later = self.advance(20)
@@ -93,8 +92,8 @@ class ANodeThatCannotBeReached(ChainTestCase):
         self.assertNoLitter()
         self.assertEqual(self.chain.meta()["last_success"], later.isoformat())
         seen = self.chain.requests_seen()
-        self.assertEqual(len(seen), 7)
-        self.assertFalse(set(seen) & set(lost), "the mirror kept days the node no longer has")
+        self.assertEqual(seen[: len(lost)], lost, "the rows the database holds are not touched")
+        self.assertEqual(len(seen) - len(lost), 7, "the new day was not imported whole")
         stale = list(self.chain.staging.glob("*--*--*.jsonl"))
         self.assertEqual(
             [item.name for item in stale],
@@ -185,11 +184,16 @@ class ADayThatRollsOverMidTransfer(ChainTestCase):
 class ACollectorThatIsInterrupted(ChainTestCase):
     """§6.3 - killed before the rename, and killed after it."""
 
-    def test_a_failed_publish_leaves_the_previous_snapshot_and_no_debris(self) -> None:
+    def test_a_run_killed_between_commit_and_position_imports_nothing_twice(self) -> None:
         self.chain.node.append(self.chain.today, 8)
         self.assertEqual(self.collect(), 0)
-        published = self.chain.mirror_path().read_bytes()
+        held = self.chain.imported()
 
+        #
+        # The rows are committed and the import position cannot be written:
+        # what a kill between the two leaves. The next run starts from the old
+        # position and offers the same rows again.
+        #
         self.chain.node.append(self.chain.today, 5)
         with patch(
             "haprion.traffic_collector.os.replace",
@@ -198,15 +202,15 @@ class ACollectorThatIsInterrupted(ChainTestCase):
             message = quietly(lambda: self.assertEqual(self.collect(), 1))
         self.assertIn("node-a", message)
 
-        self.assertEqual(self.chain.mirror_path().read_bytes(), published)
+        self.assertEqual(self.chain.imported()[: len(held)], held)
         self.assertNoLitter()
 
-        # The next run publishes everything, exactly once.
+        # The next run takes up where it was, and every row is there exactly once.
         self.assertEqual(self.collect(), 0)
         self.assertClean()
         self.assertEqual(len(self.chain.requests_seen()), 13)
 
-    def test_a_published_snapshot_with_unwritten_metadata_is_not_fetched_again(self) -> None:
+    def test_a_day_imported_with_unwritten_metadata_is_not_fetched_again(self) -> None:
         self.chain.node.append(self.chain.today, 6)
         with patch(
             "haprion.traffic_collector._write_meta",
@@ -218,7 +222,7 @@ class ACollectorThatIsInterrupted(ChainTestCase):
 
         #
         # The cursor lives in the size of the committed part, never in the
-        # metadata. A run that published and then died must therefore not
+        # metadata. A run that imported and then died must therefore not
         # re-fetch the day it already holds.
         #
         before = self.chain.measured.payload_bytes
@@ -234,13 +238,13 @@ class TheSameDayFetchedTwice(ChainTestCase):
     def test_a_second_run_transfers_a_header_and_changes_nothing(self) -> None:
         payload = self.chain.node.append(self.chain.today, 15)
         self.settle()
-        first = self.chain.mirror_path().read_bytes()
+        first = self.chain.imported()
         self.assertEqual(self.chain.measured.payload_bytes, len(payload))
 
         before = self.chain.measured.requests
         for _ in range(3):
             self.assertEqual(self.collect(), 0)
-        self.assertEqual(self.chain.mirror_path().read_bytes(), first)
+        self.assertEqual(self.chain.imported(), first)
         self.assertEqual(self.chain.measured.payload_bytes, len(payload), "records were resent")
         self.assertClean()
         self.assertEqual(self.chain.duplicates(), 0)
@@ -269,9 +273,9 @@ class ANodeFileThatIsTruncatedOrReplaced(ChainTestCase):
         # (26-10-12: a run keeps fetching until the day is current).
         self.assertEqual(self.collect(), 0)
         self.assertClean()
-        self.assertEqual(sorted(self.chain.requests_seen()), [10, 11, 12, 13])
+        self.assertEqual(sorted(self.chain.requests_seen()), list(range(14)))
         self.assertEqual(self.collect(), 0)
-        self.assertEqual(sorted(self.chain.requests_seen()), [10, 11, 12, 13])
+        self.assertEqual(sorted(self.chain.requests_seen()), list(range(14)))
 
     def test_a_replaced_file_that_lands_the_cursor_mid_record_is_rebuilt_whole(self) -> None:
         self.chain.node.append(self.chain.today, 10)
@@ -291,16 +295,25 @@ class ANodeFileThatIsTruncatedOrReplaced(ChainTestCase):
         self.assertEqual(self.collect(), 0)
 
         self.assertNoLitter()
+        part = self.chain.staging / f"alpha--node-a--{self.chain.today.isoformat()}.jsonl"
         self.assertEqual(
-            self.chain.mirror_path().read_bytes(),
+            part.read_bytes(),
             self.chain.node.day(self.chain.today).read_bytes(),
             "the rebuilt day is not what the node holds",
         )
-        # The junk has no newline of its own, so it swallows the record after it.
-        # That is one line the interface refuses; the rest survive it.
+        #
+        # The junk has no newline of its own, so it swallows the record after
+        # it. That is one line the import skips; the rest of the new file is
+        # imported from its beginning (review 2026-10-30, E3: the position of
+        # the old file once stood, and the new file's start was never read).
+        #
         reading = self.chain.ui()
-        self.assertEqual(len(reading.entries), 11)
         self.assertEqual(reading.malformed, 1)
+        self.assertEqual(
+            sorted(self.chain.requests_seen()),
+            [*range(10), *range(11, 22)],
+            "the old rows stay, and the new file is imported whole but for the junk line",
+        )
 
 
 class ARecordThatIsNotWhatItShouldBe(ChainTestCase):
@@ -315,7 +328,8 @@ class ARecordThatIsNotWhatItShouldBe(ChainTestCase):
         self.chain.node.append(self.chain.today, 2)
 
         self.assertEqual(self.collect(), 0)
-        self.assertEqual(len(self.chain.mirrored()), 7)
+        part = self.chain.staging / f"alpha--node-a--{self.chain.today.isoformat()}.jsonl"
+        self.assertEqual(len(part.read_bytes().splitlines()), 7)
 
         reading = self.chain.ui()
         self.assertEqual(len(reading.entries), 4, "a good record was lost with a bad one")
@@ -353,10 +367,10 @@ class ARecordThatIsNotWhatItShouldBe(ChainTestCase):
 class ADiskThatFillsUp(ChainTestCase):
     """§6.7 - no room on the manager, and nothing new on the node."""
 
-    def test_a_full_manager_disk_keeps_the_last_good_mirror_and_recovers(self) -> None:
+    def test_a_full_manager_disk_keeps_the_rows_and_recovers(self) -> None:
         self.chain.node.append(self.chain.today, 9)
         self.assertEqual(self.collect(), 0)
-        published = self.chain.mirror_path().read_bytes()
+        published = self.chain.imported()
 
         self.chain.node.append(self.chain.today, 9)
         with patch(
@@ -365,7 +379,7 @@ class ADiskThatFillsUp(ChainTestCase):
         ):
             quietly(lambda: self.assertEqual(self.collect(), 1))
 
-        self.assertEqual(self.chain.mirror_path().read_bytes(), published)
+        self.assertEqual(self.chain.imported(), published)
         self.assertNotEqual(self.chain.meta()["outcome"], "ok")
         self.assertNoLitter()
 
@@ -388,7 +402,7 @@ class AHostKeyThatChanged(ChainTestCase):
     def test_a_changed_host_key_is_a_failure_and_never_a_quiet_empty_log(self) -> None:
         self.chain.node.append(self.chain.today, 5)
         self.assertEqual(self.collect(), 0)
-        published = self.chain.mirror_path().read_bytes()
+        published = self.chain.imported()
         good = self.chain.meta()["last_success"]
 
         self.chain.node.append(self.chain.today, 5)
@@ -396,7 +410,7 @@ class AHostKeyThatChanged(ChainTestCase):
             message = quietly(lambda: self.assertEqual(self.collect(), 1))
         self.assertIn("IDENTIFICATION HAS CHANGED", message)
 
-        self.assertEqual(self.chain.mirror_path().read_bytes(), published)
+        self.assertEqual(self.chain.imported(), published)
         self.assertEqual(self.chain.meta()["last_success"], good)
         self.assertEqual(self.chain.measured.refusals, 1)
         self.assertEqual(len(self.chain.ui().entries), 5)
@@ -405,23 +419,22 @@ class AHostKeyThatChanged(ChainTestCase):
 class AnInventoryThatChanged(ChainTestCase):
     """§6.9 - a node leaves, and its management address comes back as another."""
 
-    def test_a_reused_address_starts_its_own_mirror_and_never_joins_the_old_one(self) -> None:
+    def test_a_reused_address_starts_its_own_rows_and_never_joins_the_old_ones(self) -> None:
         self.chain.node.append(self.chain.today, 6)
         self.assertEqual(self.collect(), 0)
-        retired = self.chain.mirror_path().read_bytes()
+        retired = self.chain.imported()
 
         #
         # Same address, decommissioned and rebuilt under a new name. Destination
         # comes from the manager's inventory, so the new identity gets its own
-        # cursor, its own part and its own mirror - locked requirement 4.
+        # cursor, its own part and its own rows - locked requirement 4.
         #
         self.chain.config = self.retire(NodeTarget("alpha", "node-b", self.chain.target.host))
         self.chain.node.append(self.chain.today, 4)
         self.assertEqual(self.collect(), 0)
 
-        new_mirror = self.chain.mirror / "alpha--node-b.jsonl"
-        self.assertEqual(len(new_mirror.read_bytes().splitlines()), 10)
-        self.assertEqual(self.chain.mirror_path().read_bytes(), retired)
+        self.assertEqual(len(self.chain.imported("node-b")), 10)
+        self.assertEqual(self.chain.imported(), retired)
 
         # Both are listed, and the retired one is visibly stale rather than gone.
         reading = self.chain.ui()
@@ -444,7 +457,7 @@ class AnInventoryThatChanged(ChainTestCase):
         # Still inside the window: listed, readable, and visibly stale.
         moment = self.advance(RETENTION_DAYS - 2)
         quietly(lambda: self.collect(now=moment))
-        self.assertTrue(self.chain.mirror_path().exists())
+        self.assertTrue(list(self.chain.staging.glob("alpha--node-a--*.jsonl")))
         reading = self.chain.ui()
         self.assertEqual(len(reading.nodes), 2)
         self.assertEqual(len([entry for entry in reading.entries if entry.node == "node-a"]), 4)
@@ -452,7 +465,6 @@ class AnInventoryThatChanged(ChainTestCase):
         # A whole window later there is nothing left of it anywhere.
         moment = self.advance(3)
         quietly(lambda: self.collect(now=moment))
-        self.assertFalse(self.chain.mirror_path().exists())
         self.assertEqual(list(self.chain.mirror.glob("alpha--node-a.*")), [])
         self.assertEqual(list(self.chain.staging.glob("alpha--node-a--*")), [])
         self.assertEqual([item.node for item in self.chain.ui().nodes], ["node-b"])
@@ -467,12 +479,12 @@ class AnInventoryThatChanged(ChainTestCase):
         self.assertEqual(len(self.chain.ui().entries), 4, "a silent node lost its last records")
 
 
-class APageReadDuringASnapshotSwap(ChainTestCase):
-    """§6.10 - the interface reads while the collector is replacing the mirror."""
+class APageReadDuringAnImport(ChainTestCase):
+    """§6.10 - the interface reads while the collector is importing."""
 
     ROUNDS = 40
 
-    def test_every_read_sees_one_whole_snapshot(self) -> None:
+    def test_every_read_sees_whole_batches(self) -> None:
         self.chain.node.append(self.chain.today, 5)
         self.assertEqual(self.collect(), 0)
 
@@ -496,7 +508,7 @@ class APageReadDuringASnapshotSwap(ChainTestCase):
         try:
             while not stop.is_set():
                 reading = self.chain.ui()
-                self.assertEqual(reading.malformed, 0, "a read caught a half-written mirror")
+                self.assertEqual(reading.malformed, 0, "a read caught a half-imported batch")
                 self.assertFalse(reading.unavailable)
                 counts.append(len(reading.entries))
         finally:
@@ -510,7 +522,7 @@ class APageReadDuringASnapshotSwap(ChainTestCase):
         self.assertEqual(len(self.chain.requests_seen()), 5 + 3 * self.ROUNDS)
 
     def test_two_collectors_do_not_run_at_once(self) -> None:
-        """The lock is what keeps §6.10 a swap and not a race."""
+        """The lock is what keeps an import one at a time."""
 
         self.chain.node.append(self.chain.today, 3)
         held = self.chain.staging / ".collector.lock"
@@ -520,7 +532,7 @@ class APageReadDuringASnapshotSwap(ChainTestCase):
 
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assertEqual(self.collect(), 0, "a busy collector should exit quietly")
-            self.assertEqual(self.chain.mirrored(), [], "the second collector ran anyway")
+            self.assertEqual(self.chain.imported(), [], "the second collector ran anyway")
             self.assertEqual(self.chain.measured.requests, 0)
         finally:
             os.close(descriptor)
@@ -552,9 +564,10 @@ class RotationRetentionAndReadingAtOnce(ChainTestCase):
 
         #
         # The pruned day is gone from the node and from the manager's window, so
-        # it leaves the mirror too - and takes its staging part with it.
+        # its staging part goes. The rows stay: the database drops them with the
+        # partition, on its own retention.
         #
-        self.assertNotIn(oldest, self.chain.requests_seen())
+        self.assertIn(oldest, self.chain.requests_seen())
         names = sorted(item.name for item in self.chain.staging.glob("*--*--*.jsonl"))
         self.assertEqual(len(names), RETENTION_DAYS)
 
@@ -624,7 +637,7 @@ class WhatOneRunCosts(ChainTestCase):
         self.assertEqual(measured.payload_bytes - before_payload, written, "records were resent")
         header = measured.wire_bytes - before_wire - written
         self.assertLess(header, 200, "the protocol header should stay small and fixed")
-        self.assertEqual(self.chain.mirror_path().stat().st_size, written)
+        self.assertEqual(self.chain.parts_size(), written)
         self.assertLess(elapsed, 30, "one node-minute must fit inside the SSH timeout")
 
         # An idle minute after it costs one request and no records at all.
@@ -633,21 +646,21 @@ class WhatOneRunCosts(ChainTestCase):
         self.assertLess(measured.wire_bytes - before_wire, 200)
         self.assertClean()
 
-    def test_the_mirror_is_never_larger_than_what_the_node_sent(self) -> None:
+    def test_staging_is_never_larger_than_what_the_node_sent(self) -> None:
         written = 0
         for day in range(3):
             written += len(self.chain.node.append(self.chain.today - timedelta(days=day), 100))
         self.settle()
-        self.assertEqual(self.chain.mirror_path().stat().st_size, written)
+        self.assertEqual(self.chain.parts_size(), written)
         self.assertEqual(self.chain.measured.payload_bytes, written)
 
-    def test_the_interface_reads_a_bounded_amount_however_large_the_mirror(self) -> None:
+    def test_the_interface_reads_a_bounded_amount_however_large_the_table(self) -> None:
         self.chain.node.append(self.chain.today, 1200)
         self.assertEqual(self.collect(), 0)
         reading = self.chain.ui(limit=500)
         self.assertEqual(len(reading.entries), 500)
         self.assertEqual(reading.malformed, 0)
-        newest = json.loads(self.chain.mirrored()[-1])["request"]
+        newest = self.chain.requests_seen()[-1]
         self.assertEqual(reading.entries[0].request, newest, "the newest record is not first")
 
 

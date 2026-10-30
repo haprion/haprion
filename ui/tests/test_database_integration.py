@@ -2916,6 +2916,8 @@ class ARealDatabase(unittest.TestCase):
                 root,
                 root,
                 (target,),
+                "haprion",
+                "/run/postgresql",
             )
             with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 _ingest_part(config, connection, target, part)
@@ -2958,7 +2960,14 @@ class ARealDatabase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config = CollectorConfig(
-                "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
+                "svc-logread",
+                root / "key",
+                root / "known_hosts",
+                root,
+                root,
+                (target,),
+                "haprion",
+                "/run/postgresql",
             )
             page = _parse_waf_response(raw, target)
             with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
@@ -3003,7 +3012,14 @@ class ARealDatabase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config = CollectorConfig(
-                "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
+                "svc-logread",
+                root / "key",
+                root / "known_hosts",
+                root,
+                root,
+                (target,),
+                "haprion",
+                "/run/postgresql",
             )
             page = _parse_waf_response(raw, target)
             with (
@@ -3066,7 +3082,14 @@ class ARealDatabase(unittest.TestCase):
             part = root / f"alpha--node-r3--{now:%Y-%m-%d}.jsonl"
             target = NodeTarget("alpha", "node-r3", "node-r3.example.com")
             config = CollectorConfig(
-                "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
+                "svc-logread",
+                root / "key",
+                root / "known_hosts",
+                root,
+                root,
+                (target,),
+                "haprion",
+                "/run/postgresql",
             )
             part.write_text(line("a.restore.example.com", 1) + "\n")
             with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
@@ -3157,6 +3180,8 @@ class ARealDatabase(unittest.TestCase):
                 root,
                 root,
                 (target,),
+                "haprion",
+                "/run/postgresql",
             )
             with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 skipped = _ingest_part(config, connection, target, part)
@@ -3205,6 +3230,8 @@ class ARealDatabase(unittest.TestCase):
                 root,
                 root,
                 (target,),
+                "haprion",
+                "/run/postgresql",
             )
             checkpoint = root / f".{part.name}.database-offset"
             with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
@@ -3324,6 +3351,8 @@ class ARealDatabase(unittest.TestCase):
                 root,
                 root,
                 (target,),
+                "haprion",
+                "/run/postgresql",
             )
             with (
                 self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection,
@@ -3435,7 +3464,14 @@ class ARealDatabase(unittest.TestCase):
             )
             target = NodeTarget("alpha", "node-a", "node-a.example.com")
             config = CollectorConfig(
-                "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
+                "svc-logread",
+                root / "key",
+                root / "known_hosts",
+                root,
+                root,
+                (target,),
+                "haprion",
+                "/run/postgresql",
             )
             with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 _ingest_part(config, connection, target, part)

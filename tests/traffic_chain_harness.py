@@ -14,13 +14,18 @@ request from `SSH_ORIGINAL_COMMAND` the way sshd's forced command hands it over,
 writing the real wire bytes to a pipe. The manager side is the real
 `_bounded_ssh` reading that pipe, the real `_parse_response` deciding whether the
 answer is coherent, and the real `collect`/`collect_node` keeping cursors, parts,
-the mirror and the metadata. The UI side is the shipped `traffic_logs` parser and freshness reader,
-loaded by path because it lives in the interface environment and this suite runs
-in the engine's - it imports nothing but the standard library, so the file that
-runs here is the file that runs in production.
+import positions and the metadata, and the real import into the database with `COPY`. The UI side is
+the shipped `traffic_logs` freshness reader, loaded by path because it lives in the interface
+environment and this suite runs in the engine's - it imports nothing but the standard library, so the
+file that runs here is the file that runs in production.
 
 What it is NOT faithful to, and must not be claimed to be
 ---------------------------------------------------------
+There is no PostgreSQL. A recording connection stands in for it: rows written with `COPY` become
+visible at `commit`, and a row whose identity is already there is passed over, as the
+duplicate trigger does. What is proved is what the collector offers the database and when its
+import position moves - not the table, its partitions or its constraints.
+
 There is no SSH, no sshd, no key, no forced-command entry in `authorized_keys`
 and no network. `_bounded_ssh` is handed a wrapper instead of `/usr/bin/ssh`, so
 what is proved is the protocol, the cursor and the recovery - not the transport,
@@ -40,6 +45,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -50,6 +56,7 @@ from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from unittest.mock import patch
 
 from haprion.traffic_collector import (
     RETENTION_DAYS,
@@ -58,6 +65,7 @@ from haprion.traffic_collector import (
     NodeTarget,
     Response,
     _bounded_ssh,
+    _ingest_database,
     _parse_response,
 )
 
@@ -126,6 +134,89 @@ def load_node_prune() -> ModuleType:
     module = module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class RecordingDatabase:
+    """What the import wrote, as PostgreSQL would hold it: committed rows, once each."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.rows: list[tuple[Any, ...]] = []
+        self.identities: set[bytes] = set()
+        self.skipped = 0
+
+    def commit(self, pending: list[tuple[Any, ...]]) -> None:
+        with self.lock:
+            for row in pending:
+                #
+                # The duplicate trigger: a row already stored, or earlier in
+                # the same COPY, is passed over.
+                #
+                if row[0] not in self.identities:
+                    self.identities.add(row[0])
+                    self.rows.append(row)
+
+    def snapshot(self) -> list[tuple[Any, ...]]:
+        with self.lock:
+            return list(self.rows)
+
+
+class _Copy:
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    def __enter__(self) -> _Copy:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def write_row(self, row: tuple[Any, ...]) -> None:
+        for item in row:
+            if isinstance(item, str):
+                item.encode("utf-8")
+        self.connection.pending.append(row)
+
+
+class _Cursor:
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    def __enter__(self) -> _Cursor:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def copy(self, _statement: str) -> _Copy:
+        return _Copy(self.connection)
+
+
+class _Connection:
+    """The connection the collector opens, over the recording database."""
+
+    def __init__(self, database: RecordingDatabase) -> None:
+        self.database = database
+        self.pending: list[tuple[Any, ...]] = []
+
+    def __enter__(self) -> _Connection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def cursor(self) -> _Cursor:
+        return _Cursor(self)
+
+    def commit(self) -> None:
+        self.database.commit(self.pending)
+        self.pending = []
+
+    def rollback(self) -> None:
+        self.pending = []
+
+
+NO_WAF = b'{"cursor":"","eof":true,"reset":false,"sent":0}\n'
 
 
 @dataclass
@@ -243,7 +334,10 @@ class Chain:
             mirror=self.mirror,
             staging=self.staging,
             nodes=(self.target,),
+            database="haprion_ui",
+            database_socket="/run/postgresql",
         )
+        self.database = RecordingDatabase()
 
     #
     # Transport
@@ -282,9 +376,6 @@ class Chain:
     # Reading back what the chain produced
     #
 
-    def mirror_path(self) -> Path:
-        return self.mirror / f"{self.target.cluster}--{self.target.node}.jsonl"
-
     def meta(self) -> dict[str, object]:
         path = self.mirror / f"{self.target.cluster}--{self.target.node}.meta.json"
         if not path.exists():
@@ -292,24 +383,32 @@ class Chain:
         value = json.loads(path.read_bytes())
         return value if isinstance(value, dict) else {}
 
-    def mirrored(self) -> list[bytes]:
-        path = self.mirror_path()
-        return path.read_bytes().splitlines() if path.exists() else []
+    def imported(self, node: str | None = None) -> list[tuple[Any, ...]]:
+        """The rows the database holds, in the order they were committed."""
+
+        wanted = node or self.target.node
+        return [row for row in self.database.snapshot() if row[2] == wanted]
+
+    def mirrored(self) -> list[tuple[Any, ...]]:
+        return self.imported()
+
+    def parts_size(self) -> int:
+        """What the staging parts of the node hold, in bytes."""
+
+        prefix = f"{self.target.cluster}--{self.target.node}--"
+        return sum(path.stat().st_size for path in self.staging.glob(f"{prefix}*.jsonl"))
 
     def requests_seen(self) -> list[int]:
-        """The request counters in the mirror, in file order, one per record."""
+        """The request counters in the database, in the order they arrived, one per row."""
 
-        seen: list[int] = []
-        for line in self.mirrored():
-            seen.append(int(json.loads(line)["request"]))
-        return seen
+        return [int(row[4]) for row in self.imported()]
 
     def duplicates(self) -> int:
         seen = self.requests_seen()
         return len(seen) - len(set(seen))
 
     def gaps(self) -> int:
-        """Counters missing between the lowest and the highest the mirror holds."""
+        """Counters missing between the lowest and the highest the database holds."""
 
         seen = set(self.requests_seen())
         if not seen:
@@ -317,36 +416,43 @@ class Chain:
         return (max(seen) - min(seen) + 1) - len(seen)
 
     def ui(self, *, limit: int = 500) -> Any:
-        """What the mirror hands on, record by record, through the interface's own parser.
+        """What the page shows: the newest rows first within its limit, and the nodes' freshness.
 
-        The page reads PostgreSQL (`read_database`); the mirror is what the
-        collector keeps and replays from. Its records are parsed here as the
-        interface parses each row, newest first within the page's limit, and
-        its nodes' freshness read as the page reads it.
+        The rows are the database's. The freshness is read from the collector's
+        metadata as the page reads it, and the records the import could not use
+        are what it skipped.
         """
 
         cluster = self.target.cluster
         reading = UI.read_freshness(self.mirror, (cluster,))
-        entries: list[Any] = []
-        malformed = 0
-        unavailable = reading.unavailable
-        for path in sorted(self.mirror.glob(f"{cluster}--*.jsonl")):
-            node = path.name[len(f"{cluster}--") : -len(".jsonl")]
-            try:
-                lines = path.read_bytes().splitlines()
-            except FileNotFoundError:
-                continue
-            except OSError:
-                unavailable = True
-                continue
-            for line in lines:
-                try:
-                    entries.append(UI.parse(line, cluster, node))
-                except (UnicodeError, ValueError, OverflowError):
-                    malformed += 1
+        entries = [
+            UI.Entry(
+                cluster=row[1],
+                node=row[2],
+                at=row[3],
+                request=row[4],
+                client=row[5],
+                method=row[6],
+                host=row[7],
+                path=row[8],
+                frontend=row[9],
+                backend=row[10],
+                server=row[11],
+                status=row[12],
+                request_time=row[13],
+                queue_time=row[14],
+                connect_time=row[15],
+                response_time=row[16],
+                total_time=row[17],
+                bytes=row[18],
+                rule=row[19],
+            )
+            for row in self.database.snapshot()
+            if row[1] == cluster
+        ]
         entries.sort(key=lambda entry: (entry.at, entry.node, entry.request), reverse=True)
         return dataclasses.replace(
-            reading, entries=tuple(entries[:limit]), malformed=malformed, unavailable=unavailable
+            reading, entries=tuple(entries[:limit]), malformed=self.database.skipped
         )
 
 
@@ -379,7 +485,33 @@ class ChainTestCase(unittest.TestCase):
 
         moment = now or self.NOW
         before = {path: path.stat().st_mtime_ns for path in self.chain.mirror.iterdir()}
-        result = collect(self.chain.config, now=moment, fetch=self.chain.fetch)
+        database = self.chain.database
+
+        def ingest(config: CollectorConfig) -> tuple[int, int, dict[NodeTarget, str]]:
+            skipped, expired, failed = _ingest_database(config)
+            with database.lock:
+                database.skipped += skipped
+            return skipped, expired, failed
+
+        today = moment.astimezone(UTC).date()
+        days = frozenset(
+            f"{today + timedelta(days=offset):%Y%m%d}" for offset in range(-RETENTION_DAYS - 1, 2)
+        )
+        with (
+            patch(
+                "haprion.traffic_collector.psycopg.connect",
+                side_effect=lambda *_a, **_k: _Connection(database),
+            ),
+            patch("haprion.traffic_collector._database_days", return_value=days),
+            patch("haprion.traffic_collector._database_window", return_value=None),
+            patch("haprion.traffic_collector._ingest_database", ingest),
+        ):
+            result = collect(
+                self.chain.config,
+                now=moment,
+                fetch=self.chain.fetch,
+                fetch_waf_page=lambda _target, _cursor: NO_WAF,
+            )
         stamp = int(moment.timestamp() * 1_000_000_000)
         for path in self.chain.mirror.iterdir():
             if before.get(path) != path.stat().st_mtime_ns:
@@ -419,24 +551,16 @@ class ChainTestCase(unittest.TestCase):
     def retire(self, *replacements: NodeTarget) -> CollectorConfig:
         """The inventory the manager reads, with the node under test taken out."""
 
-        return CollectorConfig(
-            user=self.chain.config.user,
-            key=self.chain.config.key,
-            known_hosts=self.chain.config.known_hosts,
-            mirror=self.chain.mirror,
-            staging=self.chain.staging,
-            nodes=replacements,
-        )
+        return dataclasses.replace(self.chain.config, nodes=replacements)
 
     def assertClean(self) -> None:
-        """No duplicate record, no missing counter, no half-written line."""
+        """No duplicate row, no missing counter, no half-written line in a part."""
 
-        self.assertEqual(self.chain.duplicates(), 0, "the mirror repeated a record")
-        self.assertEqual(self.chain.gaps(), 0, "the mirror lost a record")
-        path = self.chain.mirror_path()
-        if path.exists():
+        self.assertEqual(self.chain.duplicates(), 0, "the database got a record twice")
+        self.assertEqual(self.chain.gaps(), 0, "the database lacks a record")
+        for path in self.chain.staging.glob("*--*--*.jsonl"):
             data = path.read_bytes()
-            self.assertTrue(not data or data.endswith(b"\n"), "the mirror ends mid-record")
+            self.assertTrue(not data or data.endswith(b"\n"), f"{path.name} ends mid-record")
 
     def assertNoLitter(self) -> None:
         """Nothing half-finished is left behind in staging."""
@@ -445,6 +569,8 @@ class ChainTestCase(unittest.TestCase):
             item.name
             for directory in (self.chain.staging, self.chain.mirror)
             for item in directory.iterdir()
-            if item.name.startswith(".") and item.name != ".collector.lock"
+            if item.name.startswith(".")
+            and item.name != ".collector.lock"
+            and not item.name.endswith(".database-offset")
         ]
         self.assertEqual(litter, [], "an interrupted run left a temporary file behind")

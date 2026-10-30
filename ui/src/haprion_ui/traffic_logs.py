@@ -26,12 +26,10 @@ from psycopg import Connection, sql
 from psycopg.rows import class_row
 
 NODE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
-MAX_RECORD_BYTES = 16 * 1024
 MAX_NODES = 64
 MAX_META_BYTES = 4096
 MAX_SEARCH_TOKENS = 64
 MAX_SEARCH_DEPTH = 12
-MIRROR_SUFFIX = ".jsonl"
 META_SUFFIX = ".meta.json"
 POSITIONAL_SERVER = re.compile(r"^s[1-9][0-9]*$")
 
@@ -364,54 +362,6 @@ def _resolved_server(entry: Entry, addresses: Mapping[tuple[str, str, str], str]
     return replace(entry, server=addresses.get((entry.cluster, entry.backend, entry.server), ""))
 
 
-def _text(value: Any, *, maximum: int) -> str:
-    if not isinstance(value, str) or len(value) > maximum:
-        raise ValueError("invalid text field")
-    return value
-
-
-def _number(value: Any, *, low: int = -1, high: int = 2**63 - 1) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
-        raise ValueError("invalid numeric field")
-    return value
-
-
-def parse(line: bytes, cluster: str, node: str) -> Entry:
-    if len(line) > MAX_RECORD_BYTES:
-        raise ValueError("record too large")
-    value = json.loads(line)
-    if not isinstance(value, dict) or value.get("schema") != 1:
-        raise ValueError("unsupported record")
-    stamp = _number(value.get("at"), low=0)
-    #
-    # Tolerated rather than required. A mirror can still hold records written
-    # before the request counter was added, and refusing them would report a
-    # format change as corruption.
-    #
-    counter = value.get("request", 0)
-    return Entry(
-        cluster=cluster,
-        node=node,
-        at=datetime.fromtimestamp(stamp, UTC),
-        request=_number(counter, low=0),
-        client=_text(value.get("client"), maximum=64),
-        method=_text(value.get("method"), maximum=16),
-        host=_text(value.get("host"), maximum=253),
-        path=_text(value.get("path"), maximum=8192),
-        frontend=_text(value.get("frontend"), maximum=128),
-        backend=_text(value.get("backend"), maximum=128),
-        server=_text(value.get("server"), maximum=128),
-        status=_number(value.get("status"), low=0, high=999),
-        request_time=_number(value.get("request_time")),
-        queue_time=_number(value.get("queue_time")),
-        connect_time=_number(value.get("connect_time")),
-        response_time=_number(value.get("response_time")),
-        total_time=_number(value.get("total_time")),
-        bytes=_number(value.get("bytes"), low=0),
-        rule=_text(value.get("rule", ""), maximum=160),
-    )
-
-
 def _stamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or len(value) > 64:
         return None
@@ -463,25 +413,24 @@ def _read_bounded(path: Path, *, maximum: int) -> bytes:
 
 
 def _targets(directory: Path, clusters: tuple[str, ...]) -> tuple[list[tuple[str, str]], bool]:
-    """Every cluster/node the mirror knows about, from both kinds of file.
+    """Every cluster/node the collector left metadata for.
 
-    A node that has never answered has metadata and no log. Listing only the
-    logs would drop exactly the node an operator most needs to see.
+    A node that has never answered has metadata and no rows. Listing only the
+    nodes with rows would drop exactly the node an operator most needs to see.
     """
 
     found: set[tuple[str, str]] = set()
     unavailable = False
     for cluster in clusters:
-        for suffix in (MIRROR_SUFFIX, META_SUFFIX):
-            try:
-                names = sorted(item.name for item in directory.glob(f"{cluster}--*{suffix}"))
-            except OSError:
-                unavailable = True
-                continue
-            for name in names:
-                node = name[len(f"{cluster}--") : -len(suffix)]
-                if NODE_ID.fullmatch(node):
-                    found.add((cluster, node))
+        try:
+            names = sorted(item.name for item in directory.glob(f"{cluster}--*{META_SUFFIX}"))
+        except OSError:
+            unavailable = True
+            continue
+        for name in names:
+            node = name[len(f"{cluster}--") : -len(META_SUFFIX)]
+            if NODE_ID.fullmatch(node):
+                found.add((cluster, node))
     return sorted(found)[:MAX_NODES], unavailable
 
 

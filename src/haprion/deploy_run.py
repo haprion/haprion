@@ -454,6 +454,18 @@ def run(
         writer.write(_state_line("Post-deploy status", status))
 
         landed = _verify(status, node_name, target)
+        if code == 0 and landed is None and target is not None:
+            status, landed = _await_node(
+                status,
+                node_name,
+                target,
+                read_status,
+                writer,
+                pause,
+                lambda: time_left() > reading,
+            )
+            if landed is None and not _readable(status, node_name):
+                return _node_lost(writer, status, report, node_name, target)
         failed = code != 0 or landed is False
         progress = record(progress, step, failed=failed)
 
@@ -520,6 +532,76 @@ def run(
                 report.outcome = Outcome.FAILED
                 report.error = Message(code="status_unavailable", message=str(exc))
                 return DeployRun(exc.exit_code, report)
+
+
+#
+# How long a node that answered 0 to its deploy and then cannot be read is waited
+# for, one reading a second (review 26-10-30, D2). A node that is slow to answer
+# after a heavy reload gets this; one that does not come back stops the rollout,
+# because the next node may be the VIP owner and the release is then the likely
+# reason the last one went silent.
+#
+NODE_WAIT_SECONDS = 30
+
+
+def _readable(status: ClusterStatus, node_name: str) -> bool:
+    return any(node.name == node_name and node.status_ok for node in status.observation().nodes)
+
+
+def _await_node(
+    status: ClusterStatus,
+    node_name: str,
+    target: Target,
+    read_status: ReadStatus,
+    writer: TextIO,
+    pause: Callable[[float], None],
+    may_read: Callable[[], bool],
+) -> tuple[ClusterStatus, bool | None]:
+    """The status, and whether the node landed, once it can be read again or the wait ends.
+
+    Waited only while the node cannot be read: one that answers is judged on
+    its answer as it always was. A reading that fails altogether counts as the
+    node not answering; the next full reading decides what the run does about
+    the cluster.
+    """
+
+    writer.write(f"{node_name} cannot be read after its deploy; waiting for it...\n")
+    for _ in range(NODE_WAIT_SECONDS):
+        if _readable(status, node_name) or not may_read():
+            break
+        pause(1.0)
+        try:
+            status = read_status()
+        except StatusError:
+            continue
+    return status, _verify(status, node_name, target)
+
+
+def _node_lost(
+    writer: TextIO,
+    status: ClusterStatus,
+    report: DeployReport,
+    node_name: str,
+    target: Target | None,
+) -> DeployRun:
+    """The deployed node stayed unreadable: stop before the next node can be touched.
+
+    The remaining nodes may include the VIP owner, and a release that has just
+    made one node go silent is not one to put on it too.
+    """
+
+    message = (
+        f"{node_name} could not be read after its deploy; the remaining nodes were not touched"
+    )
+    writer.write(f"\nERROR: {message}.\n")
+    entry = report.nodes[node_name]
+    entry.outcome = "failed"
+    entry.error = Message(code="node_lost_after_deploy", message=message, node=node_name)
+    _settle(status, report, target)
+    report.final_summary = status.summary
+    report.outcome = Outcome.PARTIAL
+    report.warnings.append(Message(code="node_lost_after_deploy", message=message, node=node_name))
+    return DeployRun(exit_codes.PARTIAL, report)
 
 
 #

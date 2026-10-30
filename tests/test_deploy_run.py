@@ -103,45 +103,75 @@ class TheEndIsJudgedOnTheLastReading(unittest.TestCase):
         self.assertFalse(rows["node-b"]["verified"])
         self.assertEqual(rows["node-b"]["error"]["code"], "target_not_reached")
 
+    def finish_reviving(
+        self, cluster: FakeCluster, *, after: int, release_hash: str
+    ) -> tuple[int, dict[str, Any]]:
+        """A deploy where node-b is unreadable after its own, and answers `after` waits later."""
+
+        waits = 0
+
+        def pause(_seconds: float) -> None:
+            nonlocal waits
+            waits += 1
+            if waits == after:
+                node = cluster.node("node-b")
+                node.reachable, node.release_hash = True, release_hash
+
+        code, _ = deploy(cluster, expected_hash=TARGET_HASH, pause=pause)
+        document = LAST_REPORT[0].as_envelope("alpha")
+        reconcile_semantics()(document, Path("deploy"))
+        return code, document
+
     def test_a_node_unreadable_after_its_deploy_that_returns_behind_is_not_converged(self) -> None:
         """Scenario B: unreadable right after its trigger, back on the old release later."""
 
-        def flicker(cluster: FakeCluster, node: FakeNode) -> None:
-            other = cluster.node("node-b")
-            if node.name == "node-b":
-                other.reachable = False
-            else:
-                other.reachable, other.release_hash = True, OLD_HASH
+        cluster = pair(
+            on_deploy=lambda cluster, node: setattr(cluster.node("node-b"), "reachable", False)
+        )
 
-        code, document = self.finish(pair(on_deploy=flicker))
+        code, document = self.finish_reviving(cluster, after=2, release_hash=OLD_HASH)
 
-        self.assertEqual(code, 69)
+        self.assertEqual(code, exit_codes.FAILED)
         self.assertFalse(document["result"]["converged"])
         rows = {row["name"]: row for row in document["result"]["nodes"]}
         self.assertEqual(rows["node-b"]["outcome"], "failed")
+        self.assertEqual(cluster.triggered, ["node-b"])
 
     def test_a_node_unreadable_after_its_deploy_that_returns_right_is_verified(self) -> None:
-        def flicker(cluster: FakeCluster, node: FakeNode) -> None:
-            cluster.node("node-b").reachable = node.name != "node-b"
+        """The slow answer after a heavy reload: waited for, then judged as usual (D2)."""
 
-        code, document = self.finish(pair(on_deploy=flicker))
+        cluster = pair(
+            on_deploy=lambda cluster, node: setattr(
+                cluster.node("node-b"), "reachable", node.name != "node-b"
+            )
+        )
+
+        code, document = self.finish_reviving(cluster, after=3, release_hash=TARGET_HASH)
 
         self.assertEqual(code, 0)
         self.assertTrue(document["result"]["converged"])
         rows = {row["name"]: row for row in document["result"]["nodes"]}
         self.assertEqual((rows["node-b"]["outcome"], rows["node-b"]["verified"]), ("updated", True))
+        self.assertEqual(cluster.triggered, ["node-b", "node-a"])
 
-    def test_a_node_unreadable_at_the_end_is_not_converged_and_not_called_updated(self) -> None:
-        def gone(cluster: FakeCluster, node: FakeNode) -> None:
-            cluster.node("node-b").reachable = False
+    def test_a_node_that_does_not_come_back_stops_the_rollout_before_the_owner(self) -> None:
+        """Review 26-10-30, D2: the VIP owner got the release the standby had just gone silent on."""
 
-        code, document = self.finish(pair(on_deploy=gone))
+        cluster = pair(
+            on_deploy=lambda cluster, node: setattr(cluster.node("node-b"), "reachable", False)
+        )
 
-        self.assertEqual(code, 69)
+        code, document = self.finish(cluster)
+
+        self.assertEqual(cluster.triggered, ["node-b"])
+        self.assertEqual((code, document["outcome"]), (69, "partial"))
         self.assertFalse(document["result"]["converged"])
         rows = {row["name"]: row for row in document["result"]["nodes"]}
         self.assertEqual(rows["node-b"]["outcome"], "failed")
-        self.assertEqual(rows["node-b"]["error"]["code"], "node_unverified")
+        self.assertEqual(rows["node-b"]["error"]["code"], "node_lost_after_deploy")
+        self.assertEqual(rows["node-a"]["outcome"], "not_attempted")
+        codes = [warning["code"] for warning in document["warnings"]]
+        self.assertIn("node_lost_after_deploy", codes)
 
     def test_a_node_that_was_current_and_drifts_is_named(self) -> None:
         cluster = pair()
@@ -1247,7 +1277,7 @@ class TheRunKeepsToItsBudget(unittest.TestCase):
         self.assertEqual(code, exit_codes.PARTIAL)
         rows = {row["name"]: row for row in document["result"]["nodes"]}
         self.assertEqual(rows["node-b"]["outcome"], "failed")
-        self.assertEqual(rows["node-b"]["error"]["code"], "node_unverified")
+        self.assertEqual(rows["node-b"]["error"]["code"], "node_lost_after_deploy")
 
     def test_nodes_that_fit_are_all_deployed(self) -> None:
         cluster = pair()

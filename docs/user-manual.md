@@ -161,7 +161,9 @@ haprion-objects -c alpha --show <name>
 haprion-deploy -c alpha
 ```
 
-As in the interface, a deploy skips nodes that are already current. Cluster and network configuration is
+As in the interface, a deploy skips nodes that are already current. A node that answered its deploy and
+then cannot be read is waited for, up to 30 seconds; one that stays silent stops the rollout before the
+next node is touched (`partial`, `node_lost_after_deploy`). Cluster and network configuration is
 described under [Cluster definitions](#cluster-definitions) in the environment reference.
 
 **Objects from files**, for automation. You can keep objects as files and apply them from the command line.
@@ -5479,7 +5481,7 @@ to date, and a second deploy would skip the node that still needs the work. So `
 reports three things about the list: the digest the release publishes, the digest the node installed, and
 whether `keepalived.conf` includes it. Both `haprion-status` and `haprion-deploy` call a node current only
 when every component the release owns is in place - the address list, the IPVS file and the log
-forwarding. Fix the cause and run the deploy again: it finishes the half that was left, because the node
+forwarding - and every step after the reload has finished, `keepalived.conf` among them. Fix the cause and run the deploy again: it finishes the half that was left, because the node
 script syncs these components even on a release it already runs.
 
 Whether `keepalived.conf` includes the list is reported, never treated as a target. Adding the include line

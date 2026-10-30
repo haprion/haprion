@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import tempfile
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -114,6 +117,33 @@ class WhatTheHostRuns(unittest.TestCase):
         self.assertIn("openssl pkey", command)
         self.assertIn("install -o root -g root -m 600", command)
         self.assertLess(command.index("openssl pkey"), command.index("install -o root"))
+
+    def run_rsync_line(self, fake_rsync: str) -> tuple[int, list[str]]:
+        (row,) = self.rows(record("lb-02.example.net", certificates=("app.example.com",)))
+        (step,) = certificate_receivers.fetch_steps(row, "mgr.example.net")
+        with tempfile.TemporaryDirectory() as work:
+            bin_dir = Path(work, "bin")
+            scratch = Path(work, "tmp")
+            bin_dir.mkdir()
+            scratch.mkdir()
+            tool = bin_dir / "rsync"
+            tool.write_text("#!/bin/sh\n" + fake_rsync + "\n")
+            tool.chmod(0o755)
+            env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "TMPDIR": str(scratch)}
+            done = subprocess.run(  # noqa: S603 - a fixed shell, the line under test
+                ["/bin/sh", "-c", step.command], env=env, capture_output=True, check=False
+            )
+            return done.returncode, sorted(path.name for path in scratch.iterdir())
+
+    def test_rsync_line_answers_with_the_failure_of_the_fetch_and_leaves_no_directory(self) -> None:
+        code, left = self.run_rsync_line("exit 23")
+        self.assertEqual(code, 23)
+        self.assertEqual(left, [])
+
+    def test_rsync_line_fails_when_the_pair_does_not_check_out(self) -> None:
+        code, left = self.run_rsync_line("exit 0")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(left, [])
 
     def test_https_writes_the_key_under_a_private_umask_and_checks_the_pair(self) -> None:
         (row,) = self.rows(

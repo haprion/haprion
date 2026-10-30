@@ -351,8 +351,10 @@ def _rsync_command(owner: str, host: str, held: Held) -> str:
 
     target = "/etc/ssl/" + held.certificate_id
     names = _files(held)
+    # A subshell that cleans up with a trap: `...; rm -rf` ended with rm's exit
+    # code, and a timer running the line saw success after a failed fetch.
     lines = [
-        "tmp=$(mktemp -d) &&",
+        "( tmp=$(mktemp -d) && trap 'rm -rf \"$tmp\"' EXIT &&",
         f'rsync -rt --no-owner --no-group --chmod=D700,F600 -e "ssh -i {KEY_FILE} '
         f'-o IdentitiesOnly=yes" {owner}@{host}:{held.certificate_id}/ "$tmp"/ &&',
     ]
@@ -365,7 +367,7 @@ def _rsync_command(owner: str, host: str, held: Held) -> str:
     for name in names:
         mode = "644" if name == "fullchain.pem" else "600"
         lines.append(f'install -o root -g root -m {mode} "$tmp"/{name} {target}/{name} &&')
-    lines[-1] = lines[-1].removesuffix(" &&") + '; rm -rf "$tmp"'
+    lines[-1] = lines[-1].removesuffix(" &&") + " )"
     return "\n".join(lines)
 
 

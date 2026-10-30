@@ -756,6 +756,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         status_age.setdefault(cluster, None)
     with request.app.state.pool.connection() as connection:
         items, gone = attention.unacknowledged(items, db.attention_acks(connection))
+        gone = attention.held_through_gaps(gone, status_rows, now=now, stale_after=stale_after)
         if gone:
             db.forget_attention_acks(connection, gone)
             connection.commit()

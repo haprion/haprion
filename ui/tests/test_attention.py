@@ -1345,3 +1345,56 @@ class ARemovedCluster_sFailures(LoginTestCase):
     def test_are_left_out_and_a_listed_cluster_s_are_not(self) -> None:
         self.assertTrue(self.failures_shown("alpha"))
         self.assertFalse(self.failures_shown("beta"))
+
+
+class AcknowledgementsAcrossAGapInReading(unittest.TestCase):
+    """Review 2026-10-30, E2: a reading that could not be made is not a row that has gone."""
+
+    ACK = ("preparation", "alpha", "n1")
+
+    def reading(
+        self,
+        *,
+        age: int = 15,
+        poll_error: str | None = None,
+        nodes: Any = None,
+        outcome: str = "done",
+    ) -> Any:
+        entries = [{"name": "n1", "reachable": True, "status_ok": True}] if nodes is None else nodes
+        return db.ClusterStatus(
+            cluster="alpha",
+            observed_at=NOW - timedelta(seconds=age),
+            outcome=outcome,
+            result={} if poll_error else {"nodes": entries},
+            warnings=[],
+            error=None,
+            poll_error=poll_error,
+        )
+
+    def forgotten(self, row: Any, key: tuple[str, str, str] | None = None) -> set[Any]:
+        return attention.held_through_gaps(
+            {key or self.ACK}, [row], now=NOW, stale_after=timedelta(seconds=100)
+        )
+
+    def test_a_whole_fresh_reading_without_the_row_forgets_it(self) -> None:
+        self.assertEqual(self.forgotten(self.reading()), {self.ACK})
+
+    def test_an_old_reading_keeps_it(self) -> None:
+        self.assertEqual(self.forgotten(self.reading(age=120)), set())
+
+    def test_a_failed_reading_keeps_it(self) -> None:
+        self.assertEqual(self.forgotten(self.reading(poll_error="sudo: timed out")), set())
+
+    def test_a_node_that_did_not_answer_keeps_its_rows_only(self) -> None:
+        silent = self.reading(
+            nodes=[{"name": "n1", "reachable": False, "status_ok": False}], outcome="partial"
+        )
+        self.assertEqual(self.forgotten(silent), set())
+        self.assertEqual(
+            self.forgotten(self.reading(), ("service", "alpha", "web")),
+            {("service", "alpha", "web")},
+        )
+
+    def test_a_certificate_row_is_not_about_a_reading(self) -> None:
+        key = ("certificate", "", "x")
+        self.assertEqual(self.forgotten(self.reading(age=500), key), {key})

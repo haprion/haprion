@@ -974,6 +974,59 @@ def unacknowledged(
     return [item for item in listed if item.key not in acknowledged], acknowledged - present
 
 
+#
+# The kinds of row a cluster's status reading makes, and so the acknowledgements
+# that only a whole, fresh reading can say are done with (review 2026-10-30, E2).
+#
+READ_PER_CLUSTER = frozenset({"cluster", "service"})
+READ_PER_NODE = frozenset({"node", "preparation", "node_package", "forwarding", "traffic_stream"})
+
+
+def held_through_gaps(
+    gone: set[tuple[str, str, str]],
+    status_rows: Iterable[Any],
+    *,
+    now: datetime,
+    stale_after: timedelta,
+) -> set[tuple[str, str, str]]:
+    """Of the acknowledgements whose row is not listed, those it is right to forget.
+
+    A row made from a cluster's status reading is not listed while the reading
+    is old, failed or missing the node, and then it has not gone - it could not
+    be told. Its acknowledgement stays until a whole, fresh reading leaves the
+    row out.
+    """
+
+    rows = {row.cluster: row for row in status_rows}
+    forget: set[tuple[str, str, str]] = set()
+    for key in gone:
+        kind, cluster, subject = key
+        row = rows.get(cluster)
+        if kind not in READ_PER_CLUSTER | READ_PER_NODE or row is None:
+            forget.add(key)
+            continue
+        result = row.result if isinstance(getattr(row, "result", None), Mapping) else {}
+        unread = bool(row.poll_error) or now - row.observed_at > stale_after
+        if kind in READ_PER_CLUSTER:
+            if unread or row.outcome != "done":
+                continue
+        else:
+            nodes = {
+                str(entry.get("name")): entry
+                for entry in result.get("nodes") or ()
+                if isinstance(entry, Mapping)
+            }
+            entry = nodes.get(subject)
+            if unread or (
+                entry is not None and not (entry.get("reachable") and entry.get("status_ok"))
+            ):
+                continue
+            if entry is None and row.outcome != "done":
+                continue
+        forget.add(key)
+    return forget
+
+
 def build_attention(
     items: Iterable[Item],
     *,

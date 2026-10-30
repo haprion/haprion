@@ -979,10 +979,6 @@ class EveryAllowedKeywordIsHAProxyS(unittest.TestCase):
         self.assertEqual(advanced.SECTION_KEYWORDS["userlist"], userlist)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _object(name: str, advanced_text: str, *, source: bool = False, by_hand: bool = False) -> str:
     pool = (
         "    servers: []"
@@ -1067,3 +1063,7 @@ class AStoredObjectWithALineNowRefused(unittest.TestCase):
             r"shop\.advanced has lines that cannot be written - line 3: a ring's backing file",
         ):
             load_proxy("shop", document.encode())
+
+
+if __name__ == "__main__":
+    unittest.main()

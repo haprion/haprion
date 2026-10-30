@@ -415,6 +415,44 @@ class AStatusReadIsBounded(unittest.TestCase):
         self.assertLess(len(entry["error"]["details"]["stderr"]), 2100)
         self.assertLess(len(entry["error"]["message"]), 300)
 
+    def test_a_resolver_that_does_not_answer_does_not_stretch_the_read(self) -> None:
+        """Review 2026-10-30, E10: the names are asked beside the nodes, in a budget."""
+
+        names = tuple(
+            status_collect.PublishedName(pool="p", host=f"dns{n}.example.com", address="192.0.2.1")
+            for n in range(3)
+        )
+
+        def dead(_host: str) -> str:
+            time.sleep(1.5)
+            return "192.0.2.1"
+
+        with mock.patch.object(status_collect, "DNS_LOOKUP_BUDGET_SECONDS", 0.2):
+            started = time.monotonic()
+            report = collect(
+                NODES[:1],
+                answering(
+                    **{"node-a": node_status("node-a", owner=True, release_hash=TARGET.hash)}
+                ),
+                target=TARGET,
+                dns_names=names,
+                resolve=dead,
+            )
+            elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(list(report.warnings), [])
+
+    def test_a_name_that_moved_is_still_warned_of(self) -> None:
+        name = status_collect.PublishedName(pool="p", host="dns.example.com", address="192.0.2.1")
+        report = collect(
+            NODES[:1],
+            answering(**{"node-a": node_status("node-a", owner=True, release_hash=TARGET.hash)}),
+            target=TARGET,
+            dns_names=(name,),
+            resolve=lambda _host: "192.0.2.9",
+        )
+        self.assertEqual([w.code for w in report.warnings], ["dns_server_moved"])
+
     def test_a_document_nested_past_the_parser_is_one_node_without_status(self) -> None:
         """Code review 26-10-22, 5-6: `RecursionError` is not a `JSONDecodeError`,
         and one node's answer stopped the read of every node."""

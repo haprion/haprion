@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -315,6 +317,29 @@ def dns_servers_moved(
             now = f"now resolves to {now}"
         warnings.append(Message(code=DNS_SERVER_MOVED, message=moved_message(name, now)))
     return warnings
+
+
+#
+# The names are asked with this host's resolver, one after the other and with no
+# limit of its own: a resolver that does not answer costs each name its whole
+# timeout. They are asked beside the nodes and given this long in all; a name
+# not looked up in time says nothing in this reading (review 2026-10-30, E10).
+#
+DNS_LOOKUP_BUDGET_SECONDS = 5
+
+
+def _dns_servers_moved_beside(
+    names: tuple[PublishedName, ...], resolve: dnsdist_config.Lookup | None
+) -> tuple[threading.Thread, list[Message]]:
+    found: list[Message] = []
+
+    def ask() -> None:
+        for name in names:
+            found.extend(dns_servers_moved((name,), resolve))
+
+    thread = threading.Thread(target=ask, name="dns-lookups", daemon=True)
+    thread.start()
+    return thread, found
 
 
 UNKNOWN = "unknown"
@@ -713,6 +738,8 @@ def collect(
     # every silent one added five seconds. `map` keeps the configured order, and each
     # node is judged afterwards exactly as before.
     #
+    started = time.monotonic()
+    lookups = _dns_servers_moved_beside(dns_names, resolve) if dns_names else None
     answers: list[NodeResponse] = []
     if nodes:
         with ThreadPoolExecutor(max_workers=len(nodes)) as pool:
@@ -762,7 +789,10 @@ def collect(
                     )
                 )
 
-    warnings.extend(dns_servers_moved(dns_names, resolve))
+    if lookups is not None:
+        thread, moved = lookups
+        thread.join(max(0.0, DNS_LOOKUP_BUDGET_SECONDS - (time.monotonic() - started)))
+        warnings.extend(list(moved))
 
     result = {
         "nodes": results,

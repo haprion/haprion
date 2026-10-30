@@ -7689,6 +7689,13 @@ checkpoint forward only after the database transaction commits. Repeating a batc
 each record has a fixed identity. Once `[traffic_logs]` is enabled in `ui.toml`, the interface
 reads indexed database rows; the mirror metadata still reports how fresh the collection is.
 
+A record the database cannot hold is skipped and counted in the run's output, and the import goes on
+past it: text that is not valid UTF-8 (a lone surrogate), a NUL, a field past its length, a request
+number beyond a 64-bit integer. A day file that fails to import stops that node's import only; the
+nodes after it are imported as usual, and the failed node shows `database` in the log warning and
+under Needs attention instead of `ok`. A local account on a node can write a line under the traffic
+log's tag, so one node's log is not trusted beyond that node.
+
 Successful contact does not mean the log is caught up. The log warning shows whether today's file
 is incomplete, the bytes remaining at the last read, and older days still pending. The remaining
 byte count is an observation, not a prediction of how much new traffic arrived afterwards. Each run:

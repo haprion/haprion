@@ -57,6 +57,74 @@ def no_waf(_target: NodeTarget, _cursor: str) -> bytes:
     return b'{"cursor":"","eof":true,"reset":false,"sent":0}\n'
 
 
+class _Copy:
+    """What psycopg's COPY does to a row: UTF-8 for text, bigint for numbers."""
+
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    def __enter__(self) -> _Copy:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def write_row(self, row: tuple[Any, ...]) -> None:
+        if row[2] in self.connection.refuse_nodes:
+            raise psycopg.errors.DataError("refused")
+        for item in row:
+            if isinstance(item, str):
+                item.encode("utf-8")
+            elif isinstance(item, int) and not -(2**63) <= item < 2**63:
+                raise psycopg.errors.DataError("bigint out of range")
+        self.connection.rows.append(row)
+
+
+class _Cursor:
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    def __enter__(self) -> _Cursor:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def copy(self, _statement: str) -> _Copy:
+        return _Copy(self.connection)
+
+
+class _Connection:
+    def __init__(self, refuse_nodes: tuple[str, ...] = ()) -> None:
+        self.rows: list[tuple[Any, ...]] = []
+        self.refuse_nodes = refuse_nodes
+
+    def __enter__(self) -> _Connection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def cursor(self) -> _Cursor:
+        return _Cursor(self)
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        pass
+
+
+def traffic_line(path: str = "/", **fields: Any) -> bytes:
+    record: dict[str, Any] = {
+        "schema": 1, "at": 1_700_000_000, "client": "192.0.2.1", "method": "GET",
+        "host": "a.example.test", "path": path, "frontend": "f", "backend": "b",
+        "server": "s1", "status": 200, "request_time": 0, "queue_time": 0,
+        "connect_time": 0, "response_time": 0, "total_time": 0, "bytes": 0,
+    }  # fmt: skip
+    return json.dumps(record | fields).encode() + b"\n"
+
+
 class TrafficCollectorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -638,6 +706,51 @@ class TrafficCollectorTests(unittest.TestCase):
             "/run/postgresql",
         )
 
+    def test_a_lone_surrogate_or_an_oversized_request_is_an_unusable_record(self) -> None:
+        """Review 2026-10-30, E1: `json.loads` hands on `\\ud800`, which COPY
+        cannot encode, and a request number past bigint is refused by the
+        database. Either stopped the import of every node after it."""
+
+        part = self.staging / "alpha--node-a--2026-09-08.jsonl"
+        part.write_bytes(
+            traffic_line("/\ud800") + traffic_line("/big", request=2**64) + traffic_line("/ok")
+        )
+        connection: Any = _Connection()
+        self.assertEqual(_ingest_part(self.config, connection, self.target, part), 2)
+        self.assertEqual([row[8] for row in connection.rows], ["/ok"])
+
+    def test_a_part_the_database_refuses_stops_only_its_own_node(self) -> None:
+        """Review 2026-10-30, E1: the first node's failing COPY ended the
+        import for every node after it, and its page still said `ok`."""
+
+        node_b = NodeTarget("alpha", "node-b", "node-b.example.com")
+        nodes = (self.target, node_b)
+        configured = dataclasses.replace(self.database_configured(), nodes=nodes)
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            line = traffic_line() if wanted == NOW.date() and offset == 0 else b""
+            return self.response(wanted, offset, line)
+
+        connection = _Connection(refuse_nodes=("node-a",))
+        stderr = StringIO()
+        with (
+            patch("haprion.traffic_collector.psycopg.connect", return_value=connection),
+            patch(
+                "haprion.traffic_collector._database_days",
+                return_value=frozenset({"20260908"}),
+            ),
+            patch("haprion.traffic_collector._database_window", return_value=None),
+            redirect_stderr(stderr),
+        ):
+            code = collect(configured, now=NOW, fetch=fetch, fetch_waf_page=no_waf)
+
+        self.assertEqual(code, 1)
+        self.assertEqual([row[2] for row in connection.rows], ["node-b"])
+        meta_a = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        meta_b = json.loads((self.mirror / "alpha--node-b.meta.json").read_bytes())
+        self.assertEqual((meta_a["outcome"], meta_b["outcome"]), ("database", "ok"))
+        self.assertIn("alpha/node-a: database import failed", stderr.getvalue())
+
     def test_with_the_database_as_reader_no_joined_mirror_is_written(self) -> None:
         #
         # Review 2026-09-30, R2: every run used to join the whole retained
@@ -652,10 +765,10 @@ class TrafficCollectorTests(unittest.TestCase):
                 wanted, offset, line if wanted == NOW.date() and offset == 0 else b""
             )
 
-        def ingest(config: CollectorConfig) -> tuple[int, int]:
+        def ingest(config: CollectorConfig) -> tuple[int, int, dict[NodeTarget, str]]:
             for part in sorted(config.staging.glob("alpha--node-a--*.jsonl")):
                 imported.append(part.read_bytes())
-            return 0, 0
+            return 0, 0, {}
 
         with (
             patch("haprion.traffic_collector._ingest_database", side_effect=ingest),
@@ -1123,7 +1236,7 @@ class WafJournalCollectorTests(unittest.TestCase):
                     datetime.combine(NOW.date(), time(), UTC) + timedelta(days=1),
                 ),
             ),
-            patch("haprion.traffic_collector._ingest_database", return_value=(0, 0)),
+            patch("haprion.traffic_collector._ingest_database", return_value=(0, 0, {})),
             patch("sys.stderr", errors),
         ):
             connect.return_value.__enter__.return_value = connection
@@ -1195,7 +1308,7 @@ class WafJournalCollectorTests(unittest.TestCase):
         quiet = b'{"cursor":"%s","eof":true,"reset":false,"sent":0}\n' % journal_cursor(5).encode()
         errors = StringIO()
         with (
-            patch("haprion.traffic_collector._ingest_database", return_value=(0, 0)),
+            patch("haprion.traffic_collector._ingest_database", return_value=(0, 0, {})),
             patch("haprion.traffic_collector._mirror_window", return_value=14),
             patch("haprion.traffic_collector.psycopg.connect") as connect,
             patch("sys.stderr", errors),

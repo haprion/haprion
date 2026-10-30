@@ -805,9 +805,15 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
         # A NUL is legal JSON and illegal in a PostgreSQL text column; letting
         # it through makes COPY refuse the whole batch, which is the permanent
         # stop this function exists to prevent. The record is unusable here.
+        # So is a lone surrogate: JSON can spell one (`\ud800`), `json.loads`
+        # hands it on, and COPY cannot encode it as UTF-8.
         #
         if not isinstance(item, str) or len(item) > maximum or "\0" in item:
             raise CollectorError(f"traffic record {name} is invalid")
+        try:
+            item.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise CollectorError(f"traffic record {name} is invalid") from exc
         return item
 
     #
@@ -817,7 +823,7 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
     #
     stamp = number("at", low=0, high=MAX_TIMESTAMP)
     request = value.get("request", 0)
-    if not isinstance(request, int) or isinstance(request, bool) or request < 0:
+    if not isinstance(request, int) or isinstance(request, bool) or not 0 <= request <= 2**63 - 1:
         raise CollectorError("traffic record request is invalid")
     #
     # Tolerated rather than required, as `request` is: a record written before
@@ -1167,13 +1173,22 @@ def _database_reason(exc: psycopg.Error) -> str:
     return f"{message[:300]}{state}"
 
 
-def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
-    """Import every staging part, and answer what it skipped: records, parts."""
+def _ingest_database(
+    config: CollectorConfig,
+) -> tuple[int, int, dict[NodeTarget, str]]:
+    """Import every staging part, and answer what it skipped: records, parts, failed nodes.
+
+    A part that cannot be imported stops its own node and no other: the nodes
+    after it in the list are imported as usual, and the failed node is answered
+    with the reason, for the caller to report. Only a database that cannot be
+    reached or asked at all stops the whole import.
+    """
 
     if config.database is None or config.database_socket is None:
-        return 0, 0
+        return 0, 0, {}
     skipped = 0
     expired = 0
+    failed: dict[NodeTarget, str] = {}
     try:
         with psycopg.connect(
             f"dbname={config.database} host={config.database_socket}", autocommit=False
@@ -1195,10 +1210,22 @@ def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
                         if not _within_margin(day, days):
                             expired += 1
                         continue
-                    skipped += _ingest_part(config, connection, target, part, window)
+                    try:
+                        skipped += _ingest_part(config, connection, target, part, window)
+                    except psycopg.Error as exc:
+                        failed[target] = f"database import failed: {_database_reason(exc)}"
+                    except CollectorError as exc:
+                        failed[target] = f"database import failed: {exc}"
+                    except (OSError, ValueError) as exc:
+                        # A UnicodeError is a ValueError: COPY could not encode a value.
+                        failed[target] = f"database import failed: {type(exc).__name__}"
+                    if target in failed:
+                        with contextlib.suppress(psycopg.Error):
+                            connection.rollback()
+                        break
     except psycopg.Error as exc:
         raise CollectorError(f"database import failed: {_database_reason(exc)}") from exc
-    return skipped, expired
+    return skipped, expired, failed
 
 
 #
@@ -1657,7 +1684,18 @@ def collect(
             print(f"{target.cluster}/{target.node}: {run.problem}{note}", file=sys.stderr)
             failures += not joining
         try:
-            skipped, expired = _ingest_database(config)
+            skipped, expired, failed = _ingest_database(config)
+            for target, reason in failed.items():
+                print(f"{target.cluster}/{target.node}: {reason}", file=sys.stderr)
+                if target in mirrored:
+                    _write_meta(
+                        config,
+                        target,
+                        attempted=attempted,
+                        outcome="database",
+                        success=False,
+                    )
+                failures += 1
             if skipped:
                 print(
                     f"database: skipped {labels.counted(skipped, 'unusable record')}",

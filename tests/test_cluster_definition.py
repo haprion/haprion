@@ -544,6 +544,16 @@ class CreatingACluster(unittest.TestCase):
         self.assertEqual(caught.exception.code, "cluster_invalid")
         self.assertIn("not an IPv4 address", str(caught.exception))
 
+    def test_a_cluster_id_with_the_file_separator_is_refused_with_why(self) -> None:
+        """Review 2026-10-30-igen, R5: in the guide's first step, not at the cluster file."""
+
+        for cluster in ("alpha--b", "alpha-"):
+            with self.subTest(cluster=cluster):
+                with self.assertRaises(EnrollmentError) as caught:
+                    cluster_definition.check_name(cluster, display_name="Alpha", vip="192.0.2.10")
+                self.assertEqual(caught.exception.code, "cluster_invalid")
+                self.assertIn("cannot contain '--' or end in '-'", str(caught.exception))
+
     def test_an_editing_policy_visudo_refuses_changes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = Site(Path(raw))

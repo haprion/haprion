@@ -286,7 +286,7 @@ class TheKeyScriptSaysWhatIsTrue(unittest.TestCase):
         self.assertEqual((done.returncode, done.stdout.strip()), (0, "node-a node-a"))
 
     def test_a_host_name_that_is_not_a_node_name_is_refused(self) -> None:
-        for short in ("Node-A", "1node", "node_a"):
+        for short in ("Node-A", "1node", "node_a", "node--a", "node-a-"):
             with self.subTest(short=short):
                 self.hostnames(short, f"{short}.example.com")
                 self.assertNotEqual(self.run_function("node_names").returncode, 0)
@@ -295,6 +295,7 @@ class TheKeyScriptSaysWhatIsTrue(unittest.TestCase):
         text = self.KEY_SCRIPT.read_text()
         self.assertIn("hostnamectl set-hostname", text)
         self.assertIn("lowercase letters, digits and hyphens", text)
+        self.assertIn("with no '--' and no '-' at the end", text)
 
     def test_both_scripts_fall_back_when_hostname_f_fails(self) -> None:
         prepare = (BASE / "install" / "04-node-prepare").read_text()

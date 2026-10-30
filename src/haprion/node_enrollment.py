@@ -70,9 +70,17 @@ from haprion.config import (
     Node,
     PathPolicy,
     RuntimeConfig,
+    file_separator_free,
     load_runtime_config,
 )
 from haprion.status_collect import NodeResponse
+
+#
+# Why a name with the traffic collector's file separator is refused, said where
+# the name is entered (review 2026-10-30-igen, R5) rather than when the
+# cluster file it would go into is loaded (`config.file_separator_free`).
+#
+SEPARATOR_REFUSED = "a %s cannot contain '--' or end in '-'"
 
 BLOCK_PREFIX = "haproxy-node-v1:"
 #
@@ -272,8 +280,17 @@ def parse(text: object) -> Enrollment:
         cluster = None
     elif not isinstance(cluster, str) or not CLUSTER_ID.fullmatch(cluster):
         raise EnrollmentError("enrollment_invalid", "the block names no valid cluster")
+    elif not file_separator_free(cluster):
+        raise EnrollmentError(
+            "enrollment_invalid",
+            f"the block's cluster {cluster!r}: {SEPARATOR_REFUSED % 'cluster ID'}",
+        )
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise EnrollmentError("enrollment_invalid", "the block names no valid node")
+    if not file_separator_free(name):
+        raise EnrollmentError(
+            "enrollment_invalid", f"the block's node {name!r}: {SEPARATOR_REFUSED % 'node name'}"
+        )
     cert = document.get("cert_pull_key")
     return Enrollment(
         cluster=cluster,

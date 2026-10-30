@@ -55,7 +55,14 @@ class OneClusterId(unittest.TestCase):
         self.assertEqual(line, f'^CLUSTER="({CLUSTER_ID.pattern[1:-1]})"$')
 
     def test_the_installation_scripts_check_it(self) -> None:
-        for cluster, expected in (("edge-a", 0), ("a" + "b" * 62, 0), ("al_pha", 1), ("1a", 1)):
+        for cluster, expected in (
+            ("edge-a", 0),
+            ("a" + "b" * 62, 0),
+            ("al_pha", 1),
+            ("1a", 1),
+            ("alpha--b", 1),
+            ("alpha-", 1),
+        ):
             with self.subTest(cluster=cluster):
                 run = subprocess.run(  # fixed interpreter, script built here
                     [

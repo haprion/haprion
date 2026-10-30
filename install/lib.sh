@@ -431,7 +431,7 @@ installed_nodes() {
 each_cluster() {
     local cluster
     for cluster in $CLUSTERS; do
-        valid_id "$cluster" || die "invalid cluster id: ${cluster}"
+        valid_id "$cluster" || die "invalid cluster id: ${cluster} (${ID_RULE})"
         echo "$cluster"
     done
 }

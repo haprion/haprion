@@ -108,7 +108,7 @@ node_names() {
     NODE_NAME="$(hostname)"
     NODE_HOST="$(hostname -f 2>/dev/null || true)"
     [[ "$NODE_HOST" =~ $NODE_HOST_PATTERN ]] || NODE_HOST="$NODE_NAME"
-    [[ "$NODE_NAME" =~ $NODE_NAME_PATTERN ]]
+    [[ "$NODE_NAME" =~ $NODE_NAME_PATTERN ]] && [[ "$NODE_NAME" != *--* && "$NODE_NAME" != *- ]]
 }
 
 case "$(node_state)" in
@@ -128,7 +128,7 @@ case "$(node_state)" in
         ;;
 esac
 
-node_names || die "this host's name '${NODE_NAME}' is not a node name. Node names are lowercase letters, digits and hyphens, starting with a letter: rename the host (sudo hostnamectl set-hostname <name>), then run  sudo haprion-node-key"
+node_names || die "this host's name '${NODE_NAME}' is not a node name. Node names are lowercase letters, digits and hyphens, starting with a letter, with no '--' and no '-' at the end: rename the host (sudo hostnamectl set-hostname <name>), then run  sudo haprion-node-key"
 
 install -d -m 755 "${SETUP_LOG%/*}"
 #

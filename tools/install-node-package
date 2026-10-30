@@ -66,6 +66,7 @@ done
 [[ "$node" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || fail "invalid node hostname"
 # The engine's pattern (`valid_id` in install/node-lib.sh), held to it by a test.
 [[ "$cluster" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || fail "invalid cluster id"
+[[ "$cluster" != *--* && "$cluster" != *- ]] || fail "invalid cluster id: no '--' and no '-' at the end"
 bash -n "$answers" || fail "answers file is not valid shell"
 
 #

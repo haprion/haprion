@@ -208,10 +208,19 @@ cluster_value() {
 #
 # The engine's CLUSTER_ID (config.py), held to it by a test: a cluster the
 # interface may create, a step on the node must accept (Fas 18 finding 55).
+# And its `file_separator_free`: no `--`, no `-` at the end, which the traffic
+# collector files a node's data by (review 2026-10-30, E4).
 #
 valid_id() {
-    [[ "$1" =~ ^[a-z][a-z0-9-]{0,62}$ ]]
+    [[ "$1" =~ ^[a-z][a-z0-9-]{0,62}$ ]] && separator_free "$1"
 }
+
+separator_free() {
+    [[ "$1" != *--* && "$1" != *- ]]
+}
+
+# shellcheck disable=SC2034  # read by the steps that source this file
+ID_RULE="lowercase letters, digits and hyphens, starting with a letter, with no '--' and no '-' at the end"
 
 #
 # Create a directory with an exact owner and mode, or correct one that exists.

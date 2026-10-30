@@ -20,7 +20,7 @@ need_root
 load_answers "${1:-}"
 CLUSTER="${2:-}"
 [[ -n "$CLUSTER" ]] || die "usage: $(basename "$0") <answers-file> <cluster-id>"
-valid_id "$CLUSTER" || die "invalid cluster id: ${CLUSTER}"
+valid_id "$CLUSTER" || die "invalid cluster id: ${CLUSTER} (${ID_RULE})"
 require_vars TRIGGER_USER STATUS_USER BACKUP_USER LOGREAD_USER PULL_USER MANAGER_HOST \
              NODE_CONFIG_PULL_KEY
 if id -u "$LOGREAD_USER" >/dev/null 2>&1; then

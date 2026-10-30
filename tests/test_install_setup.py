@@ -1240,7 +1240,11 @@ class AClusterTheInterfaceMayCreateTheStepsAccept(unittest.TestCase):
         from haprion.config import CLUSTER_ID
 
         lib = (INSTALL / "node-lib.sh").read_text()
-        found = re.search(r'^valid_id\(\) \{\n    \[\[ "\$1" =~ (.*) \]\]\n\}', lib, re.MULTILINE)
+        found = re.search(
+            r'^valid_id\(\) \{\n    \[\[ "\$1" =~ (.*) \]\] && separator_free "\$1"\n\}',
+            lib,
+            re.MULTILINE,
+        )
         assert found
         self.assertEqual(found.group(1), CLUSTER_ID.pattern)
         #
@@ -1250,6 +1254,9 @@ class AClusterTheInterfaceMayCreateTheStepsAccept(unittest.TestCase):
         installer = (INSTALL.parent / "tools" / "install-node-package").read_text()
         checks = re.findall(r'^\[\[ "\$cluster" =~ (\S+) \]\]', installer, re.MULTILINE)
         self.assertEqual(checks, [CLUSTER_ID.pattern])
+        self.assertIn(
+            '[[ "$cluster" != *--* && "$cluster" != *- ]] || fail "invalid cluster id:', installer
+        )
 
     def test_an_answer_for_a_hyphenated_cluster_is_found(self) -> None:
         done = subprocess.run(  # the helper under test

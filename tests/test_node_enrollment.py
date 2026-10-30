@@ -178,6 +178,33 @@ class TheBlock(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(EnrollmentError):
                 enrollment.parse(text)
 
+    def test_a_name_with_the_file_separator_is_refused_with_why(self) -> None:
+        """Review 2026-10-30-igen, R5: at the block, not when clusters.yaml is loaded."""
+
+        def printed(**fields: str) -> str:
+            document = {
+                "cluster": "alpha",
+                "name": "node-c",
+                "host": "node-c.example.com",
+                "host_key": HOST_KEY,
+                "config_pull_key": CONFIG_KEY,
+                **fields,
+            }
+            raw = base64.urlsafe_b64encode(json.dumps(document).encode()).decode()
+            return enrollment.BLOCK_PREFIX + raw
+
+        self.assertEqual(enrollment.parse(printed()).name, "node-c")
+        for fields, said in (
+            ({"name": "node--a"}, "node name cannot contain '--' or end in '-'"),
+            ({"name": "node-a-"}, "node name cannot contain '--' or end in '-'"),
+            ({"cluster": "alpha--b"}, "cluster ID cannot contain '--' or end in '-'"),
+        ):
+            with self.subTest(fields=fields):
+                with self.assertRaises(EnrollmentError) as caught:
+                    enrollment.parse(printed(**fields))
+                self.assertEqual(caught.exception.code, "enrollment_invalid")
+                self.assertIn(said, str(caught.exception))
+
     def test_a_key_that_is_not_ed25519_is_refused(self) -> None:
         with self.assertRaisesRegex(EnrollmentError, "not an ssh-ed25519 key"):
             enrollment.public_key("ssh-rsa AAAAB3NzaC1yc2E=", "the host key")

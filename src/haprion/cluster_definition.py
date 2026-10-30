@@ -64,10 +64,12 @@ from haprion.config import (
     Node,
     PathPolicy,
     RuntimeConfig,
+    file_separator_free,
     load_runtime_config,
 )
 from haprion.git_command import GIT
 from haprion.node_enrollment import (
+    SEPARATOR_REFUSED,
     AskNode,
     Enrollment,
     EnrollmentError,
@@ -241,6 +243,8 @@ def check_name(
 
     if not CLUSTER_ID.fullmatch(cluster):
         raise EnrollmentError("cluster_invalid", f"{cluster!r} is not a cluster ID")
+    if not file_separator_free(cluster):
+        raise EnrollmentError("cluster_invalid", f"{cluster!r}: {SEPARATOR_REFUSED % 'cluster ID'}")
     if (
         not display_name.strip()
         or len(display_name) > MAX_DISPLAY_NAME

@@ -1426,7 +1426,38 @@ def _run(
         )
     except (RestoreError, OSError) as exc:
         result["sessions"].setdefault(stage, {})
-        return finish_with("failed", error=str(exc), stage=stage)
+        if not overwrite:
+            return finish_with("failed", error=str(exc), stage=stage)
+        #
+        # A session that broke from this side - out of time, or the connection
+        # lost - leaves the node as the agent got to: `apply` stops keepalived
+        # before it writes, and only `finish` starts it. The agent puts the
+        # node back by itself only on an error it caught, so it is asked to,
+        # as the network step asks after its timer. A short wait first lets an
+        # agent still at work come to its own end.
+        #
+        clock.sleep(min(pause * 2, 6.0))
+        try:
+            undone = session.call(
+                request.target, {"op": "rollback", "run": run_id}, progress=stream
+            )
+        except (RestoreError, OSError) as again:
+            undone = {"ok": False, "error": str(again)}
+        result["sessions"]["rollback"] = {k: v for k, v in undone.items() if k != "ok"}
+        if undone.get("ok"):
+            return finish_with(
+                "failed",
+                error=f"{exc}; the node was put back from its copy",
+                stage=stage,
+                rolled_back=True,
+            )
+        return finish_with(
+            "failed",
+            error=f"{exc}; putting the node back failed ({undone.get('error')}). keepalived may be "
+            f"stopped on {request.node}: start it, or put its copy back from "
+            f"{restore_agent.STATE}/{run_id}/before/",
+            stage=stage,
+        )
 
 
 def _finish(

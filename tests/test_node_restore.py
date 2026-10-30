@@ -748,6 +748,33 @@ class Overwrite(RestoreTest):
         result = self.carry_out(run, confirm="node-a", checks=self.checks, break_traffic=True)
         self.assertEqual(result["outcome"], "done", result)
 
+    def broken_apply(self, rollback: dict[str, Any]) -> dict[str, Any]:
+        run = self.previewed()
+        original = FakeSession.call
+
+        def call(session: FakeSession, address: str, header: dict[str, Any], *a: Any,
+                 **k: Any) -> dict[str, Any]:  # fmt: skip
+            if header["op"] == "apply":
+                raise RestoreError("the apply session did not finish in time")
+            return original(session, address, header, *a, **k)
+
+        FakeSession.answers["rollback"] = rollback
+        with mock.patch.object(FakeSession, "call", call):
+            return self.carry_out(run, confirm="node-a", checks=self.checks)
+
+    def test_an_apply_that_breaks_from_our_side_puts_the_node_back(self) -> None:
+        result = self.broken_apply({"ok": True})
+        self.assertEqual((result["outcome"], result["stage"]), ("failed", "apply"))
+        self.assertTrue(result["rolled_back"], result)
+        self.assertEqual([c[1]["op"] for c in FakeSession.calls][-1], "rollback")
+        self.assertIn("put back", result["error"])
+
+    def test_a_rollback_that_fails_says_where_keepalived_and_the_copy_are(self) -> None:
+        result = self.broken_apply({"ok": False, "error": "no copy"})
+        self.assertFalse(result["rolled_back"])
+        self.assertIn("keepalived may be stopped on node-a", result["error"])
+        self.assertIn("/before/", result["error"])
+
     def test_a_backup_node_with_a_sick_neighbour_goes_ahead(self) -> None:
         run = self.previewed()
         self.standing = node_restore.Standing(False, "node-b", False)

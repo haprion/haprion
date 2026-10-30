@@ -3318,6 +3318,10 @@ are the same. Over the node itself, this differs:
   copy once the node answers again. keepalived is started again, and the run is `failed` with
   `rolled_back`. When the run was put back, the one-time key stays in root's `authorized_keys` until its
   `expiry-time`.
+- If a session breaks from the management host's side - it ran out of time, or the connection was lost -
+  the host asks the node to put itself back from its copy before it records `failed`. If that fails
+  too, the run says that keepalived may be stopped and where the copy is
+  (`/var/lib/haprion-restore/<run>/before/` on the node), and `rolled_back` stays false.
 
 **What it does not do.** It does not restore onto an OS other than Ubuntu 26.04 or Debian 13. And it
 does not set up what belongs to your environment rather than the product - a configuration-management

@@ -103,6 +103,7 @@ from haprion.status_collect import read_target
 from haprion.version_history import (
     comment_problem,
     count_versions,
+    index_left_behind,
     request_names,
     version_message,
 )
@@ -532,6 +533,14 @@ def _publish(
         # `install_release` is idempotent, so when nothing was missing it
         # verifies the stamp and returns.
         #
+        #
+        # The index too: a run stopped between moving the branch and
+        # `reset --mixed` leaves the files as this version and the index as the
+        # one before, and every later check reads that as unsaved work
+        # (review 26-10-30, D3).
+        #
+        if index_left_behind(repo, head):
+            refresh_worktree_index(repo, head)
         current_files = read_tree_files(repo, snapshot.tree)
         short = tls_policy.stick_counters_problem(
             current_files, cluster=request.cluster, config_path=str(cluster.config_path)

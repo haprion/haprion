@@ -513,6 +513,25 @@ class RefusalTests(PublishFixture):
             self.assertTrue(result["deployment_required"])
             self.assertEqual(os.readlink(self.publish_path / "current"), f"releases/{head}")
 
+    def test_a_publish_stopped_before_the_index_moved_is_finished_by_the_next(self) -> None:
+        """Review 26-10-30, D3: `reset --mixed` is the last act, and a stop before it left the
+        index on the previous version for good - the next publish found nothing to do."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+            self.run_publish(policy_path, self.request())
+            head = git(self.repo, "rev-parse", "HEAD")
+            git(self.repo, "read-tree", f"{head}^")
+            self.assertIn("core/haproxy.cfg", git(self.repo, "status", "--porcelain"))
+
+            code, stdout, _ = self.run_publish(policy_path, self.request())
+
+            self.assertEqual(code, 0)
+            self.assertFalse(assert_contract("haprion-publish", stdout)["result"]["changed"])
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+
     def test_a_held_cluster_lock_blocks_the_publish_without_writing(self) -> None:
         """The lock a publish did not use to take at all.
 

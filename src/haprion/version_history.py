@@ -226,6 +226,53 @@ def restore_worktree(repo: Path, commit: str) -> None:
     _git(repo, "reset", "--quiet", "--hard", commit)
 
 
+def _is_bare(repo: Path) -> bool:
+    return _git(repo, "rev-parse", "--is-bare-repository").decode().strip() == "true"
+
+
+def _nothing_untracked(repo: Path) -> bool:
+    return not _git(repo, "ls-files", "--others", "--exclude-standard").strip()
+
+
+def left_at_parent(repo: Path, head: str) -> bool:
+    """Whether the draft area still shows the version before `head`, exactly.
+
+    The state a revert leaves when it stops between moving the branch and the
+    hard reset: the index and every tracked file are the parent's, and nothing
+    else is there. A person's unsaved work makes this False, so a repair
+    based on it can never overwrite any (review 26-10-30, D3).
+    """
+
+    if _is_bare(repo):
+        return False
+    parents = _git(repo, "rev-list", "--parents", "-n", "1", head).decode().split()
+    if len(parents) != 2:
+        return False
+    parent = parents[1]
+    return (
+        not _git(repo, "diff", "--name-only", parent).strip()
+        and not _git(repo, "diff", "--cached", "--name-only", parent).strip()
+        and _nothing_untracked(repo)
+    )
+
+
+def index_left_behind(repo: Path, head: str) -> bool:
+    """Whether the files are `head` and only the index still describes an older version.
+
+    The state a core publication leaves when it stops between moving the
+    branch and `reset --mixed`: the files were the candidate, so they match
+    the new version already. Moving the index writes no file.
+    """
+
+    if _is_bare(repo):
+        return False
+    return (
+        not _git(repo, "diff", "--name-only", head).strip()
+        and bool(_git(repo, "diff", "--cached", "--name-only", head).strip())
+        and _nothing_untracked(repo)
+    )
+
+
 def recent_versions(repo: Path, limit: int = LIST_LIMIT) -> tuple[VersionSummary, ...]:
     """The newest versions, newest first, numbered the way the operator counts.
 

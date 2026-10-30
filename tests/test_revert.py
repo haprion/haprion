@@ -357,6 +357,47 @@ class RetryTests(RevertFixture):
             self.assertEqual(json.loads(document)["result"]["changed"], False)
             self.assertEqual(count_versions(self.repo), 4)
 
+    def test_a_retry_after_a_stop_before_the_files_were_written_finishes_the_revert(self) -> None:
+        """Review 26-10-30, D3: the branch moved and the reset did not happen; the same request
+        was refused as unsaved work, and the advice was to publish it - which undoes the revert."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            old = git(self.repo, "rev-parse", "HEAD")
+            request = self.revert_request(head=True)
+            self.assertEqual(self.send(policy_path, request)[0], 0)
+            new = git(self.repo, "rev-parse", "HEAD")
+            git(self.repo, "read-tree", old)
+            git(self.repo, "checkout-index", "-a", "-f")
+            shutil.rmtree(self.publish_path / "releases" / new)
+            self.assertNotEqual(git(self.repo, "status", "--porcelain"), "")
+
+            code, document = self.send(policy_path, request)
+
+            self.assertEqual(code, 0, document)
+            self.assertEqual(json.loads(document)["result"]["changed"], False)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+            self.assertEqual(count_versions(self.repo), 4)
+            self.assertTrue((self.publish_path / "releases" / new).is_dir())
+
+    def test_a_person_s_unsaved_work_is_not_swept_up_by_that_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            old = git(self.repo, "rev-parse", "HEAD")
+            request = self.revert_request(head=True)
+            self.assertEqual(self.send(policy_path, request)[0], 0)
+            git(self.repo, "read-tree", old)
+            git(self.repo, "checkout-index", "-a", "-f")
+            (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # mine\n")
+
+            code, document = self.send(policy_path, request)
+
+            self.assertEqual(code, 75)
+            self.assertIn("dirty_worktree", document)
+            self.assertIn(b"# mine", (self.repo / "core/haproxy.cfg").read_bytes())
+
 
 class RefusalTests(RevertFixture):
     def test_an_unsaved_draft_is_refused_before_anything_is_sent(self) -> None:

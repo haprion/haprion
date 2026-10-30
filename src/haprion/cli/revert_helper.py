@@ -99,6 +99,7 @@ from haprion.repo_snapshot import (
 )
 from haprion.version_history import (
     count_versions,
+    left_at_parent,
     recent_versions,
     request_names,
     restore_worktree,
@@ -358,20 +359,34 @@ def _revert(
 
     repo = cluster.config_path
 
+    branch, head = resolve_head(repo)
+    from_version = count_versions(repo, head)
+    own = next(
+        (summary for summary in recent_versions(repo) if summary.request_id == request.request_id),
+        None,
+    )
+
     #
     # Checked again on this side. The draft may have become dirty after the
     # operator approved the preview, and the reset below would overwrite it.
     #
     dirty = unsaved_changes(repo)
+    if dirty and own is not None and own.commit == head and left_at_parent(repo, head):
+        #
+        # This request's own version is the head and the draft still shows the
+        # one before it: the run stopped between moving the branch and writing
+        # the files out. Written out now, as that run would have. Anything a
+        # person changed makes `left_at_parent` false and still refuses
+        # (review 26-10-30, D3).
+        #
+        restore_worktree(repo, head)
+        dirty = unsaved_changes(repo)
     if dirty:
         return refuse(
             "dirty_worktree",
             f"there are unsaved changes in {repo}. Publish or discard them before reverting.",
             exit_codes.BLOCKED,
         )
-
-    branch, head = resolve_head(repo)
-    from_version = count_versions(repo, head)
 
     #
     # A revert is a decision about the history its caller read, and it is
@@ -386,10 +401,6 @@ def _revert(
     #   and is left alone;
     # - otherwise the head has to be the one the caller saw, when it says.
     #
-    own = next(
-        (summary for summary in recent_versions(repo) if summary.request_id == request.request_id),
-        None,
-    )
     if own is not None and own.commit != head:
         return refuse(
             "expected_target_changed",

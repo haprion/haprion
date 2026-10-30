@@ -72,6 +72,7 @@ from haprion.config import (
     HOSTNAME,
     RECEIVER_FORMATS,
     RECEIVER_ID,
+    ConfigError,
     PathPolicy,
     RuntimeConfig,
     load_runtime_config,
@@ -826,9 +827,12 @@ def issue(
     # Re-read rather than patched in memory: the publisher must see exactly
     # what the next renewal's hook will see.
     #
-    refreshed = load_runtime_config(policy, require_secure=require_secure)
-
+    #
+    # A configuration that cannot be read now is the publish that could not
+    # start, not a failed issue: the certificate is issued and registered.
+    #
     try:
+        refreshed = load_runtime_config(policy, require_secure=require_secure)
         report = publish(
             refreshed,
             policy,
@@ -839,6 +843,10 @@ def issue(
             deployer=deployer,
             installer=installer,
             now=now or datetime.now(UTC),
+        )
+    except ConfigError as exc:
+        report = unpublished(
+            request.certificate_id, PublishError("dependency_unavailable", str(exc))
         )
     except PublishError as exc:
         #
@@ -958,8 +966,8 @@ def renew(
             },
         )
 
-    refreshed = load_runtime_config(policy, require_secure=require_secure)
     try:
+        refreshed = load_runtime_config(policy, require_secure=require_secure)
         report = publish(
             refreshed,
             policy,
@@ -971,6 +979,8 @@ def renew(
             installer=installer,
             now=now or datetime.now(UTC),
         )
+    except ConfigError as exc:
+        report = unpublished(certificate_id, PublishError("dependency_unavailable", str(exc)))
     except PublishError as exc:
         report = unpublished(certificate_id, exc)
     return IssueResult(

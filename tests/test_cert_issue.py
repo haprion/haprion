@@ -40,7 +40,7 @@ from haprion import (
 from haprion.cert_issue import CertbotResult, IssueError, certbot_arguments, parse_domain
 from haprion.cli import cert_issue as command
 from haprion.cli import cert_issue_helper, cert_renew
-from haprion.config import load_policy, load_runtime_config
+from haprion.config import ConfigError, load_policy, load_runtime_config
 from tests.contract_schema import assert_contract
 from tests.test_cert_publish import Fixture, issue
 
@@ -808,6 +808,39 @@ class WhenCertbotSucceeds(IssueFixture):
         self.assertEqual(code, 1, err)
         self.assertIn("published: failed", out)
         self.assertIn("issued and registered but not fully published", err)
+
+    def test_a_configuration_that_cannot_be_read_after_registering_is_an_unpublished_issue(
+        self,
+    ) -> None:
+        """26-10-30, E8: issued and registered, so the answer says so instead of a traceback."""
+
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        broken = ConfigError("clusters.yaml is not valid YAML")
+
+        with mock.patch.object(cert_issue, "load_runtime_config", side_effect=broken):
+            code, out, err, deployed = self.run_issue(
+                policy_path,
+                "--domain",
+                "www.example.com",
+                "--method",
+                "dns-01",
+                "--cluster",
+                "alpha",
+                "--json",
+            )
+
+        document = assert_contract("haprion-cert-issue", out)
+        self.assertEqual((code, document["outcome"]), (1, "failed"), err)
+        self.assertEqual(document["error"]["code"], "publish_failed")
+        [entry] = document["result"]["publish"]["certificates"]
+        self.assertEqual(entry["error"]["code"], "dependency_unavailable")
+        self.assertIn(
+            "www.example.com", yaml.safe_load(self.registry_path.read_text())["certificates"]
+        )
+        self.assertEqual(deployed, [])
 
     def test_an_interface_certificate_for_another_name_never_reaches_certbot(self) -> None:
         """Review 26-10-24, 15-03: certbot issued it, then the install refused the name."""

@@ -372,6 +372,18 @@ class ThePage(EditorTestCase):
         )
         self.assertNotIn("/a b", text, "a path the engine could not be told exactly is not offered")
 
+    def test_allow_takes_a_cluster_id_of_any_length_the_engine_takes(self) -> None:
+        """Code review 26-10-30 again, R13: the ID was cut at 32 characters, so a
+        longer one was answered 404."""
+
+        long = "alpha-" + "x" * 34
+        with mock.patch("haprion_ui.waf_work.listed_clusters", return_value=("alpha", long)):
+            page = self.editor().get(
+                f"/waf/allow?cluster={long}&object=shop&rule=942100&field=ARGS:q&path=/search"
+            )
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Let this through on shop", page.text)
+
     def test_allow_saves_the_exception_into_the_draft(self) -> None:
         client = self.editor()
         answer = client.post(

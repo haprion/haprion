@@ -132,10 +132,8 @@ def start_oidc(
 def new_password_problem(new_password: str, repeat_password: str) -> str:
     """The sentence a new password is refused with, or ''. The CLI's same rules."""
 
-    if len(new_password) < auth.MINIMUM_PASSWORD_LENGTH:
-        return f"The new password must be at least {auth.MINIMUM_PASSWORD_LENGTH} characters."
-    if len(new_password.encode("utf-8")) > auth.MAX_PASSWORD_BYTES:
-        return f"The new password must be under {auth.MAX_PASSWORD_BYTES} bytes."
+    if problem := auth.length_problem(new_password):
+        return f"The new password {problem}."
     if new_password != repeat_password:
         return "The two new passwords do not match."
     return ""

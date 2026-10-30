@@ -166,11 +166,8 @@ def read_file(path: Path) -> list[Wanted]:
 def password_problem(password: str) -> str:
     """The web's own rule for a new password, in the same words."""
 
-    if len(password) < auth.MINIMUM_PASSWORD_LENGTH:
-        return f"a password must be at least {auth.MINIMUM_PASSWORD_LENGTH} characters"
-    if len(password.encode("utf-8")) > auth.MAX_PASSWORD_BYTES:
-        return f"a password must be under {auth.MAX_PASSWORD_BYTES} bytes"
-    return ""
+    problem = auth.length_problem(password)
+    return f"the password {problem}" if problem else ""
 
 
 def stored_accounts(connection: Any) -> list[Stored]:

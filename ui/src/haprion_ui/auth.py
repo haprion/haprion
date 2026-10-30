@@ -164,6 +164,20 @@ def burn_absent_user_time(password: str) -> None:
         return
 
 
+def length_problem(password: str) -> str:
+    """What is wrong with a new password's size, as the end of a sentence, or ''.
+
+    The one rule the page, `haprion-user` and `haprion-user apply` share: a
+    password of exactly the largest size is accepted, so the limit is "at most".
+    """
+
+    if len(password) < MINIMUM_PASSWORD_LENGTH:
+        return f"must be at least {MINIMUM_PASSWORD_LENGTH} characters"
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        return f"must be at most {MAX_PASSWORD_BYTES} bytes"
+    return ""
+
+
 def _refuse_oversized(password: str) -> None:
     if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
         raise PasswordTooLong(f"password exceeds {MAX_PASSWORD_BYTES} bytes")

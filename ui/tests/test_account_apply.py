@@ -101,6 +101,24 @@ class ThePlan(unittest.TestCase):
         ((_, _, fields),) = plan.updated
         self.assertEqual(fields, ("role", "password", "disabled"))
 
+    def test_the_password_rule_is_the_web_s_and_a_password_of_the_largest_size_passes(self) -> None:
+        from haprion_ui import accounts
+
+        self.assertEqual(account_apply.password_problem("x" * auth.MAX_PASSWORD_BYTES), "")
+        too_long = "x" * (auth.MAX_PASSWORD_BYTES + 1)
+        self.assertEqual(
+            account_apply.password_problem(too_long),
+            f"the password must be at most {auth.MAX_PASSWORD_BYTES} bytes",
+        )
+        self.assertEqual(
+            accounts.new_password_problem(too_long, too_long),
+            f"The new password must be at most {auth.MAX_PASSWORD_BYTES} bytes.",
+        )
+        self.assertEqual(
+            account_apply.password_problem("short"),
+            f"the password must be at least {auth.MINIMUM_PASSWORD_LENGTH} characters",
+        )
+
     def test_a_new_account_needs_a_password(self) -> None:
         with self.assertRaises(ApplyError):
             account_apply.plan([Wanted("new", "reader")], [], prune=False)

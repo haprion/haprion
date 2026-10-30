@@ -195,6 +195,11 @@ def _set(
     if len(text) > MAX_BYTES:
         errors.write(f"ERROR: {path} is larger than {MAX_BYTES} bytes\n")
         return exit_codes.REFUSED
+    try:
+        settings_text = text.decode("utf-8")
+    except UnicodeDecodeError:
+        errors.write(f"ERROR: {path} is not UTF-8\n")
+        return exit_codes.REFUSED
     #
     # Built against the head the settings were just read at, so a change that
     # somebody else published in between is refused instead of overwritten.
@@ -210,7 +215,7 @@ def _set(
     request = changes_publish.build_request(
         cluster,
         new_request_id(),
-        settings=text.decode("utf-8", errors="replace"),
+        settings=settings_text,
         expected_head=head,
         comment=comment,
     )

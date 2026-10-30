@@ -247,6 +247,22 @@ class TheTerminalCommand(SettingsPublishFixture):
         self.assertIn("1024 MiB", out.getvalue())
         self.assertIn("METRICS\n-------\noff", out.getvalue())
 
+    def test_set_refuses_a_file_that_is_not_utf_8_as_apply_does(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "settings.yaml"
+            path.write_bytes(b"log_targets: []\n# \xff\n")
+            err = io.StringIO()
+            code = command.main(
+                ["-c", "alpha", "--set", str(path), "-m", "Send the log"],
+                stream_out=io.StringIO(),
+                stream_err=err,
+                run_helper=lambda *_: self.reading(),
+                run_publish=lambda _request: self.fail("published"),
+            )
+
+        self.assertEqual(code, 65)
+        self.assertIn("not UTF-8", err.getvalue())
+
     def test_set_publishes_through_the_helper_against_the_head_it_read(self) -> None:
         sent: list[dict[str, object]] = []
 

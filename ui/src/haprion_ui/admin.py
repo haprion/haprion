@@ -45,10 +45,6 @@ ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
 
 
-# The floor is shared with the web's own password change; see auth.
-MINIMUM_PASSWORD_LENGTH = auth.MINIMUM_PASSWORD_LENGTH
-
-
 class AdminError(tool_answer.ToolError):
     """Something the operator needs to fix. Printed without a traceback."""
 
@@ -152,10 +148,8 @@ def read_new_password(*, piped: bool = False) -> str:
     if not sys.stdin.isatty():
         raise AdminError("a password must be typed at a terminal, not piped in")
     first = getpass.getpass("New password: ")
-    if len(first) < MINIMUM_PASSWORD_LENGTH:
-        raise AdminError(f"password must be at least {MINIMUM_PASSWORD_LENGTH} characters")
-    if len(first.encode("utf-8")) > auth.MAX_PASSWORD_BYTES:
-        raise AdminError(f"password must be under {auth.MAX_PASSWORD_BYTES} bytes")
+    if problem := auth.length_problem(first):
+        raise AdminError(f"the password {problem}")
     if getpass.getpass("Repeat password: ") != first:
         raise AdminError("the two passwords do not match")
     return first

@@ -7732,8 +7732,8 @@ A record the database cannot hold is skipped and counted in the run's output, an
 past it: text that is not valid UTF-8 (a lone surrogate), a NUL, a field past its length, a request
 number beyond a 64-bit integer. A day file that fails to import stops that node's import only; the
 nodes after it are imported as usual, and the failed node shows `database` in the log warning and
-under Needs attention instead of `ok`. A local account on a node can write a line under the traffic
-log's tag, so one node's log is not trusted beyond that node.
+under Needs attention instead of `ok`. Root or the `haproxy` account on a node can still write such a
+line, so one node's log is not trusted beyond that node.
 
 Successful contact does not mean the log is caught up. The log warning shows whether today's file
 is incomplete, the bytes remaining at the last read, and older days still pending. The remaining

@@ -416,6 +416,40 @@ class TheServiceTemplateCanTakeTheLock(unittest.TestCase):
         line = next(line for line in installer.splitlines() if line.startswith("ReadWritePaths="))
         self.assertIn(str(state_backup.LOCK_PATH.parent), line.split("=", 1)[1].split())
 
+    def test_the_restore_runs_the_sweep_puts_away_are_a_read_write_path(self) -> None:
+        installer = (Path(__file__).resolve().parents[1] / "install/02-manager-config").read_text(
+            encoding="utf-8"
+        )
+        line = next(line for line in installer.splitlines() if line.startswith("ReadWritePaths="))
+        paths = [item.removeprefix("-") for item in line.split("=", 1)[1].split()]
+        self.assertIn(str(restore_runs.RUN_ROOT), paths)
+
+
+class TheSweepSaysWhenItCannot(unittest.TestCase):
+    def test_a_sweep_that_fails_is_said_on_stderr_and_the_backup_goes_on(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            root = base / "backups"
+            root.mkdir(mode=0o700)
+            errors = io.StringIO()
+            with (
+                mock.patch.object(state_backup, "_key_is_private", return_value=True),
+                mock.patch.object(state_backup, "_root_is_private", return_value=True),
+                mock.patch.object(restore_runs, "sweep", side_effect=OSError(30, "read-only")),
+                mock.patch("sys.stderr", errors),
+            ):
+                result = state_backup.run(
+                    "alpha",
+                    mock.Mock(nodes=()),
+                    DeployIdentity(user="svc-backup", key=Path("/root/backup-key")),
+                    root,
+                    lock_path=base / "lock",
+                    restore_root=base / "runs",
+                )
+
+        self.assertEqual(result.nodes, ())
+        self.assertIn("read-only", errors.getvalue())
+
 
 class TheArchiveIsNamedOnTheManagersClock(unittest.TestCase):
     """B169: names sort the listing and drive retention, so they share one clock.

@@ -12,6 +12,7 @@ from __future__ import annotations
 import fcntl
 import os
 import stat
+import sys
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -319,10 +320,13 @@ def run(
         # puts them away when no restore runs for weeks (found 2026-10-09,
         # two runs from 2026-09-25 still on disk). Then the archives a run can
         # still restore. A sweep that fails costs tidiness, not the backup:
-        # `waiting_on` reads the hour itself.
+        # `waiting_on` reads the hour itself. It is said, so that the journal
+        # shows a unit whose sandbox cannot reach the runs.
         #
-        with suppress(OSError):
+        try:
             restore_runs.sweep(restore_root, taken.timestamp())
+        except OSError as exc:
+            print(f"haprion-state-backup: old restore runs not put away: {exc}", file=sys.stderr)
         held = restore_runs.waiting_on(restore_root, taken.timestamp())
         nodes: list[NodeResult] = []
         for node in cluster.nodes:

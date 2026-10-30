@@ -5176,6 +5176,50 @@ class AccountsFromTheWeb(unittest.TestCase):
             self.assertFalse(rows["carol"].locked)
             self.assertFalse(rows["dave"].locked)
 
+    def test_what_the_lock_does_not_count(self) -> None:
+        """Review 26-10-30, cosmetic: the E1 test held only the cases that lock."""
+
+        with self.web_connection() as connection:
+            for name in ("erin", "frank", "gina"):
+                db.create_account(connection, username=name, password_hash=self.HASH, role="reader")
+            # Nine failures, each from another IPv4 address: no prefix reaches ten.
+            for n in range(1, 10):
+                db.record_login_attempt(
+                    connection, username="erin", client_ip=f"198.51.100.{n}", succeeded=False
+                )
+            # Ten from one address, then a sign-in that worked from it.
+            for _ in range(10):
+                db.record_login_attempt(
+                    connection, username="frank", client_ip="192.0.2.7", succeeded=False
+                )
+            connection.commit()
+            self.assertTrue(self.locked_from(connection, "frank", "192.0.2.7"))
+            db.record_login_attempt(
+                connection, username="frank", client_ip="192.0.2.7", succeeded=True
+            )
+            connection.commit()
+        # Ten from one address, all older than the window.
+        with self.connect() as connection:
+            connection.execute(
+                "insert into login_attempt (at, username_normalised, client_ip, succeeded) "
+                "select now() - interval '1 hour', 'gina', '192.0.2.9', false "
+                "from generate_series(1, 10)"
+            )
+            connection.commit()
+        with self.web_connection() as connection:
+            for name, address in (
+                ("erin", "198.51.100.1"),
+                ("frank", "192.0.2.7"),
+                ("gina", "192.0.2.9"),
+            ):
+                self.assertFalse(self.locked_from(connection, name, address), name)
+            rows = {
+                r.username: r
+                for r in db.account_rows(connection, window_minutes=15, max_failures=10)
+            }
+            for name in ("erin", "frank", "gina"):
+                self.assertFalse(rows[name].locked, name)
+
     def test_an_unlock_is_a_row_the_throttle_counts_from(self) -> None:
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             for _ in range(3):

@@ -851,6 +851,23 @@ def import_certificate(
         clusters = [*kept_clusters, *(c for c in clusters if c not in kept_clusters)]
         receivers = [*kept_receivers, *(r for r in receivers if r not in kept_receivers)]
         formats = {**kept_formats, **(formats or {})}
+    #
+    # The interface's name is asked before the store is written, as the other
+    # ways in ask it before a CA is: `install` refuses a certificate that does
+    # not name the interface, but only after the mark has moved to it, and the
+    # certificate nginx still serves is then left without one.
+    #
+    if interface or (existing is not None and existing.interface):
+        try:
+            ui_interface.refuse_unserved(
+                tuple(name for name in (facts.common_name, *facts.sans) if name)
+            )
+        except PublishError as exc:
+            raise ImportError_(
+                exc.code,
+                str(exc),
+                exit_code=exit_codes.REFUSED if exc.code == "bad_input" else exit_codes.CONFIG,
+            ) from exc
     replaced = write_store(store, certificate_id, material)
     displaced = register(
         policy.certificate_registry,

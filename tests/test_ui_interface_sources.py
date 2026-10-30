@@ -32,12 +32,14 @@ from tests.test_cert_import import KEEPERS, ImportFixture, Pki
 class ServedAs(ImportFixture):
     """An interface served as `ui.example`: what a certificate for it is held to before a CA is asked."""
 
+    SERVER_NAME = "ui.example"
+
     def setUp(self) -> None:
         super().setUp()
         config = self.root / "ui-tls.conf"
         config.write_text(
             f"TLS_CERT={self.root / 'ui.crt'}\nTLS_KEY={self.root / 'ui.key'}\n"
-            "SERVER_NAME=ui.example\n"
+            f"SERVER_NAME={self.SERVER_NAME}\n"
         )
         patcher = mock.patch.object(ui_interface, "UI_TLS_CONFIG", config)
         patcher.start()
@@ -67,7 +69,9 @@ class ClaimingTheMark(unittest.TestCase):
         self.assertIsNone(cert_registry.claim_interface(certificates, "ui.example"))
 
 
-class Importing(ImportFixture):
+class Importing(ServedAs):
+    SERVER_NAME = "shop.example"
+
     def setUp(self) -> None:
         super().setUp()
         self.installed: list[str] = []
@@ -190,6 +194,22 @@ class Importing(ImportFixture):
 
         self.assertEqual(caught.exception.code, "bad_input")
         self.assertFalse((self.store / "shop.example").exists())
+
+    def test_a_certificate_that_does_not_name_the_interface_is_refused_before_the_mark_moves(
+        self,
+    ) -> None:
+        self.import_as_interface("shop.example", interface=True)
+        wrong = Pki(self.pki_dir / "wrong", names=("elsewhere.example",))
+
+        with self.assertRaises(ImportError_) as caught:
+            self.import_as_interface("shop-2.example", pki=wrong, interface=True)
+
+        self.assertEqual(caught.exception.code, "bad_input")
+        self.assertFalse((self.store / "shop-2.example").exists())
+        registered = self.registered()
+        self.assertTrue(registered["shop.example"]["interface"])
+        self.assertNotIn("shop-2.example", registered)
+        self.assertEqual(self.retirements, [(None, True)])
 
     def test_an_id_that_already_has_targets_cannot_become_the_interface_s(self) -> None:
         self.import_as_interface("shop.example", clusters=["alpha"])
@@ -382,7 +402,9 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TheCommandsAndHelpers(ImportFixture):
+class TheCommandsAndHelpers(ServedAs):
+    SERVER_NAME = "shop.example"
+
     """`--interface` at the terminal, `interface` in a job; nothing else changes."""
 
     def test_every_issuing_helper_takes_the_field_and_the_publish_helper_does_not(self) -> None:

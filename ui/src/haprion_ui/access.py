@@ -188,10 +188,14 @@ def hidden_by_a_switch(request: Request) -> None:
 
 
 def admin_write_gate(config: Config, request: Request) -> AuthenticatedSession | Response:
-    """Signed in, writes on, and an admin - every page that queues a change.
+    """Signed in, writes on, and an admin - the common gate of the pages that queue a change.
 
     Named for certificate deletion once, its first user; the backup and
-    restore pages were gated by a name that said otherwise.
+    restore pages were gated by a name that said otherwise. Not every writing
+    page passes it: the profiles, the WAF, the editor, `/operations` and the
+    certificate forms have gates or checks of their own. The CSRF token is
+    never checked here; each route checks it itself, and
+    `test_route_roles` walks every POST route with a wrong one.
     """
 
     session = current_session(request)

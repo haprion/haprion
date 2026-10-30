@@ -512,6 +512,29 @@ class CreatingACluster(unittest.TestCase):
                     self.assertIn("node-c", str(caught.exception))
                     self.assertIn("rolled back on the manager", str(caught.exception))
 
+    def test_a_block_without_the_certificate_key_is_refused_as_an_added_node_is(self) -> None:
+        """Review 26-10-30, E4: one rule for creating a cluster and adding a node."""
+
+        bare = node_enrollment.render(
+            Enrollment(
+                cluster="gamma",
+                name="node-c",
+                host="node-c.example.com",
+                host_key=key(10),
+                config_pull_key=key(11),
+                cert_pull_key=None,
+            )
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+            before = site.snapshot()
+            spec = site.spec(blocks=[bare], hosts=["node-c.example.com"])
+            with self.assertRaises(EnrollmentError) as caught:
+                site.add(spec)
+            self.assertEqual(caught.exception.code, "enrollment_invalid")
+            self.assertIn("certificate pull key", str(caught.exception))
+            self.assertEqual(site.snapshot(), before)
+
     def test_an_ipv6_vip_is_refused_before_anything_is_joined(self) -> None:
         """Review 26-10-30, E3: the node side is IPv4 only."""
 

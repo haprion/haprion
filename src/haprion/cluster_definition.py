@@ -875,6 +875,8 @@ def plan_add(
                         "node_exists",
                         f"{enrollment.name} ({host}) is already in {other.cluster_id}",
                     )
+    for enrollment, _host in spec.nodes:
+        node_enrollment.require_cert_key(policy, spec.cluster, enrollment)
     #
     # The validation certificate's directory, as the clusters already here
     # name it, or where the installation put it when this is the first

@@ -600,6 +600,21 @@ def _candidate_runtime(
         Path(temporary).unlink(missing_ok=True)
 
 
+def require_cert_key(policy: PathPolicy, cluster: str, enrollment: Enrollment) -> None:
+    """Refuse a block without the certificate pull key where certificates are distributed.
+
+    One rule for adding a node and for creating a cluster (review 26-10-30, E4).
+    """
+
+    if policy.certificate_directory(cluster) is not None and enrollment.cert_pull_key is None:
+        raise EnrollmentError(
+            "enrollment_invalid",
+            f"the block for {enrollment.name} carries no certificate pull key, and this "
+            "installation distributes certificates; run 04-node-prepare with "
+            "NODE_CERT_PULL_KEY set",
+        )
+
+
 def plan_add(
     policy: PathPolicy,
     runtime: RuntimeConfig,
@@ -630,15 +645,9 @@ def plan_add(
                 )
     if len(runtime.clusters[cluster].nodes) >= MAX_NODES:
         raise EnrollmentError("cluster_full", f"a cluster has at most {MAX_NODES} nodes")
+    require_cert_key(policy, cluster, enrollment)
     cert_account, cert_root = policy.cert_pull_account, policy.certificate_directory(cluster)
     cert_key = enrollment.cert_pull_key
-    wants_cert = cert_root is not None
-    if wants_cert and cert_key is None:
-        raise EnrollmentError(
-            "enrollment_invalid",
-            "the block carries no certificate pull key, and this installation distributes "
-            "certificates; run 04-node-prepare with NODE_CERT_PULL_KEY set",
-        )
 
     node = Node(name=enrollment.name, mgmt_host=host)
     sources = pull_sources(host, locations.forward)

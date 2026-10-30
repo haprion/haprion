@@ -636,6 +636,43 @@ def _problems(
     return problems
 
 
+#
+# What `apply` will be sent, counted before the run starts: the node refuses a
+# payload past `MAX_PAYLOAD` after the run has begun and been used up, and the
+# same archive would fail every time. Each tar member costs a header block and
+# its padding on top of the file.
+#
+TAR_OVERHEAD = 1536
+
+
+def _oversize(
+    plan: RestorePlan,
+    package: node_package.ReleasePackage | None,
+    engine: waf_engine_package.ReleasePackage | None,
+    keyring: keyring_package.ReleasePackage | None,
+) -> list[str]:
+    sizes: list[tuple[int, str]] = []
+    for file in plan.files:
+        if file.kind != "file":
+            continue
+        size = len(file.data) if file.data is not None else (file.entry.size if file.entry else 0)
+        sizes.append((size, file.path))
+    total = sum(size for size, _ in sizes) + TAR_OVERHEAD * (len(plan.files) + 3)
+    for carried in (package, engine, keyring):
+        if carried is not None:
+            total += carried.path.stat().st_size
+    if total <= restore_agent.MAX_PAYLOAD:
+        return []
+    biggest = ", ".join(
+        f"{path} ({size / (1 << 20):.1f} MiB)" for size, path in sorted(sizes, reverse=True)[:3]
+    )
+    return [
+        f"the restore would carry {total / (1 << 20):.1f} MiB, more than a restore carries "
+        f"({restore_agent.MAX_PAYLOAD // (1 << 20)} MiB); the largest files are {biggest}. "
+        "Take the large paths out of the node's EXTRA_BACKUP_PATHS and back it up again"
+    ]
+
+
 def renumbered(source: RestoreSource, inspected: dict[str, Any]) -> list[str]:
     """Accounts and groups whose number on the VM will differ from the archive's (B181).
 
@@ -766,6 +803,7 @@ def check(
                     "manager's CLI release carries none; install the release with "
                     "--keyring-package"
                 )
+    problems.extend(_oversize(plan, package, engine, keyring))
     derived = ""
     try:
         derived = restore_answers.derive(source, request.cluster, publish_root)

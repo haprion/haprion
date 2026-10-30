@@ -3230,6 +3230,10 @@ preview saw. So what was approved is what is written.
      `sshd_config.d`, only the product's `05-haprion-listen.conf` comes back, and `sshd_config` itself
      stays the VM's own. An operator's own file in these directories comes back when the node names it
      in `EXTRA_BACKUP_PATHS`.
+   - The files, the node package and the engine and key packages travel in one transfer of at most
+     64 MiB. The preview adds them up and names the largest files as a problem when they pass that, so
+     a restore that could not be carried out is not started. Keep `EXTRA_BACKUP_PATHS` to
+     configuration, not data.
    - then the HAProxy release layout, the services and the host name, and sshd is restarted. The
      archive's `05-haprion-listen.conf` has sshd listen on the node's own address. Until step 3, a
      second drop-in, `04-haprion-restore-listen.conf`, keeps it listening on the temporary address as

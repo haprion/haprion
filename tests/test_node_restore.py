@@ -22,6 +22,7 @@ from haprion import (
     node_package,
     node_restore,
     node_ssh,
+    restore_agent,
     restore_plan,
     restore_source,
     waf_engine_package,
@@ -265,6 +266,13 @@ class Preview(RestoreTest):
             {"version": self.package.version, "commit": self.package.commit},
         )
         self.assertIn("/usr/sbin/haprion-pull-deploy", summary["plan"]["from_package"])
+
+    def test_a_payload_the_node_would_refuse_is_a_problem_at_the_preview(self) -> None:
+        run = self.prepare()
+        with mock.patch.object(restore_agent, "MAX_PAYLOAD", 100):
+            problems = " ".join(self.preview(run)["problems"])
+        self.assertIn("more than a restore carries", problems)
+        self.assertIn("/etc/", problems, "names the largest files")
 
     def test_a_release_without_a_node_package_stops_the_restore(self) -> None:
         """B180: a CLI release installed without --node-package cannot prepare a node."""

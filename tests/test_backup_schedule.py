@@ -20,6 +20,7 @@ from haprion.backup_schedule import (
     SYSTEMCTL,
     ScheduleError,
     _run,
+    database_jobs,
     schedule_result,
 )
 
@@ -52,6 +53,27 @@ def reader(
         return timer if unit.endswith(".timer") else (service or {})
 
     return show, asked
+
+
+class DatabaseJobTests(unittest.TestCase):
+    """B400: how the last dump and restore check ended, from the same `systemctl show`."""
+
+    def test_a_failed_dump_and_a_unit_that_is_not_installed(self) -> None:
+        def show(unit: str, properties: tuple[str, ...]) -> dict[str, str]:
+            if unit == "haprion-backup.service":
+                return {
+                    "LoadState": "loaded",
+                    "Result": "exit-code",
+                    "ExecMainExitTimestamp": "@1787972440",
+                }
+            return {"LoadState": "not-found"}
+
+        jobs = database_jobs(show=show)
+
+        assert jobs["dump"] is not None
+        self.assertEqual(jobs["dump"]["last_result"], "exit-code")
+        self.assertEqual(jobs["dump"]["last_run"], "2026-08-29T03:00:40Z")
+        self.assertIsNone(jobs["restore_check"])
 
 
 class ScheduleTests(unittest.TestCase):

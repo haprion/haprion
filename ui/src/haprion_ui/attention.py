@@ -571,6 +571,35 @@ def from_backups(clusters: Iterable[Any]) -> list[Item]:
     return items
 
 
+DATABASE_JOBS = (
+    ("dump", "Database dump", "sudo haprion-backup dump"),
+    ("restore_check", "Restore check", "sudo haprion-backup verify-restore"),
+)
+
+
+def from_database_jobs(jobs: Mapping[str, Any] | None) -> list[Item]:
+    """A database dump or restore check whose last run failed (B400); nothing for one that is
+    not installed or has not failed. The row's text is the command to run."""
+
+    items: list[Item] = []
+    for name, subject, command in DATABASE_JOBS:
+        job = (jobs or {}).get(name)
+        if not isinstance(job, Mapping) or job.get("last_result") in (None, "", "success"):
+            continue
+        items.append(
+            Item(
+                kind="manager",
+                severity="critical",
+                cluster=None,
+                subject=subject,
+                message=f"failed; run {command}",
+                since=None,
+                link="/",
+            )
+        )
+    return items
+
+
 def from_waf(ineffective: Iterable[tuple[str, str, Any]], *, describe: Any) -> list[Item]:
     """Published exceptions the findings show are not taking effect."""
 

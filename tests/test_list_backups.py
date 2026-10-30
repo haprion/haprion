@@ -221,6 +221,28 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(document["result"]["schedule"]["retention"], 60)
         self.assertEqual(document["result"]["schedule"]["calendar"], "Mon,Fri *-*-* 05:00:00")
 
+    def test_the_listing_carries_how_the_database_jobs_last_ended(self) -> None:
+        jobs = {
+            "dump": {
+                "unit": "haprion-backup.service",
+                "last_result": "exit-code",
+                "last_run": None,
+            },
+            "restore_check": None,
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(list_backups_helper, "database_jobs", return_value=jobs),
+        ):
+            root = Path(directory)
+            for node in NODES:
+                _archive(root / node.name, "2026-08-29_05-00-00")
+            document, code = self._run(root, {"limit": 10})
+
+        self.assertEqual(code, 0)
+        self.assertEqual(document["result"]["database"], jobs)
+        _validator().validate(document)
+
     def test_a_complete_reading_is_done_and_matches_the_schema(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

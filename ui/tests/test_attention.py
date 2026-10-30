@@ -1160,6 +1160,36 @@ class AFixWaitingInTheRepository(unittest.TestCase):
         self.assertEqual(attention.from_packages([]), [])
 
 
+class ADatabaseJobThatFailed(unittest.TestCase):
+    """B400: a row only when the last dump or restore check failed, with the command to run."""
+
+    def test_only_a_failure_is_a_row_and_an_absent_job_is_none(self) -> None:
+        failed = {"unit": "haprion-backup.service", "last_result": "exit-code", "last_run": None}
+        fine = {"unit": "haprion-restore-check.service", "last_result": "success", "last_run": None}
+        [item] = attention.from_database_jobs({"dump": failed, "restore_check": fine})
+        self.assertEqual(
+            (item.kind, item.severity, item.subject), ("manager", "critical", "Database dump")
+        )
+        self.assertEqual(item.message, "failed; run sudo haprion-backup dump")
+        [check] = attention.from_database_jobs({"dump": None, "restore_check": failed})
+        self.assertEqual(check.subject, "Restore check")
+        self.assertIn("verify-restore", check.message)
+        self.assertEqual(attention.from_database_jobs({"dump": None, "restore_check": None}), [])
+        self.assertEqual(attention.from_database_jobs(None), [])
+
+    def test_the_listing_the_poller_cached_carries_them_to_the_page(self) -> None:
+        from haprion_ui import views
+
+        older = SimpleNamespace(observed_at=NOW - timedelta(hours=2), result={})
+        newer = SimpleNamespace(
+            observed_at=NOW, result={"database": {"dump": None, "restore_check": None}}
+        )
+        self.assertEqual(
+            views._database_jobs([older, newer]), {"dump": None, "restore_check": None}
+        )
+        self.assertIsNone(views._database_jobs([older]))
+
+
 class TheAcknowledgement(LoginTestCase):
     """B299: an admin leaves a row out until it has gone; a new failure is a new row."""
 

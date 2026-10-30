@@ -4707,9 +4707,11 @@ in the section linked.
   has is refused, because issuing it again would make a second lineage. A lineage kept from an earlier
   setup is added to the registry by hand, with its targets
   ([The certificate registry](#the-certificate-registry)).
-- **The database dump and its restore check are not watched by the interface.** Backing up the management
-  host is the backup; the dump is for putting one table back. Whoever relies on it should let their own
-  monitoring follow `haprion-backup.service` and `haprion-restore-check.service`
+- **The database dump and its restore check are watched only for failing.** When the last run of
+  `haprion-backup.service` or `haprion-restore-check.service` failed, *Needs attention* shows
+  *Database dump* or *Restore check* with the command to run again. It says nothing while they succeed,
+  and nothing for one that is not installed; it does not notice a timer that never fires. Backing up the
+  management host is the backup; the dump is for putting one table back
   ([Backups, and proving they restore](#backups-and-proving-they-restore)). The nightly retention is
   watched: a missed run shows under *Needs attention*, from the partitions it makes ahead of time.
 - **An existing `haproxy.cfg` is not imported.** A real configuration nearly always holds what the objects

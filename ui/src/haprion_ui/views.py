@@ -607,6 +607,16 @@ def network_page(request: Request, config: Config) -> Response:
     )
 
 
+def _database_jobs(rows: list[Any]) -> Mapping[str, Any] | None:
+    """The database jobs' last runs, which every cluster's listing carries alike: the newest."""
+
+    for row in sorted(rows, key=lambda row: row.observed_at, reverse=True):
+        jobs = (row.result or {}).get("database")
+        if isinstance(jobs, Mapping):
+            return jobs
+    return None
+
+
 def _service_lamps(
     request: Request, config: Config, clusters: Iterable[Any], status_rows: Sequence[Any]
 ) -> dict[str, dict[str, health.ObjectHealth]]:
@@ -729,8 +739,10 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         held_label=health.HELD_LABEL,
     )
     items += attention.from_certificates(certificate_view.registry, certificate_view.clusters)
+    backup_clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
+    backup_rows = list(backup_rows)
+    items += attention.from_database_jobs(_database_jobs(backup_rows))
     if features.is_on(features.NODE_BACKUPS):
-        backup_clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
         items += attention.from_backups(
             backups.build_backup_overview(
                 backup_clusters, backup_rows, stale_after=stale_after

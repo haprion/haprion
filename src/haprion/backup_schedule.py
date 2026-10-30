@@ -237,6 +237,34 @@ def _moment(value: str | None) -> str | None:
 type ShowProperties = Callable[[str, tuple[str, ...]], dict[str, str]]
 
 
+#
+# The two database jobs of the interface (B400), not a cluster's: the nightly
+# dump and the weekly restore check. A job whose unit systemd does not load is
+# not installed, and is None - there is nothing to be told about it.
+#
+DATABASE_UNITS = {
+    "dump": "haprion-backup.service",
+    "restore_check": "haprion-restore-check.service",
+}
+
+
+def database_jobs(*, show: ShowProperties = _run) -> dict[str, dict[str, Any] | None]:
+    """How the last run of each database job ended, as systemd says."""
+
+    jobs: dict[str, dict[str, Any] | None] = {}
+    for name, unit in DATABASE_UNITS.items():
+        said = show(unit, ("LoadState", "Result", "ExecMainExitTimestamp"))
+        if said.get("LoadState") != "loaded":
+            jobs[name] = None
+            continue
+        jobs[name] = {
+            "unit": unit,
+            "last_result": said.get("Result") or None,
+            "last_run": _moment(said.get("ExecMainExitTimestamp")),
+        }
+    return jobs
+
+
 def schedule_result(unit: str | None, *, show: ShowProperties = _run) -> dict[str, Any] | None:
     """What systemd says about the backup timer, or None if none is configured.
 

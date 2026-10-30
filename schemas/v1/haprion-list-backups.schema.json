@@ -100,10 +100,39 @@
       },
       "additionalProperties": true
     },
+    "database_job": {
+      "description": "The last run of one of the interface's database jobs; null when its unit is not installed.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["unit", "last_result", "last_run"],
+          "properties": {
+            "unit": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "last_result": { "type": ["string", "null"], "maxLength": 64 },
+            "last_run": {
+              "oneOf": [
+                { "$ref": "common.schema.json#/$defs/timestamp" },
+                { "type": "null" }
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        { "type": "null" }
+      ]
+    },
     "backup_list_result": {
       "type": "object",
       "required": ["limit", "nodes"],
       "properties": {
+        "database": {
+          "type": "object",
+          "properties": {
+            "dump": { "$ref": "#/$defs/database_job" },
+            "restore_check": { "$ref": "#/$defs/database_job" }
+          },
+          "additionalProperties": false
+        },
         "schedule": {
           "oneOf": [
             { "$ref": "#/$defs/backup_schedule" },

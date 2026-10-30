@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
 from haprion import backup_retention, exit_codes
-from haprion.backup_schedule import ScheduleError, schedule_result
+from haprion.backup_schedule import ScheduleError, database_jobs, schedule_result
 from haprion.backup_schedule_write import timer_unit
 from haprion.backups import BackupError, backup_list_result
 from haprion.config import (
@@ -190,6 +190,7 @@ def main(
         # had to correlate two commands to answer it would eventually show one
         # without the other.
         #
+        result["database"] = database_jobs()
         result["schedule"] = schedule_result(
             timer_unit(request.cluster)
             if getattr(policy, "backup_identity", None) is not None

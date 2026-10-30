@@ -79,6 +79,12 @@ class Observed:
     holder: str | None
     changed_ago: dict[str, int | None]
     checks: dict[str, Mapping[str, str]]
+    #
+    # The nodes the reading listed, answering or not; None when it had no node
+    # list. A node that is not among them has been taken out, and one added
+    # again under its name starts as joining (review 2026-10-30, E7).
+    #
+    nodes: frozenset[str] | None = None
 
 
 def _text(value: Any) -> str:
@@ -159,6 +165,9 @@ def observe(result: Mapping[str, Any]) -> Observed:
         holder=holder,
         changed_ago=changed_ago,
         checks=checks,
+        nodes=frozenset(key[1] for key in state if key[0] == NODE)
+        if isinstance(entries, list)
+        else None,
     )
 
 
@@ -168,7 +177,8 @@ def compare(
     """What changed, the state to keep, and the keys to forget.
 
     A key absent from the reading keeps its state, except a server the VIP
-    holder no longer lists: that one has left the configuration.
+    holder no longer lists and a node a reading with a node list no longer
+    names: those have left the configuration.
     """
 
     changes: list[Change] = []
@@ -201,7 +211,8 @@ def compare(
     gone = [
         key
         for key in previous
-        if key[0] == SERVER and observed.listed is not None and key[1] not in observed.listed
+        if (key[0] == SERVER and observed.listed is not None and key[1] not in observed.listed)
+        or (key[0] == NODE and observed.nodes is not None and key[1] not in observed.nodes)
     ]
     return changes, state, gone
 

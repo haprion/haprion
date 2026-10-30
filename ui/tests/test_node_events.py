@@ -149,6 +149,33 @@ class WhatChanged(unittest.TestCase):
         quiet, _, _ = node_events.compare(state, node_events.observe(silent))
         self.assertEqual([c.event for c in quiet], ["node_silent"])
 
+    def test_a_node_taken_out_and_added_again_is_joining_not_silent(self) -> None:
+        """Review 2026-10-30, E7: the state of a node that left must not be inherited."""
+
+        both = reading(
+            node("node-a", owner=True, servers=[]),
+            node("node-b", owner=False, servers=[]),
+        )
+        without = reading(node("node-a", owner=True, servers=[]))
+        silent = reading(
+            node("node-a", owner=True, servers=[]),
+            node("node-b", owner=None, servers=[], ok=False),
+        )
+        _, state, _ = node_events.compare({}, node_events.observe(both))
+        _, kept, gone = node_events.compare(state, node_events.observe(without))
+        self.assertEqual(gone, [("node", "node-b")])
+        remaining = {key: value for key, value in state.items() if key not in gone}
+        changes, again, _ = node_events.compare(remaining, node_events.observe(silent))
+        self.assertEqual(changes, [])
+        self.assertEqual(node_events.joining(again), {"node-b"})
+
+    def test_a_reading_without_a_node_list_forgets_no_node(self) -> None:
+        _, state, _ = node_events.compare(
+            {}, node_events.observe(reading(node("node-a", owner=True, servers=[])))
+        )
+        _, _, gone = node_events.compare(state, node_events.observe({}))
+        self.assertEqual(gone, [])
+
     def test_a_held_server_keeps_its_state_and_says_nothing(self) -> None:
         changes = compared(
             reading(node("node-a", owner=True, servers=[server("shop", "s1", "UP")])),

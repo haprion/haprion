@@ -8197,6 +8197,25 @@ class WhatTheNodesDidIsWrittenByThePollerAndReadByTheWeb(unittest.TestCase):
             #
             self.assertGreaterEqual(float(_first(cursor)), 12)
 
+    def test_a_node_taken_out_is_forgotten_and_joins_again_without_an_event(self) -> None:
+        """Review 2026-10-30, E7."""
+
+        cluster = "rebuilt"
+
+        def record(result: dict[str, Any]) -> Any:
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+                written = db.record_node_events(connection, cluster=cluster, result=result)
+                connection.commit()
+            return written
+
+        answering = self.reading("node-a", "UP")
+        record(answering)
+        record({"nodes": answering["nodes"][:1]})
+        silent = self.reading("node-a", "UP", other_ok=False)
+        written = record(silent)
+        self.assertEqual(written.events, 0)
+        self.assertEqual(written.joining, frozenset({"node-b"}))
+
     def test_the_web_cannot_write_and_the_poller_cannot_read_the_events(self) -> None:
         for role, statement in (
             (

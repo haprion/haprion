@@ -213,8 +213,13 @@ def record_node_events(
         if gone:
             cursor.execute(
                 "delete from node_event_state "
-                " where cluster = %(cluster)s and kind = 'server' and subject = any(%(gone)s)",
-                {"cluster": cluster, "gone": [key[1] for key in gone]},
+                " where cluster = %(cluster)s "
+                "   and (kind, subject) in (select * from unnest(%(kinds)s::text[], %(gone)s::text[]))",
+                {
+                    "cluster": cluster,
+                    "kinds": [key[0] for key in gone],
+                    "gone": [key[1] for key in gone],
+                },
             )
     return NodeEventsWritten(len(changes), node_events.joining(state))
 

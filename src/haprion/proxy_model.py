@@ -1318,6 +1318,14 @@ def _server(value: Any, location: str) -> Server:
     #
     if not _is_address(host) and not HOSTNAME.fullmatch(host.lower()):
         raise ModelError(f"{location}.host must be an IP address or a host name, not {host!r}")
+    #
+    # An address in its one spelling, as `config._address` keeps a VIP:
+    # `[2001:db8::10]`, `2001:db8::10` and `2001:DB8:0::10` were three servers
+    # in one pool, and the bracketed one was taken for a name and looked up
+    # (code review 2026-10-30 again, R10).
+    #
+    if _is_address(host):
+        host = str(ipaddress.ip_address(host.strip("[]")))
     port = data.get("port")
     #
     # A bool is an int in Python, and `port: true` would otherwise be port 1.
@@ -1627,7 +1635,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     # line rather than an intent, and HAProxy would happily balance between
     # them and report a pool that looks twice as healthy as it is.
     #
-    addresses = [(member.host, member.port) for member in members]
+    addresses = [(member.host.lower(), member.port) for member in members]
     if len(set(addresses)) != len(addresses):
         raise ModelError(f"{location}.servers lists the same host and port twice")
     #

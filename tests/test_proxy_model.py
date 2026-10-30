@@ -279,6 +279,40 @@ class BackendsAndHealth(unittest.TestCase):
 
         self.assertIn("same host and port twice", str(caught.exception))
 
+    def test_one_server_spelled_two_ways_is_the_same_server(self) -> None:
+        """Code review 26-10-30 again, R10: three spellings of one IPv6 address were
+        three servers, and the bracketed one was looked up as a name."""
+
+        for first, second in (
+            ("'[2001:db8::10]'", "2001:db8::10"),
+            ("2001:DB8:0::10", "2001:db8::10"),
+            ("www.example.com", "WWW.example.com"),
+        ):
+            with self.subTest(first), self.assertRaisesRegex(ModelError, "same host and port"):
+                load_proxy(
+                    "shop",
+                    with_lines(
+                        (
+                            "      - host: 192.0.2.10\n        port: 8080",
+                            f"      - host: {first}\n        port: 8080\n"
+                            f"      - host: {second}\n        port: 8080",
+                        )
+                    ),
+                )
+
+    def test_an_address_is_kept_in_its_one_spelling(self) -> None:
+        proxy = load_proxy(
+            "shop",
+            with_lines(
+                (
+                    "      - host: 192.0.2.10\n        port: 8080",
+                    "      - host: '[2001:DB8::10]'\n        port: 8080",
+                )
+            ),
+        )
+
+        self.assertEqual(next(iter(proxy.backends.values())).servers[0].host, "2001:db8::10")
+
     def test_a_pool_of_only_backup_servers_is_refused(self) -> None:
         """The form refused it and the engine did not (review 2026-10-24)."""
 

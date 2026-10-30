@@ -142,6 +142,56 @@ class AddingAndRemovingRulesInTheBrowser(EditorTestCase):
         cls.browser.close()
         cls.playwright.stop()
 
+    def open_form(self) -> Any:
+        form_page = self.editor().get("/proxies/alpha/shop/edit").text
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route(
+            f"{ORIGIN}/proxies/alpha/shop/edit",
+            lambda route, *_: route.fulfill(content_type="text/html", body=form_page),
+        )
+        for asset in ("object-form.js", "app.css"):
+            kind = "text/javascript" if asset.endswith(".js") else "text/css"
+            body = (STATIC_DIRECTORY / asset).read_text()
+            page.route(
+                f"{ORIGIN}/static/{asset}*",
+                lambda route, *_, kind=kind, body=body: route.fulfill(content_type=kind, body=body),
+            )
+        page.goto(f"{ORIGIN}/proxies/alpha/shop/edit")
+        page.click("summary:has-text('Access')")
+        return page
+
+    def test_add_rule_follows_the_last_rule(self) -> None:
+        """26-10-30, in use: Add rule at the top put the new rule at the bottom of a long list."""
+
+        page = self.open_form()
+        add = page.locator("[data-add-rule]")
+        for _ in range(3):
+            add.click()
+            last = page.locator("[data-rule]").last.evaluate(
+                "e => e.getBoundingClientRect().bottom"
+            )
+            button = add.evaluate("e => e.getBoundingClientRect().top")
+            self.assertGreaterEqual(button, last)
+
+    def test_a_rule_s_line_follows_its_name_and_mode(self) -> None:
+        page = self.open_form()
+        page.click("[data-add-rule]")
+        rule = page.locator("[data-rule]").last
+        rule.locator("input[name=rule_name]").fill("authentik-admin")
+        rule.locator("select[name=rule_mode]").select_option("deny")
+        self.assertEqual(rule.locator("[data-rule-title]").inner_text(), "authentik-admin")
+        badge = rule.locator("[data-rule-badge]")
+        self.assertEqual(badge.inner_text(), "Denying")
+        self.assertIn("status-badge-critical", badge.get_attribute("class") or "")
+        self.assertEqual(rule.locator("[data-rule-summary]").inner_text(), "No condition")
+        rule.locator("input[name=rule_path]").fill("/if/admin")
+        self.assertEqual(
+            rule.locator("[data-rule-summary]").inner_text(), "Changed — validate to see the result"
+        )
+        rule.locator("input[name=rule_name]").fill("")
+        self.assertEqual(rule.locator("[data-rule-title]").inner_text(), "New rule")
+
     def test_what_the_browser_posts_is_the_rules_on_the_screen(self) -> None:
         client = self.editor()
         form_page = client.get("/proxies/alpha/shop/edit").text

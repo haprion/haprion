@@ -486,6 +486,29 @@
       const remove = event.target.closest("[data-remove-rule]");
       if (remove) remove.closest("[data-rule]").remove();
     });
+    //
+    // A rule's folded line follows its name and mode as they are typed. Its
+    // conditions are worded by the server, so that part says it has changed,
+    // as a group's line does, until the next Validate writes it anew.
+    //
+    const follow = (event) => {
+      const rule = event.target.closest("[data-rule]");
+      if (!rule) return;
+      const name = rule.querySelector("input[name='rule_name']").value.trim();
+      rule.querySelector("[data-rule-title]").textContent = name || "New rule";
+      const deny = rule.querySelector("select[name='rule_mode']").value === "deny";
+      const badge = rule.querySelector("[data-rule-badge]");
+      badge.textContent = deny ? "Denying" : "Logging";
+      badge.classList.toggle("status-badge-critical", deny);
+      badge.classList.toggle("status-badge-warning", !deny);
+      if (!["rule_name", "rule_mode"].includes(event.target.name)) {
+        const line = rule.querySelector("[data-rule-summary]");
+        line.textContent = "Changed — validate to see the result";
+        line.classList.add("changed");
+      }
+    };
+    list.addEventListener("input", follow);
+    list.addEventListener("change", follow);
     if (!template || !add) return;
     add.addEventListener("click", () => {
       const html = template.innerHTML.replaceAll("__index__", String(next));

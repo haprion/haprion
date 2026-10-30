@@ -41,7 +41,7 @@
 
 {% macro rule_card(rule, open=False) %}
 <details class="rule-card"{% if open %} open{% endif %} data-rule>
-  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ rule.name or 'New rule' }}</span>{% if rule.mode == 'deny' %}<span class="status-badge status-badge-critical">Denying</span>{% else %}<span class="status-badge status-badge-warning">Logging</span>{% endif %}<span class="form-group-summary">{{ rule.summary }}</span></summary>
+  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title" data-rule-title>{{ rule.name or 'New rule' }}</span>{% if rule.mode == 'deny' %}<span class="status-badge status-badge-critical" data-rule-badge>Denying</span>{% else %}<span class="status-badge status-badge-warning" data-rule-badge>Logging</span>{% endif %}<span class="form-group-summary" data-rule-summary>{{ rule.summary }}</span></summary>
   <input type="hidden" name="rule_index" value="{{ rule.index }}">
   <div class="form-grid">
     <label><span class="field-title">Name</span><input name="rule_name" value="{{ rule.name }}" placeholder="admin-post"></label>
@@ -160,9 +160,10 @@
       <label{{ when('protocol', 'http https') }}><span class="field-title">Max request body <span class="optional">(optional)</span></span><input name="max_request_body" value="{{ form.max_request_body }}" size="10" placeholder="10m"><small>Declared size; <code>k</code>, <code>m</code>, <code>g</code>.</small></label>
     </div>
     <div class="rule-list"{{ when('protocol', 'http https') }} data-rule-list>
-      <div class="rule-list-head"><span class="field-title">Deny rules <span class="optional">(optional)</span></span><button type="button" class="secondary-button" data-add-rule>Add rule</button></div>
+      <div class="rule-list-head"><span class="field-title">Deny rules <span class="optional">(optional)</span></span></div>
       {% for rule in form.deny_rules %}{{ rule_card(rule) }}{% endfor %}
       <template data-rule-template>{{ rule_card(new_rule, open=True) }}</template>
+      <div class="rule-list-foot"><button type="button" class="secondary-button" data-add-rule>Add rule</button></div>
     </div>
     {% endcall %}
 

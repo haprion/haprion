@@ -2491,7 +2491,9 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 /* Access rules (Fas 21): each deny rule a folded row inside the Access group. */
 .form-grid-pair select.single-select { height: auto; min-height: 0; }
 .rule-list { display: grid; gap: 8px; padding: 6px 0 12px; }
-.rule-list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.rule-list-head, .rule-list-foot { display: flex; align-items: center; gap: 12px; }
+/* Titled like every field above it; Add rule follows the last rule, where the new one appears. */
+.rule-list-head .field-title, .rule-row > .field-title { color: var(--text-secondary); font-weight: 620; }
 .rule-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 14px; min-width: 0; }
 .rule-card > summary { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 0; cursor: pointer; list-style: none; }
 .rule-card > summary::-webkit-details-marker { display: none; }

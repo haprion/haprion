@@ -1218,7 +1218,8 @@ def worker_writable_paths(policy: PathPolicy) -> tuple[Path, ...]:
     the roots this installation chose rather than the ones an example names:
     the configuration repositories and their publish and validation roots, the
     registry's directory, and the directories the certificate publisher writes
-    in. Each once, in this order.
+    in, and the HTTP-01 webroot, where certbot in the worker's namespace writes
+    its challenge file. Each once, in this order.
     """
 
     paths = [policy.config_root, policy.publish_root, policy.validation_certs_root]
@@ -1227,6 +1228,8 @@ def worker_writable_paths(policy: PathPolicy) -> tuple[Path, ...]:
     for root in (policy.certificate_root, policy.receiver_root):
         if root is not None:
             paths.append(root.parent)
+    if policy.acme is not None and policy.acme.webroot is not None:
+        paths.append(policy.acme.webroot)
     return tuple(dict.fromkeys(paths))
 
 

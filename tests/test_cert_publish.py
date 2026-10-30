@@ -1209,6 +1209,30 @@ class TheWorkerCanLookWhereItPublishes(unittest.TestCase):
             ],
         )
 
+    def test_the_http01_webroot_is_opened_when_the_policy_names_one(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "runtime-policy.yaml"
+            path.write_text(
+                "schema_version: 1\n"
+                "cluster_file: /srv/example/registry/clusters.yaml\n"
+                "config_root: /srv/example/config\n"
+                "publish_root: /srv/example/published\n"
+                "validation_certs_root: /srv/example/validation\n"
+                "acme:\n"
+                "  webroot: /srv/example/acme\n",
+                encoding="utf-8",
+            )
+            paths = worker_writable_paths(load_policy(path, require_secure=False))
+        self.assertEqual(
+            [str(path) for path in paths],
+            [
+                "/srv/example/config",
+                "/srv/example/published",
+                "/srv/example/validation",
+                "/srv/example/acme",
+            ],
+        )
+
 
 class TheFileIsModedWhileItIsStillOurs(unittest.TestCase):
     """`write_file` sets the mode before it hands the file to the fetch account.

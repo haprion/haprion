@@ -95,8 +95,9 @@ ProtectHome=read-only
 #   /var/log/letsencrypt        certbot's log, and the lock it takes first
 #   @POLICY_PATHS@              the runtime policy's roots: the configuration
 #                               repositories, their publish and validation roots,
-#                               the registry's directory and where the publisher
-#                               writes - written in by platform step 07
+#                               the registry's directory, where the publisher
+#                               writes and the HTTP-01 webroot - written in by
+#                               platform step 07
 #   /etc/haprion/dns-profiles  root-only provider credentials
 #   /etc/haprion/certificates  the import store a deletion removes from
 #

@@ -108,6 +108,25 @@ ensure_worker_directories() {
             log "  created  ${path%:*}"
         fi
     done
+    #
+    # The HTTP-01 webroot, when the policy names one: the unit opens it, and a
+    # path that is missing stops the unit. Made only when missing, readable by
+    # the web server that serves it; an existing one is the operator's and
+    # stays as it is.
+    #
+    local webroot
+    webroot="$("${UI_ROOT}/current/venv/bin/python" -I -c 'from haprion.config import load_policy
+policy = load_policy()
+print(policy.acme.webroot if policy.acme is not None and policy.acme.webroot is not None else "")')" \
+        || die "cannot read the runtime policy's HTTP-01 webroot"
+    if [[ -n "$webroot" ]]; then
+        if [[ -d "$webroot" ]]; then
+            log "  ok       ${webroot}"
+        else
+            install -d -o root -g root -m 755 "$webroot"
+            log "  created  ${webroot}"
+        fi
+    fi
 }
 
 #

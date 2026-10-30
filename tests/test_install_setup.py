@@ -1147,6 +1147,18 @@ class TheWorkersSandboxOpensWhatExists(unittest.TestCase):
         self.assertEqual(set(fixed) - made, set(self.ELSEWHERE))
 
 
+class TheHttp01WebrootIsMadeBeforeTheUnitOpensIt(unittest.TestCase):
+    """The unit opens the webroot the policy names (`worker_writable_paths`); a path that is
+    missing stops the unit, so the step that renders it makes the directory first."""
+
+    def test_the_worker_directories_make_it_when_it_is_missing(self) -> None:
+        lib = (INSTALL / "lib.sh").read_text()
+        start = lib.index("ensure_worker_directories() {")
+        step = lib[start : lib.index("\n}\n", start)]
+        self.assertIn("acme.webroot", step)
+        self.assertIn('install -d -o root -g root -m 755 "$webroot"', step)
+
+
 class AUnitThatDoesNotStart(unittest.TestCase):
     """Reported with the journal's reason, not systemctl's 'control process exited'."""
 

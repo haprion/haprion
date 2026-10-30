@@ -381,6 +381,12 @@ profile cannot read the releases under `/etc/haproxy`. The queues are in rsyslog
 release that names receivers is refused on a node without the include. A site that already loads `impstats` itself
 gets a refusal from `rsyslogd -N1` when `04-node-prepare` runs. The log socket is `haprion-haproxy-log.socket`,
 with `net.unix.max_dgram_qlen` set in `/etc/sysctl.d/60-haproxy.conf`; taking it over restarts rsyslog once.
+The unit holds two sockets in HAProxy's chroot, both writable by the `haproxy` account alone (mode `0660`):
+`dev/log` for the ordinary log and `dev/haprion-traffic` for the structured traffic stream. `47-haprion-forward.conf`
+binds an rsyslog input and ruleset to the second one and marks what arrives there as HAProxy's; the forwarding
+rule and `48-haprion-traffic.conf` act only on a marked line, so the same tag written to `/dev/log` by another
+local account is dropped. Nodes take this release before the manager publishes a configuration whose HAProxy
+logs to `/dev/haprion-traffic`.
 
 ## Step by step, without haprion-setup
 

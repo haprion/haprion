@@ -111,6 +111,12 @@ template(name="haprion-traffic-line" type="string"
 # "haproxy", so on this tag it is a duplicate, and dropping it loses nothing.
 # The leading space is the RFC3164 separator the template above skips.
 #
+# Only what came in on HAProxy's own socket is written: the rule of that socket
+# (47-haprion-forward.conf, written by 04-node-prepare) sets
+# `$!haprion!origin` and hands the line on. The same tag arriving any other
+# way - `logger -t haproxy-traffic` to /dev/log by another local account - is
+# dropped here, and never reaches the classic log either.
+#
 # Each hour's file stops at a size: a twenty-fourth of the share of this
 # filesystem the traffic log may hold, so a day cannot take more than that
 # however much arrives. Measured against rsyslog 8.2512: the limit holds on a
@@ -119,7 +125,7 @@ template(name="haprion-traffic-line" type="string"
 # rsyslog then refuses the write and says so in its own log. The rest of that
 # hour is dropped; the hours already written stay.
 if ($programname == "haproxy-traffic") then {
-    if ($msg startswith " {") then {
+    if ($!haprion!origin == "haproxy" and $msg startswith " {") then {
         action(type="omfile"
                dynaFile="haprion-traffic-file"
                template="haprion-traffic-line"

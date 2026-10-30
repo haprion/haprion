@@ -19,6 +19,8 @@ from types import ModuleType
 from typing import Any
 from unittest import mock
 
+from tests.test_haproxy_log_socket import traffic_input
+
 BASE = Path(__file__).resolve().parents[1]
 
 
@@ -428,7 +430,9 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
         before the stop, so nothing on the tag falls through to Ubuntu's rule.
         """
 
-        self.assertIn('if ($msg startswith " {") then {', self.rule)
+        self.assertIn(
+            'if ($!haprion!origin == "haproxy" and $msg startswith " {") then {', self.rule
+        )
         tag = self.rule.index('$programname == "haproxy-traffic"')
         guard = self.rule.index('$msg startswith " {"')
         action = self.rule.index('action(type="omfile"')
@@ -527,7 +531,9 @@ class TrafficLogRsyslogStopsAnHourAtItsLimit(unittest.TestCase):
             (root / "rsyslog.conf").write_text(
                 f'global(workDirectory="{root / "work"}")\n'
                 'module(load="imuxsock" SysSock.Use="off")\n'
-                f'input(type="imuxsock" Socket="{socket_path}")\n' + rule
+                + traffic_input(str(socket_path))
+                + "\n"
+                + rule
             )
             process = subprocess.Popen(
                 [str(binary), "-n", "-f", str(root / "rsyslog.conf"), "-i", str(root / "pid")],

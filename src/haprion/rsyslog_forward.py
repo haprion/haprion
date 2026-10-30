@@ -140,7 +140,11 @@ def render(targets: Sequence[LogTarget], *, traffic_logging: bool) -> dict[str, 
         # The structured records only, as the day file takes them: a line on
         # this tag that is not JSON is a duplicate of the classic log's.
         #
-        'if ($programname == "haproxy-traffic" and $msg startswith " {") then {',
+        # `$!haprion!origin` is set by the rule of HAProxy's own log socket
+        # (04-node-prepare); the same tag from another local account is not sent.
+        #
+        'if ($programname == "haproxy-traffic" and $!haprion!origin == "haproxy"'
+        ' and $msg startswith " {") then {',
     ]
     for target in sorted(targets, key=lambda item: item.name):
         lines += _action(target)

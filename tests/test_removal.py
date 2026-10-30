@@ -669,6 +669,7 @@ NODE_ACCOUNTED = {
     "/root/.ssh": "root's; Haprion's keys in it are listed",
     "/root/.ssh/known_hosts": "the manager's line, removed with ssh-keygen -R",
     "/var/lib/cmk-agent/cmk-agent-ctl.toml": "named in advice to the operator, never written (F23)",
+    "/var/lib/haproxy/dev/haprion-traffic": "the held socket's, taken back when rsyslog restarts",
     "/var/lib/haproxy/dev/log": "rsyslog's socket, taken back when rsyslog restarts",
     "/var/log/journal": "journald's directory; the haprion-waf namespace is listed (PATTERNS)",
 }

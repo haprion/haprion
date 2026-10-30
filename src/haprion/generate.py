@@ -247,6 +247,14 @@ RETRIES = 3
 # was dropped. The per-process request counter makes every record distinct, and
 # is a useful ordering key on its own.
 TRAFFIC_LOG_PROFILE = f"{PREFIX}-traffic-json"
+#
+# The structured stream goes to a socket of its own in HAProxy's chroot, held by
+# the node's log socket unit and writable by the haproxy account alone. The
+# node's rsyslog marks what arrives there as HAProxy's, and only a marked line
+# is forwarded or written to the day file: the same tag sent to /dev/log by
+# another local account is not (review 2026-10-30, E1).
+#
+TRAFFIC_LOG_SOCKET = "/dev/haprion-traffic"
 HTTP_TRAFFIC_LOG_FORMAT = (
     '"%{+json}o %(schema)[int(1)] %(at)Ts %(request)rt %(client)ci %(method)HM '
     "%(host)[var(txn.traffic_host)] %(path)HPO %(frontend)f %(backend)b "
@@ -1718,7 +1726,9 @@ def _frontend_file(
             # receivers or both: rsyslog takes it from there (B286, B287).
             #
             *(
-                (f"    log /dev/log len 2048 format local profile {TRAFFIC_LOG_PROFILE} local2",)
+                (
+                    f"    log {TRAFFIC_LOG_SOCKET} len 2048 format local profile {TRAFFIC_LOG_PROFILE} local2",
+                )
                 if structured
                 else ()
             ),

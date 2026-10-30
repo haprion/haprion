@@ -365,10 +365,32 @@ RSYSLOG_FORWARD_RULE="/etc/rsyslog.d/47-haprion-forward.conf"
 RSYSLOG_STATS="${TRAFFIC_LOG_ROOT}/rsyslog-stats.json"
 RSYSLOG_STATS_ROTATE="/etc/logrotate.d/haprion-rsyslog-stats"
 ensure_dir "$RSYSLOG_FORWARD_DIR" root:root 755
+#
+# Where the traffic log comes in. HAProxy writes the structured stream to a
+# socket of its own, and that socket's rule marks what arrives on it as
+# HAProxy's before handing it to the ordinary rules. The forwarding rule and
+# the day file's rule act only on a line carrying the mark, so another local
+# account that writes a line under the same tag to /dev/log (`logger -t
+# haproxy-traffic`) is not forwarded and is not written to the day file.
+# Nothing a message says can set the mark: `$!` is rsyslog's own. The socket is
+# held by systemd and writable by the haproxy account alone (below), so only
+# HAProxy reaches this input. No rate limit on it: it is the traffic itself.
+#
+TRAFFIC_SOCKET_PATH="/var/lib/haproxy/dev/haprion-traffic"
+TRAFFIC_INPUT="$(sed "s|@SOCKET@|${TRAFFIC_SOCKET_PATH}|" <<'CONF'
+input(type="imuxsock" Socket="@SOCKET@" ruleset="haprion-traffic-in"
+      RateLimit.Interval="0")
+ruleset(name="haprion-traffic-in") {
+    set $!haprion!origin = "haproxy";
+    call RSYSLOG_DefaultRuleset
+}
+CONF
+)"
 rule_before="$(sha256sum "$RSYSLOG_FORWARD_RULE" 2>/dev/null || true)"
 install_file "$RSYSLOG_FORWARD_RULE" root:root 644 "# Installed by install/04-node-prepare.
 module(load=\"impstats\" interval=\"60\" format=\"json\" resetCounters=\"on\" log.syslog=\"off\"
        log.file=\"${RSYSLOG_STATS}\")
+${TRAFFIC_INPUT}
 include(file=\"${RSYSLOG_FORWARD_DIR}/forward.conf\" mode=\"optional\")"
 #
 # A minute's statistics are a few kilobytes; a day and the one before it is
@@ -392,21 +414,6 @@ if [[ "$rule_before" != "$(sha256sum "$RSYSLOG_FORWARD_RULE")" ]]; then
     systemctl restart rsyslog.service || die "rsyslog could not be restarted"
     log "  restarted rsyslog"
 fi
-#
-# The traffic log is a base function (Fas 18, 26-10-16): a node given the
-# collector's key turns its own route on, so the records reach the manager
-# with nothing done by hand. Run only when the rule is not already the one the
-# script writes, since turning it on restarts rsyslog.
-#
-TRAFFIC_RULE="/etc/rsyslog.d/48-haprion-traffic.conf"
-if [[ -n "${TRAFFIC_LOG_PUBKEY:-}" ]]; then
-    if cmp -s <("${SBIN}/haprion-traffic-log-enable" --print) "$TRAFFIC_RULE"; then
-        log "  ok       ${TRAFFIC_RULE}"
-    else
-        "${SBIN}/haprion-traffic-log-enable" || die "the traffic log could not be turned on"
-    fi
-fi
-
 #
 # What `dpkg --verify` finds changed in the package, less documentation dpkg
 # was told not to install: Ubuntu's minimal images exclude /usr/share/doc
@@ -685,6 +692,8 @@ LOG_SOCKET_FILE="/etc/systemd/system/${LOG_SOCKET_UNIT}"
 if ! grep -qsx "\$AddUnixListenSocket ${LOG_SOCKET_PATH}" /etc/rsyslog.d/49-haproxy.conf; then
     warn "/etc/rsyslog.d/49-haproxy.conf does not have rsyslog listen on ${LOG_SOCKET_PATH}"
     warn "  (it comes with Ubuntu's haproxy package); the log socket is left to rsyslog."
+    warn "  ${TRAFFIC_SOCKET_PATH} is then made by rsyslog and writable by every local account:"
+    warn "  a local account could write traffic lines. Fix the file, then run this step again."
 else
     unit_before="$(sha256sum "$LOG_SOCKET_FILE" 2>/dev/null || true)"
     install_file "$LOG_SOCKET_FILE" root:root 644 "# Installed by install/04-node-prepare.
@@ -693,7 +702,10 @@ Description=HAProxy's log socket in its chroot, held across rsyslog restarts
 
 [Socket]
 ListenDatagram=${LOG_SOCKET_PATH}
-SocketMode=0666
+ListenDatagram=${TRAFFIC_SOCKET_PATH}
+SocketUser=haproxy
+SocketGroup=haproxy
+SocketMode=0660
 ReceiveBuffer=16M
 Service=rsyslog.service
 
@@ -704,7 +716,7 @@ WantedBy=sockets.target"
     if [[ "$unit_before" != "$(sha256sum "$LOG_SOCKET_FILE")" ]] \
         || ! systemctl is-active --quiet "$LOG_SOCKET_UNIT"; then
         systemctl stop syslog.socket rsyslog.service "$LOG_SOCKET_UNIT"
-        rm -f "$LOG_SOCKET_PATH"
+        rm -f "$LOG_SOCKET_PATH" "$TRAFFIC_SOCKET_PATH"
         if ! systemctl start "$LOG_SOCKET_UNIT"; then
             # Never leave the node without rsyslog: back to the socket it makes.
             systemctl disable --quiet "$LOG_SOCKET_UNIT" || true
@@ -717,6 +729,21 @@ WantedBy=sockets.target"
         log "  applied  ${LOG_SOCKET_UNIT}; rsyslog restarted on it"
     else
         log "  ok       ${LOG_SOCKET_UNIT}"
+    fi
+fi
+
+#
+# The traffic log is a base function (Fas 18, 26-10-16): a node given the
+# collector's key turns its own route on, so the records reach the manager
+# with nothing done by hand. Run only when the rule is not already the one the
+# script writes, since turning it on restarts rsyslog.
+#
+TRAFFIC_RULE="/etc/rsyslog.d/48-haprion-traffic.conf"
+if [[ -n "${TRAFFIC_LOG_PUBKEY:-}" ]]; then
+    if cmp -s <("${SBIN}/haprion-traffic-log-enable" --print) "$TRAFFIC_RULE"; then
+        log "  ok       ${TRAFFIC_RULE}"
+    else
+        "${SBIN}/haprion-traffic-log-enable" || die "the traffic log could not be turned on"
     fi
 fi
 

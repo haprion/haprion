@@ -25,7 +25,7 @@ READER = re.compile(
 NOW = time.mktime((2026, 10, 12, 9, 30, 0, 0, 0, -1))
 
 FORWARD = """\
-if ($programname == "haproxy-traffic" and $msg startswith " {") then {
+if ($programname == "haproxy-traffic" and $!haprion!origin == "haproxy" and $msg startswith " {") then {
     action(type="omfwd"
            name="haprion-graylog"
            target="192.0.2.20")
@@ -129,7 +129,7 @@ class TheNodeReadsItsForwardingQueues(ReaderCase):
 # rsyslog's own lines as a node's journal held them (26-10-12).
 #
 FORWARD_WITH_PORTS = """\
-if ($programname == "haproxy-traffic" and $msg startswith " {") then {
+if ($programname == "haproxy-traffic" and $!haprion!origin == "haproxy" and $msg startswith " {") then {
     action(type="omfwd"
            name="haprion-graylog"
            target="192.0.2.20"

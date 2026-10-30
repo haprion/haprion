@@ -6515,7 +6515,10 @@ socket instead, the way `syslog.socket` holds the system log's:
 # /etc/systemd/system/haprion-haproxy-log.socket
 [Socket]
 ListenDatagram=/var/lib/haproxy/dev/log
-SocketMode=0666
+ListenDatagram=/var/lib/haproxy/dev/haprion-traffic
+SocketUser=haproxy
+SocketGroup=haproxy
+SocketMode=0660
 ReceiveBuffer=16M
 Service=rsyslog.service
 
@@ -6528,6 +6531,17 @@ the socket, so none are lost. The queue length is how many lines can wait: enoug
 25 000 requests a second. Like `syslog.socket`, the unit also starts rsyslog when a line arrives
 and rsyslog is not running. If `49-haproxy.conf` lacks its listen line, the step warns and leaves
 the socket to rsyslog, and that node can lose lines during an rsyslog restart.
+
+**Only HAProxy's own socket is trusted for traffic lines.** The structured stream goes to the second
+socket above, `haprion-traffic`, which only the `haproxy` account can write. The rsyslog rule that
+listens there marks each line as HAProxy's before the forwarding rule and the day file's rule see
+it, and both act only on a marked line. A local account on a node that writes a line under the tag
+`haproxy-traffic` to `/dev/log` (`logger -t haproxy-traffic`) therefore reaches neither the day
+file nor a log receiver, so it cannot add records to the traffic log or make the manager's import
+skip them. A node must have this release before the manager publishes a configuration that logs to
+the new socket: until then that node's structured stream has no reader. If `49-haproxy.conf` lacks
+its listen line, step 4 warns that the traffic socket is then made by rsyslog and open to every local
+account.
 
 **The HAProxy unit must load `conf.d`, and load it exactly once.**
 

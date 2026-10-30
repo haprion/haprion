@@ -51,7 +51,23 @@ def unit_text() -> str:
         raise AssertionError("04-node-prepare installs no log socket unit")
     path = re.search(r'^LOG_SOCKET_PATH="([^"]+)"$', text, re.MULTILINE)
     assert path is not None
-    return found.group(1).replace("${LOG_SOCKET_PATH}", path.group(1))
+    traffic = re.search(r'^TRAFFIC_SOCKET_PATH="([^"]+)"$', text, re.MULTILINE)
+    assert traffic is not None
+    return (
+        found.group(1)
+        .replace("${LOG_SOCKET_PATH}", path.group(1))
+        .replace("${TRAFFIC_SOCKET_PATH}", traffic.group(1))
+    )
+
+
+def traffic_input(socket_path: str) -> str:
+    """The rsyslog input and ruleset 04-node-prepare writes for HAProxy's traffic socket."""
+
+    text = NODE_PREPARE.read_text(encoding="utf-8")
+    found = re.search(r"TRAFFIC_INPUT=.*?<<'CONF'\n(.*?)\nCONF\n", text, re.DOTALL)
+    if found is None:
+        raise AssertionError("04-node-prepare writes no traffic input")
+    return found.group(1).replace("@SOCKET@", socket_path)
 
 
 class TheNodeHoldsTheSocket(unittest.TestCase):
@@ -59,7 +75,36 @@ class TheNodeHoldsTheSocket(unittest.TestCase):
         unit = unit_text()
         self.assertIn("ListenDatagram=" + UBUNTU_LINE.split()[-1], unit.splitlines())
         self.assertIn("Service=rsyslog.service", unit.splitlines())
-        self.assertIn("SocketMode=0666", unit.splitlines())
+        #
+        # Only HAProxy writes either socket: the rule on the traffic one trusts
+        # what arrives there (review 2026-10-30, E1).
+        #
+        self.assertEqual(
+            [line for line in unit.splitlines() if line.startswith("ListenDatagram=")],
+            [
+                "ListenDatagram=/var/lib/haproxy/dev/log",
+                "ListenDatagram=/var/lib/haproxy/dev/haprion-traffic",
+            ],
+        )
+        for line in ("SocketUser=haproxy", "SocketGroup=haproxy", "SocketMode=0660"):
+            self.assertIn(line, unit.splitlines())
+        self.assertNotIn("SocketMode=0666", unit)
+
+    def test_haproxy_logs_the_traffic_stream_to_the_socket_only_it_can_write(self) -> None:
+        """The generated `log` target, seen from the chroot, is the unit's second socket."""
+
+        from haprion.generate import TRAFFIC_LOG_SOCKET
+
+        listened = [
+            line.split("=", 1)[1]
+            for line in unit_text().splitlines()
+            if line.startswith("ListenDatagram=")
+        ]
+        self.assertEqual("/var/lib/haproxy" + TRAFFIC_LOG_SOCKET, listened[1])
+        self.assertEqual(
+            listened[1],
+            re.search(r'^TRAFFIC_SOCKET_PATH="([^"]+)"$', NODE_PREPARE.read_text(), re.M)[1],  # type: ignore[index]
+        )
 
     def test_the_check_names_ubuntus_line_exactly(self) -> None:
         text = NODE_PREPARE.read_text(encoding="utf-8")
@@ -207,6 +252,89 @@ class RsyslogKeepsAHandedSocket(unittest.TestCase):
 
         self.start(None)
         self.assertEqual(self.received(100), 100)
+
+
+@unittest.skipUnless(shutil.which("rsyslogd"), "rsyslog is not installed here")
+class OnlyHAProxysSocketIsTrusted(unittest.TestCase):
+    """Review 2026-10-30, E1, on a real rsyslogd: the tag alone writes nothing.
+
+    The configuration is the shipped one - the input and ruleset of
+    04-node-prepare, the day file's rule as `haprion-traffic-log-enable`
+    prints it - on two sockets in a temporary directory: one for HAProxy, one
+    standing for the system's /dev/log that any local account can write.
+    """
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory, True)
+        source = shutil.which("rsyslogd")
+        assert source is not None
+        self.binary = self.directory / "rsyslogd"
+        shutil.copy2(source, self.binary)
+        self.binary.chmod(0o755)
+        (self.directory / "work").mkdir()
+        (self.directory / "days").mkdir()
+        self.traffic = self.directory / "haprion-traffic"
+        self.general = self.directory / "log"
+        rule = subprocess.run(
+            ["/bin/bash", str(ROOT / "install" / "node" / "haprion-traffic-log-enable"), "--print"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.replace("/var/log/haprion/", f"{self.directory / 'days'}/")
+        self.config = self.directory / "rsyslog.conf"
+        self.config.write_text(
+            f'global(workDirectory="{self.directory / "work"}")\n'
+            'module(load="imuxsock" SysSock.Use="off")\n'
+            f"$AddUnixListenSocket {self.general}\n"
+            f"{traffic_input(str(self.traffic))}\n"
+            f"{rule}\n"
+            f'action(type="omfile" file="{self.directory / "classic.log"}")\n'
+        )
+        self.process = subprocess.Popen(
+            [str(self.binary), "-n", "-f", str(self.config), "-i", str(self.directory / "pid")]
+        )
+        self.addCleanup(self.stop)
+        deadline = time.monotonic() + 10
+        while not (self.traffic.exists() and self.general.exists()):
+            self.assertLess(time.monotonic(), deadline, "rsyslog did not listen")
+            time.sleep(0.02)
+        time.sleep(0.3)
+
+    def stop(self) -> None:
+        if self.process.poll() is None:
+            self.process.send_signal(signal.SIGTERM)
+            self.process.wait(timeout=10)
+
+    def send(self, path: Path, text: str) -> None:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
+            sender.sendto(f"<150>Oct 12 13:30:00 haproxy-traffic[1]: {text}".encode(), str(path))
+
+    def written(self, expected: int) -> list[str]:
+        deadline = time.monotonic() + 10
+        lines: list[str] = []
+        while time.monotonic() < deadline:
+            lines = [
+                line
+                for day in sorted((self.directory / "days").glob("traffic-*.jsonl"))
+                for line in day.read_text().splitlines()
+            ]
+            if len(lines) >= expected:
+                break
+            time.sleep(0.05)
+        return lines
+
+    def test_a_line_with_the_tag_on_the_general_socket_is_not_written(self) -> None:
+        self.send(self.general, '{"schema":1,"path":"/forged"}')
+        self.send(self.traffic, '{"schema":1,"path":"/real"}')
+        self.written(1)
+        time.sleep(0.5)
+        lines = self.written(1)
+
+        self.assertEqual(lines, ['{"schema":1,"path":"/real"}'])
+        self.assertFalse(
+            (self.directory / "classic.log").exists(), "the tag never reaches the classic log"
+        )
 
 
 if __name__ == "__main__":

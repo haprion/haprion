@@ -11,7 +11,7 @@
   `spark_height`, `traffic_bucket`, `traffic_window`, and the marked range:
   `traffic_marked`, `traffic_range`, `traffic_link` and `traffic_clear`.
 #}
-{% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ backend.series }}</code>{% if owner is defined and owner and traffic_logs_enabled %}<span class="traffic-links"><a href="/logs?{{ {'cluster': view.cluster, 'object': owner} | urlencode }}">Traffic log</a> · <a href="/waf?{{ {'view': 'requests', 'cluster': view.cluster, 'object': owner} | urlencode }}">WAF logs</a></span>{% endif %}<span class="traffic-rate">{{ backend.rate }} / {{ traffic_rate_unit }}</span></div>{% endif %}
+{% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ backend.series }}</code>{% if owner is defined and owner and traffic_logs_enabled %}<span class="traffic-links"><a href="/logs?{{ {'cluster': view.cluster, 'object': owner} | urlencode }}">Traffic log</a> · <a href="/waf?{{ {'view': 'requests', 'cluster': view.cluster, 'object': owner} | urlencode }}">WAF logs</a></span>{% endif %}{% if backend.note %}<span class="traffic-describes">{{ backend.note }}</span>{% endif %}<span class="traffic-rate">{{ backend.rate }} / {{ traffic_rate_unit }}</span></div>{% endif %}
 <div class="traffic-card">
   {#
     Drawn whole whether or not the window holds samples: an empty line and a

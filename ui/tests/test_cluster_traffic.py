@@ -276,6 +276,21 @@ class WhatThePageSays(ReadingACluster):
         self.assertIn("Redirect answers", text)
         self.assertIn("shop-redirect-eee20480", text)
 
+    def test_a_redirect_card_is_titled_by_its_backend_name_with_the_route_under_it(self) -> None:
+        document = NamingARedirectByWhatItDoes.DOCUMENT
+        targets = metrics.backend_targets({"shop": load_proxy("shop", document)})
+        self.backends = ["shop-redirect-old"]
+        with mock.patch.object(metrics, "backend_targets", return_value=targets):
+            text = self.page().text  # type: ignore[attr-defined]
+        card = text.split("Redirect answers", 1)[1]
+        head = card[card.index('<div class="traffic-head">') : card.index("</div>")]
+
+        self.assertRegex(head, r'<code class="traffic-backend">shop-redirect-old</code>')
+        self.assertRegex(
+            head, r'<span class="traffic-describes">/old → https://shop.example.com/new</span>'
+        )
+        self.assertNotIn(" · ", head.split("traffic-rate")[0])
+
     def test_a_redirect_answer_shows_response_classes_that_it_can_answer(self) -> None:
         """Only the response class changes; the card keeps its other five figures."""
 
@@ -585,11 +600,13 @@ backends:
     def test_a_name_no_object_accounts_for_loses_only_its_prefix(self) -> None:
         self.assertEqual(metrics.backend_label("mgd-other-web", self.targets()), "other-web")
 
-    def test_it_is_named_by_the_route_and_the_destination(self) -> None:
-        described = self.targets()[self.CURRENT].label
+    def test_it_is_titled_by_its_backend_name_and_described_by_the_route(self) -> None:
+        target = self.targets()[self.CURRENT]
 
-        self.assertIn("/old", described)
-        self.assertIn("https://shop.example.com/new", described)
+        self.assertEqual(target.label, self.CURRENT)
+        self.assertIn("/old", target.description)
+        self.assertIn("https://shop.example.com/new", target.description)
+        self.assertEqual(self.targets()[self.POOL].description, "")
 
     def test_every_name_of_both_backends_is_known(self) -> None:
         self.assertEqual(

@@ -55,6 +55,13 @@ from haprion_ui.waf_work import (
 )
 
 
+def _description(targets: Mapping[str, metrics.BackendTarget], name: str) -> str:
+    """What a redirect does, for the line under its title; nothing for any other backend."""
+
+    target = targets.get(name)
+    return target.description if target else ""
+
+
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
 
@@ -399,6 +406,7 @@ def build_router(config: Config) -> APIRouter:
                     ceiling=ceiling,
                     chosen=marked,
                     figures=figures_of(name),
+                    note=_description(targets_of[cluster], name),
                 )
                 for name, answered in found
             ]

@@ -1141,6 +1141,7 @@ def build_router(config: Config) -> APIRouter:
                     chosen=marked,
                     measurement=answers[index * 2 + 1],
                     figures=figures,
+                    note=targets[backend].description if backend in targets else "",
                 )
                 for index, backend in enumerate(served)
             ]

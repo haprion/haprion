@@ -2058,6 +2058,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
   background: var(--bg);
 }
 .traffic-backend { color: var(--muted); font-size: 12px; }
+.traffic-describes { flex-basis: 100%; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .traffic-rate { flex-basis: 100%; color: var(--muted); font-size: 11px; }
 .traffic-links { color: var(--muted); font-size: 12px; }
 /* A blank line above it, so it reads as the object's own words rather than

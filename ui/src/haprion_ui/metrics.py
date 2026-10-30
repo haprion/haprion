@@ -1675,6 +1675,10 @@ class BackendTraffic:
     # What the line counts, for the heading beside the rate unit.
     #
     rate: str = "Requests"
+    #
+    # One line under the title: what a redirect does (`BackendTarget.description`).
+    #
+    note: str = ""
 
     #
     # There was a `quiet` property here, and the sentence it turned on -
@@ -1837,6 +1841,9 @@ class BackendTarget:
     label: str
     current: str
     redirect: bool = False
+    description: str = ""
+    """What a redirect does, `/ → https://…`; shown under its name."""
+
     owner: str = ""
     """The object it is generated for (26-10-10), whose logs the card links to."""
 
@@ -1867,8 +1874,9 @@ def backend_targets(objects: Mapping[str, Proxy]) -> dict[str, BackendTarget]:
             suffix = suffixes[(route.path, route.match)]
             current = backend_name(proxy, suffix)
             target = BackendTarget(
-                label=f"{name} · {route.path} → {redirect.location}",
+                label=current,
                 current=current,
+                description=f"{route.path} → {redirect.location}",
                 redirect=True,
                 owner=name,
             )
@@ -2020,6 +2028,7 @@ def backend_traffic(
     ceiling: int | None = None,
     chosen: Selection | None = None,
     figures: Figures | None = None,
+    note: str = "",
 ) -> BackendTraffic:
     """One series' card, drawn across the window that was asked for.
 
@@ -2088,6 +2097,7 @@ def backend_traffic(
         restarted=measurement.restarted,
         handed_over=measurement.handed_over,
         rate=figures.rate,
+        note=note,
     )
 
 

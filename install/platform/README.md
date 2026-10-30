@@ -273,7 +273,8 @@ old interpreter, so merely switching the symlink cannot update the UI. On the
 first installation the unit does not exist yet; the installer names that as
 pending and Step 4 creates, starts and health-checks it instead.
 
-Rolling back is pointing `current` at the previous release and restarting. The
+Rolling back is `sudo haprion-rollback`: it pauses the worker, switches `current`
+to the previous release, restarts the services and proves it. The
 platform is isolated from the command line, so it never touches HAProxy.
 
 ## Checking the whole installation

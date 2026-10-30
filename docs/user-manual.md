@@ -3976,7 +3976,10 @@ for node backups appear only while the *Node backups* feature is on.
 on purpose. An admin can **acknowledge** such a row (with `management_writes` on). The row is then left
 out of the list, and out of what monitors are told, until it has gone: when what it says is put right, or
 when a later run of the job's operation works. The same trouble coming back after that, or a job of the
-operation failing again, makes a row again. Each acknowledgement is in *Audit*, with who made it and what
+operation failing again, makes a row again. A row that becomes worse - critical where it was a warning, a
+node in another state, a cluster fault of another kind - is a new row and shows again. An acknowledgement
+of a log receiver holds for that receiver only. It also holds while its cluster cannot be read, and goes
+when a whole reading no longer has the row. Each acknowledgement is in *Audit*, with who made it and what
 the row said.
 
 **The same list for a monitor.** A monitor can read the list without signing in:

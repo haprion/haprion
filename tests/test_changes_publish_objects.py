@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import yaml
+
 from haprion import tls_policy
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import changes_publish
@@ -376,6 +378,31 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertEqual(code, 75)
             self.assertEqual(answer["error"]["code"], "stick_counters_short")
             self.assertIn("tune.stick-counters 5", answer["error"]["message"])
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+    def test_a_core_the_traffic_socket_is_not_reached_from_is_refused(self) -> None:
+        """Review 2026-10-30-igen2, S3: the gate on the interface's own publish path."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            clusters = Path(raw) / "clusters.yaml"
+            document = yaml.safe_load(clusters.read_text(encoding="utf-8"))
+            document["clusters"]["alpha"]["traffic_logging"] = True
+            clusters.write_text(yaml.safe_dump(document), encoding="utf-8")
+            self.seed()
+            core = self.repo / "core/haproxy.cfg"
+            core.write_text(
+                core.read_text().replace("  daemon\n", "  daemon\n  chroot /srv/haproxy\n"),
+                encoding="utf-8",
+            )
+            git(self.repo, "commit", "-qam", "Human edit to core")
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            code, answer, _err = self.publish_objects(policy, self.request())
+
+            self.assertEqual(code, 75)
+            self.assertEqual(answer["error"]["code"], "traffic_log_unreachable")
+            self.assertIn("chroot /var/lib/haproxy", answer["error"]["message"])
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
     def test_an_unchanged_retry_is_held_to_the_same_policy(self) -> None:

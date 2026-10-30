@@ -521,6 +521,53 @@ class WhatASectionAsksOfTheNodesMemoryIsBounded(unittest.TestCase):
             with self.subTest(text):
                 self.assertEqual({entry[1] for entry in fates(text)}, {PLACED})
 
+    def test_a_table_is_counted_by_what_it_stores(self) -> None:
+        """Code review 26-10-30 again, S4: `store gpc(100),gpc_rate(100,1m),gpt(100)` is
+        about 2.5 KB an entry, 250 MB full, and the cap counted none of it."""
+
+        table = "backend shop-t\n    stick-table type string len 256 size 100k {}\n"
+        for stored in (
+            "store gpc(100),gpc_rate(100,1m),gpt(100)",
+            "store gpc(100),gpc_rate(100,1m)",
+            "store gpc(100) store gpt(100) store http_req_rate(10s)",
+            "store gpc(100),frobnicate",
+            "store gpc(x)",
+        ):
+            with self.subTest(stored):
+                self.assertEqual(fates(table.format(stored))[1][1], REFUSED_FATE)
+        for stored in (
+            "store gpc0,http_req_rate(10s)",
+            "store gpc(4),gpc_rate(4,1m),gpt0,server_id",
+            "",
+        ):
+            with self.subTest(stored):
+                self.assertEqual(
+                    {entry[1] for entry in fates(table.format(stored).replace("256", "64"))},
+                    {PLACED},
+                )
+
+    def test_a_text_adds_few_tables_and_rings(self) -> None:
+        tables = "".join(f"backend shop-t{n}\n    stick-table type ip size 1k\n" for n in range(5))
+        self.assertEqual([entry[1] for entry in fates(tables)][-1], REFUSED_FATE)
+        self.assertEqual([entry[1] for entry in fates(tables)][-2], PLACED)
+        self.assertEqual({entry[1] for entry in fates(tables.rsplit("backend", 1)[0])}, {PLACED})
+        rings = "".join(f"ring shop-r{n}\n    size 1k\n" for n in range(5))
+        self.assertEqual(fates(rings)[-2][1], REFUSED_FATE)
+
+    def test_the_tables_and_rings_of_a_cluster_are_bounded_together(self) -> None:
+        from haprion.generate import GeneratorError
+
+        def grown(name: str) -> tuple[str, str]:
+            table = f"backend {name}-t\n    stick-table type integer size 100k store gpc(50)"
+            return name, _object(name, table)
+
+        names = "abcdefgh"
+        _generate(*(grown(name) for name in names[:7]))
+        with self.assertRaisesRegex(
+            GeneratorError, "tables and rings .* have 256 MB|256 MB for them"
+        ):
+            _generate(*(grown(name) for name in names))
+
     def test_debug_arguments_are_read_without_quotes(self) -> None:
         """Code review 26-10-30 again, S2: HAProxy unquotes `debug`'s arguments a second
         time, so `'a,shop-r,b',bank-r` wrote to the ring `bank-r`."""

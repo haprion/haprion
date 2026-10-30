@@ -161,7 +161,12 @@ SECTION_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 #   caches of a cluster together (the generator adds them up);
 # * a ring: 16 MB;
 # * a stick table: 100k entries, with string and binary keys of 256 bytes at
-#   most - some 30 MB full.
+#   most, and 40 MB all told - an entry is its key, some bookkeeping and what
+#   `store` keeps, and a `store` array of 100 elements is 400 to 1200 bytes
+#   an element (code review 2026-10-30 again, S4: `gpc(100),gpc_rate(100,1m),
+#   gpt(100)` was 2.5 KB an entry, 250 MB full, measured on 3.4.7);
+# * 4 tables and 4 rings to a text, and 256 MB for the tables and rings of a
+#   cluster together, counted full.
 #
 MEGABYTE = 1024 * 1024
 CACHE_MAX_MB = 64
@@ -171,6 +176,127 @@ RING_MAX = 16 * MEGABYTE
 TABLE_MAX_ENTRIES = 100 * 1024
 TABLE_MAX_KEY = 256
 MEMORY = "HAProxy reserves this on every node at the reload, and `haproxy -c` does not"
+GROWS = "it fills as visitors come, and every node keeps it"
+TABLE_MAX_BYTES = 40 * MEGABYTE
+CLUSTER_GROWING_MAX_MB = 256
+MAX_TABLES = 4
+MAX_RINGS = 4
+ENTRY_OVERHEAD = 128
+DEFAULT_RING = 16384
+DEFAULT_KEY = 32
+#
+# What a stored data type keeps in an entry, from configuration.txt 11.1:
+# bytes for a counter, 12 for a rate, and `<nb>` elements for an array.
+#
+_COUNTERS = frozenset(
+    {
+        "bytes_in_cnt",
+        "bytes_out_cnt",
+        "conn_cnt",
+        "conn_cur",
+        "glitch_cnt",
+        "gpc0",
+        "gpc1",
+        "gpt0",
+        "http_req_cnt",
+        "http_err_cnt",
+        "http_fail_cnt",
+        "server_id",
+        "sess_cnt",
+    }
+)
+_RATES = frozenset(
+    {
+        "bytes_in_rate",
+        "bytes_out_rate",
+        "conn_rate",
+        "glitch_rate",
+        "gpc0_rate",
+        "gpc1_rate",
+        "http_req_rate",
+        "http_err_rate",
+        "http_fail_rate",
+        "sess_rate",
+    }
+)
+_STORED = re.compile(r"(?P<name>[a-z_0-9]+)(?:\((?P<arguments>[^)]*)\))?")
+_KEYS = {"ip": 4, "ipv6": 16, "integer": 4}
+
+
+def stored_bytes(value: str) -> int | None:
+    """What `store <value>` keeps in an entry, or None for a type this does not know."""
+
+    total = 0
+    position = 0
+    while position < len(value):
+        match = _STORED.match(value, position)
+        if match is None:
+            return None
+        name, arguments = match["name"], match["arguments"]
+        parts = arguments.split(",") if arguments is not None else []
+        elements = 1
+        if name in ("gpc", "gpt", "gpc_rate"):
+            if not parts or not _PLAIN.fullmatch(parts[0]):
+                return None
+            elements = int(parts[0])
+            width = 12 if name == "gpc_rate" else 4
+        elif name in _COUNTERS:
+            width = 4
+        elif name in _RATES:
+            width = 12
+        else:
+            return None
+        total += width * elements
+        position = match.end()
+        if position < len(value):
+            if value[position] != ",":
+                return None
+            position += 1
+    return total
+
+
+def table_bytes(tokens: Sequence[str]) -> int | None:
+    """What a `stick-table` line fills to, in bytes, or None for a line this cannot read."""
+
+    kind, length, size, stored = "", DEFAULT_KEY, 0, 0
+    index = 1
+    while index < len(tokens):
+        parameter = tokens[index]
+        width = STICK_TABLE_PARAMETERS.get(parameter)
+        value = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if width is None:
+            return None
+        if parameter == "type":
+            kind = value
+        elif parameter == "len":
+            length = size_of(value, units=False) or 0
+        elif parameter == "size":
+            size = size_of(value, units=True) or 0
+        elif parameter == "store":
+            kept = stored_bytes(value)
+            if kept is None:
+                return None
+            stored += kept
+        index += 1 + width
+    key = _KEYS.get(kind, length)
+    return size * (key + ENTRY_OVERHEAD + stored)
+
+
+def growing_bytes(section: Section) -> int:
+    """What a table or ring the text adds comes to when full, for the cluster's sum."""
+
+    total = 0
+    for line in section.lines:
+        tokens = words(line.text)
+        if section.kind == "ring" and tokens[:1] == ["size"] and len(tokens) > 1:
+            total += size_of(tokens[1], units=True) or 0
+        elif section.kind == "backend" and tokens[:1] == ["stick-table"]:
+            total += table_bytes(tokens) or 0
+    if section.kind == "ring" and total == 0:
+        total = DEFAULT_RING
+    return total
+
+
 _PLAIN = re.compile(r"[0-9]{1,12}")
 _SIZED = re.compile(r"(?P<number>[0-9]{1,12})(?P<unit>[kKmMgG]?)")
 _UNITS = {"": 1, "k": 1024, "m": MEGABYTE, "g": 1024 * MEGABYTE}
@@ -209,7 +335,7 @@ def _limit_problem(kind: str, keyword: str, value: str) -> str:
     if size is None:
         return f"write {keyword} as a plain number" + (" with k, m or g" if units else "")
     if size > most:
-        return f"{keyword} is at most {most} {counted} here: {MEMORY}"
+        return f"{keyword} is at most {most} {counted} here: {GROWS if kind != 'cache' else MEMORY}"
     return ""
 
 
@@ -1007,6 +1133,14 @@ def _stick_table_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: O
         if problem:
             return problem
         index += 1 + width
+    total = table_bytes(tokens)
+    if total is None:
+        return "a store keeps a data type HAProxy 3.4 has, written as the manual does"
+    if total > TABLE_MAX_BYTES:
+        return (
+            f"this table comes to {total // MEGABYTE} MB when full (each entry is its key plus "
+            f"what `store` keeps) and a table is at most {TABLE_MAX_BYTES // MEGABYTE} MB: {GROWS}"
+        )
     return ""
 
 
@@ -1618,6 +1752,7 @@ def place(
     section_header: Line | None = None
     section_lines: list[Line] = []
     section_keys: set[tuple[str, ...]] = set()
+    rings = tables = 0
 
     def close() -> None:
         nonlocal section_header, section_lines, section_keys
@@ -1686,6 +1821,10 @@ def place(
             problem = _header_problem(first, tokens, name)
             if not problem and section_name in seen_sections:
                 problem = f"the text names {section_name} twice"
+            if not problem and first == "ring":
+                rings += 1
+                if rings > MAX_RINGS:
+                    problem = f"a text adds at most {MAX_RINGS} rings: {GROWS}"
             if problem:
                 current = ("refused", first)
                 record(REFUSED_FATE, reason=problem)
@@ -1746,8 +1885,11 @@ def place(
                     dynamic_block=dynamic_block,
                 )
                 if not problem and keyword == ("stick-table",):
+                    tables += 1
                     if keyword in section_keys:
                         problem = "a backend holds one stick-table"
+                    elif tables > MAX_TABLES:
+                        problem = f"a text adds at most {MAX_TABLES} stick tables: {GROWS}"
                     section_keys.add(keyword)
             if problem:
                 record(REFUSED_FATE, where, problem)

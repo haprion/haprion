@@ -417,6 +417,7 @@ def generate(
     _refuse_shared_backend_names(ordered)
     _refuse_shared_section_names(ordered)
     _refuse_cache_beyond_the_cluster_s(ordered)
+    _refuse_growing_beyond_the_cluster_s(ordered)
 
     unsupported = [
         proxy
@@ -1577,6 +1578,36 @@ def _refuse_cache_beyond_the_cluster_s(proxies: Sequence[Proxy]) -> None:
         raise GeneratorError(
             f"the caches the advanced config adds come to {total} MB, and a cluster has "
             f"{advanced_config.CLUSTER_CACHE_MAX_MB} MB for them: {named}"
+        )
+
+
+def _refuse_growing_beyond_the_cluster_s(proxies: Sequence[Proxy]) -> None:
+    """The tables and rings the objects' texts add, together, within what a node may keep.
+
+    They fill as traffic comes and are kept on every node (code review 2026-10-30
+    again, S4), so the cluster's sum is counted with each one full.
+    """
+
+    sizes = {
+        proxy.name: sum(
+            advanced_config.growing_bytes(section)
+            for section in proxy.advanced.placement.sections
+            if section.kind in ("ring", "backend")
+        )
+        for proxy in proxies
+        if proxy.advanced is not None
+    }
+    total = sum(sizes.values())
+    most = advanced_config.CLUSTER_GROWING_MAX_MB
+    if total > most * advanced_config.MEGABYTE:
+        named = ", ".join(
+            f"{name} {size // advanced_config.MEGABYTE} MB"
+            for name, size in sorted(sizes.items())
+            if size
+        )
+        raise GeneratorError(
+            f"the tables and rings the advanced config adds come to {total // advanced_config.MEGABYTE} MB "
+            f"when full, and a cluster has {most} MB for them: {named}"
         )
 
 

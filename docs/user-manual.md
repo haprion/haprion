@@ -1257,7 +1257,9 @@ could undo what the limits below read; only a ring's `server` may repeat.
 
 **How much memory the sections may take.** `haproxy -c` reserves none of it, so the check before a publish
 passes any size. At the reload HAProxy reserves a cache whole, on every node at once, and the old and new
-process run side by side while it reloads. A larger value is refused:
+process run side by side while it reloads. A table or a ring is not reserved but fills as visitors come, and
+every node keeps it; a `store` of 100 counters and rates is some 2 KB for every entry, so a table is counted
+by what it holds when full. A larger value is refused:
 
 | What | At most |
 |---|---|
@@ -1267,6 +1269,9 @@ process run side by side while it reloads. A larger value is refused:
 | a ring's `size` | 16 MB |
 | a `stick-table`'s `size` | 100k entries |
 | a `stick-table`'s `len`, for a `string` or `binary` key | 256 bytes |
+| a `stick-table` full: `size` times its key, some bookkeeping and what `store` keeps | 40 MB |
+| tables and rings a text adds | 4 tables and 4 rings |
+| all the tables and rings the objects' texts add, together, each counted full | 256 MB per cluster |
 
 Write each as a plain number; `size` also takes `k`, `m` or `g`.
 

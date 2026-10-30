@@ -236,6 +236,8 @@ def make_request(
         raise RequestError(
             "bad_input", "the interface certificate has no targets; name no cluster or receiver"
         )
+    if not interface and not clusters and not receivers:
+        raise RequestError("bad_input", "at least one target (cluster or receiver) is required")
     if interface:
         try:
             ui_interface.refuse_unserved(requested)

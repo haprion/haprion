@@ -874,6 +874,25 @@ def import_certificate(
         receivers = [*kept_receivers, *(r for r in receivers if r not in kept_receivers)]
         formats = {**kept_formats, **(formats or {})}
     #
+    # Somewhere to go: the same rule the web holds an import to, and the issuance
+    # in the engine. A certificate with no target and neither mark is served to
+    # nobody and exportable by nobody. An entry that already has targets keeps
+    # them when a renewal names none.
+    #
+    if not (
+        interface
+        or exportable
+        or clusters
+        or receivers
+        or (
+            existing is not None
+            and (
+                existing.interface or existing.exportable or existing.clusters or existing.receivers
+            )
+        )
+    ):
+        raise ImportError_("bad_input", "at least one target (cluster or receiver) is required")
+    #
     # The interface's name is asked before the store is written, as the other
     # ways in ask it before a CA is: `install` refuses a certificate that does
     # not name the interface, but only after the mark has moved to it, and the

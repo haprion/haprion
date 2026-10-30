@@ -335,6 +335,13 @@ class WhatIsRefusedBeforeWriting(ImportFixture):
         self.assertEqual((directory / "privkey.pem").read_text(), "CSR KEY")
         self.assertNotIn("shop.example", self.registered())
 
+    def test_a_certificate_with_no_target_and_no_mark(self) -> None:
+        with self.assertRaises(ImportError_) as refused:
+            self.run_import("shop.example", self.material())
+        self.assertEqual(refused.exception.code, "bad_input")
+        self.assertIn("at least one target", str(refused.exception))
+        self.assert_nothing_written("shop.example")
+
     def test_an_id_registered_as_acme(self) -> None:
         with self.assertRaises(ImportError_) as refused:
             self.run_import("keeper-alpha.example", self.material(), clusters=["alpha"])

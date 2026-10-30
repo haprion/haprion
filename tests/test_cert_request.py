@@ -497,9 +497,20 @@ class TheHelperAndTheCommand(RequestFixture):
                 self.assertIn(words, errors)
         self.assertEqual(list(self.store.iterdir()), [])
 
+    def test_a_request_with_no_target_is_refused_as_the_web_refuses_it(self) -> None:
+        code, document, _ = self.helper({"id": "shop.example.net", "domains": ["shop.example.net"]})
+        self.assertEqual(code, 65)
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertIn("at least one target", document["error"]["message"])
+        self.assertEqual(list(self.store.iterdir()), [])
+
     def test_the_helper_says_when_the_name_is_taken(self) -> None:
         code, document, _ = self.helper(
-            {"id": "keeper-alpha.example", "domains": ["keeper-alpha.example"]}
+            {
+                "id": "keeper-alpha.example",
+                "domains": ["keeper-alpha.example"],
+                "clusters": ["alpha"],
+            }
         )
         self.assertEqual(code, 65)
         self.assertEqual(document["error"]["code"], "already_exists")
@@ -547,6 +558,8 @@ class TheHelperAndTheCommand(RequestFixture):
             "rsa.example.net",
             "--key-type",
             "rsa-2048",
+            "--cluster",
+            "alpha",
             "--json",
         )
         self.assertEqual(code, 0, errors)
@@ -555,7 +568,13 @@ class TheHelperAndTheCommand(RequestFixture):
 
     def test_the_command_refuses_in_the_envelope_shape(self) -> None:
         code, output, errors = self.run_cli(
-            "--id", "keeper-alpha.example", "--domain", "keeper-alpha.example", "--json"
+            "--id",
+            "keeper-alpha.example",
+            "--domain",
+            "keeper-alpha.example",
+            "--cluster",
+            "alpha",
+            "--json",
         )
         self.assertEqual(code, 65)
         self.assertEqual(

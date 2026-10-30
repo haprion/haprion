@@ -41,7 +41,7 @@ ProtectHome=read-only
 # A test restore lets its VM fetch for the run (B398): the helper writes a
 # temporary line into each pull account's authorized_keys and takes it out
 # again. Their .ssh directories are the only part of /home it may write; the `-`
-# keeps a manager without certificate distribution from failing to start.
+# only tolerates one that is missing, which 01-manager-prepare never leaves so.
 ReadWritePaths=-/home/_haprion-pull/.ssh -/home/_haprion-cert-pull/.ssh
 ProtectHostname=yes
 ProtectKernelLogs=yes

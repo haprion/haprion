@@ -449,6 +449,24 @@ class Run(RestoreTest):
         FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
         return run
 
+    def test_a_run_id_the_fetch_lines_cannot_name_is_refused_before_the_vm_is_built(self) -> None:
+        request = Request(
+            run="abcdefgh-1",
+            cluster="alpha",
+            node="node-a",
+            archive=VERSION,
+            target="192.0.2.120",
+            mode="test",
+            profile=PROFILE,
+        )
+        node_restore.prepare(self.root, request, source_of=lambda _: "192.0.2.7")
+        self.preview("abcdefgh-1")
+        FakeSession.calls = []
+        with self.assertRaisesRegex(RestoreError, "cannot let its VM fetch"):
+            self.carry_out("abcdefgh-1")
+        self.assertNotIn("apply", [c[1]["op"] for c in FakeSession.calls])
+        self.assertFalse((self.root / "abcdefgh-1" / "started.json").exists())
+
     def test_three_sessions_in_order_at_the_right_addresses(self) -> None:
         run = self.previewed()
         result = self.carry_out(run)

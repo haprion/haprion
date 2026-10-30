@@ -364,6 +364,12 @@ class AddingANode(unittest.TestCase):
             with self.assertRaisesRegex(EnrollmentError, "already"):
                 site.add(host=existing.mgmt_host)
 
+    def test_the_name_of_a_test_restores_temporary_line_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Installation(Path(raw))
+            with self.assertRaisesRegex(EnrollmentError, "temporary name"):
+                site.add(block(name="restore-r261030-0a1b2c3d"))
+
     def test_a_ninth_node_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = Installation(Path(raw))

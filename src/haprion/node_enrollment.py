@@ -625,6 +625,12 @@ def require_cert_key(policy: PathPolicy, cluster: str, enrollment: Enrollment) -
     One rule for adding a node and for creating a cluster (review 26-10-30, E4).
     """
 
+    if TEMPORARY_NODE.fullmatch(enrollment.name):
+        raise EnrollmentError(
+            "enrollment_invalid",
+            f"{enrollment.name} is the shape of a test restore's temporary name, which "
+            "pull-keys leaves alone; name the node otherwise",
+        )
     if policy.certificate_directory(cluster) is not None and enrollment.cert_pull_key is None:
         raise EnrollmentError(
             "enrollment_invalid",

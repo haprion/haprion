@@ -1320,6 +1320,11 @@ def _run(
     testing = plan.mode == "test"
     key_paths: dict[str, str] = {}
     if testing:
+        # A run ID the engine accepts but the fetch lines cannot name falls here, not after the VM.
+        try:
+            restore_fetch.name_of(run_id)
+        except restore_fetch.FetchAccessError as exc:
+            raise RestoreError(f"a test restore cannot let its VM fetch: {exc}") from exc
         # Before anything is written: a test that cannot let its VM fetch cannot prove the way.
         if fetch_access is None:
             raise RestoreError("a test restore needs the manager's fetch access; none was given")

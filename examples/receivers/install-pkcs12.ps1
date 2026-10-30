@@ -9,6 +9,10 @@
     same password, and a run that finds the same thumbprint already installed
     does nothing.
 
+    The directory must be readable by Administrators and SYSTEM only: the
+    bundle and its password are the key. The commands the interface shows set
+    that up.
+
     Names are placeholders.
 #>
 param(

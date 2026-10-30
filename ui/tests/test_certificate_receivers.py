@@ -154,7 +154,7 @@ class WhatTheHostRuns(unittest.TestCase):
         )
         self.assertEqual(
             steps[0].windows_command,
-            "mkdir C:\\certs -Force | Out-Null\ncurl.exe -k -o C:\\certs\\manager-ui.pem "
+            certificate_receivers.WINDOWS_MKDIR + "\ncurl.exe -k -o C:\\certs\\manager-ui.pem "
             "https://mgr.example.net/certdist/manager-ui.pem",
         )
         self.assertEqual(steps[0].note.count("\n"), 1)
@@ -180,6 +180,15 @@ class WhatTheHostRuns(unittest.TestCase):
         steps = certificate_receivers.fetch_steps(row, None)
         self.assertIn("crx-lb-02-example-net@<manager>:<certificate>/", steps[0].command)
 
+    def test_the_windows_directory_is_closed_to_all_but_administrators_and_system(self) -> None:
+        first, _ = certificate_receivers.key_steps("lb-02.example.net")
+        line = first.windows_command.splitlines()[0]
+        self.assertTrue(line.startswith("mkdir C:\\certs -Force | Out-Null; icacls C:\\certs "))
+        self.assertIn("/inheritance:r", line)
+        self.assertIn("*S-1-5-32-544:(OI)(CI)F", line)
+        self.assertIn("*S-1-5-18:(OI)(CI)F", line)
+        self.assertNotIn("Users", line)
+
     def test_the_key_is_made_on_the_receiver_and_named_after_it_on_both_systems(self) -> None:
         first, second = certificate_receivers.key_steps("lb-02.example.net")
         self.assertEqual(
@@ -188,13 +197,15 @@ class WhatTheHostRuns(unittest.TestCase):
         )
         self.assertEqual(
             first.windows_command,
-            "mkdir C:\\certs -Force | Out-Null\n"
+            certificate_receivers.WINDOWS_MKDIR + "\n"
             "ssh-keygen -t ed25519 -N '\"\"' -C lb-02.example.net -f C:\\certs\\certfetch",
         )
         self.assertEqual(second.command, "cat /root/.ssh/certfetch.pub")
         self.assertEqual(second.windows_command, "Get-Content C:\\certs\\certfetch.pub")
         # The first Windows command makes the directory the rest write into.
-        self.assertTrue(first.windows_command.startswith("mkdir C:\\certs -Force | Out-Null\n"))
+        self.assertTrue(
+            first.windows_command.startswith(certificate_receivers.WINDOWS_MKDIR + "\n")
+        )
         self.assertEqual(certificate_receivers.WINDOWS_TRANSPORTS, {"sftp"})
 
 

@@ -43,7 +43,15 @@ WINDOWS_CERT_DIR = "C:\\certs"
 WINDOWS_KEY_FILE = WINDOWS_CERT_DIR + "\\certfetch"
 # The first Windows command of a sequence makes the directory the rest write
 # into: a host without it fails on the first -o (seen 2026-09-19, fileserver1).
-WINDOWS_MKDIR = f"mkdir {WINDOWS_CERT_DIR} -Force | Out-Null"
+# A directory made under C:\ inherits the Users group's read and the
+# authenticated users' write, and the keys and the password land in it: the
+# inheritance is cut and only Administrators and SYSTEM (by SID, so a localized
+# system works) are granted before anything is written.
+WINDOWS_MKDIR = (
+    f"mkdir {WINDOWS_CERT_DIR} -Force | Out-Null; "
+    f'icacls {WINDOWS_CERT_DIR} /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" '
+    '"*S-1-5-18:(OI)(CI)F" | Out-Null'
+)
 # The interface's own certificate as a file, served by its server block for a
 # receiver that fetches over https to save and trust (05-platform-nginx).
 UI_CERTIFICATE_FILE = "manager-ui.pem"

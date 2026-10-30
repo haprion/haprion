@@ -10,6 +10,8 @@ a sentence in the plan.
 from __future__ import annotations
 
 import gzip
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -281,8 +283,10 @@ class TheWafEngineNamesAreTheGenerators(unittest.TestCase):
             with self.subTest(line):
                 self.assertEqual(fate(line), REFUSED_FATE)
 
-    def test_another_spoe_engine_is_the_text_s_own(self) -> None:
-        self.assertEqual(fate("filter spoe engine mine config /etc/haproxy/mine.conf"), PLACED)
+    def test_another_spoe_engine_is_refused_for_the_file_it_reads(self) -> None:
+        self.assertEqual(
+            fate("filter spoe engine mine config /etc/haproxy/mine.conf"), REFUSED_FATE
+        )
 
 
 class SectionsTheTextAddsKeepTheirNames(unittest.TestCase):
@@ -379,6 +383,256 @@ class TheStoredTextIsNormalised(unittest.TestCase):
         self.assertEqual(advanced.normalise(" \n\n"), "")
 
 
+class EveryLineIsHeldToAListOfWhatItMayBe(unittest.TestCase):
+    """Code review 26-10-30, E1: the sections the text adds other than a backend were held
+    to nothing but `errorfile`, so `backing-file /etc/shadow` in a ring was written, and
+    `haproxy -c` - run as root on every node - truncated the file and mapped the ring
+    into it. Every section is now held to the keywords it may hold."""
+
+    def test_a_ring_s_backing_file_is_refused(self) -> None:
+        text = "ring shop-r\n    size 32768\n    backing-file /etc/shadow\n"
+
+        self.assertEqual([entry[1] for entry in fates(text)], [PLACED, PLACED, REFUSED_FATE])
+        placement = place(text, name="shop", protocol="http", rate_limit=False, handwritten=False)
+        self.assertEqual([line.text for line in placement.sections[0].lines], ["size 32768"])
+
+    def test_an_unknown_word_in_every_added_section_is_refused(self) -> None:
+        for kind in advanced.SECTION_KEYWORDS:
+            with self.subTest(kind=kind):
+                self.assertEqual(fates(f"{kind} shop-x\n    frobnicate 1\n")[1][1], REFUSED_FATE)
+
+    def test_what_each_added_section_takes_is_written(self) -> None:
+        for text in (
+            "cache shop-c\n    total-max-size 4\n    max-object-size 10000\n    max-age 60\n"
+            "    process-vary on\n    max-secondary-entries 10\n",
+            "http-errors shop-e\n    errorfile 503 /etc/haproxy/errors/503.http\n",
+            "userlist shop-u\n    group admins\n    user a password '$6$salt$hash' groups admins\n",
+            "ring shop-r\n    description 'the shop log'\n    format rfc5424\n    maxlen 1200\n"
+            "    size 32768\n    timeout connect 5s\n    timeout server 10s\n"
+            "    server syslog 192.0.2.5:6514 log-proto octet-count\n",
+        ):
+            with self.subTest(text):
+                self.assertEqual({entry[1] for entry in fates(text)}, {PLACED})
+
+    def test_a_ring_s_server_is_held_to_the_server_rules(self) -> None:
+        for server in (
+            "server s /run/haproxy/manager.sock",
+            "server s 192.0.2.5:6514 ssl crt /etc/haproxy/certs/other.pem",
+        ):
+            with self.subTest(server):
+                self.assertEqual(fates(f"ring shop-r\n    {server}\n")[1][1], REFUSED_FATE)
+
+    def test_a_line_the_node_s_environment_would_fill_in_is_refused(self) -> None:
+        for line in (
+            'log "${NOTIFY_SOCKET}" local0',
+            'http-request return status 200 file "/etc/haproxy/errors/${X}"',
+            'server s1 "$HOME":80',
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+        self.assertEqual(
+            fates('ring shop-r\n    "${X-backing-file}" /etc/shadow\n')[1][1], REFUSED_FATE
+        )
+
+    def test_a_dollar_haproxy_does_not_expand_is_text(self) -> None:
+        for line in (
+            "http-request set-header X '${HOME}'",
+            'http-request deny if { path_reg "^/a$" }',
+            "http-request set-header X $HOME",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), PLACED)
+
+    def test_a_server_state_file_is_refused(self) -> None:
+        for line in ("server-state-file-name /etc/shadow", "load-server-state-from-file local"):
+            with self.subTest(line):
+                self.assertEqual(fate(line, handwritten=True), REFUSED_FATE)
+                self.assertEqual(fates(f"backend shop-b\n    {line}\n")[1][1], REFUSED_FATE)
+
+    def test_an_external_check_is_refused_whoever_writes_the_pool(self) -> None:
+        for line in (
+            "external-check command /bin/sh",
+            "external-check path /usr/bin",
+            "option external-check",
+        ):
+            for handwritten in (False, True):
+                with self.subTest(line, handwritten=handwritten):
+                    self.assertEqual(fate(line, handwritten=handwritten), REFUSED_FATE)
+
+    def test_a_log_goes_to_the_network_or_a_ring_of_the_text_s(self) -> None:
+        for line in (
+            "log /dev/log local0",
+            "log unix@/run/haproxy/x.sock local0",
+            "log fd@1 local0",
+            "log stdout format raw local0",
+            "log backend@shop-b local0",
+            "log ring@other-r local0",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+        for line in (
+            "log global",
+            "no log",
+            "log 192.0.2.5:514 local0",
+            "log udp@192.0.2.5:514 len 2048 local0 info",
+            "log syslog.example.com:514 local0",
+            "log ring@shop-r local0",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), PLACED)
+
+    def test_a_server_is_reached_at_a_network_address(self) -> None:
+        for line in (
+            "server s1 /run/haproxy/manager.sock",
+            "server s1 unix@/run/haproxy/manager.sock",
+            "server s1 abns@x",
+            "server-template s 1-3 /run/x",
+            "server s1 192.0.2.5:80 addr /run/x",
+            "server s1 192.0.2.5:80 socks4 unix@/run/x",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line, handwritten=True), REFUSED_FATE)
+
+    def test_a_server_names_no_file_but_its_authority(self) -> None:
+        for line in (
+            "server s1 192.0.2.5:443 ssl crt /etc/haproxy/certs/other.pem",
+            "server s1 192.0.2.5:443 ssl verify required ca-file /etc/shadow",
+            "server s1 192.0.2.5:443 ssl verify required ca-file /etc/haproxy/certs/ca/../a.pem",
+            "server s1 192.0.2.5:443 ssl verify required ca-file @system-ca crl-file /x.pem",
+            "server s1 192.0.2.5:443 namespace other",
+            "default-server crt /etc/haproxy/certs/other.pem",
+            "server s1 192.0.2.5:443 frobnicate 1",
+            "crt /etc/haproxy/certs/other.pem",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line, handwritten=True, protocol="tcp"), REFUSED_FATE)
+        for line in (
+            "server s1 192.0.2.5:443 ssl verify required ca-file @system-ca sni str(a.example.com)",
+            "server s1 192.0.2.5:443 ssl verify required ca-file /etc/haproxy/certs/ca/root.pem",
+            "server s1 [2001:db8::5]:80 check inter 2s weight 10",
+            "server s1 www.example.com:80 send-proxy-v2 set-proxy-v2-tlv-fmt(0x20) %[fc_pp_tlv(0x20)]",
+            "server-template s 1-3 www.example.com:80 check",
+            "default-server inter 3s fall 2 rise 3",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line, handwritten=True), PLACED)
+
+    def test_a_filter_that_reads_a_file_is_refused(self) -> None:
+        for line in (
+            "filter spoe engine mine config /etc/shadow",
+            "filter opentracing id x config /etc/shadow",
+            "filter fcgi-app shop-f",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+        self.assertEqual(fate("filter compression"), PLACED)
+
+    def test_a_list_the_text_reads_is_one_of_the_cluster_s(self) -> None:
+        for line in (
+            "acl bad src -f /etc/shadow",
+            "http-request deny if { src -f /etc/haproxy/maps/../certs/a.pem }",
+            'http-request return status 200 lf-string "%[req.hdr(x),map(/etc/shadow)]"',
+            "http-request set-header X %[src,map_ip(/etc/haproxy/certs/a.pem,none)]",
+            "http-request set-map(/etc/haproxy/maps/hosts.map) %[req.hdr(k)] %[req.hdr(v)]",
+            "http-request del-acl(/etc/haproxy/maps/geo-se.lst) %[src]",
+            "http-request deny unless { var(txn.t),jwt_verify(RS256,/etc/shadow) -m int 1 }",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+        for line in (
+            "acl se src -f /etc/haproxy/maps/geo-se.lst",
+            "http-request set-header X %[req.hdr(host),map_dom(/etc/haproxy/maps/hosts.map,none)]",
+            "http-request deny unless { var(txn.t),jwt_verify(txn.alg,txn.key) -m int 1 }",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), PLACED)
+
+    def test_the_directories_are_the_generator_s(self) -> None:
+        from haprion import certificates, generate
+
+        self.assertEqual(advanced.MAPS, f"{generate.MAPS_DIRECTORY}/")
+        self.assertEqual(
+            advanced.AUTHORITIES,
+            f"{generate.NODE_CERTIFICATE_DIR}/{certificates.AUTHORITY_DIRECTORY}/",
+        )
+
+
+#
+# Where the manual defines each added section's keywords (HAProxy 3.4).
+#
+_CHAPTERS = {
+    "cache": ("6.2.1. Cache section", "6.2.2. Proxy section"),
+    "userlist": ("12.2. Userlists", "12.3. Mailers"),
+    "http-errors": ("12.4. HTTP-errors", "12.5. Rings"),
+    "ring": ("12.5. Rings", "12.6. Log forwarding"),
+}
+
+
+def _registered() -> str:
+    haproxy = shutil.which("haproxy")
+    if haproxy is None:
+        raise unittest.SkipTest("HAProxy is not installed here")
+    return subprocess.run(
+        [haproxy, "-dKall", "-q", "-c", "-f", "/dev/null"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    ).stdout
+
+
+class EveryAllowedKeywordIsHAProxyS(unittest.TestCase):
+    """The lists are written out, not derived, so they are held to the installed HAProxy:
+    a keyword on them that HAProxy does not know would be one invented here."""
+
+    @unittest.skipUnless(MANUAL.exists(), "the HAProxy manual is not installed here")
+    def test_each_section_s_keywords_are_defined_in_its_chapter(self) -> None:
+        with gzip.open(MANUAL, "rt", encoding="utf-8") as manual:
+            text = manual.read().split("\n")
+        self.assertEqual(set(_CHAPTERS), set(advanced.SECTION_KEYWORDS))
+        for kind, (first, last) in _CHAPTERS.items():
+            chapter = text[text.index(first) : text.index(last)]
+            defined = {line.split()[0] for line in chapter if line[:1].isalpha()}
+            defined |= {" ".join(line.split()[:2]) for line in chapter if line[:1].isalpha()}
+            for words in advanced.SECTION_KEYWORDS[kind] | {
+                refused[1:] for refused in advanced.SECTION_REFUSED if refused[0] == kind
+            }:
+                with self.subTest(kind=kind, keyword=words):
+                    self.assertIn(" ".join(words), defined)
+
+    def test_each_server_parameter_is_one_haproxy_registers_with_its_width(self) -> None:
+        registered = advanced.parse_server_list(
+            line.split("server <name> <addr> ", 1)[1]
+            for line in _registered().splitlines()
+            if "server <name> <addr> " in line
+        )
+        for parameter, width in advanced.SERVER_PARAMETERS.items():
+            with self.subTest(parameter):
+                self.assertEqual(registered.get(parameter), width)
+        self.assertEqual(
+            set(registered) - set(advanced.SERVER_PARAMETERS),
+            {*advanced.SERVER_REFUSED, "set-proxy-v2-tlv-fmt"},
+        )
+
+    def test_each_filter_and_userlist_keyword_is_one_haproxy_registers(self) -> None:
+        lines = _registered().splitlines()
+        start = lines.index("# List of registered filter names:")
+        filters = set()
+        for line in lines[start + 1 :]:
+            if line.startswith("#"):
+                break
+            filters.add(line.split()[0])
+        self.assertLessEqual(advanced.FILTERS, filters)
+
+        start = lines.index("userlist")
+        userlist = set()
+        for line in lines[start + 1 :]:
+            if not line.startswith("\t"):
+                break
+            userlist.add((line.split()[0],))
+        self.assertEqual(advanced.SECTION_KEYWORDS["userlist"], userlist)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -454,3 +708,16 @@ class TheGeneratorWritesTheTextWhereThePlacementSays(unittest.TestCase):
         ]
 
         self.assertLess(pool.index("server s1"), pool.index("http-request deny if { path /x }"))
+
+
+class AStoredObjectWithALineNowRefused(unittest.TestCase):
+    def test_is_refused_whole_with_the_line_and_the_reason(self) -> None:
+        from haprion.proxy_model import ModelError, load_proxy
+
+        document = _object("shop", "ring shop-r\n    size 32768\n    backing-file /etc/shadow")
+
+        with self.assertRaisesRegex(
+            ModelError,
+            r"shop\.advanced has lines that cannot be written - line 3: a ring's backing file",
+        ):
+            load_proxy("shop", document.encode())

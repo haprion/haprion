@@ -13,9 +13,19 @@ author's to know:
   when it does not. Always after the generated lines, so the cluster's brake
   and the object's rate limit run first and the text can read their counters;
 * a `backend`, `cache`, `http-errors`, `userlist` or `ring` of the text's own
-  is written as it stands, under a name that must begin with the object's;
+  is written as it stands, under a name that must begin with the object's,
+  once every line of it is one that section type takes and this module lets
+  through;
 * everything else is refused, and so is a line whose meaning would depend on
   something the text cannot see.
+
+Every line is held to a list of what it may be, never to a list of what it may
+not: the proxy keyword matrix below for the object's rows and an added
+backend, and `SECTION_KEYWORDS` for the other sections. A word that is on
+neither is refused. The text runs on every node as root at load, `haproxy -c`
+included, so a keyword that names a file the node opens - a ring's
+`backing-file` creates and truncates one - would otherwise be a way from the
+interface to any file on the node (code review 2026-10-30, E1).
 
 What this module promises is narrower than "the text works": only that each
 line lands where it says, and that a line which would have been ignored, or
@@ -68,6 +78,7 @@ SECTIONS = frozenset(
         "crt-store",
         "traces",
         "acme",
+        "healthcheck",
     }
 )
 
@@ -82,6 +93,48 @@ OBJECT_SECTIONS = frozenset({"frontend", "listen"})
 # cluster's or the process's (B223).
 #
 EXTRA_SECTIONS = frozenset({"backend", "cache", "http-errors", "userlist", "ring"})
+
+#
+# What each of those sections other than a backend may hold (code review
+# 2026-10-30, E1), from configuration.txt 6.2.1, 12.2, 12.4 and 12.5 of
+# HAProxy 3.4 - a test holds every keyword against the installed manual. A
+# backend is held to the proxy keyword matrix instead. Per keyword:
+#
+# * cache: all five, sizes and ages in memory;
+# * http-errors: `errorfile`, its file held to the packaged error pages as
+#   everywhere else;
+# * userlist: `user` and `group`, both names and password hashes;
+# * ring: everything but `backing-file`, which creates the named file, renames
+#   an existing one to `.bak` and maps the ring into it - as root, during
+#   `haproxy -c` too - so any path on the node would be overwritten. A ring's
+#   `server` is a server line like any other, held to the same parameters.
+#
+SECTION_KEYWORDS: dict[str, frozenset[tuple[str, ...]]] = {
+    "cache": frozenset(
+        {
+            ("total-max-size",),
+            ("max-object-size",),
+            ("max-age",),
+            ("process-vary",),
+            ("max-secondary-entries",),
+        }
+    ),
+    "http-errors": frozenset({("errorfile",)}),
+    "userlist": frozenset({("user",), ("group",)}),
+    "ring": frozenset(
+        {
+            ("description",),
+            ("format",),
+            ("maxlen",),
+            ("size",),
+            ("timeout", "connect"),
+            ("timeout", "server"),
+            ("server",),
+        }
+    ),
+}
+BACKING_FILE = "a ring's backing file is created and overwritten on the node as root"
+SECTION_REFUSED: dict[tuple[str, ...], str] = {("ring", "backing-file"): BACKING_FILE}
 
 SECTION_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
@@ -332,6 +385,10 @@ _LONGEST = max(len(words) for words in KEYWORDS)
 # `transparent` are deprecated ways of naming where a connection goes or comes
 # from, which is the same question as `source`.
 #
+STATE_FILE = (
+    "a server state file is one the node reads as root; state across a reload is the cluster's"
+)
+EXTERNAL_CHECK = "an external check runs a program on the node"
 REFUSED = {
     ("bind",): "the address an object listens on is set in the form",
     ("use_backend",): "routing is the interface's: the frontend is shared",
@@ -341,6 +398,19 @@ REFUSED = {
     ("dispatch",): "a deprecated way of naming the destination; routing is the interface's",
     ("transparent",): "a deprecated form of source, which the interface sets",
     ("option", "transparent"): "a deprecated form of source, which the interface sets",
+    #
+    # Keywords that name a file or a program on the node (E1). A server state
+    # file is read as root at load from any path it is given, and state across
+    # a reload is the cluster's (`shm-stats-file` in `core/`); an external
+    # check runs a program; `crt` names a certificate and its key, which the
+    # form chooses.
+    #
+    ("server-state-file-name",): STATE_FILE,
+    ("load-server-state-from-file",): STATE_FILE,
+    ("external-check", "command"): EXTERNAL_CHECK,
+    ("external-check", "path"): EXTERNAL_CHECK,
+    ("option", "external-check"): EXTERNAL_CHECK,
+    ("crt",): "a certificate and its key are files on the node; the form chooses them",
 }
 
 #
@@ -713,14 +783,236 @@ def _waf_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
     return ""
 
 
+#
+# A server's parameters, with how many words each takes: HAProxy 3.4.7's own
+# list as `haproxy -dKcfg` prints it after `server <name> <addr>`, where `+1`
+# is one word of value. A test holds it against the installed binary. A
+# server line is read parameter by parameter, so a value is never mistaken for
+# a parameter or the other way round, and a word that is not one of these is
+# refused (E1).
+#
+# Left out, and so refused: `source` and `usesrc` (the interface's), `guid`
+# (the generator's), `crt` (a certificate and its key, files on the node),
+# `crl-file` (a file the node reads as root) and `namespace` (a network
+# namespace is a file under /var/run/netns, and with it the address the pool
+# is reached from). `ca-file` is held to the trust store and the cluster's
+# authorities below; `addr`, `agent-addr` and `socks4` to network addresses.
+#
+SERVER_LIST = """\
+addr +1
+agent-addr +1
+agent-check
+agent-inter +1
+agent-port +1
+agent-send +1
+allow-0rtt
+alpn +1
+backup
+ca-file +1
+cc +1
+check
+check-alpn +1
+check-pool-conn-name +1
+check-proto +1
+check-reuse-pool
+check-send-proxy
+check-sni +1
+check-sni-auto
+check-ssl
+check-via-socks4
+ciphers +1
+ciphersuites +1
+client-sigalgs +1
+cookie +1
+curves +1
+disabled
+downinter +1
+enabled
+error-limit +1
+fall +1
+fastinter +1
+force-sslv3
+force-tlsv10
+force-tlsv11
+force-tlsv12
+force-tlsv13
+hash-key +1
+healthcheck +1
+id +1
+idle-ping +1
+init-addr +1
+init-state +1
+inter +1
+ktls +1
+log-bufsize +1
+log-proto +1
+max-reuse +1
+maxconn +1
+maxqueue +1
+minconn +1
+no-agent-check
+no-backup
+no-check
+no-check-reuse-pool
+no-check-send-proxy
+no-check-sni-auto
+no-check-ssl
+no-renegotiate
+no-send-proxy
+no-send-proxy-v2
+no-send-proxy-v2-ssl
+no-send-proxy-v2-ssl-cn
+no-sni-auto
+no-ssl
+no-ssl-reuse
+no-sslv3
+no-tfo
+no-tls-tickets
+no-tlsv10
+no-tlsv11
+no-tlsv12
+no-tlsv13
+non-stick
+npn +1
+observe +1
+on-error +1
+on-marked-down +1
+on-marked-up +1
+pool-conn-name +1
+pool-low-conn +1
+pool-max-conn +1
+pool-purge-delay +1
+port +1
+proto +1
+proxy-v2-options +1
+quic-cc-algo +1
+redir +1
+renegotiate
+resolve-net +1
+resolve-opts +1
+resolve-prefer +1
+resolvers +1
+rise +1
+send-proxy
+send-proxy-v2
+send-proxy-v2-ssl
+send-proxy-v2-ssl-cn
+shard +1
+sigalgs +1
+slowstart +1
+sni +1
+sni-auto
+socks4 +1
+ssl
+ssl-max-ver +1
+ssl-min-ver +1
+ssl-reuse
+stick
+strict-maxconn
+tcp-md5sig +1
+tcp-ut +1
+tfo
+tls-tickets
+track +1
+verify +1
+verifyhost +1
+weight +1
+ws +1
+"""
+
+
+def parse_server_list(rows: Iterable[str]) -> dict[str, int]:
+    """`haproxy -dK`'s server rows as parameter and width, for this module and its test."""
+
+    parameters: dict[str, int] = {}
+    for row in rows:
+        words_ = row.split()
+        if words_:
+            parameters[words_[0]] = 1 if words_[1:] == ["+1"] else 0
+    return parameters
+
+
+SERVER_PARAMETERS = parse_server_list(SERVER_LIST.splitlines())
+#
+# Written `set-proxy-v2-tlv-fmt(<id>) <fmt>`: the keyword carries its TLV type
+# in the same word, and the format follows.
+#
+_TLV_PARAMETER = re.compile(r"^set-proxy-v2-tlv-fmt\([^)]*\)$")
+SERVER_REFUSED = {
+    "source": "the address a pool is reached from is set by the interface",
+    "usesrc": "the address a pool is reached from is set by the interface",
+    "guid": "the generator gives every server its identity",
+    "crt": "a certificate and its key are files on the node; the form chooses them",
+    "crl-file": "a revocation list is a file the node reads as root",
+    "namespace": "a network namespace is a file on the node, and sets where the pool is reached from",
+}
+#
+# A network address, with the prefixes that keep it one: no `/path`, `unix@`,
+# `abns@`, `fd@` or `sockpair@`, which are sockets on the node rather than
+# somewhere on the network. A server is reached over TCP; a log target may
+# also be UDP.
+#
+_HOST = r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9][A-Za-z0-9._:-]*)(?::[+-]?[0-9]{1,5})?"
+SERVER_ADDRESS = re.compile(rf"^(?:(?:ipv4|ipv6|tcp|tcp4|tcp6)@)?{_HOST}$")
+LOG_ADDRESS = re.compile(rf"^(?:(?:ipv4|ipv6|tcp|tcp4|tcp6|udp|udp4|udp6)@)?{_HOST}$")
+#
+# Where the trust a server is verified against may come from: the operating
+# system's store by HAProxy's own name for it, or one of the cluster's
+# authorities, which the generator names the same way (B276). Both are public
+# certificates.
+#
+SYSTEM_CA = "@system-ca"
+AUTHORITIES = "/etc/haproxy/certs/ca/"
+NOT_AN_ADDRESS = "a server is reached at a network address, not a socket or file on the node"
+
+
+def _within(path: str, directory: str) -> bool:
+    """Whether `path` names a file inside `directory` and nowhere else."""
+
+    return (
+        path.startswith(directory)
+        and len(path) > len(directory)
+        and ".." not in path.split("/")
+        and posixpath.normpath(path) == path
+    )
+
+
 def _server_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
-    if keyword not in (("server",), ("server-template",), ("default-server",)):
+    """Why a `server`, `server-template` or `default-server` line cannot be the text's, or ""."""
+
+    if keyword == ("server",):
+        address_at = 2
+    elif keyword == ("server-template",):
+        address_at = 3
+    elif keyword == ("default-server",):
+        address_at = 0
+    else:
         return ""
-    for token in tokens[1:]:
-        if token in ("source", "usesrc"):
-            return "the address a pool is reached from is set by the interface"
-        if token in ("guid",):
-            return "the generator gives every server its identity"
+    if address_at:
+        if len(tokens) <= address_at:
+            return ""
+        if not SERVER_ADDRESS.fullmatch(tokens[address_at]):
+            return NOT_AN_ADDRESS
+    index = address_at + 1
+    while index < len(tokens):
+        parameter = tokens[index]
+        value = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if parameter in SERVER_REFUSED:
+            return SERVER_REFUSED[parameter]
+        if _TLV_PARAMETER.fullmatch(parameter):
+            width = 1
+        elif parameter in SERVER_PARAMETERS:
+            width = SERVER_PARAMETERS[parameter]
+        else:
+            return f"{parameter} is not a server parameter in HAProxy 3.4"
+        if parameter == "ca-file" and value != SYSTEM_CA and not _within(value, AUTHORITIES):
+            return (
+                f"a server is verified against {SYSTEM_CA} or one of the cluster's "
+                f"authorities under {AUTHORITIES}"
+            )
+        if parameter in ("addr", "agent-addr", "socks4") and not SERVER_ADDRESS.fullmatch(value):
+            return NOT_AN_ADDRESS
+        index += 1 + width
     return ""
 
 
@@ -751,13 +1043,149 @@ def _file_problem(tokens: Sequence[str], keyword: tuple[str, ...] | None) -> str
             tokens[index + 1] for index, word in enumerate(tokens[:-1]) if word in _FILE_WORDS
         )
     for path in named:
-        if (
-            not path.startswith(ERROR_PAGES)
-            or ".." in path.split("/")
-            or posixpath.normpath(path) != path
-        ):
+        if not _within(path, ERROR_PAGES):
             return f"a file the text names must be one of the error pages under {ERROR_PAGES}"
     return ""
+
+
+#
+# Where a log line may go: the cluster's own log setting, a ring the text adds,
+# or a syslog server on the network. A path, `unix@`, `fd@`, `stdout` and the
+# like are sockets and descriptors on the node; `backend@` sends through a log
+# backend, which is not a form this module checks.
+#
+LOG_STREAMS = frozenset({"stdout", "stderr"})
+
+
+def _log_problem(tokens: Sequence[str], keyword: tuple[str, ...], name: str) -> str:
+    if keyword != ("log",):
+        return ""
+    at = tokens.index("log") + 1
+    if at >= len(tokens) or tokens[0] in ("no", "default"):
+        return ""
+    target = tokens[at]
+    if target == "global":
+        return ""
+    if target.startswith("ring@"):
+        if target.removeprefix("ring@").startswith(f"{name}-"):
+            return ""
+        return f"a log ring must be one this text adds, named {name}-…"
+    if target in LOG_STREAMS or not LOG_ADDRESS.fullmatch(target):
+        return "a log goes to global, a ring of the text's or a syslog server's network address"
+    return ""
+
+
+#
+# The filters the text may add (`haproxy -dKflt` on 3.4.7, held against it by
+# a test). Left out: `spoe` and `opentracing`, which read a configuration file
+# on the node as root (the WAF engine's own SPOE is the form's), and
+# `fcgi-app`, whose section is refused.
+#
+FILTERS = frozenset(
+    {"bwlim-in", "bwlim-out", "cache", "comp-req", "comp-res", "compression", "trace"}
+)
+
+
+def _filter_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
+    if keyword != ("filter",) or len(tokens) < 2 or tokens[1] in FILTERS:
+        return ""
+    if tokens[1] in ("spoe", "opentracing"):
+        return f"the {tokens[1]} filter reads its configuration from a file on the node"
+    return f"{tokens[1]} is not a filter the text may add"
+
+
+#
+# Lists read from a file: an ACL's `-f <file>` and the `map*` converters'
+# first argument. HAProxy reads them as root when it loads, so they are held
+# to the cluster's lists, which the release carries to every node (B228).
+# The actions that change a list at run time - `set-map`, `del-map`,
+# `add-acl`, `del-acl` - are refused whatever they name: a list is shared by
+# every line that reads it, other objects' included. `jwt_verify` and its
+# kin read a key or certificate file when they name one.
+#
+MAPS = "/etc/haproxy/maps/"
+_MAP_CONVERTER = re.compile(r"(?<![A-Za-z0-9_.-])map(?:_[a-z0-9_]+)?\(([^,)]*)")
+_LIST_ACTION = re.compile(r"^(?:set-map|del-map|add-acl|del-acl)\(")
+_JWT_FILE = re.compile(r"(?<![A-Za-z0-9_.-])jwt_(?:verify|verify_cert|decrypt_cert)\(([^)]*)\)")
+
+
+def _list_problem(tokens: Sequence[str]) -> str:
+    named: list[str] = []
+    for index, word in enumerate(tokens):
+        if word == "-f":
+            named.append(tokens[index + 1] if index + 1 < len(tokens) else "")
+        if _LIST_ACTION.match(word):
+            return (
+                "a list is shared by every line that reads it; the text may read one, not change it"
+            )
+        named.extend(match[1] for match in _MAP_CONVERTER.finditer(word))
+        if any("/" in match[1] for match in _JWT_FILE.finditer(word)):
+            return "a key or certificate file is one the node reads as root"
+    for path in named:
+        if not _within(path, MAPS):
+            return f"a list the text reads must be one of the cluster's under {MAPS}"
+    return ""
+
+
+def expands_variable(line: str) -> bool:
+    """Whether HAProxy would put an environment variable's value into this line.
+
+    It does inside double quotes only (configuration.txt 2.3, and measured on
+    3.4.7: `"${PWD}/x"` is expanded, `${PWD}/x` and `$PWD/x` are not). Every
+    check here reads the words as written, and a variable's value is the
+    node's - `"${HOME}"` is a path no check would see - so such a line is
+    refused rather than read.
+    """
+
+    quote = ""
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote == "'":
+            if char == "'":
+                quote = ""
+        elif char == "\\":
+            index += 1
+        elif char == '"':
+            quote = "" if quote else '"'
+        elif not quote and char == "'":
+            quote = "'"
+        elif not quote and char == "#":
+            return False
+        elif quote and char == "$":
+            following = line[index + 1 : index + 2]
+            if following == "{" or following == "_" or following.isalpha():
+                return True
+        index += 1
+    return False
+
+
+def _line_problem(tokens: Sequence[str], keyword: tuple[str, ...], name: str) -> str:
+    """What every proxy line is held to, on the object's rows and in an added backend."""
+
+    return (
+        _server_problem(tokens, keyword)
+        or _waf_problem(tokens, keyword)
+        or _filter_problem(tokens, keyword)
+        or _file_problem(tokens, keyword)
+        or _log_problem(tokens, keyword, name)
+        or _list_problem(tokens)
+    )
+
+
+def _section_problem(kind: str, tokens: Sequence[str]) -> str:
+    """Why a line of an added cache, http-errors, userlist or ring cannot be written, or ""."""
+
+    allowed = SECTION_KEYWORDS[kind]
+    for length in (2, 1):
+        words_ = tuple(tokens[:length])
+        if len(words_) != length:
+            continue
+        if (kind, *words_) in SECTION_REFUSED:
+            return SECTION_REFUSED[(kind, *words_)]
+        if words_ in allowed:
+            return _server_problem(tokens, words_) or _file_problem(tokens, None)
+    return f"not a keyword HAProxy 3.4 takes in a {kind} section"
 
 
 def _server_fact(tokens: Sequence[str]) -> tuple[str, str] | None:
@@ -842,6 +1270,12 @@ def place(
         if not tokens:
             record(IGNORED, reason="comment")
             continue
+        if expands_variable(line):
+            record(
+                REFUSED_FATE,
+                reason="an environment variable is the node's, and what it holds is not checked here",
+            )
+            continue
 
         first = tokens[0]
         if first in SECTIONS:
@@ -884,7 +1318,7 @@ def place(
             kind, _, section_name = current[1].partition(" ")
             where = f"{kind} {section_name}"
             if kind != "backend":
-                problem = _file_problem(tokens, None)
+                problem = _section_problem(kind, tokens)
                 if problem:
                     record(REFUSED_FATE, where, problem)
                 else:
@@ -903,18 +1337,13 @@ def place(
                     else REFUSED[keyword]
                 )
             else:
-                problem = (
-                    _server_problem(tokens, keyword)
-                    or _waf_problem(tokens, keyword)
-                    or _file_problem(tokens, keyword)
-                    or _counter_problem(
-                        tokens,
-                        keyword,
-                        name,
-                        rate_limit,
-                        own_table=True,
-                        dynamic_block=dynamic_block,
-                    )
+                problem = _line_problem(tokens, keyword, name) or _counter_problem(
+                    tokens,
+                    keyword,
+                    name,
+                    rate_limit,
+                    own_table=True,
+                    dynamic_block=dynamic_block,
                 )
             if problem:
                 record(REFUSED_FATE, where, problem)
@@ -947,9 +1376,7 @@ def place(
             record(REFUSED_FATE, reason="HTTP only: a tcp object has no requests")
             continue
         problem = (
-            _server_problem(tokens, keyword)
-            or _waf_problem(tokens, keyword)
-            or _file_problem(tokens, keyword)
+            _line_problem(tokens, keyword, name)
             or _counter_problem(
                 tokens, keyword, name, rate_limit, own_table=False, dynamic_block=dynamic_block
             )

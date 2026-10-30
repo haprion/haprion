@@ -1235,6 +1235,18 @@ renamed, because other files may refer to it by name. Every other section is ref
 `defaults`, `program`, `peers`, `resolvers`, `mailers` and the rest belong to the cluster or to the HAProxy
 process.
 
+Each line of an added section must be a keyword that section takes. Any other word is refused:
+
+| Section | Keywords it may hold |
+|---|---|
+| `backend` | the proxy keywords HAProxy takes in a backend, under the rules below |
+| `cache` | `total-max-size`, `max-object-size`, `max-age`, `process-vary`, `max-secondary-entries` |
+| `http-errors` | `errorfile`, naming one of the packaged error pages |
+| `userlist` | `user`, `group` |
+| `ring` | `description`, `format`, `maxlen`, `size`, `timeout connect`, `timeout server`, `server` |
+
+A ring's `backing-file` is refused: HAProxy creates and overwrites that file as root.
+
 **Lines that are refused:**
 
 - routing, listening and the outgoing address, which belong to the form: `use_backend`, `default_backend`,
@@ -1261,6 +1273,28 @@ process.
 - **Files.** A file HAProxy is told to serve - `errorfile`, and `file`, `lf-file` or `errorfile` in a
   `return` or `http-error` - must be one of the packaged error pages under `/etc/haproxy/errors/`. HAProxy
   reads such a file as root and hands it to whoever asks, so any other path is refused.
+
+**Lines that reach the node itself are refused.** HAProxy opens files and sockets as root when it loads
+its configuration, during the check before a publish too. So the text may not name one:
+
+- a list read from a file - `-f` in an ACL, or a `map` converter - unless it is one of the cluster's
+  lists under `/etc/haproxy/maps/`. The actions that change a list while HAProxy runs, `set-map`,
+  `del-map`, `add-acl` and `del-acl`, are refused, since other objects may read the same list;
+- a key or certificate file in `jwt_verify`, `jwt_verify_cert` or `jwt_decrypt_cert`. A variable that
+  holds the key is allowed;
+- a log target other than `global`, a ring the text adds, or a syslog server's network address. A
+  path, `unix@`, `fd@`, `stdout`, `stderr` and `backend@` are refused;
+- a server reached at anything but a network address, such as a socket path;
+- a server's `crt`, `crl-file` or `namespace`, or a parameter HAProxy does not have. A server's
+  `ca-file` must be `@system-ca` or one of the cluster's authorities under `/etc/haproxy/certs/ca/`;
+- the `crt` keyword, since the form chooses an object's certificates;
+- `server-state-file-name` and `load-server-state-from-file`, since state across a reload is the
+  cluster's;
+- `external-check command`, `external-check path` and `option external-check`, which run a program;
+- the `spoe` and `opentracing` filters, which read a configuration file, and the `fcgi-app` filter.
+  The text may add `compression`, `comp-req`, `comp-res`, `cache`, `bwlim-in`, `bwlim-out` and `trace`;
+- an environment variable in double quotes, such as `"${HOME}"`. HAProxy fills it in from the node, and
+  what it holds is not checked.
 
 Escapes count as HAProxy reads them: `\x67lobal` is `global`.
 

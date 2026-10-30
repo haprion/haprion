@@ -183,6 +183,18 @@ class RsyslogNeverMakesTheTrafficSocketItself(unittest.TestCase):
         self.assertLess(held, text.index("systemctl restart rsyslog.service"))
         self.assertLess(text.index("net.unix.max_dgram_qlen="), held)
 
+    def test_the_input_goes_before_any_restart_while_the_traffic_unit_is_not_active(self) -> None:
+        """T3: the dev/log unit's hold restarts rsyslog first, and must not do it on the input."""
+
+        text = NODE_PREPARE.read_text(encoding="utf-8")
+        guard = re.search(
+            r'if ! systemctl is-active --quiet "\$TRAFFIC_SOCKET_UNIT"; then\n\s+traffic_input_off\nfi\n',
+            text,
+        )
+        assert guard is not None
+        self.assertLess(guard.start(), text.index('hold_log_socket "$LOG_SOCKET_UNIT"'))
+        self.assertLess(text.index("traffic_input_off()"), guard.start())
+
     @staticmethod
     def forward_functions() -> str:
         """The forwarding rule's variables and the two functions that write it, as in the step."""

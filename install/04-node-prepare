@@ -435,35 +435,12 @@ hold_log_socket() {
     fi
 }
 
-LOG_SOCKET_PATH="/var/lib/haproxy/dev/log"
-LOG_SOCKET_UNIT="haprion-haproxy-log.socket"
-if ! grep -qsx "\$AddUnixListenSocket ${LOG_SOCKET_PATH}" /etc/rsyslog.d/49-haproxy.conf; then
-    warn "/etc/rsyslog.d/49-haproxy.conf does not have rsyslog listen on ${LOG_SOCKET_PATH}"
-    warn "  (it comes with Ubuntu's haproxy package); the log socket is left to rsyslog."
-else
-    hold_log_socket "$LOG_SOCKET_UNIT" "$LOG_SOCKET_PATH" "# Installed by install/04-node-prepare.
-[Unit]
-Description=HAProxy's log socket in its chroot, held across rsyslog restarts
-
-[Socket]
-ListenDatagram=${LOG_SOCKET_PATH}
-SocketMode=0666
-ReceiveBuffer=16M
-Service=rsyslog.service
-
-[Install]
-WantedBy=sockets.target"
-fi
 #
-# The traffic stream's socket (TRAFFIC_SOCKET_PATH above) is held the same
-# way, in a unit of its own: writable by the haproxy account alone, which is
-# what lets its input mark a line as HAProxy's. Not tied to 49-haproxy.conf -
-# the input that reads it is this step's own - so every node has it. The
-# ordinary socket above keeps mode 0666: a core that runs HAProxy as another
-# account still logs there, and nothing trusts a line on it.
-#
-# Without the socket the input that reads it must not be there either: rsyslog
-# would make the socket itself, writable by every local account.
+# rsyslog must not be restarted on the traffic input while the traffic unit is
+# not holding the socket: it would make the socket itself, open to every
+# account. So when that unit is not active, the input is taken away before the
+# first restart below, whichever unit changes first; the forwarding rule puts it
+# back once the unit holds the socket.
 #
 TRAFFIC_SOCKET_UNIT="haprion-traffic-log.socket"
 RSYSLOG_FORWARD_RULE="/etc/rsyslog.d/47-haprion-forward.conf"
@@ -494,6 +471,39 @@ forward_rule_text() {
 traffic_input_off() {
     install_file "$RSYSLOG_FORWARD_RULE" root:root 644 "$(forward_rule_text)"
 }
+if ! systemctl is-active --quiet "$TRAFFIC_SOCKET_UNIT"; then
+    traffic_input_off
+fi
+LOG_SOCKET_PATH="/var/lib/haproxy/dev/log"
+LOG_SOCKET_UNIT="haprion-haproxy-log.socket"
+if ! grep -qsx "\$AddUnixListenSocket ${LOG_SOCKET_PATH}" /etc/rsyslog.d/49-haproxy.conf; then
+    warn "/etc/rsyslog.d/49-haproxy.conf does not have rsyslog listen on ${LOG_SOCKET_PATH}"
+    warn "  (it comes with Ubuntu's haproxy package); the log socket is left to rsyslog."
+else
+    hold_log_socket "$LOG_SOCKET_UNIT" "$LOG_SOCKET_PATH" "# Installed by install/04-node-prepare.
+[Unit]
+Description=HAProxy's log socket in its chroot, held across rsyslog restarts
+
+[Socket]
+ListenDatagram=${LOG_SOCKET_PATH}
+SocketMode=0666
+ReceiveBuffer=16M
+Service=rsyslog.service
+
+[Install]
+WantedBy=sockets.target"
+fi
+#
+# The traffic stream's socket (TRAFFIC_SOCKET_PATH above) is held the same
+# way, in a unit of its own: writable by the haproxy account alone, which is
+# what lets its input mark a line as HAProxy's. Not tied to 49-haproxy.conf -
+# the input that reads it is this step's own - so every node has it. The
+# ordinary socket above keeps mode 0666: a core that runs HAProxy as another
+# account still logs there, and nothing trusts a line on it.
+#
+# Without the socket the input that reads it must not be there either: rsyslog
+# would make the socket itself, writable by every local account.
+#
 hold_log_socket "$TRAFFIC_SOCKET_UNIT" "$TRAFFIC_SOCKET_PATH" "# Installed by install/04-node-prepare.
 [Unit]
 Description=HAProxy's traffic log socket, writable by HAProxy alone

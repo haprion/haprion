@@ -1006,6 +1006,23 @@ class OverwritingANode(RestoreRouteTestCase):
         self.assertNotIn('name="break_traffic"', page)
         self.assertIn("Overwrite node-a</button>", page)
 
+    def test_several_healthy_neighbours_read_in_the_plural(self) -> None:
+        for holder, expected in (
+            (True, "it moves to node-b, node-c, which are healthy"),
+            (False, "Another node holds it; node-b, node-c are healthy"),
+        ):
+            with self.subTest(holder=holder):
+                document = fixture("haprion-node-restore-preview", "overwrite.json")
+                document["result"]["overwrite"].update(
+                    neighbour="node-b, node-c", vip_owner=holder, neighbour_healthy=True
+                )
+                self.runs = [
+                    OVERWRITE_PREPARED,
+                    job("node_restore_preview", "done", result=document, number=2),
+                ]
+                page = self.writing_client().get(f"/backups/restore/{RUN}").text
+                self.assertIn(expected, page)
+
     def test_a_sick_neighbour_under_the_vip_asks_for_the_traffic_tick(self) -> None:
         document = fixture("haprion-node-restore-preview", "overwrite.json")
         document["result"]["overwrite"].update(neighbour_healthy=False, detail="HAProxy down")

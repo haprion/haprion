@@ -4312,6 +4312,7 @@ are audited and versioned the same way.
 | *Certificates*: renew | certbot's: `haprion-cert-issue --domain <id> --renew`; NDES: `haprion-cert-scep --id <id> …` |
 | *Certificates*: publish to, remove from, delete | `haprion-cert-target`, `haprion-cert-delete` |
 | *Certificates*: DNS profiles and NDES profiles | `haprion-profiles` |
+| *Certificates*: NDES servers | `haprion-ndes-server` ([Adding an NDES server](#adding-an-ndes-server)) |
 | External certificate receivers | `haprion-cert-receiver` |
 | *Node backups*: schedule, run, restore | `haprion-backup-schedule`, `haprion-state-backup -c <cluster> --json`, `haprion-node-restore` |
 | *Settings → Users* | `haprion-user` |
@@ -4399,6 +4400,9 @@ removes an object that was skipped. Mend the object first, or apply without `--p
 - Accounts made through the identity provider. Each is made at its first sign-in, from its groups, and a
   file has nothing to say about one. An account the file does not name is left alone, and `--prune` never
   removes one of the provider's accounts.
+- NDES servers. A server is confirmed on this manager against the fingerprints of its CA certificates, which
+  a file cannot carry; the export writes none. An NDES profile in `profiles.yaml` names one, so on a new
+  installation each is added with `haprion-ndes-server add` first.
 - Secrets. Nothing secret is read back, so none is written either: no account passwords, no OIDC client
   secret, no DNS provider credentials (`fields`), no NDES challenge. Applied where they came from, the
   stored secrets are kept.
@@ -4413,15 +4417,17 @@ control:
 
 **The order.** Some steps depend on others:
 
-1. Profiles, before a certificate that is issued through one.
-2. Accounts, before the interface settings: sign-in through a provider can be turned on only while there
+1. NDES servers, before the NDES profiles that name them: a profile whose endpoint is not a confirmed server
+   is refused.
+2. Profiles, before a certificate that is issued through one.
+3. Accounts, before the interface settings: sign-in through a provider can be turned on only while there
    is an active break-glass admin. With `--prune`, an account no entry names is removed - but never one
    the provider created, and never the last active admin.
-3. Interface settings, before the backup schedules. Turning *Node backups* on starts the schedules it had
+4. Interface settings, before the backup schedules. Turning *Node backups* on starts the schedules it had
    stopped, and `haprion-settings` ends when they have run, so a schedule set after it stays as set.
-4. Per cluster: the network before the objects - an object on a VIP the cluster does not have is
+5. Per cluster: the network before the objects - an object on a VIP the cluster does not have is
    refused - then *Logs & metrics*, then the deploy.
-5. The deploy, on every run. A node that is current is left alone, and a deploy that failed on an
+6. The deploy, on every run. A node that is current is left alone, and a deploy that failed on an
    earlier run is finished on the next.
 
 **Changed and failed.** Every command answers with one envelope when given `--json`. Exit code 0 means

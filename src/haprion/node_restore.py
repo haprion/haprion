@@ -51,6 +51,7 @@ from typing import Any, TextIO
 from haprion import (
     atomic_file,
     backup_retention,
+    change_journal,
     cluster_lock,
     haprion_repository,
     haproxy_repository,
@@ -101,7 +102,14 @@ def _releaser(fetch_access: FetchAccess | None) -> Callable[[Path], None]:
             cluster = read_json(directory / restore_runs.MARKER)["cluster"]
             fetch_access.revoke(directory.name, str(cluster))
             (directory / restore_runs.MARKER).unlink(missing_ok=True)
-        except (restore_fetch.FetchAccessError, OSError, ValueError, KeyError, RestoreError) as exc:
+        except (
+            restore_fetch.FetchAccessError,
+            change_journal.RecoveryError,
+            OSError,
+            ValueError,
+            KeyError,
+            RestoreError,
+        ) as exc:
             sys.stderr.write(
                 f"WARNING: the temporary fetch keys of run {directory.name} are still out: {exc}\n"
             )

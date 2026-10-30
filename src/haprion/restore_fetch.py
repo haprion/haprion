@@ -124,8 +124,22 @@ def for_policy(
 
     def rewrite(cluster: str, make: Callable[[str, bytes], bytes], what: str) -> None:
         with locked():
-            if change_journal.read(journal) is not None:
-                change_journal.recover(journal)
+            #
+            # An unfinished node change is the one that put its record there,
+            # and it is put back by the next node command or `pull-keys`, which
+            # take that change's locks and the certificate register's. Done here
+            # it would be without them, and in this sandbox without the right to
+            # write the files a change of the root account's known_hosts holds.
+            #
+            try:
+                unfinished = change_journal.read(journal) is not None
+            except change_journal.RecoveryError as exc:
+                raise FetchAccessError(f"the change record is unreadable ({exc})") from exc
+            if unfinished:
+                raise FetchAccessError(
+                    "an unfinished node change is recorded; run the node command or "
+                    "haprion-node pull-keys first"
+                )
             changes = []
             for account, purpose in accounts():
                 path = where.authorized_keys(account)

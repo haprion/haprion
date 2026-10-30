@@ -7,7 +7,7 @@ import os
 import unittest
 from pathlib import Path
 
-from haprion import accounts, cluster_lock, restore_fetch
+from haprion import accounts, change_journal, cluster_lock, restore_fetch
 from haprion.config import load_policy
 from tests.test_node_enrollment import key
 from tests.test_pull_keys import Fixture, Site
@@ -65,6 +65,31 @@ class TheLinesAreTheNodesOwnFormat(Access):
 
         for account, text in before.items():
             self.assertEqual(self.site.authorized_keys(account).read_text(), text)
+
+    def test_an_unfinished_node_change_is_left_for_its_own_commands(self) -> None:
+        journal = self.site.locations.journal
+        change_journal._write_record(
+            journal, change_journal.Record("add", "alpha", ())
+        )
+        accounts_before = {
+            account: self.site.authorized_keys(account).read_bytes()
+            for account in ("_haprion-pull", "_haprion-cert-pull")
+        }
+        recorded = journal.read_bytes()
+
+        with self.assertRaisesRegex(restore_fetch.FetchAccessError, "unfinished node change"):
+            self.access.grant(RUN, "alpha", ADDRESS, KEYS)
+        with self.assertRaisesRegex(restore_fetch.FetchAccessError, "unfinished node change"):
+            self.access.revoke(RUN, "alpha")
+
+        self.assertEqual(journal.read_bytes(), recorded)
+        for account, content in accounts_before.items():
+            self.assertEqual(self.site.authorized_keys(account).read_bytes(), content)
+
+    def test_an_unreadable_change_record_is_a_refusal_not_a_traceback(self) -> None:
+        self.site.locations.journal.write_text("not a record")
+        with self.assertRaisesRegex(restore_fetch.FetchAccessError, "unreadable"):
+            self.access.revoke(RUN, "alpha")
 
     def test_taking_them_out_twice_is_the_same_as_once(self) -> None:
         self.access.grant(RUN, "alpha", ADDRESS, KEYS)

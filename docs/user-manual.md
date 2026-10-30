@@ -2994,7 +2994,7 @@ If the restore fails after the stop, for example on a damaged dump, a failed mig
 the services stay stopped and the command says what failed. Correct it and run the same command again,
 with this dump or another: once a restore finishes, it starts what the failed run stopped. After a
 failed privilege check, a service can be started by hand instead once the restored jobs are held with
-`sudo haprion-backup after-restore`. After a failed migration, do not: the schema is still the dump's,
+`sudo haprion-backup after-restore`, which also lets the update, a rollback and a setup go on. After a failed migration, do not: the schema is still the dump's,
 behind the code, so correct the cause and run the restore again. A reboot in between starts the services
 as any boot does, and the next restore stops them again.
 

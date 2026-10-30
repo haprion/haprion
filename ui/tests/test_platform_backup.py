@@ -677,19 +677,44 @@ class TheWeeklyCheckAsksWhatARestoreAsks(unittest.TestCase):
 class HoldingAfterARestore(unittest.TestCase):
     """Review 26-10-29, C05: `after-restore` held a job a running worker went on with."""
 
-    def after_restore(self, *, active: bool) -> subprocess.CompletedProcess[str]:
+    def after_restore(
+        self, *, active: bool, remembered: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         source = SCRIPT.read_text()
         program = (
             "set -Eeuo pipefail\n"
+            f'RESTORE_STOPPED="{remembered or "/nonexistent/restore-stopped"}"\n'
             'log() { echo "$*"; }\n'
             'die() { echo "ERROR: $*" >&2; exit 1; }\n'
             f"systemctl() {{ [[ $1 == is-active ]] && {'true' if active else 'false'}; }}\n"
             "psql_as() { cat >/dev/null; printf '[7]\\n2\\n'; }\n"
-            "DB_NAME=haprion\n" + function("do_after_restore", source) + "do_after_restore\n"
+            "DB_NAME=haprion\n"
+            + function("do_after_restore", source)
+            + function("after_restore_by_hand", source)
+            + "after_restore_by_hand\n"
         )
         return subprocess.run(  # noqa: S603 - fixed program
             ["/bin/bash", "-c", program], capture_output=True, text=True, check=False
         )
+
+    def test_by_hand_it_lets_go_of_the_refusal_a_failed_restore_left(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            remembered = Path(raw) / "restore-stopped"
+            remembered.write_text("haprion-worker.service\n")
+            done = self.after_restore(active=False, remembered=remembered)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertFalse(remembered.exists())
+
+    def test_refused_it_leaves_the_marker_for_the_restore_to_finish(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            remembered = Path(raw) / "restore-stopped"
+            remembered.write_text("haprion-worker.service\n")
+            done = self.after_restore(active=True, remembered=remembered)
+            self.assertEqual(done.returncode, 1)
+            self.assertTrue(remembered.exists())
+
+    def test_the_command_runs_the_hand_version(self) -> None:
+        self.assertIn("\n    after-restore)  after_restore_by_hand ;;\n", SCRIPT.read_text())
 
     def test_it_refuses_while_the_worker_runs_and_holds_nothing(self) -> None:
         done = self.after_restore(active=True)

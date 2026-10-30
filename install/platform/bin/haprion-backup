@@ -469,6 +469,19 @@ SQL
     log "sessions ended: ${sessions}"
 }
 
+#
+# `after-restore` run by hand (review 26-10-30, P3-1). The restore that failed
+# stopped the services and wrote RESTORE_STOPPED, which keeps an update, a
+# rollback and a setup out until a restore finishes. Holding the jobs is what
+# that refusal waits for: whoever runs this has them held and starts the
+# services as they choose, so the file goes. `restore` itself calls
+# do_after_restore, and removes the file when it has started the units.
+#
+after_restore_by_hand() {
+    do_after_restore
+    rm -f -- "$RESTORE_STOPPED"
+}
+
 step_log() { echo; echo "== $*"; }
 
 #
@@ -738,7 +751,7 @@ take_lock() {
 case "$command" in
     dump)           take_lock; do_dump ;;
     dump-before-migration) take_lock; do_dump_before_migration "$@" ;;
-    after-restore)  do_after_restore ;;
+    after-restore)  after_restore_by_hand ;;
     restore)        hold_release_lock_for_restore; take_lock; do_restore "$1" ;;
     verify-restore) take_lock; do_verify_restore ;;
     list)

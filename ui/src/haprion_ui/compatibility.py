@@ -1182,7 +1182,7 @@ def main(argv: list[str] | None = None) -> int:
             collector_config=args.collector_config,
         )
     if args.skip_nodes:
-        print("  SKIP  node installations   asked before the migration")
+        print("  SKIP  node installations   asked before the switch")
         clusters: list[str] = []
     else:
         clusters = list(args.clusters)

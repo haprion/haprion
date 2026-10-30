@@ -1579,6 +1579,14 @@ class OneReleaseChangeAtATime(unittest.TestCase):
                 ["/bin/bash", "-c", inner], capture_output=True, text=True, check=False
             )
             self.assertEqual(alone.stdout.strip(), "free", alone.stderr)
+            # The pid is written, as by the other owners, for the refusal that names it.
+            named = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                ["/bin/bash", "-c", prelude + "hold_release_lock_for_restore; echo $$"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual((Path(raw) / "run/lock").read_text(), named.stdout, named.stderr)
 
     def test_the_lock_is_root_s_alone(self) -> None:
         """Review 26-10-29, AA06: any account could open the 0644 file and hold every change off."""

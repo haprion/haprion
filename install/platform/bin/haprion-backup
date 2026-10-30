@@ -738,6 +738,7 @@ hold_release_lock_for_restore() {
     chmod 600 -- "$RELEASE_LOCK"
     flock -n 8 \
         || die "an update, a rollback or a setup of the UI release is running; run this again when it is done"
+    printf '%s\n' "$$" >"$RELEASE_LOCK"
 }
 
 take_lock() {

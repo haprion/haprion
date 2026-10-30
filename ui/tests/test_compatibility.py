@@ -725,7 +725,7 @@ class TheNodesAreLeftUnaskedOnRequest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             _, said, asked = self.run_main(Path(raw), "--skip-nodes")
         asked.assert_not_called()
-        self.assertIn("SKIP  node installations   asked before the migration", said)
+        self.assertIn("SKIP  node installations   asked before the switch", said)
         self.assertNotIn("alpha", said)
 
     def test_without_it_every_cluster_is_asked(self) -> None:

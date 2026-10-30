@@ -16,6 +16,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -342,6 +343,75 @@ class TriggerTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual([argv[-1] for argv in sent], ["ca-pull corp-root"])
+
+
+class BatchTests(unittest.TestCase):
+    """E02: a cluster with more files than the node takes in one request is asked in batches."""
+
+    def ask(self, certificates: int, authorities: int = 0) -> list[str]:
+        from haprion.deploy_plan import CertificateRef, CertificateTarget
+
+        def refs(prefix: str, count: int) -> tuple[CertificateRef, ...]:
+            return tuple(
+                CertificateRef(id=f"{prefix}{number:02d}", fingerprint="a" * 64)
+                for number in range(1, count + 1)
+            )
+
+        target = CertificateTarget(
+            certificates=refs("site", certificates), authorities=refs("root", authorities)
+        )
+        sent: list[str] = []
+
+        class FakeCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(argv: list[str], **_: object) -> FakeCompleted:
+            sent.append(argv[-1])
+            return FakeCompleted()
+
+        node = NodeStatus(
+            name="node-a",
+            mgmt_host="node-a.example.com",
+            reachable=True,
+            status_ok=True,
+            owns_vip=True,
+            release_hash=None,
+            error_code=None,
+        )
+        with mock.patch.object(node_ssh, "run_bounded", fake_run):
+            code = cert_deploy_helper.trigger_node(
+                node,
+                DeployIdentity(user="svc-app", key=Path("/root/.ssh/id_ed25519")),
+                target,
+                io.StringIO(),
+            )
+        self.assertEqual(code, 0)
+        return sent
+
+    def test_the_limit_is_the_one_the_node_script_enforces(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-cert-trigger"
+        match = re.search(r"^MAX_CERTIFICATES=(\d+)$", script.read_text(), re.MULTILINE)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(cert_deploy_helper.MAX_IDS_PER_REQUEST, int(match.group(1)))
+
+    def test_thirty_three_certificates_are_two_requests_within_the_limit(self) -> None:
+        sent = self.ask(33)
+        self.assertEqual(len(sent), 2)
+        counts = [len(request.split()) - 1 for request in sent]
+        self.assertEqual(counts, [cert_deploy_helper.MAX_IDS_PER_REQUEST, 1])
+        self.assertTrue(all(request.startswith("cert-pull ") for request in sent))
+
+    def test_exactly_the_limit_is_one_request(self) -> None:
+        self.assertEqual(len(self.ask(cert_deploy_helper.MAX_IDS_PER_REQUEST)), 1)
+
+    def test_authorities_are_batched_too_and_asked_first(self) -> None:
+        sent = self.ask(1, authorities=33)
+        self.assertEqual(
+            [request.split()[0] for request in sent], ["ca-pull", "ca-pull", "cert-pull"]
+        )
 
 
 class RefusalContractTests(HelperFixture):

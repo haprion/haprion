@@ -72,6 +72,12 @@ REQUEST_VERB = "cert-pull"
 # the run then reports that node as failed rather than as current.
 #
 AUTHORITY_VERB = "ca-pull"
+#
+# The most IDs one request may carry: the node's trigger wrapper refuses more
+# (`MAX_CERTIFICATES` in `install/node/haprion-cert-trigger`), and a test holds
+# the two numbers together. A cluster with more files is asked in batches.
+#
+MAX_IDS_PER_REQUEST = 32
 
 
 def _validate(parameters: Mapping[str, JsonValue]) -> None:
@@ -79,6 +85,18 @@ def _validate(parameters: Mapping[str, JsonValue]) -> None:
         value = parameters.get(key, False)
         if not isinstance(value, bool):
             raise HelperProtocolError(f"{key} must be a boolean")
+
+
+def _batches(verb: str, ids: list[str]) -> list[str]:
+    """One request per `MAX_IDS_PER_REQUEST` IDs; none at all for no IDs.
+
+    The node refuses a request without IDs as well as one with too many.
+    """
+
+    return [
+        " ".join([verb, *ids[start : start + MAX_IDS_PER_REQUEST]])
+        for start in range(0, len(ids), MAX_IDS_PER_REQUEST)
+    ]
 
 
 def trigger_node(
@@ -100,14 +118,12 @@ def trigger_node(
     # The authorities first: they are what a pool's `ca-file` reads, and a
     # certificate pull reloads HAProxy, which would read a missing one.
     #
-    if target.authorities:
-        requests.append(" ".join([AUTHORITY_VERB, *(ref.id for ref in target.authorities)]))
+    requests.extend(_batches(AUTHORITY_VERB, [ref.id for ref in target.authorities]))
     #
     # A cluster whose only referenced file is a CA has no certificate to ask
     # for, and the node's wrapper refuses a request without IDs (lab 26-10-26).
     #
-    if target.certificates:
-        requests.append(" ".join([REQUEST_VERB, *(ref.id for ref in target.certificates)]))
+    requests.extend(_batches(REQUEST_VERB, [ref.id for ref in target.certificates]))
     for request in requests:
         code = run_trigger(
             node_ssh.ssh_argv(identity.key, identity.user, node.mgmt_host, request),

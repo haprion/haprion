@@ -3310,8 +3310,8 @@ lists the questions.
 
 ## What a node keeps, and for how long
 
-Three kinds of copies build up on a node. Rollback copies and restore runs are removed automatically
-after **30 days**; configuration releases are removed by count. Each kind is cleaned up only at the
+Three kinds of copies build up on a node, and a fourth on the management host. Rollback copies and
+restore runs are removed automatically after **30 days**; configuration releases are removed by count. Each kind is cleaned up only at the
 moment a new copy of the same kind is made - nothing runs on the node on a schedule for this. A node
 that is never reinstalled, deployed to or restored keeps its copies until it is.
 
@@ -3319,6 +3319,7 @@ that is never reinstalled, deployed to or restored keeps its copies until it is.
 |---|---|---|---|
 | rollback copy of a file an installer replaced | `<file>.replaced-<yyyymmdd-hhmmss>` beside the file | `04-node-prepare` (so every node package installation and every restore) | when the same file is next installed, if the time in its name is more than 30 days old |
 | a configuration release | `/etc/haproxy/releases/<yyyymmdd-hhmmss>/` | `haprion-pull-deploy`, once per deploy that changed something | after a deploy that completed, all but the newest 10 |
+| a published release (on the management host) | `<publish path>/releases/<commit>/` | every publish, revert and node change | after a deploy that read every node: all but the newest 10, except the one `current` names and any a node reports it runs; an unfinished one (`.<commit>.…`) once it is an hour old |
 | a restore run's directory | `/var/lib/haprion-restore/<run>/` | `haprion-node-restore` (the terminal or the web page) | when a later restore run begins writing to the same node, if the run is more than 30 days old |
 
 **What is always kept:**

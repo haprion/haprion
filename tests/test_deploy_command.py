@@ -16,6 +16,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -184,6 +185,42 @@ class HelperFixture(unittest.TestCase):
             node_trigger=trigger,
         )
         return code, out.getvalue(), err.getvalue()
+
+
+class PublishedReleasesAreCleanedUpAfterTheDeploy(HelperFixture):
+    """Review 26-10-30, D5: the deploy reads every node, so it is where pruning can be done."""
+
+    def releases(self, policy_path: Path) -> set[str]:
+        directory = self.root / "published" / "alpha" / "releases"
+        return {entry.name for entry in directory.iterdir()}
+
+    def fill(self) -> list[str]:
+        base = self.root / "published" / "alpha" / "releases"
+        names = [TARGET_HASH, *(f"{index:040x}" for index in range(1, 12))]
+        for offset, name in enumerate(names):
+            (base / name).mkdir(parents=True)
+            stamp = 1_000_000 + 60 * offset
+            os.utime(base / name, (stamp, stamp))
+        return names
+
+    def test_what_a_node_runs_stays_and_the_rest_beyond_ten_goes(self) -> None:
+        policy_path = self.runtime()
+        names = self.fill()
+
+        code, _out, err = self.run_helper(request(), policy_path=policy_path)
+
+        self.assertEqual(code, 0, err)
+        # The oldest runs on both nodes after the deploy; the next oldest is the one beyond ten.
+        self.assertEqual(self.releases(policy_path), set(names) - {names[1]})
+
+    def test_an_unreadable_node_keeps_everything(self) -> None:
+        policy_path = self.runtime()
+        names = self.fill()
+        self.cluster.node("node-b").reachable = False
+
+        self.run_helper(request(), policy_path=policy_path)
+
+        self.assertEqual(self.releases(policy_path), set(names))
 
 
 class StatusIdentityTests(HelperFixture):

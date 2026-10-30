@@ -39,7 +39,7 @@ from typing import BinaryIO, TextIO, cast
 from haprion import exit_codes, node_ssh
 from haprion.certificates import CertificateError, target_for
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
-from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
+from haprion.cluster_status import ClusterStatus, NodeStatus, StatusError, parse_status
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     Cluster,
@@ -60,6 +60,7 @@ from haprion.helper_protocol import (
     require_no_arguments,
     write_document,
 )
+from haprion.release_install import KEEP_RELEASES, prune_releases
 from haprion.status_collect import STATUS_TIMEOUT_SECONDS, ask_node, collect, read_target
 
 OPERATION = "deploy_cluster"
@@ -119,6 +120,37 @@ def read_status(cluster: Cluster, identity: DeployIdentity) -> ClusterStatus:
         cluster.nodes, lambda node: ask_node(node, identity), target=None, vip=cluster.vip
     )
     return parse_status(report.as_envelope(cluster.cluster_id, request_id=new_request_id()))
+
+
+def prune_published_releases(cluster: Cluster, read: ReadStatus, stream: TextIO) -> None:
+    """Clean up the manager's published releases, now that the nodes have been read (D5).
+
+    Which releases may go depends on what the nodes run, and the deploy is the
+    one place that reads them all anyway. Stages an interrupted install left
+    go regardless; the finished releases only when every node answered with the
+    release it runs - one that did not may be running any of them. Never a
+    reason to fail a deploy that has already finished.
+    """
+
+    publish_path = Path(cluster.publish_path)
+    running: set[str] | None = None
+    try:
+        finished = sum(
+            1
+            for entry in (publish_path / "releases").iterdir()
+            if entry.is_dir() and not entry.name.startswith(".")
+        )
+        if finished > KEEP_RELEASES:
+            status = read()
+            hashes = {node.release_hash for node in status.nodes if node.status_ok}
+            if status.nodes and all(node.status_ok for node in status.nodes) and None not in hashes:
+                running = {name for name in hashes if name is not None}
+        removed = prune_releases(publish_path, running=running)
+    except (OSError, StatusError) as exc:
+        stream.write(f"Old releases were not cleaned up: {exc}\n")
+        return
+    if removed:
+        stream.write(f"Removed {len(removed)} old published release(s).\n")
 
 
 def trigger_node(node: NodeStatus, identity: DeployIdentity, writer: TextIO) -> int:
@@ -402,6 +434,7 @@ def main(
                 preflight=preflight,
                 budget=BUDGET,
             )
+            prune_published_releases(cluster, read, stream)
     except LockBusy as exc:
         return refuse("operation_locked", str(exc), exc.exit_code)
 

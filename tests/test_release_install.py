@@ -22,6 +22,7 @@ from haprion.release_install import (
     InstallError,
     InstallResult,
     install_release,
+    prune_releases,
 )
 from haprion.release_layout import NODE_DIRECTORIES, ReleaseMetadata
 
@@ -48,6 +49,72 @@ class Recorder:
 
     def __call__(self, path: Path, uid: int, gid: int) -> None:
         self.calls.append((str(path), uid, gid))
+
+
+def release_directories(publish: Path, names: list[str], *, newest_last: bool = True) -> None:
+    """Releases under `releases/`, each a minute newer than the one before it."""
+
+    for offset, name in enumerate(names):
+        directory = publish / "releases" / name
+        directory.mkdir(parents=True)
+        (directory / "RELEASE").write_text("schema=1\n")
+        stamp = 1_000_000 + 60 * (offset if newest_last else -offset)
+        os.utime(directory, (stamp, stamp))
+
+
+class PruningTheManagersReleases(unittest.TestCase):
+    """Review 26-10-30, D5: every publish added a full copy and nothing took one away."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.publish = Path(directory.name) / "published"
+        self.names = [f"{index:040x}" for index in range(1, 12)]
+        release_directories(self.publish, self.names)
+
+    def remaining(self) -> set[str]:
+        return {entry.name for entry in (self.publish / "releases").iterdir()}
+
+    def test_eleven_releases_leave_the_newest_ten(self) -> None:
+        removed = prune_releases(self.publish, running=set())
+
+        self.assertEqual(removed, [self.names[0]])
+        self.assertEqual(self.remaining(), set(self.names[1:]))
+
+    def test_the_release_current_names_stays(self) -> None:
+        (self.publish / "current").symlink_to(Path("releases") / self.names[0])
+
+        self.assertEqual(prune_releases(self.publish, running=set()), [])
+        self.assertEqual(self.remaining(), set(self.names))
+
+    def test_a_release_a_node_reports_stays(self) -> None:
+        self.assertEqual(prune_releases(self.publish, running={self.names[0]}), [])
+        self.assertEqual(self.remaining(), set(self.names))
+
+    def test_without_a_reading_of_the_nodes_every_release_stays(self) -> None:
+        self.assertEqual(prune_releases(self.publish, running=None), [])
+        self.assertEqual(self.remaining(), set(self.names))
+
+    def test_a_stage_older_than_an_hour_goes_whatever_the_nodes_say(self) -> None:
+        old = self.publish / "releases" / f".{'a' * 40}.x1"
+        fresh = self.publish / "releases" / f".{'b' * 40}.x2"
+        for stage, stamp in ((old, 1_000_000), (fresh, 1_000_000 + 3000)):
+            stage.mkdir()
+            os.utime(stage, (stamp, stamp))
+
+        removed = prune_releases(self.publish, running=None, now=1_000_000 + 3700)
+
+        self.assertEqual(removed, [old.name])
+        self.assertFalse(old.exists())
+        self.assertTrue(fresh.exists())
+
+    def test_fewer_than_ten_are_left_alone(self) -> None:
+        for name in self.names[:5]:
+            for path in sorted((self.publish / "releases" / name).rglob("*"), reverse=True):
+                path.unlink()
+            (self.publish / "releases" / name).rmdir()
+
+        self.assertEqual(prune_releases(self.publish, running=set()), [])
 
 
 class EmptyDirectoryTests(unittest.TestCase):

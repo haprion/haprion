@@ -21,7 +21,8 @@ import grp
 import os
 import shutil
 import tempfile
-from collections.abc import Callable, Mapping
+import time
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -181,6 +182,75 @@ def _verify_existing(release: Path, node_path: str, metadata: ReleaseMetadata) -
         raise InstallError(
             f"existing release {metadata.commit} has incorrect metadata: {', '.join(differing)}."
         )
+
+
+#
+# How many releases the manager keeps beyond the ones that must stay: the same
+# count a node keeps.
+#
+KEEP_RELEASES = 10
+STALE_STAGE_SECONDS = 3600
+
+
+def prune_releases(
+    publish_path: Path,
+    *,
+    running: Collection[str] | None,
+    keep: int = KEEP_RELEASES,
+    now: float | None = None,
+) -> list[str]:
+    """Remove what the manager no longer needs under `releases/`; the names removed.
+
+    A release is a full copy of the configuration, its maps and the WAF rule
+    set, and nothing took it away (review 26-10-30, D5). What stays: the
+    newest `keep`; the one `current` names, which is also the manifest the
+    per-object comparison reads; and every release a node reports it runs,
+    since the comparison reads that release's manifest too. `running` is the
+    hashes the nodes reported; None means the nodes were not read, and then no
+    release is removed, because one of them may run it.
+
+    The stages an interrupted install leaves (`.<commit>.*`; a kill skips the
+    cleanup) go once they are an hour old, whatever `running` says: no node
+    can run what was never renamed into place.
+    """
+
+    releases = publish_path / "releases"
+    moment = time.time() if now is None else now
+    removed: list[str] = []
+    try:
+        entries = list(releases.iterdir())
+    except OSError:
+        return removed
+
+    for entry in entries:
+        if not entry.name.startswith(".") or not entry.is_dir() or entry.is_symlink():
+            continue
+        try:
+            age = moment - entry.stat().st_mtime
+        except OSError:
+            continue
+        if age > STALE_STAGE_SECONDS:
+            shutil.rmtree(entry, ignore_errors=True)
+            removed.append(entry.name)
+
+    if running is None:
+        return removed
+
+    finished = [
+        entry
+        for entry in entries
+        if not entry.name.startswith(".") and entry.is_dir() and not entry.is_symlink()
+    ]
+    newest = sorted(finished, key=lambda entry: (entry.stat().st_mtime, entry.name), reverse=True)
+    protected = set(running)
+    current = publish_path / "current"
+    if current.is_symlink():
+        protected.add(Path(os.path.realpath(current)).name)
+    for entry in newest[keep:]:
+        if entry.name not in protected:
+            shutil.rmtree(entry, ignore_errors=True)
+            removed.append(entry.name)
+    return removed
 
 
 def install_release(

@@ -949,6 +949,8 @@ def join_document(
     }
 
 
+SSH_FAILED = 255
+
 JOINED_BUT_UNVERIFIED = (
     "{node} had joined by then: its block is used up. Add it again with the same block once "
     "it answers over SSH, or make a new block on the node with  sudo haprion-node-key --again"
@@ -964,10 +966,11 @@ def join(
 ) -> bool:
     """Join a v2 node once with its one-time key; True when this call joined it.
 
-    A node that already answers as itself in the document's cluster was joined
-    by an earlier attempt that was rolled back on the manager (its block is
-    used up by then), and has shown it trusts the manager's keys: it is not
-    joined again. A v1 block joins nothing.
+    The join always runs first, so a live one-time key is used and the document
+    is applied. Only when it cannot connect (ssh exit 255) is the node asked: one
+    that already answers as itself in the document's cluster was joined by an
+    earlier attempt that was rolled back on the manager (its block is used up
+    by then), and is not joined again. A v1 block joins nothing.
     """
 
     if enrollment.join_key is None:
@@ -978,9 +981,11 @@ def join(
             "a v2 block needs the helper's join, and there is none",
             exit_codes.CONFIG,
         )
-    if ask is not None and verify(node, str(document["cluster"]), ask) is None:
-        return False
     response = join_node(node, enrollment.join_key, document)
+    if response.exit_code == SSH_FAILED and (
+        ask is not None and verify(node, str(document["cluster"]), ask) is None
+    ):
+        return False
     if response.exit_code != 0:
         said = " ".join((response.stderr or "").strip().splitlines()[-3:])
         #

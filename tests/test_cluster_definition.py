@@ -493,6 +493,8 @@ class CreatingACluster(unittest.TestCase):
                     joins.append(node.name)
                     if node.name == "node-d":
                         return NodeResponse(75, "", "preparing this node stopped")
+                    if node.name in joined:
+                        return NodeResponse(255, "", "Permission denied")
                     joined.add(node.name)
                     return NodeResponse(0, "")
 
@@ -505,10 +507,8 @@ class CreatingACluster(unittest.TestCase):
                 with self.assertRaises(EnrollmentError) as caught:
                     site.add(spec, ask=ask, join_node=join)
                 self.assertEqual(site.snapshot(), before)
-                if joined_before:
-                    self.assertEqual(joins, ["node-d"])
-                else:
-                    self.assertEqual(joins, ["node-c", "node-d"])
+                self.assertEqual(joins, ["node-c", "node-d"])
+                if not joined_before:
                     self.assertIn("node-c", str(caught.exception))
                     self.assertIn("rolled back on the manager", str(caught.exception))
 

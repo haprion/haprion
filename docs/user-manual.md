@@ -2608,8 +2608,8 @@ manager left for it stops working. Then it removes the one-time key. This takes 
 a few minutes, most of it apt.
 
 If adding the node is rolled back after the join, the node stays joined and its block is used up.
-Add the node again with the same block: a node that already answers as itself in the cluster is not
-joined a second time. A join that stopped while preparing the node has not used the block up, and the
+Add the node again with the same block: the join is tried first, and when the block turns out to be
+used up, a node that already answers as itself in the cluster is not joined a second time. A join that stopped while preparing the node has not used the block up, and the
 same block may be tried again within the 24 hours.
 
 The one-time key is valid for 24 hours and works once. Keep the block to yourself until it has been

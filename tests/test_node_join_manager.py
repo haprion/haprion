@@ -225,7 +225,7 @@ class JoiningOnAdd(unittest.TestCase):
 
     def test_a_v2_node_is_joined_before_it_is_asked(self) -> None:
         self.add(v2(), self.joining())
-        self.assertEqual(self.calls, ["ask", "join", "ask"])
+        self.assertEqual(self.calls, ["join", "ask"])
         node, private, document = self.joined
         cluster = self.site.runtime().cluster("alpha")
         self.assertEqual((node.name, private), ("node-c", PRIVATE))
@@ -265,21 +265,34 @@ class JoiningOnAdd(unittest.TestCase):
         [hours] = re.findall(r"^VALID_HOURS=(\d+)$", script, re.MULTILINE)
         self.assertIn(f"valid for {hours} hours and once", str(caught.exception))
         self.assertNotIn("works again", str(caught.exception))
-        self.assertEqual(self.calls, ["ask", "join"])
+        self.assertEqual(self.calls, ["join"])
         self.assertEqual(self.site.snapshot(), before)
         self.assertIn("this one was not used up", str(caught.exception))
 
     def test_a_join_that_failed_after_the_key_was_used_asks_for_a_new_block(self) -> None:
         with self.assertRaises(EnrollmentError) as caught:
-            self.add(v2(), self.joining(255, "Permission denied"))
+            self.add(v2(), self.joining(255, "Permission denied"), silent_after_join=True)
         self.assertNotIn("not used up", str(caught.exception))
         self.assertIn("make a new one", str(caught.exception))
 
     def test_a_node_that_already_answers_is_not_joined_again(self) -> None:
         """A rolled-back add leaves the node joined and its block used up (review 26-10-30, E2)."""
 
-        self.add(v2(), self.joining(75, "the key is gone"), joined_already=True)
-        self.assertEqual(self.calls, ["ask", "ask"])
+        self.add(v2(), self.joining(255, "Permission denied"), joined_already=True)
+        self.assertEqual(self.calls, ["join", "ask", "ask"])
+
+    def test_a_node_that_answers_is_still_joined_while_its_key_is_live(self) -> None:
+        """Remove and add again must apply the document and use the key up (review 26-10-30, R1)."""
+
+        self.add(v2(), self.joining(), joined_already=True)
+        self.assertEqual(self.calls, ["join", "ask"])
+
+    def test_a_join_that_fails_for_another_reason_is_not_excused_by_an_answering_node(
+        self,
+    ) -> None:
+        with self.assertRaises(EnrollmentError):
+            self.add(v2(), self.joining(75, "stopped"), joined_already=True)
+        self.assertEqual(self.calls, ["join"])
 
     def test_a_node_that_joined_but_does_not_answer_is_not_called_unchanged(self) -> None:
         before = self.site.snapshot()

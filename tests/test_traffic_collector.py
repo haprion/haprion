@@ -24,6 +24,7 @@ from haprion import traffic_collector
 from haprion.traffic_collector import (
     CLOSED_DAY_GRACE,
     JOINING_SECONDS,
+    RETENTION_DAYS,
     CollectorConfig,
     CollectorError,
     NodeTarget,
@@ -37,6 +38,7 @@ from haprion.traffic_collector import (
     _parse_response,
     _parse_waf_response,
     _replace,
+    _retire,
     _retire_staging,
     _waf_cursor,
     _waf_data,
@@ -1461,6 +1463,19 @@ class WafJournalCollectorTests(unittest.TestCase):
         (self.staging / ".alpha--node-a--2026-09-08.jsonl.database-offset").write_text("10\n")
         self.assertEqual(forget_database_positions(self.config), 2)
         self.assertFalse(self.cursor_file.exists())
+
+    def test_a_merged_mirror_left_from_before_goes_after_the_window(self) -> None:
+        """B404: nothing writes `{cluster}--{node}.jsonl` any more, a node in inventory too."""
+
+        old = (NOW - timedelta(days=RETENTION_DAYS + 1)).timestamp()
+        mirror = self.config.mirror / "alpha--node-a.jsonl"
+        meta = self.config.mirror / "alpha--node-a.meta.json"
+        for path in (mirror, meta):
+            path.write_text("{}\n")
+            os.utime(path, (old, old))
+        _retire(self.config, now=NOW)
+        self.assertFalse(mirror.exists())
+        self.assertTrue(meta.exists())
 
     def test_a_retired_node_s_cursor_is_removed(self) -> None:
         self.cursor_file.write_text(journal_cursor(5) + "\n")

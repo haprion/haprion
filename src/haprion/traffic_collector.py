@@ -642,11 +642,12 @@ def collect_node(
 def _retire(config: CollectorConfig, *, now: datetime, window: int = RETENTION_DAYS) -> None:
     """Let what a node left behind when it left inventory die of old age.
 
-    Nothing is deleted while it could still be worth reading. A mirror is
-    rewritten on every successful run, so its modification time is when the
-    manager last heard from that node; once that is a whole retention window
-    old, every record in the file is older than the node's own retention too -
-    the data no longer exists at the source and the copy is a museum piece.
+    Nothing is deleted while it could still be worth reading. A node's meta
+    file is rewritten on every run, so its modification time is when the
+    manager last tried that node; once that is a whole retention window old,
+    the node has left. The merged mirror (`.jsonl`) is no longer written at
+    all (B404): what is left of one goes after the same window, whether its
+    node is still in inventory or not.
 
     Staging is left to `collect_node`, which prunes by the day in the name and
     therefore drains a retired node's parts on the same window without needing
@@ -655,7 +656,6 @@ def _retire(config: CollectorConfig, *, now: datetime, window: int = RETENTION_D
 
     keep = set()
     for target in config.nodes:
-        keep.add(f"{target.cluster}--{target.node}.jsonl")
         keep.add(f"{target.cluster}--{target.node}.meta.json")
     cutoff = (now - timedelta(days=window)).timestamp()
     for path in config.mirror.iterdir():

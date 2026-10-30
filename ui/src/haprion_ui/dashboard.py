@@ -16,6 +16,7 @@ from typing import Any, Literal
 from haprion import haproxy_versions, node_package, node_resources
 from haprion.cluster_status import (
     BEHIND_RELEASE,
+    BEHIND_STEPS,
     ahead_of,
     ahead_words,
     behind_part,
@@ -457,11 +458,12 @@ def _node_view(
     elif current is False:
         part = behind_part(status, target_hash)
         label, tone = VERSION_DRIFT, "warning"
-        detail = (
-            "Node is not on the published version"
-            if part in (None, BEHIND_RELEASE)
-            else f"The {part} is older than the published version"
-        )
+        if part in (None, BEHIND_RELEASE):
+            detail = "Node is not on the published version"
+        elif part == BEHIND_STEPS:
+            detail = "A step after the reload did not finish"
+        else:
+            detail = f"The {part} is older than the published version"
     else:
         label, tone, detail = "Online", "healthy", "Serving and reporting normally"
 

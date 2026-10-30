@@ -33,6 +33,7 @@ from haprion.cluster_status import (
     forwarding_current,
     keepalived_state,
     parse_status,
+    release_complete,
 )
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
@@ -319,6 +320,10 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         forward_file = _forward_file_line(status)
         if forward_file is not None:
             writer.write(f"  Forward file: {forward_file}\n")
+        if release_complete(status) is False:
+            writer.write(
+                "  Release:      INCOMPLETE - a step after the reload failed; run haprion-deploy\n"
+            )
         forwarding = log_forwarding.status_line(status.get("log_forwarding"))
         if forwarding is not None:
             writer.write(f"  Log forward:  {forwarding}\n")

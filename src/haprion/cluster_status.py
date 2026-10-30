@@ -160,6 +160,11 @@ class NodeStatus:
     #
     forwarding_current: bool | None = True
     #
+    # Whether the steps after the HAProxy reload all succeeded (`release.complete`).
+    # True on a node that does not report it - see `release_complete`.
+    #
+    release_complete: bool | None = True
+    #
     # Whether keepalived runs on the node, as it said (B320); None when it did
     # not say.
     #
@@ -212,6 +217,7 @@ class ClusterStatus:
                     addresses_current=node.addresses_current,
                     ipvs_current=node.ipvs_current,
                     forwarding_current=node.forwarding_current,
+                    release_complete=node.release_complete,
                     keepalived_active=node.keepalived_active,
                     certificates=node.certificates,
                     authorities=node.authorities,
@@ -482,10 +488,26 @@ def forwarding_current(status: Mapping[str, Any]) -> bool | None:
     return wanted == carried
 
 
+def release_complete(status: Mapping[str, Any]) -> bool | None:
+    """Did every step after the HAProxy reload succeed on the node?
+
+    `haprion-pull-deploy` keeps a marker from the reload until keepalived's
+    configuration, address list and IPVS file, the rejoin and the log
+    forwarding are all in place. A step that failed leaves it, and the node
+    reports the new release hash with `complete: false`; nothing else says so
+    when the failed step was keepalived.conf itself, which no other field
+    measures. A node that does not report the field is not held to it.
+    """
+
+    value = _mapping(status.get("release")).get("complete")
+    return value if isinstance(value, bool) else True
+
+
 BEHIND_RELEASE = "release"
 BEHIND_ADDRESSES = "address list"
 BEHIND_IPVS = "IPVS file"
 BEHIND_FORWARDING = "log forwarding"
+BEHIND_STEPS = "steps after the reload"
 
 
 def behind_part(status: Mapping[str, Any], target_hash: str | None) -> str | None:
@@ -507,6 +529,8 @@ def behind_part(status: Mapping[str, Any], target_hash: str | None) -> str | Non
         return BEHIND_IPVS
     if forwarding_current(status) is False:
         return BEHIND_FORWARDING
+    if release_complete(status) is False:
+        return BEHIND_STEPS
     return None
 
 
@@ -590,6 +614,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         ipvs_current=ipvs_current(status),
         ipvs_included=ipvs_included(status),
         forwarding_current=forwarding_current(status),
+        release_complete=release_complete(status),
         keepalived_active=_flag(_mapping(status.get("keepalived")).get("active")),
         certificates=_certificates(status),
         authorities=_certificates(status, "authorities"),

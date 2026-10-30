@@ -93,6 +93,12 @@ class FakeNode:
     #
     addresses: str = "in_use"
     #
+    # `release.complete`: False is a node whose steps after the HAProxy reload
+    # did not all succeed (review 26-10-30, D1). None leaves the field out, as
+    # a node does whose status script predates it.
+    #
+    complete: bool | None = True
+    #
     # The `peers` the node reports (B270): None leaves the field out, as a
     # node does whose status script predates it.
     #
@@ -124,6 +130,7 @@ class FakeNode:
                 "version": 7,
                 "hash": self.release_hash,
                 "timestamp": "2026-01-02T03:04:05+00:00",
+                **({} if self.complete is None else {"complete": self.complete}),
             },
             "config_validation": {"valid": True, "validated_at": "2026-01-02T03:04:05+00:00"},
             "stats_ok": True,
@@ -296,6 +303,8 @@ class FakeCluster:
 
         if self.target_certificates is None:
             node.release_hash = self.target_hash
+            if node.complete is False:
+                node.complete = True
             #
             # A successful pull activated both halves. The node deploy syncs the
             # address list on every run, including one where the release itself

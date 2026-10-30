@@ -49,6 +49,22 @@ CURRENT="${HAPROXY_DIR}/current"
 #
 PENDING="/run/haprion-pull-deploy.pending"
 
+#
+# HAProxy has reloaded, but a step after it has not all succeeded: keepalived's
+# configuration, address list and IPVS file, the start of a rejoining node's
+# keepalived, or the log forwarding. Written when the reload is done and removed
+# only when all of them are in place. `haprion-node-status` reports it as
+# `release.complete: false`, so a node that failed after the reload is not
+# called current just because it runs the new release hash. On disk, unlike the
+# marker above: keepalived reads its file at start, so a reboot repairs nothing.
+#
+INCOMPLETE="/var/lib/haprion/pull-deploy.incomplete"
+
+mark_incomplete() {
+    mkdir -p "${INCOMPLETE%/*}"
+    : > "$INCOMPLETE"
+}
+
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
@@ -896,8 +912,10 @@ if (( ! REJOINING )) && diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
         sync_dns_listener "$RUNNING"
         "$SERVER_STATE" reload
         rm -f "$PENDING"
+        mark_incomplete
         sync_keepalived
         sync_rsyslog_forward
+        rm -f "$INCOMPLETE"
         log "Deploy complete."
         prune_releases
         exit 0
@@ -915,6 +933,7 @@ if (( ! REJOINING )) && diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
     sync_dns_listener "$CURRENT" || exit 1
     sync_keepalived || exit 1
     sync_rsyslog_forward || exit 1
+    rm -f "$INCOMPLETE"
     exit 0
 fi
 
@@ -1070,6 +1089,7 @@ take_release() {
 
 if take_release; then
     rm -f "$PENDING"
+    mark_incomplete
     #
     # Explicitly, rather than by letting `set -e` end the script: a deploy that
     # activated the configuration and could not activate the addresses is a
@@ -1101,6 +1121,7 @@ if take_release; then
         log "ERROR: the configuration is live, but the log forwarding is not."
         exit 1
     fi
+    rm -f "$INCOMPLETE"
     log "Deploy complete."
     prune_releases
 elif (( REJOINING )); then

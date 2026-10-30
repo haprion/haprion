@@ -81,6 +81,7 @@ class Node(unittest.TestCase):
         self.releases = self.tree.releases
         self.pending = self.root / "run" / "deploy.pending"
         self.pending.parent.mkdir()
+        self.incomplete = self.root / "state" / "pull-deploy.incomplete"
         self.record = self.root / "record"
         self.offered = self.root / "offered"
         self.bin = self.root / "bin"
@@ -106,6 +107,10 @@ class Node(unittest.TestCase):
             .replace('NODE_CONF="/etc/haprion/node.conf"', f'NODE_CONF="{conf}"')
             .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.haproxy}"')
             .replace('PENDING="/run/haprion-pull-deploy.pending"', f'PENDING="{self.pending}"')
+            .replace(
+                'INCOMPLETE="/var/lib/haprion/pull-deploy.incomplete"',
+                f'INCOMPLETE="{self.incomplete}"',
+            )
             .replace("/run/haprion-deploy.lock", str(self.root / "deploy.lock"))
             .replace(
                 'SERVER_STATE="/usr/sbin/haprion-server-state"',
@@ -133,6 +138,7 @@ class Node(unittest.TestCase):
             "CURRENT_RELEASE": self.haproxy / "current" / "RELEASE",
             "RELEASES": self.releases,
             "CONFIG_PENDING": self.pending,
+            "DEPLOY_INCOMPLETE": self.incomplete,
         }
         exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
         self.read_release = namespace["read_release"]
@@ -272,6 +278,83 @@ class AConfigurationOfItsOwnIsRefused(Node):
         code, output = self.deploy()
         self.assertEqual(code, 1, output)
         self.assertIn("haproxy.cfg is not the link", output)
+
+
+class AStepAfterTheReloadThatFailsIsRemembered(Node):
+    """Review 26-10-30, D1: keepalived.conf is measured by no status field, so a node whose
+    keepalived step failed after the reload was current by hash and skipped next time."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        stub = self.bin / "keepalived"
+        stub.write_text(f'#!/bin/sh\n[ -e "{self.root}/keepalived-fails" ] && exit 1\nexit 0\n')
+        stub.chmod(0o755)
+        #
+        # `install -o root` is a node's; the copy is what these cases are about.
+        #
+        installer = self.bin / "install"
+        installer.write_text(
+            '#!/bin/sh\nset -eu\nkept=""\nwhile [ $# -gt 0 ]; do\n    case "$1" in\n'
+            '        -o|-g) shift 2 ;;\n        *) kept="${kept} \\"$1\\""; shift ;;\n'
+            "    esac\ndone\neval exec /usr/bin/install ${kept}\n"
+        )
+        installer.chmod(0o755)
+        self.addresses = self.root / "addresses.conf"
+        (self.root / "keepalived.conf").write_text(
+            f"virtual_ipaddress {{\n    include {self.addresses}\n}}\n"
+        )
+        (self.offered / "keepalived").mkdir()
+        (self.offered / "keepalived" / "addresses.conf").write_text("    192.0.2.20\n")
+
+    def keepalived_fails(self, failing: bool) -> None:
+        marker = self.root / "keepalived-fails"
+        marker.touch() if failing else marker.unlink(missing_ok=True)
+
+    def test_a_failed_keepalived_step_leaves_the_node_incomplete(self) -> None:
+        self.keepalived_fails(True)
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("keepalived rejected", output)
+        self.assertEqual(self.read_release()["hash"], "b" * 40)
+        self.assertIs(self.read_release()["complete"], False)
+
+    def test_the_next_run_with_an_unchanged_release_completes_it(self) -> None:
+        self.keepalived_fails(True)
+        self.deploy()
+        self.keepalived_fails(False)
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("No change.", output)
+        self.assertIs(self.read_release()["complete"], True)
+        self.assertEqual(self.addresses.read_text(), "    192.0.2.20\n")
+
+    def test_an_unchanged_run_that_fails_again_stays_incomplete(self) -> None:
+        self.keepalived_fails(True)
+        self.deploy()
+
+        code, _ = self.deploy()
+
+        self.assertEqual(code, 1)
+        self.assertIs(self.read_release()["complete"], False)
+
+    def test_a_clean_deploy_is_complete(self) -> None:
+        code, output = self.deploy()
+
+        self.assertEqual(code, 0, output)
+        self.assertIs(self.read_release()["complete"], True)
+        self.assertFalse(self.incomplete.exists())
+
+    def test_a_run_stopped_before_the_reload_finishes_with_the_marker_removed(self) -> None:
+        self.deploy(kill_at_check=2)
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 0, output)
+        self.assertIs(self.read_release()["complete"], True)
 
 
 class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):

@@ -93,6 +93,11 @@ class NodeObservation:
     #
     forwarding_current: bool | None = True
     #
+    # Whether every step after the HAProxy reload succeeded on the node, the
+    # keepalived configuration among them, which no other field measures.
+    #
+    release_complete: bool | None = True
+    #
     # Whether keepalived runs on the node (B320). None when the node did not
     # say, which orders it as before the field existed.
     #
@@ -162,7 +167,7 @@ class Target(Protocol):
 class ReleaseTarget:
     """The published configuration release this deploy is for.
 
-    A release activates four things on a node, and they can end up in
+    A release activates several things on a node, and they can end up in
     different states. The node installs and reloads HAProxy first, then the
     keepalived address list and the IPVS virtual servers (B256), then the log
     forwarding rsyslog reads (A1); when a later step fails its file is
@@ -188,7 +193,12 @@ class ReleaseTarget:
             return None
         if node.release_hash != self.hash:
             return False
-        parts = (node.addresses_current, node.ipvs_current, node.forwarding_current)
+        parts = (
+            node.addresses_current,
+            node.ipvs_current,
+            node.forwarding_current,
+            node.release_complete,
+        )
         if False in parts:
             return False
         if None in parts:

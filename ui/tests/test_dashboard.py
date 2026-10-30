@@ -537,6 +537,31 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(behind.detail, "Node is not on the published version")
         self.assertTrue(behind.release_behind)
 
+    def test_a_node_whose_steps_after_the_reload_failed_says_so(self) -> None:
+        """Review 26-10-30, D1: keepalived.conf has no field of its own."""
+
+        target = "c3" * 20
+        node = {
+            "name": "node-b",
+            "mgmt_host": "node-b.example.com",
+            "reachable": True,
+            "status_ok": True,
+            "current": False,
+            "status": {
+                "haproxy": {"active": True},
+                "keepalived": {"active": True, "state": "BACKUP"},
+                "vip": {"owner": False},
+                "release": {"version": "8", "hash": target, "complete": False},
+                "runtime": {"version": "3.4.6", "uptime_sec": 10},
+                "config_validation": {"valid": True},
+                "stats_ok": True,
+            },
+        }
+        view = dashboard._node_view(node, target)
+        self.assertEqual(view.label, "Behind")
+        self.assertEqual(view.detail, "A step after the reload did not finish")
+        self.assertFalse(view.release_behind)
+
     def test_a_node_past_the_published_version_needs_attention(self) -> None:
         """R2 26-10-27 (F18): *Behind* for nodes on a version the manager had no record of."""
 

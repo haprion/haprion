@@ -195,7 +195,11 @@
                 "cluster": { "$ref": "common.schema.json#/$defs/cluster_id" },
                 "version": { "$ref": "common.schema.json#/$defs/version" },
                 "hash": { "$ref": "common.schema.json#/$defs/hash" },
-                "timestamp": { "$ref": "common.schema.json#/$defs/timestamp" }
+                "timestamp": { "$ref": "common.schema.json#/$defs/timestamp" },
+                "complete": {
+                  "type": "boolean",
+                  "description": "False while a step after the HAProxy reload has not succeeded (keepalived's configuration, address list or IPVS file, a rejoining node's keepalived start, or the log forwarding); the node then runs the release but is not current. Absent from nodes installed before it was reported, which are not held to it."
+                }
               },
               "additionalProperties": true
             },

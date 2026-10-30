@@ -6724,7 +6724,9 @@ Each may pass through the releases directory to its own files, but not list it.
 If the second validation, the WAF engine, the DNS listener or the reload fails, the symlink is
 swapped back. A failure after a successful reload - keepalived's address list or the log forwarding
 not taking - is reported as a failure but not rolled back, because HAProxy already serves the right
-configuration. A node keeps its ten newest releases and removes older ones after a successful
+configuration. The node remembers the failure and reports its release as incomplete, so the next
+deploy treats it as behind and runs the steps again even though it carries the published version.
+A node keeps its ten newest releases and removes older ones after a successful
 deploy; the active and the previous release always stay.
 
 **The traffic log's own filesystem.** The traffic log ([Traffic logs and metrics](#traffic-logs-and-metrics))

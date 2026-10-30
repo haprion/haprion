@@ -40,6 +40,12 @@ CURRENT_RELEASE = Path("/etc/haproxy/current/RELEASE")
 RELEASES = Path("/etc/haproxy/releases")
 CONFIG_PENDING = Path("/run/haprion-pull-deploy.pending")
 #
+# Written by haprion-pull-deploy once HAProxy has reloaded and removed when
+# every step after it has succeeded. On disk, not in /run: keepalived reads
+# its file at start, so a reboot repairs nothing.
+#
+DEPLOY_INCOMPLETE = Path("/var/lib/haprion/pull-deploy.incomplete")
+#
 # Written by `haprion-server-state` when a kept drain or maintenance could not
 # be put back after a reload or a start (review 26-10-09, F1).
 #
@@ -1732,12 +1738,13 @@ def running_release_file() -> Path | None:
     return running / "RELEASE"
 
 
-def read_release() -> dict[str, str | None]:
-    result: dict[str, str | None] = {
+def read_release() -> dict[str, str | bool | None]:
+    result: dict[str, str | bool | None] = {
         "version": None,
         "hash": None,
         "timestamp": None,
         "cluster": None,
+        "complete": not DEPLOY_INCOMPLETE.exists(),
     }
 
     release_file = running_release_file()
@@ -1753,7 +1760,7 @@ def read_release() -> dict[str, str | None]:
             key = key.strip().lower()
             value = value.strip()
 
-            if key in result:
+            if key in result and key != "complete":
                 result[key] = value
 
     #

@@ -1251,6 +1251,10 @@ Each line of an added section must be a keyword that section takes. Any other wo
 
 A ring's `backing-file` is refused: HAProxy creates and overwrites that file as root.
 
+A keyword is written once in a `cache` or `ring`, and a `stick-table` parameter once in its line (`store` may
+repeat), with one `stick-table` to a backend. HAProxy takes the last of a repeated value, so a second line
+could undo what the limits below read; only a ring's `server` may repeat.
+
 **How much memory the sections may take.** `haproxy -c` reserves none of it, so the check before a publish
 passes any size. At the reload HAProxy reserves a cache whole, on every node at once, and the old and new
 process run side by side while it reloads. A larger value is refused:

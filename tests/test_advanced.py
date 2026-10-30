@@ -519,6 +519,28 @@ class WhatASectionAsksOfTheNodesMemoryIsBounded(unittest.TestCase):
             with self.subTest(text):
                 self.assertEqual({entry[1] for entry in fates(text)}, {PLACED})
 
+    def test_a_keyword_written_twice_is_refused(self) -> None:
+        """Code review 26-10-30 again, S1: the cap read the first `total-max-size`, HAProxy
+        takes the last, so `0` then `64` counted as nothing and took 64 MB."""
+
+        for text in (
+            "cache shop-c\n    total-max-size 0\n    total-max-size 64\n",
+            "cache shop-c\n    max-age 1\n    max-age 2\n",
+            "ring shop-r\n    size 1k\n    size 16m\n",
+            "ring shop-r\n    timeout connect 1s\n    timeout connect 2s\n",
+            "backend shop-t\n    stick-table type ip size 1\n    stick-table type ip size 2\n",
+            "backend shop-t\n    stick-table type ip size 1 size 100k\n",
+        ):
+            with self.subTest(text):
+                self.assertEqual(fates(text)[-1][1], REFUSED_FATE)
+        for text in (
+            "ring shop-r\n    timeout connect 1s\n    timeout server 2s\n",
+            "ring shop-r\n    server a 192.0.2.1:514\n    server b 192.0.2.2:514\n",
+            "backend shop-t\n    stick-table type ip size 1 store gpc0 store gpt0\n",
+        ):
+            with self.subTest(text):
+                self.assertEqual({entry[1] for entry in fates(text)}, {PLACED})
+
     def test_the_caches_of_a_cluster_are_bounded_together(self) -> None:
         from haprion.generate import GeneratorError
 

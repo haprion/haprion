@@ -986,11 +986,15 @@ def _stick_table_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: O
     if keyword != ("stick-table",):
         return ""
     index = 1
+    seen: set[str] = set()
     while index < len(tokens):
         parameter = tokens[index]
         width = STICK_TABLE_PARAMETERS.get(parameter)
         if width is None:
             return f"{parameter} is not a stick-table parameter in HAProxy 3.4"
+        if parameter in seen and parameter != "store":
+            return f"{parameter} is written twice; HAProxy takes the last, so write it once"
+        seen.add(parameter)
         value = tokens[index + 1] if index + 1 < len(tokens) else ""
         if parameter == "write-to" and value not in own["backend"]:
             return NOT_OWN_TABLE.format(table=value)
@@ -1488,6 +1492,23 @@ def _line_problem(
     )
 
 
+#
+# Keywords a cache or ring section may repeat: HAProxy adds a ring's servers up
+# and takes the last of any other. A repeated keyword is refused, so the value
+# the caps read is the value HAProxy uses (code review 2026-10-30 again, S1).
+#
+REPEATABLE = frozenset({("ring", "server")})
+
+
+def section_keyword(kind: str, tokens: Sequence[str]) -> tuple[str, ...] | None:
+    """The keyword of a line of a cache or ring that may not be written twice, or None."""
+
+    if kind not in ("cache", "ring") or not tokens:
+        return None
+    keyword = tuple(tokens[:2]) if tokens[0] == "timeout" else tuple(tokens[:1])
+    return None if (kind, *keyword) in REPEATABLE else keyword
+
+
 def _section_problem(kind: str, tokens: Sequence[str]) -> str:
     """Why a line of an added cache, http-errors, userlist or ring cannot be written, or ""."""
 
@@ -1591,9 +1612,11 @@ def place(
     current: tuple[str, str] | None = None
     section_header: Line | None = None
     section_lines: list[Line] = []
+    section_keys: set[tuple[str, ...]] = set()
 
     def close() -> None:
-        nonlocal section_header, section_lines
+        nonlocal section_header, section_lines, section_keys
+        section_keys = set()
         if current is not None and current[0] == "extra" and section_header is not None:
             kind, _, section_name = current[1].partition(" ")
             sections.append(Section(kind, section_name, section_header, tuple(section_lines)))
@@ -1683,6 +1706,14 @@ def place(
             #
             if kind != "backend":
                 problem = _section_problem(kind, tokens)
+                written = section_keyword(kind, tokens)
+                if not problem and written is not None:
+                    if written in section_keys:
+                        problem = (
+                            f"{' '.join(written)} is written twice in this {kind}; "
+                            "HAProxy takes the last, so write it once"
+                        )
+                    section_keys.add(written)
                 if problem:
                     record(REFUSED_FATE, where, problem)
                 else:
@@ -1709,6 +1740,10 @@ def place(
                     own_table=True,
                     dynamic_block=dynamic_block,
                 )
+                if not problem and keyword == ("stick-table",):
+                    if keyword in section_keys:
+                        problem = "a backend holds one stick-table"
+                    section_keys.add(keyword)
             if problem:
                 record(REFUSED_FATE, where, problem)
             else:

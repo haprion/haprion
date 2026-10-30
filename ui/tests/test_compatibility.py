@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from haprion import accounts
+from haprion import accounts, node_package
 from haprion.cli import (
     backup_job_ask,
     backup_job_helper,
@@ -684,6 +684,57 @@ class TheCheckAfterARollback(unittest.TestCase):
             line = self.schema_line(root, "0.99.5-aaaa", "9999")
             self.assertIn("FAIL  schema revision", line)
             self.assertIn("no release on this machine declares schema 9999 safe", line)
+
+
+class TheNodesAreLeftUnaskedOnRequest(unittest.TestCase):
+    """Review 26-10-30, P3-3: `--skip-nodes` is what the final proof's no-node-call rests on."""
+
+    def run_main(self, root: Path, *flags: str) -> tuple[int, str, mock.Mock]:
+        release_on_disk(root, "0.99.5-aaaa", "0100", "0100")
+        (root / "cli/releases/r1").mkdir(parents=True, exist_ok=True)
+        (root / "cli/current").symlink_to(root / "cli/releases/r1")
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(compatibility, "cli_metadata", return_value={}),
+            mock.patch.object(compatibility, "database_revision", return_value="0100"),
+            mock.patch.object(compatibility, "check_cluster_nodes") as asked,
+            mock.patch.object(node_package, "release_package") as package,
+            contextlib.redirect_stdout(io.StringIO()) as printed,
+        ):
+            code = compatibility.main(
+                [
+                    "--platform-root", str(root),
+                    "--cli-root", str(root / "cli"),
+                    "--database", "haprion",
+                    "--database-role", "migrate",
+                    "--clusters", "alpha", "beta",
+                    "--runtime-policy", str(root / "runtime-policy.yaml"),
+                    "--collector-config", str(root / "traffic-collector.json"),
+                    "--sudoers-root", str(root / "sudoers.d"),
+                    "--systemd-root", str(root / "systemd"),
+                    "--ui-release", "0.99.5-aaaa",
+                    "--skip-services",
+                    *flags,
+                ]
+            )  # fmt: skip
+        if "--skip-nodes" in flags:
+            package.assert_not_called()
+        return code, printed.getvalue(), asked
+
+    def test_no_cluster_is_asked_and_the_line_says_so(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            _, said, asked = self.run_main(Path(raw), "--skip-nodes")
+        asked.assert_not_called()
+        self.assertIn("SKIP  node installations   asked before the migration", said)
+        self.assertNotIn("alpha", said)
+
+    def test_without_it_every_cluster_is_asked(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            _, said, asked = self.run_main(Path(raw))
+        self.assertEqual(
+            [call.kwargs["cluster"] for call in asked.call_args_list], ["alpha", "beta"]
+        )
+        self.assertNotIn("SKIP  node installations", said)
 
 
 class AnUpdateBackPastAMigration(unittest.TestCase):

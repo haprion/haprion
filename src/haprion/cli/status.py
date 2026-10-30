@@ -226,6 +226,8 @@ def _node_package_line(installation: object, carried: object) -> str | None:
         return f"{shown}  NOT CONFIGURED - {haproxy_versions.CONFIGURE_ON_THE_NODE}"
     words = "OLDER" if standing.kind == "older" else "NEWER"
     said = f"{words} than this host's {node_package.short_version(str(carried))}"
+    if standing.kind == "older":
+        said += f" - {haproxy_versions.UPGRADE_ON_THE_NODE}"
     return f"{shown}  {said}" if shown else said
 
 

@@ -1184,7 +1184,7 @@ class TheDashboardBox(LoginTestCase):
         client = self.client(replace(configuration(), demo_fixture=True, clusters=demo.CLUSTERS))
         self.sign_in(client)
         page = client.get("/").text
-        said = "haprion-node 0.99.5 (49d2aeb2) is installed; the manager&#39;s is 0.99.6 (0123abcd)"
+        said = "haprion-node 0.99.5 (49d2aeb2) is installed; the manager&#39;s is 0.99.6 (0123abcd) - run sudo apt upgrade on the node"
         self.assertEqual(page.count(f'<small class="warning-text" title="{said}">'), 1)
         self.assertIn("Older node package</small>", page)
         self.assertIn(f"service-b · {said}", page)

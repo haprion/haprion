@@ -322,7 +322,7 @@ def node_package_words(installation: object, carried: object) -> tuple[str, str]
         return (
             "Node package not configured",
             f"haprion-node {node_package.short_version(str(installed))} is installed but not "
-            "configured",
+            f"configured - {haproxy_versions.CONFIGURE_ON_THE_NODE}",
         )
     manager = node_package.short_version(str(carried))
     if standing.kind == "newer":
@@ -332,10 +332,14 @@ def node_package_words(installation: object, carried: object) -> tuple[str, str]
             f" newer than the manager's {manager}",
         )
     if installed is None:
-        return "Older node package", f"haprion-node is older than the manager's {manager}"
+        return (
+            "Older node package",
+            f"haprion-node is older than the manager's {manager} - {haproxy_versions.UPGRADE_ON_THE_NODE}",
+        )
     return (
         "Older node package",
-        f"haprion-node {node_package.short_version(installed)} is installed; the manager's is {manager}",
+        f"haprion-node {node_package.short_version(installed)} is installed; the manager's is {manager}"
+        f" - {haproxy_versions.UPGRADE_ON_THE_NODE}",
     )
 
 

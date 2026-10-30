@@ -37,6 +37,7 @@ UPSTREAM = re.compile(r"\d+(?:\.\d+)*")
 
 __all__ = [
     "CONFIGURE_ON_THE_NODE",
+    "UPGRADE_ON_THE_NODE",
     "PACKAGES",
     "NodePackageStanding",
     "against_carried",
@@ -245,6 +246,7 @@ def against_carried(installation: object, carried: object) -> tuple[str | None, 
 # one whose unpacking stopped (`half-installed`) it refuses, and says to
 # reinstall it (review 26-10-29, AAA04).
 #
+UPGRADE_ON_THE_NODE = "run sudo apt upgrade on the node"
 CONFIGURE_ON_THE_NODE = (
     "run sudo dpkg --configure -a on the node, or, if dpkg leaves it unconfigured, "
     "sudo apt install --reinstall haprion-node"

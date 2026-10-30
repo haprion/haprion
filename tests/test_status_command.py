@@ -944,7 +944,9 @@ class CallerTests(HelperFixture):
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
         self.assertIn("Node package: 0.99.6 (0123abcd)\n", out)
         self.assertIn(
-            "Node package: 0.99.5 (49d2aeb2)  OLDER than this host's 0.99.6 (0123abcd)\n", out
+            "Node package: 0.99.5 (49d2aeb2)  OLDER than this host's 0.99.6 (0123abcd)"
+            " - run sudo apt upgrade on the node\n",
+            out,
         )
 
     def test_a_node_package_dpkg_did_not_configure_says_what_to_run(self) -> None:
@@ -984,7 +986,12 @@ class CallerTests(HelperFixture):
 
         payload = self.envelope(package_reader=lambda: CARRIED)
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
-        self.assertEqual(out.count("Node package: OLDER than this host's 0.99.6 (0123abcd)\n"), 2)
+        self.assertEqual(
+            out.count(
+                "Node package: OLDER than this host's 0.99.6 (0123abcd) - run sudo apt upgrade on the node\n"
+            ),
+            2,
+        )
 
     def test_without_a_carried_package_the_node_package_line_is_only_what_the_node_says(
         self,

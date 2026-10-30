@@ -126,7 +126,8 @@ class NodePackage(unittest.TestCase):
         self.assertEqual(older.package_note, "Older node package")
         self.assertEqual(
             older.package_message,
-            "haprion-node 0.99.5 (49d2aeb2) is installed; the manager's is 0.99.6 (0123abcd)",
+            "haprion-node 0.99.5 (49d2aeb2) is installed; the manager's is 0.99.6 (0123abcd)"
+            " - run sudo apt upgrade on the node",
         )
         self.assertEqual(cluster.label, "Healthy")
 
@@ -136,7 +137,7 @@ class NodePackage(unittest.TestCase):
             self.assertEqual(node.package_note, "Older node package")
             self.assertEqual(
                 node.package_message,
-                "haprion-node is older than the manager's 0.99.6 (0123abcd)",
+                "haprion-node is older than the manager's 0.99.6 (0123abcd) - run sudo apt upgrade on the node",
             )
 
     def test_a_package_the_node_did_not_configure_is_named_before_its_version(self) -> None:
@@ -146,8 +147,18 @@ class NodePackage(unittest.TestCase):
         node = self.nodes((unconfigured, self.installed(self.CARRIED))).nodes[0]
         self.assertEqual(node.package_note, "Node package not configured")
         self.assertEqual(
-            node.package_message, "haprion-node 0.99.6 (0123abcd) is installed but not configured"
+            node.package_message,
+            "haprion-node 0.99.6 (0123abcd) is installed but not configured - run sudo dpkg "
+            "--configure -a on the node, or, if dpkg leaves it unconfigured, sudo apt install "
+            "--reinstall haprion-node",
         )
+
+    def test_an_older_package_says_what_to_run_on_the_node(self) -> None:
+        """Review 2026-10-30, E8: the status command names the action; so does the row."""
+
+        older = "0.99.5+git20261028210223.49d2aeb20207"
+        node = self.nodes((self.installed(older), self.installed(self.CARRIED))).nodes[0]
+        self.assertIn("run sudo apt upgrade on the node", node.package_message or "")
 
     def test_a_newer_package_is_named_as_newer(self) -> None:
         newer = "0.99.7+git20261101090000.89abcdef0123"

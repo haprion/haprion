@@ -133,7 +133,7 @@ class TheExits(unittest.TestCase):
             return call
 
         self.run_tool(["disable", "admin"], set_disabled=note("disable"))
-        self.run_tool(["reset", "admin"], reset_password=note("reset"))
+        self.run_tool(["reset", "admin"], renew_sign_in=note("reset"))
         self.run_tool(["revoke", "admin"], revoke_sessions_for_user=note("revoke"))
         self.run_tool(["delete", "admin", "--yes"], delete_account=note("delete"))
 

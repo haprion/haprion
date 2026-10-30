@@ -315,7 +315,7 @@ def write(connection: Any, the_plan: Plan, *, actor: str) -> int:
             if "password" in fields:
                 if account.password is None:
                     raise ApplyError(f"{row.username}: no password to set")
-                ended = db.reset_password(
+                ended = db.renew_sign_in(
                     connection, user_id=row.id, password_hash=auth.hash_password(account.password)
                 )
                 ended_total += ended

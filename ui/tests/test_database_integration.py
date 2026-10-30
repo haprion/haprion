@@ -5073,7 +5073,7 @@ class AccountsFromTheWeb(unittest.TestCase):
             self.assertEqual(db.set_disabled(connection, user_id=dave.id, disabled=True), 0)
             db.set_disabled(connection, user_id=dave.id, disabled=False)
             self.assertEqual(
-                db.reset_password(connection, user_id=dave.id, password_hash=self.HASH + "y"), 0
+                db.renew_sign_in(connection, user_id=dave.id, password_hash=self.HASH + "y"), 0
             )
             connection.commit()
             dave = db.account_row(connection, "dave", window_minutes=15, max_failures=10)

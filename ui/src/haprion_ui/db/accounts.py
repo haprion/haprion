@@ -523,7 +523,7 @@ def delete_account(connection: Connection[Any], *, user_id: int) -> bool:
         raise LastAdmin from error
 
 
-def reset_password(connection: Connection[Any], *, user_id: int, password_hash: str) -> int:
+def renew_sign_in(connection: Connection[Any], *, user_id: int, password_hash: str) -> int:
     """Another account's new password, and every session it had. The CLI's `reset`."""
 
     with connection.cursor() as cursor:

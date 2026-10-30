@@ -1272,7 +1272,7 @@ def build_router(config: Config) -> APIRouter:
                     db.set_role(connection, user_id=row.id, role=role)
                     changes.append(("role_changed", detail(role=role, previous=row.role)))
                 if password_hash is not None:
-                    ended = db.reset_password(
+                    ended = db.renew_sign_in(
                         connection, user_id=row.id, password_hash=password_hash
                     )
                     changes.append(("password_reset", detail(sessions_revoked=ended)))

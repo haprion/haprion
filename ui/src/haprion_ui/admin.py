@@ -335,7 +335,7 @@ def command_reset(environment: Environment, args: argparse.Namespace) -> int:
         # working has not taken the account back from whoever had it - which is
         # the situation a reset is usually a response to.
         #
-        ended = db.reset_password(
+        ended = db.renew_sign_in(
             connection, user_id=user_id, password_hash=auth.hash_password(password)
         )
         _audit(connection, "password_reset", args.username, sessions_revoked=ended)

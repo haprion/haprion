@@ -76,7 +76,7 @@ class SettingsUsers(LoginTestCase):
             mock.patch("haprion_ui.db.create_account", side_effect=record("create", True)),
             mock.patch("haprion_ui.db.set_role", side_effect=record("role")),
             mock.patch("haprion_ui.db.set_disabled", side_effect=record("disabled", 2)),
-            mock.patch("haprion_ui.db.reset_password", side_effect=record("password", 1)),
+            mock.patch("haprion_ui.db.renew_sign_in", side_effect=record("password", 1)),
             mock.patch("haprion_ui.db.revoke_sessions_for_user", side_effect=record("revoke", 3)),
             mock.patch("haprion_ui.db.unlock_account", side_effect=record("unlock")),
             mock.patch("haprion_ui.db.set_break_glass", side_effect=record("break_glass", 2)),

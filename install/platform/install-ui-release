@@ -5,8 +5,9 @@
 #     sudo ./install-ui-release [--prepare] [--no-first-account] [--held] <release-id>
 #
 # --held is update-platform-release's: it holds the worker's claims already, and
-# lifts them itself once the release is proved. Without it this script pauses
-# them for the switch and lifts them when it ends.
+# lifts them itself once the release is proved. The pause is renewed and the
+# running jobs waited for all the same before the switch, but only without it
+# does this script lift the pause when it ends.
 #
 # --no-first-account is haprion-setup's: it asks for the first account itself,
 # last, when everything else is done.
@@ -125,12 +126,17 @@ hold_release_lock
 # Lifted again however this script ends. Only once a worker is installed - a
 # first installation has none yet.
 #
-if [[ "$held" -eq 0 ]] && systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
+if systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
     step "Holding the worker's claims"
     drain=(/usr/sbin/haprion-drain)
-    # Before the call: a way out during its wait lifts it too (review 26-10-29, A5).
-    # shellcheck disable=SC2064 # the command is fixed now, not when the trap runs
-    trap "$(printf '%q ' "${drain[@]}") resume || true" EXIT
+    if [[ "$held" -eq 0 ]]; then
+        # Before the call: a way out during its wait lifts it too (review 26-10-29, A5).
+        # shellcheck disable=SC2064 # the command is fixed now, not when the trap runs
+        trap "$(printf '%q ' "${drain[@]}") resume || true" EXIT
+    fi
+    # With --held the update owns the pause, and it may have run out since it
+    # was renewed (review 26-10-30, P3-2): a refusal here lifts it and stops
+    # before the switch, and the update's own exit lifts it in any case.
     "${drain[@]}" pause --wait "${DRAIN_SECONDS:-900}"
 fi
 

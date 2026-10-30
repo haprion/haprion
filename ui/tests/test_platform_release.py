@@ -151,7 +151,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         """Review 26-10-30, U4: the activation lifted the pause before the proof, and it ran out.
 
         The owner of the pause lifts it: the update hands the activation
-        `--held`, which neither takes nor lifts one, and the dump may wait
+        `--held`, which lifts none (it renews it before the switch), and the dump may wait
         half an hour for the backup lock, longer than the pause lasts.
         """
 
@@ -160,9 +160,15 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertIn("--held) held=1 ;;", installer)
         block = installer[installer.index('step "Holding the worker\'s claims"') :]
         guard = installer.rindex("\nif ", 0, installer.index('step "Holding the worker\'s claims"'))
-        self.assertIn('"$held" -eq 0', installer[guard : guard + 120])
+        self.assertIn("systemctl cat", installer[guard : guard + 80])
+        self.assertNotIn('"$held" -eq 0', installer[guard : guard + 80])
         self.assertLess(guard, installer.index("pause --wait"))
         self.assertLess(installer.index("pause --wait"), installer.index('step "Activating"'))
+        # The trap is the owner's alone: set only without --held, before the call.
+        trap = installer.index('trap "$(printf')
+        self.assertIn('if [[ "$held" -eq 0 ]]; then', installer[trap - 400 : trap])
+        self.assertLess(trap, installer.index("pause --wait"))
+        self.assertEqual(installer.count('trap "$(printf'), 1)
         self.assertIn("resume || true", block)
         dump = self.update.index("haprion-backup dump-before-migration")
         migrate = self.update.index('./migrate --release "$release_id"\n')

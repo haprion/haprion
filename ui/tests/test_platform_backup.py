@@ -466,16 +466,22 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         """
 
         hold = "Before starting any of them by hand, hold the restored jobs:"
-        for failure, held in (
-            ({"plan": "migrate 0102 new", "migrated": False}, True),
-            ({"proved": False}, True),
-            ({"restored": False}, False),
+        behind = "do not start any of them by hand"
+        for failure, held, schema_behind in (
+            ({"plan": "migrate 0102 new", "migrated": False}, False, True),
+            ({"proved": False}, True, False),
+            ({"restored": False}, False, False),
         ):
             with self.subTest(**failure):
                 done, said = self.restore(active=self.ACTIVE, **failure)
                 self.assertEqual(done.returncode, 1)
                 self.assertIn("run this again; it starts them once a restore finishes", done.stderr)
                 self.assertEqual(f"{hold} sudo haprion-backup after-restore" in done.stderr, held)
+                #
+                # F3: after a migration that fell the schema is the dump's, behind
+                # the code, and holding the jobs does not make a start safe.
+                #
+                self.assertEqual(behind in done.stderr, schema_behind)
                 self.assertNotIn("after-restore", said)
 
     def test_a_run_after_a_failed_one_starts_what_that_one_stopped(self) -> None:

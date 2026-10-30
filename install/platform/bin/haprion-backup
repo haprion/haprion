@@ -560,12 +560,17 @@ remember_stopped() {
 # P3-3): they stay stopped, and a run again starts them once it finishes.
 # `held` says the dump's jobs are in the database and nothing has held them
 # yet, so whoever starts a service by hand holds them first; after a failed
-# pg_restore there may be no database to hold them in. Then the units.
+# pg_restore there may be no database to hold them in. `behind` says the
+# schema is the dump's, behind the code (the migration runs in one transaction
+# and fell): nothing is started by hand then, only a run again. Then the units.
 #
 restore_stopped() {
     local reason="$1" names="$2" held="$3" hold=""
     shift 3
-    if [[ -n "$held" ]]; then
+    if [[ "$held" == behind ]]; then
+        hold="
+  The schema is behind the code, so do not start any of them by hand."
+    elif [[ -n "$held" ]]; then
         hold="
   Before starting any of them by hand, hold the restored jobs: sudo haprion-backup after-restore"
     fi
@@ -647,7 +652,7 @@ do_restore() {
     if [[ "$verdict" == migrate ]]; then
         step_log "Migrating ${revision} -> ${head}"
         (cd "$PLATFORM_STEPS" && ./migrate --release "$release") \
-            || restore_stopped "the migration from ${revision} stopped" migrate held "${stopped[@]}"
+            || restore_stopped "the migration from ${revision} stopped" migrate behind "${stopped[@]}"
         log "  the dump is at ${revision}; migrated to ${head}"
         if [[ -e "$RETENTION_TIMER" ]]; then
             "$RETENTION_COMMAND" horizon \

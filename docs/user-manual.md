@@ -2992,9 +2992,11 @@ anything stops.
 
 If the restore fails after the stop, for example on a damaged dump, a failed migration or a full disk,
 the services stay stopped and the command says what failed. Correct it and run the same command again,
-with this dump or another: once a restore finishes, it starts what the failed run stopped. To start a
-service by hand instead, hold the restored jobs first with `sudo haprion-backup after-restore`. A
-reboot in between starts the services as any boot does, and the next restore stops them again.
+with this dump or another: once a restore finishes, it starts what the failed run stopped. After a
+failed privilege check, a service can be started by hand instead once the restored jobs are held with
+`sudo haprion-backup after-restore`. After a failed migration, do not: the schema is still the dump's,
+behind the code, so correct the cause and run the restore again. A reboot in between starts the services
+as any boot does, and the next restore stops them again.
 
 `after-restore` holds every waiting or running job in the same way, and ends every session: the
 restored sessions include ones that were signed out or revoked since. Run on its own, it does the same

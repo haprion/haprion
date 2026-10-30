@@ -4819,6 +4819,9 @@ class TheBackupsHashCheck(unittest.TestCase):
         query = re.search(r'"(select password_hash from app_user[^"]*)"', script)
         if query is None:
             self.fail("haprion-backup no longer reads a password hash")
+        reader = re.search(r"^archive_local_hash\(\) \{\n.*?^\}\n", script, re.M | re.S)
+        if reader is None:
+            self.fail("haprion-backup no longer reads the archive's hash")
         with (
             psycopg.connect(
                 f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}"
@@ -4835,7 +4838,36 @@ class TheBackupsHashCheck(unittest.TestCase):
                 " values ('admin', %s, 'admin', true)",
                 (self.HASH,),
             )
-            cursor.execute(query[1])
+            cursor.execute("select id from app_user where source = 'local'")
+            local = _first(cursor)
+            # What `pg_restore --data-only --table=app_user` prints, from this
+            # transaction: the COPY header with the column names, the rows, `\.`.
+            # A generated column is in neither, as in pg_dump's own.
+            cursor.execute(
+                "select column_name from information_schema.columns"
+                " where table_name = 'app_user' and is_generated = 'NEVER'"
+                " order by ordinal_position"
+            )
+            names = ", ".join(name for (name,) in cursor.fetchall())
+            with cursor.copy("copy app_user to stdout") as copy:
+                rows = b"".join(bytes(block) for block in copy)
+            with tempfile.TemporaryDirectory() as scratch:
+                listing = Path(scratch) / "app_user.copy"
+                listing.write_bytes(
+                    f"COPY public.app_user ({names}) FROM stdin;\n".encode() + rows + b"\\.\n"
+                )
+                read = subprocess.run(  # noqa: S603 - fixed program
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f'pg_restore() {{ cat "{listing}"; }}\n{reader[0]}archive_local_hash x\n',
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            self.assertEqual(read.stdout, f"{local}\t{self.HASH}\n")
+            cursor.execute(query[1].replace("${id}", str(local)))
             self.assertEqual(cursor.fetchall(), [(self.HASH,)])
             connection.rollback()
 
@@ -9117,6 +9149,13 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             # Nothing runs, and the dump is opened by this account, not by postgres.
             'systemctl() { [[ "$1" != is-active ]] || return 1; }\n'
             'sudo() { shift 2; "$@"; }\n'
+            # The dump before the restore (B399) is written as this account.
+            "chown() { :; }\n"
+            'install() { local -a made=(); while [[ $# -gt 0 ]]; do case "$1" in'
+            ' -o|-g|-m) shift 2 ;; -d) shift ;; *) made+=("$1"); shift ;; esac; done;'
+            ' mkdir -p "${made[@]}"; }\n'
+            f"DUMP_DIR={self.directory / 'dumps'}\nDISK_WARN_PERCENT=101\n"
+            "BEFORE_RESTORE_KEPT=3\n"
             f"schema_plan() {{ {sys.executable} -m haprion_ui.restore_schema --platform-root {root}"
             ' --packaged new --revision "$1"; }\n'
             f"DB_NAME={self.NAME}\nDB_ROLE={self.role}\n"
@@ -9132,6 +9171,9 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             + "".join(
                 function(name)
                 for name in (
+                    "write_dump",
+                    "keep_newest",
+                    "dump_before_restore",
                     "dump_revision",
                     "do_after_restore",
                     "stopped_before",
@@ -9180,6 +9222,8 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         head = json.loads((self.REPOSITORY / "ui/src/haprion_ui/compatibility.json").read_text())
         head = head["requires"]["database_head"]
         self.assertIn(f"the dump is at 0101; migrated to {head}", done.stdout)
+        kept = list((self.directory / "dumps/before-restore").glob(f"{self.NAME}-*.dump"))
+        self.assertEqual(len(kept), 1, "the database replaced was not dumped first")
         self.assertEqual(self.granted(), self.expected)
         with self.scratch() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")

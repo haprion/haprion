@@ -34,6 +34,20 @@ MARKED = (
 )
 
 
+def bind_group_writable(held: socket.socket, path: Path) -> None:
+    """Bind a socket that is rw for owner and group only (mode 660), as the node's is.
+
+    The status check reads the group-write bit; the mode comes from the umask at
+    bind time, so the test never widens a file's mode after the fact.
+    """
+
+    previous = os.umask(0o117)
+    try:
+        held.bind(str(path))
+    finally:
+        os.umask(previous)
+
+
 class TheNodeReadsItsRelease(unittest.TestCase):
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
@@ -104,8 +118,7 @@ class TheNodeReadsItsRelease(unittest.TestCase):
         )
         held = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.addCleanup(held.close)
-        held.bind(str(self.root / "t.sock"))
-        os.chmod(self.root / "t.sock", 0o660)
+        bind_group_writable(held, self.root / "t.sock")
         #
         # Held, but by this test's account and not haproxy's.
         #
@@ -127,8 +140,7 @@ class TheNodeReadsItsRelease(unittest.TestCase):
         self.release(NEW_LINE.replace(traffic_stream.TRAFFIC_LOG_SOCKET, str(sock)))
         held = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.addCleanup(held.close)
-        held.bind(str(sock))
-        os.chmod(sock, 0o660)
+        bind_group_writable(held, sock)
         self.namespace["TRAFFIC_SOCKET"] = Haproxys(sock)
 
         stream = self.read()

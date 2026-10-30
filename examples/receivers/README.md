@@ -33,9 +33,10 @@ All of them are written to be run from a timer. Some properties are worth keepin
   next command to run against half a pair. The same form works on Windows, where there is no
   heredoc: a here-string piped in, `@"…"@ | sftp -b - -i C:\certs\certfetch …` - the
   receivers page in the interface shows it with the real names filled in.
-- **The Windows directory is the administrators'.** The commands the interface shows make `C:\certs`
-  with the inheritance cut and only Administrators and SYSTEM granted, before a key or a password is
-  written into it: a directory made under `C:\` otherwise inherits read for every local account.
+- **The Windows directory is the administrators'.** The commands the interface shows set `C:\certs`
+  to be owned by Administrators with only Administrators and SYSTEM granted, whatever was there
+  before, ahead of every command that writes a key or a password into it and stopping if that fails:
+  a directory made under `C:\` otherwise inherits read for every local account.
 - **The names are made up.** Host names under `example.net`, the `crx-` accounts, addresses from
   `192.0.2.0/24`, `/etc/ssl/haproxy` and `C:\certs\` are placeholders; nothing here is a real host,
   account or path.

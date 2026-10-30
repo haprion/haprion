@@ -41,17 +41,33 @@ from haprion_ui import jobs as queue
 KEY_FILE = "/root/.ssh/certfetch"
 WINDOWS_CERT_DIR = "C:\\certs"
 WINDOWS_KEY_FILE = WINDOWS_CERT_DIR + "\\certfetch"
-# The first Windows command of a sequence makes the directory the rest write
-# into: a host without it fails on the first -o (seen 2026-09-19, fileserver1).
-# A directory made under C:\ inherits the Users group's read and the
-# authenticated users' write, and the keys and the password land in it: the
-# inheritance is cut and only Administrators and SYSTEM (by SID, so a localized
-# system works) are granted before anything is written.
+# Every Windows command that writes under the directory starts with this, on
+# its own line of the paste (`windows_prepared`): a throw ends that line, so
+# nothing is written into a directory that could not be closed. C:\certs is
+# made, owned by Administrators and given a protected DACL of Administrators
+# and SYSTEM (by SID, so a localized system works), whatever was there before;
+# what it already holds inherits it.
 WINDOWS_MKDIR = (
-    f"mkdir {WINDOWS_CERT_DIR} -Force | Out-Null; "
-    f'icacls {WINDOWS_CERT_DIR} /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" '
-    '"*S-1-5-18:(OI)(CI)F" | Out-Null'
+    f"mkdir {WINDOWS_CERT_DIR} -Force -ErrorAction Stop | Out-Null; "
+    "$acl = New-Object System.Security.AccessControl.DirectorySecurity; "
+    "$acl.SetSecurityDescriptorSddlForm('O:BAG:SYD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)'); "
+    f"Set-Acl -Path {WINDOWS_CERT_DIR} -AclObject $acl -ErrorAction Stop; "
+    f"if (Get-ChildItem {WINDOWS_CERT_DIR} -Force) {{ "
+    f"icacls {WINDOWS_CERT_DIR}\\* /reset /T /C | Out-Null; "
+    "if ($LASTEXITCODE -ne 0) { throw 'icacls failed' } }"
 )
+
+
+def windows_prepared(command: str) -> str:
+    """The Windows command behind the directory preparation, on one line.
+
+    Chained with `;` and not a new line: pasted lines run one by one, and a
+    throw in the preparation stops only the line it is on.
+    """
+
+    return f"{WINDOWS_MKDIR}; {command}"
+
+
 # The interface's own certificate as a file, served by its server block for a
 # receiver that fetches over https to save and trust (05-platform-nginx).
 UI_CERTIFICATE_FILE = "manager-ui.pem"
@@ -205,7 +221,7 @@ def key_steps(receiver_id: str) -> tuple[Step, ...]:
             "On the receiving host, make a key for fetching and nothing else",
             f"ssh-keygen -t ed25519 -N '' -C {name} -f {KEY_FILE}",
             "",
-            f"{WINDOWS_MKDIR}\nssh-keygen -t ed25519 -N '\"\"' -C {name} -f {WINDOWS_KEY_FILE}",
+            windows_prepared(f"ssh-keygen -t ed25519 -N '\"\"' -C {name} -f {WINDOWS_KEY_FILE}"),
         ),
         Step(
             "Paste the public half below",
@@ -235,7 +251,7 @@ def password_step(identifier: str, host: str, password: str) -> Step:
         "Once: store this receiver's password",
         f"install -m 600 /dev/null {NETRC_FILE}\necho '{line}' > {NETRC_FILE}",
         "Copy it now: this page is the only place it is shown.",
-        f"Set-Content -Path {WINDOWS_NETRC_FILE} -Value '{line}'",
+        windows_prepared(f"Set-Content -Path {WINDOWS_NETRC_FILE} -Value '{line}'"),
     )
 
 
@@ -280,8 +296,10 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                 "contact); redo it when the interface's certificate changes.\n"
                 "If this host already trusts the CA that issued it, skip this step and drop "
                 "--cacert.",
-                f"{WINDOWS_MKDIR}\ncurl.exe -k -o {WINDOWS_CERT_DIR}\\manager-ui.pem "
-                f"https://{host}{HTTPS_PREFIX}/{UI_CERTIFICATE_FILE}",
+                windows_prepared(
+                    f"curl.exe -k -o {WINDOWS_CERT_DIR}\\manager-ui.pem "
+                    f"https://{host}{HTTPS_PREFIX}/{UI_CERTIFICATE_FILE}"
+                ),
             )
         )
         for held in holds:
@@ -310,9 +328,11 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                         f"Fetch {name} for {held.certificate_id}",
                         fetch,
                         note,
-                        f"curl.exe --fail --create-dirs --netrc-file {WINDOWS_NETRC_FILE} "
-                        f"--cacert {WINDOWS_CERT_DIR}\\manager-ui.pem "
-                        f"-o {WINDOWS_CERT_DIR}\\{held.certificate_id}\\{name} {url}",
+                        windows_prepared(
+                            f"curl.exe --fail --create-dirs --netrc-file {WINDOWS_NETRC_FILE} "
+                            f"--cacert {WINDOWS_CERT_DIR}\\manager-ui.pem "
+                            f"-o {WINDOWS_CERT_DIR}\\{held.certificate_id}\\{name} {url}"
+                        ),
                     )
                 )
         return tuple(steps)
@@ -349,7 +369,10 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                         if held.format == "pkcs12"
                         else ""
                     ),
-                    f"New-Item -ItemType Directory -Force {WINDOWS_CERT_DIR}\\{directory} | Out-Null\n"
+                    windows_prepared(
+                        f"New-Item -ItemType Directory -Force {WINDOWS_CERT_DIR}\\{directory} | Out-Null"
+                    )
+                    + "\n"
                     f'@"\n{windows_gets}\n"@ | sftp -b - -i {WINDOWS_KEY_FILE} '
                     f"-o IdentitiesOnly=yes {row.owner}@{host}",
                 )

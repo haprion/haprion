@@ -254,8 +254,10 @@ class WhatTheHostRuns(unittest.TestCase):
         )
         self.assertEqual(
             steps[0].windows_command,
-            certificate_receivers.WINDOWS_MKDIR + "\ncurl.exe -k -o C:\\certs\\manager-ui.pem "
-            "https://mgr.example.net/certdist/manager-ui.pem",
+            certificate_receivers.windows_prepared(
+                "curl.exe -k -o C:\\certs\\manager-ui.pem "
+                "https://mgr.example.net/certdist/manager-ui.pem"
+            ),
         )
         self.assertEqual(steps[0].note.count("\n"), 1)
         self.assertIn("skip this step and drop --cacert", steps[0].note)
@@ -281,13 +283,39 @@ class WhatTheHostRuns(unittest.TestCase):
         self.assertIn("crx-lb-02-example-net@<manager>:<certificate>/", steps[0].command)
 
     def test_the_windows_directory_is_closed_to_all_but_administrators_and_system(self) -> None:
-        first, _ = certificate_receivers.key_steps("lb-02.example.net")
-        line = first.windows_command.splitlines()[0]
-        self.assertTrue(line.startswith("mkdir C:\\certs -Force | Out-Null; icacls C:\\certs "))
-        self.assertIn("/inheritance:r", line)
-        self.assertIn("*S-1-5-32-544:(OI)(CI)F", line)
-        self.assertIn("*S-1-5-18:(OI)(CI)F", line)
-        self.assertNotIn("Users", line)
+        prepare = certificate_receivers.WINDOWS_MKDIR
+        self.assertNotIn("\n", prepare)
+        self.assertIn("O:BAG:SYD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)", prepare)
+        self.assertIn("Set-Acl -Path C:\\certs -AclObject $acl -ErrorAction Stop", prepare)
+        self.assertIn("icacls C:\\certs\\* /reset /T /C", prepare)
+        self.assertIn("throw", prepare)
+        self.assertNotIn("Users", prepare)
+
+    def test_every_windows_command_that_writes_follows_the_directory_preparation(self) -> None:
+        prepare = certificate_receivers.WINDOWS_MKDIR
+        commands: list[tuple[str, str]] = [
+            (
+                "password",
+                certificate_receivers.password_step("r", "m.example.net", "pw").windows_command,
+            ),
+            *(("key", step.windows_command) for step in certificate_receivers.key_steps("r")),
+        ]
+        for transport in ("rsync", "sftp", "https"):
+            for fmt in ("pem", "pkcs12"):
+                record_ = record("r", transport=transport, certificates=("app.example.com",))
+                (row,) = self.rows(record_)
+                row = replace(row, holds=(certificate_receivers.Held("app.example.com", fmt),))
+                for step in certificate_receivers.fetch_steps(row, "m.example.net"):
+                    commands.append((f"{transport}/{fmt}", step.windows_command))
+        self.assertGreater(len(commands), 6)
+        for label, command in commands:
+            if not command or "C:\\certs" not in command:
+                continue
+            with self.subTest(label, command=command[:60]):
+                first = command.splitlines()[0]
+                if first.startswith("Get-Content"):
+                    continue
+                self.assertTrue(first.startswith(prepare + "; "), first)
 
     def test_the_key_is_made_on_the_receiver_and_named_after_it_on_both_systems(self) -> None:
         first, second = certificate_receivers.key_steps("lb-02.example.net")
@@ -297,14 +325,15 @@ class WhatTheHostRuns(unittest.TestCase):
         )
         self.assertEqual(
             first.windows_command,
-            certificate_receivers.WINDOWS_MKDIR + "\n"
-            "ssh-keygen -t ed25519 -N '\"\"' -C lb-02.example.net -f C:\\certs\\certfetch",
+            certificate_receivers.windows_prepared(
+                "ssh-keygen -t ed25519 -N '\"\"' -C lb-02.example.net -f C:\\certs\\certfetch"
+            ),
         )
         self.assertEqual(second.command, "cat /root/.ssh/certfetch.pub")
         self.assertEqual(second.windows_command, "Get-Content C:\\certs\\certfetch.pub")
         # The first Windows command makes the directory the rest write into.
         self.assertTrue(
-            first.windows_command.startswith(certificate_receivers.WINDOWS_MKDIR + "\n")
+            first.windows_command.startswith(certificate_receivers.WINDOWS_MKDIR + "; ")
         )
         self.assertEqual(certificate_receivers.WINDOWS_TRANSPORTS, {"sftp"})
 

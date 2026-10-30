@@ -46,6 +46,7 @@ from haprion_ui import (
     db,
     feature_switch,
     metrics,
+    pending,
     poller,
     search_index,
     timing,
@@ -7643,9 +7644,7 @@ class ThePollerFollowsRenamesTheWebDidNotMake(unittest.TestCase):
         long = "n" * 129
         with (
             self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
-            mock.patch.object(
-                poller.pending, "backend_renames", return_value=({"front": long}, [long])
-            ),
+            mock.patch.object(pending, "backend_renames", return_value=({"front": long}, [long])),
             mock.patch.object(poller, "_backend_name", return_value=True),
         ):
             poller.record_objects(

@@ -6,7 +6,7 @@ import unittest
 import unittest.mock
 from typing import Any
 
-from haprion_ui import db, poller
+from haprion_ui import db, pending, poller
 
 HEAD_A = "a" * 40
 HEAD_B = "b" * 40
@@ -82,7 +82,7 @@ class WhatTheCommandLineRenamed(unittest.TestCase):
         long = "r" * 129
 
         with unittest.mock.patch.object(
-            poller.pending,
+            pending,
             "backend_renames",
             return_value=({"web": long, long: "ok", "fine": "good"}, [long, "ok", ""]),
         ):

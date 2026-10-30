@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
@@ -670,16 +670,20 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
     return items
 
 
-def from_traffic_stream(status_rows: Iterable[Any]) -> list[Item]:
+def from_traffic_stream(status_rows: Iterable[Any], *, unread: Collection[str] = ()) -> list[Item]:
     """Each node that drops every traffic record its release logs (review 2026-10-30-igen, R3).
 
     The reading is the engine's (`cluster_status.traffic_stream_problem`), the
     same `haprion-status` prints. Critical: nothing reaches the node's own log
-    or any receiver until it is put right, and nothing else says so.
+    or any receiver until it is put right, and nothing else says so. A cluster
+    whose reading is old (`unread`) is not judged by it: its own row says it
+    was not read (review 2026-10-30, E5).
     """
 
     items: list[Item] = []
     for row in status_rows:
+        if row.cluster in unread:
+            continue
         result = row.result if isinstance(getattr(row, "result", None), Mapping) else {}
         for entry in result.get("nodes") or ():
             if not isinstance(entry, Mapping) or not entry.get("status_ok"):
@@ -704,7 +708,9 @@ def from_traffic_stream(status_rows: Iterable[Any]) -> list[Item]:
     return items
 
 
-def from_log_forwarding(status_rows: Iterable[Any], *, now: datetime) -> list[Item]:
+def from_log_forwarding(
+    status_rows: Iterable[Any], *, now: datetime, unread: Collection[str] = ()
+) -> list[Item]:
     """Each node's receivers whose queue is long, not emptied, or dropped lines (B289).
 
     The reading of the figures is the engine's (`haprion.log_forwarding`), the
@@ -712,10 +718,14 @@ def from_log_forwarding(status_rows: Iterable[Any], *, now: datetime) -> list[It
     for FORWARD_WAITING is the poller's to say (`forward_waiting_since`): on a
     quiet cluster a receiver out of reach shows as a few lines that never leave,
     long before the queue is long (26-10-12, external behind a closed firewall).
+    A cluster whose reading is old (`unread`) says nothing here: the time that
+    has passed since is not time the lines waited (review 2026-10-30, E5).
     """
 
     items: list[Item] = []
     for row in status_rows:
+        if row.cluster in unread:
+            continue
         result = row.result if isinstance(getattr(row, "result", None), Mapping) else {}
         for entry in result.get("nodes") or ():
             if not isinstance(entry, Mapping) or not entry.get("status_ok"):

@@ -728,8 +728,9 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
             traffic_logs.read_freshness(config.traffic_logs.directory, tuple(clusters)).nodes,
             now=now,
         )
-    items += attention.from_log_forwarding(status_rows, now=now)
-    items += attention.from_traffic_stream(status_rows)
+    unread = frozenset(view.cluster for view in board.clusters if view.stale)
+    items += attention.from_log_forwarding(status_rows, now=now, unread=unread)
+    items += attention.from_traffic_stream(status_rows, unread=unread)
     items += attention.from_dashboard(
         board.clusters,
         drift_label=dashboard.VERSION_DRIFT,

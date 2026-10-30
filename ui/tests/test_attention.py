@@ -595,7 +595,7 @@ class ANodeThatDropsItsTrafficStream(unittest.TestCase):
 
     def test_the_dashboard_lists_it(self) -> None:
         source = (Path(attention.__file__).parent / "views.py").read_text()
-        self.assertIn("attention.from_traffic_stream(status_rows)", source)
+        self.assertIn("attention.from_traffic_stream(status_rows, unread=unread)", source)
 
 
 class AQueueThatIsNotEmptied(unittest.TestCase):
@@ -658,6 +658,18 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
         self.assertEqual(since(3, 5), {"graylog": self.NOW.isoformat()})
         self.assertEqual(since(3, 3), {"graylog": earlier.isoformat()})
         self.assertEqual(since(4, 3), {"graylog": earlier.isoformat()})
+
+    def test_a_cluster_read_long_ago_is_not_judged_by_a_queue_that_has_waited_since(self) -> None:
+        """Review 2026-10-30, E5: not read is not "not delivered"."""
+
+        result = self.reading(3, self.NOW - timedelta(minutes=7))
+        row = SimpleNamespace(cluster="external", result=result)
+        shown = attention.from_log_forwarding([row], now=self.NOW)
+        self.assertEqual(len(shown), 1)
+        self.assertEqual(
+            attention.from_log_forwarding([row], now=self.NOW, unread={"external"}), []
+        )
+        self.assertEqual(attention.from_traffic_stream([row], unread={"external"}), [])
 
     def test_a_node_that_said_nothing_keeps_the_waiting_it_had(self) -> None:
         """Review 2026-10-30, E6: one missed reading does not start the time again."""

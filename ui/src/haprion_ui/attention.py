@@ -26,6 +26,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import address_ranges, log_forwarding
+from haprion.cluster_status import traffic_stream_problem
 from haprion.node_package import short_version
 
 from haprion_ui import jobs as jobs_module
@@ -199,6 +200,7 @@ PAGES = {
     "manager": "Dashboard",
     "preparation": "Dashboard",
     "node_package": "Dashboard",
+    "traffic_stream": "Dashboard",
 }
 KINDS = tuple(PAGES)
 
@@ -665,6 +667,40 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
                 link="/logs",
             )
         )
+    return items
+
+
+def from_traffic_stream(status_rows: Iterable[Any]) -> list[Item]:
+    """Each node that drops every traffic record its release logs (review 2026-10-30-igen, R3).
+
+    The reading is the engine's (`cluster_status.traffic_stream_problem`), the
+    same `haprion-status` prints. Critical: nothing reaches the node's own log
+    or any receiver until it is put right, and nothing else says so.
+    """
+
+    items: list[Item] = []
+    for row in status_rows:
+        result = row.result if isinstance(getattr(row, "result", None), Mapping) else {}
+        for entry in result.get("nodes") or ():
+            if not isinstance(entry, Mapping) or not entry.get("status_ok"):
+                continue
+            status = entry.get("status")
+            if not isinstance(status, Mapping):
+                continue
+            reason = traffic_stream_problem(status)
+            if reason is None:
+                continue
+            items.append(
+                Item(
+                    kind="traffic_stream",
+                    severity="critical",
+                    cluster=row.cluster,
+                    subject=str(entry.get("name", "")),
+                    message=f"drops its traffic log: {reason}",
+                    since=None,
+                    link=card_link(row.cluster),
+                )
+            )
     return items
 
 

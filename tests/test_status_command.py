@@ -89,10 +89,12 @@ def node_status(
     forward_file: dict[str, object] | None = None,
     preparation: dict[str, object] | None = None,
     installation: dict[str, object] | None = None,
+    traffic_stream: dict[str, object] | None = None,
 ) -> str:
     return json.dumps(
         {
             **({} if installation is None else {"installation": installation}),
+            **({} if traffic_stream is None else {"traffic_stream": traffic_stream}),
             **({} if forward_file is None else {"forward_file": forward_file}),
             **({} if preparation is None else {"preparation": preparation}),
             **({} if waf_engine is None else {"waf_engine": waf_engine}),
@@ -692,6 +694,37 @@ class CallerTests(HelperFixture):
 
         self.assertEqual(out.count("Forward file:"), 1)
         self.assertIn("Forward file: BEHIND the release - run haprion-deploy", out)
+
+    def test_a_node_that_drops_its_traffic_stream_says_what_to_do(self) -> None:
+        """Review 2026-10-30-igen, R3: what the interface's Needs attention says."""
+
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a",
+                        owner=True,
+                        release_hash=TARGET_HASH,
+                        traffic_stream={"to_socket": False, "marked_only": True, "socket": True},
+                    ),
+                    "node-b": node_status(
+                        "node-b",
+                        owner=False,
+                        release_hash=TARGET_HASH,
+                        traffic_stream={"to_socket": True, "marked_only": True, "socket": True},
+                    ),
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertEqual(out.count("Traffic log:"), 1)
+        self.assertIn(
+            "Traffic log:  DROPPED - its release was published for nodes before this version;"
+            " publish the cluster again",
+            out,
+        )
 
     def test_a_node_to_prepare_again_is_named_with_the_command(self) -> None:
         """B363: the CLI says what the interface's Needs attention says."""

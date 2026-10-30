@@ -517,6 +517,33 @@ def forwarding_current(status: Mapping[str, Any]) -> bool | None:
     return wanted == carried
 
 
+def traffic_stream_problem(status: Mapping[str, Any]) -> str | None:
+    """Why the node drops every traffic record its release logs, or None (review 2026-10-30-igen, R3).
+
+    The reason only, which `haprion-status` and the interface each put in a sentence.
+
+    A node prepared by this version's step 4 keeps a traffic line only when it
+    came in on HAProxy's own socket. A release an older manager published, or
+    one a revert put back, logs the stream elsewhere; the node then drops it
+    until the cluster is published again, and nothing else says so. A node
+    that does not report the field, or logs no stream, says nothing.
+    """
+
+    stream = status.get("traffic_stream")
+    if not isinstance(stream, Mapping):
+        return None
+    if stream.get("to_socket") is True:
+        if stream.get("socket") is False:
+            return (
+                "HAProxy's traffic socket is missing or open to other accounts;"
+                " run haprion-node-prepare on the node"
+            )
+        return None
+    if stream.get("marked_only") is True:
+        return "its release was published for nodes before this version; publish the cluster again"
+    return None
+
+
 def release_complete(status: Mapping[str, Any]) -> bool | None:
     """Did every step after the HAProxy reload succeed on the node?
 

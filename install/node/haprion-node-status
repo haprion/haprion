@@ -15,7 +15,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
-from stat import S_ISREG
+from stat import S_ISREG, S_ISSOCK
 from typing import Any
 
 
@@ -1352,6 +1352,72 @@ def runtime_info() -> tuple[bool, dict[str, Any]]:
 SHM_STATS_FILE = re.compile(r"^\s*shm-stats-file\s+(\S+)\s*(?:#.*)?$")
 
 
+#
+# The traffic stream (B403, review 2026-10-30-igen, R3). Once step 4 of this
+# version has run, the node's rsyslog keeps a traffic line only when it came in
+# on HAProxy's own socket. A release published by an older manager - or one a
+# revert put back - still logs the stream to /dev/log, and every record of it
+# is then dropped on this node until the cluster is published again. The node
+# says what it has; the manager says what that means
+# (`cluster_status.traffic_stream_problem`).
+#
+CURRENT_CONFIG = Path("/etc/haproxy/current")
+TRAFFIC_RULE = Path("/etc/rsyslog.d/48-haprion-traffic.conf")
+TRAFFIC_SOCKET = Path("/var/lib/haproxy/dev/haprion-traffic")
+TRAFFIC_ORIGIN = "$!haprion!origin"
+TRAFFIC_LOG_LINE = re.compile(
+    r"^[ \t]*log[ \t]+(\S+)[ \t].*\bprofile[ \t]+mgd-traffic-json\b", re.MULTILINE
+)
+
+
+def _text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def read_traffic_stream() -> dict[str, Any] | None:
+    """Where the release logs the traffic stream and whether rsyslog here takes it; null for none.
+
+    `to_socket`: every structured `log` line names HAProxy's own socket.
+    `marked_only`: the day file's or the forwarding rule keeps only a line
+    that came in there. `socket`: the socket is there for HAProxy alone.
+    """
+
+    files = [CURRENT_CONFIG / "haproxy.cfg", *sorted((CURRENT_CONFIG / "conf.d").glob("*.cfg"))]
+    targets = [found for path in files for found in TRAFFIC_LOG_LINE.findall(_text(path))]
+    if not targets:
+        return None
+    try:
+        held = TRAFFIC_SOCKET.lstat()
+        owner = f"{TRAFFIC_SOCKET.owner()}:{TRAFFIC_SOCKET.group()}"
+        ready = (
+            S_ISSOCK(held.st_mode) and owner == "haproxy:haproxy" and held.st_mode & 0o777 == 0o660
+        )
+    except (OSError, KeyError):
+        ready = False
+    return {
+        "to_socket": all(target == str(TRAFFIC_SOCKET) for target in targets),
+        "marked_only": any(
+            TRAFFIC_ORIGIN in _text(path) for path in (TRAFFIC_RULE, RSYSLOG_FORWARD)
+        ),
+        "socket": ready,
+    }
+
+
+def traffic_stream_summary(stream: dict[str, Any] | None) -> str:
+    """The traffic stream in one line, for the person standing at the node."""
+
+    if stream is None:
+        return "not logged by this release"
+    if stream["to_socket"]:
+        return "to HAProxy's socket" if stream["socket"] else "DROPPED: HAProxy's socket is missing"
+    if stream["marked_only"]:
+        return "DROPPED: the release logs to /dev/log; publish the cluster again"
+    return "to /dev/log"
+
+
 def shm_stats_path(config_text: str) -> str | None:
     section = None
     for line in config_text.splitlines():
@@ -2077,6 +2143,7 @@ result: dict[str, Any] = {
     "packages": read_packages(),
     "log_forwarding": read_log_forwarding(),
     "forward_file": read_forward_file(),
+    "traffic_stream": read_traffic_stream(),
     "wildcard_listeners": read_wildcard_listeners(),
 }
 
@@ -2115,6 +2182,7 @@ else:
             f"  refused={pool['refused']}  answered={pool['answered']}"
         )
     print(f"Log forwarding:    {forward_file_summary(result['forward_file'])}")
+    print(f"Traffic stream:    {traffic_stream_summary(result['traffic_stream'])}")
     print(f"Every address:     {wildcard_summary(result['wildcard_listeners'])}")
     preparation = result["preparation"]
     print(

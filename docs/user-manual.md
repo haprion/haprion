@@ -3876,6 +3876,11 @@ box is not shown.
 - **Traffic log collection** on a node that failed, has not succeeded for five minutes, or is still
   behind after five runs or with older days waiting. Catching up after a burst is left to the log page's
   own warning.
+- **A node that drops its traffic log**, as critical: the node keeps only traffic lines that came in on
+  HAProxy's own socket, and its release logs them elsewhere - a release published before the node took
+  this version, or one a revert put back. Publish the cluster again. Or the release logs to that socket
+  and the node does not hold it for HAProxy alone: run `sudo haprion-node-prepare` on the node.
+  `haprion-status` says the same on the node's *Traffic log* line.
 - **A traffic log receiver** whose queue on the node has neither emptied nor shrunk for three minutes, or
   holds 10 000 lines or more - with the reason the node's rsyslog gave, when it gave one. One that dropped
   lines in the last hour is critical.
@@ -3986,8 +3991,8 @@ haprion_status_age_seconds{cluster="beta"} 14
 ```
 
 `kind` is one of `backup`, `certificate`, `cluster`, `forwarding`, `job`, `logs`, `manager`, `node`,
-`reading`, `service` and `waf`. Every kind and severity pair is present, even at 0, so an alert
-expression never meets a missing series.
+`node_package`, `preparation`, `reading`, `service`, `traffic_stream` and `waf`. Every kind and
+severity pair is present, even at 0, so an alert expression never meets a missing series.
 
 #### Uptime Kuma
 
@@ -6550,7 +6555,10 @@ skip them. The system's `/dev/log` is not changed. rsyslogd runs under AppArmor,
 allows HAProxy's `dev/log` but not this socket, so step 4 adds a rule for it in
 `/etc/apparmor.d/rsyslog.d/haprion-haproxy-log` and reloads the profile. A node whose step 4 has
 not made the socket, or whose socket other accounts can write, refuses a release that logs to it:
-the deploy fails on that node and says to run `haprion-node-prepare` there first.
+the deploy fails on that node and says to run `haprion-node-prepare` there first. The other way
+round - a node prepared with this release while its configuration was published by an older
+manager - the node drops the traffic log until the cluster is published again, and *Needs
+attention* says so. After an upgrade, publish each cluster once the manager is updated.
 
 The generated configuration names the socket by its full path, `/var/lib/haproxy/dev/haprion-traffic`.
 A HAProxy chrooted in `/var/lib/haproxy` looks that path up inside its chroot, so step 4 puts a link

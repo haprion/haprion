@@ -391,7 +391,10 @@ is dropped. rsyslogd's AppArmor profile gets a rule for the traffic socket in
 chrooted in `/var/lib/haproxy`, step 4 links the same path inside the chroot to the socket. A publish that logs the
 stream refuses a core that chroots HAProxy elsewhere or runs it as an account that may not write the socket
 (`traffic_log_unreachable`). `haprion-pull-deploy` refuses a release that logs to the traffic socket on a node
-where the socket or its link is missing, or the socket is not `haproxy:haproxy` mode `0660`.
+where the socket or its link is missing, or the socket is not `haproxy:haproxy` mode `0660`. The node's status
+reports `traffic_stream`: whether the release logs to the socket, whether the node keeps only marked lines, and
+whether the socket is held. A node that keeps only marked lines while its release logs elsewhere drops the traffic
+log; *Needs attention* lists it until the cluster is published again.
 
 ## Step by step, without haprion-setup
 

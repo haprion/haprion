@@ -448,6 +448,17 @@
             }
           }
         },
+        "traffic_stream": {
+          "description": "Where the release logs the structured traffic stream and whether the node's rsyslog takes it (B403): to_socket when every structured log line names HAProxy's own traffic socket, marked_only when the day file's or the forwarding rule keeps only lines that came in there, socket when that socket is there and writable by the haproxy account alone. With marked_only and not to_socket, or to_socket and not socket, every traffic record is dropped on the node. Null when the release logs no traffic stream, absent from nodes installed before it was reported.",
+          "type": ["object", "null"],
+          "required": ["to_socket", "marked_only", "socket"],
+          "properties": {
+            "to_socket": { "type": "boolean" },
+            "marked_only": { "type": "boolean" },
+            "socket": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
         "forward_file": {
           "description": "The log forwarding the release carries (current/rsyslog/forward.conf) against the one rsyslog reads (/etc/rsyslog.d/haprion/forward.conf), each present or not with its sha256; present null when it could not be looked at, sha256 null when present and unreadable (review 26-10-13, A1). A release without the file asks for none, so an installed file is then behind. Absent from nodes installed before it was reported, which are not held to it.",
           "type": "object",

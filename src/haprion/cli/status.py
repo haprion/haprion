@@ -34,6 +34,7 @@ from haprion.cluster_status import (
     keepalived_state,
     parse_status,
     release_complete,
+    traffic_stream_problem,
 )
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
@@ -324,6 +325,9 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
             writer.write(
                 "  Release:      INCOMPLETE - a step after the reload failed; run haprion-deploy\n"
             )
+        dropped = traffic_stream_problem(status)
+        if dropped is not None:
+            writer.write(f"  Traffic log:  DROPPED - {dropped}\n")
         forwarding = log_forwarding.status_line(status.get("log_forwarding"))
         if forwarding is not None:
             writer.write(f"  Log forward:  {forwarding}\n")

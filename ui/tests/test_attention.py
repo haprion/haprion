@@ -560,6 +560,44 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
         )
 
 
+class ANodeThatDropsItsTrafficStream(unittest.TestCase):
+    """Review 2026-10-30-igen, R3: nodes prepared first, or a revert, drop every record."""
+
+    def items(self, **stream: bool) -> list[Any]:
+        row = SimpleNamespace(
+            cluster="alpha",
+            result={
+                "nodes": [
+                    {"name": "node-a", "status_ok": True, "status": {"traffic_stream": stream}},
+                    {"name": "node-b", "status_ok": True, "status": {"traffic_stream": None}},
+                    {"name": "node-c", "status_ok": True, "status": {}},
+                ]
+            },
+        )
+        return attention.from_traffic_stream([row])
+
+    def test_a_release_from_before_on_a_node_that_keeps_only_marked_lines(self) -> None:
+        items = self.items(to_socket=False, marked_only=True, socket=True)
+        self.assertEqual(
+            [(item.kind, item.severity, item.subject, item.link) for item in items],
+            [("traffic_stream", "critical", "node-a", "/#cluster-alpha")],
+        )
+        self.assertIn("publish the cluster again", items[0].message)
+
+    def test_a_release_to_the_socket_on_a_node_without_it(self) -> None:
+        items = self.items(to_socket=True, marked_only=True, socket=False)
+        self.assertEqual([item.subject for item in items], ["node-a"])
+        self.assertIn("haprion-node-prepare", items[0].message)
+
+    def test_a_stream_that_arrives_is_not_listed(self) -> None:
+        self.assertEqual(self.items(to_socket=True, marked_only=True, socket=True), [])
+        self.assertEqual(self.items(to_socket=False, marked_only=False, socket=False), [])
+
+    def test_the_dashboard_lists_it(self) -> None:
+        source = (Path(attention.__file__).parent / "views.py").read_text()
+        self.assertIn("attention.from_traffic_stream(status_rows)", source)
+
+
 class AQueueThatIsNotEmptied(unittest.TestCase):
     """26-10-12: on a quiet cluster a receiver out of reach is a few lines that never leave."""
 

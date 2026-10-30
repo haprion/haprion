@@ -22,6 +22,7 @@ from typing import Any
 
 import psycopg
 from haprion import exit_codes
+from haprion.cli import arguments
 
 from haprion_ui import (
     backups,
@@ -238,7 +239,7 @@ def command_show(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = arguments.ArgumentParser(
         prog="haprion-settings",
         description="The interface's own settings: External monitoring, features, OIDC. Root only.",
     )

@@ -38,6 +38,7 @@ from typing import Any
 import psycopg
 import yaml
 from haprion import backup_retention, backup_schedule, cluster_settings, exit_codes
+from haprion.cli import arguments
 from haprion.config import ConfigError
 from haprion.digits import is_digits
 
@@ -319,7 +320,7 @@ def command_export(args: argparse.Namespace, *, read: ReadEngine = read_engine) 
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = arguments.ArgumentParser(
         prog="haprion-export",
         description="Write what is set now as the files the apply commands take. Root only.",
     )

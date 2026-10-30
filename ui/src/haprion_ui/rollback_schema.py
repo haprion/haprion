@@ -15,9 +15,10 @@ Exit 0 when the target runs on the schema, 1 with the reason when it does not.
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
+
+from haprion.cli import arguments
 
 from .compatibility import (
     CompatibilityError,
@@ -29,7 +30,7 @@ from .compatibility import (
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = arguments.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--platform-root", required=True, type=Path)
     parser.add_argument("--target", required=True)
     parser.add_argument("--revision", required=True)

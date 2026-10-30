@@ -74,6 +74,20 @@ class TheRootToolsAnswer(unittest.TestCase):
                     self.assertEqual(code, exit_codes.NOT_FOUND)
                     self.assertEqual(json.loads(out)["error"]["code"], "not_found")
 
+    def test_a_mistyped_call_exits_usage_like_the_engine_s(self) -> None:
+        """Review 26-10-30, E8: argparse's own 2 is in no table."""
+
+        from haprion_ui import export_tool
+
+        for main in (admin.main, settings_tool.main, profile_apply.main, export_tool.main):
+            with (
+                self.subTest(tool=main.__module__),
+                mock.patch("sys.stderr", new_callable=io.StringIO),
+                self.assertRaises(SystemExit) as stopped,
+            ):
+                main(["--no-such-flag"])
+            self.assertEqual(stopped.exception.code, exit_codes.USAGE)
+
     def test_without_the_installation_s_database_file(self) -> None:
         with (
             mock.patch("os.geteuid", return_value=0),

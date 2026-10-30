@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from haprion import accounts, haproxy_versions, node_package, node_ssh, status_collect
+from haprion.cli import arguments
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     load_policy,
@@ -806,7 +807,7 @@ def check_traffic_collector(report: Report, *, policy: Path, collector_config: P
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Check all installed Haprion components")
+    parser = arguments.ArgumentParser(description="Check all installed Haprion components")
     parser.add_argument("--platform-root", required=True, type=Path)
     parser.add_argument("--cli-root", required=True, type=Path)
     parser.add_argument("--database", required=True)

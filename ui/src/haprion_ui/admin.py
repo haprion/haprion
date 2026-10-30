@@ -37,6 +37,7 @@ from typing import Any
 
 import psycopg
 from haprion import admin_file, exit_codes
+from haprion.cli import arguments
 
 from haprion_ui import account_apply, auth, config, db, labels, tool_answer, users
 
@@ -550,7 +551,7 @@ COMMANDS = {
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = arguments.ArgumentParser(
         prog="haprion-user",
         description="Manage interface accounts. Root only; passwords are never arguments.",
     )

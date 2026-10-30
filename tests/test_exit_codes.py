@@ -107,10 +107,11 @@ class OneTable(unittest.TestCase):
     def test_every_command_parses_with_the_parser_that_exits_usage(self) -> None:
         """Review 26-10-24, 06-06: argparse's own 2 is in no table."""
 
-        cli = Path(__file__).resolve().parents[1] / "src/haprion/cli"
+        root = Path(__file__).resolve().parents[1]
         own = [
-            path.name
-            for path in sorted(cli.glob("*.py"))
+            f"{path.parent.name}/{path.name}"
+            for directory in (root / "src/haprion/cli", root / "ui/src/haprion_ui")
+            for path in sorted(directory.glob("*.py"))
             if path.name != "arguments.py" and "argparse.ArgumentParser(" in path.read_text()
         ]
         self.assertEqual(own, [])

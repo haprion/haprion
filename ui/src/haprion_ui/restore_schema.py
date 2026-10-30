@@ -18,10 +18,10 @@ points at does not run on, by the rule a rollback uses.
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
+from haprion.cli import arguments
 from haprion.digits import is_digits
 
 from .compatibility import (
@@ -72,7 +72,7 @@ def plan(root: Path, packaged: str, revision: str) -> tuple[str, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = arguments.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--platform-root", required=True, type=Path)
     parser.add_argument("--packaged", required=True)
     parser.add_argument("--revision", required=True)

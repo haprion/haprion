@@ -46,7 +46,7 @@ from typing import Any
 import psycopg
 import yaml
 from haprion import exit_codes, ndes_profiles, safe_yaml
-from haprion.cli import apply_common
+from haprion.cli import apply_common, arguments
 from haprion.config import load_policy
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.dns_profiles import ProfileError
@@ -588,7 +588,7 @@ def command_list(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = arguments.ArgumentParser(
         prog="haprion-profiles",
         description="DNS and NDES profiles for certificate issuance. Root only.",
     )

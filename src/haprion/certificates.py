@@ -229,7 +229,9 @@ def read_reference(root: Path, identifier: str) -> CertificateRef:
         raise CertificateError(f"certificate '{identifier}' is not a PEM file") from exc
 
     try:
-        return CertificateRef(id=identifier, fingerprint=leaf_fingerprint(pem))
+        return CertificateRef(
+            id=identifier, fingerprint=leaf_fingerprint(pem), chain=bundle_fingerprint(pem)
+        )
     except CertificateError as exc:
         raise CertificateError(f"certificate '{identifier}': {exc}") from exc
 

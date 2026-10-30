@@ -1911,7 +1911,9 @@ def read_certificates() -> list[dict[str, Any]]:
                 continue
             if path.stat().st_size > MAX_CERTIFICATE_BYTES:
                 continue
-            fingerprint = leaf_fingerprint(path.read_text(encoding="ascii", errors="strict"))
+            text = path.read_text(encoding="ascii", errors="strict")
+            fingerprint = leaf_fingerprint(text)
+            chain = bundle_fingerprint(text)
         #
         # A file that cannot be read, or is not ASCII, is not a certificate
         # this node can report on; the others still are.
@@ -1919,13 +1921,14 @@ def read_certificates() -> list[dict[str, Any]]:
         except (OSError, ValueError):
             continue
 
-        if fingerprint is None or path.name[: -len(".pem")] in pending:
+        if fingerprint is None or chain is None or path.name[: -len(".pem")] in pending:
             continue
 
         entries.append(
             {
                 "id": path.name[: -len(".pem")],
                 "fingerprint_sha256": fingerprint,
+                "chain_sha256": chain,
                 "valid": certificate_valid(path),
             }
         )

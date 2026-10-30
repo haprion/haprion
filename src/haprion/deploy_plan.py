@@ -109,6 +109,12 @@ class NodeObservation:
     # before authorities existed.
     #
     authorities: tuple[tuple[str, str], ...] | None = None
+    #
+    # The chain fingerprint (id, chain) of each certificate that reported one.
+    # Empty for a node from before the field: its certificates are then
+    # compared by the leaf alone, as they were.
+    #
+    chains: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +224,24 @@ class CertificateRef:
 
     id: str
     fingerprint: str
+    #
+    # The SHA-256 over every certificate block in the file, the leaf and the
+    # intermediates behind it. The leaf alone cannot tell a chain that was
+    # completed from the one it replaced. None where it was not measured
+    # (a CA file's fingerprint already is the whole bundle's).
+    #
+    chain: str | None = None
+
+    def matches(self, leaf: str | None, chain: str | None) -> bool:
+        """Whether a node's copy, as it reports it, is these bytes.
+
+        A node that reports no chain is judged by the leaf alone: an older
+        node against a newer manager is no worse off than before the field.
+        """
+
+        if leaf != self.fingerprint:
+            return False
+        return self.chain is None or chain is None or chain == self.chain
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,10 +277,11 @@ class CertificateTarget:
         if self.authorities and node.authorities is None:
             return None
         carried = dict(node.certificates)
+        chains = dict(node.chains)
         held = dict(node.authorities or ())
-        return all(carried.get(ref.id) == ref.fingerprint for ref in self.certificates) and all(
-            held.get(ref.id) == ref.fingerprint for ref in self.authorities
-        )
+        return all(
+            ref.matches(carried.get(ref.id), chains.get(ref.id)) for ref in self.certificates
+        ) and all(held.get(ref.id) == ref.fingerprint for ref in self.authorities)
 
     def skip_reason(self, node: NodeObservation) -> str:
         return f"{node.name} already has the referenced certificates; nothing to do"
@@ -323,13 +348,20 @@ class CertificateGap:
 
 
 def _behind(
-    carried: tuple[tuple[str, str], ...], wanted: tuple[CertificateRef, ...]
+    carried: tuple[tuple[str, str], ...],
+    wanted: tuple[CertificateRef, ...],
+    chains: tuple[tuple[str, str], ...] = (),
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """The IDs a node lacks and the IDs it carries as other bytes, in `wanted` order."""
 
     held = dict(carried)
+    reported = dict(chains)
     missing = tuple(ref.id for ref in wanted if ref.id not in held)
-    stale = tuple(ref.id for ref in wanted if ref.id in held and held[ref.id] != ref.fingerprint)
+    stale = tuple(
+        ref.id
+        for ref in wanted
+        if ref.id in held and not ref.matches(held[ref.id], reported.get(ref.id))
+    )
     return missing, stale
 
 
@@ -363,7 +395,7 @@ def certificate_gaps(
         missing_authorities: tuple[str, ...] = ()
         stale_authorities: tuple[str, ...] = ()
         if node.certificates is not None:
-            missing, stale = _behind(node.certificates, certificates.certificates)
+            missing, stale = _behind(node.certificates, certificates.certificates, node.chains)
         if node.authorities is not None:
             missing_authorities, stale_authorities = _behind(
                 node.authorities, certificates.authorities

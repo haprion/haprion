@@ -260,6 +260,19 @@ class ResultTests(unittest.TestCase):
             ),
         )
 
+    def test_a_published_certificate_carries_the_fingerprint_of_its_whole_chain(self) -> None:
+        leaf = _pem("alpha.test")
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "alpha.pem").write_text(leaf, encoding="ascii")
+            short = self._result(directory, ("alpha",))["certificates"][0]
+            (Path(directory) / "alpha.pem").write_text(
+                leaf + _pem("intermediate.test"), encoding="ascii"
+            )
+            full = self._result(directory, ("alpha",))["certificates"][0]
+
+        self.assertEqual(short["fingerprint_sha256"], full["fingerprint_sha256"])
+        self.assertNotEqual(short["chain_sha256"], full["chain_sha256"])
+
     def test_a_referenced_certificate_that_is_missing_is_listed_as_unusable(self) -> None:
         #
         # This is the case the listing is most needed for: cert-deploy refuses
@@ -625,6 +638,25 @@ class RegistryListingTests(unittest.TestCase):
             result = self._run(root, registry)
 
         self.assertEqual(result["certificates"][0]["measured_at"], "source")
+
+    def test_the_chain_fingerprint_follows_every_certificate_block_in_the_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "live" / "lineage"
+            source.mkdir(parents=True)
+            leaf = _pem("one.example.net")
+            registry = self._registry(
+                root, certificates={"one": self._entry("one", lineage="lineage")}
+            )
+            (source / "fullchain.pem").write_text(leaf, encoding="ascii")
+            short = self._run(root, registry)["certificates"][0]
+            (source / "fullchain.pem").write_text(
+                leaf + _pem("intermediate.example.net"), encoding="ascii"
+            )
+            full = self._run(root, registry)["certificates"][0]
+
+        self.assertEqual(short["fingerprint_sha256"], full["fingerprint_sha256"])
+        self.assertNotEqual(short["chain_sha256"], full["chain_sha256"])
 
     def test_a_receiver_only_import_without_material_is_not_read_from_anywhere_else(
         self,

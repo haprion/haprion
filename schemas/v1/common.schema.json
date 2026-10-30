@@ -256,6 +256,11 @@
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
+        "chain_sha256": {
+          "description": "SHA-256 over every certificate block in the file, the leaf and the intermediates behind it. Absent where it could not be measured.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "common_name": {
           "type": [
             "string",
@@ -311,6 +316,11 @@
           "maxLength": 255
         },
         "fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "chain_sha256": {
+          "description": "SHA-256 over every certificate block in the file, the leaf and the intermediates behind it. The leaf's fingerprint cannot tell a completed chain from the one it replaced. Absent from nodes installed before it was reported; the certificate is then judged by the leaf alone.",
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },

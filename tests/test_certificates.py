@@ -157,6 +157,18 @@ class ReadTests(unittest.TestCase):
         self.assertEqual(reference.id, "example-net")
         self.assertEqual(reference.fingerprint, hashlib.sha256(LEAF).hexdigest())
 
+    def test_a_chain_completed_behind_the_same_leaf_changes_the_chain_and_not_the_leaf(
+        self,
+    ) -> None:
+        self.write("example-net", published_pem(chain=False))
+        short = read_reference(self.root, "example-net")
+        self.write("example-net", published_pem())
+        full = read_reference(self.root, "example-net")
+
+        self.assertEqual(short.fingerprint, full.fingerprint)
+        self.assertIsNotNone(short.chain)
+        self.assertNotEqual(short.chain, full.chain)
+
     def test_a_missing_certificate_says_it_is_referenced_but_absent(self) -> None:
         with self.assertRaises(CertificateError) as raised:
             read_reference(self.root, "example-net")

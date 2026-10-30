@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -130,6 +130,12 @@ class CertificateView:
     # is the file it is about. Present so one row template serves both views.
     #
     material_note: str | None = None
+    #
+    # The SHA-256 over every certificate block in the published file, which
+    # the leaf's fingerprint cannot stand in for: the same leaf with another
+    # chain behind it is another file. Empty where the engine did not say.
+    #
+    chain: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +231,11 @@ class RegistryCertificateView:
     #
     exportable: bool = False
     fullchain_pem: str | None = None
+    #
+    # The SHA-256 over every certificate block in the measured file; see
+    # `CertificateView.chain`.
+    #
+    chain: str = ""
 
     @property
     def csr_pending(self) -> bool:
@@ -473,6 +484,7 @@ def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
         lifecycle=lifecycle,
         lifecycle_label=_lifecycle_label(lifecycle),
         fingerprint=_text(entry.get("fingerprint_sha256"), ""),
+        chain=_text(entry.get("chain_sha256"), ""),
         referenced=entry.get("referenced_by_cluster") is True,
         usable=True,
         problem=None,
@@ -769,15 +781,41 @@ def _placed(
         label, detail, tone = "Unreadable", certificate.problem or "Could not be read", "critical"
     else:
         label, detail, tone = _node_state(
-            certificate.identifier, certificate.fingerprint, [carriage] if carriage else []
+            certificate.identifier,
+            certificate.fingerprint,
+            [carriage] if carriage else [],
+            chain=certificate.chain,
         )
     return replace(
         certificate, targets=placed, state_label=label, state_detail=detail, state_tone=tone
     )
 
 
+def holds_other_bytes(
+    nodes: NodeCarriage, identifier: str, fingerprint: str, chain: str = ""
+) -> bool:
+    """Whether a cluster's nodes report this certificate as other bytes than the manager's.
+
+    The leaf decides first. Where the manager knows the chain and a node reports
+    one, that decides too: the same leaf behind another chain is the file a
+    chain repair replaced. A node that reports no chain is judged by the leaf.
+    """
+
+    if fingerprint and any(
+        value != fingerprint for value in nodes.fingerprints.get(identifier, frozenset())
+    ):
+        return True
+    return bool(chain) and any(
+        value != chain for value in nodes.chains.get(identifier, frozenset())
+    )
+
+
 def _node_state(
-    identifier: str, fingerprint: str, carriages: Iterable[NodeCarriage | None]
+    identifier: str,
+    fingerprint: str,
+    carriages: Iterable[NodeCarriage | None],
+    *,
+    chain: str = "",
 ) -> tuple[str, str, Tone]:
     """What the given clusters' nodes report carrying, said without overreaching.
 
@@ -791,8 +829,7 @@ def _node_state(
     for nodes in carriages:
         if nodes is None:
             continue
-        held = nodes.fingerprints.get(identifier, frozenset())
-        if fingerprint and any(value != fingerprint for value in held):
+        if holds_other_bytes(nodes, identifier, fingerprint, chain):
             wrong = True
         on += nodes.holders.get(identifier, 0)
         total += nodes.reporting
@@ -832,6 +869,11 @@ class NodeCarriage:
     reporting: int
     holders: Mapping[str, int]
     fingerprints: Mapping[str, frozenset[str]]
+    #
+    # The chain fingerprint of each certificate that reported one, by ID. A
+    # node from before the field adds nothing here.
+    #
+    chains: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
 
 def _carriage(readings: Iterable[Any]) -> dict[str, NodeCarriage]:
@@ -843,6 +885,7 @@ def _carriage(readings: Iterable[Any]) -> dict[str, NodeCarriage]:
         reporting = 0
         holders: dict[str, int] = {}
         fingerprints: dict[str, set[str]] = {}
+        chains: dict[str, set[str]] = {}
         for value in nodes:
             #
             # Under the node's own status document, where the status contract
@@ -873,10 +916,13 @@ def _carriage(readings: Iterable[Any]) -> dict[str, NodeCarriage]:
                     continue
                 holders[identifier] = holders.get(identifier, 0) + 1
                 fingerprints.setdefault(identifier, set()).add(fingerprint)
+                if chain := _text(entry.get("chain_sha256"), ""):
+                    chains.setdefault(identifier, set()).add(chain)
         carriage[reading.cluster] = NodeCarriage(
             reporting=reporting,
             holders=holders,
             fingerprints={key: frozenset(value) for key, value in fingerprints.items()},
+            chains={key: frozenset(value) for key, value in chains.items()},
         )
     return carriage
 
@@ -943,6 +989,7 @@ def _registry_state(
     fingerprint: str,
     carriage: Mapping[str, NodeCarriage],
     taken_out: Mapping[str, TakenOut] | None = None,
+    chain: str = "",
 ) -> tuple[str, str, Tone]:
     """What is true about this certificate's copies, said without overreaching.
 
@@ -1043,7 +1090,10 @@ def _registry_state(
                 "warning",
             )
         label, detail, tone = _node_state(
-            identifier, fingerprint, (carriage.get(cluster) for cluster in clusters)
+            identifier,
+            fingerprint,
+            (carriage.get(cluster) for cluster in clusters),
+            chain=chain,
         )
         #
         # The receivers are judged even when the certificate goes to a
@@ -1160,6 +1210,7 @@ def _registry_certificate(
         text = pending_request.get("csr_pem")
         csr_pem = text if isinstance(text, str) and text else None
     fingerprint = _text(entry.get("fingerprint_sha256"), "")
+    chain = _text(entry.get("chain_sha256"), "") if kind != "authority" else ""
     if kind == "authority":
         #
         # A node reports a CA file by every certificate in it (B276), so the
@@ -1186,6 +1237,7 @@ def _registry_certificate(
         fingerprint=fingerprint,
         carriage=carriage,
         taken_out=taken_out,
+        chain=chain,
     )
     cluster_targets = tuple(target.name for target in targets if target.kind == "cluster")
     older_copy_clusters = tuple(
@@ -1193,8 +1245,7 @@ def _registry_certificate(
         for cluster in cluster_targets
         if (nodes := carriage.get(cluster)) is not None
         and fingerprint
-        and (held := nodes.fingerprints.get(identifier, frozenset()))
-        and any(value != fingerprint for value in held)
+        and holds_other_bytes(nodes, identifier, fingerprint, chain)
     )
     return RegistryCertificateView(
         identifier=identifier,
@@ -1232,6 +1283,7 @@ def _registry_certificate(
         fullchain_pem=_chain(entry.get("fullchain_pem"))
         if entry.get("exportable") is True
         else None,
+        chain=chain,
     )
 
 

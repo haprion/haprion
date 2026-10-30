@@ -207,6 +207,11 @@
           "enum": ["source", "distribution", null]
         },
         "fingerprint_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "chain_sha256": {
+          "description": "SHA-256 over every certificate block in the measured file; what a node reports as chain_sha256 for its copy.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "common_name": { "type": ["string", "null"], "maxLength": 255 },
         "sans": { "type": "array", "items": { "type": "string", "maxLength": 255 } },
         "not_before": { "type": "string", "format": "date-time" },

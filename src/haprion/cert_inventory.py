@@ -321,6 +321,9 @@ def _one(
         entry["validation_error"] = str(exc)
         return entry
 
+    chain = _chain(certificate_path(root, identifier))
+    if chain is not None:
+        entry["chain_sha256"] = chain
     entry.update(
         deployable=True,
         fingerprint_sha256=fingerprint,
@@ -351,6 +354,20 @@ def _unmeasured(now: datetime) -> dict[str, Any]:
         "lifecycle": "static",
         "valid": False,
     }
+
+
+def _chain(path: Path) -> str | None:
+    """The SHA-256 over every certificate block in the file, or None.
+
+    What a node reports as `chain_sha256` for its copy. The leaf's fingerprint
+    is the same for a chain that was completed and the one it replaced; this
+    is not. The private key is not a certificate block and is never read as one.
+    """
+
+    with contextlib.suppress(OSError, UnicodeDecodeError, CertificateError):
+        if path.stat().st_size <= MAX_CERTIFICATE_BYTES:
+            return bundle_fingerprint(path.read_text(encoding="ascii", errors="strict"))
+    return None
 
 
 def _measure(path: Path) -> tuple[str, Facts]:
@@ -563,6 +580,13 @@ def registry_result(
             row["validation_error"] = measured
         else:
             fingerprint, facts, row["measured_at"] = measured
+            measured_file = (
+                source_directory(entry, live=live, store=store) / FULLCHAIN
+                if row["measured_at"] == "source"
+                else _distributed(certificate_root, entry, entry.clusters[0])
+            )
+            if (chain_sha256 := _chain(measured_file)) is not None:
+                row["chain_sha256"] = chain_sha256
             #
             # The chain an exportable certificate is downloaded as (B255). It
             # is public - the same bytes any client of the device is shown -

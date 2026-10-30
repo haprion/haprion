@@ -24,9 +24,11 @@ from haprion import exit_codes
 from haprion.deploy_plan import (
     CertificateRef,
     CertificateTarget,
+    ClusterObservation,
     NodeObservation,
     Outcome,
     VipState,
+    certificate_gaps,
 )
 from tests.plan_harness import drive, pair
 
@@ -323,6 +325,54 @@ class ResultFieldsTests(unittest.TestCase):
                 ]
             },
         )
+
+
+class ASameLeafWithAnotherChainIsAnotherFile(unittest.TestCase):
+    """E03: completing the intermediates behind a leaf must reach the nodes."""
+
+    OLD_CHAIN = "1" * 64
+    NEW_CHAIN = "2" * 64
+    TARGET = CertificateTarget(
+        certificates=(CertificateRef(id="example-net", fingerprint=WILDCARD, chain=NEW_CHAIN),)
+    )
+
+    def observed(self, chains: tuple[tuple[str, str], ...]) -> NodeObservation:
+        return NodeObservation(
+            name="node-a",
+            status_ok=True,
+            certificates=(("example-net", WILDCARD),),
+            chains=chains,
+        )
+
+    def test_a_node_holding_the_old_chain_is_behind(self) -> None:
+        node = self.observed((("example-net", self.OLD_CHAIN),))
+
+        self.assertIs(self.TARGET.is_current(node), False)
+        gaps = certificate_gaps(ClusterObservation((node,), VipState.SINGLE_OWNER), self.TARGET)
+        self.assertEqual([gap.stale for gap in gaps], [("example-net",)])
+
+    def test_a_node_holding_the_new_chain_is_current(self) -> None:
+        node = self.observed((("example-net", self.NEW_CHAIN),))
+
+        self.assertIs(self.TARGET.is_current(node), True)
+
+    def test_a_node_that_reports_no_chain_is_judged_by_the_leaf_as_before(self) -> None:
+        self.assertIs(self.TARGET.is_current(self.observed(())), True)
+
+
+class TheChainIsReadFromTheNodesStatus(unittest.TestCase):
+    def test_only_the_entries_that_report_one_are_kept(self) -> None:
+        from haprion.cluster_status import _chains
+
+        status = {
+            "certificates": [
+                {"id": "example-net", "fingerprint_sha256": WILDCARD, "chain_sha256": ROTATED},
+                {"id": "example-com", "fingerprint_sha256": INTERNAL},
+            ]
+        }
+
+        self.assertEqual(_chains(status), (("example-net", ROTATED),))
+        self.assertEqual(_chains({}), ())
 
 
 class TheClustersCaFilesCount(unittest.TestCase):

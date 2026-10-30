@@ -181,6 +181,12 @@ class NodeStatus:
     #
     authorities: tuple[tuple[str, str], ...] | None = None
     #
+    # The certificates' chain fingerprints as the node reports them, as (id,
+    # chain) for each one that did. Empty on a node whose status script
+    # predates the field; its certificates are then judged by the leaf alone.
+    #
+    chains: tuple[tuple[str, str], ...] = ()
+    #
     # Ports another program holds on every address of the node, and so on its
     # VIPs (26-10-15), as (protocol, port, program or None). None on a node that
     # did not say - an older status script, or `ss` it could not read.
@@ -221,6 +227,7 @@ class ClusterStatus:
                     keepalived_active=node.keepalived_active,
                     certificates=node.certificates,
                     authorities=node.authorities,
+                    chains=node.chains,
                 )
                 for node in self.nodes
             ),
@@ -270,6 +277,28 @@ def _certificates(
         fingerprint = _text(item.get("fingerprint_sha256"))
         if identifier is not None and fingerprint is not None:
             pairs.append((identifier, fingerprint))
+    return tuple(sorted(pairs))
+
+
+def _chains(status: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    """The chain fingerprint each carried certificate reports, where it does.
+
+    A node reports the SHA-256 over every certificate block in the file next
+    to the leaf's (`chain_sha256`), because two files can share a leaf and
+    differ in the intermediates behind it. An entry without it is left out,
+    and the leaf alone then judges that certificate.
+    """
+
+    entries = status.get("certificates")
+    if not isinstance(entries, list):
+        return ()
+    pairs = []
+    for entry in entries:
+        item = _mapping(entry)
+        identifier = _text(item.get("id"))
+        chain = _text(item.get("chain_sha256"))
+        if identifier is not None and chain is not None:
+            pairs.append((identifier, chain))
     return tuple(sorted(pairs))
 
 
@@ -618,6 +647,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         keepalived_active=_flag(_mapping(status.get("keepalived")).get("active")),
         certificates=_certificates(status),
         authorities=_certificates(status, "authorities"),
+        chains=_chains(status),
         servers=_servers(status),
         frontends=_frontends(status),
         peers=_peers(status),

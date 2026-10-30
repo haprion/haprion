@@ -986,6 +986,36 @@ class TheStateIsReadFromTheContractsShape(unittest.TestCase):
         self.assertEqual(view.clusters[0].certificates[0].state_label, "On all 2 nodes")
 
 
+class ANodeHoldingAnotherChainHoldsAnOlderCopy(unittest.TestCase):
+    """E03: the same leaf behind another chain is the file a chain repair replaced."""
+
+    def view(self, node_chain: str | None) -> tuple[str, str]:
+        node_entry = node(("example.com", "c" * 64))
+        node_status = cast(dict[str, Any], node_entry["status"])
+        if node_chain is not None:
+            node_status["certificates"][0]["chain_sha256"] = node_chain
+        listed = certificate(fingerprint="c" * 64)
+        listed["chain_sha256"] = "1" * 64
+        row = registered(fingerprint="c" * 64)
+        row["chain_sha256"] = "1" * 64
+        view = overview(
+            with_registry(reading(certificates=[listed]), row), status=(status(node_entry),)
+        )
+        return (
+            registry_of(view).certificates[0].state_label,
+            view.clusters[0].certificates[0].state_label,
+        )
+
+    def test_another_chain_is_an_older_copy_in_both_views(self) -> None:
+        self.assertEqual(self.view("2" * 64), ("Nodes hold an older copy",) * 2)
+
+    def test_the_same_chain_is_current(self) -> None:
+        self.assertEqual(self.view("1" * 64), ("On the node",) * 2)
+
+    def test_a_node_that_reports_no_chain_is_judged_by_the_leaf(self) -> None:
+        self.assertEqual(self.view(None), ("On the node",) * 2)
+
+
 class GettingStartedCountsWhatAProxyCouldServe(unittest.TestCase):
     """Imported and CSR-signed certificates count, wherever they came from (review 26-10-24, 12-08).
 

@@ -219,7 +219,7 @@ restore_previous() {
     settle_files 0
     warn "restoring UI release ${previous_id}"
     if last_proved_current || "$rollback" --to "$previous_id"; then
-        ./check-compatibility && return 0
+        ./check-compatibility --skip-nodes && return 0
         return 2
     fi
     candidate_current || return 1
@@ -437,7 +437,7 @@ if [[ -e /etc/nginx/sites-available/haprion ]]; then
 fi
 
 step "Proving the running installation"
-if ! ./check-compatibility; then
+if ! ./check-compatibility --skip-nodes; then
     undo_and_die "the final compatibility check failed"
 fi
 files_settled=yes

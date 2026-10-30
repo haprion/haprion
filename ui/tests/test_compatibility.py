@@ -1271,6 +1271,47 @@ class FrozenSchemaTests(unittest.TestCase):
         self.assertIn("did not answer", printed)
         self.assertIn("PASS  node/alpha/node-b", printed)
 
+    def test_a_helper_slower_than_the_check_waits_is_a_warning_not_a_traceback(self) -> None:
+        """Review 26-10-30, U1: `TimeoutExpired` ended the check, and a final check rolled back."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            helper = Path(raw) / "slow-helper"
+            helper.write_text("#!/bin/sh\nexec sleep 5\n")
+            helper.chmod(0o755)
+            report = compatibility.Report()
+            with (
+                mock.patch.object(compatibility, "NODE_CALL_TIMEOUT_SECONDS", 0.5),
+                contextlib.redirect_stdout(io.StringIO()) as printed,
+            ):
+                compatibility.check_cluster_nodes(
+                    report, cluster="alpha", helper=helper, required_api=1
+                )
+        self.assertEqual(report.failures, 0)
+        self.assertIn("WARN  nodes/alpha", printed.getvalue())
+        self.assertIn("gave no answer within 0.5 seconds", printed.getvalue())
+
+    def test_the_wait_for_the_helper_outlasts_the_helper_s_own_limits(self) -> None:
+        from haprion import node_ssh, status_collect
+
+        self.assertGreater(
+            compatibility.NODE_CALL_TIMEOUT_SECONDS,
+            status_collect.STATUS_TIMEOUT_SECONDS + node_ssh.STATUS_CONNECT_TIMEOUT_SECONDS,
+        )
+
+    def test_a_service_or_database_command_that_hangs_fails_with_a_sentence(self) -> None:
+        report = compatibility.Report()
+        timed_out = compatibility.CommandTimedOut(["/usr/bin/systemctl"], 30)
+        with (
+            mock.patch.object(compatibility, "_command", side_effect=timed_out),
+            contextlib.redirect_stdout(io.StringIO()) as printed,
+        ):
+            compatibility.check_service(report, unit="haprion-web", release=Path("/x"))
+            with self.assertRaises(compatibility.CompatibilityError) as raised:
+                compatibility.database_revision("role", "db")
+        self.assertEqual(report.failures, 1)
+        self.assertIn("gave no answer within 30 seconds", printed.getvalue())
+        self.assertIn("gave no answer within 30 seconds", str(raised.exception))
+
     def test_a_node_that_answers_without_its_metadata_still_fails(self) -> None:
         failures, printed = self.nodes_checked({"name": "node-a", "reachable": True, "status": {}})
         self.assertEqual(failures, 1)

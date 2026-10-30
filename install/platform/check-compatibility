@@ -3,7 +3,10 @@
 # Read all independently installed parts as one compatibility report.
 #
 #     sudo ./check-compatibility [--release <release-id>] [--before-migration | --first-install]
-#                                [--rollback-to <release-id>]
+#                                [--rollback-to <release-id>] [--skip-nodes]
+#
+# --skip-nodes leaves the nodes unasked: the proof after a switch or a restore
+# is the interface release's to give, and the nodes were asked before it.
 #
 # --first-install is the check before a first installation's release is
 # activated: the worker unit, sudo rules and helper sockets come from step 07,
@@ -29,6 +32,7 @@ need_root
 release_id=""
 before_migration=0
 first_install=0
+skip_nodes=0
 rollback_to=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -45,12 +49,16 @@ while [[ $# -gt 0 ]]; do
             first_install=1
             shift
             ;;
+        --skip-nodes)
+            skip_nodes=1
+            shift
+            ;;
         --rollback-to)
             [[ -n "${2:-}" ]] || die "--rollback-to needs a release id"
             rollback_to="$2"
             shift 2
             ;;
-        *) die "usage: $(basename "$0") [--release <release-id>] [--before-migration | --first-install] [--rollback-to <release-id>]" ;;
+        *) die "usage: $(basename "$0") [--release <release-id>] [--before-migration | --first-install] [--rollback-to <release-id>] [--skip-nodes]" ;;
     esac
 done
 [[ "$before_migration" -eq 0 || -n "$release_id" ]] \
@@ -80,6 +88,9 @@ if [[ -n "$rollback_to" ]]; then
 fi
 if [[ "$first_install" -eq 1 ]]; then
     extra_args+=(--first-install)
+fi
+if [[ "$skip_nodes" -eq 1 ]]; then
+    extra_args+=(--skip-nodes)
 fi
 
 CLI_ROOT="${CLI_ROOT:-/opt/haprion}"

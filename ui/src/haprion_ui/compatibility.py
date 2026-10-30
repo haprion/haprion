@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from haprion import accounts, haproxy_versions, node_package
+from haprion import accounts, haproxy_versions, node_package, node_ssh, status_collect
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     load_policy,
@@ -462,24 +462,64 @@ def check_socket(report: Report, *, helper: str, socket_path: Path) -> None:
         report.fail(f"{helper} socket", f"{socket_path} is not a socket")
 
 
-def _command(argv: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - every executable is fixed by the installation
-        argv,
-        input=input_text,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=30,
-        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
-    )
+#
+# The status helper's own limits are the status read's (`STATUS_TIMEOUT_SECONDS`
+# for the whole read of a node, and the connect wait before it); the call that
+# waits for the helper waits longer, so that a slow node is the helper's answer
+# - `reachable: false` - and not an exception here (review 26-10-30, U1).
+#
+NODE_CALL_MARGIN_SECONDS = 15
+NODE_CALL_TIMEOUT_SECONDS = (
+    status_collect.STATUS_TIMEOUT_SECONDS
+    + node_ssh.STATUS_CONNECT_TIMEOUT_SECONDS
+    + NODE_CALL_MARGIN_SECONDS
+)
+COMMAND_TIMEOUT_SECONDS = 30
+
+
+class CommandTimedOut(Exception):
+    """A command the check ran did not finish within its limit."""
+
+    def __init__(self, argv: list[str], seconds: float) -> None:
+        super().__init__(f"{Path(argv[0]).name} gave no answer within {seconds:g} seconds")
+        self.seconds = seconds
+
+
+def _command(
+    argv: list[str],
+    *,
+    input_text: str | None = None,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
+    limit = COMMAND_TIMEOUT_SECONDS if timeout is None else timeout
+    try:
+        return subprocess.run(  # noqa: S603 - every executable is fixed by the installation
+            argv,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=limit,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CommandTimedOut(argv, limit) from exc
 
 
 def check_service(report: Report, *, unit: str, release: Path) -> None:
-    active = _command([SYSTEMCTL, "is-active", unit])
+    try:
+        active = _command([SYSTEMCTL, "is-active", unit])
+    except CommandTimedOut as exc:
+        report.fail(unit, str(exc))
+        return
     if active.returncode != 0 or active.stdout.strip() != "active":
         report.fail(unit, "not active")
         return
-    pid_result = _command([SYSTEMCTL, "show", unit, "--property=MainPID", "--value"])
+    try:
+        pid_result = _command([SYSTEMCTL, "show", unit, "--property=MainPID", "--value"])
+    except CommandTimedOut as exc:
+        report.fail(unit, str(exc))
+        return
     pid = pid_result.stdout.strip()
     if pid_result.returncode != 0 or not is_digits(pid) or pid == "0":
         report.fail(unit, "has no main process")
@@ -543,9 +583,21 @@ def check_worker_sandbox(
 
 
 def database_revision(role: str, database: str) -> str:
-    completed = _command(
-        [PSQL, "-U", role, "-d", database, "-qtAX", "-c", "select version_num from alembic_version"]
-    )
+    try:
+        completed = _command(
+            [
+                PSQL,
+                "-U",
+                role,
+                "-d",
+                database,
+                "-qtAX",
+                "-c",
+                "select version_num from alembic_version",
+            ]
+        )
+    except CommandTimedOut as exc:
+        raise CompatibilityError(f"database revision query: {exc}") from exc
     if completed.returncode != 0:
         raise CompatibilityError(completed.stderr.strip() or "database revision query failed")
     revision = completed.stdout.strip()
@@ -629,7 +681,14 @@ def check_cluster_nodes(
         },
         separators=(",", ":"),
     )
-    completed = _command([str(helper)], input_text=request)
+    try:
+        completed = _command([str(helper)], input_text=request, timeout=NODE_CALL_TIMEOUT_SECONDS)
+    except CommandTimedOut as exc:
+        report.warn(
+            f"nodes/{cluster}",
+            f"{exc}; what its nodes run is unknown - check again when they answer",
+        )
+        return
     try:
         envelope = json.loads(completed.stdout)
     except json.JSONDecodeError:
@@ -792,6 +851,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # which runs after activation, so they are left to the check after it.
     #
     parser.add_argument("--first-install", action="store_true")
+    #
+    # The nodes left unasked: the check after a switch or a restore, where the
+    # interface's own release decides and the nodes were asked before the
+    # migration (review 26-10-30, U1).
+    #
+    parser.add_argument("--skip-nodes", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -1116,13 +1181,19 @@ def main(argv: list[str] | None = None) -> int:
             policy=args.runtime_policy,
             collector_config=args.collector_config,
         )
+    if args.skip_nodes:
+        print("  SKIP  node installations   asked before the migration")
+        clusters: list[str] = []
+    else:
+        clusters = list(args.clusters)
     helper = cli_release / "bin/haprion-status-helper"
-    try:
-        carried = node_package.release_package(cli_release)
-    except node_package.PackageError as exc:
-        report.warn("node package", f"the CLI release's node package cannot be read: {exc}")
-        carried = None
-    for cluster in args.clusters:
+    carried = None
+    if not args.skip_nodes:
+        try:
+            carried = node_package.release_package(cli_release)
+        except node_package.PackageError as exc:
+            report.warn("node package", f"the CLI release's node package cannot be read: {exc}")
+    for cluster in clusters:
         check_cluster_nodes(
             report,
             cluster=cluster,

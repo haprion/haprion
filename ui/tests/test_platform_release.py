@@ -222,6 +222,18 @@ class CoordinatedUpdateTests(unittest.TestCase):
                         f"{match.group(1)}systemctl reset-failed {match.group(2)} 2>/dev/null || true",
                     )
 
+    def test_the_proofs_after_the_switch_leave_the_nodes_to_the_check_before_it(self) -> None:
+        """Review 26-10-30, U1: a slow node rolled back a release that worked."""
+
+        self.assertIn(
+            "./check-compatibility --skip-nodes && return 0", self.functions("restore_previous")
+        )
+        self.assertIn("if ! ./check-compatibility --skip-nodes; then", self.update)
+        before = re.findall(r"^\./check-compatibility --release .*$", self.update, re.M)
+        self.assertEqual(len(before), 2)
+        for line in before:
+            self.assertNotIn("--skip-nodes", line)
+
     def test_both_post_switch_failures_restore_the_previous_release(self) -> None:
         self.assertEqual(self.update.count('    undo_and_die "'), 2)
         self.assertIn('"$rollback" --to "$previous_id"', self.update)
@@ -703,7 +715,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         and never the release just
         activated or the one it replaced."""
 
-        final_check = self.update.index("if ! ./check-compatibility; then")
+        final_check = self.update.index("if ! ./check-compatibility --skip-nodes; then")
         prune = self.update.index('keep="${RELEASES_KEPT:-10}"')
         self.assertLess(final_check, prune)
         self.assertNotIn("RELEASES_KEPT:-3", self.update)
@@ -1225,6 +1237,14 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
                 code, errors = self.check(*refused, module="new")
                 self.assertEqual(code, 1)
                 self.assertIn("ERROR", errors)
+
+    def test_the_nodes_are_left_unasked_on_request(self) -> None:
+        code, errors = self.check("--skip-nodes", module="new")
+        self.assertEqual(code, 0, errors)
+        self.assertIn("--skip-nodes", self.recorded())
+        code, errors = self.check(module="new")
+        self.assertEqual(code, 0, errors)
+        self.assertNotIn("--skip-nodes", self.recorded())
 
     def test_the_release_the_package_installed_checks_the_current_one(self) -> None:
         """Review 26-10-29, A01: after a rollback the current release is older.

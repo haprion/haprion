@@ -12,6 +12,7 @@ import unittest
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
@@ -227,12 +228,14 @@ class Site:
         spec: cluster_definition.Definition | None = None,
         ask: AskNode | None = None,
         addresses: Any = None,
+        join_node: Any = None,
     ) -> Any:
         return cluster_definition.add(
             self.policy,
             self.runtime(),
             spec or self.spec(),
             ask=ask or answering_as("gamma"),
+            join_node=join_node,
             locations=self.locations,
             places=self.places,
             tools=self.tools,
@@ -448,6 +451,66 @@ class CreatingACluster(unittest.TestCase):
             self.assertFalse((site.config_root / "gamma").exists())
             self.assertFalse((site.publish_root / "gamma").exists())
             self.assertFalse((site.backup_root / "node-c").exists())
+
+    def test_nodes_a_rolled_back_create_joined_are_not_joined_again(self) -> None:
+        """Review 26-10-30, E2: node-c joined, node-d failed, the block of node-c is used up."""
+
+        from tests.test_node_join_manager import PRIVATE
+
+        blocks = [
+            node_enrollment.render(
+                Enrollment(
+                    cluster=None,
+                    name=name,
+                    host=f"{name}.example.com",
+                    host_key=key(seed),
+                    config_pull_key=key(seed + 1),
+                    cert_pull_key=key(seed + 2),
+                    join_key=PRIVATE,
+                )
+            )
+            for name, seed in (("node-c", 10), ("node-d", 20))
+        ]
+        document = {"version": 1, "cluster": "gamma"}
+        for joined_before in ((), ("node-c",)):
+            with (
+                self.subTest(joined_before=joined_before),
+                tempfile.TemporaryDirectory() as raw,
+                mock.patch.object(node_enrollment, "join_document", return_value=document),
+            ):
+                site = Site(Path(raw))
+                before = site.snapshot()
+                joins: list[str] = []
+                joined = set(joined_before)
+
+                def join(
+                    node: Any,
+                    _private: str,
+                    _document: Any,
+                    joins: list[str] = joins,
+                    joined: set[str] = joined,
+                ) -> Any:
+                    joins.append(node.name)
+                    if node.name == "node-d":
+                        return NodeResponse(75, "", "preparing this node stopped")
+                    joined.add(node.name)
+                    return NodeResponse(0, "")
+
+                def ask(node: Any, joined: set[str] = joined) -> Any:
+                    if node.name not in joined:
+                        return NodeResponse(255, "")
+                    return NodeResponse(0, json.dumps({"node": node.name, "cluster": "gamma"}))
+
+                spec = site.spec(blocks=blocks, hosts=["node-c.example.com", "node-d.example.com"])
+                with self.assertRaises(EnrollmentError) as caught:
+                    site.add(spec, ask=ask, join_node=join)
+                self.assertEqual(site.snapshot(), before)
+                if joined_before:
+                    self.assertEqual(joins, ["node-d"])
+                else:
+                    self.assertEqual(joins, ["node-c", "node-d"])
+                    self.assertIn("node-c", str(caught.exception))
+                    self.assertIn("rolled back on the manager", str(caught.exception))
 
     def test_an_editing_policy_visudo_refuses_changes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

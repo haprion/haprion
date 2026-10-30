@@ -1020,13 +1020,37 @@ def add(
                 host_key=locations.manager_host_key,
                 collector_key=locations.collector_key,
             )
+            joined: list[str] = []
             for node, (enrollment, _host) in zip(nodes, spec.nodes, strict=True):
-                node_enrollment.join(node, enrollment, document, join_node)
+                try:
+                    if node_enrollment.join(node, enrollment, document, join_node, ask):
+                        joined.append(node.name)
+                except EnrollmentError as failed:
+                    if not joined:
+                        raise
+                    raise EnrollmentError(
+                        failed.code,
+                        f"{failed} Joined before it, and rolled back on the manager: "
+                        f"{', '.join(joined)}. Their blocks are used up; add the cluster again "
+                        "with the same blocks once they answer over SSH.",
+                        failed.exit_code,
+                    ) from None
+        else:
+            joined = []
         for node in nodes:
             problem = node_enrollment.verify(node, spec.cluster, ask)
             if problem is not None:
                 raise EnrollmentError(
-                    "node_unverified", f"{problem}. Nothing was changed.", exit_codes.BLOCKED
+                    "node_unverified",
+                    f"{problem}. "
+                    + (
+                        "The manager's files were put back, but these nodes had joined: "
+                        f"{', '.join(joined)}. Their blocks are used up; add the cluster again "
+                        "with the same blocks once they answer over SSH."
+                        if joined
+                        else "Nothing was changed."
+                    ),
+                    exit_codes.BLOCKED,
                 )
     return Outcome(
         cluster=spec.cluster,

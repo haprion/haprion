@@ -940,32 +940,58 @@ def join_document(
     }
 
 
+JOINED_BUT_UNVERIFIED = (
+    "{node} had joined by then: its block is used up. Add it again with the same block once "
+    "it answers over SSH, or make a new block on the node with  sudo haprion-node-key --again"
+)
+
+
 def join(
     node: Node,
     enrollment: Enrollment,
     document: dict[str, Any],
     join_node: JoinNode | None,
-) -> None:
-    """Join a v2 node once with its one-time key; nothing to do for a v1 block."""
+    ask: AskNode | None = None,
+) -> bool:
+    """Join a v2 node once with its one-time key; True when this call joined it.
+
+    A node that already answers as itself in the document's cluster was joined
+    by an earlier attempt that was rolled back on the manager (its block is
+    used up by then), and has shown it trusts the manager's keys: it is not
+    joined again. A v1 block joins nothing.
+    """
 
     if enrollment.join_key is None:
-        return
+        return False
     if join_node is None:
         raise EnrollmentError(
             "dependency_unavailable",
             "a v2 block needs the helper's join, and there is none",
             exit_codes.CONFIG,
         )
+    if ask is not None and verify(node, str(document["cluster"]), ask) is None:
+        return False
     response = join_node(node, enrollment.join_key, document)
     if response.exit_code != 0:
         said = " ".join((response.stderr or "").strip().splitlines()[-3:])
+        #
+        # Step 4 stops (exit 75) before it uses the key up: the block works
+        # again until it expires. Any other exit may have come after the key
+        # was used, so only a new block is promised.
+        #
+        again = (
+            "this one was not used up, so try it again within 24 hours, or make a new one"
+            if response.exit_code == 75
+            else "make a new one"
+        )
         raise EnrollmentError(
             "node_join_failed",
             f"{node.mgmt_host} did not join (exit {response.exit_code}){': ' + said if said else ''}. "
-            "Nothing was changed here. A block is valid for 24 hours and once; make a new one "
+            f"Nothing was changed here. A block is valid for 24 hours and once; {again} "
             "on the node with  sudo haprion-node-key --again",
             exit_codes.BLOCKED,
         )
+    return True
 
 
 def verify(node: Node, cluster: str, ask: AskNode) -> str | None:
@@ -1131,9 +1157,10 @@ def add(
         for directory in backup_directories:
             directory.mkdir(mode=0o700)
         change_journal.apply(changes)
+        joined = False
         if enrollment.join_key is not None:
             target = runtime.cluster(cluster)
-            join(
+            joined = join(
                 node,
                 enrollment,
                 join_document(
@@ -1145,11 +1172,19 @@ def add(
                     collector_key=(locations or Locations()).collector_key,
                 ),
                 join_node,
+                ask,
             )
         problem = verify(node, cluster, ask)
         if problem is not None:
             raise EnrollmentError(
-                "node_unverified", f"{problem}. Nothing was changed.", exit_codes.BLOCKED
+                "node_unverified",
+                f"{problem}. "
+                + (
+                    f"The manager's files were put back, but {JOINED_BUT_UNVERIFIED.format(node=node.name)}"
+                    if joined
+                    else "Nothing was changed."
+                ),
+                exit_codes.BLOCKED,
             )
     return Outcome(
         node=node,

@@ -197,23 +197,27 @@ class JoiningOnAdd(unittest.TestCase):
 
         return join
 
-    def asking(self) -> Any:
+    def asking(self, *, joined_already: bool = False, silent_after_join: bool = False) -> Any:
+        """A node that answers once it has joined (or did so before this call)."""
+
         answer = answering()
 
         def ask(node: Node) -> NodeResponse:
             self.calls.append("ask")
+            if silent_after_join or not (joined_already or "join" in self.calls):
+                return NodeResponse(exit_code=255, stdout="")
             return answer(node)
 
         return ask
 
-    def add(self, entry: Enrollment, join: Any) -> Any:
+    def add(self, entry: Enrollment, join: Any, **asking: bool) -> Any:
         return node_enrollment.add(
             self.site.policy,
             self.site.runtime(),
             entry,
             cluster="alpha",
             host="node-c.example.com",
-            ask=self.asking(),
+            ask=self.asking(**asking),
             join_node=join,
             locations=self.site.locations,
             require_secure=False,
@@ -221,7 +225,7 @@ class JoiningOnAdd(unittest.TestCase):
 
     def test_a_v2_node_is_joined_before_it_is_asked(self) -> None:
         self.add(v2(), self.joining())
-        self.assertEqual(self.calls, ["join", "ask"])
+        self.assertEqual(self.calls, ["ask", "join", "ask"])
         node, private, document = self.joined
         cluster = self.site.runtime().cluster("alpha")
         self.assertEqual((node.name, private), ("node-c", PRIVATE))
@@ -261,11 +265,34 @@ class JoiningOnAdd(unittest.TestCase):
         [hours] = re.findall(r"^VALID_HOURS=(\d+)$", script, re.MULTILINE)
         self.assertIn(f"valid for {hours} hours and once", str(caught.exception))
         self.assertNotIn("works again", str(caught.exception))
-        self.assertEqual(self.calls, ["join"])
+        self.assertEqual(self.calls, ["ask", "join"])
+        self.assertEqual(self.site.snapshot(), before)
+        self.assertIn("this one was not used up", str(caught.exception))
+
+    def test_a_join_that_failed_after_the_key_was_used_asks_for_a_new_block(self) -> None:
+        with self.assertRaises(EnrollmentError) as caught:
+            self.add(v2(), self.joining(255, "Permission denied"))
+        self.assertNotIn("not used up", str(caught.exception))
+        self.assertIn("make a new one", str(caught.exception))
+
+    def test_a_node_that_already_answers_is_not_joined_again(self) -> None:
+        """A rolled-back add leaves the node joined and its block used up (review 26-10-30, E2)."""
+
+        self.add(v2(), self.joining(75, "the key is gone"), joined_already=True)
+        self.assertEqual(self.calls, ["ask", "ask"])
+
+    def test_a_node_that_joined_but_does_not_answer_is_not_called_unchanged(self) -> None:
+        before = self.site.snapshot()
+        with self.assertRaises(EnrollmentError) as caught:
+            self.add(v2(), self.joining(), silent_after_join=True)
+        self.assertEqual(caught.exception.code, "node_unverified")
+        self.assertNotIn("Nothing was changed.", str(caught.exception))
+        self.assertIn("had joined", str(caught.exception))
+        self.assertIn("haprion-node-key --again", str(caught.exception))
         self.assertEqual(self.site.snapshot(), before)
 
     def test_a_v1_block_joins_nothing(self) -> None:
-        self.add(v2(cluster="alpha", join_key=None), self.joining())
+        self.add(v2(cluster="alpha", join_key=None), self.joining(), joined_already=True)
         self.assertEqual(self.calls, ["ask"])
 
 
@@ -320,7 +347,9 @@ class TheHelperOpensTheSeal(unittest.TestCase):
             require_root=False,
             lock_root=Path(self.raw) / "locks",
             locations=self.site.locations,
-            ask=answering(),
+            ask=lambda node: (
+                answering()(node) if self.joined else NodeResponse(exit_code=255, stdout="")
+            ),
             join_node=join,
             publish=published,
         )

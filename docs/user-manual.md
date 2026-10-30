@@ -2607,6 +2607,11 @@ the address the manager came in on. A purpose the manager has no key for gets no
 manager left for it stops working. Then it removes the one-time key. This takes from half a minute to
 a few minutes, most of it apt.
 
+If adding the node is rolled back after the join, the node stays joined and its block is used up.
+Add the node again with the same block: a node that already answers as itself in the cluster is not
+joined a second time. A join that stopped while preparing the node has not used the block up, and the
+same block may be tried again within the 24 hours.
+
 The one-time key is valid for 24 hours and works once. Keep the block to yourself until it has been
 used: whoever holds it can join the node to a manager. The web never stores it. It is encrypted for the
 root helper (with the same key pair that protects DNS provider credentials) before the job is queued,

@@ -1097,7 +1097,7 @@ def editor_submit(
     if form.action == "draft" or (
         result.document
         and form.fields().get("protocol") != "dns"
-        and _unresolved_servers(key, result.document)
+        and _unresolved_servers(object_id, result.document)
     ):
         return RedirectResponse(
             proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303

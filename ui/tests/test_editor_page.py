@@ -1579,6 +1579,21 @@ class SavingSaysSo(EditorTestCase):
         self.assertIn('class="preview-notice notice-warning" data-unresolved', page.text)
         self.assertNotIn("data-unresolved", clean.text)
 
+    def test_a_renamed_object_s_unresolved_server_keeps_the_save_in_the_editor(self) -> None:
+        """Code review 26-10-30 again, R14: the check read the document under the old
+        name, the model refused it for not matching, and the warning was lost."""
+
+        with mock.patch("haprion.resolve_socket.unresolved", side_effect=lambda hosts: list(hosts)):
+            answer = self.save(
+                "/proxies/alpha/shop/edit",
+                action="save",
+                name="bazaar",
+                servers="typo.example.com:8080",
+            )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/bazaar/edit?saved=1")
+
     def test_a_server_written_with_two_colons_is_refused_where_it_is_typed(self) -> None:
         """Finding 82: `name::8080` became the host `name:`, was saved, called valid, and
         stopped the deploy on a node."""

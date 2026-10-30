@@ -281,6 +281,19 @@ def _with_warning(result: dict[str, Any] | None, code: str, message: str) -> dic
     return ended
 
 
+def _record_backend_renames(connection: Any, job: db.ClaimedJob) -> None:
+    """Write down what a done publish renamed (B253), if it renamed anything."""
+
+    renames = job.payload.get("backend_renames")
+    if job.operation == "changes_publish" and job.cluster is not None and isinstance(renames, dict):
+        db.record_backend_renames(
+            connection,
+            cluster=job.cluster,
+            renamed=dict(renames.get("renamed") or {}),
+            introduced=list(renames.get("introduced") or ()),
+        )
+
+
 def _finish(
     connection: Any,
     job: db.ClaimedJob,
@@ -370,25 +383,15 @@ def _finish(
     # failed to install leaves the card starting afresh, which is the loss of a
     # history and never a wrong one.
     #
-    renames = job.payload.get("backend_renames")
     #
-    # A publish followed by a deploy in the same job (B257) published even
-    # when the deploy did not; its own answer is under `publish`.
+    # A publish with a deploy after it has recorded them already, when the
+    # publish committed (`_conclude`): the page folds the old card into the new
+    # one from then, not from when the last node has installed.
     #
     answer = jobs.publish_answer(result)
     published = state == "done" or (answer is not None and answer.get("outcome") == "done")
-    if (
-        published
-        and job.operation == "changes_publish"
-        and job.cluster is not None
-        and isinstance(renames, dict)
-    ):
-        db.record_backend_renames(
-            connection,
-            cluster=job.cluster,
-            renamed=dict(renames.get("renamed") or {}),
-            introduced=list(renames.get("introduced") or ()),
-        )
+    if published and job.payload.get("deploy") is not True:
+        _record_backend_renames(connection, job)
 
     db.record_audit_event(
         connection,
@@ -933,6 +936,8 @@ def _conclude(
     elif (
         state == "done" and job.operation == "changes_publish" and job.payload.get("deploy") is True
     ):
+        _record_backend_renames(connection, job)
+        connection.commit()
         deployed = _deploy_after(job, cast(dict[str, Any], result), lease.ours, stopping)
         if deployed is None:
             return

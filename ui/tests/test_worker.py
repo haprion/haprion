@@ -1646,6 +1646,25 @@ class PublishAndDeploy(WorkerTestCase):
 
         record.assert_called_once()
 
+    def test_renames_are_written_when_the_publish_commits_before_its_deploy_runs(self) -> None:
+        """The page folds the old card into the new one from the publish, not the last node."""
+
+        renames = {"renamed": {"web": "shop-front"}, "introduced": ["shop-front"]}
+        job = claimed(
+            operation="changes_publish", payload={**self.PAYLOAD, "backend_renames": renames}
+        )
+        with mock.patch.object(db, "record_backend_renames") as record:
+            seen: list[int] = []
+
+            def deploy(*_a: Any, **_k: Any) -> None:
+                seen.append(record.call_count)
+
+            with mock.patch.object(worker, "_deploy_after", side_effect=deploy):
+                self.run_job(job, [self.published(job)])
+
+        self.assertEqual(seen, [1])
+        record.assert_called_once()
+
     def test_a_refused_deploy_after_it_is_said_as_the_job_s_own_refusal_is(self) -> None:
         """Review 26-10-24, 07-05: an invalid result document, with the reason in the log only."""
 

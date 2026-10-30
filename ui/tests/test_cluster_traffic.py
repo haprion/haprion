@@ -603,6 +603,23 @@ backends:
             ([self.POOL], [self.CURRENT]),
         )
 
+    def test_a_recorded_rename_draws_one_card_under_the_new_name(self) -> None:
+        """Right after the publish the poller has only the old name, and while it
+        rolls out node by node it has both; either way the card is the new one."""
+
+        recorded = {self.POOL: ["old-web"]}
+        for listed in (["old-web"], ["old-web", self.POOL], [self.POOL]):
+            with self.subTest(listed=listed):
+                self.assertEqual(
+                    metrics.split_backends(listed, self.targets(), recorded), ([self.POOL], [])
+                )
+        # Without the record the name stays; a name an object produces is not folded.
+        self.assertEqual(metrics.split_backends(["old-web"], self.targets()), (["old-web"], []))
+        self.assertEqual(
+            metrics.split_backends([self.POOL], self.targets(), {self.POOL: [self.POOL]}),
+            ([self.POOL], []),
+        )
+
     def test_a_pool_is_not_taken_for_a_redirect_by_its_name(self) -> None:
         """`shop-redirect` is a redirect only if a route makes it one."""
 

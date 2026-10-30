@@ -416,7 +416,14 @@ def build_router(config: Config) -> APIRouter:
 
                 return metrics.backend_label(name, targets)
 
-            served_pools, redirects = metrics.split_backends(backends, targets)
+            served_pools, redirects = metrics.split_backends(
+                backends,
+                targets,
+                {
+                    name: [item.name for item in earlier if item.until is None]
+                    for name, earlier in aliases[cluster].items()
+                },
+            )
 
             frontends = [frontend for frontend, _owned in seen]
             drawn.append(

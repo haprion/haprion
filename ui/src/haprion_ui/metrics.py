@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -1911,19 +1911,45 @@ def renamed_backends(before: Proxy | None, after: Proxy) -> tuple[dict[str, str]
 
 
 def split_backends(
-    backends: Sequence[str], targets: Mapping[str, BackendTarget]
+    backends: Sequence[str],
+    targets: Mapping[str, BackendTarget],
+    renamed_from: Mapping[str, Collection[str]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """A cluster's backends as (pools, redirects), in their order.
 
     An older name is left out once its current name has history of its own:
     the two are one backend, and two cards for it would read as two. Until the
     change is deployed the older name is the only one, and is drawn.
+
+    `renamed_from` maps a name an object produces to the names it was recorded
+    as renamed from and that nobody has been given since. Such an older name is
+    drawn as its new name, once: right after the publish, before the poller has
+    a sample under the new name, and while a rename rolls out node by node and
+    the newest poll holds both.
     """
 
     seen = set(backends)
+    #
+    # Each recorded earlier name to the name that carries it on. The newest
+    # poll holds both names while a rename rolls out, and only the old one
+    # until the first sample under the new: in both cases one card is drawn,
+    # under the new name (which an object produces, so it has its links),
+    # and reads the old name's history.
+    #
+    carried_by: dict[str, str] = {}
+    for name, earlier in (renamed_from or {}).items():
+        if name in targets:
+            for old in earlier:
+                if old != name and old not in targets:
+                    carried_by[old] = name
     pools: list[str] = []
     redirects: list[str] = []
-    for name in backends:
+    placed: set[str] = set()
+    for listed in backends:
+        name = carried_by.get(listed, listed)
+        if name in placed:
+            continue
+        placed.add(name)
         target = targets.get(name)
         if target is None:
             (redirects if is_redirect(name) else pools).append(name)

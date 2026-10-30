@@ -11,7 +11,8 @@ admin sign-in through a provider needs, are refused here as there.
 
 The file carries passwords, so it is refused when anybody but its owner may
 read it. A listed account the provider created keeps the role and password
-the provider and the interface give it; only `disabled` applies to it. An
+the provider and the interface give it; only `disabled` applies to it, and the
+role on its line is ignored. An
 account no entry names is left alone unless `--prune` asks for it to go, and
 `--prune` never removes an account the provider created.
 
@@ -236,10 +237,17 @@ def plan(wanted: Sequence[Wanted], current: Sequence[Stored], *, prune: bool) ->
             fields.append("break_glass")
         if account.disabled is not None and account.disabled != row.disabled:
             fields.append("disabled")
-        if provider and (account.role != row.role or account.password or account.break_glass):
+        #
+        # The role is the provider's to set and moves with its groups: the
+        # line carries the one an export wrote, and a file must not stop
+        # applying because the provider moved the person since (review
+        # 26-10-30, E10). A password or a break-glass mark has no meaning for
+        # such an account and is said so.
+        #
+        if provider and (account.password or account.break_glass):
             raise ApplyError(
-                f"{account.username} signs in through the provider, which sets its role; "
-                "only disabled applies to it"
+                f"{account.username} signs in through the provider, which sets its role and "
+                "has no password; only disabled applies to it"
             )
         if fields:
             updated.append((row, account, tuple(fields)))

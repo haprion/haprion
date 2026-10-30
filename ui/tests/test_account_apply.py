@@ -121,8 +121,15 @@ class ThePlan(unittest.TestCase):
             [Wanted("sso", "reader", disabled=True)], [provider], prune=False
         )
         self.assertEqual(disabled.updated[0][2], ("disabled",))
-        with self.assertRaises(ApplyError):
-            account_apply.plan([Wanted("sso", "admin")], [provider], prune=False)
+        moved = account_apply.plan([Wanted("sso", "admin", disabled=True)], [provider], prune=False)
+        self.assertEqual(moved.updated[0][2], ("disabled",))
+        self.assertTrue(account_apply.plan([Wanted("sso", "admin")], [provider], prune=False).empty)
+        for refused in (
+            Wanted("sso", "reader", password="a password"),
+            Wanted("sso", "reader", break_glass=True),
+        ):
+            with self.assertRaises(ApplyError):
+                account_apply.plan([refused], [provider], prune=False)
 
     def test_prune_takes_local_accounts_only(self) -> None:
         plan = account_apply.plan(

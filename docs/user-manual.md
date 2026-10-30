@@ -813,7 +813,7 @@ from what is stored. It goes through the same code and the same database guards 
 - A password is compared with the stored one, not set again, so applying the same file twice changes
   nothing. A changed password ends that account's sessions, as `reset` does.
 - The file carries passwords, so it is refused unless only its owner may read it (mode `0600`).
-- An account the provider created takes only `disabled` from the file.
+- An account the provider created takes only `disabled` from the file; the role on its line is ignored, and a password or `break_glass: true` is refused.
 - An account no entry names is left alone, unless `--prune` is given. `--prune` removes local accounts
   only.
 - A new account is not break-glass unless the file says so.

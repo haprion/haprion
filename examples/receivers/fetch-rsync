@@ -41,7 +41,7 @@ rsync -a -e "ssh -i ${IDENTITY} -o IdentitiesOnly=yes" \
 #
 certificate_key=$(openssl x509 -in "${staging}/fullchain.pem" -pubkey -noout)
 private_key=$(openssl pkey -in "${staging}/privkey.pem" -pubout)
-[ "$certificate_key" = "$private_key" ] || {
+[ -n "$certificate_key" ] && [ "$certificate_key" = "$private_key" ] || {
     echo "fetch-rsync: the key does not belong to the certificate; not installed" >&2
     exit 1
 }

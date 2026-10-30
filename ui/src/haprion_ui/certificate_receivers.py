@@ -239,6 +239,21 @@ def password_step(identifier: str, host: str, password: str) -> Step:
     )
 
 
+def _pair_check(certificate: str, key: str) -> str:
+    """Shell that succeeds only when the key belongs to the certificate.
+
+    Each public key is captured on its own so a failing openssl stops the
+    line, and the first must not be empty: two failed calls print nothing,
+    and nothing equals nothing.
+    """
+
+    return (
+        f"pub_cert=$(openssl x509 -in {certificate} -pubkey -noout) && "
+        f"pub_key=$(openssl pkey -in {key} -pubout) && "
+        'test -n "$pub_cert" && test "$pub_cert" = "$pub_key"'
+    )
+
+
 def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
     """The commands this receiver's host runs, one block per certificate it holds.
 
@@ -285,10 +300,8 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                 )
                 note = ""
                 if name == "privkey.pem":
-                    fetch += (
-                        f' && test "$(openssl x509 -in {held.certificate_id}/fullchain.pem '
-                        f'-pubkey -noout)" = "$(openssl pkey -in {held.certificate_id}/privkey.pem '
-                        '-pubout)"'
+                    fetch += " && " + _pair_check(
+                        f"{held.certificate_id}/fullchain.pem", f"{held.certificate_id}/privkey.pem"
                     )
                 if name.endswith(".pfx"):
                     note = "A PKCS#12 pair is then imported with examples/receivers/install-pkcs12.ps1."
@@ -323,9 +336,8 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                 f"{gets}\nEOF\n)"
             )
             if held.format != "pkcs12":
-                command += (
-                    f' && test "$(openssl x509 -in {directory}/fullchain.pem -pubkey -noout)" = '
-                    f'"$(openssl pkey -in {directory}/privkey.pem -pubout)"'
+                command += " && " + _pair_check(
+                    f"{directory}/fullchain.pem", f"{directory}/privkey.pem"
                 )
             steps.append(
                 Step(
@@ -375,10 +387,7 @@ def _rsync_command(owner: str, host: str, held: Held) -> str:
         f'-o IdentitiesOnly=yes" {owner}@{host}:{held.certificate_id}/ "$tmp"/ &&',
     ]
     if held.format != "pkcs12":
-        lines.append(
-            'test "$(openssl x509 -in "$tmp"/fullchain.pem -pubkey -noout)" = '
-            '"$(openssl pkey -in "$tmp"/privkey.pem -pubout)" &&'
-        )
+        lines.append(_pair_check('"$tmp"/fullchain.pem', '"$tmp"/privkey.pem') + " &&")
     lines.append(f"install -d -o root -g root -m 755 {target} &&")
     for name in names:
         mode = "644" if name == "fullchain.pem" else "600"

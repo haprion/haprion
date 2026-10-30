@@ -140,6 +140,42 @@ class WhatTheHostRuns(unittest.TestCase):
         self.assertEqual(code, 23)
         self.assertEqual(left, [])
 
+    def test_every_pair_check_fails_when_openssl_fails(self) -> None:
+        lines = {
+            "rsync": record("lb-02.example.net", certificates=("app.example.com",)),
+            "sftp": record(
+                "lb-02.example.net", transport="sftp", certificates=("app.example.com",)
+            ),
+            "https": record(
+                "192.0.2.9",
+                transport="https",
+                allow=("192.0.2.9/32",),
+                certificates=("app.example.com",),
+            ),
+        }
+        for transport, entry in lines.items():
+            (row,) = self.rows(entry)
+            steps = certificate_receivers.fetch_steps(row, "mgr.example.net")
+            check = steps[-1].command if transport == "https" else steps[0].command
+            for openssl in ("exit 1", "exit 0"):
+                with self.subTest(transport=transport, openssl=openssl):
+                    self.assertNotEqual(self.run_check(check, openssl), 0)
+
+    def run_check(self, command: str, fake_openssl: str) -> int:
+        # Only the pair check is run: the fetching, installing and the
+        # directory making before it are replaced by true.
+        start = command.index("pub_cert=")
+        end = command.find(" &&\n", start)
+        check = command[start : end if end != -1 else None]
+        with tempfile.TemporaryDirectory() as work:
+            tool = Path(work, "openssl")
+            tool.write_text("#!/bin/sh\n" + fake_openssl + "\n")
+            tool.chmod(0o755)
+            env = {"PATH": f"{work}:/usr/bin:/bin", "tmp": work}
+            return subprocess.run(  # noqa: S603 - a fixed shell, the line under test
+                ["/bin/sh", "-c", check], env=env, capture_output=True, check=False
+            ).returncode
+
     def test_rsync_line_fails_when_the_pair_does_not_check_out(self) -> None:
         code, left = self.run_rsync_line("exit 0")
         self.assertNotEqual(code, 0)

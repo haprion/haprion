@@ -217,7 +217,12 @@ def run(*argv: str) -> subprocess.CompletedProcess[str]:
     # Every caller passes an absolute binary and this script's own names and
     # paths - never anything read from the manager or from a request.
     #
-    return subprocess.run(argv, capture_output=True, text=True, check=False)  # noqa: S603
+    # Decoded with replacement: another local account's process name can be any
+    # bytes (`ss` prints it), and strict decoding stopped the whole status.
+    #
+    return subprocess.run(  # noqa: S603
+        argv, capture_output=True, text=True, errors="replace", check=False
+    )
 
 
 def service_active(name: str) -> bool:
@@ -806,6 +811,7 @@ def read_rsyslog_journal() -> list[tuple[float, str]]:
             ],
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
             timeout=5,
         )

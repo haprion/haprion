@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -100,3 +102,20 @@ class AForcedCommandWithoutArgumentsIsOneSudoAllowsNoneFor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RunTests(unittest.TestCase):
+    """Review 2026-10-30, E4: another account's process name can be any bytes."""
+
+    def test_output_that_is_not_utf8_is_read_not_a_crash(self) -> None:
+        found = re.search(r"^def run\(.*?(?=^def service_active)", SCRIPT.read_text(), re.M | re.S)
+        assert found, "run is no longer where the test extracts it from"
+        namespace: dict[str, Any] = {"subprocess": subprocess}
+        exec(found.group(0), namespace)  # noqa: S102 - verbatim function from the node script
+
+        done = namespace["run"](
+            sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x\\xff\\xfey')"
+        )
+
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, "x\ufffd\ufffdy")

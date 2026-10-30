@@ -223,7 +223,7 @@ tomllib.loads(sys.stdin.read())' \
 # path as RESTORE_STOPPED in haprion-backup, held together by a test. The file
 # exists from the restore's first stop until a restore finishes.
 #
-# shellcheck disable=SC2034 # read by update-platform-release
+# Read by hold_release_lock, which refuses while it exists.
 RESTORE_STOPPED=/run/haprion/restore-stopped
 RELEASE_LOCK=/run/haprion/ui-release.lock
 #
@@ -260,6 +260,18 @@ hold_release_lock() {
         die "another change of the UI release is running (pid ${holder:-unknown} or a command it started); ${again}"
     fi
     printf '%s\n' "$$" > "$RELEASE_LOCK"
+    #
+    # A restore that stopped the services and did not finish leaves the dump's
+    # jobs unheld: whatever started them - an activation, a rollback's restart -
+    # would start the worker on them. Said before anything is paused, migrated
+    # or switched (review 26-10-30, F1, U3).
+    #
+    if [[ -e "$RESTORE_STOPPED" ]]; then
+        again="Run it again first: sudo haprion-backup restore <dump>"
+        [[ -z "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]] || again+=", then: sudo dpkg --configure -a"
+        die "a restore stopped the services and did not finish; nothing was changed.
+  ${again}"
+    fi
 }
 
 #

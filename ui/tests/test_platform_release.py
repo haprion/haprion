@@ -451,41 +451,19 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertIn("names no release on disk to go back to (gone)", refused.stderr)
 
     def test_a_restore_that_did_not_finish_stops_the_update_before_anything_changes(self) -> None:
-        """Review 26-10-30, F1: an activation started the worker on the dump's unheld jobs."""
+        """Review 26-10-30, F1: an activation started the worker on the dump's unheld jobs.
 
-        lib = (ROOT / "install/lib.sh").read_text()
-        path = re.search(r"^RESTORE_STOPPED=(\S+)$", lib, re.MULTILINE)
-        backup = (ROOT / "install/platform/bin/haprion-backup").read_text()
-        self.assertIsNotNone(path)
-        self.assertIn(f"\nRESTORE_STOPPED={path.group(1) if path else ''}\n", backup)
+        U3: the refusal is the release lock's, one text for update, rollback,
+        activation and setup, and it comes before the update reads anything.
+        """
+
+        self.assertNotIn("unfinished_restore", self.update)
         self.assertLess(
-            self.update.index("\nunfinished_restore\n"),
-            self.update.index("hold_release_lock\n"),
+            self.update.index("\nhold_release_lock\n"), self.update.index('\ncurrent="')
         )
-        for marker, refused in ((None, False), ("haprion-web.service\n", True)):
-            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as raw:
-                remembered = Path(raw) / "restore-stopped"
-                if marker is not None:
-                    remembered.write_text(marker)
-                done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
-                    [
-                        "/bin/bash",
-                        "-c",
-                        f'RESTORE_STOPPED="$1"; die() {{ echo "ERROR: $*" >&2; exit 1; }}; '
-                        f"{self.functions('unfinished_restore')}unfinished_restore; echo went on",
-                        "-",
-                        str(remembered),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    env={"PATH": "/usr/bin:/bin"},
-                )
-                self.assertEqual(done.returncode, 1 if refused else 0, done.stderr)
-                self.assertEqual("went on" in done.stdout, not refused)
-                if refused:
-                    self.assertIn("a restore stopped the services and did not finish", done.stderr)
-                    self.assertIn("sudo haprion-backup restore <dump>", done.stderr)
+        self.assertLess(
+            self.update.index('[[ -n "$release_id" ]]'), self.update.index("\nhold_release_lock\n")
+        )
 
     def test_a_marker_with_no_way_back_says_the_way_out(self) -> None:
         """Review 26-10-29, AA04: every apt run stopped on it, and nothing said what to do."""
@@ -1492,6 +1470,85 @@ class OneReleaseChangeAtATime(unittest.TestCase):
                 self.assertIn(
                     "\nRELEASE_LOCK=/run/haprion/ui-release.lock\n", (ROOT / path).read_text()
                 )
+
+    def test_a_restore_that_did_not_finish_refuses_every_command_that_takes_the_lock(
+        self,
+    ) -> None:
+        """Review 26-10-30, U3: a rollback started the services a failed restore had stopped."""
+
+        for path in ("install/lib.sh", "install/platform/bin/haprion-rollback"):
+            text = (ROOT / path).read_text()
+            self.assertRegex(text, r"(?m)^RESTORE_STOPPED=/run/haprion/restore-stopped$")
+            found = LOCK_FUNCTION.search(text)
+            self.assertIsNotNone(found, path)
+            function = found.group(0) if found else ""
+            for marker, dpkg in ((None, ""), ("haprion-web.service\n", ""), ("x\n", "haprion-ui")):
+                with (
+                    self.subTest(path=path, marker=marker, dpkg=dpkg),
+                    tempfile.TemporaryDirectory() as raw,
+                ):
+                    stopped = Path(raw) / "restore-stopped"
+                    if marker is not None:
+                        stopped.write_text(marker)
+                    done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                        [
+                            "/bin/bash",
+                            "-c",
+                            f"RELEASE_LOCK={raw}/lock; RESTORE_STOPPED={stopped}; "
+                            f"DPKG_MAINTSCRIPT_PACKAGE={dpkg}; "
+                            'die() { echo "ERROR: $*" >&2; exit 1; }; '
+                            + function
+                            + "hold_release_lock; echo went on",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    refused = marker is not None
+                    self.assertEqual(done.returncode, 1 if refused else 0, done.stderr)
+                    self.assertEqual("went on" in done.stdout, not refused)
+                    if refused:
+                        self.assertIn(
+                            "a restore stopped the services and did not finish; nothing was changed",
+                            done.stderr,
+                        )
+                        self.assertIn("sudo haprion-backup restore <dump>", done.stderr)
+                        self.assertEqual("dpkg --configure -a" in done.stderr, bool(dpkg))
+
+    def test_a_restore_holds_the_release_lock_on_a_descriptor_of_its_own(self) -> None:
+        """U3: nothing switched the release under a restore, and `take_lock` owns descriptor 9."""
+
+        backup = (ROOT / "install/platform/bin/haprion-backup").read_text()
+        self.assertIn("\nRELEASE_LOCK=/run/haprion/ui-release.lock\n", backup)
+        found = re.search(r"^hold_release_lock_for_restore\(\) \{\n.*?^\}\n", backup, re.M | re.S)
+        self.assertIsNotNone(found)
+        function = found.group(0) if found else ""
+        self.assertIn("exec 8>>", function)
+        self.assertNotIn("9", function)
+        self.assertRegex(backup, r"(?m)^    restore\) +hold_release_lock_for_restore; take_lock;")
+        with tempfile.TemporaryDirectory() as raw:
+            prelude = (
+                f"RELEASE_LOCK={raw}/run/lock; "
+                'die() { echo "ERROR: $*" >&2; exit 1; }; ' + function
+            )
+            inner = prelude + "hold_release_lock_for_restore; echo free"
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                [
+                    "/bin/bash",
+                    "-c",
+                    prelude
+                    + f"hold_release_lock_for_restore; /bin/bash -c {shlex.quote(inner)}; true",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotIn("free", done.stdout)
+            self.assertIn("is running", done.stderr)
+            alone = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                ["/bin/bash", "-c", inner], capture_output=True, text=True, check=False
+            )
+            self.assertEqual(alone.stdout.strip(), "free", alone.stderr)
 
     def test_the_lock_is_root_s_alone(self) -> None:
         """Review 26-10-29, AA06: any account could open the 0644 file and hold every change off."""

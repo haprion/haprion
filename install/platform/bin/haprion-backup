@@ -706,6 +706,27 @@ start_units() {
 LOCK=/run/lock/haprion-backup.lock
 LOCK_WAIT_SECONDS=1800
 
+#
+# The release lock, for as long as a restore runs (review 26-10-30, U3): an
+# update, a rollback or an activation switching the release, or restarting the
+# services, under a restore. Descriptor 8: `take_lock` owns 9. It does not
+# refuse for the marker `restore` itself leaves - a restore that failed is
+# run again.
+#
+RELEASE_LOCK=/run/haprion/ui-release.lock
+
+hold_release_lock_for_restore() {
+    local mask
+    mkdir -p -- "${RELEASE_LOCK%/*}"
+    mask="$(umask)"
+    umask 077
+    exec 8>>"$RELEASE_LOCK"
+    umask "$mask"
+    chmod 600 -- "$RELEASE_LOCK"
+    flock -n 8 \
+        || die "an update, a rollback or a setup of the UI release is running; run this again when it is done"
+}
+
 take_lock() {
     exec 9>"$LOCK"
     flock -n 9 && return
@@ -718,7 +739,7 @@ case "$command" in
     dump)           take_lock; do_dump ;;
     dump-before-migration) take_lock; do_dump_before_migration "$@" ;;
     after-restore)  do_after_restore ;;
-    restore)        take_lock; do_restore "$1" ;;
+    restore)        hold_release_lock_for_restore; take_lock; do_restore "$1" ;;
     verify-restore) take_lock; do_verify_restore ;;
     list)
         [[ -d "$DUMP_DIR" ]] || die "no dump directory: ${DUMP_DIR}"

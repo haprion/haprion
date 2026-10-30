@@ -21,15 +21,9 @@ need_root
 release_id="${1:-}"
 [[ -n "$release_id" ]] || die "usage: $(basename "$0") <release-id>"
 #
-# A restore that did not finish has stopped the services, and an activation
-# would start the worker on the dump's jobs, which nothing has held yet. Said
-# before anything is paused, migrated or switched.
+# The lock also refuses while a restore that stopped the services has not
+# finished, before anything is paused, migrated or switched.
 #
-unfinished_restore() {
-    [[ ! -e "$RESTORE_STOPPED" ]] || die "a restore stopped the services and did not finish; nothing was changed.
-  Run it again first: sudo haprion-backup restore <dump>"
-}
-unfinished_restore
 hold_release_lock
 
 current="${UI_ROOT}/current"

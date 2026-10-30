@@ -361,12 +361,14 @@ def _error_message(node: Mapping[str, Any]) -> str | None:
 
 
 def _failed_command(node: Mapping[str, Any]) -> str | None:
-    """What the node's status command said when it ran and failed (review 2026-10-30, E3)."""
+    """That the node's own status command ran and failed (review 2026-10-30, E3).
 
-    error = _mapping(node.get("error"))
-    message = error.get("message")
-    if error.get("code") == "node_status_invalid" and isinstance(message, str) and message:
-        return message[:240]
+    A fixed sentence, as it goes to every reader and to the monitors. What the
+    node said is `reason`, which only an administrator is shown (R4).
+    """
+
+    if _mapping(node.get("error")).get("code") == "node_status_invalid":
+        return "The status command failed on the node"
     return None
 
 

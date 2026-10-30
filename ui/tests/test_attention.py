@@ -1497,6 +1497,56 @@ class WhyAReadingFailed(LoginTestCase):
         self.assertIn("Collection unavailable", page)
         self.assertNotIn(self.ASKED, page)
 
+    def test_a_failed_status_command_keeps_the_nodes_words_for_an_administrator(self) -> None:
+        """Review 26-10-30, R4: its stderr is not for readers, the box or the monitors."""
+
+        failed = db.ClusterStatus(
+            cluster="alpha",
+            observed_at=datetime.now(UTC),
+            outcome="partial",
+            result={
+                "nodes": [
+                    {
+                        "name": "n1",
+                        "mgmt_host": "n1",
+                        "reachable": True,
+                        "status_ok": False,
+                        "status": None,
+                        "error": {
+                            "code": "node_status_invalid",
+                            "message": f"the status command failed on the node (exit 1): {self.ASKED}",
+                        },
+                    }
+                ]
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        listed = [StatusAccess("192.0.2.0/24", "admin", NOW)]
+        pages: dict[str, str] = {}
+        for role in ("admin", "reader"):
+            self.account = replace(self.account, role=role)
+            client = self.client(replace(configuration(), clusters=("alpha",)))
+            self.sign_in(client)
+            with (
+                mock.patch("haprion_ui.db.cluster_statuses", return_value=[failed]),
+                mock.patch("haprion_ui.db.status_access", return_value=listed),
+            ):
+                pages[role] = client.get("/").text
+                if role == "reader":
+                    pages["json"] = client.get(
+                        "/status/attention.json", headers={"X-Forwarded-For": "192.0.2.10"}
+                    ).text
+                    pages["metrics"] = client.get(
+                        "/status/metrics", headers={"X-Forwarded-For": "192.0.2.10"}
+                    ).text
+        self.assertIn(self.ASKED, pages["admin"])
+        self.assertIn("The status command failed on the node", pages["reader"])
+        self.assertIn("Invalid status", pages["json"])
+        for shown in ("reader", "json", "metrics"):
+            self.assertNotIn(self.ASKED, pages[shown])
+
     def test_the_node_row_carries_the_nodes_own_message_for_an_administrator(self) -> None:
         status = dashboard.build_dashboard(
             ("alpha",),

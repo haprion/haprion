@@ -245,7 +245,8 @@ class HealthDerivation(unittest.TestCase):
         view = self.dashboard(replace(status, result={**status.result, "nodes": nodes}))
         shown = view.clusters[0].nodes[0]
         self.assertEqual(shown.label, "Invalid status")
-        self.assertIn("exit 1", shown.detail)
+        self.assertEqual(shown.detail, "The status command failed on the node")
+        self.assertIn("exit 1", shown.reason or "")
 
     def test_done_and_converged_is_only_green_when_node_services_are_healthy(self) -> None:
         status = reading("done-single-owner.json")

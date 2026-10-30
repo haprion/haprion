@@ -64,7 +64,7 @@ from haprion.cert_request_state import (
     KEY_TYPES,
     RECORD,
     TARGETS,
-    csr_is_pending,
+    id_holder,
 )
 from haprion.config import (
     CERTIFICATE_ID,
@@ -73,7 +73,6 @@ from haprion.config import (
     PathPolicy,
     RuntimeConfig,
 )
-from haprion.ndes_state import request_is_pending
 
 OPERATION = "cert_request"
 MAX_DOMAINS = 32
@@ -155,33 +154,15 @@ def _refuse_taken(
     """Step 2: the ID is free everywhere, or the request says which place has it."""
 
     registered = runtime.registry.certificates.get(certificate_id) if runtime.registry else None
-    if registered is not None:
-        raise RequestError(
-            "already_exists",
-            f"{certificate_id!r} is already in the registry as {registered.source.kind!r}. "
-            "Choose another name, or renew the certificate that exists.",
-        )
-    if (live / certificate_id).exists():
-        raise RequestError(
-            "already_exists",
-            f"certbot has a lineage named {certificate_id!r}; choose another name",
-        )
-    if (store / certificate_id).exists():
-        if csr_is_pending(store, certificate_id):
-            raise RequestError(
-                "already_exists",
-                f"a signing request for {certificate_id!r} is already waiting; download it "
-                "from the certificate's row, or delete the row to start over",
-            )
-        raise RequestError(
-            "already_exists",
-            f"the import store already holds material for {certificate_id!r}; choose another name",
-        )
-    if request_root is not None and request_is_pending(request_root, certificate_id):
-        raise RequestError(
-            "already_exists",
-            f"an NDES enrollment for {certificate_id!r} is still waiting on its CA",
-        )
+    holder = id_holder(
+        certificate_id,
+        registered_kind=registered.source.kind if registered is not None else None,
+        live=live,
+        store=store,
+        request_root=request_root,
+    )
+    if holder is not None:
+        raise RequestError("already_exists", holder.message)
 
 
 # - Making -----------------------------------------------------------------

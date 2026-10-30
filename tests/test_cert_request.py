@@ -14,6 +14,7 @@ import io
 import json
 import shutil
 import subprocess
+import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from haprion.cli import cert_import as import_command
 from haprion.cli import cert_request as command
 from haprion.cli import cert_request_helper
 from haprion.config import load_policy, load_runtime_config
+from haprion.ndes_state import request_directory
 from tests.contract_schema import assert_contract
 from tests.test_cert_import import KEEPERS, OPENSSL, Pki
 from tests.test_cert_publish import Fixture
@@ -578,6 +580,46 @@ class TheHelperAndTheCommand(RequestFixture):
 class TheStateModuleAgreesWithTheInventory(unittest.TestCase):
     def test_the_material_file_has_one_name(self) -> None:
         self.assertEqual(cert_request_state.MATERIAL, FULLCHAIN)
+
+    def test_each_of_the_five_places_holds_an_id_and_an_allowed_one_is_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            live, store, requests = root / "live", root / "store", root / "requests"
+            for directory in (live, store, requests):
+                directory.mkdir()
+
+            def holder(certificate_id: str, **extra: Any) -> str | None:
+                found = cert_request_state.id_holder(
+                    certificate_id,
+                    registered_kind=extra.pop("registered_kind", None),
+                    live=live,
+                    store=store,
+                    request_root=requests,
+                    **extra,
+                )
+                return found.kind if found is not None else None
+
+            self.assertIsNone(holder("free.example"))
+            self.assertEqual(
+                holder("a.example", registered_kind="acme"), cert_request_state.HELD_BY_ENTRY
+            )
+            self.assertEqual(
+                holder("a.example", registered_kind="import"),
+                cert_request_state.HELD_BY_IMPORT_ENTRY,
+            )
+            (live / "b.example").mkdir()
+            self.assertEqual(holder("b.example"), cert_request_state.HELD_BY_LINEAGE)
+            (store / "c.example").mkdir()
+            self.assertEqual(holder("c.example"), cert_request_state.HELD_BY_MATERIAL)
+            self.assertIsNone(holder("c.example", allow=(cert_request_state.HELD_BY_MATERIAL,)))
+            (store / "d.example").mkdir()
+            (store / "d.example" / cert_request_state.CSR).write_text("CSR")
+            self.assertEqual(holder("d.example"), cert_request_state.HELD_BY_CSR)
+            enrollment = request_directory(requests, "e.example")
+            enrollment.mkdir()
+            (enrollment / "request.json").write_text("{}")
+            self.assertEqual(holder("e.example"), cert_request_state.HELD_BY_ENROLLMENT)
+            self.assertIsNone(holder("e.example", allow=(cert_request_state.HELD_BY_ENROLLMENT,)))
 
     def test_targets_of_nothing_pending_are_empty(self) -> None:
         self.assertEqual(

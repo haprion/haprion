@@ -749,12 +749,6 @@ def import_certificate(
         )
     if not CERTIFICATE_ID.fullmatch(certificate_id):
         raise ImportError_("bad_input", f"invalid certificate ID: {certificate_id!r}")
-    if (live / certificate_id).exists():
-        raise ImportError_(
-            "already_exists",
-            f"certbot has a lineage named {certificate_id!r}; an imported certificate "
-            "cannot share the ID. Choose another.",
-        )
     facts, fingerprint = check(material, now=now)
     #
     # The ID and the targets are checked against the registry before the store
@@ -772,6 +766,34 @@ def import_certificate(
             "not_import",
             f"{certificate_id!r} is registered as {existing.source.kind!r}; its material is "
             "not imported. Choose another ID.",
+        )
+    #
+    # The ID is free everywhere but where an import may share it: its own
+    # earlier material and the entry that names it, a signing request it
+    # answers, and - from NDES - the enrollment that is being finished.
+    # Anything else is another way's, and writing the store would take it away.
+    #
+    holder = cert_request_state.id_holder(
+        certificate_id,
+        registered_kind=None,
+        live=live,
+        store=store,
+        request_root=policy.ndes.state_root if policy.ndes is not None else None,
+        allow=(
+            cert_request_state.HELD_BY_CSR,
+            cert_request_state.HELD_BY_MATERIAL,
+            *((cert_request_state.HELD_BY_ENROLLMENT,) if ndes_profile else ()),
+        ),
+    )
+    if holder is not None:
+        raise ImportError_("already_exists", holder.message)
+    if cert_request_state.csr_is_pending(store, certificate_id) and material.key != stored_key(
+        store, certificate_id
+    ):
+        raise ImportError_(
+            "already_exists",
+            f"a signing request for {certificate_id!r} is waiting for its signature; import "
+            "the certificate the CA returned for it, without a key, or choose another ID",
         )
     unknown_clusters = sorted(set(clusters) - set(runtime.clusters))
     if unknown_clusters:

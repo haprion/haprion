@@ -12,6 +12,11 @@ from typing import Any, TextIO
 from haprion import cert_import, exit_codes, ndes, ndes_profiles, ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer, PublishError
+from haprion.cert_request_state import (
+    HELD_BY_ENROLLMENT,
+    HELD_BY_MATERIAL,
+    id_holder,
+)
 from haprion.cli import arguments, cert_job
 from haprion.cli.cert_import import result_envelope
 from haprion.cli.cert_publish import default_deployer
@@ -165,10 +170,21 @@ def enroll(
                 "certificate ID already belongs to another source kind",
                 exit_codes.REFUSED,
             )
-        if (live / certificate_id).exists():
-            raise ScepRefusal(
-                "bad_input", "certificate ID already belongs to an ACME lineage", exit_codes.REFUSED
-            )
+        #
+        # The other places an ID may be held (a signing request waiting, a
+        # lineage, an enrollment that is not the one being resumed). Its own
+        # earlier material is what a renewal replaces.
+        #
+        holder = id_holder(
+            certificate_id,
+            registered_kind=None,
+            live=live,
+            store=store,
+            request_root=policy.ndes.state_root,
+            allow=(HELD_BY_MATERIAL, *((HELD_BY_ENROLLMENT,) if resume else ())),
+        )
+        if holder is not None:
+            raise ScepRefusal("bad_input", holder.message, exit_codes.REFUSED)
         profile = ndes_profiles.resolve(policy.ndes, profile_id, require_secure=require_secure)
         with ndes.enroll(
             policy.ndes,

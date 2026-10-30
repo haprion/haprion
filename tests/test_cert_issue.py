@@ -858,8 +858,36 @@ class WhenCertbotSucceeds(IssueFixture):
         )
 
         self.assertEqual(code, 64)
-        self.assertIn("already has a lineage", err)
+        self.assertIn("has a lineage named", err)
         self.assertEqual(certbot.calls, [])
+
+    def test_an_id_with_a_waiting_signing_request_is_not_issued(self) -> None:
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        directory = self.store / "example.com"
+        directory.mkdir(parents=True)
+        for name, text in (("privkey.pem", "KEY"), ("request.csr", "CSR"), ("request.json", "{}")):
+            (directory / name).write_text(text)
+        certbot = FakeCertbot(self.live)
+
+        code, _, err, _ = self.run_issue(
+            policy_path,
+            "--domain",
+            "example.com",
+            "--method",
+            "dns-01",
+            "--cluster",
+            "alpha",
+            certbot=certbot,
+        )
+
+        self.assertEqual(code, 64)
+        self.assertIn("signing request", err)
+        self.assertEqual(certbot.calls, [])
+        self.assertNotIn(
+            "example.com", yaml.safe_load(self.registry_path.read_text())["certificates"]
+        )
 
     def test_not_root(self) -> None:
         policy_path = self.policy_with_acme(

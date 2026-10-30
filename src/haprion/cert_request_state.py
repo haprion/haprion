@@ -17,12 +17,13 @@ be signed.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from haprion.config import CERTIFICATE_ID, CLUSTER_ID, RECEIVER_FORMATS, RECEIVER_ID
+from haprion.ndes_state import request_is_pending
 
 CSR = "request.csr"
 RECORD = "request.json"
@@ -202,3 +203,95 @@ def request_is_interface(store: Path, certificate_id: str) -> bool:
         return False
     loaded = _bounded_json(store / certificate_id / TARGETS, MAX_RECORD_BYTES)
     return isinstance(loaded, dict) and loaded.get("interface") is True
+
+
+#
+# Who can hold a certificate ID. There are five places, and each way a
+# certificate arrives used to ask about its own subset (review 26-10-30, E4):
+# an issuance never looked at a waiting signing request, an import never at a
+# waiting NDES enrollment. `id_holder` is the one answer; it is asked under the
+# certificate lock, and a caller names the holders it may share the ID with.
+#
+HELD_BY_ENTRY = "registered"  # a registry entry of a source that is not an import
+HELD_BY_IMPORT_ENTRY = "import_entry"  # a registry entry whose material was imported
+HELD_BY_LINEAGE = "lineage"  # certbot's `live/<id>`
+HELD_BY_CSR = "csr_waiting"  # a signing request made here, not yet signed
+HELD_BY_MATERIAL = "material"  # imported material in the store
+HELD_BY_ENROLLMENT = "enrollment"  # an NDES enrollment still waiting on its CA
+
+
+@dataclass(frozen=True, slots=True)
+class IdHolder:
+    kind: str
+    message: str
+
+
+def id_holder(
+    certificate_id: str,
+    *,
+    registered_kind: str | None,
+    live: Path | None,
+    store: Path,
+    request_root: Path | None,
+    allow: Collection[str] = (),
+) -> IdHolder | None:
+    """What already holds this certificate ID, or None when it is free.
+
+    `registered_kind` is the source kind of the registry entry of that name,
+    None when there is none. `live` None leaves certbot's directory out: an
+    issuance asks again after certbot has made its lineage. A holder whose kind
+    is in `allow` is the caller's own and is not reported.
+    """
+
+    holders: list[IdHolder] = []
+    if registered_kind is not None:
+        if registered_kind == "import":
+            holders.append(
+                IdHolder(
+                    HELD_BY_IMPORT_ENTRY,
+                    f"{certificate_id!r} is already in the registry as 'import'. "
+                    "Choose another name, or renew the certificate that exists.",
+                )
+            )
+        else:
+            holders.append(
+                IdHolder(
+                    HELD_BY_ENTRY,
+                    f"{certificate_id!r} is already in the registry as {registered_kind!r}. "
+                    "Choose another name, or renew the certificate that exists.",
+                )
+            )
+    if live is not None and (live / certificate_id).exists():
+        holders.append(
+            IdHolder(
+                HELD_BY_LINEAGE,
+                f"certbot has a lineage named {certificate_id!r} that the registry does not "
+                f"hold; choose another name, or remove it with 'haprion-cert-delete "
+                f"{certificate_id}'",
+            )
+        )
+    if (store / certificate_id).exists():
+        if csr_is_pending(store, certificate_id):
+            holders.append(
+                IdHolder(
+                    HELD_BY_CSR,
+                    f"a signing request for {certificate_id!r} is already waiting; download it "
+                    "from the certificate's row, or delete the row to start over",
+                )
+            )
+        else:
+            holders.append(
+                IdHolder(
+                    HELD_BY_MATERIAL,
+                    f"the import store already holds material for {certificate_id!r}; "
+                    "choose another name",
+                )
+            )
+    if request_root is not None and request_is_pending(request_root, certificate_id):
+        holders.append(
+            IdHolder(
+                HELD_BY_ENROLLMENT,
+                f"an NDES enrollment for {certificate_id!r} is still waiting on its CA",
+            )
+        )
+    return next((holder for holder in holders if holder.kind not in allow), None)

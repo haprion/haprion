@@ -320,6 +320,21 @@ class WhatIsRefusedBeforeWriting(ImportFixture):
         self.assertEqual(refused.exception.code, "already_exists")
         self.assert_nothing_written("shop.example")
 
+    def test_a_key_that_is_not_the_waiting_requests_never_overwrites_it(self) -> None:
+        directory = self.store / "shop.example"
+        directory.mkdir(parents=True)
+        for name, text in (
+            ("privkey.pem", "CSR KEY"),
+            ("request.csr", "CSR"),
+            ("request.json", "{}"),
+        ):
+            (directory / name).write_text(text)
+        with self.assertRaises(ImportError_) as refused:
+            self.run_import("shop.example", self.material(), clusters=["alpha"])
+        self.assertEqual(refused.exception.code, "already_exists")
+        self.assertEqual((directory / "privkey.pem").read_text(), "CSR KEY")
+        self.assertNotIn("shop.example", self.registered())
+
     def test_an_id_registered_as_acme(self) -> None:
         with self.assertRaises(ImportError_) as refused:
             self.run_import("keeper-alpha.example", self.material(), clusters=["alpha"])

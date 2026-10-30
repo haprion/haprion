@@ -11,6 +11,7 @@ from unittest import mock
 import yaml
 
 from haprion import exit_codes, ndes, ndes_profiles, ui_interface
+from haprion.cert_import import ImportError_
 from haprion.cli import cert_scep, cert_scep_helper
 from haprion.config import NdesPolicy, load_policy
 from haprion.dns_profile_keys import generate, render_private_key
@@ -163,6 +164,33 @@ class HelperBoundary(ScepFixture):
         self.assertEqual(doc["error"]["code"], "bad_input")
         self.assertIn("mgr.example.net", doc["error"]["message"])
         engine.assert_not_called()
+
+    def test_an_id_with_a_waiting_signing_request_never_reaches_the_ca(self) -> None:
+        directory = self.store / "web.example.com"
+        directory.mkdir(parents=True)
+        (directory / "privkey.pem").write_text("CSR KEY")
+        (directory / "request.csr").write_text("CSR")
+        with mock.patch.object(ndes, "enroll") as engine:
+            code, doc, _ = self.helper(
+                {
+                    "id": "web.example.com",
+                    "profile": "certserver1",
+                    "domains": ["web.example.com"],
+                    "clusters": ["alpha"],
+                }
+            )
+        self.assertEqual((code, doc["outcome"]), (exit_codes.REFUSED, "failed"))
+        self.assertIn("signing request", doc["error"]["message"])
+        engine.assert_not_called()
+        self.assertEqual((directory / "privkey.pem").read_text(), "CSR KEY")
+
+    def test_a_hand_import_cannot_take_an_id_an_enrollment_is_waiting_on(self) -> None:
+        self.pending("shop.example")
+        with self.assertRaises(ImportError_) as refused:
+            self.run_import("shop.example", self.material(), clusters=["alpha"])
+        self.assertEqual(refused.exception.code, "already_exists")
+        self.assertIn("NDES enrollment", str(refused.exception))
+        self.assertFalse((self.store / "shop.example").exists())
 
     def test_a_pending_request_keeps_its_targets_beside_it_and_is_not_registered(self) -> None:
         """Review 2026-09-17, finding 1: an entry without material refused

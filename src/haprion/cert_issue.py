@@ -63,6 +63,7 @@ from haprion.cert_publish import (
     publish,
     unpublished,
 )
+from haprion.cert_request_state import id_holder
 from haprion.config import (
     CERTIFICATE_ID,
     CLUSTER_ID,
@@ -599,6 +600,8 @@ def add_to_registry(
     *,
     require_secure: bool = True,
     lock_path: Path = DEFAULT_LOCK_PATH,
+    store: Path = IMPORT_STORE,
+    request_root: Path | None = None,
 ) -> str | None:
     """Add the entry through the one writer the registry has.
 
@@ -613,7 +616,14 @@ def add_to_registry(
 
     try:
         with cert_registry.locked(lock_path):
-            return _add_entry(path, request, runtime, require_secure=require_secure)
+            return _add_entry(
+                path,
+                request,
+                runtime,
+                require_secure=require_secure,
+                store=store,
+                request_root=request_root,
+            )
     except cert_registry.RegistryError as exc:
         #
         # The one failure that leaves something behind: certbot has issued the
@@ -630,8 +640,8 @@ def add_to_registry(
             #
             raise IssueError(
                 exc.code,
-                f"certbot issued {request.certificate_id!r}, and another certificate was "
-                "registered under that name while it ran; nothing was written over it. The "
+                f"certbot issued {request.certificate_id!r}, and another certificate took "
+                "that name while it ran; nothing was written over it. The "
                 "issued lineage is not registered: remove it with "
                 f"'sudo certbot delete --cert-name {request.certificate_id}', then issue under "
                 "another name.",
@@ -645,11 +655,55 @@ def add_to_registry(
         ) from exc
 
 
+def refuse_taken(
+    request: IssueRequest,
+    runtime: RuntimeConfig,
+    *,
+    live: Path | None,
+    store: Path,
+    request_root: Path | None,
+) -> None:
+    """The ID is free in all five places (`cert_request_state.id_holder`), or say which has it."""
+
+    entry = runtime.registry.certificates.get(request.certificate_id) if runtime.registry else None
+    holder = id_holder(
+        request.certificate_id,
+        registered_kind=entry.source.kind if entry is not None else None,
+        live=live,
+        store=store,
+        request_root=request_root,
+    )
+    if holder is not None:
+        raise IssueError("already_exists", holder.message)
+
+
 def _add_entry(
-    path: Path, request: IssueRequest, runtime: RuntimeConfig, *, require_secure: bool
+    path: Path,
+    request: IssueRequest,
+    runtime: RuntimeConfig,
+    *,
+    require_secure: bool,
+    store: Path,
+    request_root: Path | None,
 ) -> str | None:
     document = cert_registry.read_document(path)
     certificates = dict(document.get("certificates") or {})
+    #
+    # Asked again under the lock for what a signing request or an NDES
+    # enrollment may have taken since `issue` looked; certbot's own directory
+    # is certbot's by now. The registry itself is the document just read.
+    #
+    holder = id_holder(
+        request.certificate_id,
+        registered_kind=None,
+        live=None,
+        store=store,
+        request_root=request_root,
+    )
+    if holder is not None:
+        raise cert_registry.RegistryError(
+            "already_exists", holder.message, exit_code=exit_codes.BLOCKED
+        )
     if request.certificate_id in certificates:
         #
         # `build_request` checked a snapshot from before certbot ran. An import,
@@ -724,12 +778,8 @@ def issue(
         interface=interface,
         exportable=exportable,
     )
-    if (live / request.certificate_id).exists():
-        raise IssueError(
-            "already_exists",
-            f"certbot already has a lineage named {request.certificate_id!r}; register it "
-            "in the registry instead of issuing it again",
-        )
+    request_root = policy.ndes.state_root if policy.ndes is not None else None
+    refuse_taken(request, runtime, live=live, store=store, request_root=request_root)
     invocation = certbot_invocation(request, policy, require_secure=require_secure)
 
     certbot_started = time.monotonic()
@@ -764,6 +814,8 @@ def issue(
         runtime,
         require_secure=require_secure,
         lock_path=lock_path,
+        store=store,
+        request_root=request_root,
     )
     #
     # Re-read rather than patched in memory: the publisher must see exactly

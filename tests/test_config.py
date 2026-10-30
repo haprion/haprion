@@ -16,7 +16,6 @@ import yaml
 
 from haprion.cli.cluster_config import main as cluster_config_main
 from haprion.config import (
-    CLUSTER_ID,
     AbuseProtection,
     Cluster,
     ConfigError,
@@ -29,6 +28,7 @@ from haprion.config import (
     load_registry,
     load_runtime_config,
     receiver_id_names_a_host,
+    valid_cluster_id,
 )
 
 BASE = Path(__file__).resolve().parents[1]
@@ -146,9 +146,9 @@ class ConfigTests(unittest.TestCase):
             ):
                 pass
         for cluster in ("al--pha", "alpha-", "alpha--b"):
-            self.assertIsNone(CLUSTER_ID.fullmatch(cluster), cluster)
+            self.assertFalse(valid_cluster_id(cluster), cluster)
         for cluster in ("alpha", "alpha-b", "a-b-c1"):
-            self.assertIsNotNone(CLUSTER_ID.fullmatch(cluster), cluster)
+            self.assertTrue(valid_cluster_id(cluster), cluster)
 
     def test_a_cluster_has_between_one_and_eight_nodes(self) -> None:
         def nodes(count: int) -> Mutate:

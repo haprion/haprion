@@ -18,13 +18,24 @@ from haprion import accounts, address_ranges, exit_codes, labels, safe_yaml
 
 DEFAULT_POLICY_PATH = Path("/etc/haprion/runtime-policy.yaml")
 MAX_CONFIG_BYTES = 1024 * 1024
-#
-# No `--` and no trailing `-` in a cluster ID or a node name: the traffic
-# collector files a node's data as `<cluster>--<node>--<day>`, and a name that
-# carries the separator lets one node's cleanup take another's files (review
-# 2026-10-30, E4).
-#
-CLUSTER_ID = re.compile(r"^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){0,62}$")
+CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+
+
+def file_separator_free(name: str) -> bool:
+    """No `--` and no trailing `-` in a cluster ID or a node name.
+
+    The traffic collector files a node's data as `<cluster>--<node>--<day>`, and
+    a name that carries the separator lets one node's cleanup take another's
+    files (review 2026-10-30, E4). Kept apart from the pattern, which the
+    install steps repeat in shell, where it cannot be written.
+    """
+
+    return "--" not in name and not name.endswith("-")
+
+
+def valid_cluster_id(name: str) -> bool:
+    return CLUSTER_ID.fullmatch(name) is not None and file_separator_free(name)
+
 
 #
 # What a cluster's single VIP is called when it has never had to be named.
@@ -56,7 +67,6 @@ ABUSE_WINDOW = re.compile(r"^[1-9][0-9]{0,3}(s|m)$")
 DEFAULT_ABUSE_WINDOW = "10s"
 NODE_PATH = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
-NODE_NAME = CLUSTER_ID
 #
 # How many nodes one cluster may have. keepalived sets no limit - one VRRP
 # instance shares its addresses between any number of nodes by priority - so
@@ -641,7 +651,7 @@ class RuntimeConfig:
     registry: Registry | None = None
 
     def cluster(self, cluster_id: str) -> Cluster:
-        if not CLUSTER_ID.fullmatch(cluster_id):
+        if not valid_cluster_id(cluster_id):
             raise ConfigError("invalid cluster ID", exit_code=exit_codes.USAGE)
         try:
             return self.clusters[cluster_id]
@@ -1664,7 +1674,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
 
     clusters: dict[str, Cluster] = {}
     for cluster_id, raw_value in raw_clusters.items():
-        if not CLUSTER_ID.fullmatch(cluster_id):
+        if not valid_cluster_id(cluster_id):
             raise ConfigError(f"invalid cluster ID in configuration: {cluster_id!r}")
         location = f"clusters.{cluster_id}"
         raw = _mapping(raw_value, location)
@@ -1782,7 +1792,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             raw_node = _mapping(raw_node_value, node_location)
             _only_keys(raw_node, {"name", "mgmt_host"}, node_location)
             name = _required_string(raw_node, "name", node_location)
-            if not NODE_NAME.fullmatch(name):
+            if not NAME.fullmatch(name) or not file_separator_free(name):
                 raise ConfigError(f"{node_location}.name is invalid")
             nodes.append(
                 Node(

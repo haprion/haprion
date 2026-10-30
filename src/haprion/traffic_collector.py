@@ -21,7 +21,7 @@ from typing import Any
 import psycopg
 
 from haprion import atomic_file, exit_codes, labels, node_ssh
-from haprion.config import CLUSTER_ID
+from haprion.config import file_separator_free, valid_cluster_id
 from haprion.proxy_model import NAME as OBJECT_NAME
 from haprion.proxy_model import WAF_DECIDING_RULES, waf_field
 
@@ -71,7 +71,7 @@ CLOSED_DAY_GRACE = timedelta(minutes=5)
 #
 FETCH_BUDGET_SECONDS = 30.0
 DATABASE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
-NODE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.]|-(?=[A-Za-z0-9_.])){0,63}$")
+NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 USER = re.compile(r"^[a-z_][a-z0-9_-]{0,30}$")
 HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$")
 
@@ -204,9 +204,13 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
         if not isinstance(raw, dict) or set(raw) != {"cluster", "node", "host"}:
             raise CollectorError("collector node has unexpected or missing fields")
         cluster, node, host = raw["cluster"], raw["node"], raw["host"]
-        if not isinstance(cluster, str) or CLUSTER_ID.fullmatch(cluster) is None:
+        if not isinstance(cluster, str) or not valid_cluster_id(cluster):
             raise CollectorError("collector node cluster is invalid")
-        if not isinstance(node, str) or NODE.fullmatch(node) is None:
+        if (
+            not isinstance(node, str)
+            or NODE.fullmatch(node) is None
+            or not file_separator_free(node)
+        ):
             raise CollectorError("collector node name is invalid")
         if not isinstance(host, str) or HOST.fullmatch(host) is None:
             raise CollectorError("collector node host is invalid")

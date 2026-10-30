@@ -104,20 +104,32 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
                 # is kept. The provider section is planned, not written.
                 #
                 connection.rollback()
+            stopped: settings_apply.SavedThenStopped | None = None
             if wanted.oidc is not None:
-                outcome.oidc = settings_apply.apply_oidc(
-                    connection,
-                    wanted.oidc,
-                    actor=actor,
-                    check=args.check,
-                    public_key=settings.oidc_public_key,
-                    replace_secret=args.replace_oidc_secret,
-                    piped_secret=piped,
-                )
+                try:
+                    outcome.oidc = settings_apply.apply_oidc(
+                        connection,
+                        wanted.oidc,
+                        actor=actor,
+                        check=args.check,
+                        public_key=settings.oidc_public_key,
+                        replace_secret=args.replace_oidc_secret,
+                        piped_secret=piped,
+                    )
+                except settings_apply.SavedThenStopped as error:
+                    #
+                    # The provider section committed, and the rest of the file
+                    # with it, before it stopped (review 26-10-30, E5): that is
+                    # saved, and the jobs it queued still run.
+                    #
+                    outcome.oidc = error.answer
+                    stopped = error
+                    connection.rollback()
             if args.check:
                 connection.rollback()
             else:
-                connection.commit()
+                if stopped is None:
+                    connection.commit()
                 saved = True
                 #
                 # Node backups on starts the schedules it stopped as jobs. A
@@ -133,6 +145,8 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
                         raise settings_apply.ApplyError(
                             f"backup schedule for {job.cluster}: {problem}", code="job_not_done"
                         )
+                if stopped is not None:
+                    raise stopped
     except settings_apply.ApplyError as exc:
         if saved:
             #

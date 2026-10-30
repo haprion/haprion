@@ -88,6 +88,19 @@ class ApplyError(tool_answer.ToolError):
     """What is wrong with the file or the change; said as the page says it."""
 
 
+class SavedThenStopped(ApplyError):
+    """The provider section stopped after it had committed: what it did stands.
+
+    The transaction carries the rest of the file with it (the status access,
+    the switches and the jobs they queued), so the answer is `partial`, not a
+    refusal (review 26-10-30, E5). `answer` is what the provider section saved.
+    """
+
+    def __init__(self, error: ApplyError, answer: dict[str, Any]) -> None:
+        super().__init__(str(error), code=error.code, exit_code=error.exit_code)
+        self.answer = answer
+
+
 @dataclass(frozen=True, slots=True)
 class Wanted:
     status_access: tuple[str, ...] | None = None
@@ -405,71 +418,80 @@ def apply_oidc(
     if check or (not fields and turn is None):
         return answer if (fields or turn is not None or sealing) else None
 
-    if turn is False:
-        answer["sessions_ended"] += _set_enabled(
-            connection, False, actor=actor, issuer=current.issuer
-        )
-    if fields and parsed is not None:
-        verified = False
-        if on_after and current.enabled and turn is None:
-            #
-            # On, the row accepts only verified settings: verified first, and
-            # saved as verified in one statement - the page's Save while on.
-            #
-            ok, checks, trouble = verify(replace(current, **parsed.settings), redirect)
-            if not ok:
-                raise ApplyError(
-                    "oidc: sign-in through the provider is on, and these settings did not "
-                    f"pass Verify; nothing was saved. {_failed_verify(trouble, checks)}"
-                )
-            verified = True
-        try:
-            ended = db.save_oidc_provider(
-                connection, settings=parsed.settings, actor=actor, verified=verified
+    committed = False
+    try:
+        if turn is False:
+            answer["sessions_ended"] += _set_enabled(
+                connection, False, actor=actor, issuer=current.issuer
             )
-            answer["sessions_ended"] += ended
-        except db.ProviderRefused as error:
-            raise ApplyError(f"oidc: {error}") from error
-        db.record_audit_event(
-            connection,
-            actor=actor,
-            action="oidc_configured",
-            detail={
-                "issuer": parsed.settings["issuer"],
-                "client_id": parsed.settings["client_id"],
-                "secret_replaced": "client_secret_sealed" in parsed.settings,
-                "sessions_ended": ended,
-                "via": "cli",
-            },
-        )
-        connection.commit()
-    if turn is True:
-        stored = db.oidc_provider(connection) or current
-        if not stored.verified:
-            ok, checks, trouble = verify(stored, redirect)
-            recorded = ok and db.record_oidc_verified(connection, revision=stored.revision)
+        if fields and parsed is not None:
+            verified = False
+            if on_after and current.enabled and turn is None:
+                #
+                # On, the row accepts only verified settings: verified first, and
+                # saved as verified in one statement - the page's Save while on.
+                #
+                ok, checks, trouble = verify(replace(current, **parsed.settings), redirect)
+                if not ok:
+                    raise ApplyError(
+                        "oidc: sign-in through the provider is on, and these settings did not "
+                        f"pass Verify; nothing was saved. {_failed_verify(trouble, checks)}"
+                    )
+                verified = True
+            try:
+                ended = db.save_oidc_provider(
+                    connection, settings=parsed.settings, actor=actor, verified=verified
+                )
+                answer["sessions_ended"] += ended
+            except db.ProviderRefused as error:
+                raise ApplyError(f"oidc: {error}") from error
             db.record_audit_event(
                 connection,
                 actor=actor,
-                action="oidc_verified",
+                action="oidc_configured",
                 detail={
-                    "issuer": stored.issuer,
-                    "ok": ok,
-                    "revision": stored.revision,
+                    "issuer": parsed.settings["issuer"],
+                    "client_id": parsed.settings["client_id"],
+                    "secret_replaced": "client_secret_sealed" in parsed.settings,
+                    "sessions_ended": ended,
                     "via": "cli",
                 },
             )
             connection.commit()
-            if not recorded:
-                raise ApplyError(
-                    "oidc: the settings did not pass Verify, so sign-in through the provider "
-                    f"stays off{'; the settings were saved' if fields else ''}. "
-                    f"{_failed_verify(trouble, checks)}"
+            committed = True
+        if turn is True:
+            stored = db.oidc_provider(connection) or current
+            if not stored.verified:
+                ok, checks, trouble = verify(stored, redirect)
+                recorded = ok and db.record_oidc_verified(connection, revision=stored.revision)
+                db.record_audit_event(
+                    connection,
+                    actor=actor,
+                    action="oidc_verified",
+                    detail={
+                        "issuer": stored.issuer,
+                        "ok": ok,
+                        "revision": stored.revision,
+                        "via": "cli",
+                    },
                 )
-        answer["sessions_ended"] += _set_enabled(
-            connection, True, actor=actor, issuer=stored.issuer
-        )
-    connection.commit()
+                connection.commit()
+                committed = True
+                if not recorded:
+                    raise ApplyError(
+                        "oidc: the settings did not pass Verify, so sign-in through the provider "
+                        f"stays off{'; the settings were saved' if fields else ''}. "
+                        f"{_failed_verify(trouble, checks)}"
+                    )
+            answer["sessions_ended"] += _set_enabled(
+                connection, True, actor=actor, issuer=stored.issuer
+            )
+        connection.commit()
+        committed = True
+    except ApplyError as error:
+        if committed:
+            raise SavedThenStopped(error, answer) from error
+        raise
     return answer
 
 

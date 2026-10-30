@@ -27,7 +27,15 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from haprion import oidc
 
-from haprion_ui import db, feature_switch, oidc_web, settings_apply, tool_answer
+from haprion_ui import (
+    config,
+    db,
+    feature_switch,
+    oidc_web,
+    settings_apply,
+    settings_tool,
+    tool_answer,
+)
 from haprion_ui.settings_apply import ApplyError, Outcome
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures/haprion-settings-apply/valid/done.json"
@@ -223,6 +231,60 @@ class TheColoursSwitch(unittest.TestCase):
             )
 
         self.assertEqual(flipped, {"cluster_colours": True})
+
+
+class TheRunThatSavedAndStopped(unittest.TestCase):
+    """Review 26-10-30, E5: Verify failing after the commit is `partial`, with what was saved."""
+
+    def test_a_failed_verify_after_the_commit_is_partial_and_names_what_was_saved(self) -> None:
+        provider = SimpleNamespace(
+            enabled=False,
+            verified=False,
+            issuer="https://idp.example.com",
+            revision=3,
+            client_secret_sealed=b"x",
+            client_id="c",
+            ca_pem=None,
+        )
+        commits: list[int] = []
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        connection.commit.side_effect = lambda: commits.append(1)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "settings.yaml")
+            path.write_text(
+                "status_access: [192.0.2.10]\n"
+                "oidc:\n  enabled: true\n  interface_url: https://mgr.example.com\n"
+            )
+            path.chmod(0o600)
+            out = io.StringIO()
+            with (
+                mock.patch("os.geteuid", return_value=0),
+                mock.patch.object(
+                    config, "load", return_value=SimpleNamespace(oidc_public_key=None)
+                ),
+                mock.patch.object(settings_tool, "load_environment"),
+                mock.patch.object(settings_tool, "connect", return_value=connection),
+                mock.patch.object(db, "status_access", return_value=[]),
+                mock.patch.object(db, "set_status_access"),
+                mock.patch.object(db, "record_audit_event"),
+                mock.patch.object(db, "oidc_provider", return_value=provider),
+                mock.patch.object(db, "record_oidc_verified", return_value=False),
+                mock.patch.object(
+                    settings_apply,
+                    "verify_with_helper",
+                    return_value=(False, [], "the provider refused the client"),
+                ),
+                contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                code = settings_tool.main(["apply", str(path), "--json"])
+
+        answer = json.loads(out.getvalue())
+        self.assertEqual((code, answer["outcome"]), (69, "partial"))
+        self.assertEqual(answer["result"]["status_access"]["added"], ["192.0.2.10/32"])
+        self.assertIn("did not pass Verify", answer["warnings"][0]["message"])
+        self.assertTrue(commits)
 
 
 class TheAnswer(unittest.TestCase):

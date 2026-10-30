@@ -4536,6 +4536,11 @@ sudo /usr/share/haprion-ui/install/platform/check-compatibility
 It reads the whole installation - the CLI, the platform, the database, the nodes - and ends with
 `COMPATIBLE` when every part fits.
 
+**After an upgrade, the next publish carries more than your change.** Every publish also builds again
+what the product generates for every object. If the new version generates differently, the next publish
+- *Publish this version* included - carries that for all objects, not only the ones you changed. Read
+the version's Diff after it.
+
 ### CLI rollback
 
 Install the retained previous package; apt then puts the older version in place. If the web interface

@@ -1295,6 +1295,10 @@ Write each as a plain number; `size` also takes `k`, `m` or `g`.
   another table, as `table_http_req_rate(<name>)` does, is allowed.
 - **The WAF engine's wiring.** The engine's SPOE filter, and the `txn.coraza.*` variables its verdict is
   read from. A line that set them could make the engine's answer say something it did not.
+- **The generator's variables.** `txn.rule`, `txn.traffic_host`, `txn.client`, `txn.access_path`,
+  `txn.hsts` and `txn.waf_body` carry what the traffic log records and the HSTS header the frontend
+  writes. The pool runs after the frontend, so a value set there would win. The text may read them;
+  `set-var`, `set-var-fmt`, `unset-var` and `do-resolve` on them are refused.
 - **Files.** A file HAProxy is told to serve - `errorfile`, and `file`, `lf-file` or `errorfile` in a
   `return` or `http-error` - must be one of the packaged error pages under `/etc/haproxy/errors/`. HAProxy
   reads such a file as root and hands it to whoever asks, so any other path is refused.

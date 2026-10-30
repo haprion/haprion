@@ -548,6 +548,42 @@ class TheWafEngineNamesAreTheGenerators(unittest.TestCase):
         )
 
 
+class TheGeneratorSVariablesAreReadNotWritten(unittest.TestCase):
+    """Code review 26-10-30 again, R6: `set-var(txn.rule)` and `set-var(txn.hsts)` were
+    placed, and the pool runs after the frontend - the traffic log named the text's
+    rule and the HSTS header was the text's."""
+
+    def test_setting_or_clearing_one_is_refused(self) -> None:
+        for line in (
+            "http-request set-var(txn.rule) str(waf-engine:deny)",
+            "http-request set-var(txn.traffic_host) str(bank.example.com)",
+            "http-response set-var(txn.hsts) str(max-age=0)",
+            'http-request set-var-fmt(txn.client) "%[src]"',
+            "http-request unset-var(txn.access_path)",
+            "http-request set-var(txn.x) str(a),set-var(txn.waf_body)",
+            r"http-request set-var(txn.x) str(a),set-var(\'txn.rule\')",
+            "http-request do-resolve(txn.client,dns) str(example.com)",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+
+    def test_reading_one_is_placed(self) -> None:
+        for line in (
+            "http-request deny if { var(txn.rule) -m found }",
+            "http-request set-var(txn.mine) var(txn.traffic_host)",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), PLACED)
+
+    def test_the_list_is_every_variable_the_generator_names(self) -> None:
+        import re
+
+        from haprion import generate
+
+        named = set(re.findall(r"txn\.[a-z_]+", Path(generate.__file__).read_text()))
+        self.assertEqual(named - {"txn.coraza"}, advanced.GENERATED_VARIABLES)
+
+
 class SectionsTheTextAddsKeepTheirNames(unittest.TestCase):
     def test_a_backend_named_after_the_object_is_written_as_it_stands(self) -> None:
         placement = place(

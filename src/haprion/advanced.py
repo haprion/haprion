@@ -973,6 +973,37 @@ def _stick_table_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: O
     return ""
 
 
+#
+# The transaction variables the generated lines set and read: the rule that
+# decided, the host and client the traffic log records, the access path, the
+# HSTS header the frontend writes back, the body the WAF engine saw. The
+# object's pool runs after the frontend, so a value the text set there would
+# win - the traffic log would name another rule or host, and the HSTS header
+# would be the text's (code review 2026-10-30 again, R6). The text may read
+# them. A test holds the list against every `txn.` name in generate.py.
+#
+GENERATED_VARIABLES = frozenset(
+    {"txn.access_path", "txn.client", "txn.hsts", "txn.rule", "txn.traffic_host", "txn.waf_body"}
+)
+#
+# What writes a variable: the actions and the converter of the same names, and
+# `do-resolve`, which stores the address it finds. The name is read as HAProxy
+# reads a converter's argument, without quotes.
+#
+_VARIABLE_WRITER = re.compile(
+    r"(?<![A-Za-z0-9_.-])(?:set-var|set-var-fmt|unset-var|do-resolve)\((?P<name>[^,)]*)"
+)
+
+
+def _variable_problem(tokens: Sequence[str]) -> str:
+    for word in tokens:
+        for match in _VARIABLE_WRITER.finditer(word):
+            written = "".join(char for char in match["name"] if char not in "'\"\\ \t")
+            if written in GENERATED_VARIABLES:
+                return f"{written} is the generator's; the text may read it but not set it"
+    return ""
+
+
 def _waf_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
     """The WAF engine's names, which only the generated lines may use (B232).
 
@@ -1384,6 +1415,7 @@ def _line_problem(
     return (
         _server_problem(tokens, keyword)
         or _waf_problem(tokens, keyword)
+        or _variable_problem(tokens)
         or _filter_problem(tokens, keyword)
         or _file_problem(tokens, keyword)
         or _log_problem(tokens, keyword, own)

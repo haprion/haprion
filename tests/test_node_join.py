@@ -407,6 +407,8 @@ class TheJoin(unittest.TestCase):
         self.assertEqual(self.keys.read_text(), "")
         self.assertFalse((self.join_dir / "join_key").exists())
         self.assertTrue((self.join_dir / "joined").is_file())
+        # Review 26-10-30, R5: the address the manager came in on reaches step 4's answers.
+        self.assertIn("NODE_LISTEN_ADDRESS='192.0.2.21'", (self.join_dir / "join.env").read_text())
         self.assertEqual(oct((self.join_dir / "join.env").stat().st_mode & 0o777), "0o600")
         log = (self.root / "log" / "join.log").read_text()
         self.assertIn(f"step 4 {self.join_dir / 'join.env'} edge-a", log)

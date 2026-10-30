@@ -38,12 +38,20 @@ def deploy(
     """Run one deploy. The report is kept aside for the cases that inspect it."""
 
     out = io.StringIO()
+    now = 0.0
+    waited = pause or (lambda _seconds: None)
 
     def read_status() -> ClusterStatus:
         return parse_status(cluster.read_status())
 
     def trigger(node: NodeStatus) -> int:
         return cluster.trigger(node.name)
+
+    def sleep(seconds: float) -> None:
+        # The waits are on the clock, so the clock moves when the run pauses.
+        nonlocal now
+        now += seconds
+        waited(seconds)
 
     outcome = deploy_run.run(
         read_status,
@@ -52,7 +60,8 @@ def deploy(
         target=ReleaseTarget(version=8, hash=expected_hash) if expected_hash else None,
         allow_vip_unknown=allow_vip_unknown,
         preflight=preflight,
-        pause=pause or (lambda _seconds: None),
+        pause=sleep,
+        clock=lambda: now,
     )
     LAST_REPORT[:] = [outcome.report]
     # Every run must also make a valid answer: a partial that kept its error
@@ -172,6 +181,34 @@ class TheEndIsJudgedOnTheLastReading(unittest.TestCase):
         self.assertEqual(rows["node-a"]["outcome"], "not_attempted")
         codes = [warning["code"] for warning in document["warnings"]]
         self.assertIn("node_lost_after_deploy", codes)
+
+    def test_the_wait_for_a_silent_node_is_thirty_seconds_of_the_clock(self) -> None:
+        """Review 26-10-30, E3: a reading of a node that is down takes its connect timeout."""
+
+        cluster = pair(
+            on_deploy=lambda cluster, node: setattr(cluster.node("node-b"), "reachable", False)
+        )
+        now = 0.0
+        reads_after = 0
+
+        def read_status() -> ClusterStatus:
+            nonlocal now, reads_after
+            if not cluster.node("node-b").reachable:
+                now += 5.0
+                reads_after += 1
+            return parse_status(cluster.read_status())
+
+        result = deploy_run.run(
+            read_status,
+            lambda node: cluster.trigger(node.name),
+            io.StringIO(),
+            target=TARGET,
+            pause=lambda _seconds: None,
+            clock=lambda: now,
+        )
+
+        self.assertEqual(result.exit_code, 69)
+        self.assertLessEqual(reads_after, 7)
 
     def test_a_node_that_was_current_and_drifts_is_named(self) -> None:
         cluster = pair()
@@ -1239,7 +1276,7 @@ class TheRunKeepsToItsBudget(unittest.TestCase):
             trigger,
             io.StringIO(),
             target=TARGET,
-            pause=lambda _seconds: None,
+            pause=lambda seconds: now.__setitem__(0, now[0] + seconds),
             budget=self.BUDGET,
             clock=lambda: now[0],
         )

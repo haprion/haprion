@@ -463,6 +463,7 @@ def run(
                 writer,
                 pause,
                 lambda: time_left() > reading,
+                clock,
             )
             if landed is None and not _readable(status, node_name):
                 return _node_lost(writer, status, report, node_name, target)
@@ -535,9 +536,11 @@ def run(
 
 
 #
-# How long a node that answered 0 to its deploy and then cannot be read is waited
-# for, one reading a second (review 26-10-30, D2). A node that is slow to answer
-# after a heavy reload gets this; one that does not come back stops the rollout,
+# How long, on the clock, a node that answered 0 to its deploy and then cannot be
+# read is waited for (review 26-10-30, D2). A reading of a node that is down costs
+# its connect timeout and one of a node that hangs far more, so the limit is time
+# and not a count of readings. A node that is slow to answer after a heavy reload
+# gets this; one that does not come back stops the rollout,
 # because the next node may be the VIP owner and the release is then the likely
 # reason the last one went silent.
 #
@@ -556,6 +559,7 @@ def _await_node(
     writer: TextIO,
     pause: Callable[[float], None],
     may_read: Callable[[], bool],
+    clock: Callable[[], float],
 ) -> tuple[ClusterStatus, bool | None]:
     """The status, and whether the node landed, once it can be read again or the wait ends.
 
@@ -566,9 +570,8 @@ def _await_node(
     """
 
     writer.write(f"{node_name} cannot be read after its deploy; waiting for it...\n")
-    for _ in range(NODE_WAIT_SECONDS):
-        if _readable(status, node_name) or not may_read():
-            break
+    wait_end = clock() + NODE_WAIT_SECONDS
+    while not _readable(status, node_name) and may_read() and clock() < wait_end:
         pause(1.0)
         try:
             status = read_status()

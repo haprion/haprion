@@ -162,7 +162,7 @@ haprion-deploy -c alpha
 ```
 
 As in the interface, a deploy skips nodes that are already current. A node that answered its deploy and
-then cannot be read is waited for, up to 30 seconds; one that stays silent stops the rollout before the
+then cannot be read is waited for, up to 30 seconds by the clock; one that stays silent stops the rollout before the
 next node is touched (`partial`, `node_lost_after_deploy`). Cluster and network configuration is
 described under [Cluster definitions](#cluster-definitions) in the environment reference.
 

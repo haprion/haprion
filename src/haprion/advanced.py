@@ -19,13 +19,23 @@ author's to know:
 * everything else is refused, and so is a line whose meaning would depend on
   something the text cannot see.
 
-Every line is held to a list of what it may be, never to a list of what it may
-not: the proxy keyword matrix below for the object's rows and an added
-backend, and `SECTION_KEYWORDS` for the other sections. A word that is on
-neither is refused. The text runs on every node as root at load, `haproxy -c`
-included, so a keyword that names a file the node opens - a ring's
-`backing-file` creates and truncates one - would otherwise be a way from the
-interface to any file on the node (code review 2026-10-30, E1).
+Every keyword is held to a list of what it may be: the proxy keyword matrix
+below for the object's rows and an added backend, `SECTION_KEYWORDS` for the
+other sections, and the parameters of a `server` and a `stick-table` one by
+one. A word that is on none of them is refused. The text runs on every node
+as root at load, `haproxy -c` included, so a keyword that names a file the
+node opens - a ring's `backing-file` creates and truncates one - would
+otherwise be a way from the interface to any file on the node (code review
+2026-10-30, E1).
+
+What follows a keyword is held to less. The actions of `http-request` and
+its kin, and the fetches and converters in a line, are many and grow with
+every HAProxy release, so they are read for what this module knows to be
+dangerous rather than held to a list: a file outside the generator's
+directories, a table, ring or cache the text does not add, a counter slot or
+variable the generator owns, the statistics page. A new action that writes
+somewhere else would pass until it is added here; `haproxy -c` does not know
+the difference either.
 
 What this module promises is narrower than "the text works": only that each
 line lands where it says, and that a line which would have been ignored, or

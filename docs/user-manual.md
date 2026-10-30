@@ -6625,9 +6625,9 @@ status leaves those certificates out until the next run reloads.
 
 **What the node attests.** Step 4 also writes `/etc/haprion/node-installation.json`, and the node
 package writes it again on a joined node when `apt upgrade` replaces the scripts. It records the
-node compatibility API and a SHA-256 digest of each script above except `haprion-node-key` and
-`haprion-node-join` - thirteen scripts. Those two only join a new node once, so they are not part
-of what a node attests or what its state backup carries. `haprion-node-status` recomputes the
+node compatibility API and a SHA-256 digest of each script above except `haprion-node-key`,
+`haprion-node-join` and `haprion-node-prepare` - thirteen scripts. Those three only join a node or
+prepare it again by hand, so they are not part of what a node attests or what its state backup carries. `haprion-node-status` recomputes the
 digests on every reading, so copied metadata cannot hide a script changed after installation. The
 report contains code digests only, never node configuration or key material.
 

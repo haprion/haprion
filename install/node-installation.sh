@@ -7,6 +7,10 @@
 # scripts as changed and the next manager update stopped on it. And which
 # step 4 last ran here, for the postinst to compare with the one it brings.
 #
+# Not in the list, on purpose: haprion-node-key, haprion-node-join and
+# haprion-node-prepare. They join a node or prepare it again by hand, they are
+# run by an operator, and step 4's `dpkg --verify` covers them.
+#
 # shellcheck disable=SC2034  # read by the files that source this one
 SCRIPTS=(
     haprion-pull-deploy

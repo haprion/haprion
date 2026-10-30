@@ -119,6 +119,22 @@ class NodeInstallationReadingTests(unittest.TestCase):
         installed = tuple(re.findall(r"^\s+(haprion-[a-z0-9-]+)$", match.group(1), re.MULTILINE))
         self.assertEqual(installed, NODE_SCRIPTS)
 
+    def test_a_script_left_out_of_the_attestation_is_left_out_on_purpose(self) -> None:
+        """Review 26-10-30: the list looked complete; what it leaves out is named."""
+
+        shipped = {
+            path.name
+            for path in (INSTALLER.parent / "node").iterdir()
+            if path.is_file() and path.name.startswith("haprion-")
+        }
+        left_out = shipped - set(NODE_SCRIPTS)
+        self.assertEqual(
+            left_out, {"haprion-node-key", "haprion-node-join", "haprion-node-prepare"}
+        )
+        text = (INSTALLER.parent / "node-installation.sh").read_text()
+        for name in left_out:
+            self.assertIn(f"{name}", text.split("SCRIPTS=(")[0])
+
     def test_the_status_script_reads_the_same_list_it_is_installed_with(self) -> None:
         """26-10-09: the list in the status script itself was never compared.
 

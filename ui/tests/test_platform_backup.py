@@ -610,7 +610,9 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
     def test_the_command_is_offered(self) -> None:
         source = SCRIPT.read_text()
         self.assertIn("#     haprion-backup restore <dump>", source)
-        self.assertIn('restore)        take_lock; do_restore "$1" ;;', source)
+        self.assertIn(
+            'restore)        hold_release_lock_for_restore; take_lock; do_restore "$1" ;;', source
+        )
 
     def test_what_a_restore_stopped_is_kept_where_only_root_writes_and_a_boot_empties(
         self,

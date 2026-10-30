@@ -7,6 +7,7 @@ up - the documented way needed the source tree and an answers file.
 
 from __future__ import annotations
 
+import base64
 import importlib.machinery
 import importlib.util
 import os
@@ -226,8 +227,9 @@ class TheCommand(CommandFixture):
 class TheKeyOption(CommandFixture):
     """`--key <purpose>=<key>`: one manager key, on a node that has joined (review 26-10-30)."""
 
-    KEY = "ssh-ed25519 " + "A" * 68
-    OTHER = "ssh-ed25519 " + "B" * 68
+    HEADER = b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20"
+    KEY = "ssh-ed25519 " + base64.b64encode(HEADER + bytes([1]) * 32).decode()
+    OTHER = "ssh-ed25519 " + base64.b64encode(HEADER + bytes([2]) * 32).decode()
 
     def setUp(self) -> None:
         super().setUp()
@@ -241,6 +243,21 @@ class TheKeyOption(CommandFixture):
         self.assertIn(f"STATUS_PUBKEY='{self.KEY}'\n", answers)
         self.assertIn("PREPARED_AGAIN=yes", answers)
         self.assertEqual(seen.read_text().split()[1], "alpha")
+
+    def test_the_fingerprint_is_printed_to_compare_with_the_manager_s(self) -> None:
+        self.step(0)
+        expected = subprocess.run(  # the same fingerprint, by the tool that names it
+            ["/usr/bin/ssh-keygen", "-lf", "-"],
+            input=self.KEY + "\n",
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()[1]
+        with mock.patch("sys.stdout") as stdout:
+            self.assertEqual(PREPARE.main(["--key", f"status={self.KEY}"]), 0)
+        printed = "".join(call.args[0] for call in stdout.write.call_args_list)
+        self.assertIn(expected, printed)
+        self.assertTrue(expected.startswith("SHA256:"))
 
     def test_a_comment_after_the_key_is_dropped(self) -> None:
         self.step(0)
@@ -289,6 +306,12 @@ class TheKeyOption(CommandFixture):
             "ssh-ed25519 short",
             f"ssh-ed25519 {'A' * 68}'; id",
             self.KEY.split()[1],
+            # Sixty-eight base64 characters that are not an ed25519 key.
+            "ssh-ed25519 " + "A" * 68,
+            "ssh-ed25519 " + base64.b64encode(b"\x00\x00\x00\x07ssh-rsa" + bytes(40)).decode()[:68],
+            "ssh-ed25519 "
+            + base64.b64encode(self.HEADER + bytes(32)).decode().replace("=", "A")[:67]
+            + "=",
         ):
             with self.subTest(bad=bad):
                 self.refused(f"status={bad}", "not one ssh-ed25519 public key")

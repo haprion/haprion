@@ -41,6 +41,9 @@ the one that last ran here.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import os
 import re
 import subprocess
@@ -92,6 +95,8 @@ PURPOSES = {
     "traffic_log": "TRAFFIC_LOG_PUBKEY",
 }
 PUBKEY = re.compile(r"^ssh-ed25519 [A-Za-z0-9+/]{68}$")
+# The wire form of an ed25519 public key: the type, then the 32-byte key.
+ED25519_HEADER = b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20"
 REMOVE = INSTALL.parent / "node-remove"
 REQUIRED = (
     "CLUSTER",
@@ -200,15 +205,35 @@ def cluster_vip() -> str | None:
     return None
 
 
+def fingerprint(key: str) -> str:
+    """The key's SHA256 fingerprint, as ssh-keygen -l prints it."""
+
+    digest = hashlib.sha256(base64.b64decode(key.split()[1])).digest()
+    return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
 def manager_key(argument: str) -> tuple[str, str]:
-    """`<purpose>=<public key>` as the answer name and the key it installs."""
+    """`<purpose>=<public key>` as the answer name and the key it installs.
+
+    The key has to be what sshd will read: the ed25519 header and 32 bytes,
+    not any 68 characters (review 26-10-30, R4).
+    """
 
     purpose, equals, rest = argument.partition("=")
     if not equals or purpose not in PURPOSES:
         raise Refused(f"{purpose!r} is not a purpose; the purposes are {', '.join(PURPOSES)}")
     fields = rest.split()
     key = " ".join(fields[:2])
-    if len(fields) < 2 or not PUBKEY.fullmatch(key):
+    try:
+        blob = base64.b64decode(fields[1], validate=True) if len(fields) > 1 else b""
+    except (binascii.Error, ValueError):
+        blob = b""
+    if (
+        len(fields) < 2
+        or not PUBKEY.fullmatch(key)
+        or len(blob) != len(ED25519_HEADER) + 32
+        or not blob.startswith(ED25519_HEADER)
+    ):
         raise Refused(f"the {purpose} key is not one ssh-ed25519 public key")
     return PURPOSES[purpose], key
 
@@ -291,6 +316,11 @@ def main(argv: list[str] | None = None) -> int:
         stdin=subprocess.DEVNULL,
         check=False,
     )
+    if done.returncode == 0 and replacement is not None:
+        print(
+            f"Key fingerprint {fingerprint(replacement[1])}:"
+            " compare it with  ssh-keygen -lf <the .pub file>  on the manager"
+        )
     return done.returncode
 
 

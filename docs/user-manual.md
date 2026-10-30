@@ -6262,7 +6262,7 @@ sudo haprion-node-prepare --key status="ssh-ed25519 AAAA..."
 The purpose is one of `deploy`, `cert_deploy`, `server_state`, `status`, `probe`, `backup` and
 `traffic_log`. The key replaces that purpose's line, with the same forced command and the manager's
 addresses as the join gives it; the other keys stay, and running it again changes nothing. A node that
-has not joined (a manager joined it, or step 4 was run on it by hand), a purpose it does not know and a key that is not one ssh-ed25519 public key are refused.
+has not joined (a manager joined it, or step 4 was run on it by hand), a purpose it does not know and a key that is not one ssh-ed25519 public key are refused. The command prints the key's fingerprint; compare it with `ssh-keygen -lf` on the `.pub` file.
 
 A node also has a one-time join key. It is part of the enrollment block the node prints, and lets a manager
 join the node once, as `_haprion-join`, within 24 hours; the join removes it after use.

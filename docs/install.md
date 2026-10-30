@@ -257,7 +257,7 @@ A rotated manager key, or one added after the join, reaches a joined node only b
 `sudo haprion-node-prepare --key <purpose>="<public key>"`, where the purpose is `deploy`, `cert_deploy`,
 `server_state`, `status`, `probe`, `backup` or `traffic_log`. It replaces that one key with the binding the
 join gives it, leaves the others, and refuses a node that has not joined: one a manager joined, or one prepared
-by hand with step 4, counts as joined.
+by hand with step 4, counts as joined. It checks that the key is a real ssh-ed25519 key and prints its fingerprint, to compare with `ssh-keygen -lf` on the manager's `.pub` file.
 
 ## 4. Sign in
 

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "settings_show",
+  "cluster": null,
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "status_access": [
+      "192.0.2.10/32"
+    ],
+    "features": {
+      "cluster_colours": true,
+      "waf_engine": false
+    },
+    "oidc": {
+      "enabled": true,
+      "issuer": "https://idp.example.com",
+      "client_id": "haprion",
+      "client_secret": "set",
+      "verified": true,
+      "prompt_login": false
+    }
+  },
+  "warnings": [],
+  "error": null
+}

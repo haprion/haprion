@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import json
 import os
 import sys
 from dataclasses import dataclass
@@ -41,6 +40,7 @@ from haprion.cli import arguments
 
 from haprion_ui import account_apply, auth, config, db, labels, tool_answer, users
 
+LIST_OPERATION = "user_list"
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
 
@@ -507,24 +507,22 @@ def command_list(environment: Environment, args: argparse.Namespace) -> int:
             cursor.execute("select username, created_at::date from app_user")
             created = dict(cursor.fetchall())
     if getattr(args, "json", False):
-        print(
-            json.dumps(
-                {
-                    "accounts": [
-                        {
-                            "username": row.username,
-                            "role": row.role,
-                            "kind": _kind(row),
-                            "disabled": row.disabled,
-                            "locked": row.locked,
-                            "sessions": row.sessions,
-                        }
-                        for row in listed
-                    ]
-                }
-            )
+        return tool_answer.done(
+            LIST_OPERATION,
+            {
+                "accounts": [
+                    {
+                        "username": row.username,
+                        "role": row.role,
+                        "kind": _kind(row),
+                        "disabled": row.disabled,
+                        "locked": row.locked,
+                        "sessions": row.sessions,
+                    }
+                    for row in listed
+                ]
+            },
         )
-        return 0
     if not listed:
         print("no accounts. Create the first one with:")
         print("  sudo haprion-user add <username> --role admin")
@@ -625,7 +623,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    contract = account_apply.OPERATION if args.command == "apply" else None
+    contract = {"apply": account_apply.OPERATION, "list": LIST_OPERATION}.get(args.command)
     if os.geteuid() != 0:
         #
         # Refused here as well as by the database. Peer authentication would

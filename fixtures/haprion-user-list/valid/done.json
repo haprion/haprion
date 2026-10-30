@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "user_list",
+  "cluster": null,
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "accounts": [
+      {
+        "username": "admin",
+        "role": "admin",
+        "kind": "break-glass",
+        "disabled": false,
+        "locked": false,
+        "sessions": 1
+      },
+      {
+        "username": "operator",
+        "role": "reader",
+        "kind": "local",
+        "disabled": true,
+        "locked": false,
+        "sessions": 0
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

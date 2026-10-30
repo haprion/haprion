@@ -21,6 +21,7 @@ from typing import Any
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import publish, publish_helper
 from haprion.reservations import fragment_digest
+from tests.contract_schema import assert_contract
 from tests.test_publish_helper import (
     CORE_CFG,
     GENERATED,
@@ -67,12 +68,15 @@ class CallerFixture(PublishFixture):
             return code, out.getvalue(), err.getvalue()
 
         writer = io.StringIO()
+        errors = io.StringIO()
         code = publish.main(
             list(argv),
             stream_out=writer,
+            stream_err=errors,
             run_helper=run_helper,
             config_path=lambda _cluster: self.repo,
         )
+        self.errors = errors.getvalue()
         return code, writer.getvalue()
 
 
@@ -262,6 +266,71 @@ class RefusalTests(CallerFixture):
                 publish.main(argv, stream_out=io.StringIO())
             self.assertEqual(caught.exception.code, 64)
             self.assertIn("haprion-publish -c <cluster>", shown.getvalue())
+
+    def test_json_is_one_document_on_stdout_and_the_progress_on_stderr(self) -> None:
+        """Review 26-10-30, E12 (B409): haprion-publish had no --json."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+
+            code, output = self.run_caller(policy_path, "-c", "alpha", "--json", "Added serverxyz")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(output.splitlines()), 1, output)
+            document = assert_contract("haprion-publish", output)
+            self.assertEqual((document["outcome"], document["result"]["changed"]), ("done", True))
+            self.assertEqual(self.requests[0]["parameters"]["comment"], "Added serverxyz")
+            self.assertIn("Checking alpha", self.errors)
+
+            again, output = self.run_caller(policy_path, "-c", "alpha", "Added serverxyz", "--json")
+            self.assertEqual(again, 0)
+            self.assertFalse(assert_contract("haprion-publish", output)["result"]["changed"])
+
+    def test_json_answers_a_refusal_with_the_helper_s_document(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", b"global\n  nonsense\n")
+
+            code, output = self.run_caller(
+                policy_path,
+                "-c",
+                "alpha",
+                "--json",
+                "Broken on purpose",
+                valid=False,
+                diagnostics="[ALERT] unknown keyword 'nonsense'\n",
+            )
+
+            self.assertEqual(code, 65)
+            document = assert_contract("haprion-publish", output)
+            self.assertEqual(document["outcome"], "failed")
+
+    def test_json_answers_what_stopped_it_before_the_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw), linked_worktree=True)
+            history = self.repo.with_name(f"{self.repo.name}.git")
+            history.rename(history.with_name(f"{history.name}.moved"))
+
+            code, output = self.run_caller(policy_path, "-c", "alpha", "--json", "Added serverxyz")
+
+            self.assertEqual(code, 68)
+            document = assert_contract("haprion-publish", output)
+            self.assertEqual(document["error"]["code"], "dependency_unavailable")
+            self.assertEqual(self.requests, [])
+
+    def test_json_answers_an_unknown_cluster(self) -> None:
+        def unknown(_cluster: str) -> Path:
+            raise SystemExit(64)
+
+        out = io.StringIO()
+        with self.assertRaises(SystemExit) as stopped:
+            publish.main(["-c", "nowhere", "--json", "x"], stream_out=out, config_path=unknown)
+
+        self.assertEqual(stopped.exception.code, 64)
+        self.assertEqual(
+            assert_contract("haprion-publish", out.getvalue())["error"]["code"], "bad_input"
+        )
 
     def test_a_comment_of_several_words_is_joined(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

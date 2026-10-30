@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-settings-show.schema.json",
+  "title": "haprion-settings show JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "settings_show" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/settings_show_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/settings_show_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "settings_show_result": {
+      "type": "object",
+      "required": ["status_access", "features", "oidc"],
+      "properties": {
+        "status_access": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+        "features": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+          "additionalProperties": { "type": "boolean" }
+        },
+        "oidc": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["enabled", "issuer", "client_secret", "verified"],
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "issuer": { "type": ["string", "null"] },
+                "client_secret": { "enum": ["set", null] },
+                "verified": { "type": "boolean" }
+              },
+              "additionalProperties": true
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -1133,7 +1133,8 @@ sudo haprion-settings show --json
 The `oidc` section holds what the configuration page saves. `enabled` is the page's *On* and *Off*.
 Turning it on runs Verify first, as the page does. The page takes the redirect URI from the browser; the
 command takes it from `interface_url`, the address people sign in at. Settings saved while sign-in is off
-stay saved when Verify then fails, and the command says why sign-in did not turn on.
+stay saved when Verify then fails; the command ends with 69 and `partial`, naming what it saved and why sign-in did not
+turn on.
 
 The stored client secret is encrypted for the helper, so the command cannot compare it with the file. The
 secret from the file is therefore stored only when none is stored yet, when the issuer, the client or the CA
@@ -4328,7 +4329,8 @@ What they have in common:
 - **`--json`** prints one answer in the contract's format, called the envelope (`docs/CONTRACT.md`,
   `schemas/v1/`). It includes `changed` where the command decides it, also when the command stops early.
   The exit code follows the envelope's outcome: 0 for done, 69 for partly done, 75 for blocked, and a code
-  from the contract's *Exit codes* for a failure.
+  from the contract's *Exit codes* for a failure. `haprion-publish`, `haprion-user list`,
+  `haprion-settings show` and `haprion-profiles list` answer in it too.
 - **Publishing is not deploying.** `haprion-objects apply`, `haprion-network apply` and
   `haprion-cluster-settings apply` publish a new version. `haprion-deploy` rolls it out - the same two
   steps *Publish & deploy* takes.

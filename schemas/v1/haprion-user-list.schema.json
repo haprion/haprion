@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-user-list.schema.json",
+  "title": "haprion-user list JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "user_list" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/user_list_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/user_list_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "user_list_result": {
+      "type": "object",
+      "required": ["accounts"],
+      "properties": {
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["username", "role", "kind", "disabled", "locked", "sessions"],
+            "properties": {
+              "username": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "role": { "enum": ["admin", "reader"] },
+              "kind": { "enum": ["sso", "break-glass", "local"] },
+              "disabled": { "type": "boolean" },
+              "locked": { "type": "boolean" },
+              "sessions": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

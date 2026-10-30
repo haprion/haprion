@@ -31,7 +31,6 @@ says which one did not apply and stops there.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import stat
 import sys
@@ -64,6 +63,7 @@ from haprion_ui import (
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 OPERATION = "profiles_apply"
+LIST_OPERATION = "profiles_list"
 MAX_FILE_BYTES = 256 * 1024
 MAX_PROFILES = 64
 WAIT_SECONDS = job_wait.WAIT_SECONDS
@@ -577,8 +577,7 @@ def command_list(args: argparse.Namespace) -> int:
         for name, listed in rows.items()
     }
     if args.json:
-        print(json.dumps(shown))
-        return 0
+        return tool_answer.done(LIST_OPERATION, shown)
     for name, listed in shown.items():
         for entry in listed:
             print(
@@ -624,7 +623,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    contract = OPERATION if args.command in ("apply", "remove") else None
+    contract = LIST_OPERATION if args.command == "list" else OPERATION
     if os.geteuid() != 0:
         return tool_answer.refusal(
             args, contract, "not_root", "run this with sudo", exit_codes.NOT_ROOT

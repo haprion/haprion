@@ -12,7 +12,6 @@ client secret is sealed against.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -211,6 +210,9 @@ def _saved_then_stopped(
     return exit_codes.PARTIAL
 
 
+SHOW_OPERATION = "settings_show"
+
+
 def command_show(args: argparse.Namespace) -> int:
     with connect(load_environment()) as connection:
         shown = settings_apply.document(connection)
@@ -225,8 +227,7 @@ def command_show(args: argparse.Namespace) -> int:
             "verified": provider.verified,
         }
     if args.json:
-        print(json.dumps(shown))
-        return 0
+        return tool_answer.done(SHOW_OPERATION, shown)
     print("status_access: " + (", ".join(access) or "(off)"))
     for name, enabled in switches.items():
         print(f"feature {name}: {'on' if enabled else 'off'}")
@@ -271,7 +272,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    contract = settings_apply.OPERATION if args.command == "apply" else None
+    contract = SHOW_OPERATION if args.command == "show" else settings_apply.OPERATION
     if os.geteuid() != 0:
         return tool_answer.refusal(
             args, contract, "not_root", "run this with sudo", exit_codes.NOT_ROOT

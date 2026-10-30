@@ -32,25 +32,36 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from haprion import exit_codes
-from haprion.cli.caller import CallerError, usage
+from haprion.cli.caller import CallerError, looked_up, usage, without_answer
 from haprion.cli.caller import config_path as _config_path
+from haprion.envelope import failure, new_request_id
 from haprion.git_command import GitError
 from haprion.git_command import git as _git
+from haprion.helper_protocol import config_error_code, write_document
 from haprion.repo_health import describe_problem, is_repo_root
 from haprion.repo_snapshot import SNAPSHOT_PREFIXES, PublishError, resolve_head
 
 OPERATION = "publish_version"
+#
+# What the document says, as `schemas/v1/haprion-publish` has it; the request
+# above is the helper's.
+#
+ANSWER = "publish"
 
 HELPER = "/opt/haprion/current/bin/haprion-publish-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (
     "Usage:\n"
-    "  haprion-publish -c <cluster> <comment>\n"
+    "  haprion-publish -c <cluster> [--json] <comment>\n"
     "\n"
     "Examples:\n"
     '  haprion-publish -c alpha "Add a backend server"\n'
-    '  haprion-publish -c beta "Add a public service"\n'
+    '  haprion-publish -c beta --json "Add a public service"\n'
+    "\n"
+    "  --json\n"
+    "        Print one result document on stdout instead of the report; the\n"
+    "        progress goes to stderr.\n"
 )
 
 type RunHelper = Callable[[bytes], tuple[int, str, str]]
@@ -71,13 +82,21 @@ def _run_helper(request: bytes) -> tuple[int, str, str]:
     )
 
 
-def _parse(argv: list[str]) -> tuple[str, str]:
+def _parse(argv: list[str]) -> tuple[str, str, bool]:
+    """(cluster, comment, --json); `--json` stands right after the cluster or last."""
+
     if len(argv) < 3 or argv[0] not in ("-c", "--cluster"):
         usage(USAGE)
-    comment = " ".join(argv[2:]).strip()
+    rest = argv[2:]
+    json_mode = False
+    if rest[0] == "--json":
+        json_mode, rest = True, rest[1:]
+    elif rest[-1] == "--json":
+        json_mode, rest = True, rest[:-1]
+    comment = " ".join(rest).strip()
     if not comment:
         usage(USAGE)
-    return argv[1], comment
+    return argv[1], comment, json_mode
 
 
 def collect_layers(repo: Path) -> dict[str, str]:
@@ -191,24 +210,53 @@ def main(
     argv: list[str] | None = None,
     *,
     stream_out: TextIO | None = None,
+    stream_err: TextIO | None = None,
     run_helper: RunHelper = _run_helper,
     config_path: ConfigPath = _config_path,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
-    cluster_id, comment = _parse(argv)
+    errors: TextIO = stream_err or sys.stderr
+    cluster_id, comment, json_mode = _parse(argv)
+    #
+    # With `--json` stdout is one document and everything said besides goes to
+    # stderr (review 26-10-30, E12, B409).
+    #
+    said: TextIO = errors if json_mode else writer
+
+    def refuse(message: str, exit_code: int) -> int:
+        if json_mode:
+            plain = message.removeprefix("ERROR: ")
+            write_document(
+                writer,
+                failure(
+                    operation=ANSWER,
+                    cluster=cluster_id,
+                    request_id=new_request_id(),
+                    code=config_error_code(exit_code)
+                    if exit_code == exit_codes.UNAVAILABLE
+                    else "bad_input",
+                    message=plain[:2048],
+                    exit_code=exit_code,
+                ),
+                exit_code,
+            )
+            errors.write(f"ERROR: {plain}\n")
+        else:
+            writer.write(f"{message}\n")
+        return exit_code
 
     try:
-        repo = config_path(cluster_id)
+        repo = looked_up(
+            config_path, cluster_id, operation=ANSWER, json_mode=json_mode, writer=writer
+        )
         if not is_repo_root(repo):
-            writer.write(f"{describe_problem(cluster_id, repo)}\n")
-            return exit_codes.UNAVAILABLE
+            return refuse(describe_problem(cluster_id, repo), exit_codes.UNAVAILABLE)
         _, expected_head = resolve_head(repo)
-        _report_managed(repo, writer)
+        _report_managed(repo, said)
         files = collect_layers(repo)
     except (CallerError, GitError, PublishError) as exc:
-        writer.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return refuse(f"ERROR: {exc}", exc.exit_code)
 
     request = json.dumps(
         {
@@ -230,7 +278,7 @@ def main(
     # after it knew that, and a progress line that claims work which did not
     # happen is exactly the kind of output nobody can trust under pressure.
     #
-    writer.write(f"Checking {cluster_id} ...\n")
+    said.write(f"Checking {cluster_id} ...\n")
     code, out, err = run_helper(request)
 
     try:
@@ -244,7 +292,26 @@ def main(
         # did. Its own words are the best thing available - inventing a summary
         # here would be guessing.
         #
+        if json_mode:
+            return without_answer(
+                subprocess.CompletedProcess([], code, "", err),
+                operation=ANSWER,
+                cluster=cluster_id,
+                json_mode=True,
+                writer=writer,
+                errors=errors,
+                fallback=f"publishing failed with exit code {code}.",
+            )
         writer.write(err or f"ERROR: publishing failed with exit code {code}.\n")
+        return exit_codes.of_process(code, exit_codes.INTERNAL) or exit_codes.INTERNAL
+
+    if json_mode:
+        #
+        # The helper's own document, as it wrote it: the contract is its.
+        #
+        writer.write(out if out.endswith("\n") else f"{out}\n")
+        if document.get("outcome") == "done":
+            return exit_codes.OK
         return exit_codes.of_process(code, exit_codes.INTERNAL) or exit_codes.INTERNAL
 
     if document.get("outcome") != "done":

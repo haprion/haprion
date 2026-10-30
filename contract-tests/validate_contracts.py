@@ -483,6 +483,59 @@ def check_settings_apply_semantics(document: dict[str, object], path: Path) -> N
         raise AssertionError(f"{path}: changed is whether any setting was written")
 
 
+def check_user_list_semantics(document: dict[str, object], path: Path) -> None:
+    """An account is listed once, whatever the case of its name."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done listing says what it lists")
+        return
+    assert isinstance(result, dict)
+    names = [account["username"].lower() for account in result["accounts"]]
+    if len(set(names)) != len(names):
+        raise AssertionError(f"{path}: an account is listed once")
+
+
+def check_settings_show_semantics(document: dict[str, object], path: Path) -> None:
+    """An address once; sign-in through the provider is on only for a verified provider."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done listing says what it lists")
+        return
+    assert isinstance(result, dict)
+    if len(set(result["status_access"])) != len(result["status_access"]):
+        raise AssertionError(f"{path}: an address is listed once")
+    provider = result["oidc"]
+    if (
+        provider is not None
+        and provider["enabled"]
+        and not (provider["verified"] and provider["issuer"])
+    ):
+        raise AssertionError(f"{path}: sign-in through the provider needs a verified issuer")
+
+
+def check_profiles_list_semantics(document: dict[str, object], path: Path) -> None:
+    """A profile ID once per kind; only an NDES profile has an endpoint."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done listing says what it lists")
+        return
+    assert isinstance(result, dict)
+    for kind in ("dns", "ndes"):
+        ids = [entry["id"] for entry in result[kind]]
+        if len(set(ids)) != len(ids):
+            raise AssertionError(f"{path}: a {kind} profile is listed once")
+    if any("endpoint" in entry for entry in result["dns"]) or any(
+        "endpoint" not in entry for entry in result["ndes"]
+    ):
+        raise AssertionError(f"{path}: an endpoint belongs to an NDES profile only")
+
+
 def check_profiles_apply_semantics(document: dict[str, object], path: Path) -> None:
     """A job per change once applied, none under --check; changed is whether any change."""
 
@@ -1248,6 +1301,9 @@ SEMANTIC_CHECKS = {
     "user_apply": check_user_apply_semantics,
     "settings_apply": check_settings_apply_semantics,
     "profiles_apply": check_profiles_apply_semantics,
+    "user_list": check_user_list_semantics,
+    "settings_show": check_settings_show_semantics,
+    "profiles_list": check_profiles_list_semantics,
     "export": check_export_semantics,
     "reset_history": check_history_reset_semantics,
     "readings": check_readings_semantics,
@@ -1316,6 +1372,12 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         first["exit_code"] = 0
     elif operation in ("user_apply", "settings_apply", "profiles_apply"):
         result["changed"] = not result["changed"]
+    elif operation == "user_list":
+        result["accounts"].append(deepcopy(result["accounts"][0]))
+    elif operation == "settings_show":
+        result["oidc"]["verified"] = False
+    elif operation == "profiles_list":
+        result["dns"].append(deepcopy(result["dns"][0]))
     elif operation == "export":
         result["skipped"].append({"path": result["files"][0], "reason": "written twice"})
     elif operation == "reset_history":

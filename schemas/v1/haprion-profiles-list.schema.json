@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-profiles-list.schema.json",
+  "title": "haprion-profiles list JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "profiles_list" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/profiles_list_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/profiles_list_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "required": ["id", "provider", "revision"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "revision": { "type": "integer", "minimum": 1 },
+        "endpoint": { "type": "string", "minLength": 1, "maxLength": 2048 }
+      },
+      "additionalProperties": false
+    },
+    "profiles_list_result": {
+      "type": "object",
+      "required": ["dns", "ndes"],
+      "properties": {
+        "dns": { "type": "array", "items": { "$ref": "#/$defs/profile" } },
+        "ndes": { "type": "array", "items": { "$ref": "#/$defs/profile" } }
+      },
+      "additionalProperties": true
+    }
+  }
+}

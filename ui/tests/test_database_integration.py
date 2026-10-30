@@ -5805,7 +5805,7 @@ class TheAccountToolAgainstARealDatabase(AccountToolHarness):
         self.assertRegex(output, r"alice\s+admin\s+local\s+locked")
         self.assertRegex(output, r"carol\s+reader\s+local\s+active")
         out = self.run_tool("list", "--json")[1]
-        accounts = {a["username"]: a["locked"] for a in json.loads(out)["accounts"]}
+        accounts = {a["username"]: a["locked"] for a in json.loads(out)["result"]["accounts"]}
         self.assertEqual(accounts, {"alice": True, "carol": False})
         self.assertEqual(self.run_tool("unlock", "alice")[0], 0)
         self.assertRegex(self.run_tool("list")[1], r"alice\s+admin\s+local\s+active")

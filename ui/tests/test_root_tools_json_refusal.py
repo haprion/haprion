@@ -136,12 +136,6 @@ class TheRootToolsAnswer(unittest.TestCase):
             ("dependency_unavailable", exit_codes.CONFIG),
         )
 
-    def test_a_command_without_a_contract_prints_no_document(self) -> None:
-        with mock.patch("os.geteuid", return_value=1000):
-            code, out = run(settings_tool.main, ["show", "--json"])
-
-        self.assertEqual((code, out), (77, ""))
-
 
 class ADatabaseErrorIsToldApart(unittest.TestCase):
     """Review 26-10-24, 07-07: every database error was `bad_input`, even after work was done."""

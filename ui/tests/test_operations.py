@@ -1405,7 +1405,12 @@ class NoWorkerIsNotSaidOfAHelperStillAtWork(unittest.TestCase):
                 status + 4 * session + node_restore.ROLLBACK_SECONDS + 20 + 60,
                 restore,
             ),
-            "node_restore_preview": (status + session, restore),
+            # The key scan, the target inspected, the cluster's state backup (its
+            # budget), and the status read.
+            "node_restore_preview": (
+                5 + session + state_backup.RUN_BUDGET_SECONDS + status,
+                restore,
+            ),
             # Files of the run, and a key made on this host.
             "node_restore_prepare": (0, restore),
             "node_restore_status": (0, restore),
@@ -1425,7 +1430,13 @@ class NoWorkerIsNotSaidOfAHelperStillAtWork(unittest.TestCase):
         self.assertEqual(set(self.longest_runs()), set(recovery.KEEPS_ANSWER))
 
     def test_no_worker_is_said_after_the_longest_helper_has_answered(self) -> None:
+        """From the helper's start: a worker stopped at once loses its client with it
+        (one control group) and its lease runs out within `LEASE_SECONDS`, while the
+        helper works on in its own unit."""
+
         after = jobs.NO_WORKER_AFTER.total_seconds()
-        for operation, (longest, client) in self.longest_runs().items():
+        for operation, (longest, _client) in self.longest_runs().items():
             with self.subTest(operation=operation):
-                self.assertLess(longest - client + worker.IDLE_SECONDS + self.LOCAL, after)
+                self.assertLess(
+                    longest + worker.LEASE_SECONDS + worker.IDLE_SECONDS + self.LOCAL, after
+                )

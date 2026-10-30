@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% from "_back.html" import back_button %}
+{% from "_certificate_job.html" import certificate_job_notice %}
 {% block title %}Restore a node — Haprion{% endblock %}
 {% block content %}
 {#
@@ -17,7 +18,7 @@
 {% endif %}
 
 {% if running %}
-<p class="preview-notice"><strong>{{ running.label }} on {{ cluster }}.</strong> The queue runs one job per cluster at a time; this form can be sent once it has finished.</p>
+{% call certificate_job_notice(running) %}The queue runs one job per cluster at a time; this form can be sent once it has finished.{% endcall %}
 {% endif %}
 
 <form method="post" action="/backups/restore/new" class="preview-form restore-form">

@@ -619,6 +619,29 @@ class StartingARun(RestoreRouteTestCase):
         self.assertIn("<h1>Restore node-a</h1>", page.text)
         self.assertIn('name="mode" value="new_vm" checked', page.text)
 
+    def test_a_held_job_or_one_no_worker_holds_is_not_waited_for(self) -> None:
+        """D3: "can be sent once it has finished", of a job that does not finish by itself."""
+
+        path = f"/backups/restore/new?cluster=alpha&node=node-a&archive={VERSION}"
+        waiting = job("node_restore_status", "pending")
+        gone = replace(
+            job("node_restore_status", "running"),
+            lease_lapsed_since=datetime.now(UTC) - jobs.NO_WORKER_AFTER - timedelta(minutes=1),
+        )
+        for row, sentence in (
+            (replace(waiting, held_since=datetime.now(UTC)), "waits for an admin"),
+            (gone, "has no worker"),
+            (waiting, "once it has finished"),
+        ):
+            with (
+                self.subTest(sentence=sentence),
+                mock.patch("haprion_ui.db.recent_jobs", return_value=[row]),
+            ):
+                page = self.writing_client().get(path).text
+                self.assertIn(sentence, page)
+                if sentence != "once it has finished":
+                    self.assertNotIn("once it has finished", page)
+
     def test_the_gates(self) -> None:
         path = f"/backups/restore/new?cluster=alpha&node=node-a&archive={VERSION}"
         self.assertEqual(self.writing_client(role="reader").get(path).status_code, 403)

@@ -156,6 +156,16 @@ class OneAnswer(unittest.TestCase):
                 continue
             with self.subTest(template=path.name):
                 self.assertNotIn("{{ certificate_job }}", path.read_text(encoding="utf-8"))
+        #
+        # Nor may a form say a job "has finished" outside the one macro that knows
+        # whether it will (D3): the node restore's own sentence said it of a
+        # held job.
+        #
+        for path in sorted((PACKAGE / "templates").glob("*.html")):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if "once it has finished" in line and path.name != "_certificate_job.html":
+                    with self.subTest(template=path.name, line=number):
+                        self.assertTrue(line.lstrip().startswith("{% call certificate_job_notice"))
 
     def test_a_script_is_answered_in_text_with_the_same_sentence(self) -> None:
         answer = refusals.conflict_page(

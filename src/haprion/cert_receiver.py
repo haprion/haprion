@@ -65,6 +65,7 @@ from haprion.config import (
     receiver_id_names_a_host,
 )
 from haprion.envelope import Message, Outcome, envelope
+from haprion.helper_protocol import config_error_code
 
 USERADD = "/usr/sbin/useradd"
 USERDEL = "/usr/sbin/userdel"
@@ -894,7 +895,7 @@ def exclusive(
             runtime = load_runtime_config(policy, require_secure=require_secure)
         except ConfigError as exc:
             raise ReceiverError(
-                "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
+                config_error_code(exc.exit_code),
                 str(exc),
                 exit_code=exc.exit_code,
             ) from exc

@@ -1521,7 +1521,9 @@ def build_router(config: Config) -> APIRouter:
                     detail=detail,
                 )
                 connection.commit()
-            return RedirectResponse(f"/settings/oidc?done={action}&ended={ended}", status_code=303)
+            return RedirectResponse(
+                "/settings/oidc?done=" + action + "&ended=" + str(ended), status_code=303
+            )
 
         return PlainTextResponse("Unknown action", status_code=400)
 

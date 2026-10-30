@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from haprion import restore_agent
 from haprion.backup_archive import REQUIRED_PATHS
 
 BASE = Path(__file__).resolve().parents[1]
@@ -51,6 +52,54 @@ def pattern(text: str) -> str:
     if matched is None:
         raise AssertionError("EXTRA_PATH_PATTERN is missing")
     return matched.group(1)
+
+
+class TheRestoreLimit(unittest.TestCase):
+    """Backup and restore share one limit: an archive a restore cannot carry is not taken."""
+
+    exporter: str
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.exporter = (BASE / "install/node/haprion-state-export").read_text(encoding="utf-8")
+
+    def check(self, size: int) -> subprocess.CompletedProcess[str]:
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(work)], check=False)
+        (work / "rootfs/etc").mkdir(parents=True)
+        with (work / "rootfs/etc/big-extra.dat").open("wb") as handle:
+            handle.truncate(size)
+        constants = "".join(
+            line + "\n"
+            for line in self.exporter.splitlines()
+            if re.match(r"^(RESTORE_PAYLOAD_LIMIT|PACKAGES_RESERVE|TAR_OVERHEAD)=", line)
+        )
+        program = (
+            "set -euo pipefail\n"
+            f"ROOTFS='{work}/rootfs'; NODE_CONF=/etc/haprion/node.conf\n"
+            + constants
+            + shell_function(self.exporter, "check_restore_limit")
+            + "check_restore_limit\n"
+        )
+        return subprocess.run(  # fixed program over a test-owned tree
+            ["/bin/bash", "-c", program], capture_output=True, text=True, check=False
+        )
+
+    def test_the_limit_is_the_restores(self) -> None:
+        match = re.search(r"^RESTORE_PAYLOAD_LIMIT=\$\(\((.*)\)\)$", self.exporter, re.MULTILINE)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(eval(match.group(1), {}), restore_agent.MAX_PAYLOAD)  # noqa: S307
+
+    def test_files_within_the_limit_are_taken(self) -> None:
+        self.assertEqual(self.check(1024).returncode, 0)
+
+    def test_files_past_it_are_refused_with_the_largest_named(self) -> None:
+        result = self.check(45 * 1024 * 1024)
+        self.assertEqual(result.returncode, 78)
+        self.assertIn("a restore cannot carry", result.stderr)
+        self.assertIn("/etc/big-extra.dat", result.stderr)
+        self.assertIn("EXTRA_BACKUP_PATHS", result.stderr)
 
 
 class TheOperatorsOwnPaths(unittest.TestCase):

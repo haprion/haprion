@@ -347,6 +347,34 @@ done
 require_path "$CONFIG_PULL_KEY"
 [[ -z "${CERT_PULL_KEY:-}" ]] || require_path "$CERT_PULL_KEY"
 
+# A restore carries the files, the node package and the engine and key packages
+# to the VM in one transfer of at most RESTORE_PAYLOAD_LIMIT bytes
+# (restore_agent.MAX_PAYLOAD; a test holds the two together). The packages take
+# PACKAGES_RESERVE of it, about twice what they weigh today. An archive whose
+# files pass the rest could be taken and listed and never restored, so it is
+# refused here, where the operator can still take the large paths out of
+# EXTRA_BACKUP_PATHS.
+RESTORE_PAYLOAD_LIMIT=$((64 * 1024 * 1024))
+PACKAGES_RESERVE=$((24 * 1024 * 1024))
+TAR_OVERHEAD=1536
+
+check_restore_limit() {
+    local total count largest
+    read -r total count < <(
+        find "$ROOTFS" -type f -printf '%s\n' | awk '{ s += $1; n++ } END { print s + 0, n + 0 }'
+    )
+    total=$((total + count * TAR_OVERHEAD))
+    if ((total > RESTORE_PAYLOAD_LIMIT - PACKAGES_RESERVE)); then
+        largest="$(find "$ROOTFS" -type f -printf '%s %P\n' | sort -rn | head -3 \
+            | awk '{ printf "%s%s (%.1f MiB)", sep, "/" $2, $1 / 1048576; sep = ", " }')"
+        echo "ERROR: the files would make an archive a restore cannot carry:" \
+            "$((total / 1048576)) MiB against $(((RESTORE_PAYLOAD_LIMIT - PACKAGES_RESERVE) / 1048576)) MiB." \
+            "The largest are ${largest}. Take large paths out of EXTRA_BACKUP_PATHS in ${NODE_CONF}." >&2
+        exit 78
+    fi
+}
+check_restore_limit
+
 # The manifest is the archive's content contract. It records metadata as well
 # as bytes: a private key restored world-readable is not the same state merely
 # because its checksum matches. It excludes itself and is generated only after

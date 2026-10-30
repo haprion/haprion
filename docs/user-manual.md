@@ -6679,6 +6679,10 @@ list them in `EXTRA_BACKUP_PATHS` in the answers file. Step 4 renders that into 
   device, **fails that node's backup** rather than being skipped. The management host only shows
   an export's messages when it fails, and an archive that quietly lacks a file you asked for is
   exactly the drift a backup is there to rule out.
+- The files of the archive must fit, with the packages a restore adds, in the 64 MiB one restore
+  transfer carries (the files may take 40 MiB). The export **fails** past that, naming the largest
+  files, because an archive that is taken and can never be restored is worse than none. List
+  configuration, not data.
 
 So every node that gets the answers file must have every listed path.
 

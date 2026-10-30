@@ -215,16 +215,28 @@ def _with_forward_waiting(
                 for name, since in carried_over.items()
                 if isinstance(since, Mapping)
             }
+        sizes_over = previous.get("forward_queued_carried")
+        if isinstance(sizes_over, Mapping):
+            queued_before = {
+                str(name): dict(sizes)
+                for name, sizes in sizes_over.items()
+                if isinstance(sizes, Mapping)
+            }
     if isinstance(previous, Mapping) and isinstance(previous.get("nodes"), list):
         for node in previous["nodes"]:
             if not isinstance(node, Mapping):
                 continue
             if isinstance(node.get("forward_waiting_since"), Mapping):
                 before[str(node.get("name"))] = node["forward_waiting_since"]
-            queued_before[str(node.get("name"))] = {
-                str(receiver.get("name")): receiver.get("queued")
-                for receiver in _forward_receivers(node)
-            }
+            # A node that said nothing carries the sizes it had (R6); one that
+            # answered has them in its receivers.
+            if isinstance(node.get("forward_queued"), Mapping):
+                queued_before[str(node.get("name"))] = dict(node["forward_queued"])
+            else:
+                queued_before[str(node.get("name"))] = {
+                    str(receiver.get("name")): receiver.get("queued")
+                    for receiver in _forward_receivers(node)
+                }
     #
     # A failed reading, which has no node list, keeps the waiting under
     # `forward_waiting_carried` until a reading that has one.
@@ -235,7 +247,14 @@ def _with_forward_waiting(
     # (review 2026-10-30, E6).
     #
     if not isinstance(nodes, list):
-        return {**result, "forward_waiting_carried": before} if before else result
+        if not before:
+            return result
+        sizes_carried = {name: sizes for name, sizes in queued_before.items() if name in before}
+        return {
+            **result,
+            "forward_waiting_carried": before,
+            **({"forward_queued_carried": sizes_carried} if sizes_carried else {}),
+        }
     carried: list[Any] = []
     for node in nodes:
         if not isinstance(node, Mapping):
@@ -243,7 +262,17 @@ def _with_forward_waiting(
             continue
         earlier = before.get(str(node.get("name")), {})
         if not node.get("status_ok") or not isinstance(node.get("status"), Mapping):
-            carried.append({**node, "forward_waiting_since": dict(earlier)} if earlier else node)
+            if earlier:
+                silent_sizes = queued_before.get(str(node.get("name")), {})
+                carried.append(
+                    {
+                        **node,
+                        "forward_waiting_since": dict(earlier),
+                        **({"forward_queued": silent_sizes} if silent_sizes else {}),
+                    }
+                )
+            else:
+                carried.append(node)
             continue
         sizes = queued_before.get(str(node.get("name")), {})
         waiting: dict[str, str] = {}

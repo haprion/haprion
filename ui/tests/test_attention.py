@@ -715,6 +715,42 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
         )
         self.assertEqual(_with_forward_waiting({}, None, self.NOW), {})
 
+    def test_a_queue_that_shrank_across_a_missed_reading_is_still_a_receiver_reached(self) -> None:
+        """Review 26-10-30, R6: the size was carried by nothing, so the clock was never restarted."""
+
+        from haprion_ui.db import _with_forward_waiting
+
+        def answered(queued: int) -> dict[str, Any]:
+            return {
+                "nodes": [
+                    {
+                        "name": "node-a",
+                        "status_ok": True,
+                        "status": {
+                            "log_forwarding": {"receivers": [{"name": "graylog", "queued": queued}]}
+                        },
+                    }
+                ]
+            }
+
+        silent = {
+            "nodes": [{"name": "node-a", "reachable": False, "status_ok": False, "status": None}]
+        }
+        start = self.NOW - timedelta(minutes=5)
+        first = _with_forward_waiting(answered(4), None, start)
+        for missed in (silent, {}):
+            with self.subTest(missed=missed):
+                middle = _with_forward_waiting(missed, first, self.NOW - timedelta(minutes=2))
+                after = _with_forward_waiting(answered(2), middle, self.NOW)
+                self.assertEqual(
+                    after["nodes"][0]["forward_waiting_since"], {"graylog": self.NOW.isoformat()}
+                )
+                # A queue that did not shrink still keeps its clock across the gap.
+                same = _with_forward_waiting(answered(4), middle, self.NOW)
+                self.assertEqual(
+                    same["nodes"][0]["forward_waiting_since"], {"graylog": start.isoformat()}
+                )
+
     def test_three_minutes_without_emptying_is_listed(self) -> None:
         self.assertEqual(self.items(self.reading(3, self.NOW - timedelta(minutes=2))), [])
         listed = self.items(self.reading(3, self.NOW - timedelta(minutes=7)))

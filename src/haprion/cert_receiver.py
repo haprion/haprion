@@ -1247,7 +1247,9 @@ def instructions(receiver: Receiver, locations: Locations) -> tuple[str, ...]:
     return (
         "transport: rsync over ssh, read-only",
         f"user: {receiver.owner}@{host}",
-        f"fetch: rsync -a {receiver.owner}@{host}:<certificate>/ /local/path/",
+        f"fetch: rsync -rt --no-owner --no-group --chmod=D700,F600 "
+        f"{receiver.owner}@{host}:<certificate>/ /local/staging/ "
+        "(examples/receivers/fetch-rsync installs the files as root's)",
         f"the key you gave is bound to {receiver.receiver_id} and its addresses; fetch from there",
     )
 
@@ -1422,9 +1424,12 @@ def _restore_secret(target: Path, before: str) -> None:
     atomic_file.write(target, before.encode("ascii"), mode=0o640, uid=ROOT_UID, gid=group)
 
 
-def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:
-    """Every registered receiver, what it fetches with, and what it holds."""
+def listing(
+    policy: PathPolicy, runtime: RuntimeConfig, locations: Locations | None = None
+) -> list[dict[str, Any]]:
+    """Every registered receiver, what it fetches with, what it holds and how it fetches."""
 
+    locations = locations or Locations()
     registry = runtime.registry
     if registry is None:
         raise ReceiverError(
@@ -1434,6 +1439,15 @@ def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:
         )
     rows: list[dict[str, Any]] = []
     for receiver_id, receiver in sorted(registry.receivers.items()):
+        #
+        # What `add` printed once, for a receiver whose host is installed
+        # again later. A manager whose own address cannot be read leaves the
+        # lines out; the table is still true.
+        #
+        try:
+            how = list(instructions(receiver, locations))
+        except ReceiverError:
+            how = []
         rows.append(
             {
                 "id": receiver_id,
@@ -1443,6 +1457,7 @@ def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:
                 "owner": receiver.owner,
                 "allow": list(receiver.allow),
                 "certificates": list(cert_registry.receiver_in_use(registry, receiver_id)),
+                "instructions": how,
             }
         )
     return rows

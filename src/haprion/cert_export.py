@@ -34,7 +34,7 @@ from haprion.cert_inventory import (
     source_directory,
 )
 from haprion.cert_publish import _memfd, _openssl, key_matches
-from haprion.certificates import CertificateError, leaf_fingerprint
+from haprion.certificates import MAX_CERTIFICATE_BYTES, CertificateError, leaf_fingerprint
 from haprion.config import Registry
 
 FORMATS = ("pem-key", "pfx", "pfx-compatible")
@@ -86,6 +86,14 @@ def check_password(form: str, password: object) -> str | None:
     return password
 
 
+def _read(path: Path) -> bytes:
+    """A material file, held to the size the publisher and the listing hold theirs to."""
+
+    if path.lstat().st_size > MAX_CERTIFICATE_BYTES:
+        raise OSError(f"{path.name} is implausibly large")
+    return path.read_bytes()
+
+
 def export(
     registry: Registry | None,
     certificate_id: str,
@@ -111,8 +119,8 @@ def export(
         )
     directory = source_directory(entry, live=live, store=store)
     try:
-        fullchain = (directory / FULLCHAIN).read_bytes()
-        privkey = (directory / PRIVKEY).read_bytes()
+        fullchain = _read(directory / FULLCHAIN)
+        privkey = _read(directory / PRIVKEY)
     except OSError as exc:
         raise ExportError(
             "dependency_unavailable",

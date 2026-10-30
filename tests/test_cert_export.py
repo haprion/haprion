@@ -22,7 +22,7 @@ from haprion import cert_registry
 from haprion.cert_export import ExportError, export
 from haprion.cert_import import ImportError_, import_certificate
 from haprion.cert_inventory import OPENSSL, registry_result
-from haprion.certificates import CERTIFICATE_OPENING
+from haprion.certificates import CERTIFICATE_OPENING, MAX_CERTIFICATE_BYTES
 from haprion.cli import cert_export_helper
 from haprion.config import ConfigError, load_policy, load_registry, load_runtime_config
 from tests.contract_schema import assert_contract
@@ -244,6 +244,16 @@ class Exporting(ExportableFixture):
         for form, password in (("pfx", None), ("pfx", "short"), ("pem-key", BUNDLE_PASSWORD)):
             with self.subTest(form=form, password=password), self.assertRaises(ExportError):
                 export(self.registry(), DEVICE, form, password, live=self.live, store=self.store)
+
+    def test_an_implausibly_large_file_is_refused_unread(self) -> None:
+        self.make_exportable()
+        (self.store / DEVICE / "privkey.pem").write_bytes(b"x" * (MAX_CERTIFICATE_BYTES + 1))
+
+        with self.assertRaises(ExportError) as refused:
+            export(self.registry(), DEVICE, "pem-key", live=self.live, store=self.store)
+
+        self.assertEqual(refused.exception.code, "dependency_unavailable")
+        self.assertIn("implausibly large", str(refused.exception))
 
     def test_a_certificate_without_the_mark_gives_nothing_out(self) -> None:
         self.make_exportable()

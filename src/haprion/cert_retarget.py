@@ -337,9 +337,9 @@ def retarget(
         # Rolled out once per added cluster, after every certificate is
         # published: thirty certificates to one cluster are one pull and one
         # reload, not thirty. Asked for by name rather than taken from the
-        # publisher's "changed" list - the cluster PEM is one shared file, so
-        # a certificate another cluster already carries writes nothing new,
-        # and the new cluster's nodes would never be told.
+        # publisher's "changed" list - an added cluster can already hold an
+        # identical file (left behind by a removal whose unlink failed), which
+        # writes nothing new, and its nodes would never be told.
         #
         #
         # And every cluster still marked from an earlier run, after these:
@@ -419,10 +419,11 @@ def _add(
     touched: list[str] = []
     #
     # Marked before the registry names them (`cert_pending`). The publisher
-    # cannot do it for us: the cluster PEM is one shared file, so a cluster
-    # added to a certificate another cluster already carries is written
-    # nothing new, and a rollout that then failed would leave no trace a
-    # second run could find - the registry would already say "added".
+    # cannot do it for us: an added cluster can already hold an identical
+    # file (left behind by a removal whose unlink failed), so it writes
+    # nothing new, and a mark made only once the registry names the cluster
+    # is the mark a failed rollout would not have: a second run would find
+    # no trace of it - the registry would already say "added".
     #
     pending_path = cert_pending.pending_path(registry_path)
     try:

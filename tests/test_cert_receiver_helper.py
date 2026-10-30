@@ -80,7 +80,10 @@ class AddingThroughTheHelper(HelperFixture):
             ["account", "directory", "lock", "registry"],
         )
         self.assertTrue(
-            any("rsync -a crx-lb-02-example-net@" in line for line in result["instructions"])
+            any(
+                "rsync -rt --no-owner --no-group --chmod=D700,F600 crx-lb-02-example-net@" in line
+                for line in result["instructions"]
+            )
         )
         self.assertIn("mgr.example.net", " ".join(result["instructions"]))
         self.assertEqual(self.registered()["lb-02.example.net"]["transport"], "rsync")

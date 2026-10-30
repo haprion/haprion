@@ -1019,6 +1019,8 @@ class TheCommand(ReceiverFixture):
         self.assertEqual(code, 0)
         self.assertIn("lb-02.example.net", out)
         self.assertIn("rsync", out)
+        self.assertIn("fetch: rsync -rt --no-owner --no-group", out)
+        self.assertNotIn("rsync -a", out)
 
         code, out, _ = self.run_cli("remove", "lb-02.example.net")
         self.assertEqual(code, 0, out)

@@ -165,6 +165,11 @@ def _print_listing(rows: list[dict[str, Any]], writer: TextIO) -> None:
     for row in rows:
         holds = ", ".join(row["certificates"]) or "-"
         writer.write(f"{row['id']:<28} {row['transport']:<9} {holds}\n")
+    for row in rows:
+        if row["instructions"]:
+            writer.write(f"\n{row['id']}:\n")
+            for line in row["instructions"]:
+                writer.write(f"  {line}\n")
 
 
 def main(
@@ -237,7 +242,7 @@ def main(
 
     try:
         if arguments.action == "list":
-            rows = listing(policy, runtime)
+            rows = listing(policy, runtime, locations)
             if arguments.json_mode:
                 return write_document(
                     writer,

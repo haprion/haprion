@@ -407,6 +407,9 @@ def from_dashboard(
                     message=f"{cluster.label} · {cluster.detail}",
                     since=None,
                     link=card_link(cluster.cluster),
+                    # What kind of fault, so that acknowledging "no owner" does
+                    # not hide "split brain" (review 2026-10-30, R7).
+                    variant=f"{cluster.label} · {cluster.detail}",
                 )
             )
         for node in cluster.nodes:

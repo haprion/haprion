@@ -1673,6 +1673,22 @@ class AnAcknowledgementHoldsWhatItWasGivenFor(unittest.TestCase):
         down = self.row("forwarding", "warning", "node-a → siem")
         self.assertEqual(self.shown([down], *found), found)
 
+    def test_a_cluster_acknowledged_for_no_owner_is_shown_again_in_split_brain(self) -> None:
+        """Review 26-10-30, R7: the cluster's own row had no variant."""
+
+        def faults(detail: str) -> Any:
+            (item,) = attention.from_dashboard(
+                [cluster(label="VIP fault", tone="critical", detail=detail)],
+                drift_label="Behind",
+                cluster_faults=frozenset({"VIP fault"}),
+            )
+            return item
+
+        no_owner = faults("VIP state: no owner")
+        split = faults("VIP state: split brain")
+        self.assertEqual(self.shown([no_owner], no_owner), [])
+        self.assertEqual(self.shown([no_owner], split), [split])
+
     def test_a_node_row_carries_its_label_as_its_variant(self) -> None:
         (item,) = attention.from_dashboard(
             [cluster(nodes=(node("n1", "critical", "Unreachable"),))], drift_label="Behind"

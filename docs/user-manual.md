@@ -658,8 +658,8 @@ servers:
 - A name that gives no address, or several addresses of one family, refuses the save.
 - Publishing looks nothing up: it writes the stored address. Publishing something else - a log target, a
   neighbouring object - therefore never moves a DNS server, and never fails because DNS does.
-- A name stored without an address refuses the publish with *save the object again*. An object written by
-  hand gives the `address` itself.
+- A name stored without an address refuses the publish: save the object again, or give its `address`
+  beside the name. An object written by hand, for `haprion-objects apply`, gives the `address` itself.
 - The address is the one the name had when the object was saved. `haprion-status` and the object's page
   say when the name has moved since. *Look up again*, beside that warning, saves the object with the
   address the name has now, for the next publish.

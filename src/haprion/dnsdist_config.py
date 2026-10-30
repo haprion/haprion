@@ -245,7 +245,7 @@ def _servers(proxy: Proxy, pool: Backend, source: str | None) -> list[str]:
         if address is None:
             raise Unresolved(
                 f"{proxy.name}: {server.host} has no address saved with it; save the object "
-                f"again so the manager looks the name up"
+                f"again so the manager looks the name up, or give its address beside the name"
             )
         fields = [
             f"address={_quote(_endpoint(address, server.port))}",

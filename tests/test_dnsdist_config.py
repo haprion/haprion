@@ -146,7 +146,10 @@ class ANamedServerIsWrittenWithItsSavedAddress(unittest.TestCase):
         self.assertNotIn("looked up from 198.51.100.54", conf)
 
     def test_a_name_saved_without_an_address_refuses_the_publish(self) -> None:
-        with self.assertRaisesRegex(GeneratorError, "ns1.example.com has no address saved"):
+        with self.assertRaisesRegex(
+            GeneratorError,
+            "ns1.example.com has no address saved.*or give its address beside the name",
+        ):
             self.conf(named(address=None))
 
 

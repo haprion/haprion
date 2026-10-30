@@ -478,7 +478,7 @@ def generate(
     # A named dns server is written with the address saved beside it when the
     # object was saved (B252, B261); nothing is looked up here. A name saved
     # without one refuses the publish as any other object that cannot be
-    # generated, and says to save the object again.
+    # generated, and says to save the object again or give the address.
     #
     try:
         dns = dnsdist_config.render(

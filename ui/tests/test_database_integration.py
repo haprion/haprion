@@ -40,7 +40,16 @@ from haprion.traffic_collector import (
 )
 from psycopg.types.json import Jsonb
 
-from haprion_ui import attention, auth, db, metrics, search_index, timing, traffic_logs
+from haprion_ui import (
+    attention,
+    auth,
+    db,
+    feature_switch,
+    metrics,
+    search_index,
+    timing,
+    traffic_logs,
+)
 from haprion_ui import jobs as jobs_module
 from haprion_ui.metrics import METRIC_COUNTERS
 
@@ -8637,19 +8646,13 @@ class TheSettingsFromAFile(unittest.TestCase):
         self.assertEqual(self.cli_audit(), [])
 
     def test_a_switch_is_refused_as_the_page_refuses_it(self) -> None:
-        with self.connect() as connection:
-            connection.execute(
-                "update feature_switch set enabled = false where name = 'cluster_colours'"
-            )
-            connection.commit()
-        many = tuple(f"c{number}" for number in range(7))
-        path = self.write("status_access: [192.0.2.10]\nfeatures:\n  cluster_colours: true\n")
+        path = self.write("status_access: [192.0.2.10]\nfeatures:\n  node_backups: false\n")
 
-        with mock.patch.object(db, "cluster_list", return_value=many):
+        with mock.patch.object(feature_switch, "restore_waiting", return_value=True):
             code, answer = self.run_tool("apply", path, "--json")
 
         self.assertEqual(code, 65)
-        self.assertIn("Cluster colours cover", answer["error"]["message"])
+        self.assertIn("A node restore is running or waiting", answer["error"]["message"])
         with self.connect() as connection:
             self.assertEqual(
                 connection.execute("select count(*) from status_access").fetchone(), (0,)
@@ -8693,8 +8696,9 @@ class TheSettingsFromAFile(unittest.TestCase):
 
         code, answer = self.run_tool("apply", self.write(self.PROVIDER), "--json")
 
-        self.assertEqual(code, 65)
-        self.assertIn("stays off", answer["error"]["message"])
+        self.assertEqual((code, answer["outcome"]), (69, "partial"))
+        self.assertIn("stays off", answer["warnings"][0]["message"])
+        self.assertEqual(answer["result"]["oidc"]["fields"][:1], ["issuer"])
         provider = self.provider()
         self.assertEqual((provider.enabled, provider.client_id), (False, "client"))
 

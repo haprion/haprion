@@ -363,6 +363,13 @@ def _append(path: Path, payload: bytes) -> None:
         os.close(descriptor)
 
 
+def _forget_checkpoint(config: CollectorConfig, part: Path) -> None:
+    checkpoint = _database_checkpoint(config, part)
+    if checkpoint.exists() or checkpoint.is_symlink():
+        _regular(checkpoint, maximum=32)
+        checkpoint.unlink()
+
+
 def _update_day(
     config: CollectorConfig,
     target: NodeTarget,
@@ -374,13 +381,18 @@ def _update_day(
     path = _part(config, target, wanted)
     offset = _safe_size(path)
     response = fetch(target, wanted, offset)
-    if response.reset:
+    if response.reset or response.skipped_bytes:
+        #
+        # Reset: the node's file is shorter than the part, or gone. Skipped
+        # bytes: a local cursor in the middle of a remote record, which can
+        # only come from a damaged or replaced file. Rebuild the day rather
+        # than preserving a hole - and forget how far the database had read
+        # it: the rebuilt part is another file, and an old position inside it
+        # would leave its first bytes out of the database (review 2026-10-30,
+        # E3). The duplicate trigger passes over what is already stored.
+        #
         _replace(path, b"", 0o600)
-        return False, response.size
-    if response.skipped_bytes:
-        # A local cursor in the middle of a remote record can only come from a
-        # damaged/replaced file. Rebuild the day rather than preserving a hole.
-        _replace(path, b"", 0o600)
+        _forget_checkpoint(config, path)
         return False, response.size
     _append(path, response.payload)
     if closed and not response.eof and not response.payload and response.size > _safe_size(path):
@@ -589,10 +601,7 @@ def collect_node(
                 _regular(path, maximum=maximum)
                 path.unlink()
                 if suffix == ".jsonl":
-                    checkpoint = _database_checkpoint(config, path)
-                    if checkpoint.exists() or checkpoint.is_symlink():
-                        _regular(checkpoint, maximum=32)
-                        checkpoint.unlink()
+                    _forget_checkpoint(config, path)
 
     try:
         #

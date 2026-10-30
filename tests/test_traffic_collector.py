@@ -751,6 +751,53 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual((meta_a["outcome"], meta_b["outcome"]), ("database", "ok"))
         self.assertIn("alpha/node-a: database import failed", stderr.getvalue())
 
+    def test_a_rebuilt_day_is_imported_from_its_beginning(self) -> None:
+        """Review 2026-10-30, E3: a node file replaced the same day by a longer
+        one rebuilt the part from zero, but the import position stayed, so the
+        new file's first bytes never reached the database."""
+
+        old = b"".join(traffic_line(f"/old/{n}") for n in range(50))
+        new = b"".join(traffic_line(f"/new/{n}") for n in range(200))
+        today = NOW.date()
+        node_file = {"data": old}
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            data = node_file["data"]
+            if wanted != today:
+                return self.response(wanted, offset, b"")
+            if offset > len(data):
+                return Response(len(data), offset, 0, False, True, 0, b"")
+            return self.response(wanted, offset, data[offset:])
+
+        part = self.staging / f"alpha--node-a--{today.isoformat()}.jsonl"
+        collect_node(self.config, self.target, now=NOW, fetch=fetch, window=2)
+        connection: Any = _Connection()
+        _ingest_part(self.config, connection, self.target, part)
+        self.assertEqual(len(connection.rows), 50)
+
+        # The node is rebuilt: a new, longer file. A fetch at the old end
+        # lands inside a record of it, which the reader reports as skipped bytes.
+        node_file["data"] = new
+        real = fetch
+
+        def landing_mid_record(target: NodeTarget, wanted: date, offset: int) -> Response:
+            if wanted == today and 0 < offset < len(new):
+                return Response(len(new), offset, 0, False, False, 7, b"")
+            return real(target, wanted, offset)
+
+        collect_node(
+            self.config,
+            self.target,
+            now=NOW + timedelta(minutes=1),
+            fetch=landing_mid_record,
+            window=2,
+        )
+        self.assertEqual(part.read_bytes(), new)
+        connection = _Connection()
+        _ingest_part(self.config, connection, self.target, part)
+        self.assertEqual([row[8] for row in connection.rows][:2], ["/new/0", "/new/1"])
+        self.assertEqual(len(connection.rows), 200)
+
     def test_with_the_database_as_reader_no_joined_mirror_is_written(self) -> None:
         #
         # Review 2026-09-30, R2: every run used to join the whole retained

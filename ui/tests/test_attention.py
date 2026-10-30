@@ -1450,3 +1450,66 @@ class AcknowledgementsAcrossAGapInReading(unittest.TestCase):
     def test_a_certificate_row_is_not_about_a_reading(self) -> None:
         key = ("certificate", "", "x")
         self.assertEqual(self.forgotten(self.reading(age=500), key), {key})
+
+
+class WhyAReadingFailed(LoginTestCase):
+    """Review 2026-10-30, E11: the words of the reading, for an administrator."""
+
+    ASKED = "sudo: a password is required"
+
+    def page(self, role: str) -> str:
+        self.account = replace(self.account, role=role)
+        failed = db.ClusterStatus(
+            cluster="alpha",
+            observed_at=datetime.now(UTC),
+            outcome="unavailable",
+            result={},
+            warnings=[],
+            error=None,
+            poll_error=self.ASKED,
+        )
+        client = self.client(replace(configuration(), clusters=("alpha",)))
+        self.sign_in(client)
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=[failed]):
+            return client.get("/").text
+
+    def test_an_administrator_is_told_why_the_poller_could_not_read(self) -> None:
+        self.assertIn(self.ASKED, self.page("admin"))
+
+    def test_a_reader_is_not(self) -> None:
+        page = self.page("reader")
+        self.assertIn("Collection unavailable", page)
+        self.assertNotIn(self.ASKED, page)
+
+    def test_the_node_row_carries_the_nodes_own_message_for_an_administrator(self) -> None:
+        status = dashboard.build_dashboard(
+            ("alpha",),
+            (
+                db.ClusterStatus(
+                    cluster="alpha",
+                    observed_at=NOW,
+                    outcome="partial",
+                    result={
+                        "nodes": [
+                            {
+                                "name": "n1",
+                                "mgmt_host": "n1",
+                                "reachable": False,
+                                "status_ok": False,
+                                "status": None,
+                                "error": {
+                                    "code": "ssh_unreachable",
+                                    "message": "SSH failed with exit 255",
+                                },
+                            }
+                        ]
+                    },
+                    warnings=[],
+                    error=None,
+                    poll_error=None,
+                ),
+            ),
+            now=NOW,
+            stale_after=timedelta(seconds=100),
+        )
+        self.assertEqual(status.clusters[0].nodes[0].reason, "SSH failed with exit 255")

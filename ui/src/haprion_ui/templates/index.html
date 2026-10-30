@@ -94,6 +94,7 @@
         <div>
           <h3>{{ cluster.cluster }}</h3>
           <p>{{ cluster.detail }}</p>
+          {% if role == 'admin' and cluster.reason %}<p><small>{{ cluster.reason }}</small></p>{% endif %}
         </div>
       </div>
       {% set flow = traffic.get(cluster.cluster) %}{% if flow %}
@@ -137,7 +138,7 @@
           {% for node in cluster.nodes %}
           <tr>
             <td data-label="Node"><strong title="{{ node.name }}">{{ node.name }}</strong><small title="{{ node.management_host }}">{{ node.management_host }}</small></td>
-            <td data-label="Service"><span class="inline-status"><span class="status-dot status-{{ node.tone }}"></span>{{ node.label }}</span>{% if node.detail %}<small title="{{ node.detail }}">{{ node.detail }}</small>{% endif %}</td>
+            <td data-label="Service"><span class="inline-status"><span class="status-dot status-{{ node.tone }}"></span>{{ node.label }}</span>{% if node.detail %}<small title="{{ node.reason if role == 'admin' and node.reason else node.detail }}">{{ node.detail }}</small>{% endif %}</td>
             <td data-label="Failover">{{ node.keepalived }}</td>
             <td data-label="VIP">{{ node.vip }}</td>
             <td data-label="Version"><span class="release-value">{{ node.version }}</span>{% if node.release_behind %}<small class="warning-text">Behind</small>{% endif %}</td>

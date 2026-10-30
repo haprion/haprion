@@ -69,6 +69,11 @@ class NodeView:
     #
     package_note: str | None = None
     package_message: str | None = None
+    #
+    # Why the node could not be read, in the words of the reading (an
+    # administrator's hover): "SSH gave no answer within 60 seconds".
+    #
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +154,11 @@ class ClusterView:
     #
     cpu: ResourceFigure | None = None
     memory: ResourceFigure | None = None
+    #
+    # Why the poller could not read the cluster at all (`poll_error`), as
+    # Network shows it, for an administrator.
+    #
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +353,13 @@ def node_package_words(installation: object, carried: object) -> tuple[str, str]
     )
 
 
+def _error_message(node: Mapping[str, Any]) -> str | None:
+    """The reading's own words for what went wrong with a node, if it gave any."""
+
+    message = _mapping(node.get("error")).get("message")
+    return message[:240] if isinstance(message, str) and message else None
+
+
 def _failed_command(node: Mapping[str, Any]) -> str | None:
     """What the node's status command said when it ran and failed (review 2026-10-30, E3)."""
 
@@ -395,6 +412,7 @@ def _node_view(
             runtime="Unknown",
             stats="Unknown",
             current=current,
+            reason=_error_message(node),
         )
 
     if node.get("status_ok") is not True or not isinstance(node.get("status"), Mapping):
@@ -410,6 +428,7 @@ def _node_view(
             runtime="Unknown",
             stats="Unknown",
             current=current,
+            reason=_error_message(node),
         )
 
     status = _mapping(node["status"])
@@ -894,6 +913,7 @@ def _cluster_view(
         target_version=_positive(target.get("version")),
         cpu=cpu_figure,
         memory=memory_figure,
+        reason=reading.poll_error or None,
     )
 
 

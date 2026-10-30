@@ -15,6 +15,7 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from haprion import (
+    labels,
     proxy_model,
 )
 from haprion.proxy_model import (
@@ -604,8 +605,14 @@ def build_router(config: Config) -> APIRouter:
         earliest = local_earliest.astimezone(UTC)
         time_filter_error: str | None
         try:
-            from_at = log_time_filter(selected_from, earliest=earliest, latest=now)
-            to_at = log_time_filter(selected_to, earliest=earliest, latest=now, end_of_minute=True)
+            outside = (
+                "Choose a date and time within the last "
+                f"{labels.counted(config.traffic_logs.retention_days, 'day')}."
+            )
+            from_at = log_time_filter(selected_from, earliest=earliest, latest=now, outside=outside)
+            to_at = log_time_filter(
+                selected_to, earliest=earliest, latest=now, end_of_minute=True, outside=outside
+            )
             if from_at is not None and to_at is not None and from_at > to_at:
                 raise ValueError("From must be earlier than To.")
         except ValueError as exc:

@@ -466,6 +466,7 @@ class TheTrafficLogPage(LoginTestCase):
         query: str = "",
         now: datetime | None = None,
         path: str = "/logs",
+        retention_days: int = 14,
     ) -> str:
         """The page, optionally rendered as if the machine's clock read `now`.
 
@@ -478,7 +479,10 @@ class TheTrafficLogPage(LoginTestCase):
             configuration(),
             clusters=clusters,
             traffic_logs=TrafficLogs(
-                enabled=enabled, directory=self.root, max_lines=500, retention_days=14
+                enabled=enabled,
+                directory=self.root,
+                max_lines=500,
+                retention_days=retention_days,
             ),
         )
         client = self.client(config)
@@ -851,6 +855,16 @@ class TheTrafficLogPage(LoginTestCase):
 
         self.assertGreater(self.asked[-1]["to_at"], stamp)
         self.assertIn("app.example.com", page)
+
+    def test_a_time_before_the_window_names_the_real_retention(self) -> None:
+        """Review 2026-10-30, E5: the page said 14 days whatever the database kept."""
+
+        page = self.page(query="?from=26-09-01%2012:00", now=NOW, retention_days=7)
+
+        self.assertIn("within the last 7 days", page)
+        self.assertNotIn("14 days", page)
+        page = self.page(query="?from=26-09-07%2012:00", now=NOW, retention_days=1)
+        self.assertIn("within the last 1 day.", page)
 
     def test_a_reversed_time_range_is_explained_instead_of_showing_all_records(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record())

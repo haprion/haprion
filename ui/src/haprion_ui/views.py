@@ -109,7 +109,7 @@ def log_time_filter(
     earliest: datetime,
     latest: datetime,
     end_of_minute: bool = False,
-    outside: str = "Choose a date and time within the available 14 days.",
+    outside: str,
 ) -> datetime | None:
     """Turn a date and time in the reader's clock into the UTC used by log records."""
 

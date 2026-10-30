@@ -1962,14 +1962,16 @@ def read_keepalived_state() -> str | None:
 
     /run/haproxy belongs to the haproxy group, so the name may be a link put
     there. This runs as root and sends what it reads to the manager: a link, or
-    anything but a regular file, is not followed and not read (review 26-10-30, E5).
+    anything but a regular file of this user's own, is not followed and not read
+    (review 26-10-30, E5 and R3).
     """
     try:
         descriptor = os.open(KEEPALIVED_STATE, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return None
     try:
-        if not S_ISREG(os.fstat(descriptor).st_mode):
+        found = os.fstat(descriptor)
+        if not S_ISREG(found.st_mode) or found.st_uid != os.geteuid():
             return None
         return os.read(descriptor, 64).decode("utf-8").strip()
     except (OSError, ValueError):

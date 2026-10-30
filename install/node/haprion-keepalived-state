@@ -13,17 +13,21 @@ esac
 
 STATE_DIR="/run/haproxy"
 STATE_FILE="${STATE_DIR}/keepalived.state"
+WORK_DIR="/run/haprion-keepalived"
 
 mkdir -p "$STATE_DIR"
 
 #
-# /run/haproxy is group-writable (haproxy), so a name made here must not be
-# one somebody can predict and link elsewhere: mktemp makes a new file under
-# a random name, and the rename replaces the state file's name itself, a link
-# or not (review 26-10-30, E5).
+# /run/haproxy is group-writable (haproxy): anybody in the group can remove and
+# replace names there, including a temporary file made there under a random
+# name, which root would then write and chmod through a link. So the file is
+# made in a directory only root can write to, on the same tmpfs, and renamed
+# into place: the rename replaces the state file's name itself, a link or not,
+# and refuses a directory at that name (review 26-10-30, E5 and R3).
 #
-TMP="$(mktemp "${STATE_DIR}/.keepalived.state.XXXXXX")"
+install -d -o root -g root -m 755 "$WORK_DIR"
+TMP="$(mktemp "${WORK_DIR}/state.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 printf '%s\n' "$STATE" > "$TMP"
 chmod 644 "$TMP"
-mv -f "$TMP" "$STATE_FILE"
+mv -T "$TMP" "$STATE_FILE"

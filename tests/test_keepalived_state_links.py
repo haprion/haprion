@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 WRITER = ROOT / "install/node/haprion-keepalived-state"
@@ -33,11 +34,29 @@ class TheWriter(unittest.TestCase):
         script = WRITER.read_text()
         self.assertIn('STATE_DIR="/run/haproxy"', script)
         self.script = Path(temporary.name) / "writer"
-        self.script.write_text(script.replace("/run/haproxy", str(self.directory)))
+        self.assertIn('WORK_DIR="/run/haprion-keepalived"', script)
+        self.work = Path(temporary.name) / "work"
+        self.script.write_text(
+            script.replace("/run/haproxy", str(self.directory)).replace(
+                "/run/haprion-keepalived", str(self.work)
+            )
+        )
+        # install -o root -g root needs root; the test is not, so it makes its own.
+        self.bin = Path(temporary.name) / "bin"
+        self.bin.mkdir()
+        shim = self.bin / "install"
+        shim.write_text('#!/bin/sh\nfor last; do :; done\nmkdir -p -m 755 "$last"\n')
+        shim.chmod(0o755)
+        spy = self.bin / "mktemp"
+        spy.write_text(
+            f'#!/bin/sh\necho "$1" >> "{self.bin / "made"}"\nexec /usr/bin/mktemp "$@"\n'
+        )
+        spy.chmod(0o755)
 
     def write(self, state: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # the script under test, in a temporary directory
             ["/bin/bash", str(self.script), state],
+            env={**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}"},
             capture_output=True,
             text=True,
             check=False,
@@ -47,6 +66,23 @@ class TheWriter(unittest.TestCase):
         script = WRITER.read_text()
         self.assertIn("mktemp", script)
         self.assertNotIn('"${STATE_FILE}.$$"', script)
+
+    def test_the_temporary_file_is_made_where_the_group_cannot_write(self) -> None:
+        """Review 26-10-30, R3: a name in the group's directory can be swapped for a link."""
+
+        self.assertEqual(self.write("BACKUP").returncode, 0)
+        made = Path((self.bin / "made").read_text().strip())
+        self.assertEqual(made.parent, self.work)
+        self.assertNotEqual(made.parent, self.directory)
+        self.assertEqual(stat.S_IMODE(self.work.stat().st_mode), 0o755)
+        self.assertEqual((self.directory / "keepalived.state").read_text(), "BACKUP\n")
+        self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_a_directory_in_the_state_file_s_place_does_not_take_the_file(self) -> None:
+        (self.directory / "keepalived.state").mkdir()
+        self.assertNotEqual(self.write("MASTER").returncode, 0)
+        self.assertEqual(list((self.directory / "keepalived.state").iterdir()), [])
+        self.assertEqual(list(self.work.iterdir()), [])
 
     def test_a_link_in_the_state_file_s_place_is_replaced_not_written_through(self) -> None:
         victim = self.directory.parent / "victim"
@@ -86,6 +122,13 @@ class TheReader(unittest.TestCase):
     def test_a_regular_file_is_read(self) -> None:
         self.state.write_text("BACKUP\n")
         self.assertEqual(self.read(), "BACKUP")
+
+    def test_a_file_of_another_owner_is_not_state(self) -> None:
+        """Review 26-10-30, R3: the group can put a file there; only root's is the writer's."""
+
+        self.state.write_text("BACKUP\n")
+        with mock.patch.object(os, "geteuid", return_value=os.getuid() + 1):
+            self.assertIsNone(self.read())
 
     def test_a_missing_file_is_no_state(self) -> None:
         self.assertIsNone(self.read())

@@ -39,7 +39,7 @@ from typing import BinaryIO, TextIO, cast
 from haprion import exit_codes, node_ssh
 from haprion.certificates import CertificateError, target_for
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
-from haprion.cluster_status import ClusterStatus, NodeStatus, StatusError, parse_status
+from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     Cluster,
@@ -48,8 +48,9 @@ from haprion.config import (
     load_policy,
     load_runtime_config,
 )
+from haprion.deploy_plan import Outcome, ReleaseTarget
 from haprion.deploy_run import OPERATION as DEPLOY_OPERATION
-from haprion.deploy_run import Budget, CertificatePreflight, ReadStatus, TriggerNode, run
+from haprion.deploy_run import Budget, CertificatePreflight, DeployRun, ReadStatus, TriggerNode, run
 from haprion.envelope import failure, new_request_id
 from haprion.helper_protocol import (
     HelperProtocolError,
@@ -61,7 +62,7 @@ from haprion.helper_protocol import (
     write_document,
 )
 from haprion.labels import counted
-from haprion.release_install import KEEP_RELEASES, prune_releases
+from haprion.release_install import prune_releases
 from haprion.status_collect import STATUS_TIMEOUT_SECONDS, ask_node, collect, read_target
 
 OPERATION = "deploy_cluster"
@@ -123,31 +124,24 @@ def read_status(cluster: Cluster, identity: DeployIdentity) -> ClusterStatus:
     return parse_status(report.as_envelope(cluster.cluster_id, request_id=new_request_id()))
 
 
-def prune_published_releases(cluster: Cluster, read: ReadStatus, stream: TextIO) -> None:
-    """Clean up the manager's published releases, now that the nodes have been read (D5).
+def prune_published_releases(
+    cluster: Cluster, outcome: DeployRun, target: ReleaseTarget, stream: TextIO
+) -> None:
+    """Clean up the manager's published releases after the run (D5).
 
-    Which releases may go depends on what the nodes run, and the deploy is the
-    one place that reads them all anyway. Stages an interrupted install left
-    go regardless; the finished releases only when every node answered with the
-    release it runs - one that did not may be running any of them. Never a
-    reason to fail a deploy that has already finished.
+    Which releases may go depends on what the nodes run. The run's last reading
+    says it when the rollout finished: every node then carries the target. A
+    reading of its own would fall in the 60 s the budget keeps for the answer
+    (review 26-10-30, E4), so any other outcome removes none of the finished
+    releases - one of the nodes may run any of them. Stages an interrupted
+    install left go regardless. Never a reason to fail a deploy that has
+    already finished.
     """
 
-    publish_path = Path(cluster.publish_path)
-    running: set[str] | None = None
+    running = {target.hash} if outcome.report.outcome is Outcome.DONE else None
     try:
-        finished = sum(
-            1
-            for entry in (publish_path / "releases").iterdir()
-            if entry.is_dir() and not entry.name.startswith(".")
-        )
-        if finished > KEEP_RELEASES:
-            status = read()
-            hashes = {node.release_hash for node in status.nodes if node.status_ok}
-            if status.nodes and all(node.status_ok for node in status.nodes) and None not in hashes:
-                running = {name for name in hashes if name is not None}
-        removed = prune_releases(publish_path, running=running)
-    except (OSError, StatusError) as exc:
+        removed = prune_releases(Path(cluster.publish_path), running=running)
+    except OSError as exc:
         stream.write(f"Old releases were not cleaned up: {exc}\n")
         return
     if removed:
@@ -435,7 +429,7 @@ def main(
                 preflight=preflight,
                 budget=BUDGET,
             )
-            prune_published_releases(cluster, read, stream)
+            prune_published_releases(cluster, outcome, target, stream)
     except LockBusy as exc:
         return refuse("operation_locked", str(exc), exc.exit_code)
 

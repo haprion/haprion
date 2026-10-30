@@ -80,6 +80,7 @@ class HelperFixture(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.cluster = pair()
         self.triggered: list[str] = []
+        self.reads = 0
 
     def runtime(
         self,
@@ -166,6 +167,7 @@ class HelperFixture(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
 
         def read_status() -> ClusterStatus:
+            self.reads += 1
             return parse_status(self.cluster.read_status())
 
         def trigger(node: NodeStatus) -> int:
@@ -212,6 +214,19 @@ class PublishedReleasesAreCleanedUpAfterTheDeploy(HelperFixture):
         self.assertEqual(code, 0, err)
         # The oldest runs on both nodes after the deploy; the next oldest is the one beyond ten.
         self.assertEqual(self.releases(policy_path), set(names) - {names[1]})
+
+    def test_the_cleanup_reads_no_node_the_deploy_did_not_read(self) -> None:
+        """Review 26-10-30, E4: a reading after the run is outside the budget's reserve."""
+
+        self.run_helper(request(), policy_path=self.runtime())
+        without = self.reads
+        self.reads = 0
+        self.cluster = pair()
+        self.fill()
+
+        self.run_helper(request(), policy_path=self.runtime())
+
+        self.assertEqual(self.reads, without)
 
     def test_an_unreadable_node_keeps_everything(self) -> None:
         policy_path = self.runtime()

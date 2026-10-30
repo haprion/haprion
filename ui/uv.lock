@@ -395,7 +395,7 @@ wheels = [
 
 [[package]]
 name = "haprion"
-version = "0.99.5"
+version = "0.99.6"
 source = { editable = "../" }
 dependencies = [
     { name = "psycopg" },
@@ -428,7 +428,7 @@ dev = [
 
 [[package]]
 name = "haprion-ui"
-version = "0.99.5"
+version = "0.99.6"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },

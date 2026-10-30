@@ -1000,6 +1000,32 @@ def _node_package(
         report.step("traffic-log", enabled=True)
 
 
+def _fetch_keys(host: Host, wanted: dict[str, str]) -> dict[str, str]:
+    """The public halves of the fetch keys 04-node-prepare made, for a test restore (B398).
+
+    The manager lets exactly these in for the run. Only a key under root's
+    `.ssh` is read, and only its `.pub` - the type and the key, no comment.
+    """
+
+    keys: dict[str, str] = {}
+    for kind, path in wanted.items():
+        pure = PurePosixPath(path)
+        if (
+            kind not in ("config", "cert")
+            or ".." in pure.parts
+            or not str(pure).startswith("/root/.ssh/")
+        ):
+            raise Refused(f"the {kind} fetch key is not under /root/.ssh: {path!r}")
+        public = host.path(f"{path}.pub")
+        if not public.is_file():
+            raise Failed(f"the {kind} fetch key {path}.pub was not made")
+        fields = public.read_text(encoding="utf-8").split()
+        if len(fields) < 2:
+            raise Failed(f"{path}.pub is not a public key")
+        keys[kind] = " ".join(fields[:2])
+    return keys
+
+
 @contextlib.contextmanager
 def _services_held(host: Host) -> Iterator[None]:
     """Packages start their services on install unless told otherwise.
@@ -1463,7 +1489,10 @@ def _apply(
     _keyring(host, header, items, report)
     _waf_engine(host, header, items, report)
     _node_package(host, header, carried, items, report)
-    return {"steps": report.steps, "warnings": report.warnings}
+    answer: dict[str, Any] = {"steps": report.steps, "warnings": report.warnings}
+    if header.get("report_keys"):
+        answer["fetch_keys"] = _fetch_keys(host, header["report_keys"])
+    return answer
 
 
 # --------------------------------------------------------------------------

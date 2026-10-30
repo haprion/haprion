@@ -3283,6 +3283,13 @@ above, except that:
 - sshd's `ListenAddress` is rewritten to the test address;
 - keepalived is masked, so it can never join the production pair's VRRP;
 - the VM keeps its own SSH host keys;
+- the VM fetches its configuration and certificates from this manager as a node does, with the fetch
+  keys it made for itself. For the run alone, the manager lets those keys in from the test address
+  only - the same read-only line a node's own has, ending by itself after two hours - and takes them
+  out when the run ends, however it ends, and when the run is swept or discarded. If they cannot be
+  taken out, the result says so and the next restore command does it. `haprion-node pull-keys`
+  leaves them alone. The manager and the VM are the same as in a real restore, so what the restore
+  proves includes the fetch;
 - no password hash is sent: the accounts are created locked, and the preview says passwords are not
   restored in test mode. The password step is proved by a restore as the node.
 

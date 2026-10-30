@@ -23,6 +23,7 @@ from haprion import (
     node_restore,
     node_ssh,
     restore_agent,
+    restore_fetch,
     restore_plan,
     restore_source,
     waf_engine_package,
@@ -64,6 +65,35 @@ INSPECTED: dict[str, Any] = {
 }
 
 
+FETCH_KEYS = {
+    "config": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIconfig",
+    "cert": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIcerts",
+}
+
+
+class FakeAccess:
+    """The manager's two pull accounts, as a list of the temporary lines in them."""
+
+    def __init__(self) -> None:
+        self.held: dict[str, tuple[str, str, dict[str, str]]] = {}
+        self.log: list[str] = []
+        self.refuse_revoke = False
+
+    def grant(self, run: str, cluster: str, address: str, keys: Any) -> None:
+        self.log.append(f"grant {run}")
+        self.held[run] = (cluster, address, dict(keys))
+
+    def revoke(self, run: str, cluster: str) -> None:
+        self.log.append(f"revoke {run}")
+        if self.refuse_revoke:
+            raise restore_fetch.FetchAccessError("the lock is busy")
+        self.held.pop(run, None)
+
+    @property
+    def access(self) -> node_restore.FetchAccess:
+        return node_restore.FetchAccess(self.grant, self.revoke)
+
+
 class FakeSession:
     calls: list[tuple[str, dict[str, Any], bytes]]
     answers: dict[str, dict[str, Any]]
@@ -81,6 +111,8 @@ class FakeSession:
         FakeSession.trusted[header["op"]] = (
             self.known_hosts.read_text().splitlines() if self.known_hosts.exists() else []
         )
+        if header["op"] == "apply" and "apply" not in FakeSession.answers:
+            return {"ok": True, "op": "apply", "fetch_keys": dict(FETCH_KEYS)}
         return FakeSession.answers.get(header["op"], {"ok": True, "op": header["op"]})
 
 
@@ -103,6 +135,7 @@ class RestoreTest(unittest.TestCase):
         FakeSession.calls = []
         FakeSession.trusted = {}
         FakeSession.answers = {"inspect": dict(INSPECTED)}
+        self.fetching = FakeAccess()
         self.silent = {"192.0.2.29", "192.0.2.21"}
         carried = work / "haprion-node.deb"
         carried.write_bytes(b"the release's node package")
@@ -173,7 +206,7 @@ class RestoreTest(unittest.TestCase):
             publish_root=PUBLISH_ROOT,
             package_of=lambda: self.package,
             lock_root=self.root / "locks",
-            **kwargs,
+            **{"fetch_access": self.fetching.access, **kwargs},
         )
 
 
@@ -864,6 +897,129 @@ class Timed(RestoreTest):
 
     def later(self, run: str, seconds: float) -> float:
         return node_restore.prepared_at(self.root / run) + seconds
+
+
+class TheTestVmFetches(Timed):
+    """B398: a test restore lets its VM's new fetch keys in for the run, and only for it."""
+
+    def previewed(self, *, test: bool = True) -> str:
+        run = self.prepare(test=test)
+        self.preview(run)
+        FakeSession.calls = []
+        FakeSession.trusted = {}
+        FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
+        return run
+
+    def at_finish(self, run: str, **kwargs: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The run's result, and what the manager held when the VM's finish session began."""
+
+        seen: dict[str, Any] = {}
+        original = FakeSession.call
+
+        def call(session: FakeSession, address: str, header: dict[str, Any], *a: Any,
+                 **k: Any) -> dict[str, Any]:  # fmt: skip
+            if header["op"] == "finish":
+                seen.update(self.fetching.held)
+            return original(session, address, header, *a, **k)
+
+        with mock.patch.object(FakeSession, "call", call):
+            return self.carry_out(run, **kwargs), seen
+
+    def test_the_keys_are_in_while_it_fetches_and_out_after_finish(self) -> None:
+        run = self.previewed()
+
+        result, seen = self.at_finish(run)
+
+        self.assertEqual(result["outcome"], "done", result)
+        self.assertEqual(seen, {run: ("alpha", "192.0.2.29", dict(FETCH_KEYS))})
+        self.assertEqual(self.fetching.held, {})
+        self.assertFalse((self.root / run / "fetch-keys.json").exists())
+
+    def test_they_are_asked_for_before_anything_is_written(self) -> None:
+        run = self.previewed()
+        FakeSession.calls = []
+
+        with self.assertRaisesRegex(RestoreError, "needs the manager's fetch access"):
+            self.carry_out(run, fetch_access=None)
+        self.assertEqual(FakeSession.calls[:0], [])
+        self.assertFalse((self.root / run / "started.json").exists())
+
+    def test_a_failure_takes_them_out_too(self) -> None:
+        run = self.previewed()
+        FakeSession.answers["network"] = {"ok": False, "error": "netplan refused"}
+
+        result = self.carry_out(run)
+
+        self.assertEqual((result["outcome"], result["stage"]), ("failed", "network"))
+        self.assertEqual(self.fetching.held, {})
+        self.assertFalse((self.root / run / "fetch-keys.json").exists())
+
+    def test_a_vm_that_reports_something_else_than_keys_is_not_let_in(self) -> None:
+        run = self.previewed()
+        FakeSession.answers["apply"] = {
+            "ok": True,
+            "fetch_keys": {"config": 'command="/bin/sh" ssh-ed25519 AAAA'},
+        }
+
+        result = self.carry_out(run)
+
+        self.assertEqual((result["outcome"], result["stage"]), ("failed", "apply"))
+        self.assertEqual(self.fetching.held, {})
+
+    def test_keys_that_will_not_come_out_leave_the_run_for_the_sweep(self) -> None:
+        run = self.previewed()
+        self.fetching.refuse_revoke = True
+
+        result = self.carry_out(run)
+
+        self.assertEqual(result["outcome"], "done")
+        self.assertIn("still out", result["warning"])
+        self.assertIn(run, self.fetching.held)
+        self.assertIn("still out", node_restore.status(self.root, run)["result"]["warning"])
+        # A caller that cannot take them out leaves the run where it is.
+        past = self.later(run, node_restore.START_WINDOW + 1)
+        self.assertEqual(node_restore.sweep(self.root, past), [])
+        self.assertTrue((self.root / run).is_dir())
+        # One that can does, and then the run goes with its key.
+        self.fetching.refuse_revoke = False
+        node_restore.sweep(self.root, past, fetch_access=self.fetching.access)
+        self.assertEqual(self.fetching.held, {})
+        self.assertFalse((self.root / run / "fetch-keys.json").exists())
+
+    def test_a_run_that_died_is_swept_and_discarded_with_its_keys(self) -> None:
+        for how in ("sweep", "discard"):
+            with self.subTest(how=how):
+                run = self.previewed()
+                (self.root / run / "fetch-keys.json").write_text('{"cluster": "alpha"}')
+                self.fetching.held[run] = ("alpha", "192.0.2.29", dict(FETCH_KEYS))
+                if how == "sweep":
+                    gone = node_restore.sweep(
+                        self.root,
+                        self.later(run, node_restore.START_WINDOW + 1),
+                        fetch_access=self.fetching.access,
+                    )
+                    self.assertIn(run, gone)
+                else:
+                    node_restore.discard(self.root, run, fetch_access=self.fetching.access)
+                self.assertEqual(self.fetching.held, {})
+                self.assertFalse((self.root / run).exists())
+
+    def test_a_discard_that_cannot_take_them_out_keeps_the_run(self) -> None:
+        run = self.previewed()
+        (self.root / run / "fetch-keys.json").write_text('{"cluster": "alpha"}')
+        self.fetching.refuse_revoke = True
+
+        with self.assertRaisesRegex(RestoreError, "could not be taken out"):
+            node_restore.discard(self.root, run, fetch_access=self.fetching.access)
+        self.assertTrue((self.root / run).is_dir())
+
+    def test_a_restore_onto_a_new_vm_lets_nobody_in(self) -> None:
+        run = self.previewed(test=False)
+
+        result = self.carry_out(run, confirm="node-a")
+
+        self.assertEqual(result["outcome"], "done", result)
+        self.assertEqual(self.fetching.log, [])
 
 
 class TheHour(Timed):

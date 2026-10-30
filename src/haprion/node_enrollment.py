@@ -442,17 +442,36 @@ def pull_sources(host: str, forward: Callable[[str], tuple[str, ...]]) -> tuple[
     return (host, *addresses)
 
 
-def pull_line(root: Path, key: str, node: str, purpose: str, sources: Iterable[str]) -> str:
+def pull_line(
+    root: Path,
+    key: str,
+    node: str,
+    purpose: str,
+    sources: Iterable[str],
+    *,
+    expires: str | None = None,
+) -> str:
     """One node's fetch key: read-only, its cluster's tree alone, from its addresses alone.
 
     `sources` empty leaves `from=` out: only `pull-keys` writes such a line,
     for a node whose host does not resolve at the time, and says so.
+    `expires` (`YYYYMMDDHHMM`, UTC) ends the line by itself: a test restore's
+    temporary one (`TEMPORARY_NODE`) does not outlive its run.
     """
 
     allowed = ",".join(sources)
     lock = f'from="{allowed}",' if allowed else ""
-    return f'{lock}restrict,command="{RRSYNC} -ro {root}" {key} {node} {purpose}'
+    end = f'expiry-time="{expires}Z",' if expires else ""
+    return f'{lock}restrict,{end}command="{RRSYNC} -ro {root}" {key} {node} {purpose}'
 
+
+#
+# The name a test restore's temporary fetch line goes under: `restore-<run>`,
+# in the place of a node's name. Nothing manages such a line but the restore
+# that wrote it, so `pull-keys` leaves it alone and the node commands never
+# find it by a node's name (B398).
+#
+TEMPORARY_NODE = re.compile(r"^restore-r\d{6}-[0-9a-f]{8}$")
 
 KEY_LINE = re.compile(
     r'^(?P<options>(?:[^\s"]|"[^"]*")+)\s+(?P<key>[a-z0-9@.-]+\s+[A-Za-z0-9+/=]+)\s+(?P<comment>.+)$'

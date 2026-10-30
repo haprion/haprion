@@ -39,6 +39,8 @@ class FakeHost(Host):
         # Whether starting keepalived writes its state file, as the notify script does.
         self.notifies = True
         self.rendered_node_conf: str | None = None
+        # What 04-node-prepare writes besides: the fetch keys it makes.
+        self.made_files: dict[str, str] = {}
         # Whether sshd fails to bind what its configuration names.
         self.sshd_deaf = False
         for name, text in {
@@ -162,6 +164,8 @@ class FakeHost(Host):
         errors = ""
         if argv[0] == "bash" and argv[1].endswith("/install/04-node-prepare"):
             errors = self.prepare_stderr
+            for name, text in self.made_files.items():
+                self.path(name).write_text(text)
             if self.rendered_node_conf is not None:
                 self.path("/etc/haprion/node.conf").write_text(self.rendered_node_conf)
         if check and code != 0:
@@ -314,6 +318,30 @@ class Apply(AgentTest):
         self.assertEqual(self.host.path("/etc/default/grub.d").stat().st_mode & 0o7777, 0o755)
         self.assertEqual(self.host.owners["/etc/default/grub.d"], (0, 0))
         self.assertTrue(self.host.path("/etc/systemd/system/ipvsadm.service").is_symlink())
+
+    def test_a_test_run_reports_the_public_halves_of_the_fetch_keys_the_node_made(self) -> None:
+        self.host.made_files = {
+            "/root/.ssh/id_config.pub": "ssh-ed25519 AAAAconfig root@node-test\n",
+            "/root/.ssh/id_cert.pub": "ssh-ed25519 AAAAcert root@node-test\n",
+        }
+        header = {
+            **APPLY_HEADER,
+            "report_keys": {"config": "/root/.ssh/id_config", "cert": "/root/.ssh/id_cert"},
+        }
+
+        result = self.apply(header)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            result["fetch_keys"],
+            {"config": "ssh-ed25519 AAAAconfig", "cert": "ssh-ed25519 AAAAcert"},
+        )
+
+    def test_a_key_outside_roots_ssh_is_not_read_and_a_plain_apply_reports_none(self) -> None:
+        refused = self.apply({**APPLY_HEADER, "report_keys": {"config": "/etc/shadow"}})
+        self.assertFalse(refused["ok"])
+        self.assertIn("not under /root/.ssh", refused["error"])
+        self.assertNotIn("fetch_keys", self.apply())
 
     def test_what_the_image_had_in_a_carried_directory_goes_to_quarantine(self) -> None:
         self.apply()

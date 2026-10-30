@@ -51,6 +51,7 @@ from haprion.node_enrollment import (
     CERT_PURPOSE,
     CONFIG_PURPOSE,
     RRSYNC,
+    TEMPORARY_NODE,
     EnrollmentError,
     Locations,
     config_root,
@@ -128,6 +129,8 @@ def plan(
         before = read(path)
         after = before
         for name, key in node_keys(before, purpose).items():
+            if TEMPORARY_NODE.fullmatch(name):
+                continue  # a test restore's, which only that restore changes (B398)
             found = _nodes_named(runtime, name)
             if not found:
                 after = keys_without(after, name, purpose)

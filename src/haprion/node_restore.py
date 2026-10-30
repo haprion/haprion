@@ -59,6 +59,7 @@ from haprion import (
     node_ssh,
     restore_agent,
     restore_answers,
+    restore_fetch,
     restore_plan,
     restore_runs,
     state_backup,
@@ -82,9 +83,39 @@ RESULT_KEPT = restore_runs.RESULT_KEPT
 KEPT_FILES = restore_runs.KEPT_FILES
 prepared_at = restore_runs.prepared_at
 expired = restore_runs.expired
-sweep = restore_runs.sweep
 _Held = restore_runs.Held
 _retire = restore_runs.retire
+
+FetchAccess = restore_fetch.FetchAccess
+fetch_access_for = restore_fetch.for_policy
+lazy_fetch_access = restore_fetch.lazy
+
+
+def _releaser(fetch_access: FetchAccess | None) -> Callable[[Path], None]:
+    """What takes a run's temporary fetch keys out before its directory goes."""
+
+    def release(directory: Path) -> None:
+        try:
+            if fetch_access is None:
+                raise restore_fetch.FetchAccessError("this caller cannot take them out")
+            cluster = read_json(directory / restore_runs.MARKER)["cluster"]
+            fetch_access.revoke(directory.name, str(cluster))
+            (directory / restore_runs.MARKER).unlink(missing_ok=True)
+        except (restore_fetch.FetchAccessError, OSError, ValueError, KeyError, RestoreError) as exc:
+            sys.stderr.write(
+                f"WARNING: the temporary fetch keys of run {directory.name} are still out: {exc}\n"
+            )
+            raise restore_runs.ReleaseFailed(str(exc)) from exc
+
+    return release
+
+
+def sweep(root: Path, now: float, *, fetch_access: FetchAccess | None = None) -> list[str]:
+    """`restore_runs.sweep`, taking a run's temporary fetch keys out first when it has any."""
+
+    return restore_runs.sweep(root, now, _releaser(fetch_access) if fetch_access else None)
+
+
 SSH_KEYGEN = "/usr/bin/ssh-keygen"
 SSH_KEYSCAN = "/usr/bin/ssh-keyscan"
 IP = "/usr/sbin/ip"
@@ -1138,6 +1169,7 @@ def run(
     backup_failed_ok: bool = False,
     break_traffic: bool = False,
     lock_root: Path = cluster_lock.DEFAULT_LOCK_ROOT,
+    fetch_access: FetchAccess | None = None,
 ) -> dict[str, Any]:
     """Carry out the previewed plan, holding the run's directory throughout.
 
@@ -1155,26 +1187,73 @@ def run(
     with _Held(run_directory(root, run_id), wait=True):
         try:
             with cluster_lock.hold(cluster.cluster_id, operation="node_restore", root=lock_root):
-                return _run(
-                    _unexpired(root, run_id, now()),
-                    run_id,
-                    confirm,
-                    cluster,
-                    backup_root,
-                    answering=answering,
-                    progress=progress,
-                    pause=pause,
-                    rollback_seconds=rollback_seconds,
-                    clock=clock,
-                    session_for=session_for,
-                    publish_root=publish_root,
-                    package_of=package_of,
-                    checks=checks,
-                    backup_failed_ok=backup_failed_ok,
-                    break_traffic=break_traffic,
-                )
+                carried: dict[str, Any] | None = None
+                try:
+                    carried = _run(
+                        _unexpired(root, run_id, now()),
+                        run_id,
+                        confirm,
+                        cluster,
+                        backup_root,
+                        answering=answering,
+                        progress=progress,
+                        pause=pause,
+                        rollback_seconds=rollback_seconds,
+                        clock=clock,
+                        session_for=session_for,
+                        publish_root=publish_root,
+                        package_of=package_of,
+                        checks=checks,
+                        backup_failed_ok=backup_failed_ok,
+                        break_traffic=break_traffic,
+                        fetch_access=fetch_access,
+                    )
+                    return carried
+                finally:
+                    _take_out(root / run_id, fetch_access, carried, progress)
         except cluster_lock.LockBusy as exc:
             raise RestoreError(str(exc)) from exc
+
+
+def _take_out(
+    directory: Path,
+    fetch_access: FetchAccess | None,
+    result: dict[str, Any] | None,
+    progress: TextIO | None,
+) -> None:
+    """The temporary fetch keys out, however the run ended; said in the result if they stay."""
+
+    if not (directory / restore_runs.MARKER).exists():
+        return
+    try:
+        _releaser(fetch_access)(directory)
+    except restore_runs.ReleaseFailed as exc:
+        note = (
+            f"the temporary fetch keys are still out ({exc}); they end by themselves within "
+            "two hours, and the next restore command takes them out"
+        )
+        if result is not None:
+            result["warning"] = note
+            if (directory / "result.json").exists():
+                _write_json(directory / "result.json", result)
+        (progress or sys.stderr).write(f"WARNING: {note}\n")
+
+
+_CONFIG_KEY = re.compile(r'^NODE_CONFIG_PULL_KEY="([^"\n]+)"$', re.MULTILINE)
+_CERT_KEY = re.compile(r'^NODE_CERT_PULL_KEY="([^"\n]+)"$', re.MULTILINE)
+
+
+def _key_paths(answers: str) -> dict[str, str]:
+    """Where the VM's fetch keys will be, from the answers its node preparation reads."""
+
+    found: dict[str, str] = {}
+    for kind, pattern in (("config", _CONFIG_KEY), ("cert", _CERT_KEY)):
+        match = pattern.search(answers)
+        if match:
+            found[kind] = match.group(1)
+    if "config" not in found:
+        raise RestoreError("the answers name no configuration fetch key to let in")
+    return found
 
 
 def _run(
@@ -1195,6 +1274,7 @@ def _run(
     checks: OverwriteChecks | None,
     backup_failed_ok: bool,
     break_traffic: bool,
+    fetch_access: FetchAccess | None,
 ) -> dict[str, Any]:
     stream = progress or sys.stderr
     request = Request.from_dict(read_json(directory / "request.json"))
@@ -1225,6 +1305,13 @@ def _run(
     if confirm != plan.hostname:
         raise RestoreError(f"confirm with the restored node's name, {plan.hostname}")
     overwrite = plan.mode == "overwrite"
+    testing = plan.mode == "test"
+    key_paths: dict[str, str] = {}
+    if testing:
+        # Before anything is written: a test that cannot let its VM fetch cannot prove the way.
+        if fetch_access is None:
+            raise RestoreError("a test restore needs the manager's fetch access; none was given")
+        key_paths = _key_paths(checked.answers)
     if overwrite:
         if checks is None:
             raise RestoreError(
@@ -1277,6 +1364,8 @@ def _run(
         ),
         "answers": checked.answers,
         "traffic_log": plan.traffic_log,
+        # A test VM reports the public halves of the fetch keys it makes (B398).
+        "report_keys": key_paths,
         "groups": [{"name": g.name, "gid": g.gid} for g in plan.groups],
         "accounts": [
             {
@@ -1346,7 +1435,9 @@ def _run(
             payload(checked.source, (*plan.files, carried, *engine, *keyring)),
             progress=stream,
         )
-        result["sessions"]["apply"] = {k: v for k, v in applied.items() if k != "ok"}
+        result["sessions"]["apply"] = {
+            k: v for k, v in applied.items() if k not in {"ok", "fetch_keys"}
+        }
         if not applied.get("ok"):
             return finish_with(
                 "failed",
@@ -1356,6 +1447,19 @@ def _run(
             )
 
         final = str(plan.address.ip)
+        if testing:
+            assert fetch_access is not None  # noqa: S101 - refused above
+            _write_json(directory / restore_runs.MARKER, {"cluster": request.cluster})
+            try:
+                fetch_access.grant(
+                    run_id,
+                    request.cluster,
+                    final,
+                    restore_fetch.valid_keys(applied.get("fetch_keys")),
+                )
+            except restore_fetch.FetchAccessError as exc:
+                raise RestoreError(f"the VM could not be let in to fetch: {exc}") from exc
+            stream.write(f"the VM's fetch keys let in from {final} for this run\n")
         archived = None if plan.mode == "test" else _archived_host_key(checked.source)
         if plan.mode != "test" and archived is None:
             return finish_with("failed", error="the archive has no ed25519 host key", stage="apply")
@@ -1502,11 +1606,13 @@ def _finish(
     return finish_with("done", address=final, hostname=plan.hostname)
 
 
-def discard(root: Path, run_id: str) -> bool:
+def discard(root: Path, run_id: str, *, fetch_access: FetchAccess | None = None) -> bool:
     """Remove a run's directory unless a step is working in it; False when there was none.
 
     Nothing is sent to the target. The line pasted there stays until its
     `expiry-time`, and without the private half removed here nothing can use it.
+    A test run's temporary fetch keys on this host are taken out first; if they
+    cannot be, the directory stays.
     """
 
     if not restore_agent.RUN_ID.fullmatch(run_id):
@@ -1517,6 +1623,14 @@ def discard(root: Path, run_id: str) -> bool:
     _private_directory(directory)
     try:
         with _Held(directory, wait=False):
+            if (directory / restore_runs.MARKER).exists():
+                try:
+                    _releaser(fetch_access)(directory)
+                except restore_runs.ReleaseFailed as exc:
+                    raise RestoreError(
+                        f"the temporary fetch keys of run {run_id} could not be taken out ({exc}); "
+                        "the run stays"
+                    ) from exc
             shutil.rmtree(directory)
     except BlockingIOError as exc:
         raise RestoreError(f"run {run_id} is being worked on; wait for it to finish") from exc

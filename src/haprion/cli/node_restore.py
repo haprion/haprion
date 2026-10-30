@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import exit_codes, labels, node_restore
+from haprion import exit_codes, labels, node_restore, restore_fetch
 from haprion.backup_archive import ArchiveError
 from haprion.cli import node_restore_helper
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
@@ -326,7 +326,11 @@ def main(
         # After the step, not before: a run that has just expired is refused by
         # its own step with a sentence saying so, rather than found missing.
         #
-        node_restore.sweep(run_root, time.time())
+        node_restore.sweep(
+            run_root,
+            time.time(),
+            fetch_access=restore_fetch.lazy(lambda: load_policy(policy_path)),
+        )
 
 
 def _step(
@@ -342,7 +346,11 @@ def _step(
 ) -> int:
     try:
         if step == "discard":
-            removed = node_restore.discard(run_root, options["--run"])
+            removed = node_restore.discard(
+                run_root,
+                options["--run"],
+                fetch_access=restore_fetch.lazy(lambda: load_policy(policy_path)),
+            )
             out.write(
                 f"run {options['--run']} removed\n"
                 if removed
@@ -421,6 +429,7 @@ def _step(
             checks=checks,
             backup_failed_ok=bool(parameters.get("backup_failed_ok")),
             break_traffic=bool(parameters.get("break_traffic")),
+            fetch_access=restore_fetch.for_policy(policy),
         )
         if as_json:
             out.write(json.dumps(result) + "\n")

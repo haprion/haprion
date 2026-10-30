@@ -254,7 +254,13 @@ def main(
         #
         if not require_root or os.geteuid() == 0:
             try:
-                engine.sweep(run_root, now())
+                engine.sweep(
+                    run_root,
+                    now(),
+                    fetch_access=engine.lazy_fetch_access(
+                        lambda: load_policy(policy_path, require_secure=require_secure)
+                    ),
+                )
             except OSError as exc:
                 (error_stream or sys.stderr).write(f"WARNING: sweeping expired runs: {exc}\n")
 
@@ -338,7 +344,13 @@ def _answer(
                 owner = Request.from_dict(engine.read_json(directory / "request.json")).cluster
                 if owner != request.cluster:
                     raise RestoreError(f"run {run} belongs to cluster {owner}")
-            removed = engine.discard(run_root, run)
+            removed = engine.discard(
+                run_root,
+                run,
+                fetch_access=engine.lazy_fetch_access(
+                    lambda: load_policy(policy_path, require_secure=require_secure)
+                ),
+            )
             return write_document(
                 writer,
                 envelope(
@@ -450,6 +462,7 @@ def _answer(
             checks=checks,
             backup_failed_ok=bool(parameters.get("backup_failed_ok", False)),
             break_traffic=bool(parameters.get("break_traffic", False)),
+            fetch_access=engine.fetch_access_for(policy),
         )
     except (RestoreError, ArchiveError) as exc:
         return refuse("restore_refused", str(exc), exit_codes.BLOCKED)

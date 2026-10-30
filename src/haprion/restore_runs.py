@@ -16,6 +16,7 @@ import fcntl
 import json
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 from haprion import restore_agent
@@ -37,6 +38,12 @@ START_WINDOW = 3600
 # known_hosts and the preview's plan go at the hour, as before.
 #
 RESULT_KEPT = 7 * 24 * 3600
+#
+# Written to a run's directory before a test restore lets its VM fetch, and
+# removed once the lines it let in are out (`restore_fetch`). A run with it is
+# not put away until they are.
+#
+MARKER = "fetch-keys.json"
 KEPT_FILES = frozenset({"request.json", "prepared.json", "started.json", "result.json"})
 
 
@@ -122,11 +129,18 @@ def retire(directory: Path, now: float) -> bool:
     return False
 
 
-def sweep(root: Path, now: float) -> list[str]:
+class ReleaseFailed(Exception):
+    """The temporary fetch keys of a run could not be taken out; its directory stays."""
+
+
+def sweep(root: Path, now: float, release: Callable[[Path], None] | None = None) -> list[str]:
     """Put away every run past its hour that no step holds; the runs removed whole.
 
     A run that began writing loses its key and plan at the hour and keeps its
     outcome for `status` until RESULT_KEPT; see `retire`.
+
+    A run with temporary fetch keys still out (`MARKER`) is put away only by a
+    caller that can take them out, `release`; any other leaves it for one that can.
     """
 
     if not root.is_dir():
@@ -139,8 +153,12 @@ def sweep(root: Path, now: float) -> list[str]:
             if not expired(directory, now):
                 continue
             with Held(directory, wait=False):
+                if (directory / MARKER).exists():
+                    if release is None:
+                        continue
+                    release(directory)
                 gone = retire(directory, now)
-        except (BlockingIOError, FileNotFoundError):
+        except (BlockingIOError, FileNotFoundError, ReleaseFailed):
             continue
         if gone:
             removed.append(directory.name)

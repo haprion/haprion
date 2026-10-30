@@ -63,6 +63,7 @@ class HelperTest(unittest.TestCase):
         FakeSession.calls = []
         FakeSession.answers = {"inspect": dict(INSPECTED)}
         self.silent = {"192.0.2.29", "192.0.2.21"}
+        self.access = node_restore.FetchAccess(lambda *_: None, lambda *_: None)
         carried = work / "haprion-node.deb"
         carried.write_bytes(b"the release's node package")
         self.package = node_package.ReleasePackage(
@@ -96,6 +97,8 @@ class HelperTest(unittest.TestCase):
             read_json=node_restore.read_json,
             run_directory=node_restore.run_directory,
             discard=node_restore.discard,
+            fetch_access_for=lambda _policy: self.access,
+            lazy_fetch_access=lambda _load: self.access,
             status=node_restore.status,
             sweep=node_restore.sweep,
             prepare=partial(node_restore.prepare, source_of=lambda _: "192.0.2.7"),

@@ -93,6 +93,15 @@ class ACoreThatMissesTheSocketIsRefused(unittest.TestCase):
         self.assertIn("chroot /var/lib/haproxy", said)
         self.assertIn("sudoedit /srv/config/alpha/core/haproxy.cfg", said)
 
+    def test_an_anonymous_chroot_is_named_as_one(self) -> None:
+        said = problem(tree(UBUNTU_GLOBAL.replace(b"/var/lib/haproxy", b"auto")))
+        assert said is not None
+        self.assertIn("an anonymous chroot (`auto`)", said)
+        self.assertNotIn("in auto", said)
+
+    def test_an_explicit_root_may_write_the_socket(self) -> None:
+        self.assertIsNone(problem(tree(b"global\n    user root\n")))
+
     def test_a_chroot_in_a_core_fragment_counts_when_the_core_has_none(self) -> None:
         files = tree(
             b"global\n    daemon\n", **{"core/conf.d/0100-g.cfg": b"global\n  chroot /srv/x\n"}

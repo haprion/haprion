@@ -452,10 +452,6 @@ class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):
         self.assertFalse(self.left.exists())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AReleaseThatLogsTrafficNeedsTheNodesSocket(Node):
     """Review 2026-10-30-igen, R3: a new manager's release on a node an older step 4 prepared."""
 
@@ -520,3 +516,7 @@ class AReleaseThatLogsTrafficNeedsTheNodesSocket(Node):
         (self.offered / "conf.d" / "1040-frontends.cfg").write_text("frontend mgd-http\n")
         code, said = self.deploy()
         self.assertEqual(code, 0, said)
+
+
+if __name__ == "__main__":
+    unittest.main()

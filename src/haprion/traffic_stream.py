@@ -141,12 +141,13 @@ def chroot_reaches_socket(chroot: str | None) -> bool:
 def may_write_socket(settings: Mapping[str, str]) -> bool:
     """Whether the account `global` names may write a socket that is haproxy:haproxy 0660.
 
-    No `user` or `uid` leaves HAProxy as root, as systemd starts it.
+    No `user` or `uid` leaves HAProxy as root, as systemd starts it, and an
+    explicit `user root` is the same.
     """
 
     user = settings.get("user")
     uid = settings.get("uid")
-    if settings.get("group") == ACCOUNT or user == ACCOUNT:
+    if settings.get("group") == ACCOUNT or user in (ACCOUNT, "root"):
         return True
     return user is None and uid in (None, "0")
 
@@ -169,8 +170,9 @@ def problem(files: Mapping[str, bytes], *, cluster: str, config_path: str) -> st
     settings = global_settings(node_order(files))
     chroot = settings.get("chroot")
     if not chroot_reaches_socket(chroot):
+        where = "an anonymous chroot (`auto`)" if chroot == "auto" else chroot
         return (
-            f"{cluster}: core/haproxy.cfg chroots HAProxy in {chroot}, and the traffic log's socket "
+            f"{cluster}: core/haproxy.cfg chroots HAProxy in {where}, and the traffic log's socket "
             f"is {TRAFFIC_LOG_SOCKET}.\n"
             f"\n"
             f"  Fix it, then publish again:\n"

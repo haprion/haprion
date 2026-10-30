@@ -144,6 +144,8 @@ class LoginTestCase(unittest.TestCase):
         self.hidden_by: list[str] = []
         self.shown_again = 0
         self.provider: Any = None
+        self.provider_after_first: Any = None  # what the locked read sees
+        self.provider_reads: list[bool] = []
         self.update_row: Any = None
         self.id_tokens: dict[bytes, str | None] = {}
 
@@ -274,7 +276,7 @@ class LoginTestCase(unittest.TestCase):
             #
             mock.patch("haprion_ui.db.cluster_list", return_value=None),
             # No OIDC provider row unless a test gives one (0041).
-            mock.patch("haprion_ui.db.oidc_provider", side_effect=lambda _c: self.provider),
+            mock.patch("haprion_ui.db.oidc_provider", side_effect=self._provider),
             mock.patch(
                 "haprion_ui.db.session_id_token",
                 side_effect=lambda _c, token_hash: self.id_tokens.get(token_hash),
@@ -311,6 +313,12 @@ class LoginTestCase(unittest.TestCase):
     def _show(self, _connection: object) -> bool:
         self.shown_again += 1
         return True
+
+    def _provider(self, _c: object, *, share_lock: bool = False) -> Any:
+        self.provider_reads.append(share_lock)
+        if self.provider_after_first is not None and share_lock:
+            return self.provider_after_first
+        return self.provider
 
     def _account(self, _connection: object, username: str) -> Account | None:
         return self.account if username.lower() == "operator" else None

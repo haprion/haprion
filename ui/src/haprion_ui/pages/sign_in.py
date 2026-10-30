@@ -48,6 +48,16 @@ from haprion_ui.db import AuthenticatedSession
 from haprion_ui.templates import TEMPLATES
 
 
+def local_login_held_back(account: db.Account | None, provider: db.OidcProvider | None) -> bool:
+    return (
+        account is not None
+        and provider is not None
+        and provider.enabled
+        and provider.local_login == "break_glass_only"
+        and not account.break_glass
+    )
+
+
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
 
@@ -112,13 +122,7 @@ def build_router(config: Config) -> APIRouter:
         # local accounts. Refused exactly as a wrong password is, so the form
         # does not say which accounts are break-glass.
         #
-        held_back = (
-            account is not None
-            and provider is not None
-            and provider.enabled
-            and provider.local_login == "break_glass_only"
-            and not account.break_glass
-        )
+        held_back = local_login_held_back(account, provider)
         #
         # The hash is computed holding no connection, and at most
         # auth.HASHING_AT_ONCE at a time: six connections serve every page, and
@@ -176,12 +180,20 @@ def build_router(config: Config) -> APIRouter:
                 # been disabled or its password changed while the hash ran.
                 #
                 current = db.account_by_username(connection, username)
+                #
+                # And the provider's rule, under a share lock held to the
+                # commit: turning sign-in through the provider on updates that
+                # row and then ends the sessions, so either this sign-in sees
+                # the new rule or that end sees the session made here (B402).
+                #
+                provider = db.oidc_provider(connection, share_lock=True)
                 accepted = (
                     current is not None
                     and account is not None
                     and current.id == account.id
                     and not current.disabled
                     and current.password_hash == account.password_hash
+                    and not local_login_held_back(current, provider)
                 )
             #
             # A success clears the count; a failure was written before the hash.

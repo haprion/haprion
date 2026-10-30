@@ -76,11 +76,16 @@ OIDC_SETTINGS = (
 )
 
 
-def oidc_provider(connection: Connection[Any]) -> OidcProvider | None:
-    """The provider row, or None before 0041."""
+def oidc_provider(connection: Connection[Any], *, share_lock: bool = False) -> OidcProvider | None:
+    """The provider row, or None before 0041. `share_lock` holds the row until
+    the transaction ends, so a change to it (which updates the row) waits for a
+    sign-in that read the old rule, or is seen by one that reads after: no
+    session is made against a rule the change has already ended sessions
+    under (B402)."""
 
+    lock = " for share" if share_lock else ""
     with connection.cursor(row_factory=class_row(OidcProvider)) as cursor:
-        cursor.execute(f"select {_OIDC_COLUMNS} from oidc_provider")  # noqa: S608 - constant
+        cursor.execute(f"select {_OIDC_COLUMNS} from oidc_provider{lock}")  # noqa: S608 - constants
         return cursor.fetchone()
 
 

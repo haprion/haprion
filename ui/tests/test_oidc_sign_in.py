@@ -159,6 +159,20 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.account = replace(self.account, break_glass=True)
         self.assertEqual(self.sign_in(self.client()).status_code, 303)
 
+    def test_a_sign_in_in_flight_when_the_rule_turns_on_makes_no_session(self) -> None:
+        #
+        # Review 26-10-30, R1: the provider is read before the hash and flips
+        # while it runs; the session is made only under the rule read last,
+        # holding the row (B402).
+        #
+        self.account = replace(self.account, break_glass=False)
+        self.provider_after_first = self.provider
+        self.provider = replace(self.provider, enabled=False)
+        response = self.sign_in(self.client())
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.sessions, {})
+        self.assertIn(True, self.provider_reads)
+
     def test_held_back_reads_exactly_as_a_wrong_password(self) -> None:
         self.account = replace(self.account, break_glass=False)
         held = self.sign_in(self.client())

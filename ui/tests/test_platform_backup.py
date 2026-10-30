@@ -329,7 +329,9 @@ class ADumpBeforeAMigration(unittest.TestCase):
             sorted(path.name for path in self.dumps.glob("*.dump")), ["haprion-20261022.dump"]
         )
 
-    def before_restore(self, exists: bool) -> subprocess.CompletedProcess[str]:
+    def before_restore(
+        self, exists: bool, chosen: str = "", inside_if: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         source = SCRIPT.read_text()
         program = (
             "set -Eeuo pipefail\n"
@@ -341,7 +343,11 @@ class ADumpBeforeAMigration(unittest.TestCase):
             + function("write_dump", source)
             + function("keep_newest", source)
             + function("dump_before_restore", source)
-            + "dump_before_restore\n"
+            + (
+                f'if ! ( dump_before_restore "{chosen}" ); then echo FAILED; fi\n'
+                if inside_if
+                else f'dump_before_restore "{chosen}"\n'
+            )
         )
         return subprocess.run(  # noqa: S603 - fixed program
             ["/bin/bash", "-c", program],
@@ -363,6 +369,36 @@ class ADumpBeforeAMigration(unittest.TestCase):
         self.assertEqual(
             sorted(path.name for path in self.dumps.glob("*.dump")), ["haprion-20261022.dump"]
         )
+
+    def test_a_dump_that_fails_part_way_fails_the_step_even_inside_a_condition(self) -> None:
+        (self.root / "bin" / "pg_dump").write_text(
+            "#!/bin/sh\n"
+            'for a; do case "$a" in --file=*) echo dump > "${a#--file=}" ;; esac; done\n'
+            "exit 1\n"
+        )
+        self.dumps.mkdir()
+        done = self.before_restore(True, inside_if=True)
+        self.assertIn("FAILED", done.stdout)
+        self.assertEqual(list((self.dumps / "before-restore").iterdir()), [])
+
+    def test_a_dump_that_cannot_be_put_in_place_fails_the_step_inside_a_condition(self) -> None:
+        (self.root / "bin" / "chown").write_text("#!/bin/sh\nexit 1\n")
+        self.dumps.mkdir()
+        done = self.before_restore(True, inside_if=True)
+        self.assertIn("FAILED", done.stdout)
+        self.assertEqual(list((self.dumps / "before-restore").iterdir()), [])
+
+    def test_the_dump_being_restored_is_never_the_one_removed(self) -> None:
+        directory = self.dumps / "before-restore"
+        directory.mkdir(parents=True)
+        for day in (21, 22, 23):
+            made = directory / f"haprion-202610{day}-100000.dump"
+            made.write_text("older")
+            os.utime(made, (1_790_000_000 + day, 1_790_000_000 + day))
+        chosen = directory / "haprion-20261021-100000.dump"
+        done = self.before_restore(True, chosen=str(chosen))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(chosen.read_text(), "older")
 
     def test_no_database_means_nothing_to_dump(self) -> None:
         self.dumps.mkdir()

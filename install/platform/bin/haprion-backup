@@ -219,7 +219,12 @@ write_dump() {
     #
     step_log "Dumping ${DB_NAME}"
     rm -f -- "$staging"
-    ( umask 077 && pg_dump -U "$DB_ROLE" -d "$DB_NAME" --format=custom --file="$staging" )
+    #
+    # Every step is checked on its own: this runs inside `if ! ( ... )` in a
+    # restore, where bash switches `set -e` off for everything called from it.
+    #
+    ( umask 077 && pg_dump -U "$DB_ROLE" -d "$DB_NAME" --format=custom --file="$staging" ) \
+        || { rm -f -- "$staging"; die "pg_dump failed; no dump was written"; }
 
     #
     # Read back before it is kept. pg_dump exiting zero says the command ran;
@@ -231,9 +236,10 @@ write_dump() {
     [[ "$entries" -gt 0 ]] || { rm -f -- "$staging"; die "the dump has no readable contents"; }
     log "  ok       ${entries} archive entries readable"
 
-    chown root:root "$staging"
-    chmod 600 "$staging"
-    mv -f -- "$staging" "$target"
+    if ! { chown root:root "$staging" && chmod 600 "$staging" && mv -f -- "$staging" "$target"; }; then
+        rm -f -- "$staging"
+        die "the dump could not be put in place as ${target}"
+    fi
     log "  written  ${target}  ($(du -h "$target" | cut -f1))"
 }
 
@@ -285,14 +291,14 @@ do_dump_before_migration() {
 # The newest `count` dumps of `directory` by modification time, the rest removed.
 #
 keep_newest() {
-    local directory="$1" count="$2" index
+    local directory="$1" count="$2" spare="${3:-}" index
     local -a dumps=()
     while IFS= read -r file; do dumps+=("$file"); done < <(
         find "$directory" -maxdepth 1 -name "${DB_NAME}-*.dump" -printf '%T@ %f\n' \
             | sort -rn | cut -d' ' -f2-
     )
     for index in "${!dumps[@]}"; do
-        if [[ "$index" -ge "$count" ]]; then
+        if [[ "$index" -ge "$count" && "${directory}/${dumps[$index]}" != "$spare" ]]; then
             rm -f -- "${directory}/${dumps[$index]}"
             log "  removed  ${dumps[$index]}"
         fi
@@ -310,16 +316,21 @@ keep_newest() {
 BEFORE_RESTORE_KEPT=3
 
 dump_before_restore() {
-    local directory="${DUMP_DIR}/before-restore" target
+    local chosen="${1:-}" directory="${DUMP_DIR}/before-restore" target
     [[ "$(psql_scratch -d postgres -c \
         "select 1 from pg_database where datname = '${DB_NAME}'")" == 1 ]] || {
         log "  ${DB_NAME} does not exist; nothing to dump"
         return
     }
-    install -d -o root -g root -m 700 "$DUMP_DIR" "$directory"
+    install -d -o root -g root -m 700 "$DUMP_DIR" "$directory" \
+        || die "cannot create ${directory}"
     target="${directory}/${DB_NAME}-$(date +%Y%m%d-%H%M%S).dump"
     write_dump "$target"
-    keep_newest "$directory" "$BEFORE_RESTORE_KEPT"
+    #
+    # The dump being restored may be one of these, the oldest, and is read
+    # after this: it is never the one removed.
+    #
+    keep_newest "$directory" "$BEFORE_RESTORE_KEPT" "$chosen"
 }
 
 #
@@ -707,7 +718,7 @@ do_restore() {
     fi
 
     step_log "Dumping what is about to be replaced"
-    if ! ( dump_before_restore ); then
+    if ! ( dump_before_restore "$dump" ); then
         start_units "${now[@]}"
         remember_stopped "${before[@]}"
         die "the database could not be dumped before it is replaced; nothing was restored${before[*]:+, and ${before[*]} stay stopped}"

@@ -923,7 +923,9 @@ Each account also has a budget of its own across all addresses: ten times the li
 the same window. It stops many addresses guessing at one name. An attempt refused by the throttle is not
 counted again, so one address that keeps trying cannot use up that budget for everyone else.
 `haprion-user unlock` clears both. An IPv6 address counts as its /64. *Settings -> Users* marks an account
-*Locked* by this same rule, so a name the sign-in refuses is never shown as *Active*.
+*Locked* by this same rule, so a name the sign-in refuses is never shown as *Active*;
+`haprion-user list` shows it too (its STATE column, and `locked` in `--json`), reading the limit and window from the
+same configuration.
 
 The web service can add and read sign-in attempts, but cannot change or delete them. A counter the web
 process could reset would be a lock whose key is kept behind the door. An unlock therefore deletes

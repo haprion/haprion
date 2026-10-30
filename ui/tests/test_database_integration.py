@@ -5544,6 +5544,8 @@ class AccountToolHarness(unittest.TestCase):
             ),
             mock.patch.object(admin, "connect", side_effect=lambda _e: self.connect()),
             mock.patch.dict(os.environ, {"SUDO_USER": "operator"}),
+            # The web's throttle is read from its file; none here, so the defaults.
+            mock.patch.object(admin, "UI_CONFIG_PATH", Path("/nonexistent/ui.toml")),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -5684,6 +5686,27 @@ class TheAccountToolAgainstARealDatabase(AccountToolHarness):
         self.assertRegex(output, r"alice\s+admin\s+break-glass")
         self.assertRegex(output, r"bob\s+reader\s+sso")
         self.assertRegex(output, r"carol\s+reader\s+local")
+
+    def test_list_shows_the_lock_the_sign_in_and_the_users_page_use(self) -> None:
+        #
+        # Review 26-10-30, R3: one rule (`db.account_rows`), not a third copy.
+        #
+        self.add("alice")
+        self.add("carol", role="reader")
+        with self.connect() as connection:
+            connection.execute(
+                "insert into login_attempt (username_normalised, client_ip, succeeded) "
+                "select 'alice', '192.0.2.7', false from generate_series(1, 10)"
+            )
+            connection.commit()
+        output = self.run_tool("list")[1]
+        self.assertRegex(output, r"alice\s+admin\s+local\s+locked")
+        self.assertRegex(output, r"carol\s+reader\s+local\s+active")
+        out = self.run_tool("list", "--json")[1]
+        accounts = {a["username"]: a["locked"] for a in json.loads(out)["accounts"]}
+        self.assertEqual(accounts, {"alice": True, "carol": False})
+        self.assertEqual(self.run_tool("unlock", "alice")[0], 0)
+        self.assertRegex(self.run_tool("list")[1], r"alice\s+admin\s+local\s+active")
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

@@ -38,7 +38,7 @@ from typing import Any
 import psycopg
 from haprion import admin_file, exit_codes
 
-from haprion_ui import account_apply, auth, db, labels, tool_answer, users
+from haprion_ui import account_apply, auth, config, db, labels, tool_answer, users
 
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
@@ -55,6 +55,9 @@ class AdminError(tool_answer.ToolError):
         self, message: str, *, code: str = "bad_input", exit_code: int = exit_codes.USAGE
     ) -> None:
         super().__init__(message, code=code, exit_code=exit_code)
+
+
+UI_CONFIG_PATH = config.DEFAULT_CONFIG_PATH
 
 
 @dataclass(frozen=True, slots=True)
@@ -485,48 +488,66 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
     return 0
 
 
+def sign_in_throttle() -> config.Throttle:
+    """The web's throttle, from its configuration, so that *locked* here is the
+    same answer the sign-in gives; the defaults when the file cannot be read."""
+
+    try:
+        return config.load(UI_CONFIG_PATH).throttle
+    except (config.ConfigError, OSError):
+        return config.Throttle(max_failures=10, window_minutes=15)
+
+
 def command_list(environment: Environment, args: argparse.Namespace) -> int:
-    with connect(environment) as connection, connection.cursor() as cursor:
-        cursor.execute(
-            "select u.username, u.role, u.disabled, u.source, u.break_glass, u.created_at::date, "
-            "       (select count(*) from app_session s "
-            "         where s.user_id = u.id and s.revoked_at is null "
-            "           and s.expires_at > statement_timestamp()) "
-            "  from app_user u order by u.username_normalised"
+    throttle = sign_in_throttle()
+    with connect(environment) as connection:
+        #
+        # The rows the Users page lists, with its rule for *locked* (review
+        # 26-10-30, R3); only the creation date is read here.
+        #
+        listed = db.account_rows(
+            connection,
+            window_minutes=throttle.window_minutes,
+            max_failures=throttle.max_failures,
         )
-        rows = cursor.fetchall()
+        with connection.cursor() as cursor:
+            cursor.execute("select username, created_at::date from app_user")
+            created = dict(cursor.fetchall())
     if getattr(args, "json", False):
         print(
             json.dumps(
                 {
                     "accounts": [
                         {
-                            "username": username,
-                            "role": role,
-                            "kind": "sso"
-                            if source == "oidc"
-                            else "break-glass"
-                            if break_glass
-                            else "local",
-                            "disabled": disabled,
-                            "sessions": sessions,
+                            "username": row.username,
+                            "role": row.role,
+                            "kind": _kind(row),
+                            "disabled": row.disabled,
+                            "locked": row.locked,
+                            "sessions": row.sessions,
                         }
-                        for username, role, disabled, source, break_glass, _created, sessions in rows
+                        for row in listed
                     ]
                 }
             )
         )
         return 0
-    if not rows:
+    if not listed:
         print("no accounts. Create the first one with:")
         print("  sudo haprion-user add <username> --role admin")
         return 0
     print(f"{'USERNAME':<24} {'ROLE':<8} {'KIND':<12} {'STATE':<9} {'CREATED':<12} SESSIONS")
-    for username, role, disabled, source, break_glass, created, sessions in rows:
-        state = "disabled" if disabled else "active"
-        kind = "sso" if source == "oidc" else "break-glass" if break_glass else "local"
-        print(f"{username:<24} {role:<8} {kind:<12} {state:<9} {str(created):<12} {sessions}")
+    for row in listed:
+        state = "disabled" if row.disabled else "locked" if row.locked else "active"
+        print(
+            f"{row.username:<24} {row.role:<8} {_kind(row):<12} {state:<9} "
+            f"{str(created.get(row.username, '')):<12} {row.sessions}"
+        )
     return 0
+
+
+def _kind(row: db.AccountRow) -> str:
+    return "sso" if row.source == "oidc" else "break-glass" if row.break_glass else "local"
 
 
 COMMANDS = {

@@ -910,7 +910,7 @@ class RemovingAReceiver(ReceiverFixture):
 class Listing(ReceiverFixture):
     def rows(self) -> list[dict[str, Any]]:
         policy, runtime = self.loaded()
-        return cert_receiver.listing(policy, runtime)
+        return cert_receiver.listing(policy, runtime, self.locations)
 
     def test_a_receiver_is_listed_with_its_transport_and_what_it_holds(self) -> None:
         self.add()

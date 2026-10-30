@@ -9,9 +9,11 @@ appear when something is wrong.
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
 from collections.abc import Callable
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -74,6 +76,40 @@ class DatabaseJobTests(unittest.TestCase):
         self.assertEqual(jobs["dump"]["last_result"], "exit-code")
         self.assertEqual(jobs["dump"]["last_run"], "2026-08-29T03:00:40Z")
         self.assertIsNone(jobs["restore_check"])
+
+
+class AFailedRunSurvivesARestart(unittest.TestCase):
+    """B407: systemd's Result is `success` for a unit that has not run since the machine started."""
+
+    @staticmethod
+    def after_a_restart(unit: str, properties: tuple[str, ...]) -> dict[str, str]:
+        return {"LoadState": "loaded", "Result": "success", "ExecMainExitTimestamp": "@0"}
+
+    def test_the_marker_a_failed_run_left_says_it_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            Path(raw, ".failed-restore-check").write_text("2026-10-26T04:00:03Z\nexit 1\n")
+            jobs = database_jobs(show=self.after_a_restart, directory=Path(raw))
+
+        assert jobs["restore_check"] is not None and jobs["dump"] is not None
+        self.assertEqual(jobs["restore_check"]["last_result"], "exit-code")
+        self.assertEqual(jobs["restore_check"]["last_run"], "2026-10-26T04:00:03Z")
+        self.assertEqual(jobs["dump"]["last_result"], "success")
+
+    def test_without_a_marker_systemd_s_word_stands(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            jobs = database_jobs(show=self.after_a_restart, directory=Path(raw))
+
+        assert jobs["dump"] is not None
+        self.assertEqual(jobs["dump"]["last_result"], "success")
+
+    def test_a_marker_does_not_make_a_unit_that_is_not_installed_a_job(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            Path(raw, ".failed-dump").write_text("2026-10-26T04:00:03Z\n")
+            jobs = database_jobs(
+                show=lambda unit, properties: {"LoadState": "not-found"}, directory=Path(raw)
+            )
+
+        self.assertEqual(jobs, {"dump": None, "restore_check": None})
 
 
 class ScheduleTests(unittest.TestCase):

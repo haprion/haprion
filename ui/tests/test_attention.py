@@ -1271,6 +1271,14 @@ class ADatabaseJobThatFailed(unittest.TestCase):
         self.assertEqual(attention.from_database_jobs({"dump": None, "restore_check": None}), [])
         self.assertEqual(attention.from_database_jobs(None), [])
 
+    def test_a_failure_the_marker_kept_through_a_restart_is_still_a_row(self) -> None:
+        """B407: the helper says `exit-code` for it, with the time the marker was written."""
+
+        marked = {"unit": "haprion-restore-check.service", "last_result": "exit-code",
+                  "last_run": "2026-10-26T04:00:03Z"}  # fmt: skip
+        (row,) = attention.from_database_jobs({"dump": None, "restore_check": marked})
+        self.assertEqual((row.severity, row.subject), ("critical", "Restore check"))
+
     def test_the_listing_the_poller_cached_carries_them_to_the_page(self) -> None:
         from haprion_ui import views
 

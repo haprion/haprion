@@ -4826,8 +4826,8 @@ in the section linked.
   ([The certificate registry](#the-certificate-registry)).
 - **The database dump and its restore check are watched only for failing.** When the last run of
   `haprion-backup.service` or `haprion-restore-check.service` failed, *Needs attention* shows
-  *Database dump* or *Restore check* with the command to start the unit again (starting the unit is what
-  clears the row). It says nothing while they succeed, and nothing for one that is not installed, or when
+  *Database dump* or *Restore check* with the command to start the unit again (a run that succeeds is what
+  clears the row, also after the manager has restarted). It says nothing while they succeed, and nothing for one that is not installed, or when
   the runtime policy has no `backup_root` (the state is read with the node backups' listing); it does not notice a timer that never fires. Backing up the
   management host is the backup; the dump is for putting one table back
   ([Backups, and proving they restore](#backups-and-proving-they-restore)). The nightly retention is

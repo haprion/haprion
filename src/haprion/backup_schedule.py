@@ -25,6 +25,7 @@ import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from haprion.backup_retention import DEFAULT_RETENTION, RetentionError, bounded
@@ -248,8 +249,32 @@ DATABASE_UNITS = {
 }
 
 
-def database_jobs(*, show: ShowProperties = _run) -> dict[str, dict[str, Any] | None]:
-    """How the last run of each database job ended, as systemd says."""
+#
+# What `haprion-backup` leaves in the dump directory when a run of a job fails
+# and removes when one succeeds (B407). systemd's own `Result` is the state of
+# its last run since the machine started: after a reboot it says `success`
+# for a job that last failed, and the row about it would go until the next run
+# - a week for the restore check.
+#
+FAILURE_MARKERS = {"dump": ".failed-dump", "restore_check": ".failed-restore-check"}
+MARKER_DIRECTORY = Path("/var/lib/haprion/database-jobs")
+
+
+def _marked(directory: Path, job: str) -> str | None:
+    """When a failed run of the job was marked ('' if the time cannot be read); None if none was."""
+
+    try:
+        text = (directory / FAILURE_MARKERS[job]).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    first = text.splitlines()[0].strip() if text.strip() else ""
+    return first if re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", first) else ""
+
+
+def database_jobs(
+    *, show: ShowProperties = _run, directory: Path = MARKER_DIRECTORY
+) -> dict[str, dict[str, Any] | None]:
+    """How the last run of each database job ended: systemd's word, and the marker's (B407)."""
 
     jobs: dict[str, dict[str, Any] | None] = {}
     for name, unit in DATABASE_UNITS.items():
@@ -257,11 +282,12 @@ def database_jobs(*, show: ShowProperties = _run) -> dict[str, dict[str, Any] | 
         if said.get("LoadState") != "loaded":
             jobs[name] = None
             continue
-        jobs[name] = {
-            "unit": unit,
-            "last_result": said.get("Result") or None,
-            "last_run": _moment(said.get("ExecMainExitTimestamp")),
-        }
+        result = said.get("Result") or None
+        last_run = _moment(said.get("ExecMainExitTimestamp"))
+        marked = _marked(directory, name)
+        if marked is not None and result in (None, "success"):
+            result, last_run = "exit-code", marked or last_run
+        jobs[name] = {"unit": unit, "last_result": result, "last_run": last_run}
     return jobs
 
 

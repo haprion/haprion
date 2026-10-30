@@ -236,8 +236,10 @@ class OneRunAtATime(unittest.TestCase):
 
     def test_dump_and_verify_take_the_lock_and_list_does_not(self) -> None:
         source = SCRIPT.read_text()
-        self.assertIn("dump)           take_lock; do_dump ;;", source)
-        self.assertIn("verify-restore) take_lock; do_verify_restore ;;", source)
+        self.assertIn("dump)           take_lock; run_recorded dump do_dump ;;", source)
+        self.assertIn(
+            "verify-restore) take_lock; run_recorded restore-check do_verify_restore ;;", source
+        )
 
     def test_a_free_lock_is_taken_at_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -859,3 +861,36 @@ class HoldingAfterARestore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AFailedRunLeavesAMarker(unittest.TestCase):
+    """B407: the interface lists a failed database job until a run of it works, through a reboot."""
+
+    def run_recorded(
+        self, state: Path, name: str, command: str
+    ) -> subprocess.CompletedProcess[str]:
+        source = SCRIPT.read_text()
+        program = (
+            "set -Eeuo pipefail\n"
+            f"JOB_STATE={state}\n"
+            "failing() { echo about to fail; false; echo not reached; }\n"
+            + function("run_recorded", source)
+            + f"run_recorded {name} {command}\n"
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program], capture_output=True, text=True, check=False
+        )
+
+    def test_a_failed_run_writes_the_marker_and_a_good_one_removes_it(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            failed = self.run_recorded(state, "dump", "failing")
+            self.assertEqual(failed.returncode, 1)
+            self.assertNotIn("not reached", failed.stdout)
+            marker = state / ".failed-dump"
+            self.assertRegex(marker.read_text(), r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\nexit 1\n$")
+            self.assertEqual(stat.S_IMODE(marker.stat().st_mode), 0o600)
+
+            worked = self.run_recorded(state, "dump", "true")
+            self.assertEqual(worked.returncode, 0)
+            self.assertFalse(marker.exists())

@@ -829,12 +829,37 @@ take_lock() {
         || die "another haprion-backup run still holds ${LOCK} after ${LOCK_WAIT_SECONDS} s"
 }
 
+#
+# What a run of the dump or the restore check leaves for the interface (B407): a
+# marker when it failed, removed when one succeeds. systemd keeps the result of
+# its last run only until the machine restarts, and the interface lists a failed
+# job until a run works. The directory is root's; the poller's helper reads it.
+#
+JOB_STATE=/var/lib/haprion/database-jobs
+
+run_recorded() {
+    local marker="${JOB_STATE}/.failed-$1" status
+    shift
+    set +e
+    ( set -e; "$@" )
+    status=$?
+    set -e
+    if [[ $status -eq 0 ]]; then
+        rm -f -- "$marker"
+    else
+        install -d -o root -g root -m 700 "$JOB_STATE" 2>/dev/null || true
+        ( umask 077; printf '%s\nexit %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" \
+            >"${marker}.partial" && mv -f -- "${marker}.partial" "$marker" ) 2>/dev/null || true
+    fi
+    return "$status"
+}
+
 case "$command" in
-    dump)           take_lock; do_dump ;;
+    dump)           take_lock; run_recorded dump do_dump ;;
     dump-before-migration) take_lock; do_dump_before_migration "$@" ;;
     after-restore)  after_restore_by_hand ;;
     restore)        hold_release_lock_for_restore; take_lock; do_restore "$1" ;;
-    verify-restore) take_lock; do_verify_restore ;;
+    verify-restore) take_lock; run_recorded restore-check do_verify_restore ;;
     list)
         [[ -d "$DUMP_DIR" ]] || die "no dump directory: ${DUMP_DIR}"
         find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" \

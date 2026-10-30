@@ -15,8 +15,9 @@ content. The history keeps every intermediate version, and nothing is rewritten.
 
 `--json` prints one envelope (`schemas/v1/haprion-revert`) instead of the
 preview and the summary: the helper's, or this half's own when it stops before
-asking - a refusal, or a version that is already current, which is `done`
-with `changed: false`.
+asking - a refusal. The current version is sent to the helper like any other:
+it finds the content in place, installs the release if that is missing and
+answers `done` with `changed: false`, as it does for the interface.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from haprion import exit_codes
 from haprion.cli.caller import CallerError, usage
 from haprion.cli.caller import config_path as _config_path
 from haprion.digits import is_digits
-from haprion.envelope import envelope, failure
+from haprion.envelope import failure
 from haprion.git_command import GitError
 from haprion.helper_protocol import config_error_code, write_document
 from haprion.repo_health import describe_problem, is_repo_root, unsaved_changes
@@ -212,39 +213,14 @@ def main(
         dirty = unsaved_changes(repo)
         if dirty:
             return refuse(
-                "unsaved_changes",
+                "dirty_worktree",
                 f"there are unsaved changes in {repo}.\n\n{dirty}\n\n"
                 "Publish or discard them before reverting.",
-                exit_codes.REFUSED,
+                exit_codes.BLOCKED,
             )
 
         total = count_versions(repo)
         version = _target_version(cluster_id, requested, total)
-        if version == total:
-            if json_mode:
-                emit(
-                    envelope(
-                        operation=REVERT_OPERATION,
-                        outcome="done",
-                        cluster=cluster_id,
-                        request_id=request_id,
-                        result={
-                            "changed": False,
-                            "from_version": total,
-                            "restored_version": version,
-                            "new_version": None,
-                            "hash": None,
-                            "published_at": None,
-                            "deployment_required": False,
-                            "next_command": None,
-                        },
-                    ),
-                    exit_codes.OK,
-                )
-            else:
-                writer.write(f"Version {version} is already current for cluster '{cluster_id}'.\n")
-            return 0
-
         commit = version_commit(repo, version)
         if commit is None:
             raise CallerError(f"could not find version {version}.")

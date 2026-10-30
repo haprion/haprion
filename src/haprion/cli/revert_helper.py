@@ -76,6 +76,7 @@ from haprion.helper_protocol import (
 from haprion.managed_network import location as network_location
 from haprion.managed_publish import MANAGED_PREFIX
 from haprion.release_install import (
+    DEPLOYMENT_REQUIRED_AFTER_INSTALL,
     PUBLISH_GROUP,
     ChangeOwner,
     InstallError,
@@ -523,7 +524,7 @@ def _revert(
                     # than the side whose cost is a cluster left behind a release
                     # nobody named.
                     #
-                    deployment_required=True,
+                    deployment_required=DEPLOYMENT_REQUIRED_AFTER_INSTALL,
                     from_version=from_version,
                     restored_version=version,
                     new_version=from_version,
@@ -609,7 +610,7 @@ def _revert(
             request_id=request.request_id,
             result=_result(
                 changed=True,
-                deployment_required=True,
+                deployment_required=DEPLOYMENT_REQUIRED_AFTER_INSTALL,
                 from_version=from_version,
                 restored_version=version,
                 new_version=metadata.version,

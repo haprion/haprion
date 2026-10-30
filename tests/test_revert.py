@@ -207,9 +207,23 @@ class RevertTests(RevertFixture):
             self.history(3)
             code, output = self.run_caller(policy_path, "-c", "alpha", "3")
             self.assertEqual(code, 0)
-            self.assertIn("already current", output)
-            self.assertEqual(self.requests, [])
+            self.assertIn("already holds the content of version 3", output)
+            self.assertIn("haprion-deploy -c alpha", output)
+            self.assertEqual(len(self.requests), 1)
             self.assertEqual(count_versions(self.repo), 3)
+
+    def test_the_current_version_installs_a_release_that_is_missing(self) -> None:
+        """Review 26-10-30, D4: the interface sends it to the helper, so the command does too."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            self.assertFalse((self.publish_path / "current").exists())
+
+            code, _ = self.run_caller(policy_path, "-c", "alpha", "3")
+
+            self.assertEqual(code, 0)
+            self.assertTrue((self.publish_path / "current").exists())
 
 
 class WindowTests(RevertFixture):
@@ -406,7 +420,7 @@ class RefusalTests(RevertFixture):
             self.history(3)
             (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # unsaved\n")
             code, output = self.run_caller(policy_path, "-c", "alpha", "2")
-            self.assertEqual(code, 65)
+            self.assertEqual(code, 75)
             self.assertIn("unsaved changes", output)
             self.assertIn("core/haproxy.cfg", output)
             self.assertEqual(self.requests, [])
@@ -709,7 +723,8 @@ class JsonModeTests(RevertFixture):
             self.assertEqual(code, 0)
             document = assert_contract("haprion-revert", output)
             self.assertFalse(document["result"]["changed"])
-            self.assertEqual(self.requests, [])
+            self.assertTrue(document["result"]["deployment_required"])
+            self.assertEqual(len(self.requests), 1)
 
     def test_a_helper_killed_by_a_signal_is_an_envelope_with_an_exit_the_table_has(self) -> None:
         """Review 26-10-24, 06-05: -9 through sudo was passed on, and no document was written."""

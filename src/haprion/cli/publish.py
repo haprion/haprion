@@ -265,10 +265,14 @@ def main(
             # "No changes" left the nodes behind a release nobody mentioned
             # (review 2026-10-22, 1A-6).
             #
+            repeated = (
+                f"version {result['version']} is already the published release"
+                if result.get("already_current")
+                else f"version {result['version']} was not the published release and now is"
+            )
             writer.write(
-                f"No changes to record for cluster '{cluster_id}'; version "
-                f"{result['version']} was not the published release and now is.\n\n"
-                "No node deployment has run. Bring the nodes into step with:\n\n"
+                f"No changes to record for cluster '{cluster_id}'; {repeated}.\n\n"
+                "No node deployment has run. If the nodes are behind, bring them into step with:\n\n"
                 f"  {result['next_command']}\n"
             )
             return 0

@@ -71,6 +71,18 @@ class InstallError(Exception):
         self.exit_code = exit_code
 
 
+#
+# `deployment_required` for every writer that installs a release: publish,
+# revert, the managed layer, objects. A run killed after the install cannot be
+# told from a repeat, and the repository does not say whether anybody was ever
+# told to deploy; nodes are not read here. True costs a deploy that reports
+# `skip`; False once left both nodes a version behind (measured 26-08-31), and
+# does so also for a publish repeated after one nobody deployed (review
+# 26-10-30, D4).
+#
+DEPLOYMENT_REQUIRED_AFTER_INSTALL = True
+
+
 @dataclass(frozen=True, slots=True)
 class InstallResult:
     release: Path

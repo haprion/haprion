@@ -70,6 +70,7 @@ from haprion.helper_protocol import (
     write_document,
 )
 from haprion.release_install import (
+    DEPLOYMENT_REQUIRED_AFTER_INSTALL,
     PUBLISH_GROUP,
     ChangeOwner,
     InstallError,
@@ -593,7 +594,7 @@ def _publish(
                 request_id=request.request_id,
                 result=_result(
                     changed=False,
-                    deployment_required=not installed.already_current,
+                    deployment_required=DEPLOYMENT_REQUIRED_AFTER_INSTALL,
                     version=count_versions(repo, head),
                     commit=head,
                     published_at=None,
@@ -691,7 +692,7 @@ def _publish(
             request_id=request.request_id,
             result=_result(
                 changed=True,
-                deployment_required=True,
+                deployment_required=DEPLOYMENT_REQUIRED_AFTER_INSTALL,
                 version=metadata.version,
                 commit=metadata.commit,
                 published_at=metadata.timestamp,

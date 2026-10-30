@@ -48,7 +48,12 @@ from haprion.helper_protocol import (
 )
 from haprion.managed_network import location as network_location
 from haprion.managed_publish import GENERATED_PREFIX, MANAGED_PREFIX
-from haprion.release_install import ChangeOwner, InstallError, install_release
+from haprion.release_install import (
+    DEPLOYMENT_REQUIRED_AFTER_INSTALL,
+    ChangeOwner,
+    InstallError,
+    install_release,
+)
 from haprion.release_layout import (
     LayoutError,
     ReleaseMetadata,
@@ -246,11 +251,7 @@ def _result(
         "hash": commit,
         "published_at": published_at,
         "comment": comment,
-        #
-        # Always: a managed publish records a version and a release, and only a
-        # deploy takes either to the nodes.
-        #
-        "deployment_required": True,
+        "deployment_required": DEPLOYMENT_REQUIRED_AFTER_INSTALL,
         "next_command": f"haprion-deploy -c {cluster}",
         "release": release,
         "already_current": already_current,

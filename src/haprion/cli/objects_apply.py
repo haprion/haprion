@@ -268,7 +268,7 @@ def _summary(plan: Plan, *, check: bool, versions: Sequence[Mapping[str, Any]]) 
             {"version": v.get("version"), "hash": v.get("hash"), "changed": v.get("changed")}
             for v in versions
         ],
-        "deployment_required": bool(versions) and any(v.get("changed") for v in versions),
+        "deployment_required": any(v.get("deployment_required") for v in versions),
         #
         # As each publish reported them (finding 72); a check publishes nothing
         # and so looks nothing up.

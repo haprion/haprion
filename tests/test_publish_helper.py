@@ -422,7 +422,7 @@ class RefusalTests(PublishFixture):
             code, stdout, stderr = self.run_publish(policy_path, self.request(), valid=False)
 
             self.assertEqual(code, 0, stderr)
-            self.assertFalse(json.loads(stdout)["result"]["deployment_required"])
+            self.assertTrue(json.loads(stdout)["result"]["deployment_required"])
             self.assertEqual(self.sandbox_roots, [])
 
     def test_an_invalid_candidate_records_nothing(self) -> None:
@@ -462,9 +462,9 @@ class RefusalTests(PublishFixture):
                 document = assert_contract("haprion-publish", stdout)
                 self.assertEqual(document["error"]["code"], "bad_input")
 
-    def test_a_second_publish_with_the_release_in_place_asks_for_no_deploy(self) -> None:
-        """The genuine no-op the contract describes: nothing recorded, nothing
-        moved, and no deploy implied."""
+    def test_a_second_publish_with_the_release_in_place_still_asks_for_a_deploy(self) -> None:
+        """Nothing recorded and nothing moved, but the nodes are not read: a publish repeated
+        after one nobody deployed leaves them behind (review 26-10-30, D4)."""
 
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))
@@ -476,8 +476,8 @@ class RefusalTests(PublishFixture):
             self.assertEqual(code, 0)
             result = assert_contract("haprion-publish", stdout)["result"]
             self.assertFalse(result["changed"])
-            self.assertIs(result["deployment_required"], False)
-            self.assertIsNone(result["next_command"])
+            self.assertIs(result["deployment_required"], True)
+            self.assertEqual(result["next_command"], "haprion-deploy -c alpha")
             self.assertTrue(result["already_current"])
 
     def test_an_interrupted_publish_is_finished_without_a_second_version(self) -> None:

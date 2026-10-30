@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from haprion import exit_codes
-from haprion.cli import changes_publish, objects
+from haprion.cli import changes_publish, objects, objects_apply
 from tests.contract_schema import assert_contract
 from tests.test_proxy_model import MINIMAL
 
@@ -78,7 +78,12 @@ class Fakes:
         self.head = f"{len(self.published):040x}"
         answer = {
             "operation": changes_publish.OPERATION,
-            "result": {"changed": True, "version": 10 + len(self.published), "hash": self.head},
+            "result": {
+                "changed": True,
+                "deployment_required": True,
+                "version": 10 + len(self.published),
+                "hash": self.head,
+            },
             "error": None,
         }
         return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
@@ -120,10 +125,20 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual(sorted(sent["parameters"]["objects"]), ["api", "shop"])
         answer = assert_contract("haprion-objects-apply", out)
         self.assertEqual(answer["result"]["changed"], True)
+        self.assertEqual(answer["result"]["deployment_required"], True)
         self.assertEqual(
             (answer["result"]["added"], answer["result"]["updated"], answer["result"]["unchanged"]),
             (["shop"], ["api"], ["kept"]),
         )
+
+    def test_the_helper_s_answer_on_deployment_is_passed_on_unchanged_or_not(self) -> None:
+        """Review 26-10-30, D4: a retry that repaired the release changed nothing and still needs a deploy."""
+
+        plan = objects_apply.Plan(added=("shop",), changed=(), removed=(), unchanged=())
+        for changed, required in ((False, True), (True, True), (False, False)):
+            versions = [{"changed": changed, "deployment_required": required}]
+            summary = objects_apply._summary(plan, check=False, versions=versions)
+            self.assertEqual(summary["deployment_required"], required)
 
     def test_the_same_files_again_change_nothing(self) -> None:
         fakes = Fakes({"shop": document("shop")})

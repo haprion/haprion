@@ -161,7 +161,13 @@ class EndToEndTests(CallerFixture):
             self.assertIn("haprion-deploy -c alpha", output)
             code, output = self.run_caller(policy_path, "-c", "alpha", "No change at all")
             self.assertEqual(code, 0)
-            self.assertIn("No changes to publish", output)
+            #
+            # Nothing new, but nobody is told the nodes are in step: a publish
+            # repeated after one nobody deployed must not read as finished
+            # (review 26-10-30, D4).
+            #
+            self.assertIn("is already the published release", output)
+            self.assertIn("haprion-deploy -c alpha", output)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
     def test_handwritten_fragments_nobody_has_confirmed_are_pointed_out(self) -> None:

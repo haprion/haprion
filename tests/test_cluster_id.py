@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from haprion import restore_agent, restore_answers, traffic_collector
-from haprion.config import CLUSTER_ID
+from haprion.config import CLUSTER_ID, valid_cluster_id
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -43,7 +43,7 @@ class OneClusterId(unittest.TestCase):
             self.assertFalse(CLUSTER_ID.fullmatch(bad), bad)
 
     def test_what_imports_the_engine_uses_its_pattern(self) -> None:
-        self.assertIs(vars(traffic_collector)["CLUSTER_ID"], CLUSTER_ID)
+        self.assertIs(vars(traffic_collector)["valid_cluster_id"], valid_cluster_id)
         self.assertIs(vars(restore_answers)["CLUSTER_ID"], CLUSTER_ID)
 
     def test_the_node_restore_agent_copies_it(self) -> None:

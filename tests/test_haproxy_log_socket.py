@@ -136,7 +136,7 @@ class TheNodeHoldsTheSocket(unittest.TestCase):
     def test_haproxy_logs_the_traffic_stream_to_the_socket_only_it_can_write(self) -> None:
         """The generated `log` target is the traffic unit's socket, by its host path."""
 
-        from haprion.generate import TRAFFIC_LOG_SOCKET
+        from haprion.traffic_stream import TRAFFIC_LOG_SOCKET
 
         self.assertEqual(
             ["ListenDatagram=" + TRAFFIC_LOG_SOCKET],

@@ -27,6 +27,7 @@ from haprion.traffic_collector import (
     RETENTION_DAYS,
     CollectorConfig,
     CollectorError,
+    Fetch,
     NodeTarget,
     ProtocolError,
     Response,
@@ -608,7 +609,7 @@ class TrafficCollectorTests(unittest.TestCase):
         calls: list[tuple[date, int]] = []
         day_before = NOW.date() - 2 * date.resolution
         yesterday = NOW.date() - date.resolution
-        whole = self.chunked({yesterday: 16}, calls)
+        whole: Fetch = self.chunked({yesterday: 16}, calls)
 
         def fetch(target: NodeTarget, wanted: date, offset: int) -> Response:
             if wanted == day_before:

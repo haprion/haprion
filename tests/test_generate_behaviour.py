@@ -1087,7 +1087,9 @@ class AMonitorsAnsweredRequestsAreNotLogged(unittest.TestCase):
         arguments = write_release(root, layer)
         frontends = root / "conf.d" / "1000-frontends.cfg"
         frontends.write_text(
-            frontends.read_text().replace("log /var/lib/haproxy/dev/haprion-traffic ", f"log {root / 'log.sock'} ")
+            frontends.read_text().replace(
+                "log /var/lib/haproxy/dev/haprion-traffic ", f"log {root / 'log.sock'} "
+            )
         )
         binary = shutil.which("haproxy")
         assert binary is not None

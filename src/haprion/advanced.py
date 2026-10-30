@@ -1317,6 +1317,11 @@ def place(
         if current is not None and current[0] == "extra":
             kind, _, section_name = current[1].partition(" ")
             where = f"{kind} {section_name}"
+            #
+            # A cache, http-errors, userlist or ring takes none of the proxy
+            # keywords, so it is held to its own list instead of the matrix:
+            # a line of it is written only when that list has it.
+            #
             if kind != "backend":
                 problem = _section_problem(kind, tokens)
                 if problem:

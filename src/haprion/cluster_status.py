@@ -543,7 +543,7 @@ def traffic_stream_problem(status: Mapping[str, Any]) -> str | None:
         if stream.get("socket") is False:
             return (
                 "HAProxy's traffic socket is missing or open to other accounts;"
-                " run haprion-node-prepare on the node"
+                " run  sudo haprion-node-prepare  on the node"
             )
         return None
     if stream.get("marked_only") is True:

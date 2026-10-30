@@ -23,7 +23,8 @@ Restart=on-failure
 RestartSec=10
 
 # Filesystem protections identical to the web service. The poller writes nothing
-# outside the database and reads only its configuration and its own release.
+# outside the database and reads only its configuration, its own release and
+# the package state (dpkg and apt) behind the manager-package rows.
 ProtectSystem=strict
 # tmpfs rather than yes, and the difference is not cosmetic: with
 # ProtectHome=yes the bind mount below is masked and the file stays invisible,
@@ -78,7 +79,7 @@ SystemCallArchitectures=native
 # NoNewPrivileges must be off because this service's whole purpose is to run one
 # privileged helper through sudo, and sudo is setuid: with the flag on, the exec
 # fails and the poller can never read a node's status. It is the narrowest
-# possible use of that - two exact sudoers rules, no arguments.
+# possible use of that - four exact sudoers rules, no arguments.
 NoNewPrivileges=no
 # sudo needs to change uid, so the bounding set cannot be empty. Nothing wider
 # is granted: the helper it starts is what holds root, not this process.

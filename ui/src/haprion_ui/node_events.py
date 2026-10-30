@@ -245,9 +245,9 @@ def described(event: str, subject: str, detail: Mapping[str, Any], node: str) ->
         source = _text(detail.get("from"))
         return f"The VIP moved to {node}" + (f" from {source}" if source else "")
     if event == "node_silent":
-        return f"{node} stopped answering"
+        return f"{node} stopped reporting its status"
     if event == "node_back":
-        return f"{node} answers again"
+        return f"{node} reports its status again"
     return event
 
 

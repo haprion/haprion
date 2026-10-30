@@ -4152,7 +4152,7 @@ record. An admin also sees each job's diagnostics.
 
 - a server that went down or came back up, with the check's reason;
 - the VIP moving from one node to the other;
-- a node that stopped answering, or answers again.
+- a node that stopped reporting its status, or reports it again.
 
 A node just added is *Joining* until it answers the first time, and that first answer is not an event. A
 server's row names its object and links to its servers. Both roles can read this view. It pages and
@@ -7923,7 +7923,7 @@ command line runs, through exact sudoers rules:
 <poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cluster-list-helper ""
 ```
 
-Status and inventory reach the nodes. `haprion-readings-helper` answers, in one call, the six
+Only the status reading reaches the nodes; inventory reads the published commit. `haprion-readings-helper` answers, in one call, the six
 readings that touch only the management host: versions, backup archives, certificates, the network
 description, the cluster settings and the stored objects. It runs their own helpers, so a pass is
 one sudo call rather than six lines in the host's journal.

@@ -2063,8 +2063,9 @@ def read_cluster() -> str | None:
 
     Read here rather than taken as an argument, so the sudo rule and the forced
     command are the same on every node (B266). The manager compares it with the
-    cluster it asked about, which also catches a node installed into the wrong
-    one.
+    cluster it asked about when it connects (the node's enrollment), which
+    catches a node installed into the wrong one; the status reading is guarded
+    by the node's host key.
     """
     try:
         lines = NODE_CONF.read_text(encoding="utf-8").splitlines()

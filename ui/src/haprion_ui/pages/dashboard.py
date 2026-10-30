@@ -230,7 +230,7 @@ def build_router(config: Config) -> APIRouter:
                 "demo_fixture": config.demo_fixture,
                 #
                 # The page redraws itself once per poll (live.js), so the CPU,
-                # memory and freshness on it move without a reload. Not for a
+                # memory and freshness on it move without a reload. Not for
                 # the demo data: nothing behind it changes.
                 #
                 #

@@ -218,6 +218,13 @@ tomllib.loads(sys.stdin.read())' \
     install_file "$file" "root:${PLATFORM_GROUP}" 640 "$content"
 }
 
+#
+# The units a restore stopped and did not start again, one per line; the same
+# path as RESTORE_STOPPED in haprion-backup, held together by a test. The file
+# exists from the restore's first stop until a restore finishes.
+#
+# shellcheck disable=SC2034 # read by update-platform-release
+RESTORE_STOPPED=/run/haprion/restore-stopped
 RELEASE_LOCK=/run/haprion/ui-release.lock
 #
 # One change of the UI release at a time (review 26-10-29, A10): an update,

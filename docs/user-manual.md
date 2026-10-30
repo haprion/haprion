@@ -4510,6 +4510,9 @@ keeps what it goes back to in `/var/lib/haprion-ui/platform-update`. A release w
 release last proved cannot run on is refused for that reason. To keep the unproved release instead, and
 go on from it, remove `/var/lib/haprion-ui/platform-update/update`, then run `sudo dpkg --configure -a`.
 
+While a restore has stopped the services and not finished, the update refuses before it changes anything: run
+`sudo haprion-backup restore` again to the end first.
+
 A newer certbot that fails its trial renewal is not made current. The update says so, the previous
 certbot keeps renewing, and the update goes on.
 

@@ -438,6 +438,43 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertEqual(refused.returncode, 1)
         self.assertIn("names no release on disk to go back to (gone)", refused.stderr)
 
+    def test_a_restore_that_did_not_finish_stops_the_update_before_anything_changes(self) -> None:
+        """Review 26-10-30, F1: an activation started the worker on the dump's unheld jobs."""
+
+        lib = (ROOT / "install/lib.sh").read_text()
+        path = re.search(r"^RESTORE_STOPPED=(\S+)$", lib, re.MULTILINE)
+        backup = (ROOT / "install/platform/bin/haprion-backup").read_text()
+        self.assertIsNotNone(path)
+        self.assertIn(f"\nRESTORE_STOPPED={path.group(1) if path else ''}\n", backup)
+        self.assertLess(
+            self.update.index("\nunfinished_restore\n"),
+            self.update.index("hold_release_lock\n"),
+        )
+        for marker, refused in ((None, False), ("haprion-web.service\n", True)):
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as raw:
+                remembered = Path(raw) / "restore-stopped"
+                if marker is not None:
+                    remembered.write_text(marker)
+                done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f'RESTORE_STOPPED="$1"; die() {{ echo "ERROR: $*" >&2; exit 1; }}; '
+                        f"{self.functions('unfinished_restore')}unfinished_restore; echo went on",
+                        "-",
+                        str(remembered),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env={"PATH": "/usr/bin:/bin"},
+                )
+                self.assertEqual(done.returncode, 1 if refused else 0, done.stderr)
+                self.assertEqual("went on" in done.stdout, not refused)
+                if refused:
+                    self.assertIn("a restore stopped the services and did not finish", done.stderr)
+                    self.assertIn("sudo haprion-backup restore <dump>", done.stderr)
+
     def test_a_marker_with_no_way_back_says_the_way_out(self) -> None:
         """Review 26-10-29, AA04: every apt run stopped on it, and nothing said what to do."""
 

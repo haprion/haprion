@@ -170,8 +170,42 @@ class WhatTheHostRuns(unittest.TestCase):
         self.assertIn("get /app.example.com/app.example.com.pfx", step.command)
         self.assertIn("get /app.example.com/app.example.com.password", step.command)
         self.assertIn('@"', step.windows_command)
-        self.assertIn("C:\\certs\\app.example.com.pfx", step.windows_command)
+        self.assertIn("C:\\certs\\app.example.com\\app.example.com.pfx", step.windows_command)
         self.assertIn("install-pkcs12.ps1", step.note)
+
+    def test_two_pem_certificates_take_two_directories_on_every_line(self) -> None:
+        for transport, allow in (("sftp", ()), ("https", ("192.0.2.9/32",))):
+            with self.subTest(transport):
+                (row,) = self.rows(
+                    record(
+                        "192.0.2.9",
+                        transport=transport,
+                        allow=allow,
+                        certificates=("a.example.com", "b.example.com"),
+                    )
+                )
+                steps = certificate_receivers.fetch_steps(row, "mgr.example.net")
+                posix = "\n".join(step.command for step in steps)
+                windows = "\n".join(step.windows_command for step in steps)
+                for name in ("a.example.com", "b.example.com"):
+                    self.assertIn(f"{name}/privkey.pem", posix)
+                    self.assertIn(f"C:\\certs\\{name}\\privkey.pem", windows)
+                self.assertNotIn("-o privkey.pem", posix)
+                self.assertNotIn("-o C:\\certs\\privkey.pem", windows)
+                self.assertNotRegex(posix, r"get /\S+ fullchain")
+                self.assertNotIn("C:\\certs\\fullchain.pem", windows)
+
+    def test_sftp_checks_the_pair_under_a_private_umask_and_leaves_pkcs12_alone(self) -> None:
+        (pem,) = self.rows(
+            record("lb-02.example.net", transport="sftp", certificates=("app.example.com",))
+        )
+        (step,) = certificate_receivers.fetch_steps(pem, "mgr.example.net")
+        self.assertTrue(step.command.startswith("(umask 077; mkdir -p app.example.com && sftp "))
+        self.assertIn("get /app.example.com/privkey.pem app.example.com/privkey.pem", step.command)
+        self.assertIn("openssl pkey -in app.example.com/privkey.pem", step.command)
+        (pfx,) = self.rows(record("lb-01", transport="sftp", certificates=("app.example.com",)))
+        (step,) = certificate_receivers.fetch_steps(pfx, "mgr.example.net")
+        self.assertNotIn("openssl", step.command)
 
     def test_https_pins_the_interface_and_fetches_under_the_allowlist(self) -> None:
         (row,) = self.rows(record("192.0.2.9", transport="https", allow=("192.0.2.9/32",)))

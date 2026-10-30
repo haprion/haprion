@@ -16,8 +16,8 @@
     Names are placeholders.
 #>
 param(
-    [string]$Bundle   = "C:\certs\app.example.net.pfx",
-    [string]$PasswordFile = "C:\certs\app.example.net.password",
+    [string]$Bundle   = "C:\certs\app.example.net\app.example.net.pfx",
+    [string]$PasswordFile = "C:\certs\app.example.net\app.example.net.password",
     [string]$Store    = "Cert:\LocalMachine\My",
     [string]$SiteName = "Default Web Site"
 )

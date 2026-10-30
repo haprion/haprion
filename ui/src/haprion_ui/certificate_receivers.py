@@ -297,31 +297,47 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                         f"Fetch {name} for {held.certificate_id}",
                         fetch,
                         note,
-                        f"curl.exe --fail --netrc-file {WINDOWS_NETRC_FILE} "
+                        f"curl.exe --fail --create-dirs --netrc-file {WINDOWS_NETRC_FILE} "
                         f"--cacert {WINDOWS_CERT_DIR}\\manager-ui.pem "
-                        f"-o {WINDOWS_CERT_DIR}\\{name} {url}",
+                        f"-o {WINDOWS_CERT_DIR}\\{held.certificate_id}\\{name} {url}",
                     )
                 )
         return tuple(steps)
 
     if row.transport == "sftp":
         for held in holds:
-            gets = "\n".join(f"get /{held.certificate_id}/{name}" for name in _files(held))
+            # A directory per certificate, as the https line has: two
+            # certificates would otherwise take the same file names. The pair is
+            # checked as the rsync and https lines check it, and the files are
+            # written under umask 077 (sftp creates them with the remote mode,
+            # 0600, but not the directory).
+            directory = held.certificate_id
+            gets = "\n".join(f"get /{directory}/{name} {directory}/{name}" for name in _files(held))
             windows_gets = "\n".join(
-                f"get /{held.certificate_id}/{name} {WINDOWS_CERT_DIR}\\{name}"
+                f"get /{directory}/{name} {WINDOWS_CERT_DIR}\\{directory}\\{name}"
                 for name in _files(held)
             )
+            command = (
+                f"(umask 077; mkdir -p {directory} && "
+                f"sftp -b - -i {KEY_FILE} -o IdentitiesOnly=yes {row.owner}@{host} <<'EOF'\n"
+                f"{gets}\nEOF\n)"
+            )
+            if held.format != "pkcs12":
+                command += (
+                    f' && test "$(openssl x509 -in {directory}/fullchain.pem -pubkey -noout)" = '
+                    f'"$(openssl pkey -in {directory}/privkey.pem -pubout)"'
+                )
             steps.append(
                 Step(
                     f"Fetch {held.certificate_id}",
-                    f"sftp -b - -i {KEY_FILE} -o IdentitiesOnly=yes {row.owner}@{host} <<'EOF'\n"
-                    f"{gets}\nEOF",
+                    command,
                     "The commands arrive on stdin, so nothing is typed at a prompt."
                     + (
                         " A PKCS#12 pair is then imported with examples/receivers/install-pkcs12.ps1."
                         if held.format == "pkcs12"
                         else ""
                     ),
+                    f"New-Item -ItemType Directory -Force {WINDOWS_CERT_DIR}\\{directory} | Out-Null\n"
                     f'@"\n{windows_gets}\n"@ | sftp -b - -i {WINDOWS_KEY_FILE} '
                     f"-o IdentitiesOnly=yes {row.owner}@{host}",
                 )

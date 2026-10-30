@@ -483,6 +483,9 @@ class TheTree(unittest.TestCase):
         ("install/platform/05-platform-nginx", "../sites-available/haprion"): (
             "the target of a link, which nginx resolves in /etc/nginx/sites-enabled"
         ),
+        ("install/04-node-prepare", "../../../../dev/haprion-traffic"): (
+            "the target of a link, which resolves beside it in HAProxy's chroot"
+        ),
         **{
             (f"install/platform/{step}", "../.."): "the tree the step runs from"
             for step in (
@@ -544,7 +547,11 @@ class TheTree(unittest.TestCase):
         self.assertIn("install/certbot-deploy-hook", named)
         self.assertIn("install/sysusers/haprion.conf", named)
         self.assertEqual(self.missing(named, carried), [])
-        self.assertEqual(sorted(set(self.NOT_CARRIED) - excepted), [])
+        #
+        # An exception neither the manager's scripts nor the node's use any more.
+        #
+        _, node_excepted = self.beside(node_scripts())
+        self.assertEqual(sorted(set(self.NOT_CARRIED) - excepted - node_excepted), [])
 
     def test_every_file_the_node_step_reads_from_beside_it_is_carried(self) -> None:
         carried = {source for source, _ in node_package.CONTENTS.values()}

@@ -3956,7 +3956,7 @@ box is not shown.
   own warning.
 - **A node that drops its traffic log**, as critical: the node keeps only traffic lines that came in on
   HAProxy's own socket, and its release logs them elsewhere - a release published before the node took
-  this version, or one a revert put back. Publish the cluster again. Or the release logs to that socket
+  this version, or one a revert put back. Publish and deploy the cluster again. Or the release logs to that socket
   and the node does not hold it for HAProxy alone: run `sudo haprion-node-prepare` on the node.
   `haprion-status` says the same on the node's *Traffic log* line.
 - **A node whose traffic log is unguarded**, as a warning: its release logs to HAProxy's own socket, and
@@ -6657,7 +6657,7 @@ logs to the socket while its day file's rule still takes unmarked lines is liste
 attention* as unguarded until the step has run there. A node still on the old package cannot make that refusal itself, so the deploy
 refuses it first: it stops before any node is touched and names the nodes that need
 `sudo haprion-node-prepare` after an update. After an upgrade, update and prepare the nodes, then
-publish each cluster.
+publish and deploy each cluster.
 
 The generated configuration names the socket by its full path, `/var/lib/haproxy/dev/haprion-traffic`.
 A HAProxy chrooted in `/var/lib/haproxy` looks that path up inside its chroot, so step 4 puts a link

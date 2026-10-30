@@ -1460,7 +1460,7 @@ def traffic_stream_summary(stream: dict[str, Any] | None) -> str:
             )
         return "to HAProxy's socket"
     if stream["marked_only"]:
-        return "DROPPED: the release logs to /dev/log; publish the cluster again"
+        return "DROPPED: the release logs to /dev/log; publish and deploy the cluster again"
     return "to /dev/log"
 
 

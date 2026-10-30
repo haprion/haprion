@@ -738,7 +738,7 @@ class CallerTests(HelperFixture):
         self.assertEqual(out.count("Traffic log:"), 1)
         self.assertIn(
             "Traffic log:  DROPPED - its release was published for nodes before this version;"
-            " publish the cluster again",
+            " publish and deploy the cluster again",
             out,
         )
 

@@ -547,7 +547,7 @@ def traffic_stream_problem(status: Mapping[str, Any]) -> str | None:
             )
         return None
     if stream.get("marked_only") is True:
-        return "its release was published for nodes before this version; publish the cluster again"
+        return "its release was published for nodes before this version; publish and deploy the cluster again"
     return None
 
 

@@ -106,7 +106,8 @@ class TheNodeReadsItsRelease(NodeReading):
         )
         assert stream is not None
         self.assertIn(
-            "publish the cluster again", traffic_stream_problem({"traffic_stream": stream}) or ""
+            "publish and deploy the cluster again",
+            traffic_stream_problem({"traffic_stream": stream}) or "",
         )
         self.assertIn("DROPPED", self.namespace["traffic_stream_summary"](stream))
 

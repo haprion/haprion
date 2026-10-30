@@ -586,7 +586,7 @@ class ANodeThatDropsItsTrafficStream(unittest.TestCase):
             [(item.kind, item.severity, item.subject, item.link) for item in items],
             [("traffic_stream", "critical", "node-a", "/#cluster-alpha")],
         )
-        self.assertIn("publish the cluster again", items[0].message)
+        self.assertIn("publish and deploy the cluster again", items[0].message)
 
     def test_a_release_to_the_socket_on_a_node_without_it(self) -> None:
         items = self.items(to_socket=True, marked_only=True, socket=False)

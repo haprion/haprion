@@ -1,4 +1,7 @@
-"""Bounded, read-only reading of the traffic mirror the collector maintains.
+"""Bounded, read-only reading of the traffic the collector maintains.
+
+The rows are the database's, and the freshness comes from the metadata files
+beside the mirror.
 
 Everything here treats the files as untrusted text. A node writes its own log,
 and a node can be compromised; what it must never be able to do is decide how

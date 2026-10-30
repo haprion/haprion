@@ -41,7 +41,8 @@ def _address(value: str) -> tuple[Any, ...] | None:
 #
 # The page sorts the rows it read - the newest matches, at most `max_lines` -
 # and never asks the database for another order: the query stays the one the
-# primary key answers in milliseconds at any volume. Newest first is the
+# partitions' index (cluster, time, request number, newest first) answers in
+# milliseconds at any volume. Newest first is the
 # default; a tie keeps it.
 #
 TABLE = sorting.Table(

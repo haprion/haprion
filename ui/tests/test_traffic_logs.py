@@ -358,6 +358,23 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn('data-log-warning="/logs/warning"', listed)
         self.assertIn("4321 bytes remaining", listed)
 
+    def test_a_cluster_id_longer_than_32_characters_is_not_cut_short(self) -> None:
+        """Code review 26-10-30 again, S6: the filter was cut to 32 characters, so the
+        cluster was no longer one of those listed."""
+
+        long = "c" * 40
+        (self.root / f"{long}--node-a.meta.json").write_text(
+            json.dumps({"schema_version": 1, "outcome": "unreachable"})
+        )
+
+        page = self.page(clusters=(long,), query=f"?cluster={long}")
+
+        self.assertEqual(self.asked[-1]["cluster"], long)
+        self.assertIn(
+            "node-a", self.page(clusters=(long,), path="/logs/warning", query=f"?cluster={long}")
+        )
+        self.assertIn(long, page)
+
     def test_a_caught_up_node_leaves_the_slot_empty(self) -> None:
         self.healthy_meta()
 

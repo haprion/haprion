@@ -24,7 +24,6 @@ from haprion import (
     crs,
     proxy_model,
 )
-from haprion.config import CLUSTER_ID
 from haprion.digits import is_digits
 from haprion.proxy_model import (
     ModelError,
@@ -39,7 +38,7 @@ from haprion_ui import (
 )
 from haprion_ui import editor as editor_module
 from haprion_ui.access import current_session, forbidden_page
-from haprion_ui.config import Config
+from haprion_ui.config import Config, cluster_id_of
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.editor_flow import carried_base, editor_state, state_reading
 from haprion_ui.reading import (
@@ -165,25 +164,13 @@ def waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> Waf
     )
 
 
-def _cluster_id(value: str) -> str:
-    """A cluster ID as asked for, or "" for one that cannot be.
-
-    Held to the engine's rule rather than cut short: cut at 32, a cluster ID of
-    33 to 63 characters was answered 404, and one whose first 32 characters
-    were another cluster's reached that cluster (code review 2026-10-30
-    again, R13).
-    """
-
-    return value if CLUSTER_ID.fullmatch(value) else ""
-
-
 def waf_work_page(request: Request, config: Config, view: str, problem: str = "") -> Response:
     session = current_session(request)
     if session is None:
         return RedirectResponse("/login", status_code=303)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
     clusters = listed_clusters(request, config)
-    selected = _cluster_id(request.query_params.get("cluster", ""))
+    selected = cluster_id_of(request.query_params.get("cluster", ""))
     chosen = (selected,) if selected in clusters else tuple(clusters)
     overview = waf_overview(request, config, chosen)
     days, findings, exceptions = overview.days, overview.findings, overview.exceptions
@@ -205,7 +192,7 @@ def waf_work_page(request: Request, config: Config, view: str, problem: str = ""
             "exceptions": exceptions,
             "where": waf.where,
             "saved": request.query_params.get("saved", "")[:40],
-            "saved_in": _cluster_id(request.query_params.get("in", "")),
+            "saved_in": cluster_id_of(request.query_params.get("in", "")),
             "can_write": config.management_writes and session.role == "admin",
             "problem": problem,
         },
@@ -309,7 +296,7 @@ def allow_waf_exception(request: Request, config: Config, form: Any) -> Response
     if not isinstance(gate, AuthenticatedSession):
         return gate
     session = gate
-    cluster = _cluster_id(str(values.get("cluster", "")))
+    cluster = cluster_id_of(str(values.get("cluster", "")))
     name = str(values.get("object", ""))[:40]
     rule_text = str(values.get("rule", ""))[:6]
     field = str(values.get("field", ""))[:256]
@@ -408,7 +395,7 @@ def remove_waf_exception(request: Request, config: Config, form: Any) -> Respons
     gate = _waf_write_gate(request, config, str(form.get("csrf_token", "")))
     if not isinstance(gate, AuthenticatedSession):
         return gate
-    cluster = _cluster_id(str(form.get("cluster", "")))
+    cluster = cluster_id_of(str(form.get("cluster", "")))
     name = str(form.get("object", ""))[:40]
     rule_text = str(form.get("rule", ""))[:6]
     if not _waf_target(request, config, cluster, name) or not is_digits(rule_text):

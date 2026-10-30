@@ -44,7 +44,7 @@ from haprion_ui import (
 from haprion_ui import version_changes as version_changes_view
 from haprion_ui.access import admin_write_gate, client_address, current_session, forbidden_page
 from haprion_ui.accounts import listed_accounts
-from haprion_ui.config import Config
+from haprion_ui.config import Config, cluster_id_of
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.pending import held_server_counts, pending_count, pending_package, publish_key
 from haprion_ui.reading import (
@@ -849,7 +849,7 @@ def build_router(config: Config) -> APIRouter:
 
         query = request.query_params
         actor = query.get("who", "")[:255]
-        cluster = query.get("cluster", "")[:32]
+        cluster = cluster_id_of(query.get("cluster", ""))
         search = query.get("q", "")[:200]
         selected_from = query.get("from", "")[:14]
         selected_to = query.get("to", "")[:14]
@@ -960,7 +960,7 @@ def build_router(config: Config) -> APIRouter:
         """What the nodes did on their own, a page at a time as *Audit* pages (26-10-12)."""
 
         query = request.query_params
-        cluster = query.get("cluster", "")[:32]
+        cluster = cluster_id_of(query.get("cluster", ""))
         search = query.get("q", "")[:200]
         selected_from = query.get("from", "")[:14]
         selected_to = query.get("to", "")[:14]

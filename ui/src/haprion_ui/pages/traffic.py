@@ -35,7 +35,7 @@ from haprion_ui import (
 )
 from haprion_ui.access import current_session, forbidden_page
 from haprion_ui.cluster_identity import accent_index
-from haprion_ui.config import Config
+from haprion_ui.config import Config, cluster_id_of
 from haprion_ui.editor_flow import earlier_names
 from haprion_ui.reading import (
     OBJECTS_SOURCE,
@@ -526,7 +526,7 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         listed = listed_clusters(request, config)
-        selected = request.query_params.get("cluster", "")[:32]
+        selected = cluster_id_of(request.query_params.get("cluster", ""))
         if not config.traffic_logs.enabled or (selected and selected not in listed):
             reading = traffic_logs.Reading((), (), 0, False)
         else:
@@ -578,7 +578,7 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        selected_cluster = request.query_params.get("cluster", "")[:32]
+        selected_cluster = cluster_id_of(request.query_params.get("cluster", ""))
         selected_status = request.query_params.get("status", "")[:3]
         selected_query = request.query_params.get("q", "")[:200]
         selected_from = request.query_params.get("from", "")[:14]

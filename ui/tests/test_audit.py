@@ -238,6 +238,26 @@ class ThePage(LoginTestCase):
         self.assertEqual((by_who["order"], by_who["descending"]), ("who", False))
         self.assertEqual((oldest["order"], oldest["descending"]), ("time", False))
 
+    def test_a_cluster_id_of_any_length_the_engine_allows_is_not_cut_short(self) -> None:
+        """Code review 26-10-30 again, S6: the filter was cut to 32 characters."""
+
+        long = "c" * 40
+        client = self.client()
+        self.sign_in(client)
+        with (
+            mock.patch("haprion_ui.db.audit_events", return_value=[]) as listed,
+            mock.patch("haprion_ui.db.audit_count", return_value=0) as counted,
+        ):
+            client.get(f"/jobs?view=audit&cluster={long}")
+        self.assertEqual(listed.call_args.kwargs["cluster"], long)
+        self.assertEqual(counted.call_args.kwargs["cluster"], long)
+        with (
+            mock.patch("haprion_ui.db.node_event_page", return_value=[]) as paged,
+            mock.patch("haprion_ui.db.node_event_count", return_value=0),
+        ):
+            client.get(f"/jobs?view=nodes&cluster={long}")
+        self.assertEqual(paged.call_args.kwargs["cluster"], long)
+
     def test_a_reader_has_no_audit_view(self) -> None:
         self.account = replace(self.account, role="reader")
         client = self.client()

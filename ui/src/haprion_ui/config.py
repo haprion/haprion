@@ -230,6 +230,18 @@ class Config:
     oidc_public_key: Path | None = None
 
 
+def cluster_id_of(value: str) -> str:
+    """A cluster ID as asked for, or "" for one that cannot be.
+
+    Held to the engine's rule rather than cut short: cut at 32, a cluster ID of
+    33 to 63 characters was answered 404, or showed nothing, and one whose
+    first 32 characters were another cluster's reached that cluster (code
+    review 2026-10-30 again, R13 and S6).
+    """
+
+    return value if CLUSTER_ID.fullmatch(value) else ""
+
+
 def _section(data: Any, key: str, allowed: frozenset[str]) -> dict[str, Any]:
     value = data.get(key)
     if not isinstance(value, dict):

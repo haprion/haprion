@@ -9223,8 +9223,8 @@ class AcknowledgedAttention(unittest.TestCase):
             connection.commit()
 
     def test_once_read_back_and_forgotten(self) -> None:
-        job = ("job", "alpha", "job 7")
-        node = ("node", "", "node-b")
+        job = ("job", "alpha", "job 7", "critical", "")
+        node = ("node", "", "node-b", "critical", "Unreachable")
         with self.connect() as connection:
             self.assertTrue(db.acknowledge_attention(connection, job, actor="operator"))
             self.assertFalse(db.acknowledge_attention(connection, job, actor="other"))
@@ -9236,9 +9236,36 @@ class AcknowledgedAttention(unittest.TestCase):
             by = connection.execute("select acknowledged_by from attention_ack").fetchone()
         self.assertEqual(by, ("operator",))
 
+    def test_a_warning_acknowledged_does_not_hide_the_critical_row_or_another_receiver(
+        self,
+    ) -> None:
+        """B406, over the real columns: what an acknowledgement holds is its severity and variant."""
+
+        def item(severity: Any, subject: str = "shop.example", variant: str = "") -> Any:
+            return attention.Item(
+                "certificate", severity, "alpha", subject, "x", None, "/", variant=variant
+            )
+
+        warning, critical = item("warning"), item("critical")
+        siem = attention.Item("forwarding", "warning", "alpha", "n1 → siem", "x", None, "/")
+        loki = attention.Item("forwarding", "warning", "alpha", "n1 → loki", "x", None, "/")
+        with self.connect() as connection:
+            self.assertTrue(db.acknowledge_attention(connection, warning.key, actor="operator"))
+            self.assertTrue(db.acknowledge_attention(connection, siem.key, actor="operator"))
+            connection.commit()
+            acknowledged = db.attention_acks(connection)
+            shown, gone = attention.unacknowledged([critical, warning, siem, loki], acknowledged)
+            self.assertEqual(shown, [critical, loki])
+            self.assertEqual(gone, set())
+            self.assertTrue(db.acknowledge_attention(connection, critical.key, actor="operator"))
+            db.forget_attention_acks(connection, {warning.key})
+            self.assertEqual(db.attention_acks(connection), {critical.key, siem.key})
+
     def test_the_web_cannot_rewrite_who_acknowledged(self) -> None:
         with self.connect() as connection:
-            db.acknowledge_attention(connection, ("job", "alpha", "job 7"), actor="operator")
+            db.acknowledge_attention(
+                connection, ("job", "alpha", "job 7", "critical", ""), actor="operator"
+            )
             connection.commit()
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 connection.execute("update attention_ack set acknowledged_by = 'x'")
@@ -9584,17 +9611,21 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             },
         )
 
-    def test_a_dump_at_0101_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
-        self.alembic("upgrade", "0101")
+    def restored_from(self, revision: str, *, grants_differ: str) -> None:
+        self.alembic("upgrade", revision)
         with self.scratch() as connection:
             connection.execute(
                 "insert into job (operation, cluster, payload, idempotency_key)"
                 " values ('deploy', 'alpha', '{}', %s)",
                 (uuid4(),),
             )
+            connection.execute(
+                "insert into attention_ack (kind, cluster, subject, acknowledged_by)"
+                " values ('job', 'alpha', 'job 7', 'operator')"
+            )
             connection.commit()
-        self.assertNotEqual(self.granted(), self.expected, "0101 already grants what 0102 does")
-        dump = self.directory / "before-0102.dump"
+        self.assertNotEqual(self.granted(), self.expected, grants_differ)
+        dump = self.directory / "before-the-head.dump"
         subprocess.run(  # noqa: S603 - this cluster's pg_dump, fixed arguments
             [f"{self.bindir}/pg_dump", "-h", self.socket, "-U", self.role, "-d", self.NAME,
              "--format=custom", f"--file={dump}"],
@@ -9608,7 +9639,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         head = json.loads((self.REPOSITORY / "ui/src/haprion_ui/compatibility.json").read_text())
         head = head["requires"]["database_head"]
-        self.assertIn(f"the dump is at 0101; migrated to {head}", done.stdout)
+        self.assertIn(f"the dump is at {revision}; migrated to {head}", done.stdout)
         kept = list((self.directory / "dumps/before-restore").glob(f"{self.NAME}-*.dump"))
         self.assertEqual(len(kept), 1, "the database replaced was not dumped first")
         self.assertEqual(self.granted(), self.expected)
@@ -9619,3 +9650,11 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             self.assertEqual(_first(cursor), 0)
             cursor.execute("select count(*) from audit_event where action = 'jobs_held'")
             self.assertEqual(_first(cursor), 1)
+            cursor.execute("select severity, variant from attention_ack")
+            self.assertEqual(cursor.fetchall(), [("", "")])
+
+    def test_a_dump_at_0101_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0101", grants_differ="0101 already grants what 0102 does")
+
+    def test_a_dump_at_0102_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0102", grants_differ="0102 already grants what 0103 does")

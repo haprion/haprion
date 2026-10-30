@@ -19,7 +19,6 @@ from haprion.digits import is_digits
 from haprion.version_history import comment_problem
 
 from haprion_ui import (
-    attention,
     audit,
     auth,
     blocked,
@@ -465,8 +464,7 @@ def build_router(config: Config) -> APIRouter:
             (
                 item
                 for item in attention_items(request, config).items
-                if item.key
-                == attention.acknowledgement_key(kind, cluster, subject, severity, variant)
+                if item.key == (kind, cluster, subject, severity, variant)
             ),
             None,
         )

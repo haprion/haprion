@@ -137,8 +137,8 @@ app_web	app_session	UPDATE	last_seen_at, revoked_at
 app_web	app_user	INSERT	break_glass, oidc_issuer, oidc_subject, password_hash, role, source, username
 app_web	app_user	SELECT	break_glass, created_at, disabled, id, oidc_issuer, oidc_subject, password_hash, role, source, updated_at, username, username_normalised
 app_web	app_user	UPDATE	break_glass, disabled, password_hash, role
-app_web	attention_ack	INSERT	acknowledged_by, cluster, kind, subject
-app_web	attention_ack	SELECT	acknowledged_at, acknowledged_by, cluster, kind, subject
+app_web	attention_ack	INSERT	acknowledged_by, cluster, kind, severity, subject, variant
+app_web	attention_ack	SELECT	acknowledged_at, acknowledged_by, cluster, kind, severity, subject, variant
 app_web	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_web	audit_event	SELECT	action, actor, at, cluster, detail, id, request_id
 app_web	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings

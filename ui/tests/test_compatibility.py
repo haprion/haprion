@@ -466,15 +466,14 @@ def release_on_disk(root: Path, name: str, head: str, safe_from: str) -> None:
     """A UI release under `root/releases` that says only its schema."""
 
     document = json.loads(MANIFEST.read_text())
-    revisions = document["requires"]["database_revisions"]
-    # Releases with these numbers came before the baseline and named none.
+    # Releases with these numbers came before the baseline and named none, and ran on
+    # every revision from the baseline (the real manifest's floor has moved since).
+    revisions = [revision for revision in ("0100", "0101", "0102") if revision <= head]
     document["requires"].pop("database_baseline")
     document["requires"].update(
         database_head=head,
         rollback_safe_from=safe_from,
-        database_revisions=revisions[: revisions.index(head) + 1]
-        if head in revisions
-        else [*revisions, head],
+        database_revisions=revisions if head in revisions else [*revisions, head],
     )
     site = root / "releases" / name / "venv/lib/python3.12/site-packages"
     (site / "haprion_ui").mkdir(parents=True)
@@ -567,6 +566,28 @@ class RestoreSchemaCommandTests(unittest.TestCase):
         release_on_disk(root, "new", "0102", safe_from)
         release_on_disk(root, "old", "0101", "0100")
         (root / "current").symlink_to(root / "releases" / current)
+
+    def test_a_dump_from_a_revision_the_release_no_longer_runs_on_is_migrated(self) -> None:
+        """The real manifest: the floor of what runs is the head, the baseline is where dumps start."""
+
+        document = json.loads(MANIFEST.read_text())["requires"]
+        head, baseline = document["database_head"], document["database_baseline"]
+        self.assertGreater(head, baseline)
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            site = root / "releases" / "new/venv/lib/python3.12/site-packages/haprion_ui"
+            site.mkdir(parents=True)
+            (site / "compatibility.json").write_text(MANIFEST.read_text())
+            info = site.parent / "haprion_ui-0.1.0.dist-info"
+            info.mkdir()
+            (info / "entry_points.txt").write_text(
+                "[console_scripts]\nhaprion-worker = haprion_ui.worker:_entry\n"
+            )
+            (root / "current").symlink_to(root / "releases" / "new")
+            self.assertEqual(self.ask(root, head), (0, f"same {head} new\n"))
+            for revision in ("0100", "0101", "0102"):
+                with self.subTest(revision=revision):
+                    self.assertEqual(self.ask(root, revision), (0, f"migrate {head} new\n"))
 
     def test_a_dump_at_the_head_is_restored_as_it_is_and_an_older_one_migrated(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

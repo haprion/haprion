@@ -72,17 +72,21 @@ class StatusAccess:
 
 
 #
-# A row of *Needs attention* by kind, cluster ('' for none) and subject (B299).
+# A row of *Needs attention* by kind, cluster ('' for none), subject, the
+# severity it was acknowledged as and its variant ('' for none) (B299, B406).
 #
-type AttentionKey = tuple[str, str, str]
+type AttentionKey = tuple[str, str, str, str, str]
 
 
 def attention_acks(connection: Connection[Any]) -> set[AttentionKey]:
     """The rows an admin has acknowledged (0073)."""
 
     with connection.cursor() as cursor:
-        cursor.execute("select kind, cluster, subject from attention_ack")
-        return {(str(kind), str(cluster), str(subject)) for kind, cluster, subject in cursor}
+        cursor.execute("select kind, cluster, subject, severity, variant from attention_ack")
+        return {
+            (str(kind), str(cluster), str(subject), str(severity), str(variant))
+            for kind, cluster, subject, severity, variant in cursor
+        }
 
 
 def acknowledge_attention(connection: Connection[Any], key: AttentionKey, *, actor: str) -> bool:
@@ -90,8 +94,8 @@ def acknowledge_attention(connection: Connection[Any], key: AttentionKey, *, act
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "insert into attention_ack (kind, cluster, subject, acknowledged_by) "
-            "values (%s, %s, %s, %s) on conflict do nothing",
+            "insert into attention_ack (kind, cluster, subject, severity, variant, acknowledged_by) "
+            "values (%s, %s, %s, %s, %s, %s) on conflict do nothing",
             (*key, actor),
         )
         return cursor.rowcount == 1
@@ -101,10 +105,11 @@ def forget_attention_acks(connection: Connection[Any], gone: set[AttentionKey]) 
     """Remove acknowledgements whose row has gone, so the row is new if it comes back."""
 
     with connection.cursor() as cursor:
-        for kind, cluster, subject in sorted(gone):
+        for key in sorted(gone):
             cursor.execute(
-                "delete from attention_ack where kind = %s and cluster = %s and subject = %s",
-                (kind, cluster, subject),
+                "delete from attention_ack where kind = %s and cluster = %s and subject = %s"
+                " and severity = %s and variant = %s",
+                key,
             )
 
 

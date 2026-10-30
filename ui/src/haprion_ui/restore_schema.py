@@ -46,7 +46,17 @@ def plan(root: Path, packaged: str, revision: str) -> tuple[str, str]:
     refusal = before_baseline(release, revision)
     if refusal is not None:
         raise CompatibilityError(f"{dump}: {refusal}")
-    if revision not in release.database_revisions:
+    #
+    # A dump migrates from any revision between the baseline and the head: the
+    # migrations are one chain. The revisions a release runs on are fewer -
+    # from the oldest the code still reads - and the dump is not run on, it is
+    # migrated first.
+    #
+    baseline = release.database_baseline
+    migrates = revision in release.database_revisions or (
+        baseline is not None and is_digits(revision) and baseline <= revision < head
+    )
+    if not migrates:
         if is_digits(revision) and is_digits(head) and int(revision) > int(head):
             raise CompatibilityError(
                 f"{dump}: it comes from a newer release, and no migration goes back"

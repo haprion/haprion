@@ -78,22 +78,6 @@ def card_link(cluster: str) -> str:
     return f"/#cluster-{cluster}"
 
 
-#
-# The stored acknowledgement is (kind, cluster, subject), as it has been since
-# B299: the severity and the variant ride in the subject, behind this
-# separator, so that a row's key needs no column of its own - a column would
-# move the schema floor and make every earlier dump unrestorable (B406).
-#
-KEY_PART = "\x1f"
-
-
-def acknowledgement_key(
-    kind: str, cluster: str, subject: str, severity: str, variant: str
-) -> tuple[str, str, str]:
-    rest = KEY_PART + KEY_PART.join((severity, variant))
-    return (kind, cluster, subject[: 256 - len(rest)] + rest)
-
-
 @dataclass(frozen=True, slots=True)
 class Item:
     kind: str
@@ -133,16 +117,14 @@ class Item:
         )
 
     @property
-    def key(self) -> tuple[str, str, str]:
+    def key(self) -> tuple[str, str, str, str, str]:
         """What an acknowledgement names (B299, B406): the row as the list shows it.
 
         The severity is in it: a row that becomes worse is a new row, and its
         acknowledgement - of what it had been - does not hide it.
         """
 
-        return acknowledgement_key(
-            self.kind, self.cluster or "", self.subject, self.severity, self.variant
-        )
+        return (self.kind, self.cluster or "", self.subject, self.severity, self.variant)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1011,8 +993,8 @@ def from_manager(
 
 
 def unacknowledged(
-    items: Iterable[Item], acknowledged: set[tuple[str, str, str]]
-) -> tuple[list[Item], set[tuple[str, str, str]]]:
+    items: Iterable[Item], acknowledged: set[tuple[str, str, str, str, str]]
+) -> tuple[list[Item], set[tuple[str, str, str, str, str]]]:
     """The rows nobody has acknowledged, and the acknowledgements whose row has gone (B299).
 
     An acknowledgement lasts as long as its row: when what the row says is put
@@ -1034,12 +1016,12 @@ READ_PER_NODE = frozenset({"node", "preparation", "node_package", "forwarding", 
 
 
 def held_through_gaps(
-    gone: set[tuple[str, str, str]],
+    gone: set[tuple[str, str, str, str, str]],
     status_rows: Iterable[Any],
     *,
     now: datetime,
     stale_after: timedelta,
-) -> set[tuple[str, str, str]]:
+) -> set[tuple[str, str, str, str, str]]:
     """Of the acknowledgements whose row is not listed, those it is right to forget.
 
     A row made from a cluster's status reading is not listed while the reading
@@ -1049,9 +1031,9 @@ def held_through_gaps(
     """
 
     rows = {row.cluster: row for row in status_rows}
-    forget: set[tuple[str, str, str]] = set()
+    forget: set[tuple[str, str, str, str, str]] = set()
     for key in gone:
-        kind, cluster, named = key
+        kind, cluster, named = key[:3]
         row = rows.get(cluster)
         if kind not in READ_PER_CLUSTER | READ_PER_NODE or row is None:
             forget.add(key)
@@ -1067,7 +1049,7 @@ def held_through_gaps(
                 for entry in result.get("nodes") or ()
                 if isinstance(entry, Mapping)
             }
-            entry = nodes.get(named.partition(KEY_PART)[0].partition(RECEIVER_ARROW)[0])
+            entry = nodes.get(named.partition(RECEIVER_ARROW)[0])
             if unread or (
                 entry is not None and not (entry.get("reachable") and entry.get("status_ok"))
             ):

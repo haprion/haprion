@@ -138,7 +138,7 @@ class LoginTestCase(unittest.TestCase):
         # table reads as all on.
         #
         self.switches: dict[str, Any] = {}
-        self.acks: set[tuple[str, str, str]] = set()
+        self.acks: set[tuple[str, str, str, str, str]] = set()
         # The getting started list (B316) is shown until a test hides it.
         self.getting_started_hidden_at: datetime | None = None
         self.hidden_by: list[str] = []

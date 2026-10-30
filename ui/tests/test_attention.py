@@ -1337,9 +1337,7 @@ class TheAcknowledgement(LoginTestCase):
         self.assertIn('name="subject" value="job 7"', page.text)
         self.assertEqual(sum(self.counts().values()), 1)
 
-        self.acks = {
-            attention.acknowledgement_key("job", self.FAILED.cluster or "", "job 7", "critical", "")
-        }
+        self.acks = {("job", self.FAILED.cluster or "", "job 7", "critical", "")}
 
         self.assertEqual(sum(self.counts().values()), 0)
         self.assertNotIn('value="job 7"', self.signed_in().get("/").text)
@@ -1362,9 +1360,7 @@ class TheAcknowledgement(LoginTestCase):
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(
             stored.call_args.args[1],
-            attention.acknowledgement_key(
-                "job", self.FAILED.cluster or "", "job 7", "critical", ""
-            ),
+            ("job", self.FAILED.cluster or "", "job 7", "critical", ""),
         )
         self.assertIn("attention_acknowledged", self.audit)
 
@@ -1380,8 +1376,8 @@ class TheAcknowledgement(LoginTestCase):
         stored.assert_not_called()
 
     def test_an_acknowledgement_whose_row_has_gone_is_forgotten(self) -> None:
-        kept = attention.acknowledgement_key("job", "alpha", "job 7", "critical", "")
-        gone = attention.acknowledgement_key("node", "alpha", "node-b", "critical", "Unreachable")
+        kept = ("job", "alpha", "job 7", "critical", "")
+        gone = ("node", "alpha", "node-b", "critical", "Unreachable")
         item = attention.Item("job", "critical", "alpha", "job 7", "Deploy failed", NOW, "/jobs")
 
         shown, forgotten = attention.unacknowledged([item], {kept, gone})
@@ -1422,7 +1418,7 @@ class ARemovedCluster_sFailures(LoginTestCase):
 class AcknowledgementsAcrossAGapInReading(unittest.TestCase):
     """Review 2026-10-30, E2: a reading that could not be made is not a row that has gone."""
 
-    ACK = ("preparation", "alpha", "n1")
+    ACK = ("preparation", "alpha", "n1", "warning", "")
 
     def reading(
         self,
@@ -1443,7 +1439,7 @@ class AcknowledgementsAcrossAGapInReading(unittest.TestCase):
             poll_error=poll_error,
         )
 
-    def forgotten(self, row: Any, key: tuple[str, str, str] | None = None) -> set[Any]:
+    def forgotten(self, row: Any, key: tuple[str, str, str, str, str] | None = None) -> set[Any]:
         return attention.held_through_gaps(
             {key or self.ACK}, [row], now=NOW, stale_after=timedelta(seconds=100)
         )
@@ -1463,12 +1459,12 @@ class AcknowledgementsAcrossAGapInReading(unittest.TestCase):
         )
         self.assertEqual(self.forgotten(silent), set())
         self.assertEqual(
-            self.forgotten(self.reading(), ("service", "alpha", "web")),
-            {("service", "alpha", "web")},
+            self.forgotten(self.reading(), ("service", "alpha", "web", "critical", "")),
+            {("service", "alpha", "web", "critical", "")},
         )
 
     def test_a_certificate_row_is_not_about_a_reading(self) -> None:
-        key = ("certificate", "", "x")
+        key = ("certificate", "", "x", "critical", "")
         self.assertEqual(self.forgotten(self.reading(age=500), key), {key})
 
 

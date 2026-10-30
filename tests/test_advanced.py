@@ -584,6 +584,52 @@ class TheGeneratorSVariablesAreReadNotWritten(unittest.TestCase):
         self.assertEqual(named - {"txn.coraza"}, advanced.GENERATED_VARIABLES)
 
 
+class WhatShowsOrChangesOtherObjectsIsRefused(unittest.TestCase):
+    """B405. B1: an anonymous POST to one object's stats page put another object's
+    server in maintenance. B3: one object stored its content into another object's
+    cache, which then served it to that object's visitors."""
+
+    def test_every_stats_keyword_and_the_exporter_are_refused(self) -> None:
+        for line in (
+            "stats enable",
+            "stats uri /hap-stats",
+            "stats admin if TRUE",
+            "stats http-request allow",
+            "stats auth admin:secret",
+            "stats scope shop",
+            "http-request use-service prometheus-exporter if { path /metrics }",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+                self.assertEqual(fate(line, protocol="tcp"), REFUSED_FATE)
+                self.assertEqual(fates(f"backend shop-b\n    {line}\n")[1][1], REFUSED_FATE)
+
+    def test_a_cache_is_used_only_by_the_text_that_adds_it(self) -> None:
+        for line in (
+            "http-request cache-use bank-c",
+            "http-response cache-store bank-c",
+            "filter cache bank-c",
+            "http-request cache-use shop-api-c",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate_beside_own(line), REFUSED_FATE)
+        for line in (
+            "http-request cache-use shop-c",
+            "http-response cache-store shop-c if { status 200 }",
+            "filter cache shop-c",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate_beside_own(line), PLACED)
+
+    def test_shared_variables_are_allowed(self) -> None:
+        for line in (
+            "http-request set-var(proc.shared) str(1)",
+            "http-request set-var(sess.flag) str(1)",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), PLACED)
+
+
 class SectionsTheTextAddsKeepTheirNames(unittest.TestCase):
     def test_a_backend_named_after_the_object_is_written_as_it_stands(self) -> None:
         placement = place(

@@ -464,6 +464,18 @@ STATE_FILE = (
     "a server state file is one the node reads as root; state across a reload is the cluster's"
 )
 EXTERNAL_CHECK = "an external check runs a program on the node"
+#
+# HAProxy's statistics page, in every form (B405). Measured on 3.4.7: with
+# `stats enable` and `stats admin` in one object's pool, an anonymous request
+# listed every object's servers and addresses, and an anonymous POST put
+# another object's server in maintenance - past the product's own drain and
+# maintenance, which then showed the wrong state. The cluster has its own
+# metrics.
+#
+STATS = (
+    "HAProxy's statistics page shows, and can change, every object of the cluster; "
+    "the cluster has its own metrics"
+)
 REFUSED = {
     ("bind",): "the address an object listens on is set in the form",
     ("use_backend",): "routing is the interface's: the frontend is shared",
@@ -486,6 +498,7 @@ REFUSED = {
     ("external-check", "path"): EXTERNAL_CHECK,
     ("option", "external-check"): EXTERNAL_CHECK,
     ("crt",): "a certificate and its key are files on the node; the form chooses them",
+    **{words: STATS for words in KEYWORDS if words[0] == "stats"},
 }
 
 #
@@ -1004,6 +1017,39 @@ def _variable_problem(tokens: Sequence[str]) -> str:
     return ""
 
 
+NOT_OWN_CACHE = "{cache} is not a cache this text adds; a line uses only its own"
+
+
+def _service_problem(tokens: Sequence[str]) -> str:
+    """The Prometheus exporter is the statistics page by another name (B405)."""
+
+    for index, word in enumerate(tokens[:-1]):
+        if word == "use-service" and tokens[index + 1] == "prometheus-exporter":
+            return STATS
+    return ""
+
+
+def _cache_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: Own) -> str:
+    """A cache is used and filled only by the text that adds it (B405).
+
+    Measured on 3.4.7: a pool that set another object's Host and stored into
+    that object's cache answered that object's visitors with its own content.
+    """
+
+    named: str | None = None
+    if keyword == ("filter",) and tokens[1:2] == ["cache"]:
+        named = tokens[2] if len(tokens) > 2 else None
+    elif (
+        keyword in (("http-request",), ("http-response",))
+        and len(tokens) > 2
+        and tokens[1] in ("cache-use", "cache-store")
+    ):
+        named = tokens[2]
+    if named is not None and named not in own["cache"]:
+        return NOT_OWN_CACHE.format(cache=named)
+    return ""
+
+
 def _waf_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
     """The WAF engine's names, which only the generated lines may use (B232).
 
@@ -1416,6 +1462,8 @@ def _line_problem(
         _server_problem(tokens, keyword)
         or _waf_problem(tokens, keyword)
         or _variable_problem(tokens)
+        or _service_problem(tokens)
+        or _cache_problem(tokens, keyword, own)
         or _filter_problem(tokens, keyword)
         or _file_problem(tokens, keyword)
         or _log_problem(tokens, keyword, own)

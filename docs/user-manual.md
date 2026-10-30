@@ -1290,11 +1290,16 @@ Write each as a plain number; `size` also takes `k`, `m` or `g`.
   exactly. A name that begins with `<object>-` is not enough: `shop` and `shop-api` are two objects. This
   covers `table <name>` in `track-sc2` and `stick` rules, a table's `write-to`, the fetches and converters
   that create or change an entry (`table_inc_gpc0`, `src_clr_gpc`, `sc_inc_gpc1` and their kin, and
-  `src_updt_conn_cnt`), `log ring@<name>`, and the `debug` converter's destination. On the object's own
+  `src_updt_conn_cnt`), `log ring@<name>`, the `debug` converter's destination, and the cache in
+  `cache-use`, `cache-store` and `filter cache`. One object storing into another's cache would answer
+  that object's visitors with its own content. On the object's own
   lines such a fetch or converter must name its table, since the pool's own is the rate limit's. Reading
   another table, as `table_http_req_rate(<name>)` does, is allowed.
 - **The WAF engine's wiring.** The engine's SPOE filter, and the `txn.coraza.*` variables its verdict is
   read from. A line that set them could make the engine's answer say something it did not.
+- **HAProxy's statistics page.** Every `stats` keyword, and `use-service prometheus-exporter`. The page
+  shows every object's servers and addresses, and `stats admin` lets an anonymous visitor put another
+  object's server in maintenance. The cluster has its own metrics.
 - **The generator's variables.** `txn.rule`, `txn.traffic_host`, `txn.client`, `txn.access_path`,
   `txn.hsts` and `txn.waf_body` carry what the traffic log records and the HSTS header the frontend
   writes. The pool runs after the frontend, so a value set there would win. The text may read them;
@@ -1331,6 +1336,12 @@ A file the text may name - an error page, a list, a server's authority - is writ
 one plain file name: letters, digits, `.`, `_` and `-`, not beginning with a dot. A further `/`, a quote
 or a backslash in the name is refused. HAProxy reads a converter's arguments a second time and drops
 quotes again there, so a quoted `..` would otherwise leave the directory.
+
+**Shared variables.** The text may set `proc.*` and `sess.*` variables, and they are shared. A `proc.*`
+variable is one for the whole HAProxy process on the node, so every object's text that names it sees the
+same value. A `sess.*` variable follows the visitor's connection, and the frontend is shared: one
+connection may carry requests to several objects on the same listener, so what one object's text sets,
+another object's text reads. Do not take a `sess.*` variable as proof of anything, such as a login.
 
 **Lines that are skipped.** `mode` is skipped, since the form sets the protocol. So are the lines that set
 what the form owns for the pool - servers, balancing, health checks, cookie, and the connect, server,

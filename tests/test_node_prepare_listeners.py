@@ -170,6 +170,22 @@ class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
         self.assertIn("applied  sshd listens on 192.0.2.11:22 only", run.stdout)
         self.assertEqual(self.restarts(), ["restart ssh.service"])
 
+    def test_the_address_the_manager_came_in_on_wins_over_the_route_s(self) -> None:
+        run = self.run_step(SOURCE="192.0.2.12", NODE_LISTEN_ADDRESS="192.0.2.11")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("ListenAddress 192.0.2.11\n", self.drop_in.read_text())
+
+    def test_an_arrival_address_the_node_does_not_have_is_refused(self) -> None:
+        run = self.run_step(NODE_LISTEN_ADDRESS="192.0.2.99")
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("is not an address of this node", run.stderr)
+        self.assertFalse(self.drop_in.exists())
+
+    def test_the_virtual_address_is_refused_as_an_arrival_address_too(self) -> None:
+        run = self.run_step(NODE_LISTEN_ADDRESS="192.0.2.20")
+        self.assertEqual(run.returncode, 1)
+        self.assertFalse(self.drop_in.exists())
+
     def test_sshd_already_on_chosen_addresses_is_left_alone(self) -> None:
         run = self.run_step(CHOSEN="1")
         self.assertEqual(run.returncode, 0, run.stderr)

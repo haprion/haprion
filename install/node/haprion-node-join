@@ -14,8 +14,9 @@ turned into the answers of step 4, which then runs as it would by hand: the
 packages HAProxy and the rest need, the release layout, the sudo rules,
 node.conf, the manager's keys with the forced commands this node gives each
 purpose, the manager's host key, and sshd on the address the manager came in
-on. The manager is reached at the address it connected from (SSH_CONNECTION,
-kept by sudo for this command alone), so no name has to resolve.
+on (SSH_CONNECTION's third field, NODE_LISTEN_ADDRESS in the answers). The
+manager is reached at the address it connected from (SSH_CONNECTION, kept by
+sudo for this command alone), so no name has to resolve.
 
 When step 4 has finished the one-time key is removed, and the node's status is
 the answer. A step that stops leaves the key, so the same block may be tried
@@ -82,8 +83,29 @@ def manager_address() -> str:
     return str(address)
 
 
-def answers(document: object, manager: str) -> tuple[str, str]:
-    """Step 4's answers file and the cluster, from the manager's document."""
+def arrival_address() -> str:
+    """This node's address the manager connected to: SSH_CONNECTION's third field."""
+
+    fields = os.environ.get("SSH_CONNECTION", "").split()
+    if len(fields) != 4:
+        raise Refused("not run through the join key's connection (no SSH_CONNECTION)")
+    try:
+        address = ipaddress.ip_address(fields[2])
+    except ValueError:
+        raise Refused("SSH_CONNECTION names no server address") from None
+    if address.version != 4:
+        raise Refused(
+            "the manager connected to an IPv6 address, which the node scripts do not reach yet"
+        )
+    return str(address)
+
+
+def answers(document: object, manager: str, listen: str | None = None) -> tuple[str, str]:
+    """Step 4's answers file and the cluster, from the manager's document.
+
+    `listen` is the address of this node the manager came in on; sshd is moved
+    to it, not to whichever address the way back to the manager leaves from.
+    """
 
     if not isinstance(document, dict) or set(document) - FIELDS:
         raise Refused(f"the document has fields other than {sorted(FIELDS)}")
@@ -124,6 +146,7 @@ def answers(document: object, manager: str) -> tuple[str, str]:
         f"NODE_PATH_{variable}='{node_path}'",
         f"VIP_{variable}='{vip}'",
         "JOINED_BY_MANAGER=yes",
+        *([f"NODE_LISTEN_ADDRESS='{listen}'"] if listen else []),
         *(f"{PURPOSES[purpose]}='{key}'" for purpose, key in sorted(keys.items())),
     ]
     return "\n".join(lines) + "\n", cluster
@@ -135,6 +158,7 @@ def main() -> int:
         return 77
     try:
         manager = manager_address()
+        arrival = arrival_address()
         raw = sys.stdin.buffer.read(MAX_DOCUMENT + 1)
         if len(raw) > MAX_DOCUMENT:
             raise Refused("the document is too large")
@@ -142,7 +166,7 @@ def main() -> int:
             document = json.loads(raw)
         except ValueError:
             raise Refused("the document is not JSON") from None
-        text, cluster = answers(document, manager)
+        text, cluster = answers(document, manager, arrival)
     except Refused as refused:
         print(f"haprion-node-join: {refused}", file=sys.stderr)
         return 64

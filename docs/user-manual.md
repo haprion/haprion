@@ -6388,7 +6388,8 @@ with `cannot bind socket (Address already in use)` and rolls back.
 
 sshd is the usual case. Out of the box it listens on `0.0.0.0:22`, which rules out a tcp object on
 port 22 of the virtual address, such as an SFTP service. So `04-node-prepare` has sshd listen on
-the node's own address - the one the node reaches the management host from:
+the node's own address - the one the manager came in on when it joined the node, or, on a node
+prepared by hand or again, the one the node reaches the management host from:
 
 ```text
 # /etc/ssh/sshd_config.d/05-haprion-listen.conf

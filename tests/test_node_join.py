@@ -123,6 +123,12 @@ class TheDocument(unittest.TestCase):
             ],
         )
 
+    def test_the_address_the_manager_came_in_on_is_an_answer(self) -> None:
+        text, _ = JOIN.answers(document(), "198.51.100.5", "192.0.2.21")
+        self.assertIn("NODE_LISTEN_ADDRESS='192.0.2.21'", text.splitlines())
+        text, _ = JOIN.answers(document(), "198.51.100.5")
+        self.assertNotIn("NODE_LISTEN_ADDRESS", text)
+
     def test_the_collector_s_key_is_an_answer_like_the_others(self) -> None:
         keys = {"deploy": KEY, "status": OTHER, "traffic_log": OTHER}
         text, _ = JOIN.answers(document(keys=keys), "198.51.100.5")
@@ -182,6 +188,24 @@ class TheDocument(unittest.TestCase):
                 self.assertRaises(JOIN.Refused),
             ):
                 JOIN.manager_address()
+
+
+class TheArrivalAddress(unittest.TestCase):
+    def test_it_is_the_connection_s_third_field(self) -> None:
+        with mock.patch.dict(os.environ, {"SSH_CONNECTION": "198.51.100.5 50022 192.0.2.21 22"}):
+            self.assertEqual(JOIN.arrival_address(), "192.0.2.21")
+        for value in (
+            "",
+            "198.51.100.5 50022 192.0.2.21",
+            "198.51.100.5 1 2001:db8::21 22",
+            "a 1 b 2",
+        ):
+            with (
+                self.subTest(value=value),
+                mock.patch.dict(os.environ, {"SSH_CONNECTION": value}),
+                self.assertRaises(JOIN.Refused),
+            ):
+                JOIN.arrival_address()
 
 
 class TheJoin(unittest.TestCase):

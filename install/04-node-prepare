@@ -556,9 +556,12 @@ fi
 # port on the virtual address too, and an object on that port - an SFTP service
 # on 22 - fails every deploy on `cannot bind socket` (26-10-15: sshd's
 # 0.0.0.0:22 beside a tcp object on 22, for two days). A warning nobody reads
-# does not prevent that, so sshd is given the node's own address: the one this
-# node reaches the management host from, which is the one the management host
-# reaches it on. An sshd already on chosen addresses is left as it is.
+# does not prevent that, so sshd is given the node's own address: the one the
+# management host came in on when it joined the node (NODE_LISTEN_ADDRESS, from
+# the join connection), else - a node prepared by hand or again - the one this
+# node reaches the management host from. A node with several addresses may
+# answer the manager from another one than it was reached on, which is why the
+# join carries the address. An sshd already on chosen addresses is left as it is.
 #
 # Changed carefully, because it is how the operator reaches this node: the
 # address must be on this node and not the virtual one, `sshd -t` must pass,
@@ -592,11 +595,15 @@ sshd_off_the_virtual_address() {
             | grep -qE '^(0\.0\.0\.0|\[::\]):'; then
         log "  ok       sshd listens on chosen addresses only"
     else
-        manager_address="$(getent ahostsv4 "$MANAGER_HOST" | awk 'NR == 1 { print $1 }')"
-        [[ -n "$manager_address" ]] || die "cannot resolve MANAGER_HOST ${MANAGER_HOST} to an IPv4 address"
-        own_address="$(ip -4 -o route get "$manager_address" \
-            | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
-        [[ -n "$own_address" ]] || die "no route to the management host ${manager_address}"
+        if [[ -n "${NODE_LISTEN_ADDRESS:-}" ]]; then
+            own_address="$NODE_LISTEN_ADDRESS"
+        else
+            manager_address="$(getent ahostsv4 "$MANAGER_HOST" | awk 'NR == 1 { print $1 }')"
+            [[ -n "$manager_address" ]] || die "cannot resolve MANAGER_HOST ${MANAGER_HOST} to an IPv4 address"
+            own_address="$(ip -4 -o route get "$manager_address" \
+                | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
+            [[ -n "$own_address" ]] || die "no route to the management host ${manager_address}"
+        fi
         [[ "$own_address" != "$(cluster_value VIP "$CLUSTER")" ]] \
             || die "this node reaches the management host from the virtual address ${own_address}"
         ip -4 -o addr show | grep -qF " inet ${own_address}/" \

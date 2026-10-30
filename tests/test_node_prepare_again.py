@@ -170,6 +170,14 @@ class TheCommand(unittest.TestCase):
         self.assertEqual(oct(answers.stat().st_mode & 0o777), "0o600")
         self.assertIn("PREPARED_AGAIN=yes", answers.read_text())
 
+    def test_the_cluster_s_vip_is_an_answer_for_the_sshd_check(self) -> None:
+        addresses = self.root / "addresses.conf"
+        addresses.write_text("# generated\n192.0.2.10/32 dev eth0\n")
+        self.step(0)
+        with mock.patch.object(PREPARE, "KEEPALIVED_ADDRESSES", addresses):
+            self.assertEqual(PREPARE.main([]), 0)
+        self.assertIn('VIP_alpha="192.0.2.10"', (self.state / "prepare.env").read_text())
+
     def test_a_manager_that_moved_is_given_with_its_host_key_carried_over(self) -> None:
         """Review 26-10-25, 3-01: the manager's key did not change, only where it is."""
 

@@ -44,6 +44,10 @@ NODE_CONF = Path(os.environ.get("NODE_CONF", "/etc/haprion/node.conf"))
 KNOWN_HOSTS = Path(os.environ.get("ROOT_KNOWN_HOSTS", "/root/.ssh/known_hosts"))
 SSH_KEYGEN = "/usr/bin/ssh-keygen"
 STATE_DIR = Path(os.environ.get("JOIN_DIR", "/var/lib/haprion-node"))
+KEEPALIVED_ADDRESSES = Path(
+    os.environ.get("KEEPALIVED_ADDRESSES", "/etc/keepalived/addresses.conf")
+)
+VIP = re.compile(r"^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(?:/\d+)?(?:\s|$)")
 
 # The engine's pattern (config.py) and the fixed names (accounts.py), held to
 # them by a test.
@@ -154,6 +158,23 @@ def answers(
     return "\n".join(lines) + "\n", cluster
 
 
+def cluster_vip() -> str | None:
+    """The cluster's VIP as keepalived has it: the first address of addresses.conf.
+
+    The node status reads it the same way. Step 4 refuses to put sshd on it.
+    """
+
+    try:
+        lines = KEEPALIVED_ADDRESSES.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        found = VIP.match(line.strip())
+        if found:
+            return found.group(1)
+    return None
+
+
 def carried_host_key(old: str) -> str | None:
     """The manager's ed25519 host key, as root's known_hosts holds it for `old`."""
 
@@ -201,6 +222,9 @@ def main(argv: list[str] | None = None) -> int:
         if manager is not None:
             host_key = carried_host_key(_values(conf)["MANAGER"])
         text, cluster = answers(conf, manager=manager, host_key=host_key)
+        vip = cluster_vip()
+        if vip is not None:
+            text += f'VIP_{cluster.replace("-", "_")}="{vip}"\n'
     except (Refused, UnicodeDecodeError) as refused:
         print(f"haprion-node-prepare: {refused}", file=sys.stderr)
         return 64

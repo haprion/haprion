@@ -13,11 +13,15 @@ The gaps are the list Fas 23 empties.
 from __future__ import annotations
 
 import ast
+import contextlib
+import importlib
+import io
 import tomllib
 import unittest
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from haprion_ui.app import create_app
 from tests.test_login import configuration
@@ -242,21 +246,25 @@ def _entry_points() -> dict[str, str]:
     return points
 
 
-def _sources(line: str) -> list[Path]:
-    """The module a command line runs, and the one its verb dispatches to, when there is one."""
+def _help(line: str) -> str:
+    """What the command says when asked for `--help`: run, not read from its source.
+
+    Nothing is called but the parser, so the command is not run against the
+    machine, and a command that does not know `--json` does not say it.
+    """
 
     words = line.split()
-    module = _entry_points()[words[0]].split(":")[0]
-    package, _, name = module.rpartition(".")
-    base = (
-        ROOT / ("src" if package.startswith("haprion.") else "ui/src") / package.replace(".", "/")
-    )
-    found = [base / f"{name}.py"]
-    if len(words) > 1 and not words[1].startswith("-"):
-        verb = base / f"{name}_{words[1]}.py"
-        if verb.exists():
-            found.append(verb)
-    return found
+    module, _, _ = _entry_points()[words[0]].partition(":")
+    shown = io.StringIO()
+    with (
+        contextlib.redirect_stdout(shown),
+        contextlib.redirect_stderr(shown),
+        mock.patch("subprocess.run", side_effect=AssertionError("a command was run")),
+        mock.patch("sys.stdin", io.StringIO()),
+        contextlib.suppress(SystemExit),
+    ):
+        importlib.import_module(module).main([*words[1:], "--help"])
+    return shown.getvalue()
 
 
 def _programs() -> set[str]:
@@ -308,13 +316,7 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         )
         self.assertEqual(missing, [])
         self.assertEqual(sorted({entry.line for entry in entries if entry.schema in READS}), [])
-        silent = sorted(
-            {
-                entry.line
-                for entry in entries
-                if not any("--json" in source.read_text() for source in _sources(entry.line))
-            }
-        )
+        silent = sorted({entry.line for entry in entries if "--json" not in _help(entry.line)})
         self.assertEqual(silent, [])
 
     def test_the_check_would_notice_a_new_route(self) -> None:

@@ -27,6 +27,7 @@ from haprion_ui import (
     settings_tool,
     tool_answer,
 )
+from tests.contract_schema import assert_contract
 
 
 def run(main: Any, argv: list[str]) -> tuple[int, str]:
@@ -39,16 +40,31 @@ def run(main: Any, argv: list[str]) -> tuple[int, str]:
 class TheRootToolsAnswer(unittest.TestCase):
     def test_not_as_root_is_the_contract_s_refusal(self) -> None:
         with mock.patch("os.geteuid", return_value=1000):
-            for main, argv, operation in (
-                (admin.main, ["apply", "accounts.yaml", "--json"], "user_apply"),
-                (settings_tool.main, ["apply", "settings.yaml", "--json"], "settings_apply"),
-                (profile_apply.main, ["apply", "profiles.yaml", "--json"], "profiles_apply"),
-                (profile_apply.main, ["remove", "dns", "cf-main", "--json"], "profiles_apply"),
+            for main, argv, operation, schema in (
+                (admin.main, ["apply", "accounts.yaml", "--json"], "user_apply", "user-apply"),
+                (
+                    settings_tool.main,
+                    ["apply", "settings.yaml", "--json"],
+                    "settings_apply",
+                    "settings-apply",
+                ),
+                (
+                    profile_apply.main,
+                    ["apply", "profiles.yaml", "--json"],
+                    "profiles_apply",
+                    "profiles-apply",
+                ),
+                (
+                    profile_apply.main,
+                    ["remove", "dns", "cf-main", "--json"],
+                    "profiles_apply",
+                    "profiles-apply",
+                ),
             ):
                 with self.subTest(operation=operation, argv=argv):
                     code, out = run(main, argv)
                     self.assertEqual(code, exit_codes.NOT_ROOT)
-                    answer = json.loads(out)
+                    answer = assert_contract(f"haprion-{schema}", out)
                     self.assertEqual((answer["operation"], answer["ok"]), (operation, False))
                     self.assertEqual(answer["error"]["code"], "not_root")
                     self.assertIn("sudo", answer["error"]["message"])

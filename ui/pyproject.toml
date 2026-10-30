@@ -65,6 +65,10 @@ dev = [
     # form posts included - rather than by calling the handlers directly.
     # Starlette 1.x reads httpx2 and warns on httpx (review 2026-10-20).
     "httpx2==2.13.1",
+    # Test-only: the root tools' answers are held to schemas/v1, as the
+    # engine's are (review 26-10-30, E11). The engine's dev group pins the same range.
+    "jsonschema>=4.23,<5",
+    "types-jsonschema==4.26.0.20260518",
     "mypy==2.3.1",
     #
     # Test-only, and a real browser. The interface ships four hand-written

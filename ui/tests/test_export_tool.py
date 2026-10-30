@@ -17,7 +17,7 @@ import os
 import stat
 import tempfile
 import unittest
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -32,8 +32,8 @@ from haprion_ui import (
     export_tool,
     profile_apply,
     settings_apply,
-    tool_answer,
 )
+from tests.contract_schema import assert_contract
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures/haprion-export/valid/done.json"
 
@@ -47,14 +47,6 @@ SETTINGS: dict[str, Any] = {
     "metrics": {"port": 8405, "sources": ["192.0.2.0/24"]},
     "peers": None,
 }
-
-
-def answered(write: Callable[[], int]) -> tuple[int, dict[str, Any]]:
-    """What a tool printed with `--json`, through the engine's envelope (4-9)."""
-
-    with contextlib.redirect_stdout(io.StringIO()) as out:
-        code = write()
-    return code, json.loads(out.getvalue())
 
 
 class Engine:
@@ -320,16 +312,32 @@ class TheClusterFilesApplyUnchanged(unittest.TestCase):
         self.assertEqual(reason, "the timer's calendar 'hourly' is not one the form can set")
 
 
-class TheAnswer(unittest.TestCase):
-    def test_it_has_the_shape_the_contract_holds(self) -> None:
-        fixture = json.loads(FIXTURE.read_text())
+class TheAnswer(Harness):
+    def test_the_real_answer_holds_the_contract_and_the_fixture_s_fields(self) -> None:
+        parsed = export_tool.build_parser().parse_args([str(self.target), "--json"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = export_tool.command_export(parsed, read=self.engine)
 
-        code, answer = answered(lambda: tool_answer.done(export_tool.OPERATION, fixture["result"]))
         self.assertEqual(code, 0)
-
-        self.assertEqual(set(answer), set(fixture))
-        self.assertEqual(answer["operation"], fixture["operation"])
+        answer = assert_contract("haprion-export", out.getvalue())
+        fixture = json.loads(FIXTURE.read_text())
         self.assertEqual(set(answer["result"]), set(fixture["result"]))
+        self.assertEqual(answer["result"]["clusters"], ["alpha", "beta"])
+        self.assertIn("settings.yaml", answer["result"]["files"])
+
+    def test_a_refusal_holds_the_contract_too(self) -> None:
+        self.engine.refuse = "haprion-objects"
+        parsed = export_tool.build_parser().parse_args([str(self.target), "--json"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = export_tool.command_export(parsed, read=self.engine)
+
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
+        self.assertEqual(
+            assert_contract("haprion-export", out.getvalue())["error"]["code"],
+            "dependency_unavailable",
+        )
 
 
 if __name__ == "__main__":

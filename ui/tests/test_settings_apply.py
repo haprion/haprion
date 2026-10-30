@@ -13,12 +13,10 @@ import io
 import json
 import tempfile
 import unittest
-from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 from unittest import mock
 
 from cryptography import x509
@@ -37,16 +35,9 @@ from haprion_ui import (
     tool_answer,
 )
 from haprion_ui.settings_apply import ApplyError, Outcome
+from tests.contract_schema import assert_contract
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures/haprion-settings-apply/valid/done.json"
-
-
-def answered(write: Callable[[], int]) -> tuple[int, dict[str, Any]]:
-    """What a tool printed with `--json`, through the engine's envelope (4-9)."""
-
-    with contextlib.redirect_stdout(io.StringIO()) as out:
-        code = write()
-    return code, json.loads(out.getvalue())
 
 
 class TheFile(unittest.TestCase):
@@ -280,7 +271,7 @@ class TheRunThatSavedAndStopped(unittest.TestCase):
             ):
                 code = settings_tool.main(["apply", str(path), "--json"])
 
-        answer = json.loads(out.getvalue())
+        answer = assert_contract("haprion-settings-apply", out.getvalue())
         self.assertEqual((code, answer["outcome"]), (69, "partial"))
         self.assertEqual(answer["result"]["status_access"]["added"], ["192.0.2.10/32"])
         self.assertIn("did not pass Verify", answer["warnings"][0]["message"])
@@ -299,15 +290,15 @@ class TheAnswer(unittest.TestCase):
                 "sessions_ended": 0,
             },
         )
-        code, answer = answered(
-            lambda: tool_answer.done(
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = tool_answer.done(
                 settings_apply.OPERATION, settings_apply.summary(outcome, check=False)
             )
-        )
         self.assertEqual(code, 0)
+        answer = assert_contract("haprion-settings-apply", out.getvalue())
         fixture = json.loads(FIXTURE.read_text())
 
-        self.assertEqual(set(answer), set(fixture))
         self.assertEqual(answer["result"], fixture["result"])
         self.assertEqual(answer["operation"], fixture["operation"])
 

@@ -983,6 +983,17 @@ class Cli(unittest.TestCase):
             64,
         )  # fmt: skip
 
+    def test_a_disk_error_is_said_as_the_helper_says_it(self) -> None:
+        errors = io.StringIO()
+        with mock.patch.object(
+            node_restore, "status", side_effect=OSError(28, "No space left on device")
+        ):
+            code = cli.main(
+                ["status", "--run", "r260101-0000aaaa"], error_stream=errors, require_root=False
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("the restore could not continue", errors.getvalue())
+
     def test_the_command_line_refuses_what_the_helper_refuses(self) -> None:
         # One check for both callers: a test address without its prefix is the
         # same mistake typed in a terminal or in the form.

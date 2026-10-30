@@ -221,6 +221,66 @@ class StateBackupTests(unittest.TestCase):
                 [kept, "node-a-before-upgrade.tar.gz"],
             )
 
+    def run_one(self, fetch: Any, root: Path, retention: int = 14) -> state_backup.NodeResult:
+        with mock.patch.object(state_backup, "_directory_is_private", return_value=True):
+            return state_backup._one_node(
+                self.node,
+                self.identity,
+                root,
+                "2026-09-21_05-00-00",
+                fetch=fetch,
+                validator=self.valid,
+                retention=retention,
+            )
+
+    def test_a_full_disk_is_not_an_invalid_archive(self) -> None:
+        def full(
+            node: Node, identity: DeployIdentity, destination: BinaryIO, *, timeout: float
+        ) -> state_backup.FetchResult:
+            raise OSError(28, "No space left on device")
+
+        with tempfile.TemporaryDirectory() as raw:
+            result = self.run_one(full, Path(raw))
+            self.assertEqual(list((Path(raw) / "node-a").iterdir()), [])
+
+        self.assertEqual(result.outcome, "failed")
+        self.assertEqual(result.error, "backup_storage_failed")
+        self.assertEqual(result.detail, "No space left on device")
+
+    def test_a_file_in_the_way_of_the_node_directory_is_a_storage_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "node-a").write_bytes(b"in the way")
+            result = self.run_one(self.fetch, Path(raw))
+
+        self.assertEqual(result.error, "backup_storage_failed")
+
+    def test_an_archive_already_saved_is_not_reported_as_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch.object(state_backup, "_retain", side_effect=OSError(5, "I/O error")):
+                result = self.run_one(self.fetch, Path(raw))
+            saved = (Path(raw) / "node-a" / "2026-09-21_05-00-00.tar.gz").is_file()
+
+        self.assertTrue(saved)
+        self.assertEqual(result.outcome, "done")
+        self.assertEqual(result.version, "2026-09-21_05-00-00")
+        self.assertEqual(result.error, "backup_retention_failed")
+
+    def test_a_lock_that_cannot_be_opened_is_a_refused_run(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "lockdir").write_bytes(b"a file where the directory should be")
+            with (
+                mock.patch.object(state_backup, "_key_is_private", return_value=True),
+                mock.patch.object(state_backup, "_root_is_private", return_value=True),
+                self.assertRaises(state_backup.BackupRunError),
+            ):
+                state_backup.run(
+                    "alpha",
+                    mock.Mock(nodes=(self.node,)),
+                    self.identity,
+                    Path(raw),
+                    lock_path=Path(raw) / "lockdir" / "lock",
+                )
+
     def test_a_failed_export_never_becomes_a_backup(self) -> None:
         def failed(
             node: Node, identity: DeployIdentity, destination: BinaryIO, *, timeout: float

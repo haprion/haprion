@@ -52,9 +52,11 @@ def _write(result: BackupResult, writer: TextIO) -> None:
     writer.write(f"=== {result.cluster}: {result.outcome} ===\n")
     for node in result.nodes:
         if node.outcome == "done":
-            writer.write(f"  {node.name}: {node.version}.tar.gz ({node.size_bytes} bytes)\n")
+            note = f" [{node.error}: {node.detail}]" if node.error else ""
+            writer.write(f"  {node.name}: {node.version}.tar.gz ({node.size_bytes} bytes){note}\n")
         else:
-            writer.write(f"  {node.name}: FAILED [{node.error}]\n")
+            detail = f": {node.detail}" if node.detail else ""
+            writer.write(f"  {node.name}: FAILED [{node.error}{detail}]\n")
 
 
 def main(

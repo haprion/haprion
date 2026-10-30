@@ -4,7 +4,7 @@ import io
 import json
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 from uuid import uuid4
 
@@ -89,6 +89,52 @@ class BackupJobHelperTests(unittest.TestCase):
         assert_contract("haprion-backup-run", json.dumps(document))
         self.assertEqual(document["outcome"], "partial")
         self.assertEqual([warning["node"] for warning in document["warnings"]], ["node-b"])
+
+    def test_a_saved_archive_with_a_prune_failure_is_done_with_a_warning(self) -> None:
+        report = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            (
+                NodeResult(
+                    "node-a",
+                    "done",
+                    "2026-09-21_05-00-00",
+                    4096,
+                    "backup_retention_failed",
+                    "I/O error",
+                ),
+            ),
+        )
+        document, code = backup_job_helper.run_document(
+            report, cluster="alpha", request_id=str(uuid4())
+        )
+
+        self.assertEqual(code, exit_codes.OK)
+        assert_contract("haprion-backup-run", json.dumps(document))
+        self.assertEqual(document["outcome"], "done")
+        (warning,) = cast(list[dict[str, str]], document["warnings"])
+        self.assertEqual(warning["code"], "backup_retention_failed")
+        self.assertIn("saved", warning["message"])
+
+    def test_a_storage_failure_says_the_disk_not_the_archive(self) -> None:
+        report = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            (
+                NodeResult("node-a", "done", "2026-09-21_05-00-00", 4096, None),
+                NodeResult(
+                    "node-b", "failed", None, None, "backup_storage_failed", "No space left"
+                ),
+            ),
+        )
+        document, _ = backup_job_helper.run_document(
+            report, cluster="alpha", request_id=str(uuid4())
+        )
+
+        (warning,) = cast(list[dict[str, str]], document["warnings"])
+        self.assertEqual(warning["code"], "backup_storage_failed")
+        self.assertIn("manager", warning["message"])
+        self.assertNotIn("valid state archive", warning["message"])
 
     def test_schedule_change_uses_only_the_bounded_schedule_and_switch(self) -> None:
         request_id = str(uuid4())

@@ -79,6 +79,11 @@ class NodeResult:
     version: str | None
     size_bytes: int | None
     error: str | None
+    #
+    # What the OS said, for the text that names `error`. Not part of the
+    # contract: the code is, and the code is all the envelope carries.
+    #
+    detail: str | None = None
 
     def as_dict(self) -> dict[str, str | int | None]:
         return {
@@ -209,7 +214,10 @@ def _one_node(
     timeout: float = FETCH_TIMEOUT_SECONDS,
 ) -> NodeResult:
     directory = root / node.name
-    directory.mkdir(mode=0o700, exist_ok=True)
+    try:
+        directory.mkdir(mode=0o700, exist_ok=True)
+    except OSError as exc:
+        return _storage_failed(node, exc)
     if not _directory_is_private(directory):
         return NodeResult(node.name, "failed", None, None, "backup_directory_insecure")
 
@@ -229,14 +237,36 @@ def _one_node(
         if facts.hostname != node.name:
             return NodeResult(node.name, "failed", None, None, "backup_node_mismatch")
         atomic_file.move(incoming, final)
-        _commit_latest(directory, final)
-        _retain(directory, retention, held)
-        return NodeResult(node.name, "done", version, facts.size_bytes, None)
-    except (OSError, ArchiveError):
+    except ArchiveError:
         return NodeResult(node.name, "failed", None, None, "backup_archive_invalid")
+    except OSError as exc:
+        return _storage_failed(node, exc)
     finally:
         with suppress(FileNotFoundError):
             incoming.unlink()
+    #
+    # From here the archive has its name and is a backup. A link or a prune
+    # that fails is said beside it, not instead of it.
+    #
+    try:
+        _commit_latest(directory, final)
+        _retain(directory, retention, held)
+    except OSError as exc:
+        return NodeResult(
+            node.name,
+            "done",
+            version,
+            facts.size_bytes,
+            "backup_retention_failed",
+            exc.strerror or str(exc),
+        )
+    return NodeResult(node.name, "done", version, facts.size_bytes, None)
+
+
+def _storage_failed(node: Node, exc: OSError) -> NodeResult:
+    return NodeResult(
+        node.name, "failed", None, None, "backup_storage_failed", exc.strerror or str(exc)
+    )
 
 
 def run(
@@ -277,8 +307,12 @@ def run(
     taken = now or datetime.now(UTC)
     version = taken.astimezone().strftime("%Y-%m-%d_%H-%M-%S")
     deadline = clock() + budget
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+b") as lock:
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = lock_path.open("a+b")
+    except OSError as exc:
+        raise BackupRunError(f"the backup lock cannot be opened: {exc.strerror or exc}") from exc
+    with lock_file as lock:
         _lock_within(lock.fileno(), min(deadline, clock() + LOCK_WAIT_SECONDS), clock, wait)
         #
         # Runs past their hour first, as a restore step would: nothing else

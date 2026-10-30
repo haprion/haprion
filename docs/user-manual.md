@@ -5181,6 +5181,10 @@ node in exactly one configured cluster.
   to finish; if it cannot start, it answers `backup_busy` and takes nothing. It gives each node up to five
   minutes. A node it had no time left for is reported as `backup_budget_exhausted`, and the archives it did
   take are kept.
+- **When the manager cannot store an archive.** A full or unwritable backup volume is reported per node as
+  `backup_storage_failed`, with what the system said; it does not mean the node's archive was bad. If the
+  archive was saved but the "latest" link or the pruning of old ones then failed, the node counts as done
+  and carries a `backup_retention_failed` warning.
 
 The ordinary listing and the *Node backups* page show every archive kept for each node, and name the node
 it came from. Archives are not interchangeable between nodes: hostnames, network settings and SSH

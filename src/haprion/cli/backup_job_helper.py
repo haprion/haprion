@@ -67,12 +67,21 @@ def build_schedule_request(
     return _document(SCHEDULE, cluster, request_id, {**schedule.as_dict(), "enabled": enabled})
 
 
+def _node_message(node: state_backup.NodeResult) -> str:
+    detail = f": {node.detail}" if node.detail else ""
+    if node.error == "backup_storage_failed":
+        return f"The archive could not be written on the manager{detail}"
+    if node.error == "backup_retention_failed":
+        return f"The archive was saved, but the old ones could not be pruned{detail}"
+    return "The node did not produce a valid state archive"
+
+
 def run_document(
     report: state_backup.BackupResult, *, cluster: str, request_id: str
 ) -> tuple[dict[str, object], int]:
     """One backup run as its envelope and exit code: the helper's, and `haprion-state-backup --json`'s."""
 
-    failed = tuple(node for node in report.nodes if node.outcome != "done")
+    flagged = tuple(node for node in report.nodes if node.error)
     error = (
         Message(code="backup_failed", message="No node produced a valid state archive")
         if report.outcome == "failed"
@@ -81,10 +90,10 @@ def run_document(
     warnings = tuple(
         Message(
             code=node.error or "backup_failed",
-            message="The node did not produce a valid state archive",
+            message=_node_message(node),
             node=node.name,
         )
-        for node in failed
+        for node in flagged
     )
     return (
         envelope(
@@ -93,7 +102,7 @@ def run_document(
             cluster=cluster,
             request_id=request_id,
             result=report.as_dict(),
-            warnings=warnings if report.outcome == "partial" else (),
+            warnings=warnings if report.outcome != "failed" else (),
             error=error,
         ),
         exit_codes.for_outcome(report.outcome),

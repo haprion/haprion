@@ -431,6 +431,9 @@ def _step(
     except (RestoreError, ArchiveError) as exc:
         errors.write(f"ERROR: {exc}\n")
         return 1
+    except OSError as exc:
+        errors.write(f"ERROR: the restore could not continue: {exc}\n")
+        return 1
 
 
 if __name__ == "__main__":

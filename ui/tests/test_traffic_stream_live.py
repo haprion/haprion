@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from haprion.config import Vip
-from haprion.generate import TRAFFIC_LOG_SOCKET, generate
+from haprion.generate import generate
 from haprion.proxy_model import load_proxy
 from haprion.traffic_collector import _database_row
 
@@ -41,6 +41,8 @@ ENABLE = ROOT / "install" / "node" / "haprion-traffic-log-enable"
 NODE_PREPARE = ROOT / "install" / "04-node-prepare"
 HOSTNAME = "shop.example.com"
 NODE_LOG_ROOT = "/var/log/haprion/"
+# The chroot-relative socket the generator logs the structured stream to.
+TRAFFIC_LOG_SOCKET = "/dev/haprion-traffic"
 _PR_SET_PDEATHSIG = 1
 
 OBJECT = """

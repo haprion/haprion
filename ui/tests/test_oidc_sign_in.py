@@ -17,6 +17,7 @@ from typing import Any
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
+import psycopg
 from fastapi.testclient import TestClient
 
 from haprion_ui import auth, db, oidc_web
@@ -238,6 +239,20 @@ class SigningInThroughTheProvider(LoginTestCase):
         again = self.back(client, state)
         self.assertEqual(again.status_code, 401)
         self.assertIn("expired or was already used", again.text)
+
+    def test_a_state_with_a_nul_is_an_expired_sign_in(self) -> None:
+        """Review 26-10-30, E4: PostgreSQL text holds no NUL, and it was a 500."""
+
+        client = self.client()
+        client.get("/login")
+        with mock.patch(
+            "haprion_ui.db.use_oidc_login",
+            side_effect=psycopg.errors.DataError("PostgreSQL text fields cannot contain NUL"),
+        ) as used:
+            response = self.back(client, "stat\x00e")
+        used.assert_not_called()
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("expired or was already used", response.text)
 
     def test_the_provider_s_no_is_its_own_sentence(self) -> None:
         client = self.client()

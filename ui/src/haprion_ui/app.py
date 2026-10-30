@@ -157,6 +157,21 @@ def create_app(config: Config | None = None) -> FastAPI:
         return refusals.database_unavailable(request, exc)
 
     #
+    # A value PostgreSQL cannot hold - a NUL in text - is a refused form, not a
+    # bare 500 with a traceback in the journal (review 26-10-30, E4). Routes that
+    # know their field refuse it themselves; this is for the next one that does not.
+    #
+    @app.exception_handler(psycopg.DataError)
+    async def unstorable_values(request: Request, exc: psycopg.DataError) -> Response:
+        return await run_in_threadpool(
+            refusals.refusal_page,
+            request,
+            settings,
+            "A value could not be stored. Nothing was saved; go back to correct it.",
+            back=request.url.path,
+        )
+
+    #
     # A job or a draft refused because of another is one page wherever it is
     # met, and a page that is not there is a page too, for somebody signed in
     # (review 26-10-24, 07-02). Each route used to say it its own way.

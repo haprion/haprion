@@ -93,6 +93,14 @@ def build_router(config: Config) -> APIRouter:
             #
             return login_again(request, config)
 
+        #
+        # PostgreSQL text holds no NUL: a name with one is no account, answered
+        # as a wrong password is and never sent to the database (review
+        # 26-10-30, E4).
+        #
+        if "\x00" in username:
+            return login_again(request, config, error=SIGN_IN_FAILED)
+
         address = client_address(request)
         with request.app.state.pool.connection() as connection:
             throttled = sign_in_throttled(connection, config, username=username, address=address)
@@ -353,7 +361,12 @@ def build_router(config: Config) -> APIRouter:
         code = request.query_params.get("code", "")[:4096]
         address = client_address(request)
         with request.app.state.pool.connection() as connection:
-            pending = db.use_oidc_login(connection, state=state) if state else None
+            # A state with a NUL is no state we issued, and the database refuses the text.
+            pending = (
+                db.use_oidc_login(connection, state=state)
+                if state and "\x00" not in state
+                else None
+            )
             connection.commit()
         if pending is None:
             return login_again(

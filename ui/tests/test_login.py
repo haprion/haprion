@@ -21,6 +21,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID
 
+import psycopg
 from fastapi.testclient import TestClient
 
 from haprion_ui import attention, auth, db, metrics
@@ -747,6 +748,32 @@ class RefusingToSignIn(LoginTestCase):
         self.assertNotIn(auth.SESSION_COOKIE, client.cookies)
         self.assertEqual(self.attempts[-1][2], False)
         self.assertIn("login_failed", self.audit)
+
+    def test_a_name_with_a_nul_is_a_wrong_password_and_never_reaches_the_database(self) -> None:
+        """Review 26-10-30, E4: PostgreSQL text holds no NUL, and it was a 500."""
+
+        def refuse_nul(_c: object, *, username: str, **_: object) -> bool:
+            if "\x00" in username:
+                raise psycopg.errors.DataError("PostgreSQL text fields cannot contain NUL")
+            return False
+
+        with mock.patch("haprion_ui.db.login_locked", side_effect=refuse_nul):
+            client = self.client()
+            response = self.sign_in(client, username="oper\x00ator")
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("Sign-in failed", response.text)
+        self.assertEqual(self.attempts, [])
+
+    def test_a_value_the_database_cannot_hold_is_a_refused_page_not_a_500(self) -> None:
+        client = self.client()
+        self.assertEqual(self.sign_in(client).status_code, 303)
+        with mock.patch(
+            "haprion_ui.db.cluster_statuses",
+            side_effect=psycopg.errors.DataError("cannot contain NUL"),
+        ):
+            response = client.get("/")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Nothing was saved", response.text)
 
     def test_the_attempt_is_counted_before_the_password_is_hashed(self) -> None:
         """Review 26-10-22, 3-3: counted after the hash, every attempt sent at once read

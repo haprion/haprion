@@ -205,10 +205,16 @@ def _with_forward_waiting(
     """
 
     nodes = result.get("nodes")
-    if not isinstance(nodes, list):
-        return result
     before: dict[str, Mapping[str, Any]] = {}
     queued_before: dict[str, dict[str, Any]] = {}
+    if isinstance(previous, Mapping):
+        carried_over = previous.get("forward_waiting_carried")
+        if isinstance(carried_over, Mapping):
+            before = {
+                str(name): since
+                for name, since in carried_over.items()
+                if isinstance(since, Mapping)
+            }
     if isinstance(previous, Mapping) and isinstance(previous.get("nodes"), list):
         for node in previous["nodes"]:
             if not isinstance(node, Mapping):
@@ -219,12 +225,26 @@ def _with_forward_waiting(
                 str(receiver.get("name")): receiver.get("queued")
                 for receiver in _forward_receivers(node)
             }
+    #
+    # A failed reading, which has no node list, keeps the waiting under
+    # `forward_waiting_carried` until a reading that has one.
+    #
+    # A reading with no node list (it failed) and a node that said nothing know
+    # nothing of the receivers, and so of nothing being reached: the waiting
+    # goes on from the earlier reading instead of starting again from now
+    # (review 2026-10-30, E6).
+    #
+    if not isinstance(nodes, list):
+        return {**result, "forward_waiting_carried": before} if before else result
     carried: list[Any] = []
     for node in nodes:
         if not isinstance(node, Mapping):
             carried.append(node)
             continue
         earlier = before.get(str(node.get("name")), {})
+        if not node.get("status_ok") or not isinstance(node.get("status"), Mapping):
+            carried.append({**node, "forward_waiting_since": dict(earlier)} if earlier else node)
+            continue
         sizes = queued_before.get(str(node.get("name")), {})
         waiting: dict[str, str] = {}
         for receiver in _forward_receivers(node):

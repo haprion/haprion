@@ -659,6 +659,46 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
         self.assertEqual(since(3, 3), {"graylog": earlier.isoformat()})
         self.assertEqual(since(4, 3), {"graylog": earlier.isoformat()})
 
+    def test_a_node_that_said_nothing_keeps_the_waiting_it_had(self) -> None:
+        """Review 2026-10-30, E6: one missed reading does not start the time again."""
+
+        from haprion_ui.db import _with_forward_waiting
+
+        earlier = self.NOW - timedelta(minutes=7)
+        silent = {
+            "nodes": [{"name": "node-a", "reachable": False, "status_ok": False, "status": None}]
+        }
+        previous = {
+            "nodes": [{"name": "node-a", "forward_waiting_since": {"graylog": earlier.isoformat()}}]
+        }
+        middle = _with_forward_waiting(silent, previous, self.NOW)
+        self.assertEqual(
+            middle["nodes"][0]["forward_waiting_since"], {"graylog": earlier.isoformat()}
+        )
+        again = self.reading(3, earlier)
+        self.assertEqual(
+            again["nodes"][0]["forward_waiting_since"], {"graylog": earlier.isoformat()}
+        )
+
+    def test_a_reading_that_failed_carries_the_waiting_to_the_next(self) -> None:
+        from haprion_ui.db import _with_forward_waiting
+
+        earlier = self.NOW - timedelta(minutes=7)
+        previous = {
+            "nodes": [{"name": "node-a", "forward_waiting_since": {"graylog": earlier.isoformat()}}]
+        }
+        failed = _with_forward_waiting({}, previous, self.NOW)
+        node = {
+            "name": "node-a",
+            "status_ok": True,
+            "status": {"log_forwarding": {"receivers": [{"name": "graylog", "queued": 3}]}},
+        }
+        after = _with_forward_waiting({"nodes": [node]}, failed, self.NOW)
+        self.assertEqual(
+            after["nodes"][0]["forward_waiting_since"], {"graylog": earlier.isoformat()}
+        )
+        self.assertEqual(_with_forward_waiting({}, None, self.NOW), {})
+
     def test_three_minutes_without_emptying_is_listed(self) -> None:
         self.assertEqual(self.items(self.reading(3, self.NOW - timedelta(minutes=2))), [])
         listed = self.items(self.reading(3, self.NOW - timedelta(minutes=7)))

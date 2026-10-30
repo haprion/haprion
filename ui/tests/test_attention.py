@@ -1170,10 +1170,10 @@ class ADatabaseJobThatFailed(unittest.TestCase):
         self.assertEqual(
             (item.kind, item.severity, item.subject), ("manager", "critical", "Database dump")
         )
-        self.assertEqual(item.message, "failed; run sudo haprion-backup dump")
+        self.assertEqual(item.message, "failed; run sudo systemctl start haprion-backup.service")
         [check] = attention.from_database_jobs({"dump": None, "restore_check": failed})
         self.assertEqual(check.subject, "Restore check")
-        self.assertIn("verify-restore", check.message)
+        self.assertIn("systemctl start haprion-restore-check.service", check.message)
         self.assertEqual(attention.from_database_jobs({"dump": None, "restore_check": None}), [])
         self.assertEqual(attention.from_database_jobs(None), [])
 

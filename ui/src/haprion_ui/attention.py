@@ -572,14 +572,15 @@ def from_backups(clusters: Iterable[Any]) -> list[Item]:
 
 
 DATABASE_JOBS = (
-    ("dump", "Database dump", "sudo haprion-backup dump"),
-    ("restore_check", "Restore check", "sudo haprion-backup verify-restore"),
+    ("dump", "Database dump", "sudo systemctl start haprion-backup.service"),
+    ("restore_check", "Restore check", "sudo systemctl start haprion-restore-check.service"),
 )
 
 
 def from_database_jobs(jobs: Mapping[str, Any] | None) -> list[Item]:
     """A database dump or restore check whose last run failed (B400); nothing for one that is
-    not installed or has not failed. The row's text is the command to run."""
+    not installed or has not failed. The row's text is the command to run: starting the
+    unit, because the row reads the unit's last result, which only a run of the unit changes."""
 
     items: list[Item] = []
     for name, subject, command in DATABASE_JOBS:

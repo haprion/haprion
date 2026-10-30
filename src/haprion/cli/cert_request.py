@@ -172,7 +172,7 @@ def main(
     try:
         formats = cert_job.format_flags(args.format, args.receiver)
     except HelperProtocolError as exc:
-        return refuse("bad_input", str(exc), exit_codes.REFUSED)
+        return refuse("bad_input", str(exc), exit_codes.USAGE)
     try:
         doc, exit_code = request(
             certificate_id=args.id,

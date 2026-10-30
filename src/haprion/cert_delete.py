@@ -587,7 +587,7 @@ def delete(
     require_secure: bool = True,
     renewal_directory: Path = Path("/etc/letsencrypt/renewal"),
     store: Path = IMPORT_STORE,
-    certbot: str = "/usr/bin/certbot",
+    certbot: str,
     lock_path: Path = DEFAULT_LOCK_PATH,
     lineage_remover: LineageRemover = run_certbot,
     node_remover: NodeRemover = ask_node,

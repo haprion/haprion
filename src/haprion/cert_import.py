@@ -513,7 +513,11 @@ def assemble(certificates: Sequence[str], keys: Sequence[str]) -> Material:
         raise ImportError_(
             "key_mismatch", "the private key does not belong to any of the certificates"
         )
-    leaf = leaves[0]
+    #
+    # A file may carry an old and a renewed certificate for the one key (a PFX
+    # exported with both): the one that runs longest is the one to serve.
+    #
+    leaf = max(leaves, key=lambda candidate: describe(candidate).not_after)
     others = [c for c in certificates if c != leaf]
     named = {c: _names(c) for c in others}
     chain: list[str] = []

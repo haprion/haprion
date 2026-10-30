@@ -233,6 +233,19 @@ class ReadingTheMaterial(ImportFixture):
             self.pki.leaf.read_text(),
         )
 
+    def test_two_certificates_for_one_key_serve_the_one_that_runs_longest(self) -> None:
+        key = self.pki.leaf_key
+        older = openssl(
+            "req", "-x509", "-new", "-key", str(key), "-days", "10", "-subj", "/CN=shop.example"
+        )
+        newer = openssl(
+            "req", "-x509", "-new", "-key", str(key), "-days", "400", "-subj", "/CN=shop.example"
+        )
+        for certificates in ([older, newer], [newer, older]):
+            with self.subTest(first=certificates[0] == older):
+                material = assemble(certificates, [key.read_text()])
+                self.assertEqual(material.leaf, newer)
+
     def test_an_encrypted_key_is_refused(self) -> None:
         encrypted = openssl("pkey", "-in", str(self.pki.leaf_key), "-aes256", "-passout", "pass:x")
         with self.assertRaises(ImportError_) as refused:

@@ -415,6 +415,7 @@ class TheRoundTrip(RequestFixture):
             require_secure=False,
             renewal_directory=self.root / "renewal",
             store=self.store,
+            certbot="/usr/bin/certbot",
             lock_path=self.lock,
             lineage_remover=lambda arguments: (0, ""),
             node_remover=lambda identity, host, verb, certificate_id: (0, ""),
@@ -565,6 +566,12 @@ class TheHelperAndTheCommand(RequestFixture):
         self.assertEqual(code, 0, errors)
         document = assert_contract("haprion-cert-request", output)
         self.assertEqual(document["result"]["key_type"], "rsa-2048")
+
+    def test_a_malformed_format_is_a_usage_error_as_in_the_other_commands(self) -> None:
+        code, _, errors = self.run_cli(
+            "--id", "a.example", "--domain", "a.example", "--receiver", "lb-01", "--format", "x"
+        )
+        self.assertEqual(code, 64, errors)
 
     def test_the_command_refuses_in_the_envelope_shape(self) -> None:
         code, output, errors = self.run_cli(

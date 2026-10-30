@@ -200,8 +200,11 @@ def main() -> int:
         )
         return 75
     #
-    # Used: the key goes, and with it the only way in this account had.
+    # Joined: the mark says so for good (the key goes next, and a new one may
+    # come with --again). Then the key goes, and with it the only way in this
+    # account had.
     #
+    (JOIN_DIR / "joined").touch(mode=0o600)
     JOIN_KEYS.write_text("")
     for leftover in (JOIN_DIR / "join_key", JOIN_DIR / "join_key.pub"):
         leftover.unlink(missing_ok=True)

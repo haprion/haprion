@@ -256,7 +256,8 @@ A node accepts the manager's keys only from the manager's address. If the manage
 A rotated manager key, or one added after the join, reaches a joined node only by hand: on the node,
 `sudo haprion-node-prepare --key <purpose>="<public key>"`, where the purpose is `deploy`, `cert_deploy`,
 `server_state`, `status`, `probe`, `backup` or `traffic_log`. It replaces that one key with the binding the
-join gives it, leaves the others, and refuses a node that has not joined.
+join gives it, leaves the others, and refuses a node that has not joined: one a manager joined, or one prepared
+by hand with step 4, counts as joined.
 
 ## 4. Sign in
 

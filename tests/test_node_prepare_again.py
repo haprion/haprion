@@ -229,6 +229,11 @@ class TheKeyOption(CommandFixture):
     KEY = "ssh-ed25519 " + "A" * 68
     OTHER = "ssh-ed25519 " + "B" * 68
 
+    def setUp(self) -> None:
+        super().setUp()
+        self.state.mkdir()
+        (self.state / "joined").touch()
+
     def test_a_key_is_an_answer_of_step_four_with_the_node_s_own_answers(self) -> None:
         seen = self.step(0)
         self.assertEqual(PREPARE.main(["--key", f"status={self.KEY}"]), 0)
@@ -289,9 +294,15 @@ class TheKeyOption(CommandFixture):
                 self.refused(f"status={bad}", "not one ssh-ed25519 public key")
 
     def test_a_node_that_has_not_joined_is_refused(self) -> None:
-        self.state.mkdir()
-        (self.state / "join_key").write_text("private")
+        (self.state / "joined").unlink()
         self.refused(f"status={self.KEY}", "has not joined")
+
+    def test_a_new_one_time_key_does_not_undo_the_join(self) -> None:
+        """Review 26-10-30, R2: after --again the node still has the old manager's keys."""
+
+        (self.state / "join_key").write_text("private")
+        self.step(0)
+        self.assertEqual(PREPARE.main(["--key", f"status={self.KEY}"]), 0)
 
     def test_a_node_never_prepared_is_refused(self) -> None:
         self.node_conf.unlink()

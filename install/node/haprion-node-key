@@ -34,6 +34,7 @@ load_answers ""
 NODE_CONF="${NODE_CONF:-/etc/haprion/node.conf}"
 JOIN_DIR="${JOIN_DIR:-/var/lib/haprion-node}"
 JOIN_KEY="${JOIN_DIR}/join_key"
+JOIN_MARK="${JOIN_DIR}/joined"
 JOIN_KEYS="${JOIN_KEYS:-/home/${JOIN_USER}/.ssh/authorized_keys}"
 JOIN_SUDOERS="${JOIN_SUDOERS:-/etc/sudoers.d/haprion-node-join}"
 HOST_KEY_FILE="${HOST_KEY_FILE:-/etc/ssh/ssh_host_ed25519_key.pub}"
@@ -75,19 +76,20 @@ join_key_current() {
 }
 
 #
-# Joined is what a join leaves: node.conf, and no one-time key (the join
-# removes it when step 4 has finished). Step 4 writes node.conf early, so a
-# node whose preparation stopped later has node.conf and its key still - and
-# no manager. With the key still valid its block is the one to print again;
-# with it used up or expired, a new key is the way on (review 26-10-30, E8).
+# Joined is what the join leaves (and step 4 run by hand with the manager's
+# keys): node.conf and the "joined" mark. Step 4 writes node.conf early, so a
+# node whose preparation stopped later has node.conf and no mark - and no
+# manager. With a one-time key still valid its block is the one to print
+# again, also on a node that joined before; with the key used up or expired
+# and no mark, a new key is the way on (review 26-10-30, E8 and R2).
 #
 node_state() {
     if [[ ! -f "$NODE_CONF" || "$MODE" == --again ]]; then
         echo fresh
-    elif [[ ! -f "$JOIN_KEY" ]]; then
-        echo joined
     elif join_key_current; then
         echo fresh
+    elif [[ -f "$JOIN_MARK" ]]; then
+        echo joined
     else
         echo unfinished
     fi

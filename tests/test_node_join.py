@@ -212,6 +212,7 @@ class TheKeyScriptSaysWhatIsTrue(unittest.TestCase):
         )
         self.conf = self.root / "node.conf"
         self.key = self.root / "join_key"
+        self.mark = self.root / "joined"
         self.keys = self.root / "authorized_keys"
         self.bin = self.root / "bin"
         self.bin.mkdir()
@@ -225,6 +226,7 @@ class TheKeyScriptSaysWhatIsTrue(unittest.TestCase):
                 "NODE_CONF": str(self.conf),
                 "JOIN_KEY": str(self.key),
                 "JOIN_KEYS": str(self.keys),
+                "JOIN_MARK": str(self.mark),
                 "MODE": "",
                 **env,
             },
@@ -242,12 +244,24 @@ class TheKeyScriptSaysWhatIsTrue(unittest.TestCase):
         )
         fake.chmod(0o755)
 
-    def test_a_node_with_a_conf_and_no_key_is_joined(self) -> None:
+    def test_a_node_with_a_conf_and_the_joined_mark_is_joined(self) -> None:
         self.conf.write_text('CLUSTER="alpha"\n')
+        self.mark.touch()
         self.assertEqual(self.run_function("node_state").stdout.strip(), "joined")
 
-    def test_a_node_with_a_conf_and_a_key_that_is_gone_stale_is_not(self) -> None:
+    def test_the_mark_outlives_a_one_time_key_that_has_gone_stale(self) -> None:
+        """Review 26-10-30, R2: a node prepared by hand keeps the key its package made."""
+
         self.conf.write_text('CLUSTER="alpha"\n')
+        self.mark.touch()
+        self.key.write_text("private")
+        self.key.with_suffix(".pub").write_text("ssh-ed25519 AAAA x")
+        self.keys.write_text("")
+        self.assertEqual(self.run_function("node_state").stdout.strip(), "joined")
+
+    def test_a_node_with_a_conf_and_no_mark_is_unfinished(self) -> None:
+        self.conf.write_text('CLUSTER="alpha"\n')
+        self.assertEqual(self.run_function("node_state").stdout.strip(), "unfinished")
         self.key.write_text("private")
         self.key.with_suffix(".pub").write_text("ssh-ed25519 AAAA x")
         self.keys.write_text("")
@@ -307,6 +321,38 @@ class TheArrivalAddress(unittest.TestCase):
                 JOIN.arrival_address()
 
 
+class TheHandPreparedNodeIsMarkedJoined(unittest.TestCase):
+    """Review 26-10-30, R2: step 4 by hand leaves the mark the join leaves."""
+
+    STEP = BASE / "install" / "04-node-prepare"
+
+    def test_the_mark_is_a_private_file_in_the_join_directory(self) -> None:
+        import re
+
+        text = self.STEP.read_text()
+        found = re.search(r"^mark_joined\(\) \{\n.*?^\}\n", text, re.MULTILINE | re.DOTALL)
+        assert found is not None, "04-node-prepare has no mark_joined"
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw) / "lib"
+            done = subprocess.run(  # the function from the script under test
+                ["/bin/bash", "-c", f"set -Eeuo pipefail\n{found.group(0)}mark_joined"],
+                env={**os.environ, "JOIN_DIR": str(directory)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(oct((directory / "joined").stat().st_mode & 0o777), "0o600")
+            self.assertEqual(oct(directory.stat().st_mode & 0o777), "0o700")
+
+    def test_only_the_hand_branch_runs_it(self) -> None:
+        text = self.STEP.read_text()
+        call = text.index("\nmark_joined\n")
+        self.assertGreater(call, text.index('PREPARED_AGAIN:-}" == yes ]]; then\n    echo'))
+        self.assertGreater(call, text.index('step "Enrollment block"'))
+        self.assertLess(call, text.index('log "This node is prepared."'))
+
+
 class TheJoin(unittest.TestCase):
     """main() with a step 4 and a status that are stand-ins, as root."""
 
@@ -360,6 +406,7 @@ class TheJoin(unittest.TestCase):
         self.assertEqual(json.loads(out), {"node": "node-a"})
         self.assertEqual(self.keys.read_text(), "")
         self.assertFalse((self.join_dir / "join_key").exists())
+        self.assertTrue((self.join_dir / "joined").is_file())
         self.assertEqual(oct((self.join_dir / "join.env").stat().st_mode & 0o777), "0o600")
         log = (self.root / "log" / "join.log").read_text()
         self.assertIn(f"step 4 {self.join_dir / 'join.env'} edge-a", log)
@@ -371,6 +418,7 @@ class TheJoin(unittest.TestCase):
         self.assertIn("preparing this node stopped (exit 3)", err)
         self.assertIn("haprion-node-join", self.keys.read_text())
         self.assertTrue((self.join_dir / "join_key").exists())
+        self.assertFalse((self.join_dir / "joined").exists())
 
 
 if __name__ == "__main__":

@@ -263,9 +263,9 @@ def main(argv: list[str] | None = None) -> int:
         return 64
     try:
         replacement = None if new_key is None else manager_key(new_key)
-        if replacement is not None and (STATE_DIR / "join_key").exists():
+        if replacement is not None and not (STATE_DIR / "joined").exists():
             raise Refused(
-                "this node has not joined a manager (its one-time key is still here); join it"
+                "this node has not joined a manager; join it"
                 " with its block, or make a new one with  sudo haprion-node-key --again"
             )
         conf = NODE_CONF.read_text(encoding="utf-8")

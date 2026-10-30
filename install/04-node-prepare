@@ -908,6 +908,18 @@ print("haproxy-node-v1:" + encoded.decode())
 PY
 )"
 
+#
+# Prepared by hand, with the manager's keys in the answers: this node is as
+# joined as one a manager joined, and says so the same way (review 26-10-30,
+# R2).
+#
+mark_joined() {
+    local directory="${JOIN_DIR:-/var/lib/haprion-node}"
+    install -d -m 700 "$directory"
+    install -m 600 /dev/null "${directory}/joined"
+}
+mark_joined
+
 echo
 log "This node is prepared."
 

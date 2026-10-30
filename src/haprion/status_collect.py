@@ -465,6 +465,20 @@ def _said(stderr: str) -> str:
     return joined if len(joined) <= STDERR_DETAIL_CHARS else joined[:STDERR_DETAIL_CHARS] + " […]"
 
 
+def _headline(said: str) -> str:
+    """The line of what a command said that names the trouble.
+
+    The first line, except for a Python traceback, whose first line is always
+    "Traceback (most recent call last):" and whose last is the exception.
+    """
+
+    lines = said.splitlines()
+    if not lines:
+        return ""
+    line = lines[-1] if lines[0].startswith("Traceback") else lines[0]
+    return line[:STDERR_LINE_CHARS]
+
+
 def _node_result(
     node: Node, response: NodeResponse, target: ReleaseTarget | None
 ) -> tuple[dict[str, Any], Message | None]:
@@ -491,7 +505,7 @@ def _node_result(
         entry["error"] = {
             "code": "node_status_invalid",
             "message": f"the status command failed on the node (exit {response.exit_code})"
-            + (f": {said.splitlines()[0][:STDERR_LINE_CHARS]}" if said else ""),
+            + (f": {_headline(said)}" if said else ""),
             "node": node.name,
             "details": {"exit_code": response.exit_code, **({"stderr": said} if said else {})},
         }

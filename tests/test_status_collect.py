@@ -410,6 +410,23 @@ class AStatusReadIsBounded(unittest.TestCase):
         self.assertIn("run 04-node-prepare", entry["error"]["details"]["stderr"])
         self.assertEqual(entry["error"]["details"]["exit_code"], 1)
 
+    def test_a_crash_is_shown_by_its_exception_not_by_the_traceback_line(self) -> None:
+        """Review 26-10-30, R3: the first line of a traceback says nothing."""
+
+        crash = NodeResponse(
+            exit_code=1,
+            stdout="",
+            stderr=(
+                "Traceback (most recent call last):\n"
+                '  File "/usr/sbin/haprion-node-status", line 2100, in <module>\n'
+                "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 3\n"
+            ),
+        )
+        entry = collect(NODES[:1], lambda _node: crash, target=None).result["nodes"][0]
+        message = entry["error"]["message"]
+        self.assertIn("UnicodeDecodeError", message)
+        self.assertNotIn("Traceback", message)
+
     def test_what_a_failed_command_said_is_bounded(self) -> None:
         noisy = NodeResponse(exit_code=2, stdout="", stderr="x" * 100_000)
         entry = collect(NODES[:1], lambda _node: noisy, target=None).result["nodes"][0]

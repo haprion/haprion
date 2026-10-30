@@ -765,6 +765,9 @@ def _address(value: Any, location: str) -> str:
         raise ConfigError(f"{location} must be an IP address") from exc
 
 
+_THIS_NETWORK = ipaddress.IPv4Network("0.0.0.0/8")
+
+
 def served_address_problem(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
     """Why this address cannot be one the cluster serves on or connects out from, or "".
 
@@ -775,7 +778,11 @@ def served_address_problem(address: ipaddress.IPv4Address | ipaddress.IPv6Addres
     network at all (code review 2026-10-30 again, R9).
     """
 
-    if address.is_unspecified:
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return f"is an IPv4 address written as IPv6; write it as {address.ipv4_mapped}"
+    if address.is_unspecified or (
+        isinstance(address, ipaddress.IPv4Address) and address in _THIS_NETWORK
+    ):
         return "is every address of the node, not one"
     if address.is_loopback:
         return "is a loopback address"

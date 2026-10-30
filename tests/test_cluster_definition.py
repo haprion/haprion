@@ -559,7 +559,7 @@ class CreatingACluster(unittest.TestCase):
         """Code review 26-10-30 again, R9: not every address, loopback or multicast."""
 
         every = "0.0.0.0"  # noqa: S104 - the address refused, not one bound
-        for vip in (every, "127.0.0.1", MULTICAST, LINK_LOCAL):
+        for vip in (every, "127.0.0.1", MULTICAST, LINK_LOCAL, "::ffff:192.0.2.10"):
             with self.subTest(vip), self.assertRaises(EnrollmentError) as caught:
                 cluster_definition.check_name("alpha", display_name="Alpha", vip=vip)
             self.assertEqual(caught.exception.code, "cluster_invalid")

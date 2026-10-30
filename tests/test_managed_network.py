@@ -111,6 +111,7 @@ MULTICAST = str(ipaddress.IPv4Address(0xE0000001))
 LINK_LOCAL = str(ipaddress.IPv4Address(0xA9FE0101))
 BROADCAST = str(ipaddress.IPv4Address(0xFFFFFFFF))
 RESERVED = str(ipaddress.IPv4Address(0xF0000001))
+THIS_NETWORK = str(ipaddress.IPv4Address(0x00010203))
 
 
 class AVipIsOneAddressOnTheNetwork(unittest.TestCase):
@@ -128,6 +129,7 @@ class AVipIsOneAddressOnTheNetwork(unittest.TestCase):
             "fe80::1",
             BROADCAST,
             RESERVED,
+            THIS_NETWORK,
         ):
             for document in (
                 f"vips:\n  main:\n    address: '{address}'\n",
@@ -136,6 +138,18 @@ class AVipIsOneAddressOnTheNetwork(unittest.TestCase):
             ):
                 with self.subTest(document), self.assertRaisesRegex(ConfigError, address):
                     self.load(document)
+
+    def test_an_ipv4_address_written_as_ipv6_is_refused(self) -> None:
+        """Code review 26-10-30 again, S5: `::ffff:192.0.2.20` beside `192.0.2.20` was two
+        VIPs, bound twice on one address."""
+
+        for document in (
+            "vips:\n  main:\n    address: 192.0.2.20\n  other:\n    address: '::ffff:192.0.2.20'\n",
+            "vips:\n  main:\n    address: '::ffff:192.0.2.20'\n",
+            "vips:\n  main:\n    address: 192.0.2.20\n    source: '::ffff:192.0.2.21'\n",
+        ):
+            with self.subTest(document), self.assertRaisesRegex(ConfigError, "write it as"):
+                self.load(document)
 
     def test_an_address_on_the_network_is_kept(self) -> None:
         self.load("vips:\n  main:\n    address: 192.0.2.20\n    source: 2001:db8::5\n")

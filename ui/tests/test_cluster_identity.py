@@ -24,12 +24,14 @@ class ClusterIdentityTests(unittest.TestCase):
 
         self.assertEqual([accent_index(name) for name in names], list(range(ACCENT_COUNT)))
 
-    def test_more_clusters_than_colours_means_no_colours(self) -> None:
-        cluster_identity.read_in([f"c{index}" for index in range(ACCENT_COUNT + 1)], on=True)
+    def test_past_six_clusters_the_first_six_keep_their_colours_and_the_rest_have_none(
+        self,
+    ) -> None:
+        names = [f"c{index}" for index in range(ACCENT_COUNT + 1)]
+        cluster_identity.read_in(names, on=True)
 
-        self.assertIsNone(accent_index("c0"))
-        self.assertFalse(cluster_identity.fits([f"c{index}" for index in range(ACCENT_COUNT + 1)]))
-        self.assertTrue(cluster_identity.fits([f"c{index}" for index in range(ACCENT_COUNT)]))
+        self.assertEqual([accent_index(name) for name in names[:-1]], list(range(ACCENT_COUNT)))
+        self.assertIsNone(accent_index(names[-1]))
 
     def test_off_and_unlisted_clusters_have_no_colour(self) -> None:
         cluster_identity.read_in(("alpha",), on=False)

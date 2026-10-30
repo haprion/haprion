@@ -201,50 +201,28 @@ class TheSessionsItEnded(unittest.TestCase):
         self.assertEqual(answer["sessions_ended"], 3)
 
 
-class TheLockedSwitch(unittest.TestCase):
-    """Review 26-10-30, E2 (B408): cluster colours past six clusters."""
+class TheColoursSwitch(unittest.TestCase):
+    """Review 26-10-30, E2 (B410): the switch is never locked, whatever the cluster count."""
 
     def readings(self, count: int) -> feature_switch.Readings:
         return feature_switch.Readings(
-            clusters=lambda: tuple(f"c{index}" for index in range(count)),
             backup_overview=lambda: None,
             objects=lambda: [],
             restore_waiting=lambda: False,
         )
 
-    def switches(self) -> Any:
-        row = SimpleNamespace(enabled=True, remembered={})
-        return mock.patch.object(db, "feature_switches", return_value={"cluster_colours": row})
-
-    def test_a_file_that_says_what_is_stored_applies_with_seven_clusters(self) -> None:
-        with self.switches():
+    def test_it_can_be_turned_on_with_seven_clusters(self) -> None:
+        row = SimpleNamespace(enabled=False, remembered={})
+        with (
+            mock.patch.object(db, "feature_switches", return_value={"cluster_colours": row}),
+            mock.patch.object(db, "set_feature_switch", return_value=True),
+            mock.patch.object(db, "record_audit_event"),
+        ):
             flipped = settings_apply.apply_features(
                 object(), {"cluster_colours": True}, actor="t", readings=self.readings(7)
             )
 
-        self.assertEqual(flipped, {})
-
-    def test_turning_it_on_past_six_clusters_is_still_refused(self) -> None:
-        row = SimpleNamespace(enabled=False, remembered={})
-        with (
-            mock.patch.object(db, "feature_switches", return_value={"cluster_colours": row}),
-            self.assertRaises(ApplyError),
-        ):
-            settings_apply.apply_features(
-                object(), {"cluster_colours": True}, actor="t", readings=self.readings(7)
-            )
-
-    def test_the_document_says_off_where_the_interface_shows_it_off(self) -> None:
-        with (
-            self.switches(),
-            mock.patch.object(db, "status_access", return_value=[]),
-            mock.patch.object(db, "oidc_provider", return_value=None),
-        ):
-            seven = settings_apply.document(object(), [f"c{index}" for index in range(7)])
-            six = settings_apply.document(object(), ["alpha"])
-
-        self.assertEqual(seven["features"], {"cluster_colours": False})
-        self.assertEqual(six["features"], {"cluster_colours": True})
+        self.assertEqual(flipped, {"cluster_colours": True})
 
 
 class TheAnswer(unittest.TestCase):

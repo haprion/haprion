@@ -193,9 +193,9 @@ def collect(
 ) -> tuple[tuple[str, ...], Written]:
     written = Written()
     written.add("accounts.yaml", _yaml(account_apply.document(connection)))
-    known, _polled = settings_tool.known_clusters(connection, settings)
-    written.add("settings.yaml", _yaml(settings_apply.document(connection, known)))
+    written.add("settings.yaml", _yaml(settings_apply.document(connection)))
     written.add("profiles.yaml", _yaml(profile_apply.document(connection)))
+    known, _polled = settings_tool.known_clusters(connection, settings)
     unknown = sorted(set(chosen) - set(known))
     if unknown:
         raise ExportError(f"no such cluster: {', '.join(unknown)}")

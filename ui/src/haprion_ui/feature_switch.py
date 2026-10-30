@@ -4,10 +4,9 @@
 this, so the refusals are the same sentences and the side effects the same
 jobs: node backups off stops every running backup schedule through the
 schedule job the backup page queues and remembers them, and on starts exactly
-those again; the WAF engine is refused off while an object uses it; cluster
-colours are refused on past six clusters.
+those again; the WAF engine is refused off while an object uses it.
 
-What a flip needs to know besides the switch row - the clusters, their backup
+What a flip needs to know besides the switch row - the backup
 readings, the stored objects, whether a node restore is waiting - comes from
 `Readings`, so the web reads it through its own sources and the terminal from
 the same tables. The writes are in the caller's transaction; the caller
@@ -23,7 +22,6 @@ from typing import Any
 from uuid import uuid4
 
 from haprion_ui import (
-    cluster_identity,
     db,
     features,
     jobs,
@@ -40,22 +38,9 @@ class UnknownFeature(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Readings:
-    clusters: Callable[[], tuple[str, ...]]
     backup_overview: Callable[[], Any]
     objects: Callable[[], Iterable[Any]]
     restore_waiting: Callable[[], bool]
-
-
-def locked(name: str, clusters: Iterable[str]) -> bool:
-    """Whether a switch cannot be on here: cluster colours past six clusters."""
-
-    return name == features.CLUSTER_COLOURS and not cluster_identity.fits(clusters)
-
-
-def shown_on(name: str, stored: bool, clusters: Iterable[str]) -> bool:
-    """Whether the interface shows `name` on: a locked switch shows off whatever its row says."""
-
-    return stored and not locked(name, clusters)
 
 
 def restore_waiting(connection: Any) -> bool:
@@ -91,17 +76,8 @@ def switch(
     current = db.feature_switches(connection).get(name)
     if name not in features.BY_NAME or current is None:
         raise UnknownFeature(name)
-    #
-    # No change is no change, locked or not: only an attempt to turn a locked
-    # switch on is refused, so a file that says what is stored applies.
-    #
     if current.enabled == want:
         return None
-    if want and locked(name, readings.clusters()):
-        raise features.SwitchRefused(
-            f"Cluster colours cover {cluster_identity.ACCENT_COUNT} clusters, "
-            "and this installation lists more."
-        )
     #
     # A WAF the interface no longer shows still filters traffic (B231).
     #

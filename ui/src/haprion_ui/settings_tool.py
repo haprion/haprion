@@ -55,7 +55,6 @@ def _readings(connection: Any, settings: config.Config) -> feature_switch.Readin
         return [row for row in rows if not polled or getattr(row, "cluster", None) in clusters]
 
     return feature_switch.Readings(
-        clusters=lambda: listed()[0],
         backup_overview=lambda: backups.build_backup_overview(
             listed()[0],
             kept(db.cluster_backups(connection)),
@@ -197,18 +196,9 @@ def _saved_then_stopped(
     return exit_codes.PARTIAL
 
 
-SHOW_OPERATION = "settings_show"
-
-
 def command_show(args: argparse.Namespace) -> int:
-    try:
-        settings = config.load()
-    except config.ConfigError as exc:
-        return tool_answer.refusal(
-            args, SHOW_OPERATION, "dependency_unavailable", str(exc), exc.exit_code
-        )
     with connect(load_environment()) as connection:
-        shown = settings_apply.document(connection, known_clusters(connection, settings)[0])
+        shown = settings_apply.document(connection)
         provider = db.oidc_provider(connection)
     access: list[str] = shown["status_access"]
     switches: dict[str, bool] = shown["features"]

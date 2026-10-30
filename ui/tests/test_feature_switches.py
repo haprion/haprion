@@ -290,18 +290,16 @@ class Switched(LoginTestCase):
         self.assertEqual(self.flips[0]["enabled"], True)
         self.assertEqual(self.queued, [])
 
-    def test_past_six_clusters_the_switch_is_off_and_cannot_be_turned_on(self) -> None:
+    def test_past_six_clusters_the_switch_can_still_be_turned_on(self) -> None:
         client = self.client_for(tuple(f"c{index}" for index in range(7)))
 
-        self.assertNotIn("cluster-accent-", client.get("/").text)
-        settings = client.get("/settings").text
-        self.assertRegex(settings, r'aria-checked="false" aria-label="Cluster colours" disabled')
         self.off(features.CLUSTER_COLOURS)
+        settings = client.get("/settings").text
+        self.assertRegex(settings, r'aria-checked="false" aria-label="Cluster colours">')
         answer = self.post(client, "/settings/features/cluster_colours", enabled="on")
 
-        self.assertEqual(answer.status_code, 409)
-        self.assertIn("this installation lists more", answer.text)
-        self.assertEqual(self.flips, [])
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(self.flips[0]["enabled"], True)
 
 
 class SettingsOpensWithAnySwitchOff(Switched):

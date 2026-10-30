@@ -1188,8 +1188,8 @@ Turning it off is refused:
 one of six colours. The colours are handed out in the order the cluster file lists the clusters
 ([Cluster definitions](#cluster-definitions)) - the same order the dashboard draws the cards in - so
 reordering the clusters there reorders both. Until the poller has read the cluster file, the order of
-`clusters` in `ui.toml` is used instead. With more than six clusters the switch is off and cannot be
-turned on. Each card shows the cluster's name either way.
+`clusters` in `ui.toml` is used instead. With more than six clusters the first six keep their
+colours and the seventh and later have none. Each card shows the cluster's name either way.
 
 **Advanced config.** On, an object's page has an *Advanced config* button, between *Edit* and *Remove*. It
 opens a dialog where you paste HAProxy configuration as a layer on top of the object. The object stores
@@ -5425,9 +5425,9 @@ An installation growing past that size should time a complete poller pass and a 
 their intervals before it adds more.
 
 Each cluster card is marked with one of six colours
-([Features and advanced configuration](#features-and-advanced-configuration)). With more than six
-clusters the colours are switched off and the name alone marks the card. That limits the colours, not the
-clusters.
+([Features and advanced configuration](#features-and-advanced-configuration)). Past six
+clusters, the first six keep their colours and the name alone marks the rest. That limits the colours, not
+the clusters.
 
 ##### What a release holds
 

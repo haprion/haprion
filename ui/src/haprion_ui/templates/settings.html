@@ -185,7 +185,7 @@
 {% if features %}
 <section class="cluster-card settings-card" id="features">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Features</h3></div></div></header>
-  {% for feature, on, locked in features %}
+  {% for feature, on in features %}
   <div class="cluster-actions feature-row">
     <div><strong>{{ feature.title }}</strong></div>
     <div class="feature-control">
@@ -200,7 +200,7 @@
       <input type="hidden" name="enabled" value="{{ 'off' if on else 'on' }}">
       {% endif %}
       {# Locked off: cluster colours with more clusters than colours (B204). #}
-      <button type="submit" class="toggle-switch" role="switch" aria-checked="{{ 'true' if on else 'false' }}" aria-label="{{ feature.title }}"{% if locked %} disabled title="More than six clusters"{% endif %}><span class="toggle-track" aria-hidden="true"></span>{{ 'On' if on else 'Off' }}</button>
+      <button type="submit" class="toggle-switch" role="switch" aria-checked="{{ 'true' if on else 'false' }}" aria-label="{{ feature.title }}"><span class="toggle-track" aria-hidden="true"></span>{{ 'On' if on else 'Off' }}</button>
     </form>
     </div>
   </div>

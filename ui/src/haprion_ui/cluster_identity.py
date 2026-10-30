@@ -21,28 +21,23 @@ from types import MappingProxyType
 # They are handed out in the order the cluster file lists the clusters (B206) - the order the
 # dashboard draws them in - not by a hash of the name, which could give the
 # first two clusters one colour. A seventh cluster does not get the first one's
-# again: a marker that has to be doubted is worse than none, so with more than
-# six clusters there are no colours at all, and the switch under Settings says
-# it cannot be turned on. A cluster the list does not name has none either.
+# again: a marker that has to be doubted is worse than none, so the first six
+# clusters keep their colours and the seventh and later have none (B410; B204
+# switched all of them off). The name stands beside the card either way. A
+# cluster the list does not name has none either.
 #
 ACCENT_COUNT = 6
 
 _ORDER: ContextVar[Mapping[str, int]] = ContextVar("cluster_accents", default=MappingProxyType({}))
 
 
-def fits(clusters: Iterable[str]) -> bool:
-    """Whether every cluster can have a colour of its own."""
-
-    return len(tuple(clusters)) <= ACCENT_COUNT
-
-
 def read_in(clusters: Iterable[str], *, on: bool) -> None:
     """Take this request's clusters, in the installation's order, and the switch."""
 
-    listed = tuple(clusters)
+    listed = tuple(clusters)[:ACCENT_COUNT]
     _ORDER.set(
         MappingProxyType({cluster: index for index, cluster in enumerate(listed)})
-        if on and len(listed) <= ACCENT_COUNT
+        if on
         else MappingProxyType({})
     )
 

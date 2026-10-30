@@ -172,11 +172,6 @@ def build_router(config: Config) -> APIRouter:
         switched = request.query_params.get("switched", "")[:32]
         return _settings_page(request, gate, done=SWITCHED.get(switched, ""))
 
-    def _locked(request: Request, name: str) -> bool:
-        """Whether a switch cannot be on here: cluster colours past six clusters."""
-
-        return feature_switch.locked(name, listed_clusters(request, config))
-
     def _settings_page(
         request: Request,
         gate: AuthenticatedSession,
@@ -269,10 +264,9 @@ def build_router(config: Config) -> APIRouter:
                     ),
                 },
                 "features": [
-                    (feature, switches[feature.name].enabled and not locked, locked)
+                    (feature, switches[feature.name].enabled)
                     for feature in features.FEATURES
                     if feature.name in switches
-                    for locked in (_locked(request, feature.name),)
                 ],
                 "problem": problem,
                 "done": done,
@@ -338,7 +332,6 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         want = enabled == "on"
         readings = feature_switch.Readings(
-            clusters=lambda: listed_clusters(request, config),
             backup_overview=lambda: read_backup_overview(config, request),
             objects=lambda: read_source(request, config, OBJECTS_SOURCE)[1],
             restore_waiting=lambda: _restore_waiting(request),

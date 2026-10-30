@@ -49,8 +49,8 @@ FEATURES = (
     ),
     #
     # Not a capability but a way of drawing (B204): the rule down each cluster
-    # card's edge. It hides nothing, and with more than six clusters it is off
-    # whatever its row says - see `cluster_identity`.
+    # card's edge. It hides nothing, and past six clusters only the first six
+    # have a colour - see `cluster_identity`.
     #
     Feature(CLUSTER_COLOURS, "Cluster colours"),
     #

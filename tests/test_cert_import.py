@@ -18,7 +18,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_import, cert_pending, exit_codes
+from haprion import atomic_file, cert_import, cert_pending, exit_codes
 from haprion.cert_import import (
     ImportError_,
     Material,
@@ -518,27 +518,58 @@ class TheCommand(ImportFixture):
             finally:
                 held.release()
 
-    def test_a_lock_held_after_the_store_is_a_failure_not_a_refusal(self) -> None:
-        """26-10-29, C01: the material is in the store, so the answer may not say nothing changed."""
+    def test_a_lock_held_before_the_import_leaves_the_store_untouched(self) -> None:
+        """26-10-30, E9: the store and the entry are one step under the lock, so a held lock
+        refuses the import before anything is written."""
 
-        for written, certificate_id, argv in (
+        for certificate_id, argv in (
             (
-                "write_store",
                 "shop.example",
                 ("--certificate", str(self.pki.leaf), "--key", str(self.pki.leaf_key)),
             ),
-            ("write_authority_store", "corp-root", ("--authority", str(self.pki.root))),
+            ("corp-root", ("--authority", str(self.pki.root))),
         ):
-            with self.subTest(written):
-                code, out, err = self.import_held(
-                    written, "--id", certificate_id, *argv, "--cluster", "alpha", "--json"
-                )
+            with self.subTest(certificate_id):
+                held = HeldLock(self.lock)
+                held.take()
+                try:
+                    with held.waits_one_second():
+                        code, out, err = self.run_cli(
+                            "--id", certificate_id, *argv, "--cluster", "alpha", "--json"
+                        )
+                finally:
+                    held.release()
                 document = assert_contract("haprion-cert-import", out)
-                self.assertEqual((code, document["outcome"]), (exit_codes.FAILED, "failed"), err)
+                self.assertEqual((code, document["outcome"]), (exit_codes.BLOCKED, "blocked"), err)
                 self.assertEqual(document["error"]["code"], "operation_locked")
-                self.assertIn("1 seconds. Fix the targets", document["error"]["message"])
-                self.assertTrue((self.store / certificate_id).is_dir())
+                self.assertFalse((self.store / certificate_id).exists())
                 self.assertNotIn(certificate_id, self.registered())
+
+    def test_a_swap_that_fails_midway_puts_the_old_material_back(self) -> None:
+        self.run_import("shop.example", self.material(), clusters=["alpha"])
+        before = (self.store / "shop.example" / "fullchain.pem").read_text()
+        real = atomic_file.move
+        calls = []
+
+        def failing(source: Any, target: Any) -> Any:
+            calls.append(target)
+            if len(calls) == 2:
+                raise OSError("simulated")
+            return real(source, target)
+
+        with (
+            mock.patch.object(atomic_file, "move", failing),
+            self.assertRaises(ImportError_),
+        ):
+            self.run_import("shop.example", self.material(), clusters=["alpha"])
+        self.assertEqual((self.store / "shop.example" / "fullchain.pem").read_text(), before)
+
+    def test_material_set_aside_by_a_dead_swap_is_put_back_by_the_next(self) -> None:
+        self.run_import("shop.example", self.material(), clusters=["alpha"])
+        (self.store / "shop.example").rename(self.store / ".shop.example.replaced")
+        cert_cleanup = cert_import._recover_replaced
+        cert_cleanup(self.store, "shop.example")
+        self.assertTrue((self.store / "shop.example" / "fullchain.pem").exists())
 
     def test_a_publish_lock_held_after_the_registry_is_imported_and_not_distributed(
         self,

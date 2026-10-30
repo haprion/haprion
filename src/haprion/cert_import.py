@@ -44,6 +44,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -543,6 +544,45 @@ def check(material: Material, *, now: datetime | None = None) -> tuple[Facts, st
 # - Writing ----------------------------------------------------------------
 
 
+def _held(lock_path: Path | None) -> AbstractContextManager[None]:
+    """The certificate lock, or nothing when the caller holds it."""
+
+    return nullcontext() if lock_path is None else cert_registry.locked(lock_path)
+
+
+def _recover_replaced(store: Path, certificate_id: str) -> None:
+    """Put a directory the last swap set aside back, when the swap never put its successor in.
+
+    `write_store` moves `<id>/` to `.<id>.replaced` and then the new one in; a
+    process that died between the two, or a second move that failed, leaves the
+    registered material under the old name and nothing under the new.
+    """
+
+    final = store / certificate_id
+    previous = store / f".{certificate_id}.replaced"
+    if previous.is_dir() and not final.exists():
+        atomic_file.move(previous, final)
+
+
+def _swap_into_place(store: Path, certificate_id: str, staging: Path) -> None:
+    """`staging` becomes `<store>/<id>`; the directory it replaces is put back if that fails."""
+
+    final = store / certificate_id
+    previous: Path | None = None
+    if final.is_dir():
+        previous = store / f".{certificate_id}.replaced"
+        shutil.rmtree(previous, ignore_errors=True)
+        atomic_file.move(final, previous)
+    try:
+        atomic_file.move(staging, final)
+    except OSError:
+        if previous is not None:
+            atomic_file.move(previous, final)
+        raise
+    if previous is not None:
+        shutil.rmtree(previous, ignore_errors=True)
+
+
 def write_store(store: Path, certificate_id: str, material: Material) -> bool:
     """The four files under `<store>/<id>/`, root-only, in one rename. True if replaced."""
 
@@ -569,16 +609,9 @@ def write_store(store: Path, certificate_id: str, material: Material) -> bool:
         # A directory holding a request and no certificate (C9b) is not a
         # previous import: the signature is the first material under the ID.
         #
-        present = final.is_dir()
-        replaced = present and (final / FULLCHAIN).exists()
-        previous: Path | None = None
-        if present:
-            previous = store / f".{certificate_id}.replaced"
-            shutil.rmtree(previous, ignore_errors=True)
-            atomic_file.move(final, previous)
-        atomic_file.move(staging, final)
-        if previous is not None:
-            shutil.rmtree(previous, ignore_errors=True)
+        _recover_replaced(store, certificate_id)
+        replaced = final.is_dir() and (final / FULLCHAIN).exists()
+        _swap_into_place(store, certificate_id, staging)
         return replaced
     except OSError as exc:
         shutil.rmtree(staging, ignore_errors=True)
@@ -599,11 +632,15 @@ def register(
     require_secure: bool,
     ndes_profile: str | None = None,
     formats: Mapping[str, str] | None = None,
-    lock_path: Path = DEFAULT_LOCK_PATH,
+    lock_path: Path | None = DEFAULT_LOCK_PATH,
     interface: bool = False,
     exportable: bool = False,
 ) -> str | None:
     """The entry, through the one writer the registry has, under the certificate lock.
+
+    `lock_path` None means the caller holds the lock already, around the store
+    write too (`import_certificate`); a second hold of the same file from this
+    process would wait for itself.
 
     An entry that exists already keeps every target it has, and the targets
     named here are added to them: re-importing a rotated certificate - or
@@ -622,7 +659,7 @@ def register(
     """
 
     try:
-        with cert_registry.locked(lock_path):
+        with _held(lock_path):
             return _register_entry(
                 path,
                 certificate_id,
@@ -718,6 +755,46 @@ def _register_entry(
     return displaced
 
 
+def _refuse_held(
+    certificate_id: str,
+    material: Material,
+    *,
+    policy: PathPolicy,
+    live: Path,
+    store: Path,
+    ndes_profile: str | None,
+) -> None:
+    """The ID is free everywhere but where an import may share it, asked under the lock.
+
+    Its own earlier material and the entry that names it, a signing request it
+    answers, and - from NDES - the enrollment that is being finished. Anything
+    else is another way's, and writing the store would take it away.
+    """
+
+    holder = cert_request_state.id_holder(
+        certificate_id,
+        registered_kind=None,
+        live=live,
+        store=store,
+        request_root=policy.ndes.state_root if policy.ndes is not None else None,
+        allow=(
+            cert_request_state.HELD_BY_CSR,
+            cert_request_state.HELD_BY_MATERIAL,
+            *((cert_request_state.HELD_BY_ENROLLMENT,) if ndes_profile else ()),
+        ),
+    )
+    if holder is not None:
+        raise ImportError_("already_exists", holder.message)
+    if cert_request_state.csr_is_pending(store, certificate_id) and material.key != stored_key(
+        store, certificate_id
+    ):
+        raise ImportError_(
+            "already_exists",
+            f"a signing request for {certificate_id!r} is waiting for its signature; import "
+            "the certificate the CA returned for it, without a key, or choose another ID",
+        )
+
+
 def import_certificate(
     *,
     certificate_id: str,
@@ -766,34 +843,6 @@ def import_certificate(
             "not_import",
             f"{certificate_id!r} is registered as {existing.source.kind!r}; its material is "
             "not imported. Choose another ID.",
-        )
-    #
-    # The ID is free everywhere but where an import may share it: its own
-    # earlier material and the entry that names it, a signing request it
-    # answers, and - from NDES - the enrollment that is being finished.
-    # Anything else is another way's, and writing the store would take it away.
-    #
-    holder = cert_request_state.id_holder(
-        certificate_id,
-        registered_kind=None,
-        live=live,
-        store=store,
-        request_root=policy.ndes.state_root if policy.ndes is not None else None,
-        allow=(
-            cert_request_state.HELD_BY_CSR,
-            cert_request_state.HELD_BY_MATERIAL,
-            *((cert_request_state.HELD_BY_ENROLLMENT,) if ndes_profile else ()),
-        ),
-    )
-    if holder is not None:
-        raise ImportError_("already_exists", holder.message)
-    if cert_request_state.csr_is_pending(store, certificate_id) and material.key != stored_key(
-        store, certificate_id
-    ):
-        raise ImportError_(
-            "already_exists",
-            f"a signing request for {certificate_id!r} is waiting for its signature; import "
-            "the certificate the CA returned for it, without a key, or choose another ID",
         )
     unknown_clusters = sorted(set(clusters) - set(runtime.clusters))
     if unknown_clusters:
@@ -909,20 +958,38 @@ def import_certificate(
                 str(exc),
                 exit_code=exit_codes.REFUSED if exc.code == "bad_input" else exit_codes.CONFIG,
             ) from exc
-    replaced = write_store(store, certificate_id, material)
-    displaced = register(
-        policy.certificate_registry,
-        certificate_id,
-        runtime,
-        clusters=clusters,
-        receivers=receivers,
-        require_secure=require_secure,
-        ndes_profile=ndes_profile,
-        formats=formats,
-        lock_path=lock_path,
-        interface=interface,
-        exportable=exportable,
-    )
+    #
+    # One step under the certificate lock: the ID is asked, the store written
+    # and the entry registered. A publisher that reads under the lock then sees
+    # the material and the entry together or neither, and not the instant the
+    # old directory is aside and the new one not yet in.
+    #
+    try:
+        with cert_registry.locked(lock_path):
+            _refuse_held(
+                certificate_id,
+                material,
+                policy=policy,
+                live=live,
+                store=store,
+                ndes_profile=ndes_profile,
+            )
+            replaced = write_store(store, certificate_id, material)
+            displaced = register(
+                policy.certificate_registry,
+                certificate_id,
+                runtime,
+                clusters=clusters,
+                receivers=receivers,
+                require_secure=require_secure,
+                ndes_profile=ndes_profile,
+                formats=formats,
+                lock_path=None,
+                interface=interface,
+                exportable=exportable,
+            )
+    except cert_registry.RegistryError as exc:
+        raise ImportError_(exc.code, str(exc), exit_code=exc.exit_code) from exc
     try:
         refreshed = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
@@ -1084,15 +1151,9 @@ def write_authority_store(store: Path, certificate_id: str, blocks: Sequence[str
             handle.write("".join(blocks))
             handle.flush()
             os.fsync(handle.fileno())
+        _recover_replaced(store, certificate_id)
         replaced = final.is_dir()
-        previous: Path | None = None
-        if replaced:
-            previous = store / f".{certificate_id}.replaced"
-            shutil.rmtree(previous, ignore_errors=True)
-            atomic_file.move(final, previous)
-        atomic_file.move(staging, final)
-        if previous is not None:
-            shutil.rmtree(previous, ignore_errors=True)
+        _swap_into_place(store, certificate_id, staging)
         return replaced
     except OSError as exc:
         shutil.rmtree(staging, ignore_errors=True)
@@ -1110,12 +1171,12 @@ def _register_authority(
     *,
     clusters: Sequence[str],
     require_secure: bool,
-    lock_path: Path,
+    lock_path: Path | None,
 ) -> None:
     """The entry, kept clusters and new ones together, through the registry's one writer."""
 
     try:
-        with cert_registry.locked(lock_path):
+        with _held(lock_path):
             document = cert_registry.read_document(path)
             certificates = dict(document.get("certificates") or {})
             existing = certificates.get(certificate_id)
@@ -1207,15 +1268,19 @@ def import_authority(
             f"every certificate in the file has expired (the last "
             f"{latest.isoformat(timespec='seconds')}); nothing was imported",
         )
-    replaced = write_authority_store(store, certificate_id, blocks)
-    _register_authority(
-        policy.certificate_registry,
-        certificate_id,
-        runtime,
-        clusters=clusters,
-        require_secure=require_secure,
-        lock_path=lock_path,
-    )
+    try:
+        with cert_registry.locked(lock_path):
+            replaced = write_authority_store(store, certificate_id, blocks)
+            _register_authority(
+                policy.certificate_registry,
+                certificate_id,
+                runtime,
+                clusters=clusters,
+                require_secure=require_secure,
+                lock_path=None,
+            )
+    except cert_registry.RegistryError as exc:
+        raise ImportError_(exc.code, str(exc), exit_code=exc.exit_code) from exc
     try:
         refreshed = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:

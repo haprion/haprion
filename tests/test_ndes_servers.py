@@ -128,6 +128,7 @@ class ServedOverTls(Served):
 
         super().__init__(answer)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(chain, key)
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
 

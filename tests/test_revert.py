@@ -395,6 +395,66 @@ class RetryTests(RevertFixture):
             self.assertEqual(count_versions(self.repo), 4)
             self.assertTrue((self.publish_path / "releases" / new).is_dir())
 
+    def stop_after_a_revert(self, policy_path: Path) -> str:
+        """A revert that stopped between moving the branch and writing the files; the new head."""
+
+        old = git(self.repo, "rev-parse", "HEAD")
+        self.assertEqual(self.send(policy_path, self.revert_request(head=True))[0], 0)
+        new = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "read-tree", old)
+        git(self.repo, "checkout-index", "-a", "-f")
+        return new
+
+    def test_the_command_after_a_stopped_revert_finishes_it_with_a_new_request_id(self) -> None:
+        """Review 26-10-30, E5: the command takes a new id every run, so the first revert's
+        own repair never matched, and the advice to publish undid the revert."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            self.stop_after_a_revert(policy_path)
+
+            code, output = self.run_caller(policy_path, "-c", "alpha", "2")
+
+            self.assertEqual(code, 0, output)
+            self.assertEqual(len(self.requests), 1)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+            self.assertEqual(count_versions(self.repo), 4)
+
+    def test_another_request_after_a_stopped_revert_finishes_it_too(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            self.stop_after_a_revert(policy_path)
+            target = version_commit(self.repo, 2)
+            assert target is not None
+            other = revert.build_request(
+                "alpha",
+                "44444444-4444-4444-8444-444444444444",
+                version=2,
+                expected_commit=target,
+                expected_head=git(self.repo, "rev-parse", "HEAD"),
+            ).encode()
+
+            code, document = self.send(policy_path, other)
+
+            self.assertEqual(code, 0, document)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+            self.assertEqual(count_versions(self.repo), 4)
+
+    def test_the_command_still_refuses_a_person_s_work_beside_a_stopped_revert(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            self.stop_after_a_revert(policy_path)
+            (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # mine\n")
+
+            code, output = self.run_caller(policy_path, "-c", "alpha", "2")
+
+            self.assertEqual(code, 75)
+            self.assertEqual(self.requests, [])
+            self.assertIn(b"# mine", (self.repo / "core/haproxy.cfg").read_bytes())
+
     def test_a_person_s_unsaved_work_is_not_swept_up_by_that_repair(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))

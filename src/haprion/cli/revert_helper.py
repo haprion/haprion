@@ -103,10 +103,10 @@ from haprion.repo_snapshot import (
 )
 from haprion.version_history import (
     count_versions,
-    left_at_parent,
     recent_versions,
     request_names,
     restore_worktree,
+    stopped_before_the_files,
     version_commit,
     version_message,
 )
@@ -377,13 +377,14 @@ def _revert(
     # operator approved the preview, and the reset below would overwrite it.
     #
     dirty = unsaved_changes(repo)
-    if dirty and own is not None and own.commit == head and left_at_parent(repo, head):
+    if dirty and stopped_before_the_files(repo, head):
         #
-        # This request's own version is the head and the draft still shows the
-        # one before it: the run stopped between moving the branch and writing
-        # the files out. Written out now, as that run would have. Anything a
-        # person changed makes `left_at_parent` false and still refuses
-        # (review 26-10-30, D3).
+        # A helper's version is the head and the draft still shows the one
+        # before it: a run stopped between moving the branch and writing the
+        # files out. Written out now, as that run would have, whoever's request
+        # it was: the command takes a new request id every run (E5). Anything
+        # a person changed makes the check false and still refuses (review
+        # 26-10-30, D3).
         #
         restore_worktree(repo, head)
         dirty = unsaved_changes(repo)

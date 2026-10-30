@@ -39,7 +39,12 @@ from haprion.git_command import GitError
 from haprion.helper_protocol import config_error_code, write_document
 from haprion.repo_health import describe_problem, is_repo_root, unsaved_changes
 from haprion.repo_snapshot import resolve_head
-from haprion.version_history import count_versions, version_commit, version_summary
+from haprion.version_history import (
+    count_versions,
+    stopped_before_the_files,
+    version_commit,
+    version_summary,
+)
 
 OPERATION = "revert_version"
 #
@@ -210,8 +215,13 @@ def main(
                 "not_a_repository", describe_problem(cluster_id, repo), exit_codes.UNAVAILABLE
             )
 
+        #
+        # A revert that stopped before it wrote the files leaves the draft one
+        # version behind; the helper finishes it, so it is not a refusal here
+        # (review 26-10-30, E5). Anything a person changed still is.
+        #
         dirty = unsaved_changes(repo)
-        if dirty:
+        if dirty and not stopped_before_the_files(repo, resolve_head(repo)[1]):
             return refuse(
                 "dirty_worktree",
                 f"there are unsaved changes in {repo}.\n\n{dirty}\n\n"

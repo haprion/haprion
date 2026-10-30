@@ -256,6 +256,18 @@ def left_at_parent(repo: Path, head: str) -> bool:
     )
 
 
+def stopped_before_the_files(repo: Path, head: str) -> bool:
+    """Whether a helper recorded `head` and stopped before it wrote the files out.
+
+    A version carrying a request trailer, with the draft area still exactly the
+    version before it. Whose request it was does not matter: the parent is in
+    the history, so writing `head` out can lose nothing, and a command that
+    takes a new request id on every run (E5) finds the same state as a retry.
+    """
+
+    return request_id_of(repo, head) is not None and left_at_parent(repo, head)
+
+
 def index_left_behind(repo: Path, head: str) -> bool:
     """Whether the files are `head` and only the index still describes an older version.
 

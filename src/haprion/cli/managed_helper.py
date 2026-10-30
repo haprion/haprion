@@ -77,6 +77,7 @@ from haprion.version_history import (
     recorded_on,
     request_names,
     restore_worktree,
+    stopped_before_the_files,
     version_message,
 )
 
@@ -289,12 +290,14 @@ def _publish(
         repo, head, base=change.expected_head, request_id=request.request_id
     )
     dirty = unsaved_changes(repo)
-    if dirty and retry and _only_managed(dirty):
+    if dirty and ((retry and _only_managed(dirty)) or stopped_before_the_files(repo, head)):
         #
         # The run stopped between its commit and writing the worktree out, so
         # the application's own layer still shows the version before. Written
         # out now, as that run would have; anything a person changed is
-        # outside managed/ and still refuses (review 26-10-24, 01-03).
+        # outside managed/ and still refuses (review 26-10-24, 01-03). The same
+        # for a version some other request recorded and stopped on, when the
+        # draft is exactly the version before it (review 26-10-30, E5).
         #
         restore_worktree(repo, head)
         dirty = unsaved_changes(repo)

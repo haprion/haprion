@@ -155,6 +155,27 @@ class NetworkPublicationTests(NetworkPublishFixture):
             self.assertEqual(count_versions(self.repo), versions)
             self.assertEqual(os.readlink(self.publish_path / "current"), f"releases/{head}")
 
+    def test_another_request_after_a_stop_before_the_files_were_written_finds_a_clean_draft(
+        self,
+    ) -> None:
+        """Review 26-10-30, E5: the draft is the version before a helper's, and not a person's."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            old = git(self.repo, "rev-parse", "HEAD")
+            self.publish_network(policy, self.request())
+            git(self.repo, "read-tree", "--reset", "-u", old)
+            self.assertNotEqual(git(self.repo, "status", "--porcelain"), "")
+            other = json.loads(self.request().getvalue())
+            other["request_id"] = "88888888-8888-4888-8888-888888888888"
+
+            code, document, _err = self.publish_network(
+                policy, io.BytesIO(json.dumps(other).encode())
+            )
+
+            self.assertEqual(code, 0, document)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+
     def test_a_dirty_human_worktree_is_blocked_without_touching_it(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))

@@ -233,6 +233,7 @@ class RestorePlan:
             "from_package": list(self.from_package),
             "traffic_log": self.traffic_log,
             "groups": [{"name": group.name, "gid": group.gid} for group in self.groups],
+            "passwords": "not restored in test mode" if self.mode == "test" else "restored",
             "accounts": [
                 {
                     "name": account.name,
@@ -241,7 +242,8 @@ class RestorePlan:
                     "home": account.home,
                     "groups": list(account.groups),
                     "service": account.service,
-                    "has_password": bool(account.password_hash)
+                    "has_password": self.mode != "test"
+                    and bool(account.password_hash)
                     and account.password_hash not in {"!", "*", "!*"},
                 }
                 for account in self.accounts

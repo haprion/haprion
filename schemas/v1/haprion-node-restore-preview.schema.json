@@ -132,9 +132,13 @@
             "accounts",
             "packages",
             "keepalived",
-            "rewrites"
+            "rewrites",
+            "passwords"
           ],
           "properties": {
+            "passwords": {
+              "enum": ["restored", "not restored in test mode"]
+            },
             "mode": {
               "enum": [
                 "new_vm",

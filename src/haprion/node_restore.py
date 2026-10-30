@@ -1288,7 +1288,9 @@ def _run(
                 "shell": a.shell,
                 "groups": list(a.groups),
                 "service": a.service,
-                "password_hash": a.password_hash,
+                # A test run goes to a machine the preview only fingerprinted: no
+                # hash leaves the manager for it, and the accounts are created locked.
+                "password_hash": None if plan.mode == "test" else a.password_hash,
             }
             for a in plan.accounts
         ],

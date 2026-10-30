@@ -199,6 +199,8 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
         out.write(f"  left to the target's own: {', '.join(plan['left_out'])}\n")
     if archive["extra_paths"]:
         out.write(f"  operator's own paths: {', '.join(archive['extra_paths'])}\n")
+    if plan.get("passwords", "restored") != "restored":
+        out.write(f"  passwords are {plan['passwords']}\n")
     out.write("  accounts:\n")
     for account in plan["accounts"]:
         kind = "service" if account["service"] else "operator"

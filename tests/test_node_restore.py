@@ -515,9 +515,20 @@ class Run(RestoreTest):
         self.carry_out(run)
         self.assertEqual(FakeSession.trusted["network"], [f"192.0.2.120 {TARGET_KEY}"])
 
-    def test_the_apply_header_carries_hashes_but_the_result_file_does_not(self) -> None:
-        run = self.previewed()
+    def test_a_test_run_sends_no_password_hash_and_says_so(self) -> None:
+        run = self.prepare()
+        summary = self.preview(run)
+        self.assertEqual(summary["plan"]["passwords"], "not restored in test mode")
+        self.assertFalse(any(a["has_password"] for a in summary["plan"]["accounts"]))
+        FakeSession.calls = []
         self.carry_out(run)
+        header = next(c[1] for c in FakeSession.calls if c[1]["op"] == "apply")
+        self.assertTrue(header["accounts"])
+        self.assertTrue(all(a["password_hash"] is None for a in header["accounts"]))
+
+    def test_the_apply_header_carries_hashes_but_the_result_file_does_not(self) -> None:
+        run = self.previewed(test=False)
+        self.carry_out(run, confirm="node-a")
         header = FakeSession.calls[1][1]
         operator = next(a for a in header["accounts"] if a["name"] == "operator")
         self.assertTrue(operator["password_hash"].startswith("$y$"))

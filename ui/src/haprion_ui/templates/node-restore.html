@@ -98,6 +98,7 @@
     {% if plan.quarantined %}<div><dt>To quarantine</dt><dd>{% for path in plan.quarantined %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %}</dd></div>{% endif %}
     {% endif %}
     <div><dt>Accounts</dt><dd>{% for account in plan.accounts %}{{ account.name }}{% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
+    {% if plan.passwords and plan.passwords != 'restored' %}<div><dt>Passwords</dt><dd>{{ plan.passwords }}</dd></div>{% endif %}
     {% if restore.renumbered %}<div><dt>Other numbers</dt><dd>{{ restore.renumbered | join('; ') }} · files are owned by name</dd></div>{% endif %}
     {% if plan.mode != 'overwrite' %}<div><dt>Files</dt><dd>{{ plan.files | length }} files{% if plan.equal_directories %} · made equal to the archive: {{ plan.equal_directories | join(', ') }}{% endif %}</dd></div>{% endif %}
     {% if restore.node_package %}<div><dt>Node package</dt><dd><code>haprion-node {{ restore.node_package.version }}</code> from this manager's release writes the node scripts{% if plan.from_package %} in place of the archive's {{ plan.from_package | length }}{% endif %}{% if plan.traffic_log %} · turns the traffic log on, as it was{% endif %}</dd></div>{% endif %}

@@ -3278,7 +3278,9 @@ above, except that:
 - the `include` of the published address list is removed;
 - sshd's `ListenAddress` is rewritten to the test address;
 - keepalived is masked, so it can never join the production pair's VRRP;
-- the VM keeps its own SSH host keys.
+- the VM keeps its own SSH host keys;
+- no password hash is sent: the accounts are created locked, and the preview says passwords are not
+  restored in test mode. The password step is proved by a restore as the node.
 
 The test address must be in the node's network, because the node's routes come with the archive.
 `--confirm` takes the test host name.

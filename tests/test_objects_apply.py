@@ -215,7 +215,7 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertIn("shop.yaml", err)
         self.assertEqual(fakes.published, [])
 
-    def test_a_range_with_host_bits_is_refused_before_the_manager_is_asked(self) -> None:
+    def test_a_range_with_host_bits_is_refused_before_anything_is_published(self) -> None:
         """Review 26-10-24, 15-06: a file being applied is being written."""
 
         fakes = Fakes({})
@@ -246,6 +246,36 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual(len(fakes.stored), count)
         self.assertEqual(len(json.loads(out)["result"]["versions"]), 2)
 
+    def test_what_is_removed_or_changed_goes_in_a_batch_before_what_is_added(self) -> None:
+        """Code review 26-10-30 again, R11: a new object that took a removed one's name
+        went in the first batch while the removed one was still there."""
+
+        fakes = Fakes({"old": document("old"), "kept": document("kept")})
+        for number in range(changes_publish.MAX_OBJECTS + 1):
+            self.write(f"site{number:03d}", document(f"site{number:03d}"))
+        self.write("kept", document("kept", port=9090))
+
+        code, _, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--prune")
+
+        self.assertEqual(code, 0)
+        first = list(fakes.published[0]["parameters"]["objects"])
+        self.assertEqual(first[:2], ["old", "kept"])
+        self.assertIsNone(fakes.published[0]["parameters"]["objects"]["old"])
+
+    def test_an_object_stored_before_a_rule_applies_unchanged(self) -> None:
+        """Code review 26-10-30 again, R12: an export of an object stored with a range
+        that has host bits was refused whole, though the plan called it unchanged."""
+
+        older = document("shop").replace("routes:", "allow_from: [192.0.2.1/24]\nroutes:")
+        fakes = Fakes({"shop": older})
+        self.write("shop", older)
+
+        code, out, err = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root))
+
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("nothing to change", out)
+        self.assertEqual(fakes.published, [])
+
     def test_a_later_batch_refused_is_partial_with_the_versions_published(self) -> None:
         """Review 2026-10-22, 4-2: the published versions were only in the message."""
 
@@ -267,7 +297,7 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual((code, answer["outcome"]), (exit_codes.PARTIAL, "partial"))
         self.assertEqual([v["version"] for v in answer["result"]["versions"]], [11])
         self.assertEqual(answer["warnings"][0]["code"], "changes_invalid")
-        self.assertIn("1 earlier batch(es) published", err)
+        self.assertIn("1 earlier batch published", err)
 
     def test_a_head_that_moved_is_blocked(self) -> None:
         fakes = Fakes({})

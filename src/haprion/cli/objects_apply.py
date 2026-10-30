@@ -41,7 +41,14 @@ from haprion.cli.apply_common import (
 from haprion.cli.cluster_settings import run_publish_helper
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
-from haprion.proxy_model import MAX_MODEL_BYTES, NAME, NAME_RULE, ModelError, load_written
+from haprion.proxy_model import (
+    MAX_MODEL_BYTES,
+    NAME,
+    NAME_RULE,
+    ModelError,
+    load_proxy,
+    load_written,
+)
 
 OPERATION = "objects_apply"
 SUFFIXES = (".yaml", ".yml")
@@ -124,9 +131,16 @@ def read_files(targets: Sequence[str]) -> dict[str, str]:
             raise Refused("unreadable", f"{path}: {exc.strerror}", exit_codes.NOT_FOUND) from exc
         if len(data) > MAX_MODEL_BYTES:
             raise Refused("too_long", f"{path}: larger than {MAX_MODEL_BYTES} bytes")
+        #
+        # Read as a stored object here, and held to the rules for what is
+        # written only once the plan says it is written: an export of an
+        # object stored before a rule changes nothing when applied, as the
+        # plan says, and was refused whole (code review 2026-10-30 again,
+        # R12).
+        #
         try:
             text = data.decode("utf-8")
-            load_written(name, data)
+            load_proxy(name, data)
         except (UnicodeDecodeError, ModelError) as exc:
             raise Refused("object_invalid", f"{path}: {exc}") from exc
         documents[name] = text
@@ -166,8 +180,19 @@ def plan_apply(wanted: Mapping[str, str], current: Mapping[str, str], *, prune: 
         sorted(name for name in wanted if name in current and current[name] == wanted[name])
     )
     removed = tuple(sorted(name for name in current if name not in wanted)) if prune else ()
-    documents: dict[str, str | None] = {name: wanted[name] for name in (*added, *changed)}
-    documents.update(dict.fromkeys(removed))
+    for name in (*added, *changed):
+        try:
+            load_written(name, wanted[name].encode())
+        except ModelError as exc:
+            raise Refused("object_invalid", f"{name}: {exc}") from exc
+    #
+    # Removed first, then changed, then added: when the plan is published in
+    # more than one batch, a name, port or pool a removed or changed object
+    # lets go is free before the batch whose new object takes it (code review
+    # 2026-10-30 again, R11).
+    #
+    documents: dict[str, str | None] = dict.fromkeys(removed)
+    documents.update({name: wanted[name] for name in (*changed, *added)})
     return Plan(
         added=added,
         changed=changed,
@@ -244,7 +269,7 @@ def publish(
             raise PartlyDone(
                 Refused(
                     refused.code,
-                    f"{refused}; {len(answers)} earlier batch(es) published",
+                    f"{refused}; {labels.counted(len(answers), 'earlier batch', 'earlier batches')} published",
                     refused.exit_code,
                     refused.details,
                 ),

@@ -206,6 +206,21 @@ class StateBackupTests(unittest.TestCase):
                 restore_runs.waiting_on(Path(raw) / "missing", time.time()), frozenset()
             )
 
+    def test_a_file_the_listing_does_not_know_takes_no_place_in_the_count(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            kept = "2026-09-21_05-00-00.tar.gz"
+            for name in ("2026-09-19_05-00-00.tar.gz", "2026-09-20_05-00-00.tar.gz", kept):
+                (directory / name).write_bytes(b"x")
+            (directory / "node-a-before-upgrade.tar.gz").write_bytes(b"x")
+
+            state_backup._retain(directory, 1)
+
+            self.assertEqual(
+                sorted(path.name for path in directory.iterdir()),
+                [kept, "node-a-before-upgrade.tar.gz"],
+            )
+
     def test_a_failed_export_never_becomes_a_backup(self) -> None:
         def failed(
             node: Node, identity: DeployIdentity, destination: BinaryIO, *, timeout: float

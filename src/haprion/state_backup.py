@@ -24,6 +24,7 @@ from uuid import uuid4
 from haprion import atomic_file, exit_codes, node_ssh, restore_runs
 from haprion.backup_archive import MAX_ARCHIVE_BYTES, ArchiveError, ArchiveFacts, validate
 from haprion.backup_retention import DEFAULT_RETENTION
+from haprion.backups import ARCHIVE
 from haprion.config import Cluster, DeployIdentity, Node
 
 FETCH_TIMEOUT_SECONDS = 300.0
@@ -185,10 +186,7 @@ def _retain(directory: Path, keep: int, held: frozenset[str] = frozenset()) -> N
         (
             path
             for path in directory.iterdir()
-            if path.is_file()
-            and not path.is_symlink()
-            and path.name.endswith(".tar.gz")
-            and not path.name.startswith(".")
+            if path.is_file() and not path.is_symlink() and ARCHIVE.fullmatch(path.name) is not None
         ),
         key=lambda path: path.name,
         reverse=True,

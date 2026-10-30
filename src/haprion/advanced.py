@@ -1467,6 +1467,54 @@ def _server_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
 
 
 #
+# A health check's own connection (code review 2026-10-30, slutkoll P1-1):
+# `tcp-check connect` and `http-check connect` take an `addr`, and it took
+# `unix@` as a server line's address would - measured on 3.4.7, the check
+# then opened the node's statistics socket, wrote to it and read the answer.
+# A check connects to its own server: another port of it is the check's to
+# say, as a plain number, and another address is the server line's `addr`,
+# held to a network address there. So `addr` is refused here outright, and
+# the line is read parameter by parameter like a server line (the manual's
+# synopsis, which a test holds it against).
+#
+CHECK_CONNECT = frozenset({("tcp-check", "connect"), ("http-check", "connect")})
+CHECK_CONNECT_PARAMETERS = {
+    "default": 0,
+    "port": 1,
+    "send-proxy": 0,
+    "via-socks4": 0,
+    "ssl": 0,
+    "sni": 1,
+    "alpn": 1,
+    "linger": 0,
+    "proto": 1,
+    "comment": 1,
+}
+CHECK_CONNECT_REFUSED = {
+    "addr": "a health check connects to its own server; another address is the server's `addr`",
+}
+_PORT = re.compile(r"[0-9]{1,5}")
+
+
+def _check_connect_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
+    if keyword not in CHECK_CONNECT:
+        return ""
+    index = len(keyword)
+    while index < len(tokens):
+        parameter = tokens[index]
+        value = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if parameter in CHECK_CONNECT_REFUSED:
+            return CHECK_CONNECT_REFUSED[parameter]
+        width = CHECK_CONNECT_PARAMETERS.get(parameter)
+        if width is None:
+            return f"{parameter} is not a parameter of {' '.join(keyword)} in HAProxy 3.4"
+        if parameter == "port" and not (_PORT.fullmatch(value) and 1 <= int(value) <= 65535):
+            return "a health check's port is a plain number from 1 to 65535"
+        index += 1 + width
+    return ""
+
+
+#
 # The files a line may make HAProxy serve: the error pages the haproxy package
 # installs, and nothing else. HAProxy reads such a file as root when it loads
 # the configuration and hands it to whoever asks, and the candidate's sandbox
@@ -1618,6 +1666,7 @@ def _line_problem(
 
     return (
         _server_problem(tokens, keyword)
+        or _check_connect_problem(tokens, keyword)
         or _waf_problem(tokens, keyword)
         or _variable_problem(tokens)
         or _service_problem(tokens)

@@ -924,6 +924,47 @@ class EveryLineIsHeldToAListOfWhatItMayBe(unittest.TestCase):
             with self.subTest(line):
                 self.assertEqual(fate(line, handwritten=True), REFUSED_FATE)
 
+    def test_a_health_check_connects_to_its_own_server(self) -> None:
+        """Code review 26-10-30, slutkoll P1-1: `tcp-check connect addr unix@...` was placed,
+        and on 3.4.7 the check opened the socket, wrote to it and read the answer."""
+
+        review = (
+            "option tcp-check\n"
+            "tcp-check connect addr unix@/run/haproxy/manager.sock\n"
+            'tcp-check send "prompt\\n"\n'
+            "tcp-check expect string OK\n"
+            "server s1 198.51.100.20:8080 check\n"
+        )
+        self.assertEqual(
+            [entry[1] for entry in fates(review, handwritten=True)],
+            [PLACED, REFUSED_FATE, PLACED, PLACED, PLACED],
+        )
+        for line in (
+            "tcp-check connect addr unix@/run/haproxy/manager.sock",
+            "http-check connect addr unix@/run/haproxy/manager.sock",
+            "tcp-check connect addr 203.0.113.9 port 25",
+            "http-check connect port 8081 addr 192.0.2.5",
+            "tcp-check connect port req.hdr(x)",
+            "tcp-check connect port 70000",
+            "tcp-check connect frobnicate",
+        ):
+            for protocol in ("http", "tcp"):
+                for handwritten in (False, True):
+                    with self.subTest(line, protocol=protocol, handwritten=handwritten):
+                        self.assertEqual(
+                            fate(line, handwritten=handwritten, protocol=protocol), REFUSED_FATE
+                        )
+            with self.subTest(line, section="backend"):
+                self.assertEqual(fates(f"backend shop-b\n    {line}\n")[1][1], REFUSED_FATE)
+        for line in (
+            "tcp-check connect",
+            "tcp-check connect port 8081 ssl sni str(a.example.com) alpn h2 linger",
+            "tcp-check connect default send-proxy via-socks4 proto none comment x",
+            "http-check connect port 443 ssl alpn h2 comment x",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line, handwritten=True), PLACED)
+
     def test_a_server_names_no_file_but_its_authority(self) -> None:
         for line in (
             "server s1 192.0.2.5:443 ssl crt /etc/haproxy/certs/other.pem",
@@ -1044,6 +1085,21 @@ class EveryAllowedKeywordIsHAProxyS(unittest.TestCase):
             set(registered) - set(advanced.SERVER_PARAMETERS),
             {*advanced.SERVER_REFUSED, "set-proxy-v2-tlv-fmt"},
         )
+
+    @unittest.skipUnless(MANUAL.exists(), "the HAProxy manual is not installed here")
+    def test_a_check_connect_s_parameters_are_the_manual_s_synopsis(self) -> None:
+        import re
+
+        with gzip.open(MANUAL, "rt", encoding="utf-8") as manual:
+            text = manual.read()
+        for keyword in ("tcp-check connect", "http-check connect"):
+            with self.subTest(keyword):
+                start = text.index(f"\n{keyword} [")
+                synopsis = text[start : text.index("\n  Opens a new connection", start)]
+                named = set(re.findall(r"\[([a-z0-9-]+)(?: <[a-z]+>)?\]", synopsis))
+                self.assertEqual(
+                    named, {*advanced.CHECK_CONNECT_PARAMETERS, *advanced.CHECK_CONNECT_REFUSED}
+                )
 
     def test_each_filter_and_userlist_keyword_is_one_haproxy_registers(self) -> None:
         lines = _registered().splitlines()

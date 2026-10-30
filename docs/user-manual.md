@@ -1335,7 +1335,10 @@ its configuration, during the check before a publish too. So the text may not na
   holds the key is allowed;
 - a log target other than `global`, a ring the text adds, or a syslog server's network address. A
   path, `unix@`, `fd@`, `stdout`, `stderr` and `backend@` are refused;
-- a server reached at anything but a network address, such as a socket path;
+- a server reached at anything but a network address, such as a socket path, and the same for its
+  `addr`, `agent-addr` and `socks4`;
+- an `addr` in `tcp-check connect` or `http-check connect`. A health check connects to its own server,
+  on another port if need be (`port 8081`, a plain number); a different address is the server's `addr`;
 - a server's `crt`, `crl-file` or `namespace`, or a parameter HAProxy does not have. A server's
   `ca-file` must be `@system-ca` or one of the cluster's authorities under `/etc/haproxy/certs/ca/`;
 - the `crt` keyword, since the form chooses an object's certificates;

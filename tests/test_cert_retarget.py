@@ -9,13 +9,15 @@ everything of its own in place.
 
 from __future__ import annotations
 
+import fcntl
+import os
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import yaml
 
-from haprion import cert_retarget
+from haprion import cert_registry, cert_retarget
 from haprion.cert_delete import Guards
 from haprion.cert_inventory import FULLCHAIN, PRIVKEY
 from haprion.cert_retarget import Change, retarget
@@ -79,6 +81,29 @@ class PublishingToMoreTargets(RetargetFixture):
         # nothing is still due (`cert_pending`) before the retarget starts.
         #
         self.run_publish(self.policy_path, deployer=lambda _cluster_id: 0)
+
+    def test_the_registry_is_written_under_the_certificate_lock_in_both_directions(self) -> None:
+        held: list[tuple[str, bool]] = []
+        real = cert_registry.write
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            fd = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                held.append(("write", True))
+            else:
+                held.append(("write", False))
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+            return real(*args, **kwargs)
+
+        with mock.patch.object(cert_registry, "write", spy):
+            self.retarget(self.policy_path, "add", "example.com", clusters=("beta",))
+            self.retarget(self.policy_path, "remove", "example.com", clusters=("beta",))
+
+        self.assertEqual(held, [("write", True), ("write", True)])
 
     def test_two_certificates_gain_a_cluster_and_it_is_rolled_out_once(self) -> None:
         report = self.retarget(

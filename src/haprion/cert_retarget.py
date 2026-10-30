@@ -447,25 +447,32 @@ def _add(
     }
     registered: set[str] = set()
     for certificate_id in certificate_ids:
-        runtime = _load(policy, require_secure)
-        found = _entry_or_refusal(certificate_id, runtime)
-        if isinstance(found, CertificateOutcome):
-            outcomes.append(found)
-            continue
-        before_clusters, before_receivers = found
-        clusters = tuple(dict.fromkeys((*before_clusters, *change.clusters)))
-        receivers = tuple(dict.fromkeys((*before_receivers, *change.receivers)))
+        #
+        # The read of the entry and the write of the registry are one step under
+        # the certificate lock, like every other registry writer: a lock taken
+        # for the write alone would still let the targets just read be stale.
+        # `publish` below takes the lock itself, so it stays outside.
+        #
         try:
-            written = cert_registry.set_targets(
-                registry_path,
-                certificate_id=certificate_id,
-                clusters=clusters,
-                receivers=receivers,
-                runtime=runtime,
-                formats=change.formats,
-                require_secure=require_secure,
-            )
-        except cert_registry.RegistryError as exc:
+            with publish_lock(lock_path):
+                runtime = _load(policy, require_secure)
+                found = _entry_or_refusal(certificate_id, runtime)
+                if isinstance(found, CertificateOutcome):
+                    outcomes.append(found)
+                    continue
+                before_clusters, before_receivers = found
+                clusters = tuple(dict.fromkeys((*before_clusters, *change.clusters)))
+                receivers = tuple(dict.fromkeys((*before_receivers, *change.receivers)))
+                written = cert_registry.set_targets(
+                    registry_path,
+                    certificate_id=certificate_id,
+                    clusters=clusters,
+                    receivers=receivers,
+                    runtime=runtime,
+                    formats=change.formats,
+                    require_secure=require_secure,
+                )
+        except (cert_registry.RegistryError, PublishError) as exc:
             outcomes.append(CertificateOutcome(certificate_id, "refused", str(exc), exc.code))
             continue
         if not written.changed:

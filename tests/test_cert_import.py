@@ -24,6 +24,7 @@ from haprion.cert_import import (
     Material,
     assemble,
     import_certificate,
+    read_bytes,
     read_material,
     split_blocks,
 )
@@ -214,6 +215,23 @@ class ReadingTheMaterial(ImportFixture):
         self.assertNotIn("Bag Attributes", certificates[0] + keys[0])
         self.assertNotIn("friendlyName", certificates[0] + keys[0])
         self.assertNotIn("Key Attributes", certificates[0] + keys[0])
+
+    def test_a_pem_saved_with_a_utf8_bom_is_read(self) -> None:
+        data = self.pki.leaf.read_bytes() + self.pki.leaf_key.read_bytes()
+        plain = read_bytes(data)
+        self.assertEqual(read_bytes(b"\xef\xbb\xbf" + data), plain)
+        bom_file = self.root / "bom.pem"
+        bom_file.write_bytes(b"\xef\xbb\xbf" + self.pki.leaf.read_bytes())
+        self.assertEqual(
+            read_material(
+                certificate=bom_file,
+                key=self.pki.leaf_key,
+                chain=None,
+                pkcs12=None,
+                password_file=None,
+            ).leaf,
+            self.pki.leaf.read_text(),
+        )
 
     def test_an_encrypted_key_is_refused(self) -> None:
         encrypted = openssl("pkey", "-in", str(self.pki.leaf_key), "-aes256", "-passout", "pass:x")

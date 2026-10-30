@@ -220,11 +220,18 @@ def split_blocks(text: str) -> tuple[list[str], list[str]]:
     return certificates, keys
 
 
+#
+# What Windows tools put first in a file saved as "UTF-8 with BOM". Only the
+# base64 blocks are read, so it is dropped rather than refused.
+#
+UTF8_BOM = b"\xef\xbb\xbf"
+
+
 def _read(path: Path, what: str) -> str:
     try:
         if path.stat().st_size > MAX_CERTIFICATE_BYTES:
             raise ImportError_("bad_input", f"{what} is implausibly large: {path}")
-        return path.read_text(encoding="ascii", errors="strict")
+        return path.read_bytes().removeprefix(UTF8_BOM).decode("ascii")
     except FileNotFoundError:
         raise ImportError_("bad_input", f"{what} does not exist: {path}") from None
     except (OSError, UnicodeDecodeError) as exc:
@@ -409,7 +416,7 @@ def read_bytes(data: bytes, *, password: str | None = None) -> tuple[list[str], 
         raise ImportError_("bad_input", "the file is empty")
     if _PEM_MARK in data:
         try:
-            text = data.decode("ascii")
+            text = data.removeprefix(UTF8_BOM).decode("ascii")
         except UnicodeDecodeError:
             raise ImportError_("bad_input", "the PEM file holds bytes that are not text") from None
         certificates, keys = split_blocks(text)

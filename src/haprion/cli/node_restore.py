@@ -200,7 +200,8 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
     if archive["extra_paths"]:
         out.write(f"  operator's own paths: {', '.join(archive['extra_paths'])}\n")
     if plan.get("passwords", "restored") != "restored":
-        out.write(f"  passwords are {plan['passwords']}\n")
+        # The mode names what happens to the archive's password hashes; no hash is in it.
+        out.write("  passwords are not restored in test mode\n")
     out.write("  accounts:\n")
     for account in plan["accounts"]:
         kind = "service" if account["service"] else "operator"

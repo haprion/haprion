@@ -250,9 +250,17 @@ def check_name(
             "cluster_invalid", f"the display name must be 1-{MAX_DISPLAY_NAME} printable characters"
         )
     try:
-        return ipaddress.ip_address(vip)
+        address = ipaddress.ip_address(vip)
     except ValueError:
         raise EnrollmentError("cluster_invalid", "the VIP must be an IP address") from None
+    #
+    # The node side is IPv4 only (join refuses an IPv6 VIP, the status reads
+    # `ip -4`), so a cluster is not created with one only to be rolled back
+    # after the node has been prepared (review 26-10-30, E3).
+    #
+    if address.version != 4:
+        raise EnrollmentError("cluster_invalid", "the VIP is not an IPv4 address")
+    return address
 
 
 def definition(

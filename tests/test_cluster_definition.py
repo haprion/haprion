@@ -512,6 +512,14 @@ class CreatingACluster(unittest.TestCase):
                     self.assertIn("node-c", str(caught.exception))
                     self.assertIn("rolled back on the manager", str(caught.exception))
 
+    def test_an_ipv6_vip_is_refused_before_anything_is_joined(self) -> None:
+        """Review 26-10-30, E3: the node side is IPv4 only."""
+
+        with self.assertRaises(EnrollmentError) as caught:
+            cluster_definition.check_name("alpha", display_name="Alpha", vip="2001:db8::10")
+        self.assertEqual(caught.exception.code, "cluster_invalid")
+        self.assertIn("not an IPv4 address", str(caught.exception))
+
     def test_an_editing_policy_visudo_refuses_changes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = Site(Path(raw))

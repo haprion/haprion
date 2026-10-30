@@ -2731,7 +2731,8 @@ A manager may have no clusters, and a cluster may start with one node and no cer
 cluster with *Create cluster* under *Settings → Nodes & clusters*, or with `haprion-cluster`, through the
 same root helper as a node. It needs:
 
-- its ID, VIP and display name (the ID unless you give one);
+- its ID, VIP and display name (the ID unless you give one). The VIP is an IPv4 address: the node
+  scripts do not reach IPv6 yet, and an IPv6 address is refused when the cluster is created;
 - the block its first node printed when its package was installed. The node is joined as any node is
   ([Adding and removing a node](#adding-and-removing-a-node)).
 

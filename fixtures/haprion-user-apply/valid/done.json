@@ -11,7 +11,8 @@
     "created": ["viewer"],
     "updated": [{"username": "admin", "fields": ["password"]}],
     "deleted": [],
-    "unchanged": ["operator"]
+    "unchanged": ["operator"],
+    "sessions_ended": 2
   },
   "warnings": [],
   "error": null

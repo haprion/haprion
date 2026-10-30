@@ -23,7 +23,16 @@ from typing import Any
 import psycopg
 from haprion import exit_codes
 
-from haprion_ui import backups, config, db, feature_switch, job_wait, settings_apply, tool_answer
+from haprion_ui import (
+    backups,
+    config,
+    db,
+    feature_switch,
+    job_wait,
+    labels,
+    settings_apply,
+    tool_answer,
+)
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 
@@ -166,6 +175,8 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
         if outcome.oidc["enabled"] is not None:
             state = "on" if outcome.oidc["enabled"] else "off"
             print(f"{lead} turn sign-in through the provider {state}")
+        if outcome.oidc.get("sessions_ended"):
+            print(f"{labels.counted(outcome.oidc['sessions_ended'], 'session')} ended")
         if outcome.oidc["sealing"] == "kept":
             print(
                 "the stored client secret was kept: it cannot be compared; "

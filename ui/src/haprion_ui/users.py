@@ -61,6 +61,11 @@ DONE = {
     "unlock": "Unlocked.",
 }
 #
+# The messages a break-glass change can end in, which are followed by how many
+# sessions it ended (B402).
+#
+BREAK_GLASS_DONE = frozenset({"break_glass", "saved"})
+#
 # The form's `action` values; anything else is refused before it reaches the
 # database.
 #

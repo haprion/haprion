@@ -1084,7 +1084,8 @@ accounts that are not break-glass end at once, since they could not sign in agai
 sessions when that rule is chosen while sign-in is on, and an account's sessions when its break-glass mark
 is removed in that state (`haprion-user break-glass --off` and `apply` do the same). Your own session
 stays when you are one of them. The page and the audit event (`sessions_ended`, `sessions_revoked`) say
-how many ended.
+how many ended; so does the answer of `haprion-settings apply` and `haprion-user apply` (`sessions_ended`
+in `--json`).
 
 **Settings from a file**, for automation. `haprion-settings`, run as root on the manager, sets what three
 parts of the settings set: *External monitoring*, *Features* and the OIDC configuration. It uses the same

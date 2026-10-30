@@ -8553,7 +8553,8 @@ class TheSettingsFromAFile(unittest.TestCase):
         self.assertEqual(first[1]["result"]["oidc"]["enabled"], True)
         self.assertEqual(first[1]["result"]["oidc"]["sealing"], "replaced")
         self.assertEqual(
-            second[1]["result"]["oidc"], {"fields": [], "enabled": None, "sealing": "kept"}
+            second[1]["result"]["oidc"],
+            {"fields": [], "enabled": None, "sealing": "kept", "sessions_ended": 0},
         )
         self.assertFalse(second[1]["result"]["changed"])
         self.assertEqual(self.verified, ["https://mgr.example.com/login/oidc/callback"])

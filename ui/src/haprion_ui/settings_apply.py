@@ -391,12 +391,19 @@ def apply_oidc(
             "oidc: interface_url is needed to verify the settings with the provider "
             "(the address people sign in at, such as https://mgr.example.com)"
         )
-    answer: dict[str, Any] = {"fields": fields, "enabled": turn, "sealing": sealing}
+    answer: dict[str, Any] = {
+        "fields": fields,
+        "enabled": turn,
+        "sealing": sealing,
+        "sessions_ended": 0,
+    }
     if check or (not fields and turn is None):
         return answer if (fields or turn is not None or sealing) else None
 
     if turn is False:
-        _set_enabled(connection, False, actor=actor, issuer=current.issuer)
+        answer["sessions_ended"] += _set_enabled(
+            connection, False, actor=actor, issuer=current.issuer
+        )
     if fields and parsed is not None:
         verified = False
         if on_after and current.enabled and turn is None:
@@ -415,6 +422,7 @@ def apply_oidc(
             ended = db.save_oidc_provider(
                 connection, settings=parsed.settings, actor=actor, verified=verified
             )
+            answer["sessions_ended"] += ended
         except db.ProviderRefused as error:
             raise ApplyError(f"oidc: {error}") from error
         db.record_audit_event(
@@ -453,12 +461,14 @@ def apply_oidc(
                     f"stays off{'; the settings were saved' if fields else ''}. "
                     f"{_failed_verify(trouble, checks)}"
                 )
-        _set_enabled(connection, True, actor=actor, issuer=stored.issuer)
+        answer["sessions_ended"] += _set_enabled(
+            connection, True, actor=actor, issuer=stored.issuer
+        )
     connection.commit()
     return answer
 
 
-def _set_enabled(connection: Any, enabled: bool, *, actor: str, issuer: str | None) -> None:
+def _set_enabled(connection: Any, enabled: bool, *, actor: str, issuer: str | None) -> int:
     try:
         ended = db.set_oidc_enabled(connection, enabled=enabled, actor=actor)
     except db.ProviderRefused as error:
@@ -470,6 +480,7 @@ def _set_enabled(connection: Any, enabled: bool, *, actor: str, issuer: str | No
         action="oidc_enabled" if enabled else "oidc_disabled",
         detail=detail,
     )
+    return ended
 
 
 # - the answer -------------------------------------------------------------------

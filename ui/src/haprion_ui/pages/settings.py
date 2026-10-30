@@ -400,8 +400,16 @@ def build_router(config: Config) -> APIRouter:
         *,
         problem: str = "",
         done: str = "",
+        ended: int = 0,
         status_code: int = 200,
     ) -> Response:
+        said = users.DONE.get(done, "")
+        if said and ended > 0 and done in users.BREAK_GLASS_DONE:
+            #
+            # Removing the mark under sign-in through the provider ends the
+            # account's sessions (B402); the page says how many.
+            #
+            said += f" {labels.counted(ended, 'session')} of this account ended."
         return TEMPLATES.TemplateResponse(
             request,
             "settings-user.html",
@@ -409,7 +417,7 @@ def build_router(config: Config) -> APIRouter:
                 **_users_context(request, session),
                 "account": users.user_view(row, signed_in_as=session.username),
                 "problem": problem,
-                "done": users.DONE.get(done, ""),
+                "done": said,
             },
             status_code=status_code,
         )
@@ -1194,7 +1202,14 @@ def build_router(config: Config) -> APIRouter:
         row = _account_row(request, name)
         if row is None:
             return PlainTextResponse("Not found", status_code=404)
-        return _user_page(request, gate, row, done=request.query_params.get("done", "")[:16])
+        counted = request.query_params.get("ended", "")
+        return _user_page(
+            request,
+            gate,
+            row,
+            done=request.query_params.get("done", "")[:16],
+            ended=int(counted[:6]) if is_digits(counted) else 0,
+        )
 
     @router.post("/settings/users/{name}", response_class=HTMLResponse)
     def change_user(
@@ -1254,6 +1269,7 @@ def build_router(config: Config) -> APIRouter:
 
         with request.app.state.pool.connection() as connection:
             changes: list[tuple[str, dict[str, object]]] = []
+            glass_ended = 0
 
             def detail(**fields: object) -> dict[str, object]:
                 return {"account": row.username, "via": "web", **fields}
@@ -1268,7 +1284,7 @@ def build_router(config: Config) -> APIRouter:
                     )
                     changes.append(("password_reset", detail(sessions_revoked=ended)))
                 if new_break_glass:
-                    ended = db.set_break_glass(
+                    ended = glass_ended = db.set_break_glass(
                         connection,
                         user_id=row.id,
                         break_glass=not row.break_glass,
@@ -1322,6 +1338,11 @@ def build_router(config: Config) -> APIRouter:
                 done = "role" if new_role else "password" if new_secret else "break_glass"
         else:
             done = action
+        if glass_ended and done in users.BREAK_GLASS_DONE:
+            return RedirectResponse(
+                users.href(row.username) + "?done=" + done + "&ended=" + str(glass_ended),
+                status_code=303,
+            )
         return RedirectResponse(users.href(row.username) + "?done=" + done, status_code=303)
 
     @router.get("/settings/oidc", response_class=HTMLResponse)

@@ -253,8 +253,11 @@ def plan(wanted: Sequence[Wanted], current: Sequence[Stored], *, prune: bool) ->
     )
 
 
-def write(connection: Any, the_plan: Plan, *, actor: str) -> None:
-    """Every change of the plan, audited as the web audits it, in the caller's transaction."""
+def write(connection: Any, the_plan: Plan, *, actor: str) -> int:
+    """Every change of the plan, audited as the web audits it, in the caller's
+    transaction. Returns how many sessions the changes ended."""
+
+    ended_total = 0
 
     def audit(action: str, account: str, **detail: object) -> None:
         db.record_audit_event(
@@ -297,11 +300,13 @@ def write(connection: Any, the_plan: Plan, *, actor: str) -> None:
                 ended = db.reset_password(
                     connection, user_id=row.id, password_hash=auth.hash_password(account.password)
                 )
+                ended_total += ended
                 audit("password_reset", row.username, sessions_revoked=ended)
             if "break_glass" in fields:
                 ended = db.set_break_glass(
                     connection, user_id=row.id, break_glass=bool(account.break_glass)
                 )
+                ended_total += ended
                 audit(
                     "break_glass_changed",
                     row.username,
@@ -310,6 +315,7 @@ def write(connection: Any, the_plan: Plan, *, actor: str) -> None:
                 )
             if "disabled" in fields:
                 ended = db.set_disabled(connection, user_id=row.id, disabled=bool(account.disabled))
+                ended_total += ended
                 if account.disabled:
                     audit("account_disabled", row.username, sessions_revoked=ended)
                 else:
@@ -323,9 +329,10 @@ def write(connection: Any, the_plan: Plan, *, actor: str) -> None:
         ) from exc
     except db.LastAdmin as exc:
         raise ApplyError("the last active admin cannot be demoted, disabled or deleted") from exc
+    return ended_total
 
 
-def summary(the_plan: Plan, *, check: bool) -> dict[str, Any]:
+def summary(the_plan: Plan, *, check: bool, sessions_ended: int = 0) -> dict[str, Any]:
     return {
         "changed": not the_plan.empty,
         "check": check,
@@ -336,4 +343,5 @@ def summary(the_plan: Plan, *, check: bool) -> dict[str, Any]:
         ],
         "deleted": [row.username for row in the_plan.deleted],
         "unchanged": list(the_plan.unchanged),
+        "sessions_ended": sessions_ended,
     }

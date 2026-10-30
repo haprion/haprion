@@ -10,7 +10,7 @@
     "check": false,
     "status_access": {"added": ["192.0.2.10/32"], "removed": []},
     "features": {"waf_engine": true},
-    "oidc": {"fields": ["button_text"], "enabled": null, "sealing": "kept"}
+    "oidc": {"fields": ["button_text"], "enabled": null, "sealing": "kept", "sessions_ended": 0}
   },
   "warnings": [],
   "error": null

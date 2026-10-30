@@ -16,8 +16,9 @@ import unittest
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
-from haprion_ui import account_apply, auth, tool_answer
+from haprion_ui import account_apply, auth, db, tool_answer
 from haprion_ui.account_apply import ApplyError, Stored, Wanted
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures/haprion-user-apply/valid/done.json"
@@ -131,6 +132,32 @@ class ThePlan(unittest.TestCase):
         )
 
         self.assertEqual([row.username for row in plan.deleted], ["old"])
+
+
+class TheSessionsItEnded(unittest.TestCase):
+    def test_a_write_returns_how_many_sessions_its_changes_ended(self) -> None:
+        """Review 26-10-30, R4: the count was in the audit rows only."""
+
+        the_plan = account_apply.plan(
+            [
+                Wanted("admin", "admin", break_glass=False),
+                Wanted("operator", "reader", disabled=True),
+            ],
+            [stored("admin", break_glass=True), stored("operator", id=2)],
+            prune=False,
+        )
+        with (
+            mock.patch.object(db, "set_break_glass", return_value=2),
+            mock.patch.object(db, "set_disabled", return_value=1),
+            mock.patch.object(db, "set_role"),
+            mock.patch.object(db, "record_audit_event"),
+        ):
+            ended = account_apply.write(mock.Mock(), the_plan, actor="admin")
+
+        self.assertEqual(ended, 3)
+        self.assertEqual(
+            account_apply.summary(the_plan, check=False, sessions_ended=ended)["sessions_ended"], 3
+        )
 
 
 class TheAnswer(unittest.TestCase):

@@ -402,7 +402,11 @@ class SettingsUsers(LoginTestCase):
         marked = self.post(
             client, "/settings/users/bob", action="save", role="reader", break_glass="on"
         )
-        self.assertEqual(marked.headers["location"], "/settings/users/bob?done=break_glass")
+        self.assertEqual(marked.headers["location"], "/settings/users/bob?done=break_glass&ended=2")
+        self.assertIn(
+            "Break-glass changed. 2 sessions of this account ended.",
+            client.get(marked.headers["location"]).text,
+        )
         self.assertEqual(
             self.calls[-1],
             (

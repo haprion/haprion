@@ -41,7 +41,8 @@
           }
         },
         "deleted": { "$ref": "#/$defs/names" },
-        "unchanged": { "$ref": "#/$defs/names" }
+        "unchanged": { "$ref": "#/$defs/names" },
+        "sessions_ended": { "type": "integer", "minimum": 0 }
       },
       "additionalProperties": true
     }

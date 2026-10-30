@@ -14,6 +14,7 @@ import json
 import tempfile
 import unittest
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -174,12 +175,42 @@ class TheIdentity(unittest.TestCase):
         self.assertIn("ca_pem", answer["fields"])
 
 
+class TheSessionsItEnded(unittest.TestCase):
+    def test_turning_sign_in_off_says_how_many_sessions_ended(self) -> None:
+        """Review 26-10-30, R4: the count was in the audit row only."""
+
+        with (
+            mock.patch.object(
+                db, "oidc_provider", return_value=replace(stored_provider(), enabled=True)
+            ),
+            mock.patch.object(db, "set_oidc_enabled", return_value=3),
+            mock.patch.object(db, "record_audit_event"),
+        ):
+            answer = settings_apply.apply_oidc(
+                mock.Mock(),
+                {"enabled": False},
+                actor="admin",
+                check=False,
+                public_key=None,
+                replace_secret=False,
+                piped_secret=None,
+            )
+
+        assert answer is not None  # noqa: S101 - the file turns it off
+        self.assertEqual(answer["sessions_ended"], 3)
+
+
 class TheAnswer(unittest.TestCase):
     def test_it_has_the_shape_the_contract_holds(self) -> None:
         outcome = Outcome(
             status_access={"added": ["192.0.2.10/32"], "removed": []},
             features={"waf_engine": True},
-            oidc={"fields": ["button_text"], "enabled": None, "sealing": "kept"},
+            oidc={
+                "fields": ["button_text"],
+                "enabled": None,
+                "sealing": "kept",
+                "sessions_ended": 0,
+            },
         )
         code, answer = answered(
             lambda: tool_answer.done(

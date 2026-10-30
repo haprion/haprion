@@ -457,6 +457,7 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
 
     try:
         wanted = account_apply.read_file(Path(args.file))
+        ended = 0
         with connect(environment) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("select pg_advisory_xact_lock(hashtext('app_user_keep_an_admin'))")
@@ -464,7 +465,7 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
                 wanted, account_apply.stored_accounts(connection), prune=args.prune
             )
             if not args.check and not the_plan.empty:
-                account_apply.write(connection, the_plan, actor=actor_name())
+                ended = account_apply.write(connection, the_plan, actor=actor_name())
                 connection.commit()
     except account_apply.ApplyError as exc:
         #
@@ -472,7 +473,7 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
         # usage error (64) however the answer is printed.
         #
         return tool_answer.refusal(args, account_apply.OPERATION, exc.code, str(exc), exc.exit_code)
-    result = account_apply.summary(the_plan, check=args.check)
+    result = account_apply.summary(the_plan, check=args.check, sessions_ended=ended)
     if args.json:
         return tool_answer.done(account_apply.OPERATION, result)
     if the_plan.empty:
@@ -485,6 +486,8 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
         print(f"{lead} change {entry['username']}: {', '.join(entry['fields'])}")
     for name in result["deleted"]:
         print(f"{lead} delete {name}")
+    if ended:
+        print(f"{labels.counted(ended, 'session')} ended")
     return 0
 
 

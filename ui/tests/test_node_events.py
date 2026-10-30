@@ -237,7 +237,8 @@ class TheSentences(unittest.TestCase):
             "The VIP moved to node-b from node-a",
         )
         self.assertEqual(
-            node_events.described("node_silent", "node-b", {}, "node-b"), "node-b stopped reporting its status"
+            node_events.described("node_silent", "node-b", {}, "node-b"),
+            "node-b stopped reporting its status",
         )
 
     def test_every_event_the_table_allows_has_a_sentence(self) -> None:

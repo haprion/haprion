@@ -554,8 +554,12 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
         self.assertEqual(
             [(item.severity, item.subject, item.message) for item in items],
             [
-                ("critical", "node-a", "traffic log to loki: 7 lines dropped in the last hour"),
-                ("warning", "node-a", "traffic log to loki: 20 000 lines queued"),
+                (
+                    "critical",
+                    "node-a → loki",
+                    "traffic log to loki: 7 lines dropped in the last hour",
+                ),
+                ("warning", "node-a → loki", "traffic log to loki: 20 000 lines queued"),
             ],
         )
 
@@ -716,7 +720,7 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
         listed = self.items(self.reading(3, self.NOW - timedelta(minutes=7)))
         self.assertEqual(
             [(item.severity, item.subject, item.message) for item in listed],
-            [("warning", "node-a", "traffic log to graylog: 3 lines not delivered")],
+            [("warning", "node-a → graylog", "traffic log to graylog: 3 lines not delivered")],
         )
         self.assertEqual(listed[0].since, self.NOW - timedelta(minutes=7))
 
@@ -1325,7 +1329,9 @@ class TheAcknowledgement(LoginTestCase):
         self.assertIn('name="subject" value="job 7"', page.text)
         self.assertEqual(sum(self.counts().values()), 1)
 
-        self.acks = {("job", self.FAILED.cluster or "", "job 7")}
+        self.acks = {
+            attention.acknowledgement_key("job", self.FAILED.cluster or "", "job 7", "critical", "")
+        }
 
         self.assertEqual(sum(self.counts().values()), 0)
         self.assertNotIn('value="job 7"', self.signed_in().get("/").text)
@@ -1341,11 +1347,17 @@ class TheAcknowledgement(LoginTestCase):
                     "kind": "job",
                     "cluster": self.FAILED.cluster or "",
                     "subject": "job 7",
+                    "severity": "critical",
                 },
                 follow_redirects=False,
             )
         self.assertEqual(answer.status_code, 303)
-        self.assertEqual(stored.call_args.args[1], ("job", self.FAILED.cluster or "", "job 7"))
+        self.assertEqual(
+            stored.call_args.args[1],
+            attention.acknowledgement_key(
+                "job", self.FAILED.cluster or "", "job 7", "critical", ""
+            ),
+        )
         self.assertIn("attention_acknowledged", self.audit)
 
     def test_a_row_the_list_does_not_show_is_acknowledged_by_nothing(self) -> None:
@@ -1360,8 +1372,8 @@ class TheAcknowledgement(LoginTestCase):
         stored.assert_not_called()
 
     def test_an_acknowledgement_whose_row_has_gone_is_forgotten(self) -> None:
-        kept = ("job", "alpha", "job 7")
-        gone = ("node", "alpha", "node-b")
+        kept = attention.acknowledgement_key("job", "alpha", "job 7", "critical", "")
+        gone = attention.acknowledgement_key("node", "alpha", "node-b", "critical", "Unreachable")
         item = attention.Item("job", "critical", "alpha", "job 7", "Deploy failed", NOW, "/jobs")
 
         shown, forgotten = attention.unacknowledged([item], {kept, gone})
@@ -1513,3 +1525,66 @@ class WhyAReadingFailed(LoginTestCase):
             stale_after=timedelta(seconds=100),
         )
         self.assertEqual(status.clusters[0].nodes[0].reason, "SSH failed with exit 255")
+
+
+class AnAcknowledgementHoldsWhatItWasGivenFor(unittest.TestCase):
+    """B406: a row that became worse is shown again, in the box and for the monitors."""
+
+    def row(self, kind: str, severity: Any, subject: str, variant: str = "") -> Any:
+        return attention.Item(kind, severity, "alpha", subject, "x", None, "/", variant=variant)
+
+    def shown(self, acknowledged: Any, *rows: Any) -> list[Any]:
+        listed, _ = attention.unacknowledged(rows, {row.key for row in acknowledged})
+        return listed
+
+    def test_a_certificate_acknowledged_as_a_warning_is_shown_again_when_it_expires(self) -> None:
+        soon = self.row("certificate", "warning", "shop.example")
+        expired = self.row("certificate", "critical", "shop.example")
+        self.assertEqual(self.shown([soon], soon), [])
+        self.assertEqual(self.shown([soon], expired), [expired])
+
+    def test_a_node_acknowledged_for_its_counters_is_shown_again_when_unreachable(self) -> None:
+        counters = self.row("node", "warning", "n1", "Counters not shared")
+        silent = self.row("node", "critical", "n1", "Unreachable")
+        self.assertEqual(self.shown([counters], silent), [silent])
+
+    def test_a_node_whose_label_changed_at_the_same_severity_is_shown_again(self) -> None:
+        keepalived = self.row("node", "critical", "n1", "Keepalived fault")
+        stopped = self.row("node", "critical", "n1", "HAProxy stopped")
+        self.assertEqual(self.shown([keepalived], stopped), [stopped])
+
+    def test_an_object_acknowledged_yellow_is_shown_again_red(self) -> None:
+        yellow = self.row("service", "warning", "shop")
+        red = self.row("service", "critical", "shop")
+        self.assertEqual(self.shown([yellow], red), [red])
+
+    def test_acknowledging_one_receiver_does_not_hide_another_on_the_node(self) -> None:
+        rows = {
+            "nodes": [
+                {
+                    "name": "node-a",
+                    "status_ok": True,
+                    "status": {
+                        "log_forwarding": {
+                            "stats_age_sec": 5,
+                            "receivers": [
+                                {"name": "siem", "queued": 0, "dropped_last_hour": 0},
+                                {"name": "loki", "queued": 0, "dropped_last_hour": 9},
+                            ],
+                        }
+                    },
+                }
+            ]
+        }
+        found = attention.from_log_forwarding(
+            [SimpleNamespace(cluster="alpha", result=rows)], now=NOW
+        )
+        self.assertEqual([item.subject for item in found], ["node-a → loki"])
+        down = self.row("forwarding", "warning", "node-a → siem")
+        self.assertEqual(self.shown([down], *found), found)
+
+    def test_a_node_row_carries_its_label_as_its_variant(self) -> None:
+        (item,) = attention.from_dashboard(
+            [cluster(nodes=(node("n1", "critical", "Unreachable"),))], drift_label="Behind"
+        )
+        self.assertEqual((item.severity, item.variant), ("critical", "Unreachable"))

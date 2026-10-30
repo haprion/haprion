@@ -78,6 +78,22 @@ def card_link(cluster: str) -> str:
     return f"/#cluster-{cluster}"
 
 
+#
+# The stored acknowledgement is (kind, cluster, subject), as it has been since
+# B299: the severity and the variant ride in the subject, behind this
+# separator, so that a row's key needs no column of its own - a column would
+# move the schema floor and make every earlier dump unrestorable (B406).
+#
+KEY_PART = "\x1f"
+
+
+def acknowledgement_key(
+    kind: str, cluster: str, subject: str, severity: str, variant: str
+) -> tuple[str, str, str]:
+    rest = KEY_PART + KEY_PART.join((severity, variant))
+    return (kind, cluster, subject[: 256 - len(rest)] + rest)
+
+
 @dataclass(frozen=True, slots=True)
 class Item:
     kind: str
@@ -87,6 +103,11 @@ class Item:
     message: str
     since: datetime | None
     link: str
+    #
+    # What else tells this row from the same row worse (B406): the label a node
+    # carries. Part of what an acknowledgement names, with the severity.
+    #
+    variant: str = ""
 
     @property
     def page(self) -> str:
@@ -113,9 +134,15 @@ class Item:
 
     @property
     def key(self) -> tuple[str, str, str]:
-        """What an acknowledgement names (B299): the row as the list shows it."""
+        """What an acknowledgement names (B299, B406): the row as the list shows it.
 
-        return (self.kind, self.cluster or "", self.subject)
+        The severity is in it: a row that becomes worse is a new row, and its
+        acknowledgement - of what it had been - does not hide it.
+        """
+
+        return acknowledgement_key(
+            self.kind, self.cluster or "", self.subject, self.severity, self.variant
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -447,6 +474,7 @@ def from_dashboard(
                     message=f"{node.label}" + (f" · {node.detail}" if node.detail else ""),
                     since=None,
                     link=card_link(cluster.cluster),
+                    variant=node.label,
                 )
             )
     return items
@@ -708,6 +736,19 @@ def from_traffic_stream(status_rows: Iterable[Any], *, unread: Collection[str] =
     return items
 
 
+RECEIVER_ARROW = " → "
+
+
+def _receiver_subject(node: str, receiver: str | None) -> str:
+    """The node, and the receiver when the row is about one: what an acknowledgement names (B406).
+
+    Acknowledging one receiver's row must not hide another receiver's on the
+    same node.
+    """
+
+    return f"{node}{RECEIVER_ARROW}{receiver}" if receiver else node
+
+
 def from_log_forwarding(
     status_rows: Iterable[Any], *, now: datetime, unread: Collection[str] = ()
 ) -> list[Item]:
@@ -741,7 +782,7 @@ def from_log_forwarding(
                         kind="forwarding",
                         severity=problem.severity,
                         cluster=row.cluster,
-                        subject=str(entry.get("name", "")),
+                        subject=_receiver_subject(str(entry.get("name", "")), problem.receiver),
                         message=problem.message,
                         since=None,
                         link=f"/settings/clusters/{row.cluster}#delivery",
@@ -778,7 +819,7 @@ def from_log_forwarding(
                         kind="forwarding",
                         severity="warning",
                         cluster=row.cluster,
-                        subject=str(entry.get("name", "")),
+                        subject=_receiver_subject(str(entry.get("name", "")), name),
                         message=f"traffic log to {name}: "
                         + (f"{lines} lines " if isinstance(lines, int) else "")
                         + "not delivered"
@@ -1010,7 +1051,7 @@ def held_through_gaps(
     rows = {row.cluster: row for row in status_rows}
     forget: set[tuple[str, str, str]] = set()
     for key in gone:
-        kind, cluster, subject = key
+        kind, cluster, named = key
         row = rows.get(cluster)
         if kind not in READ_PER_CLUSTER | READ_PER_NODE or row is None:
             forget.add(key)
@@ -1026,7 +1067,7 @@ def held_through_gaps(
                 for entry in result.get("nodes") or ()
                 if isinstance(entry, Mapping)
             }
-            entry = nodes.get(subject)
+            entry = nodes.get(named.partition(KEY_PART)[0].partition(RECEIVER_ARROW)[0])
             if unread or (
                 entry is not None and not (entry.get("reachable") and entry.get("status_ok"))
             ):

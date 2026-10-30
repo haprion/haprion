@@ -412,7 +412,7 @@ def apply_oidc(
                 )
             verified = True
         try:
-            db.save_oidc_provider(
+            ended = db.save_oidc_provider(
                 connection, settings=parsed.settings, actor=actor, verified=verified
             )
         except db.ProviderRefused as error:
@@ -425,6 +425,7 @@ def apply_oidc(
                 "issuer": parsed.settings["issuer"],
                 "client_id": parsed.settings["client_id"],
                 "secret_replaced": "client_secret_sealed" in parsed.settings,
+                "sessions_ended": ended,
                 "via": "cli",
             },
         )
@@ -462,9 +463,7 @@ def _set_enabled(connection: Any, enabled: bool, *, actor: str, issuer: str | No
         ended = db.set_oidc_enabled(connection, enabled=enabled, actor=actor)
     except db.ProviderRefused as error:
         raise ApplyError(f"oidc: {error}") from error
-    detail: dict[str, Any] = {"issuer": issuer, "via": "cli"}
-    if not enabled:
-        detail["sessions_ended"] = ended
+    detail: dict[str, Any] = {"issuer": issuer, "sessions_ended": ended, "via": "cli"}
     db.record_audit_event(
         connection,
         actor=actor,

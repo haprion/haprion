@@ -119,9 +119,15 @@ class SettingsOidc(LoginTestCase):
         }
 
         def save(
-            _c: object, *, settings: dict[str, Any], actor: str, verified: bool = False
-        ) -> None:
-            self.saved.append({**settings, "_verified": verified, "_actor": actor})
+            _c: object,
+            *,
+            settings: dict[str, Any],
+            actor: str,
+            verified: bool = False,
+            keep: bytes = b"",
+        ) -> int:
+            self.saved.append({**settings, "_verified": verified, "_actor": actor, "_keep": keep})
+            return 0
 
         def audit(_c: object, *, action: str, detail: Any = None, **_: Any) -> None:
             self.audit.append(action)
@@ -391,5 +397,29 @@ class SettingsOidc(LoginTestCase):
         self.assertIn("Verify the settings first.", response.text)
 
         response = self.post(client, action="on")
-        self.assertEqual(response.headers["location"], "/settings/oidc?done=on")
+        self.assertEqual(response.headers["location"], "/settings/oidc?done=on&ended=0")
         self.assertEqual(self.audit[-1], "oidc_enabled")
+
+    def test_turning_on_keeps_the_admin_s_own_session_and_says_how_many_it_ended(self) -> None:
+        """Review 26-10-30, E2 (B402): On ends the local sessions it turns away."""
+
+        self.provider = provider(issuer=ISSUER, revision=2, verified_revision=2)
+        client = self.admin()
+        with mock.patch("haprion_ui.db.set_oidc_enabled", return_value=2) as switched:
+            response = self.post(client, action="on")
+
+        self.assertEqual(
+            switched.call_args.kwargs["keep"],
+            auth.token_hash(client.cookies[auth.SESSION_COOKIE]),
+        )
+        self.assertEqual(response.headers["location"], "/settings/oidc?done=on&ended=2")
+        self.assertEqual(
+            self.audit_details[-1],
+            ("oidc_enabled", {"issuer": ISSUER, "via": "web", "sessions_ended": 2}),
+        )
+        page = client.get(response.headers["location"]).text
+        self.assertIn(
+            "Sign-in through the provider is on. 2 sessions of local accounts that are not "
+            "break-glass ended.",
+            page,
+        )

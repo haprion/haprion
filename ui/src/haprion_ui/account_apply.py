@@ -299,10 +299,15 @@ def write(connection: Any, the_plan: Plan, *, actor: str) -> None:
                 )
                 audit("password_reset", row.username, sessions_revoked=ended)
             if "break_glass" in fields:
-                db.set_break_glass(
+                ended = db.set_break_glass(
                     connection, user_id=row.id, break_glass=bool(account.break_glass)
                 )
-                audit("break_glass_changed", row.username, break_glass=bool(account.break_glass))
+                audit(
+                    "break_glass_changed",
+                    row.username,
+                    break_glass=bool(account.break_glass),
+                    sessions_revoked=ended,
+                )
             if "disabled" in fields:
                 ended = db.set_disabled(connection, user_id=row.id, disabled=bool(account.disabled))
                 if account.disabled:

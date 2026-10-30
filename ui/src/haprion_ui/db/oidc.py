@@ -11,7 +11,7 @@ import psycopg
 from psycopg import Connection
 from psycopg.rows import class_row
 
-from haprion_ui.db.accounts import Account
+from haprion_ui.db.accounts import Account, end_locked_out_sessions, end_sessions_where
 from haprion_ui.db.core import savepoint
 
 
@@ -94,12 +94,19 @@ def save_oidc_provider(
     settings: Mapping[str, Any],
     actor: str,
     verified: bool = False,
-) -> None:
+    keep: bytes = b"",
+) -> int:
     """Write the settings. `verified` records, in the same statement, that the
     new settings passed Verify - which is how settings are changed while
     sign-in through the provider is on, since it may only be on at a verified
     revision. The trigger raises the revision, so `revision + 1` is the one
-    this statement makes."""
+    this statement makes.
+
+    Choosing the rule *break-glass accounts only* while sign-in through the
+    provider is on ends the live sessions of the local accounts it turns away,
+    in the same transaction, and returns how many; `keep` is the session of
+    the admin who saved.
+    """
 
     unknown = set(settings) - set(OIDC_SETTINGS)
     if unknown:
@@ -113,6 +120,9 @@ def save_oidc_provider(
                 "updated_by = %(actor)s",
                 {**settings, "actor": actor},
             )
+            if "local_login" in settings:
+                return end_locked_out_sessions(connection, keep=keep)
+            return 0
     except psycopg.errors.CheckViolation as error:
         raise ProviderRefused(
             "Sign-in through the provider is on; these settings did not pass Verify."
@@ -131,7 +141,9 @@ def record_oidc_verified(connection: Connection[Any], *, revision: int) -> bool:
         return cursor.rowcount == 1
 
 
-def set_oidc_enabled(connection: Connection[Any], *, enabled: bool, actor: str) -> int:
+def set_oidc_enabled(
+    connection: Connection[Any], *, enabled: bool, actor: str, keep: bytes = b""
+) -> int:
     """Turn sign-in through the provider on or off. The database refuses on
     unless the settings are complete and verified and a break-glass admin is
     active; each refusal comes back as its sentence.
@@ -140,6 +152,10 @@ def set_oidc_enabled(connection: Connection[Any], *, enabled: bool, actor: str) 
     the same statement's transaction, and returns how many: those sessions
     lived on for up to `oidc_absolute_hours` after the provider was turned off
     (review 26-10-24, 09-05). Local and break-glass accounts keep theirs.
+
+    On, with the rule *break-glass accounts only*, ends the live sessions of
+    the local accounts that rule turns away, the same way, and returns how
+    many; `keep` is the session of the admin who turned it on, which stays.
     """
 
     try:
@@ -149,14 +165,8 @@ def set_oidc_enabled(connection: Connection[Any], *, enabled: bool, actor: str) 
                 {"enabled": enabled, "actor": actor},
             )
             if enabled:
-                return 0
-            cursor.execute(
-                "update app_session s set revoked_at = statement_timestamp() "
-                "  from app_user u "
-                " where s.user_id = u.id and u.source = 'oidc' and s.revoked_at is null "
-                "   and s.expires_at > statement_timestamp()"
-            )
-            return cursor.rowcount
+                return end_locked_out_sessions(connection, keep=keep)
+            return end_sessions_where(cursor, "u.source = 'oidc'")
     except psycopg.errors.CheckViolation as error:
         if "break-glass" in (error.diag.message_primary or ""):
             raise ProviderRefused(

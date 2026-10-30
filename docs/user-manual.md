@@ -1077,6 +1077,12 @@ sign-in is on runs Verify first, and either saves the settings as verified or sa
 audited (`oidc_configured`, `oidc_verified`, `oidc_enabled`, `oidc_disabled`); the secret never is.
 Turning it off signs out everyone who signed in through the provider, at once; the page and the audit
 event say how many sessions ended. Local and break-glass accounts stay signed in.
+Turning it on with *Break-glass accounts only* does the opposite for local accounts: the sessions of local
+accounts that are not break-glass end at once, since they could not sign in again. So do the same accounts'
+sessions when that rule is chosen while sign-in is on, and an account's sessions when its break-glass mark
+is removed in that state (`haprion-user break-glass --off` and `apply` do the same). Your own session
+stays when you are one of them. The page and the audit event (`sessions_ended`, `sessions_revoked`) say
+how many ended.
 
 **Settings from a file**, for automation. `haprion-settings`, run as root on the manager, sets what three
 parts of the settings set: *External monitoring*, *Features* and the OIDC configuration. It uses the same

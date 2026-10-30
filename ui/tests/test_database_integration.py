@@ -5804,6 +5804,127 @@ class TheProviderRowFromTheWeb(unittest.TestCase):
             )
             self.assertEqual(db.set_oidc_enabled(connection, enabled=False, actor="alice"), 0)
 
+    def add_sessions(self, tokens: dict[str, str]) -> None:
+        """Accounts bob (local admin, not break-glass) and carol (local reader) with sessions."""
+
+        with self.connect() as connection:
+            for name, role in (("bob", "admin"), ("carol", "reader")):
+                connection.execute(
+                    "insert into app_user (username, password_hash, role) values (%s, %s, %s)",
+                    (name, OidcAccounts.HASH, role),
+                )
+            for token, name in tokens.items():
+                connection.execute(
+                    "insert into app_session (token_hash, user_id, expires_at) "
+                    "select %s, id, now() + interval '1 hour' from app_user where username = %s",
+                    (auth.token_hash(token), name),
+                )
+            connection.commit()
+
+    def put_back_the_rule(self) -> None:
+        with self.connect() as connection:
+            connection.execute("update oidc_provider set local_login = 'break_glass_only'")
+            connection.commit()
+
+    def live_sessions(self) -> set[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "select u.username || ':' || encode(s.token_hash, 'hex') "
+                "  from app_session s join app_user u on u.id = s.user_id "
+                " where s.revoked_at is null"
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    def alive(self, name: str, *tokens: str) -> set[str]:
+        return {f"{name}:{auth.token_hash(token).hex()}" for token in tokens}
+
+    def test_on_ends_the_sessions_of_the_local_accounts_it_turns_away(self) -> None:
+        """Review 26-10-30, E2 (B402): they lived on for the absolute lifetime."""
+
+        self.add_sessions({"b1": "bob", "b2": "bob", "c1": "carol"})
+        with self.connect() as connection:
+            connection.execute(
+                "insert into app_session (token_hash, user_id, expires_at) "
+                "select %s, id, now() + interval '1 hour' from app_user where username = 'alice'",
+                (auth.token_hash("a1"),),
+            )
+            connection.commit()
+        with self.web() as connection:
+            db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")
+            db.record_oidc_verified(connection, revision=self.row(connection).revision)
+            ended = db.set_oidc_enabled(
+                connection, enabled=True, actor="alice", keep=auth.token_hash("b2")
+            )
+            connection.commit()
+
+        self.assertEqual(ended, 2)
+        self.assertEqual(self.live_sessions(), self.alive("alice", "a1") | self.alive("bob", "b2"))
+
+    def test_on_with_every_local_account_allowed_ends_nothing(self) -> None:
+        self.add_sessions({"b1": "bob"})
+        self.addCleanup(self.put_back_the_rule)
+        with self.web() as connection:
+            db.save_oidc_provider(
+                connection, settings={**self.SETTINGS, "local_login": "all"}, actor="alice"
+            )
+            db.record_oidc_verified(connection, revision=self.row(connection).revision)
+            self.assertEqual(db.set_oidc_enabled(connection, enabled=True, actor="alice"), 0)
+            connection.commit()
+
+        self.assertEqual(self.live_sessions(), self.alive("bob", "b1"))
+
+    def test_choosing_break_glass_only_while_on_ends_the_sessions_it_turns_away(self) -> None:
+        self.add_sessions({"b1": "bob", "c1": "carol", "c2": "carol"})
+        self.addCleanup(self.put_back_the_rule)
+        with self.web() as connection:
+            db.save_oidc_provider(
+                connection, settings={**self.SETTINGS, "local_login": "all"}, actor="alice"
+            )
+            db.record_oidc_verified(connection, revision=self.row(connection).revision)
+            db.set_oidc_enabled(connection, enabled=True, actor="alice")
+            connection.commit()
+            self.assertEqual(len(self.live_sessions()), 3)
+
+            ended = db.save_oidc_provider(
+                connection,
+                settings={"local_login": "break_glass_only"},
+                actor="alice",
+                verified=True,
+                keep=auth.token_hash("c2"),
+            )
+            connection.commit()
+
+        self.assertEqual(ended, 2)
+        self.assertEqual(self.live_sessions(), self.alive("carol", "c2"))
+
+    def test_taking_break_glass_away_while_on_ends_that_account_s_sessions(self) -> None:
+        self.add_sessions({"b1": "bob", "b2": "bob", "c1": "carol"})
+        with self.connect() as connection:
+            connection.execute("update app_user set break_glass = true where username <> 'alice'")
+            connection.commit()
+        self.addCleanup(self.put_back_the_rule)
+        with self.web() as connection:
+            db.save_oidc_provider(
+                connection,
+                settings={**self.SETTINGS, "local_login": "break_glass_only"},
+                actor="alice",
+            )
+            db.record_oidc_verified(connection, revision=self.row(connection).revision)
+            self.assertEqual(db.set_oidc_enabled(connection, enabled=True, actor="alice"), 0)
+            bob = db.account_by_username(connection, "bob")
+            carol = db.account_by_username(connection, "carol")
+            if bob is None or carol is None:
+                self.fail("no accounts")
+
+            self.assertEqual(db.set_break_glass(connection, user_id=bob.id, break_glass=True), 0)
+            ended = db.set_break_glass(
+                connection, user_id=bob.id, break_glass=False, keep=auth.token_hash("b2")
+            )
+            connection.commit()
+
+        self.assertEqual(ended, 1)
+        self.assertEqual(self.live_sessions(), self.alive("bob", "b2") | self.alive("carol", "c1"))
+
     def test_while_on_a_change_saves_only_as_verified(self) -> None:
         with self.web() as connection:
             db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")
@@ -8087,6 +8208,87 @@ class TheAccountsFromAFile(AccountToolHarness):
         self.assertIn("last active admin", json.loads(output)["error"]["message"])
         self.assertIsNotNone(self.account("admin"))
 
+    def provider_on(self) -> None:
+        """The provider on at a verified revision, with break-glass accounts only."""
+
+        with self.connect() as connection:
+            connection.execute(
+                "update oidc_provider set issuer = 'https://id.example.com/', client_id = 'c', "
+                "client_secret_sealed = %s, key_id = 'k1', admin_group = 'g', "
+                "local_login = 'break_glass_only'",
+                (b"sealed",),
+            )
+            connection.execute("update oidc_provider set verified_revision = revision")
+            connection.execute("update oidc_provider set enabled = true")
+            connection.commit()
+        self.addCleanup(self.provider_off)
+
+    def provider_off(self) -> None:
+        with self.connect() as connection:
+            connection.execute("update oidc_provider set enabled = false")
+            connection.execute(
+                "update oidc_provider set issuer = null, client_id = null, "
+                "client_secret_sealed = null, key_id = null, admin_group = null, "
+                "verified_revision = null"
+            )
+            connection.commit()
+
+    def live_sessions_of(self, name: str) -> int:
+        with self.connect() as connection:
+            row = connection.execute(
+                "select count(*) from app_session s join app_user u on u.id = s.user_id "
+                " where u.username = %s and s.revoked_at is null",
+                (name,),
+            ).fetchone()
+        return int(row[0]) if row else -1
+
+    def give_session(self, name: str, token: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "insert into app_session (token_hash, user_id, expires_at) "
+                "select %s, id, now() + interval '1 hour' from app_user where username = %s",
+                (auth.token_hash(token), name),
+            )
+            connection.commit()
+
+    def test_taking_break_glass_away_ends_the_sessions_whichever_tool_does_it(self) -> None:
+        """Review 26-10-30, E2 (B402): `break-glass --off` and `apply` as the web does."""
+
+        with self.connect() as connection:
+            first_audit = connection.execute(
+                "select coalesce(max(id), 0) from audit_event"
+            ).fetchone()
+        self.add("admin", role="admin", break_glass=True)
+        self.add("operator", role="admin", break_glass=True)
+        self.add("viewer", role="reader", break_glass=True)
+        for name in ("operator", "viewer"):
+            self.give_session(name, "t-" + name)
+        self.provider_on()
+
+        code, output = self.run_tool("break-glass", "operator", "--off")
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("1 session revoked", output)
+        self.assertEqual(self.live_sessions_of("operator"), 0)
+        self.assertEqual(self.live_sessions_of("viewer"), 1)
+        changed = (
+            "accounts:\n  - username: admin\n    role: admin\n    break_glass: true\n"
+            "  - username: viewer\n    role: reader\n    break_glass: false\n"
+        )
+        code, output = self.run_tool("apply", self.write(changed), "--json")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.live_sessions_of("viewer"), 0)
+        with self.connect() as connection:
+            details = [
+                row[0]
+                for row in connection.execute(
+                    "select detail->>'sessions_revoked' from audit_event "
+                    " where action = 'break_glass_changed' and id > %s order by id",
+                    (first_audit[0] if first_audit else 0,),
+                ).fetchall()
+            ]
+        self.assertEqual(details, ["1", "1"])
+
     def test_role_and_a_piped_password(self) -> None:
         self.add("admin", role="admin")
         self.add("operator", role="admin")
@@ -8247,6 +8449,38 @@ class TheSettingsFromAFile(unittest.TestCase):
                 (False, "operator"),
             )
         self.assertEqual(self.cli_audit(), ["status_access_changed", "feature_switched"])
+
+    def test_turning_the_provider_on_ends_the_local_sessions_it_turns_away(self) -> None:
+        """Review 26-10-30, E2 (B402): as the page's On does."""
+
+        with self.connect() as connection:
+            for name in ("bob", "carol"):
+                connection.execute(
+                    "insert into app_user (username, password_hash, role, break_glass) "
+                    "values (%s, %s, 'reader', %s)",
+                    (name, OidcAccounts.HASH, name == "carol"),
+                )
+                connection.execute(
+                    "insert into app_session (token_hash, user_id, expires_at) "
+                    "select %s, id, now() + interval '1 hour' from app_user where username = %s",
+                    (auth.token_hash("t-" + name), name),
+                )
+            connection.commit()
+
+        code, answer = self.run_tool("apply", self.write(self.PROVIDER), "--json")
+
+        self.assertEqual(code, 0, answer)
+        with self.connect() as connection:
+            live = connection.execute(
+                "select u.username from app_session s join app_user u on u.id = s.user_id "
+                " where s.revoked_at is null"
+            ).fetchall()
+            detail = connection.execute(
+                "select detail->>'sessions_ended' from audit_event "
+                " where action = 'oidc_enabled' and detail->>'via' = 'cli'"
+            ).fetchone()
+        self.assertEqual(live, [("carol",)])
+        self.assertEqual(detail, ("1",))
 
     def test_check_runs_the_refusals_and_keeps_nothing(self) -> None:
         path = self.write("status_access: [192.0.2.10]\nfeatures:\n  advanced_config: false\n")

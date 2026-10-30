@@ -1268,8 +1268,18 @@ def build_router(config: Config) -> APIRouter:
                     )
                     changes.append(("password_reset", detail(sessions_revoked=ended)))
                 if new_break_glass:
-                    db.set_break_glass(connection, user_id=row.id, break_glass=not row.break_glass)
-                    changes.append(("break_glass_changed", detail(break_glass=not row.break_glass)))
+                    ended = db.set_break_glass(
+                        connection,
+                        user_id=row.id,
+                        break_glass=not row.break_glass,
+                        keep=auth.token_hash(token),
+                    )
+                    changes.append(
+                        (
+                            "break_glass_changed",
+                            detail(break_glass=not row.break_glass, sessions_revoked=ended),
+                        )
+                    )
                 if action == "delete":
                     if db.delete_account(connection, user_id=row.id):
                         changes.append(
@@ -1331,8 +1341,14 @@ def build_router(config: Config) -> APIRouter:
         }
         said = done.get(request.query_params.get("done", ""), "")
         ended = request.query_params.get("ended", "")
-        if said and request.query_params.get("done") == "off" and is_digits(ended):
-            said += f" {labels.counted(int(ended[:6]), 'session')} signed in through it ended."
+        shown = request.query_params.get("done")
+        if said and shown in ("saved", "on", "off") and is_digits(ended) and int(ended[:6]) > 0:
+            count = labels.counted(int(ended[:6]), "session")
+            said += (
+                f" {count} signed in through it ended."
+                if shown == "off"
+                else f" {count} of local accounts that are not break-glass ended."
+            )
         return oidc_page(config, request, gate, provider, done=said)
 
     @router.post("/settings/oidc", response_class=HTMLResponse)
@@ -1414,8 +1430,12 @@ def build_router(config: Config) -> APIRouter:
                     )
             with request.app.state.pool.connection() as connection:
                 try:
-                    db.save_oidc_provider(
-                        connection, settings=parsed.settings, actor=gate.username, verified=verified
+                    ended = db.save_oidc_provider(
+                        connection,
+                        settings=parsed.settings,
+                        actor=gate.username,
+                        verified=verified,
+                        keep=auth.token_hash(token),
                     )
                 except db.ProviderRefused as error:
                     connection.rollback()
@@ -1428,11 +1448,14 @@ def build_router(config: Config) -> APIRouter:
                         "issuer": parsed.settings["issuer"],
                         "client_id": parsed.settings["client_id"],
                         "secret_replaced": "client_secret_sealed" in parsed.settings,
+                        "sessions_ended": ended,
                         "via": "web",
                     },
                 )
                 connection.commit()
-            return RedirectResponse("/settings/oidc?done=saved", status_code=303)
+            return RedirectResponse(
+                "/settings/oidc?done=saved&ended=" + str(ended), status_code=303
+            )
 
         if action == "verify":
             ok, checks, trouble = verify(provider)
@@ -1478,14 +1501,19 @@ def build_router(config: Config) -> APIRouter:
             with request.app.state.pool.connection() as connection:
                 try:
                     ended = db.set_oidc_enabled(
-                        connection, enabled=action == "on", actor=gate.username
+                        connection,
+                        enabled=action == "on",
+                        actor=gate.username,
+                        keep=auth.token_hash(token),
                     )
                 except db.ProviderRefused as error:
                     connection.rollback()
                     return again(str(error), status_code=409)
-                detail: dict[str, Any] = {"issuer": provider.issuer, "via": "web"}
-                if action == "off":
-                    detail["sessions_ended"] = ended
+                detail: dict[str, Any] = {
+                    "issuer": provider.issuer,
+                    "sessions_ended": ended,
+                    "via": "web",
+                }
                 db.record_audit_event(
                     connection,
                     actor=gate.username,
@@ -1493,9 +1521,7 @@ def build_router(config: Config) -> APIRouter:
                     detail=detail,
                 )
                 connection.commit()
-            if action == "on":
-                return RedirectResponse("/settings/oidc?done=on", status_code=303)
-            return RedirectResponse("/settings/oidc?done=off&ended=" + str(ended), status_code=303)
+            return RedirectResponse(f"/settings/oidc?done={action}&ended={ended}", status_code=303)
 
         return PlainTextResponse("Unknown action", status_code=400)
 

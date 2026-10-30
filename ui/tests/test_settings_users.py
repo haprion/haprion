@@ -79,7 +79,7 @@ class SettingsUsers(LoginTestCase):
             mock.patch("haprion_ui.db.reset_password", side_effect=record("password", 1)),
             mock.patch("haprion_ui.db.revoke_sessions_for_user", side_effect=record("revoke", 3)),
             mock.patch("haprion_ui.db.unlock_account", side_effect=record("unlock")),
-            mock.patch("haprion_ui.db.set_break_glass", side_effect=record("break_glass")),
+            mock.patch("haprion_ui.db.set_break_glass", side_effect=record("break_glass", 2)),
             mock.patch("haprion_ui.db.delete_account", side_effect=record("delete", True)),
             mock.patch("haprion_ui.db.record_audit_event", side_effect=audit),
         ]
@@ -403,10 +403,23 @@ class SettingsUsers(LoginTestCase):
             client, "/settings/users/bob", action="save", role="reader", break_glass="on"
         )
         self.assertEqual(marked.headers["location"], "/settings/users/bob?done=break_glass")
-        self.assertEqual(self.calls[-1], ("break_glass", {"user_id": 3, "break_glass": True}))
+        self.assertEqual(
+            self.calls[-1],
+            (
+                "break_glass",
+                {
+                    "user_id": 3,
+                    "break_glass": True,
+                    "keep": auth.token_hash(client.cookies[auth.SESSION_COOKIE]),
+                },
+            ),
+        )
         self.assertEqual(
             self.audit_details[-1],
-            ("break_glass_changed", {"account": "bob", "via": "web", "break_glass": True}),
+            (
+                "break_glass_changed",
+                {"account": "bob", "via": "web", "break_glass": True, "sessions_revoked": 2},
+            ),
         )
 
         self.rows["bob"] = row("bob", break_glass=True)
@@ -415,7 +428,10 @@ class SettingsUsers(LoginTestCase):
         self.assertIn('Reader<span class="users-you">break-glass</span>', page)
         unmarked = self.post(client, "/settings/users/bob", action="save", role="reader")
         self.assertEqual(unmarked.status_code, 303)
-        self.assertEqual(self.calls[-1], ("break_glass", {"user_id": 3, "break_glass": False}))
+        self.assertEqual(self.calls[-1][1]["break_glass"], False)
+        self.assertEqual(
+            self.calls[-1][1]["keep"], auth.token_hash(client.cookies[auth.SESSION_COOKIE])
+        )
 
     def test_the_list_says_which_accounts_are_break_glass_or_the_provider_s(self) -> None:
         self.rows["alice"] = row("alice", role="admin", break_glass=True)

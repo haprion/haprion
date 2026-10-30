@@ -310,9 +310,23 @@ def command_break_glass(environment: Environment, args: argparse.Namespace) -> i
             cursor.execute(
                 "update app_user set break_glass = %s where id = %s", (break_glass, user_id)
             )
-        _audit(connection, "break_glass_changed", args.username, break_glass=break_glass)
+        #
+        # As the web does it: where the provider's sign-in is on with
+        # break-glass accounts only, the account can no longer sign in, so its
+        # sessions end with the mark.
+        #
+        ended = 0 if break_glass else db.end_locked_out_sessions(connection, user_id=user_id)
+        _audit(
+            connection,
+            "break_glass_changed",
+            args.username,
+            break_glass=break_glass,
+            sessions_revoked=ended,
+        )
         connection.commit()
     print(f"{args.username} is {'now' if break_glass else 'no longer'} a break-glass account")
+    if ended:
+        print(f"{labels.counted(ended, 'session')} revoked")
     return 0
 
 

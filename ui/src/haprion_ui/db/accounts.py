@@ -443,14 +443,70 @@ def set_disabled(connection: Connection[Any], *, user_id: int, disabled: bool) -
     return revoke_sessions_for_user(connection, user_id) if disabled else 0
 
 
-def set_break_glass(connection: Connection[Any], *, user_id: int, break_glass: bool) -> None:
-    """Mark a local account as one that signs in with a password whatever else is on (B195)."""
+def set_break_glass(
+    connection: Connection[Any], *, user_id: int, break_glass: bool, keep: bytes = b""
+) -> int:
+    """Mark a local account as one that signs in with a password whatever else is on (B195).
+
+    Taking the mark away while sign-in goes through the provider with
+    break-glass accounts only leaves the account unable to sign in, so its
+    live sessions end in the same transaction, as they do when the provider is
+    turned off; how many is the answer. `keep` is the session of the admin who
+    asked.
+    """
 
     _guarded_update(
         connection,
         "update app_user set break_glass = %(break_glass)s where id = %(user_id)s",
         {"break_glass": break_glass, "user_id": user_id},
     )
+    if break_glass:
+        return 0
+    return end_locked_out_sessions(connection, user_id=user_id, keep=keep)
+
+
+def end_sessions_where(cursor: Any, condition: str, *, keep: bytes = b"", **params: Any) -> int:
+    """End the live sessions of the accounts `condition` (over `u`, app_user) picks.
+
+    The one statement behind "this change leaves these accounts unable to sign
+    in": the provider turned off ends the provider's, and the provider turned
+    on with break-glass accounts only ends the local ones that are not. `keep`
+    is the token hash of the session the acting admin is using, which stays.
+    """
+
+    cursor.execute(
+        "update app_session s set revoked_at = statement_timestamp() "  # noqa: S608 - condition is code
+        "  from app_user u "
+        " where s.user_id = u.id and s.revoked_at is null "
+        "   and s.expires_at > statement_timestamp() and s.token_hash <> %(keep)s "
+        "   and (" + condition + ")",
+        {"keep": keep, **params},
+    )
+    return int(cursor.rowcount)
+
+
+def end_locked_out_sessions(
+    connection: Connection[Any], *, user_id: int | None = None, keep: bytes = b""
+) -> int:
+    """End the sessions of local accounts the sign-in rule now turns away.
+
+    While sign-in goes through the provider with break-glass accounts only, a
+    password signs in a break-glass account and no other (B195). Run after a
+    change that starts that rule - the provider turned on, the rule chosen, a
+    break-glass mark removed - it ends what the rule would refuse on a new
+    sign-in, so a session does not outlive it by up to the absolute lifetime.
+    Nothing when the rule is not in force. `user_id` limits it to one account.
+    """
+
+    with connection.cursor() as cursor:
+        return end_sessions_where(
+            cursor,
+            "u.source = 'local' and not u.break_glass "
+            "and (select enabled and local_login = 'break_glass_only' from oidc_provider) "
+            "and (%(user_id)s::bigint is null or u.id = %(user_id)s::bigint)",
+            keep=keep,
+            user_id=user_id,
+        )
 
 
 def delete_account(connection: Connection[Any], *, user_id: int) -> bool:

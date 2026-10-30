@@ -245,7 +245,7 @@ def certificate_page_context(
             "role": session.role,
             "csrf_token": auth.csrf_token(token),
             "registry_present": registry is not None,
-            "certificate_job": jobs.certificate_in_flight(recent),
+            "certificate_job": jobs.certificate_in_flight(recent, writes=config.management_writes),
             "section": "certificates",
             "management_writes": config.management_writes,
             "demo_fixture": config.demo_fixture,
@@ -575,7 +575,7 @@ def network_page(request: Request, config: Config) -> Response:
         if reading.outcome == "done" and not reading.poll_error
     }
     awaiting = network.awaiting_deploy(recent)
-    busy = jobs.in_flight(recent)
+    busy = jobs.in_flight(recent, writes=config.management_writes)
     failures = jobs.last_failure(judged)
     state = {
         view.cluster: network.deployment(

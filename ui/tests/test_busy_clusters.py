@@ -199,6 +199,23 @@ class AJobThatDoesNotFinishByItselfIsNotDrawnAsWorking(BusyPagesTestCase, BadgeR
                     self.assertIn('data-busy="alpha"', page)
                     self.assert_not_working(page, cluster=None)
 
+    def test_with_writes_off_a_job_that_stands_still_is_not_called_workerless(self) -> None:
+        """D2: no job moves on purpose; Needs attention says nothing, so neither do these."""
+
+        row = workerless_job(job(state="running", cluster="alpha"))
+        client = self.client(replace(configuration(), management_writes=False, clusters=("alpha",)))
+        self.sign_in(client)
+        with (
+            mock.patch(
+                "haprion_ui.db.cluster_statuses",
+                return_value=[status_reading("done-single-owner.json")],
+            ),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[row]),
+        ):
+            for path in ("/", "/jobs"):
+                with self.subTest(page=path):
+                    self.assertNotIn(job_states.NO_WORKER, client.get(path).text)
+
     def test_back_up_now_gives_way_to_the_same_badge(self) -> None:
         row = db.ClusterBackups(
             cluster="alpha",

@@ -87,7 +87,9 @@ def build_router(config: Config) -> APIRouter:
         )
         statuses = {
             profile.id: dns_profile_form.without_stale_refusal(
-                dns_profile_form.profile_status(profile.id, profile.revision, recent),
+                dns_profile_form.profile_status(
+                    profile.id, profile.revision, recent, writes=config.management_writes
+                ),
                 profile.id,
                 references,
             )
@@ -497,7 +499,11 @@ def build_router(config: Config) -> APIRouter:
         references = certificates.profile_references(manager, field="ndes_profile")
         statuses = {
             p.id: dns_profile_form.without_stale_refusal(
-                ndes_profile_form.profile_status(p.id, p.revision, recent), p.id, references
+                ndes_profile_form.profile_status(
+                    p.id, p.revision, recent, writes=config.management_writes
+                ),
+                p.id,
+                references,
             )
             for p in profiles
         }

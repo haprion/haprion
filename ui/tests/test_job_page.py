@@ -1032,12 +1032,12 @@ class AFailedCertificateIssue(LoginTestCase):
 class AJobNoWorkerHolds(LoginTestCase):
     """Review 26-10-29, Q01/R01: a lease long run out is not a job at work."""
 
-    def page(self, *rows: db.Job, pause: db.ClaimPause | None = None) -> str:
+    def page(self, *rows: db.Job, pause: db.ClaimPause | None = None, writes: bool = True) -> str:
         with (
             mock.patch("haprion_ui.db.recent_jobs", return_value=list(rows)),
             mock.patch("haprion_ui.db.claim_pause", return_value=pause),
         ):
-            client = self.client()
+            client = self.client(replace(configuration(), management_writes=writes))
             self.sign_in(client)
             return client.get("/jobs").text
 
@@ -1061,6 +1061,11 @@ class AJobNoWorkerHolds(LoginTestCase):
         #
         busy = replace(gone, worker_busy=True)
         self.assertIn(">Running</span>", self.page(busy))
+        #
+        # Nor with writes off, when no job moves on purpose (D2).
+        #
+        self.assertIn(">Running</span>", self.page(gone, writes=False))
+        self.assertNotIn("No worker", self.page(gone, writes=False))
 
     def test_a_release_s_pause_is_said_above_the_jobs(self) -> None:
         """Review 26-10-29, Q06: the queue waits for the release, not for the worker."""

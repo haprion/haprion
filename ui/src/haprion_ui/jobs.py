@@ -1084,12 +1084,13 @@ def _view(
     follow_up: str | None,
     next_command: str | None,
     diagnostics: bool,
+    writes: bool,
 ) -> JobView:
     label, tone = _state(job.state)
     held = job.waits_for_decision
     if held:
         label, tone = "Held", "warning"
-    elif no_worker(job, now):
+    elif no_worker(job, now, writes=writes):
         label, tone = NO_WORKER, "critical"
     ended_badly = job.state in ATTENTION
     #
@@ -1204,6 +1205,7 @@ def build_job_overview(
     awaiting: frozenset[str] = frozenset(),
     diagnostics: bool = False,
     judged: list[Job] | None = None,
+    writes: bool = True,
 ) -> JobOverview:
     """Build one bounded, newest-first operation history from database rows.
 
@@ -1272,6 +1274,7 @@ def build_job_overview(
                     else None
                 ),
                 diagnostics=diagnostics,
+                writes=writes,
             )
         )
     jobs = tuple(views)
@@ -1537,16 +1540,16 @@ class InFlight:
         return self.not_finishing is None
 
 
-def busy_with(job: Job, now: datetime | None = None) -> InFlight:
+def busy_with(job: Job, now: datetime | None = None, *, writes: bool = True) -> InFlight:
     """What a pending or running job is called and how it is drawn, by one rule."""
 
     moment = now or datetime.now(UTC)
-    sentence = not_finishing(job, moment)
+    sentence = not_finishing(job, moment, writes=writes)
     tone: Tone = "info" if sentence is None else "warning" if job.waits_for_decision else "critical"
-    return InFlight(running_label(job, moment), sentence, tone, job.id)
+    return InFlight(running_label(job, moment, writes=writes), sentence, tone, job.id)
 
 
-def certificate_in_flight(jobs: Iterable[Job]) -> InFlight | None:
+def certificate_in_flight(jobs: Iterable[Job], *, writes: bool = True) -> InFlight | None:
     """What the one certificate slot is busy with, if anything.
 
     The counterpart of `in_flight` for jobs that belong to no cluster. The
@@ -1557,12 +1560,12 @@ def certificate_in_flight(jobs: Iterable[Job]) -> InFlight | None:
 
     for job in jobs:
         if job.cluster is None and job.state in {"pending", "running"}:
-            return busy_with(job)
+            return busy_with(job, writes=writes)
     return None
 
 
 def in_flight(
-    jobs: Iterable[Job], operations: Collection[str] | None = None
+    jobs: Iterable[Job], operations: Collection[str] | None = None, *, writes: bool = True
 ) -> dict[str, InFlight]:
     """What each cluster is busy with, by cluster - or only with these operations.
 
@@ -1590,7 +1593,7 @@ def in_flight(
             continue
         if operations is not None and job.operation not in operations:
             continue
-        busy[job.cluster] = busy_with(job, now)
+        busy[job.cluster] = busy_with(job, now, writes=writes)
     return busy
 
 
@@ -1630,15 +1633,18 @@ NO_WORKER_AFTER = timedelta(minutes=35)
 NO_WORKER = "No worker"
 
 
-def no_worker(job: Job, now: datetime) -> bool:
+def no_worker(job: Job, now: datetime, *, writes: bool = True) -> bool:
     """Running, not held, and no worker has held its lease for `NO_WORKER_AFTER`.
 
     Nor any other job meanwhile: a worker that runs one under a living lease is
-    alive, and settles this one when that one ends (review 26-10-29, A2).
+    alive, and settles this one when that one ends (review 26-10-29, A2). Nor
+    with writes off, when no job moves on purpose and the worker judges none
+    (D2): a job that was running when they were switched off stands still.
     """
 
     return (
-        job.state == "running"
+        writes
+        and job.state == "running"
         and not job.waits_for_decision
         and not job.worker_busy
         and job.lease_lapsed_since is not None
@@ -1646,19 +1652,19 @@ def no_worker(job: Job, now: datetime) -> bool:
     )
 
 
-def not_finishing(job: Job | None, now: datetime) -> str | None:
+def not_finishing(job: Job | None, now: datetime, *, writes: bool = True) -> str | None:
     """The sentence for a queue's job that does not finish by itself, or None."""
 
     if job is None:
         return None
     if job.waits_for_decision:
         return HELD_BUSY
-    if no_worker(job, now):
+    if no_worker(job, now, writes=writes):
         return NO_WORKER_BUSY
     return None
 
 
-def running_label(job: Job, now: datetime | None = None) -> str:
+def running_label(job: Job, now: datetime | None = None, *, writes: bool = True) -> str:
     """What a cluster's job is called while it is pending or running.
 
     A job held after a restart waits for an administrator's Run or Discard, and
@@ -1669,7 +1675,7 @@ def running_label(job: Job, now: datetime | None = None) -> str:
 
     if job.waits_for_decision:
         return HELD
-    if no_worker(job, now or datetime.now(UTC)):
+    if no_worker(job, now or datetime.now(UTC), writes=writes):
         return NO_WORKER
     if job.operation == "changes_publish" and deploys(job):
         return PUBLISH_AND_DEPLOY

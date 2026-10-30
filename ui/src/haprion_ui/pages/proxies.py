@@ -293,7 +293,8 @@ def build_router(config: Config) -> APIRouter:
                 for view in overview.clusters
             }
             publishing = {
-                cluster: objects.names_being_published(rows) for cluster, rows in recent.items()
+                cluster: objects.names_being_published(rows, writes=config.management_writes)
+                for cluster, rows in recent.items()
             }
             failed = {cluster: objects.publish_failures(rows) for cluster, rows in recent.items()}
             #

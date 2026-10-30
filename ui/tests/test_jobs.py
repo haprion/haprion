@@ -405,6 +405,26 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
         self.assertEqual(jobs.in_flight([answered]), {"alpha": jobs.InFlight("Deploying")})
         self.assertTrue(jobs.in_flight([answered])["alpha"].working)
 
+    def test_with_writes_off_a_job_that_stands_still_is_not_said_to_have_no_worker(self) -> None:
+        """D2: no job moves on purpose, and the worker judges none; Needs attention says
+        nothing, so neither does a badge, a refusal or the Jobs row."""
+
+        now = datetime.now(UTC)
+        stood = replace(
+            self.job("alpha", "deploy", "running"),
+            lease_lapsed_since=now - jobs.NO_WORKER_AFTER - timedelta(minutes=1),
+        )
+        self.assertFalse(jobs.no_worker(stood, now, writes=False))
+        self.assertTrue(jobs.no_worker(stood, now))
+        self.assertIsNone(jobs.not_finishing(stood, now, writes=False))
+        self.assertEqual(jobs.running_label(stood, now, writes=False), "Deploying")
+        self.assertEqual(
+            jobs.in_flight([stood], writes=False), {"alpha": jobs.InFlight("Deploying")}
+        )
+        view = jobs.build_job_overview([stood], now=now, writes=False).jobs[0]
+        self.assertEqual(view.state_label, "Running")
+        self.assertEqual(jobs.build_job_overview([stood], now=now).jobs[0].state_label, "No worker")
+
     def test_a_job_no_worker_holds_is_named_so_and_neither_is_said_to_finish(self) -> None:
         """Review 26-10-29, A3: the badge named the operation, with a spinner, and the
         certificate forms said "is in progress" of a job that does not finish by itself."""

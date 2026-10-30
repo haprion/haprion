@@ -53,7 +53,7 @@ def build_router(config: Config) -> APIRouter:
             stale_after=config.poller.stale_after,
         )
         with request.app.state.pool.connection() as connection:
-            running = jobs.in_flight(db.recent_jobs(connection))
+            running = jobs.in_flight(db.recent_jobs(connection), writes=config.management_writes)
             restore_rows = [
                 job
                 for operation in node_restores.OPERATIONS
@@ -69,7 +69,10 @@ def build_router(config: Config) -> APIRouter:
                 "backups": overview,
                 "in_flight": running,
                 "restores": node_restores.recent_runs(
-                    restore_rows, shown=metrics.shown, now=datetime.now(UTC)
+                    restore_rows,
+                    shown=metrics.shown,
+                    now=datetime.now(UTC),
+                    writes=config.management_writes,
                 ),
                 #
                 # The zone the schedule form's time is read in: the manager's,
@@ -133,7 +136,9 @@ def build_router(config: Config) -> APIRouter:
         }
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         with request.app.state.pool.connection() as connection:
-            running = jobs.in_flight(db.recent_jobs(connection, cluster=cluster))
+            running = jobs.in_flight(
+                db.recent_jobs(connection, cluster=cluster), writes=config.management_writes
+            )
             if not form:
                 # The node's own address: right for a repair, overwritten for a new VM.
                 entered["target"] = node_restores.node_address(
@@ -167,7 +172,10 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         with request.app.state.pool.connection() as connection:
             restore = node_restores.run_view(
-                run, db.restore_jobs(connection, run), now=datetime.now(UTC)
+                run,
+                db.restore_jobs(connection, run),
+                now=datetime.now(UTC),
+                writes=config.management_writes,
             )
         if restore is None:
             return PlainTextResponse("Not found", status_code=404)
@@ -367,7 +375,10 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         with request.app.state.pool.connection() as connection:
             restore = node_restores.run_view(
-                run, db.restore_jobs(connection, run), now=datetime.now(UTC)
+                run,
+                db.restore_jobs(connection, run),
+                now=datetime.now(UTC),
+                writes=config.management_writes,
             )
         if restore is None:
             return PlainTextResponse("Not found", status_code=404)

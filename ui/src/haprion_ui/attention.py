@@ -795,7 +795,7 @@ def from_manager(
     # writes off, when no job moves on purpose, as the worker's row (A2).
     #
     for job in rows:
-        if writes and jobs_module.no_worker(job, now):
+        if jobs_module.no_worker(job, now, writes=writes):
             items.append(
                 Item(
                     kind="manager",

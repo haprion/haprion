@@ -50,5 +50,7 @@ def seal_submission(
     return Sealed(profile_id, profile_id, "ndes", public_key.key_id, ciphertext, endpoint)
 
 
-def profile_status(profile_id: str, revision: int, jobs: Iterable[Any]) -> ProfileStatus:
-    return _status(profile_id, revision, jobs, operation="ndes_profile_apply")
+def profile_status(
+    profile_id: str, revision: int, jobs: Iterable[Any], *, writes: bool = True
+) -> ProfileStatus:
+    return _status(profile_id, revision, jobs, operation="ndes_profile_apply", writes=writes)

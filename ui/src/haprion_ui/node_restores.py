@@ -341,7 +341,9 @@ def warning_command(warning: str) -> str:
     return next((command for phrase, command in WARNING_COMMANDS if phrase in warning), "")
 
 
-def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> RestoreRun | None:
+def run_view(
+    run: str, rows: Sequence[Job], *, now: datetime | None = None, writes: bool = True
+) -> RestoreRun | None:
     """The run's state from its jobs, oldest first, or None when it has none.
 
     `now` decides whether a run waiting on its operator has expired; without it
@@ -435,7 +437,7 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         # says it by (B2): the page said working, and refreshed, for ever.
         #
         held = [job for job in jobs if job.state in ACTIVE_STATES and job.waits_for_decision]
-        gone = [job for job in jobs if now is not None and no_worker(job, now)]
+        gone = [job for job in jobs if now is not None and no_worker(job, now, writes=writes)]
         if held:
             stage, waiting_job = "held", held[-1].id
         elif gone:
@@ -574,7 +576,11 @@ class RecentRun:
 
 
 def recent_runs(
-    rows: Iterable[Job], *, shown: Callable[[datetime], datetime], now: datetime
+    rows: Iterable[Job],
+    *,
+    shown: Callable[[datetime], datetime],
+    now: datetime,
+    writes: bool = True,
 ) -> dict[str, tuple[RecentRun, ...]]:
     """The runs that still ask something of somebody, per cluster, newest first.
 
@@ -599,7 +605,7 @@ def recent_runs(
             by_run.setdefault(run, []).append(job)
     views = []
     for run, jobs in by_run.items():
-        restore = run_view(run, jobs, now=now)
+        restore = run_view(run, jobs, now=now, writes=writes)
         if restore is None or restore.stage in {"done", "discarded", "expired"}:
             continue
         if not restore.active and restore.expires_at is not None and now > restore.expires_at:

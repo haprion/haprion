@@ -140,7 +140,7 @@ def build_router(config: Config) -> APIRouter:
                 )
                 for name in traffic_clusters
             }
-        running = jobs.in_flight(recent)
+        running = jobs.in_flight(recent, writes=config.management_writes)
         #
         # The first cluster's guide (B315) is the getting started list's first
         # row while it has a step to show, never the dashboard in its place
@@ -554,7 +554,7 @@ def build_router(config: Config) -> APIRouter:
             stale_after=config.poller.stale_after,
         )
         with request.app.state.pool.connection() as connection:
-            running = jobs.in_flight(db.recent_jobs(connection))
+            running = jobs.in_flight(db.recent_jobs(connection), writes=config.management_writes)
         #
         # What is saved and not yet published, per cluster (B257): the one
         # place a publish is made. Only where a publish could be.
@@ -820,6 +820,7 @@ def build_router(config: Config) -> APIRouter:
                 #
                 diagnostics=session.role == "admin",
                 judged=judged,
+                writes=config.management_writes,
             )
             claim_pause = db.claim_pause(connection)
         not_held = request.query_params.get("not_held", "")

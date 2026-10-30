@@ -418,7 +418,7 @@ def on_the_rows(
     return on_rows, tuple(ghosts)
 
 
-def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
+def recent_activity(rows: Sequence[Any], *, writes: bool = True) -> tuple[Activity, ...]:
     """The newest receiver jobs, newest first, with the helper's own sentence.
 
     Read defensively, as `jobs.error_code` is: the result was written by a
@@ -434,7 +434,7 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
         target = f"for {receiver}" if action in ("secret", "key") else receiver
         finished = getattr(job, "finished_at", None)
         if job.state in {"pending", "running"}:
-            state = queue.busy_with(job)
+            state = queue.busy_with(job, writes=writes)
             if not state.working:
                 label = f"{state.label}: {verb} {target}"
                 activity.append(

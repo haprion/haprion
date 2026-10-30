@@ -161,6 +161,7 @@ def cluster_creations(request: Request, recent: list[Any]) -> list[cluster_nodes
         listed_clusters(request, config),
         now=datetime.now(UTC),
         settle=timedelta(seconds=config.poller.interval_seconds * 2),
+        writes=config.management_writes,
     )
 
 

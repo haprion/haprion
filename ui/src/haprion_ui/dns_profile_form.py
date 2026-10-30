@@ -234,7 +234,12 @@ def without_stale_refusal(
 
 
 def profile_status(
-    profile_id: str, revision: int, jobs: Iterable[Any], *, operation: str = "dns_profile_apply"
+    profile_id: str,
+    revision: int,
+    jobs: Iterable[Any],
+    *,
+    operation: str = "dns_profile_apply",
+    writes: bool = True,
 ) -> ProfileStatus:
     """Derive a profile's state from its apply jobs, newest first.
 
@@ -257,7 +262,7 @@ def profile_status(
             # A held job, or one no worker holds, says so: "Applying" kept the
             # list refreshing until somebody answered it (review 26-10-29).
             #
-            state = queue.busy_with(job)
+            state = queue.busy_with(job, writes=writes)
             if not state.working:
                 return ProfileStatus(state.label, state.tone, False)
             return ProfileStatus("Removing" if removing else "Applying", "info", False)

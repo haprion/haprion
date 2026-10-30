@@ -79,7 +79,12 @@ def _asked(job: Job) -> dict[str, str]:
 
 
 def creations(
-    recent: Iterable[Job], listed: Collection[str], *, now: datetime, settle: timedelta
+    recent: Iterable[Job],
+    listed: Collection[str],
+    *,
+    now: datetime,
+    settle: timedelta,
+    writes: bool = True,
 ) -> list[Creating]:
     """Clusters whose newest cluster job is a creation the list does not show yet.
 
@@ -104,7 +109,9 @@ def creations(
             job.state == "done" and job.finished_at is not None and now - job.finished_at <= settle
         )
         if job.state in {"pending", "running"} or settling:
-            found.append(Creating(job.cluster, jobs.busy_with(job, now), None, None, job.id))
+            found.append(
+                Creating(job.cluster, jobs.busy_with(job, now, writes=writes), None, None, job.id)
+            )
         elif job.state in jobs.ATTENTION:
             found.append(
                 Creating(

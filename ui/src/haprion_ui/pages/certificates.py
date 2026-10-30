@@ -951,7 +951,9 @@ def build_router(config: Config) -> APIRouter:
             usable_profiles = tuple(
                 profile.id
                 for profile in profile_rows
-                if dns_profile_form.profile_status(profile.id, profile.revision, recent).usable
+                if dns_profile_form.profile_status(
+                    profile.id, profile.revision, recent, writes=config.management_writes
+                ).usable
             )
         usable_ndes: tuple[str, ...] = ()
         if profiles_required:
@@ -961,7 +963,9 @@ def build_router(config: Config) -> APIRouter:
             usable_ndes = tuple(
                 profile.id
                 for profile in ndes_rows
-                if ndes_profile_form.profile_status(profile.id, profile.revision, recent).usable
+                if ndes_profile_form.profile_status(
+                    profile.id, profile.revision, recent, writes=config.management_writes
+                ).usable
             )
         #
         # With receivers switched off (B193) no form offers one and every
@@ -1545,7 +1549,7 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             own = db.operation_jobs(connection, "cert_receiver", limit=5)
         on_rows, ghosts = certificate_receivers.on_the_rows(
-            rows, certificate_receivers.recent_activity(own)
+            rows, certificate_receivers.recent_activity(own, writes=config.management_writes)
         )
         return TEMPLATES.TemplateResponse(
             request,

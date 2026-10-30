@@ -1428,10 +1428,6 @@ class TheAcknowledgement(LoginTestCase):
         self.assertEqual(forgotten, {gone})
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ARemovedCluster_sFailures(LoginTestCase):
     """Review 26-10-25, 4-02: no step runs on a cluster that is gone, so nothing settles them."""
 
@@ -1700,3 +1696,7 @@ class AnAcknowledgementHoldsWhatItWasGivenFor(unittest.TestCase):
             [cluster(nodes=(node("n1", "critical", "Unreachable"),))], drift_label="Behind"
         )
         self.assertEqual((item.severity, item.variant), ("critical", "Unreachable"))
+
+
+if __name__ == "__main__":
+    unittest.main()

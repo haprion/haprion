@@ -517,7 +517,7 @@ class ADraftOnItsWay(DraftReading):
     it reads as though the button did nothing.
     """
 
-    def listing(self, jobs: list[object]) -> str:
+    def listing(self, jobs: list[object], *, writes: bool = False) -> str:
         drafts = [
             ProxyDraft(
                 cluster="edge-demo",
@@ -531,7 +531,7 @@ class ADraftOnItsWay(DraftReading):
                 deleted=False,
             )
         ]
-        client = self.client(replace(configuration(), demo_fixture=True))
+        client = self.client(replace(configuration(), demo_fixture=True, management_writes=writes))
         self.sign_in(client)
         with (
             mock.patch("haprion_ui.db.cluster_drafts", return_value=drafts),
@@ -582,9 +582,16 @@ class ADraftOnItsWay(DraftReading):
             (workerless_job, 'status-badge-critical waiting-badge">No worker<'),
         ):
             with self.subTest(state=stuck.__name__):
-                body = self.listing([stuck(self.job("pending"))])
+                body = self.listing([stuck(self.job("pending"))], writes=True)
                 self.assertNotIn("Waiting for publish", body)
                 self.assertIn(drawn, body)
+
+    def test_without_writes_a_job_nobody_takes_is_not_said_to_lack_a_worker(self) -> None:
+        """Review 26-10-29 (D2): with writes off the queue stands still on purpose."""
+
+        body = self.listing([workerless_job(self.job("pending"))])
+
+        self.assertNotIn("No worker", body)
 
     def test_a_running_publish_says_the_same(self) -> None:
         self.assertIn("Waiting for publish", self.listing([self.job("running")]))

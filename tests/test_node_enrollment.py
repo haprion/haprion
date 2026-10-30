@@ -197,7 +197,7 @@ class TheBlock(unittest.TestCase):
         for fields, said in (
             ({"name": "node--a"}, "node name cannot contain '--' or end in '-'"),
             ({"name": "node-a-"}, "node name cannot contain '--' or end in '-'"),
-            ({"cluster": "alpha--b"}, "cluster ID cannot contain '--' or end in '-'"),
+            (dict(cluster="alpha--b"), "cluster ID cannot contain '--' or end in '-'"),
         ):
             with self.subTest(fields=fields):
                 with self.assertRaises(EnrollmentError) as caught:

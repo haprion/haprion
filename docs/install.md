@@ -244,6 +244,9 @@ interface to add the node:
 `sudo haprion-node-key` prints the block again. While its one-time key is unused and valid it is the same block, and
 an upgrade of the package keeps it. `sudo haprion-node-key --again` makes a new one-time key, and an earlier block
 stops working.
+A node that was prepared but never joined, with its key used up or expired, says so and asks for
+`--again`. The node's name is its host name, which must be lowercase letters, digits and hyphens,
+starting with a letter; otherwise `haprion-node-key` says to rename the host first.
 What the block contains, and how to prepare a node without the web interface, is in
 [install/README.md](../install/README.md#step-4--each-node).
 

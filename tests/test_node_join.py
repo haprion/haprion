@@ -190,6 +190,105 @@ class TheDocument(unittest.TestCase):
                 JOIN.manager_address()
 
 
+class TheKeyScriptSaysWhatIsTrue(unittest.TestCase):
+    """Review 26-10-30, E7 and E8: joined means joined; a bad host name is said at once."""
+
+    KEY_SCRIPT = BASE / "install" / "node" / "haprion-node-key"
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root)
+        text = self.KEY_SCRIPT.read_text()
+        start = text.index("join_key_expiry() {")
+        end = text.index("\n}\n", text.index("join_key_current() {")) + 3
+        names = text.index("NODE_NAME_PATTERN=")
+        names_end = text.index("\n}\n", text.index("node_names() {")) + 3
+        self.functions = (
+            text[start:end]
+            + text[
+                text.index("node_state() {") : text.index("\n}\n", text.index("node_state() {")) + 3
+            ]
+            + text[names:names_end]
+        )
+        self.conf = self.root / "node.conf"
+        self.key = self.root / "join_key"
+        self.keys = self.root / "authorized_keys"
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+
+    def run_function(self, call: str, **env: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # functions from the script under test
+            ["/bin/bash", "-c", f"set -Eeuo pipefail\n{self.functions}{call}"],
+            env={
+                **os.environ,
+                "PATH": f"{self.bin}:{os.environ['PATH']}",
+                "NODE_CONF": str(self.conf),
+                "JOIN_KEY": str(self.key),
+                "JOIN_KEYS": str(self.keys),
+                "MODE": "",
+                **env,
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def hostnames(self, short: str, full: str | None) -> None:
+        fake = self.bin / "hostname"
+        fake.write_text(
+            "#!/bin/sh\n"
+            + (f'[ "$1" = -f ] && echo {full} && exit 0\n' if full else '[ "$1" = -f ] && exit 1\n')
+            + f"echo {short}\n"
+        )
+        fake.chmod(0o755)
+
+    def test_a_node_with_a_conf_and_no_key_is_joined(self) -> None:
+        self.conf.write_text('CLUSTER="alpha"\n')
+        self.assertEqual(self.run_function("node_state").stdout.strip(), "joined")
+
+    def test_a_node_with_a_conf_and_a_key_that_is_gone_stale_is_not(self) -> None:
+        self.conf.write_text('CLUSTER="alpha"\n')
+        self.key.write_text("private")
+        self.key.with_suffix(".pub").write_text("ssh-ed25519 AAAA x")
+        self.keys.write_text("")
+        self.assertEqual(self.run_function("node_state").stdout.strip(), "unfinished")
+
+    def test_a_node_without_a_conf_or_asked_again_gets_a_block(self) -> None:
+        self.assertEqual(self.run_function("node_state").stdout.strip(), "fresh")
+        self.conf.write_text('CLUSTER="alpha"\n')
+        self.assertEqual(self.run_function("node_state", MODE="--again").stdout.strip(), "fresh")
+
+    def test_the_text_for_an_unfinished_node_does_not_say_joined(self) -> None:
+        text = self.KEY_SCRIPT.read_text()
+        unfinished = text[
+            text.index("    unfinished)") : text.index("esac", text.index("    unfinished)"))
+        ]
+        self.assertNotIn("is joined", unfinished)
+        self.assertIn("no manager has completed a", unfinished)
+
+    def test_a_hostname_that_fails_falls_back_to_the_short_name(self) -> None:
+        self.hostnames("node-a", None)
+        done = self.run_function('node_names; echo "$NODE_NAME $NODE_HOST"')
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "node-a node-a"))
+
+    def test_a_host_name_that_is_not_a_node_name_is_refused(self) -> None:
+        for short in ("Node-A", "1node", "node_a"):
+            with self.subTest(short=short):
+                self.hostnames(short, f"{short}.example.com")
+                self.assertNotEqual(self.run_function("node_names").returncode, 0)
+
+    def test_the_refusal_says_what_to_do(self) -> None:
+        text = self.KEY_SCRIPT.read_text()
+        self.assertIn("hostnamectl set-hostname", text)
+        self.assertIn("lowercase letters, digits and hyphens", text)
+
+    def test_both_scripts_fall_back_when_hostname_f_fails(self) -> None:
+        prepare = (BASE / "install" / "04-node-prepare").read_text()
+        self.assertIn("hostname -f 2>/dev/null || hostname", prepare)
+        self.assertNotIn("$(hostname -f)", prepare)
+        self.assertNotIn("$(hostname -f)", self.KEY_SCRIPT.read_text())
+
+
 class TheArrivalAddress(unittest.TestCase):
     def test_it_is_the_connection_s_third_field(self) -> None:
         with mock.patch.dict(os.environ, {"SSH_CONNECTION": "198.51.100.5 50022 192.0.2.21 22"}):

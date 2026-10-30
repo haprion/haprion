@@ -74,13 +74,59 @@ join_key_current() {
     [[ -n "$expires" && "$expires" > "$(date -u '+%Y%m%d%H%M')" ]]
 }
 
-if [[ -f "$NODE_CONF" && "$MODE" != --again ]]; then
-    joined="$(sed -n 's/^CLUSTER="\(.*\)"$/\1/p' "$NODE_CONF")"
-    [[ "$MODE" == --package ]] && exit 0
-    echo "This node is joined to cluster ${joined:-?}. To join it again, to this or another"
-    echo "manager:  sudo haprion-node-key --again"
-    exit 0
-fi
+#
+# Joined is what a join leaves: node.conf, and no one-time key (the join
+# removes it when step 4 has finished). Step 4 writes node.conf early, so a
+# node whose preparation stopped later has node.conf and its key still - and
+# no manager. With the key still valid its block is the one to print again;
+# with it used up or expired, a new key is the way on (review 26-10-30, E8).
+#
+node_state() {
+    if [[ ! -f "$NODE_CONF" || "$MODE" == --again ]]; then
+        echo fresh
+    elif [[ ! -f "$JOIN_KEY" ]]; then
+        echo joined
+    elif join_key_current; then
+        echo fresh
+    else
+        echo unfinished
+    fi
+}
+
+#
+# The names the block carries. The host name is only a suggestion the operator
+# may replace with --host, so a hostname -f that fails falls back to the short
+# name; the node name is not, and the manager refuses a block without a valid
+# one - say so here, with what to do, instead of there (review 26-10-30, E7).
+#
+NODE_NAME_PATTERN='^[a-z][a-z0-9-]{0,62}$'
+NODE_HOST_PATTERN='^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'
+
+node_names() {
+    NODE_NAME="$(hostname)"
+    NODE_HOST="$(hostname -f 2>/dev/null || true)"
+    [[ "$NODE_HOST" =~ $NODE_HOST_PATTERN ]] || NODE_HOST="$NODE_NAME"
+    [[ "$NODE_NAME" =~ $NODE_NAME_PATTERN ]]
+}
+
+case "$(node_state)" in
+    joined)
+        joined="$(sed -n 's/^CLUSTER="\(.*\)"$/\1/p' "$NODE_CONF")"
+        [[ "$MODE" == --package ]] && exit 0
+        echo "This node is joined to cluster ${joined:-?}. To join it again, to this or another"
+        echo "manager:  sudo haprion-node-key --again"
+        exit 0
+        ;;
+    unfinished)
+        [[ "$MODE" == --package ]] && exit 0
+        prepared="$(sed -n 's/^CLUSTER="\(.*\)"$/\1/p' "$NODE_CONF")"
+        echo "This node has been prepared for cluster ${prepared:-?}, but no manager has completed a"
+        echo "join. Make a new block:  sudo haprion-node-key --again"
+        exit 0
+        ;;
+esac
+
+node_names || die "this host's name '${NODE_NAME}' is not a node name. Node names are lowercase letters, digits and hyphens, starting with a letter: rename the host (sudo hostnamectl set-hostname <name>), then run  sudo haprion-node-key"
 
 install -d -m 755 "${SETUP_LOG%/*}"
 #
@@ -146,7 +192,7 @@ if command -v sshd >/dev/null && settings="$(sshd -T 2>/dev/null)"; then
     fi
 fi
 
-BLOCK="$(/usr/bin/python3 - "$(hostname)" "$(hostname -f)" "$HOST_KEY_FILE" \
+BLOCK="$(/usr/bin/python3 - "$NODE_NAME" "$NODE_HOST" "$HOST_KEY_FILE" \
     "${NODE_CONFIG_PULL_KEY}.pub" "${NODE_CERT_PULL_KEY}.pub" "$JOIN_KEY" <<'PY'
 import base64
 import json

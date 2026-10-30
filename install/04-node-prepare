@@ -881,7 +881,7 @@ step "Enrollment block"
 #
 HOST_KEY_FILE="${HOST_KEY_FILE:-/etc/ssh/ssh_host_ed25519_key.pub}"
 [[ -r "$HOST_KEY_FILE" ]] || die "${HOST_KEY_FILE} is missing; sshd has no ed25519 host key"
-ENROLLMENT_BLOCK="$(/usr/bin/python3 - "$CLUSTER" "$(hostname)" "$(hostname -f)" \
+ENROLLMENT_BLOCK="$(/usr/bin/python3 - "$CLUSTER" "$(hostname)" "$(hostname -f 2>/dev/null || hostname)" \
     "$HOST_KEY_FILE" "${NODE_CONFIG_PULL_KEY}.pub" "${NODE_CERT_PULL_KEY:+${NODE_CERT_PULL_KEY}.pub}" <<'PY'
 import base64
 import json

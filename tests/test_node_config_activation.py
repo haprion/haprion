@@ -518,5 +518,93 @@ class AReleaseThatLogsTrafficNeedsTheNodesSocket(Node):
         self.assertEqual(code, 0, said)
 
 
+class ATestRestoreTakesTheRelease(Node):
+    """A node restored in test mode, as `haprion-node-restore` leaves it before `finish`.
+
+    Measured on the lab 2026-10-30: a test restore of node-a under another name
+    and address failed at `finish` with HAProxy and keepalived inactive. The
+    release names node-a and node-b, the product's keepalived.conf on the copy
+    sends from the test address, so the deploy took the copy for a node
+    removed from the cluster, stopped and disabled HAProxy and ended 0.
+    """
+
+    PRODUCT = "# Written by Haprion - a deploy replaces this file.\n"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.marker = self.root / "test-restore"
+        self.script.write_text(
+            self.script.read_text().replace(
+                'TEST_RESTORE_MARKER="/etc/haprion/test-restore"',
+                f'TEST_RESTORE_MARKER="{self.marker}"',
+            )
+        )
+        hostname = self.bin / "hostname"
+        hostname.write_text("#!/bin/sh\necho node-test\n")
+        hostname.chmod(0o755)
+        #
+        # As the plan rewrites them for the test address and VIP: the
+        # product's file, the include of the address list taken out.
+        #
+        self.keepalived = self.root / "keepalived.conf"
+        self.keepalived_text = (
+            self.PRODUCT
+            + "vrrp_instance alpha {\n    unicast_src_ip 198.51.100.77\n"
+            + "    virtual_ipaddress {\n        198.51.100.200\n    }\n}\n"
+        )
+        self.keepalived.write_text(self.keepalived_text)
+        self.addresses = self.root / "addresses.conf"
+        self.addresses.write_text("198.51.100.200\n")
+        published = self.offered / "keepalived"
+        published.mkdir()
+        for name, address in (("node-a", "192.0.2.11"), ("node-b", "192.0.2.12")):
+            (published / f"node-{name}.conf").write_text(
+                self.PRODUCT
+                + f"vrrp_instance alpha {{\n    unicast_src_ip {address}\n"
+                + "    virtual_ipaddress {\n        include /etc/keepalived/addresses.conf\n"
+                + "    }\n}\n"
+            )
+        (published / "addresses.conf").write_text("192.0.2.100\n")
+
+    def calls(self) -> list[str]:
+        return self.record.read_text().splitlines() if self.record.exists() else []
+
+    def test_the_release_is_installed_and_haproxy_serves_it(self) -> None:
+        self.marker.write_text("test\n")
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("removed from the cluster", output)
+        self.assertIn("A test restore", output)
+        self.assertEqual(self.read_release()["hash"], "b" * 40)
+        self.assertEqual(self.reloads(), 1)
+        self.assertTrue(self.tree.is_active("haproxy"))
+        self.assertFalse(self.left.exists())
+        self.assertFalse([call for call in self.calls() if "keepalived" in call])
+        # keepalived's files stay the test's: the cluster's VIP is not put back.
+        self.assertEqual(self.keepalived.read_text(), self.keepalived_text)
+        self.assertEqual(self.addresses.read_text(), "198.51.100.200\n")
+
+    def test_without_the_restore_s_marker_the_same_node_is_removed(self) -> None:
+        """A node genuinely removed from its cluster still steps down (B319)."""
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("removed from the cluster", output)
+        self.assertIn("systemctl disable --quiet --now haproxy", self.calls())
+        self.assertTrue(self.left.exists())
+        self.assertEqual(self.read_release()["hash"], "a" * 40)
+
+    def test_the_restore_writes_the_marker_this_script_reads(self) -> None:
+        from haprion import restore_agent
+
+        self.assertIn(
+            f'TEST_RESTORE_MARKER="{restore_agent.TEST_RESTORE_MARKER}"', DEPLOY.read_text()
+        )
+        self.assertIn(f'LEFT_MARKER="{restore_agent.LEFT_MARKER}"', DEPLOY.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3371,7 +3371,9 @@ preview saw. So what was approved is what is written.
      only;
    - HAProxy starts on a placeholder release whose only listener is a root-only unix socket;
    - the node's `haprion-cert-pull` fetches the cluster's CA files and then its certificates, and its
-     `haprion-pull-deploy` the published configuration - the same scripts a deploy triggers;
+     `haprion-pull-deploy` the published configuration - the same scripts a deploy triggers. If the
+     published release does not name the node, the deploy stops it as removed from the cluster, and the
+     run fails and says so: publish the cluster with the node in it, then restore again;
    - keepalived starts as `BACKUP`;
    - **last**, root's `authorized_keys` is replaced by the archive's, which removes the one-time key.
 
@@ -3392,6 +3394,10 @@ above, except that:
 - the `include` of the published address list is removed;
 - sshd's `ListenAddress` is rewritten to the test address;
 - keepalived is masked, so it can never join the production pair's VRRP;
+- the VM is marked as a test copy in `/etc/haprion/test-restore`. The published release names no node
+  by the test host name, and without the mark the VM's deploy would take it for a node removed from
+  the cluster. With it, the deploy installs the release and HAProxy serves it, and keepalived's files
+  stay as the restore rewrote them;
 - the VM keeps its own SSH host keys;
 - the VM fetches its configuration and certificates from this manager as a node does, with the fetch
   keys it made for itself. For the run alone, the manager lets those keys in from the test address

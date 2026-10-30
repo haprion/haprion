@@ -132,6 +132,21 @@ KEEPALIVED_ADDRESSES="/etc/keepalived/addresses.conf"
 KEEPALIVED_IPVS="/etc/keepalived/ipvs.conf"
 
 #
+# A node restored in test mode (`haprion-node-restore --test-*`): a copy of a
+# cluster's node under another name and address, keepalived masked so it never
+# takes part in the cluster's VRRP. The restore writes this file (a test holds
+# the agent's path to this one). Such a node is named in no release, and that
+# does not make it a removed one: it takes the release, HAProxy serves it, and
+# keepalived's files stay the ones the restore rewrote for the test address -
+# the release's would put the cluster's addresses and syslog objects back.
+#
+TEST_RESTORE_MARKER="/etc/haprion/test-restore"
+
+test_restore() {
+    [[ -e "$TEST_RESTORE_MARKER" ]]
+}
+
+#
 # Whether keepalived.conf includes a file. The address list is included inside
 # virtual_ipaddress, so any line naming it is the include; the IPVS file only
 # counts at the top level, outside every block, with keepalived's comments (`#`
@@ -380,6 +395,7 @@ refuse_unread_ipvs() {
 }
 
 validate_ipvs_candidate() {
+    test_restore && return 0
     if ipvs_unreadable "${1}/keepalived/ipvs.conf"; then
         refuse_unread_ipvs
         return 1
@@ -406,6 +422,7 @@ sync_keepalived_ipvs() {
 # anything is staged, so the address list does not go live without it.
 #
 sync_keepalived() {
+    test_restore && return 0
     if ipvs_unreadable "${CURRENT}/keepalived/ipvs.conf"; then
         refuse_unread_ipvs
         return 1
@@ -885,7 +902,8 @@ fi
 # none for this node - neither by name nor by the address this node's own
 # file sends from, so a renamed host is not mistaken for a removed one - and
 # the keepalived.conf here is the product's. A person's keepalived.conf (B57)
-# is theirs, and so is what it peers with.
+# is theirs, and so is what it peers with. A test restore is named in no
+# release and removed from none (TEST_RESTORE_MARKER).
 #
 # Stopped and disabled, with a marker: the node is no longer this cluster's,
 # and a reboot must not bring it back. Added again, the first release that
@@ -899,6 +917,7 @@ LEFT_MARKER="/etc/haprion/left-cluster"
 
 removed_from_release() {
     local own
+    test_restore && return 1
     [[ -f "$KEEPALIVED_CONF" ]] || return 1
     [[ "$(head -n 1 "$KEEPALIVED_CONF")" == "$KEEPALIVED_MARK" ]] || return 1
     compgen -G "${STAGE}/keepalived/node-*.conf" >/dev/null || return 1
@@ -925,7 +944,9 @@ if removed_from_release; then
 fi
 
 REJOINING=0
-if [[ -e "$LEFT_MARKER" ]]; then
+if test_restore; then
+    log "A test restore: not a member of the cluster. The release is installed; keepalived's files are left as the restore wrote them."
+elif [[ -e "$LEFT_MARKER" ]]; then
     log "This node is in the published release again: it rejoins once the release is installed."
     REJOINING=1
 fi

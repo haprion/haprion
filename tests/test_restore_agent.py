@@ -380,6 +380,31 @@ class Apply(AgentTest):
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
         self.assertTrue(self.host.path("/root/.ssh/known_hosts").exists())
 
+    def test_a_test_restore_leaves_the_mark_the_deploy_reads_and_no_left_cluster(self) -> None:
+        """Lab 2026-10-30: the deploy took a test copy for a node removed from its cluster."""
+
+        left = self.host.path(restore_agent.LEFT_MARKER)
+        left.parent.mkdir(parents=True, exist_ok=True)
+        left.write_text("")
+
+        result = self.apply()
+
+        self.assertTrue(result["ok"], result)
+        marker = self.host.path(restore_agent.TEST_RESTORE_MARKER)
+        self.assertEqual(marker.read_text(), restore_agent.TEST_RESTORE_TEXT)
+        self.assertEqual(marker.stat().st_mode & 0o777, 0o644)
+        self.assertFalse(left.exists())
+
+    def test_a_restore_for_real_takes_a_test_s_mark_away(self) -> None:
+        marker = self.host.path(restore_agent.TEST_RESTORE_MARKER)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("from a test this VM served\n")
+
+        result = self.apply({**APPLY_HEADER, "keepalived": "start"})
+
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(marker.exists())
+
     def test_nothing_starts_during_package_installation(self) -> None:
         seen: list[bool] = []
         original = self.host.run
@@ -920,6 +945,26 @@ class Finish(AgentTest):
         result = self.serve(self.header(), payload(self.KEYS))
         self.assertFalse(result["ok"])
         self.assertIn("rollback timer", result["error"])
+        self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
+
+    def test_a_deploy_that_found_the_node_removed_is_named_as_that(self) -> None:
+        """Lab 2026-10-30: pull-deploy stopped HAProxy, ended 0, and finish said only
+        that the services were not as expected."""
+
+        self.host.active.update(
+            {f"haprion-restore-rollback-{RUN}.timer": "active", "haproxy": "active"}
+        )
+        self.host.path("/etc/hostname").write_text("node-test\n")
+        left = self.host.path(restore_agent.LEFT_MARKER)
+        left.parent.mkdir(parents=True, exist_ok=True)
+        left.write_text("")
+
+        result = self.serve(self.header(), payload(self.KEYS))
+
+        self.assertFalse(result["ok"])
+        self.assertIn("found no node-test in the cluster's published release", result["error"])
+        self.assertIn("removed from the cluster", result["error"])
+        self.assertNotIn("services are not as expected", result["error"])
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
 
     def test_failing_services_keep_the_one_time_key(self) -> None:

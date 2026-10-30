@@ -12,7 +12,8 @@ Three modes exist:
 * ``test`` - the same, except that the node's identity on the network is
   rewritten to a test profile, field by field, and keepalived is masked so the
   node can never take part in the production cluster's VRRP.  Every rewritten
-  field is listed; nothing else differs from ``new_vm``.
+  field is listed; nothing else differs from ``new_vm`` but the mark the agent
+  leaves for the node's deploy (``restore_agent.TEST_RESTORE_MARKER``).
 * ``overwrite`` - the archive over the node itself, running (B172, B183): the
   same files as ``new_vm``, but the node's software is its own - no repository
   file is written and only a missing product package is installed - the

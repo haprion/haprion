@@ -139,6 +139,26 @@ CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 # shows the log was on; the archive's own copies are not written.
 #
 TRAFFIC_LOG_ENABLE = "/usr/sbin/haprion-traffic-log-enable"
+#
+# What a test restore leaves for `haprion-pull-deploy` (the same path there; a
+# test holds the two together): this node is a copy under another name and
+# address, in no release, so a deploy installs the release and leaves
+# keepalived's files as the plan rewrote them instead of taking the node for
+# one removed from its cluster. Any other restore takes it away, so a VM that
+# served a test and is restored for real is a member again.
+#
+TEST_RESTORE_MARKER = "/etc/haprion/test-restore"
+TEST_RESTORE_TEXT = (
+    "A node restored in test mode: in no cluster's release, keepalived masked.\n"
+    "haprion-pull-deploy installs the release and leaves keepalived's files alone.\n"
+)
+#
+# What `haprion-pull-deploy` leaves on a node it found missing from the
+# published release (B319): HAProxy and keepalived stopped and disabled. It
+# ends 0, as that is what it was asked for on a removed node; a restore that
+# meets it has to say so, not report the stopped services.
+#
+LEFT_MARKER = "/etc/haprion/left-cluster"
 HAPROXY = "/etc/haproxy"
 EMPTY_RELEASE = "00000000-000000"
 BOOTSTRAP_SOCKET = "/run/haprion-restore-bootstrap.sock"
@@ -1334,10 +1354,21 @@ def _layout(host: Host, run: str, report: Report) -> None:
 def _services(host: Host, header: dict[str, Any], report: Report) -> None:
     host.run(["sysctl", "--system"])
     host.run(["systemctl", "daemon-reload"])
+    marker = host.path(TEST_RESTORE_MARKER)
     if header["keepalived"] == "mask":
         host.run(["systemctl", "disable", "--now", "keepalived"], check=False)
         host.run(["systemctl", "mask", "keepalived"])
+        #
+        # A test copy left no cluster either: an archive of a node that had
+        # been removed carries the marker of that, which would have the
+        # deploy start a masked keepalived.
+        #
+        host.path(LEFT_MARKER).unlink(missing_ok=True)
+        marker.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        marker.write_text(TEST_RESTORE_TEXT, encoding="utf-8")
+        marker.chmod(0o644)
     else:
+        marker.unlink(missing_ok=True)
         host.run(["systemctl", "enable", "keepalived"])
     host.run(["systemctl", "enable", "haproxy"])
     report.step("services", keepalived=header["keepalived"], haproxy="enabled")
@@ -1644,6 +1675,16 @@ def _start(
         host.run(["/usr/sbin/haprion-cert-pull", *certificates])
     report.step("certificates", pulled=list(certificates))
     host.run(["/usr/sbin/haprion-pull-deploy"])
+    if host.path(LEFT_MARKER).exists():
+        try:
+            name = host.path("/etc/hostname").read_text(encoding="utf-8").strip() or "this node"
+        except OSError:
+            name = "this node"
+        raise Failed(
+            f"haprion-pull-deploy found no {name} in the cluster's published release, took the"
+            " node for one removed from the cluster and stopped HAProxy and keepalived"
+            f" ({LEFT_MARKER}). Publish the cluster with the node in it, then restore again."
+        )
     report.step("config", pulled=True)
 
     if header["keepalived"] == "start":

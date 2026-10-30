@@ -58,7 +58,12 @@ class CommandTests(unittest.TestCase):
         return draft
 
     def run_command(
-        self, draft: Path, answers: str, *, helper_code: int = 0, publish_code: int = 0
+        self,
+        draft: Path,
+        answers: str,
+        *extra: str,
+        helper_code: int = 0,
+        publish_code: int = 0,
     ) -> tuple[int, str, list[dict[str, Any]], list[str]]:
         crossed: list[dict[str, Any]] = []
         published: list[str] = []
@@ -86,7 +91,7 @@ class CommandTests(unittest.TestCase):
         output = io.StringIO()
         errors = io.StringIO()
         code = main(
-            ["-c", "alpha"],
+            ["-c", "alpha", *extra],
             stream_in=io.StringIO(answers),
             stream_out=output,
             stream_err=errors,
@@ -151,6 +156,14 @@ class CommandTests(unittest.TestCase):
             code, output, crossed, _ = self.run_command(draft, "y\nreset\n")
             self.assertEqual(code, 0)
             self.assertIn("did not match", output)
+            self.assertEqual(crossed, [])
+
+    def test_a_wrong_phrase_given_as_an_argument_is_a_usage_error_in_text_too(self) -> None:
+        with TemporaryDirectory() as raw:
+            draft = self.layout(Path(raw))
+            code, _, crossed, _ = self.run_command(draft, "", "--confirm", "reset")
+            self.assertEqual(code, 64)
+            self.assertIn("did not match", self.errors)
             self.assertEqual(crossed, [])
 
     def test_yes_alone_is_not_enough(self) -> None:

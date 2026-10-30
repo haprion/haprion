@@ -169,7 +169,7 @@ def main(
     try:
         plan = preview(cluster_id, config_path(cluster_id))
     except ResetError as exc:
-        return refuse("refused", str(exc), exc.exit_code)
+        return refuse("bad_input", str(exc), exc.exit_code)
 
     say.write(
         f"\nThis discards the version history for cluster '{cluster_id}'.\n\n"
@@ -181,13 +181,19 @@ def main(
         "Nothing is deleted by this command.\n\n"
     )
 
+    given = confirm is not None
     if confirm is None:
         if _ask(reader, writer, "Continue? [y/N] ").lower() not in ("y", "yes"):
             writer.write("Nothing was changed.\n")
             return 0
         confirm = _ask(reader, writer, f"Type '{CONFIRMATION}' to confirm: ")
     if confirm != CONFIRMATION:
-        if json_mode:
+        #
+        # A phrase given on the command line is automation, and says no with
+        # the exit that says so, with or without --json (review 26-10-30, E6);
+        # a phrase typed at the prompt was answered by a person.
+        #
+        if given:
             return refuse(
                 "not_confirmed", "The phrase did not match. Nothing was changed.", exit_codes.USAGE
             )

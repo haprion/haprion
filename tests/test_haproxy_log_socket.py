@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 NODE_PREPARE = ROOT / "install" / "04-node-prepare"
 UBUNTU_LINE = "$AddUnixListenSocket /var/lib/haproxy/dev/log"
+INPUT_WRITTEN = 'forward_rule_text "$TRAFFIC_INPUT"'
 #
 # What a restart costs at the busiest rate measured: rsyslog was away 65 ms
 # and a node answered 25 000 requests a second (26-10-12).
@@ -178,12 +179,34 @@ class RsyslogNeverMakesTheTrafficSocketItself(unittest.TestCase):
     def test_the_socket_is_held_before_rsyslog_is_restarted_on_the_input(self) -> None:
         text = NODE_PREPARE.read_text(encoding="utf-8")
         held = text.index('hold_log_socket "$TRAFFIC_SOCKET_UNIT"')
-        self.assertLess(held, text.index("${TRAFFIC_INPUT}"))
+        self.assertLess(held, text.index(INPUT_WRITTEN))
         self.assertLess(held, text.index("systemctl restart rsyslog.service"))
         self.assertLess(text.index("net.unix.max_dgram_qlen="), held)
 
-    def run_hold(self, unit: str, hook: str = "") -> tuple[int, list[str]]:
-        """hold_log_socket with its systemctl stubbed to fail starting `unit`; what it did."""
+    @staticmethod
+    def forward_functions() -> str:
+        """The forwarding rule's variables and the two functions that write it, as in the step."""
+
+        text = NODE_PREPARE.read_text(encoding="utf-8")
+        parts = [
+            re.search(rf"^{name}=.*$", text, re.MULTILINE)
+            for name in ("RSYSLOG_FORWARD_RULE", "RSYSLOG_FORWARD_DIR", "RSYSLOG_STATS")
+        ]
+        functions = [
+            re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", text, re.DOTALL | re.MULTILINE)
+            for name in ("forward_rule_text", "traffic_input_off")
+        ]
+        found = [m.group(0) for m in parts + functions if m is not None]
+        assert len(found) == 5
+        return "TRAFFIC_LOG_ROOT=/var/log/haprion\n" + "\n".join(found)
+
+    def run_hold(
+        self, unit: str, hook: str = "", rule: list[str] | None = None
+    ) -> tuple[int, list[str]]:
+        """hold_log_socket with its systemctl stubbed to fail starting `unit`; what it did.
+
+        `rule`, given, receives the lines of the forwarding rule the hook wrote.
+        """
 
         text = NODE_PREPARE.read_text(encoding="utf-8")
         function = re.search(r"^hold_log_socket\(\) \{\n.*?^\}\n", text, re.DOTALL | re.MULTILINE)
@@ -193,29 +216,46 @@ class RsyslogNeverMakesTheTrafficSocketItself(unittest.TestCase):
                 f'did() {{ echo "$*" >>{raw}/did; }}\n'
                 f'systemctl() {{ did systemctl "$@"; [[ "$1" == is-active ]] && return 1; '
                 f'[[ "$1 $2" != "start {unit}" ]]; }}\n'
-                f'install_file() {{ :; }}\nrm() {{ did rm "$@"; }}\n'
+                f'install_file() {{ did install_file "$1"; printf "%s\\n" "$4" >{raw}/rule; }}\n'
+                f'rm() {{ did rm "$@"; }}\n'
                 f'die() {{ did DIE "$*"; exit 3; }}\n'
-                f"RSYSLOG_FORWARD_RULE=/etc/rsyslog.d/47-haprion-forward.conf\n"
-                f'traffic_input_off() {{ rm -f "$RSYSLOG_FORWARD_RULE"; }}\n'
+                f"{self.forward_functions()}\n"
                 f"{function.group(0)}\n"
                 f"hold_log_socket {unit} {raw}/socket content {hook}\n"
             )
             done = subprocess.run(["/bin/bash", "-c", script], capture_output=True, check=False)
             did = Path(raw, "did").read_text(encoding="utf-8").splitlines()
+            if rule is not None and Path(raw, "rule").exists():
+                rule.extend(Path(raw, "rule").read_text(encoding="utf-8").splitlines())
         return done.returncode, did
 
-    def test_a_traffic_socket_that_does_not_start_takes_the_input_away_too(self) -> None:
+    def test_a_traffic_socket_that_does_not_start_rewrites_the_rule_without_the_input(self) -> None:
+        """T1: the file also carries impstats and the external receivers' include."""
+
+        rule: list[str] = []
         code, did = self.run_hold(
-            "haprion-traffic-log.socket", 'traffic_input_off "the input is off"'
+            "haprion-traffic-log.socket", 'traffic_input_off "the input is off"', rule
         )
 
         self.assertEqual(code, 3)
-        self.assertIn("rm -f /etc/rsyslog.d/47-haprion-forward.conf", did)
+        self.assertIn("install_file /etc/rsyslog.d/47-haprion-forward.conf", did)
+        self.assertNotIn("rm -f /etc/rsyslog.d/47-haprion-forward.conf", did)
+        joined = "\n".join(rule)
+        self.assertIn('module(load="impstats"', joined)
+        self.assertIn('include(file="/etc/rsyslog.d/haprion/forward.conf" mode="optional")', joined)
+        self.assertNotIn("input(", joined)
         self.assertTrue(any(line.startswith("DIE") and "the input is off" in line for line in did))
         self.assertNotIn("rsyslog runs as before", " ".join(did))
         self.assertLess(
-            did.index("rm -f /etc/rsyslog.d/47-haprion-forward.conf"),
+            did.index("install_file /etc/rsyslog.d/47-haprion-forward.conf"),
             did.index("systemctl start syslog.socket rsyslog.service"),
+        )
+
+    def test_the_rule_with_the_input_is_the_rule_without_it_plus_the_input(self) -> None:
+        text = NODE_PREPARE.read_text(encoding="utf-8")
+        self.assertIn('"$(forward_rule_text "$TRAFFIC_INPUT")"', text)
+        self.assertLess(
+            text.index("traffic_input_off()"), text.index('hold_log_socket "$TRAFFIC_SOCKET_UNIT"')
         )
 
     def test_the_traffic_unit_names_the_input_hook_and_a_true_note(self) -> None:
@@ -227,7 +267,7 @@ class RsyslogNeverMakesTheTrafficSocketItself(unittest.TestCase):
         code, did = self.run_hold("haprion-haproxy-log.socket")
 
         self.assertEqual(code, 3)
-        self.assertNotIn("rm -f /etc/rsyslog.d/47-haprion-forward.conf", did)
+        self.assertNotIn("install_file /etc/rsyslog.d/47-haprion-forward.conf", did)
         self.assertTrue(any("rsyslog runs as before" in line for line in did))
 
 
@@ -249,7 +289,7 @@ class RsyslogMayReadTheTrafficSocket(unittest.TestCase):
         self.assertIn('RSYSLOG_APPARMOR="/etc/apparmor.d/rsyslog.d/haprion-haproxy-log"', text)
         written = text.index('install -o root -g root -m 644 /dev/stdin "$RSYSLOG_APPARMOR"')
         reloaded = text.index("/usr/lib/rsyslog/reload-apparmor-profile", written)
-        self.assertLess(text.index("${TRAFFIC_INPUT}"), written)
+        self.assertLess(text.index(INPUT_WRITTEN), written)
         self.assertLess(reloaded, text.index("systemctl restart rsyslog.service"))
 
     @unittest.skipUnless(

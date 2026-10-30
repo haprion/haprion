@@ -467,8 +467,32 @@ fi
 #
 TRAFFIC_SOCKET_UNIT="haprion-traffic-log.socket"
 RSYSLOG_FORWARD_RULE="/etc/rsyslog.d/47-haprion-forward.conf"
+RSYSLOG_FORWARD_DIR="/etc/rsyslog.d/haprion"
+RSYSLOG_STATS="${TRAFFIC_LOG_ROOT}/rsyslog-stats.json"
+TRAFFIC_INPUT="$(sed "s|@SOCKET@|${TRAFFIC_SOCKET_PATH}|" <<'CONF'
+input(type="imuxsock" Socket="@SOCKET@" ruleset="haprion-traffic-in"
+      RateLimit.Interval="0")
+ruleset(name="haprion-traffic-in") {
+    set $!haprion!origin = "haproxy";
+    call RSYSLOG_DefaultRuleset
+}
+CONF
+)"
+#
+# The forwarding rule's text, with the traffic input when one is given. Without
+# it the file still carries impstats and the include of the external receivers:
+# those do not depend on the traffic socket (see "Forwarding the traffic log").
+#
+forward_rule_text() {
+    local input="${1:-}"
+    printf '%s\n' "# Installed by install/04-node-prepare."
+    printf '%s\n' "module(load=\"impstats\" interval=\"60\" format=\"json\" resetCounters=\"on\" log.syslog=\"off\""
+    printf '%s\n' "       log.file=\"${RSYSLOG_STATS}\")"
+    [[ -z "$input" ]] || printf '%s\n' "$input"
+    printf '%s' "include(file=\"${RSYSLOG_FORWARD_DIR}/forward.conf\" mode=\"optional\")"
+}
 traffic_input_off() {
-    rm -f "$RSYSLOG_FORWARD_RULE"
+    install_file "$RSYSLOG_FORWARD_RULE" root:root 644 "$(forward_rule_text)"
 }
 hold_log_socket "$TRAFFIC_SOCKET_UNIT" "$TRAFFIC_SOCKET_PATH" "# Installed by install/04-node-prepare.
 [Unit]
@@ -519,8 +543,6 @@ step "Forwarding the traffic log"
 # (B289), counted per minute, so what was dropped can be summed over the last
 # hour. rsyslog-gnutls, for receivers over TLS, is the package's dependency.
 #
-RSYSLOG_FORWARD_DIR="/etc/rsyslog.d/haprion"
-RSYSLOG_STATS="${TRAFFIC_LOG_ROOT}/rsyslog-stats.json"
 RSYSLOG_STATS_ROTATE="/etc/logrotate.d/haprion-rsyslog-stats"
 ensure_dir "$RSYSLOG_FORWARD_DIR" root:root 755
 #
@@ -541,21 +563,8 @@ ensure_dir "$RSYSLOG_FORWARD_DIR" root:root 755
 # chrooted HAProxy reaches it as /dev/haprion-traffic; one without a chroot
 # names the whole path (the generator reads which from the core).
 #
-TRAFFIC_INPUT="$(sed "s|@SOCKET@|${TRAFFIC_SOCKET_PATH}|" <<'CONF'
-input(type="imuxsock" Socket="@SOCKET@" ruleset="haprion-traffic-in"
-      RateLimit.Interval="0")
-ruleset(name="haprion-traffic-in") {
-    set $!haprion!origin = "haproxy";
-    call RSYSLOG_DefaultRuleset
-}
-CONF
-)"
 rule_before="$(sha256sum "$RSYSLOG_FORWARD_RULE" 2>/dev/null || true)"
-install_file "$RSYSLOG_FORWARD_RULE" root:root 644 "# Installed by install/04-node-prepare.
-module(load=\"impstats\" interval=\"60\" format=\"json\" resetCounters=\"on\" log.syslog=\"off\"
-       log.file=\"${RSYSLOG_STATS}\")
-${TRAFFIC_INPUT}
-include(file=\"${RSYSLOG_FORWARD_DIR}/forward.conf\" mode=\"optional\")"
+install_file "$RSYSLOG_FORWARD_RULE" root:root 644 "$(forward_rule_text "$TRAFFIC_INPUT")"
 #
 # rsyslogd runs under AppArmor (enforce on Ubuntu), and its profile names
 # HAProxy's dev/log (`/var/lib/*/dev/log`) but not the traffic socket.

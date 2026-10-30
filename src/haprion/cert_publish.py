@@ -607,12 +607,21 @@ def prune_receiver_directory(receiver: Receiver, certificate_id: str) -> None:
 
 def targets_for(
     entry: RegisteredCertificate, runtime: RuntimeConfig, policy: PathPolicy
-) -> list[Target]:
-    """Every target the registry names for this certificate, resolved before any write."""
+) -> tuple[list[Target], list[PublishError]]:
+    """Every target the registry names for this certificate, resolved before any write.
+
+    A receiver that cannot be resolved (its directory gone, its owner changed)
+    is returned as a refusal beside the targets that could. It is one
+    receiver's own trouble, and the clusters the certificate also goes to must
+    still get it: a renewal that stopped at a receiver the manager does not
+    even own left the clusters on the old certificate until it expired. What
+    stays all-or-nothing is the material, which is read before this runs.
+    """
 
     registry = runtime.registry
     assert registry is not None  # noqa: S101 - callers check; stated for the reader
     targets: list[Target] = []
+    refused: list[PublishError] = []
     for cluster_id in entry.clusters:
         if policy.certificate_root is None:
             raise PublishError(
@@ -624,14 +633,17 @@ def targets_for(
             continue
         targets.append(cluster_target(policy.certificate_root, cluster_id))
     for receiver_id in entry.receivers:
-        targets.append(
-            receiver_target(
-                registry.receivers[receiver_id],
-                entry.certificate_id,
-                form=entry.format_for(receiver_id),
+        try:
+            targets.append(
+                receiver_target(
+                    registry.receivers[receiver_id],
+                    entry.certificate_id,
+                    form=entry.format_for(receiver_id),
+                )
             )
-        )
-    return targets
+        except PublishError as exc:
+            refused.append(exc)
+    return targets, refused
 
 
 #
@@ -1092,8 +1104,12 @@ def publish(
                         continue
                     outcomes = (TargetResult("interface", "interface", installer(material)),)
                 else:
-                    targets = targets_for(entry, runtime, policy)
+                    targets, refused = targets_for(entry, runtime, policy)
                     outcomes = publish_to(targets, material)
+                    if refused:
+                        raise PublishError(
+                            refused[0].code, str(refused[0]), written=outcomes
+                        ) from refused[0]
             except PublishError as exc:
                 for outcome in exc.written:
                     if (

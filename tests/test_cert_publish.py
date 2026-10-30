@@ -405,11 +405,12 @@ class NothingHalfWritten(Fixture):
         self.assertEqual(report.certificates[0].error[0], "certificate_expiring")  # type: ignore[index]
         self.assertEqual((self.alpha / "example.com.pem").read_bytes(), good)
 
-    def test_a_missing_receiver_directory_stops_the_whole_certificate(self) -> None:
+    def test_a_missing_receiver_directory_fails_the_receiver_and_not_the_cluster(self) -> None:
         #
-        # Targets are resolved before the first write. A certificate that
-        # names a receiver whose directory is gone is not published to its
-        # cluster either: half of "exactly these targets" is not a result.
+        # The material is checked before anything is written, but a receiver
+        # is one target among several: its directory having gone is its own
+        # failure, and the cluster the certificate also goes to still gets the
+        # renewal and is rolled out (E05).
         #
         issue(self.live / "example.com", "example.com")
         policy = self.write_config(
@@ -422,12 +423,23 @@ class NothingHalfWritten(Fixture):
             }
         )
         self.receiver_dir.rmdir()
+        deployed: list[str] = []
 
-        report = self.run_publish(policy)
+        def deploy(cluster: str) -> int:
+            deployed.append(cluster)
+            return 0
 
-        self.assertEqual(report.certificates[0].status, "failed")
-        self.assertEqual(report.certificates[0].error[0], "target_missing")  # type: ignore[index]
-        self.assertEqual(self.held(), {"alpha": []})
+        report = self.run_publish(policy, deployer=deploy)
+
+        entry = report.certificates[0]
+        self.assertEqual(entry.status, "failed")
+        self.assertEqual(entry.error[0], "target_missing")  # type: ignore[index]
+        self.assertIn("lb-01", entry.error[1])  # type: ignore[index]
+        self.assertEqual([t.as_dict() for t in entry.targets],
+                         [{"kind": "cluster", "name": "alpha", "changed": True}])  # fmt: skip
+        self.assertEqual(report.changed_clusters, ("alpha",))
+        self.assertEqual(deployed, ["alpha"])
+        self.assertEqual(self.held(), {"alpha": ["example.com.pem"]})
 
     def test_a_receiver_directory_anyone_can_write_to_is_refused(self) -> None:
         #

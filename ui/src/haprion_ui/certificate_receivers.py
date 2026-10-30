@@ -264,14 +264,31 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
         for held in holds:
             for name in _files(held):
                 url = f"https://{host}{HTTPS_PREFIX}/{row.identifier}/{held.certificate_id}/{name}"
+                #
+                # The private half is written under umask 077, in a directory
+                # of the certificate's own: curl writes with the umask of the
+                # shell (0644 under root's usual 022), and two certificates
+                # would otherwise take the same file names. The key's step
+                # ends by checking it against the certificate fetched before it.
+                #
+                fetch = (
+                    f"(umask 077; curl --fail --create-dirs --netrc-file {NETRC_FILE} "
+                    f"--cacert manager-ui.pem -o {held.certificate_id}/{name} {url})"
+                )
+                note = ""
+                if name == "privkey.pem":
+                    fetch += (
+                        f' && test "$(openssl x509 -in {held.certificate_id}/fullchain.pem '
+                        f'-pubkey -noout)" = "$(openssl pkey -in {held.certificate_id}/privkey.pem '
+                        '-pubout)"'
+                    )
+                if name.endswith(".pfx"):
+                    note = "A PKCS#12 pair is then imported with examples/receivers/install-pkcs12.ps1."
                 steps.append(
                     Step(
                         f"Fetch {name} for {held.certificate_id}",
-                        f"curl --fail --netrc-file {NETRC_FILE} --cacert manager-ui.pem "
-                        f"-o {name} {url}",
-                        "A PKCS#12 pair is then imported with examples/receivers/install-pkcs12.ps1."
-                        if name.endswith(".pfx")
-                        else "",
+                        fetch,
+                        note,
                         f"curl.exe --fail --netrc-file {WINDOWS_NETRC_FILE} "
                         f"--cacert {WINDOWS_CERT_DIR}\\manager-ui.pem "
                         f"-o {WINDOWS_CERT_DIR}\\{name} {url}",
@@ -304,17 +321,44 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
         return tuple(steps)
 
     for held in holds:
-        target = "/etc/ssl/" + held.certificate_id
         steps.append(
             Step(
                 f"Fetch {held.certificate_id}",
-                f'rsync -a -e "ssh -i {KEY_FILE} -o IdentitiesOnly=yes" '
-                f"{row.owner}@{host}:{held.certificate_id}/ {target}/",
+                _rsync_command(row.owner, host, held),
                 "The key is locked to this receiver's directory; the path names the "
                 "certificate inside it.",
             )
         )
     return tuple(steps)
+
+
+def _rsync_command(owner: str, host: str, held: Held) -> str:
+    """The rsync fetch, in the shape of `examples/receivers/fetch-rsync`.
+
+    Not `rsync -a`: it keeps the owner and group of the manager's side, and
+    where no local account has that name the numeric id is used - which is
+    some other service's on the receiving host. The files are fetched into a
+    directory made for it and installed as root's, mode 600 for what is secret.
+    """
+
+    target = "/etc/ssl/" + held.certificate_id
+    names = _files(held)
+    lines = [
+        "tmp=$(mktemp -d) &&",
+        f'rsync -rt --no-owner --no-group --chmod=D700,F600 -e "ssh -i {KEY_FILE} '
+        f'-o IdentitiesOnly=yes" {owner}@{host}:{held.certificate_id}/ "$tmp"/ &&',
+    ]
+    if held.format != "pkcs12":
+        lines.append(
+            'test "$(openssl x509 -in "$tmp"/fullchain.pem -pubkey -noout)" = '
+            '"$(openssl pkey -in "$tmp"/privkey.pem -pubout)" &&'
+        )
+    lines.append(f"install -d -o root -g root -m 755 {target} &&")
+    for name in names:
+        mode = "644" if name == "fullchain.pem" else "600"
+        lines.append(f'install -o root -g root -m {mode} "$tmp"/{name} {target}/{name} &&')
+    lines[-1] = lines[-1].removesuffix(" &&") + '; rm -rf "$tmp"'
+    return "\n".join(lines)
 
 
 # --- what the queue said ------------------------------------------------------

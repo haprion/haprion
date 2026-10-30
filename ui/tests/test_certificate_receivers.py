@@ -104,6 +104,33 @@ class WhatTheHostRuns(unittest.TestCase):
         self.assertIn("crx-lb-02-example-net@mgr.example.net:app.example.com/", commands[0])
         self.assertIn("-o IdentitiesOnly=yes", commands[0])
 
+    def test_rsync_keeps_no_owner_and_installs_as_root_after_checking_the_pair(self) -> None:
+        (row,) = self.rows(record("lb-02.example.net", certificates=("app.example.com",)))
+        (step,) = certificate_receivers.fetch_steps(row, "mgr.example.net")
+        command = step.command
+        self.assertNotIn("rsync -a", command)
+        self.assertIn("--no-owner --no-group --chmod=D700,F600", command)
+        self.assertIn("mktemp -d", command)
+        self.assertIn("openssl pkey", command)
+        self.assertIn("install -o root -g root -m 600", command)
+        self.assertLess(command.index("openssl pkey"), command.index("install -o root"))
+
+    def test_https_writes_the_key_under_a_private_umask_and_checks_the_pair(self) -> None:
+        (row,) = self.rows(
+            record(
+                "192.0.2.9",
+                transport="https",
+                allow=("192.0.2.9/32",),
+                certificates=("app.example.com",),
+            )
+        )
+        _, certificate, key = certificate_receivers.fetch_steps(row, "mgr.example.net")
+        self.assertTrue(key.command.startswith("(umask 077; curl "))
+        self.assertIn("-o app.example.com/privkey.pem", key.command)
+        self.assertIn("openssl pkey -in app.example.com/privkey.pem", key.command)
+        self.assertTrue(certificate.command.startswith("(umask 077; curl "))
+        self.assertNotIn("openssl", certificate.command)
+
     def test_sftp_gets_the_pkcs12_pair_by_name_on_linux_and_windows(self) -> None:
         (row,) = self.rows(record("lb-01", transport="sftp", certificates=("app.example.com",)))
         steps = certificate_receivers.fetch_steps(row, "mgr.example.net")

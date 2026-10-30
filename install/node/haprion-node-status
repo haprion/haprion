@@ -1364,6 +1364,7 @@ SHM_STATS_FILE = re.compile(r"^\s*shm-stats-file\s+(\S+)\s*(?:#.*)?$")
 CURRENT_CONFIG = Path("/etc/haproxy/current")
 TRAFFIC_RULE = Path("/etc/rsyslog.d/48-haprion-traffic.conf")
 TRAFFIC_SOCKET = Path("/var/lib/haproxy/dev/haprion-traffic")
+TRAFFIC_SOCKET_LINK = Path("/var/lib/haproxy/var/lib/haproxy/dev/haprion-traffic")
 TRAFFIC_ORIGIN = "$!haprion!origin"
 TRAFFIC_LOG_LINE = re.compile(
     r"^[ \t]*log[ \t]+(\S+)[ \t].*\bprofile[ \t]+mgd-traffic-json\b", re.MULTILINE
@@ -1382,7 +1383,9 @@ def read_traffic_stream() -> dict[str, Any] | None:
 
     `to_socket`: every structured `log` line names HAProxy's own socket.
     `marked_only`: the day file's or the forwarding rule keeps only a line
-    that came in there. `socket`: the socket is there for HAProxy alone.
+    that came in there. `socket`: the socket is there for HAProxy alone and
+    HAProxy's chroot reaches it through the link step 4 makes, as
+    `haprion-pull-deploy` checks before it takes a release.
     """
 
     files = [CURRENT_CONFIG / "haproxy.cfg", *sorted((CURRENT_CONFIG / "conf.d").glob("*.cfg"))]
@@ -1393,7 +1396,10 @@ def read_traffic_stream() -> dict[str, Any] | None:
         held = TRAFFIC_SOCKET.lstat()
         owner = f"{TRAFFIC_SOCKET.owner()}:{TRAFFIC_SOCKET.group()}"
         ready = (
-            S_ISSOCK(held.st_mode) and owner == "haproxy:haproxy" and held.st_mode & 0o777 == 0o660
+            S_ISSOCK(held.st_mode)
+            and owner == "haproxy:haproxy"
+            and held.st_mode & 0o777 == 0o660
+            and TRAFFIC_SOCKET_LINK.resolve(strict=True) == TRAFFIC_SOCKET.resolve(strict=True)
         )
     except (OSError, KeyError):
         ready = False

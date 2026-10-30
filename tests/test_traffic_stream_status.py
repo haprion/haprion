@@ -54,6 +54,7 @@ class TheNodeReadsItsRelease(unittest.TestCase):
         self.namespace["CURRENT_CONFIG"] = self.root / "current"
         self.namespace["TRAFFIC_RULE"] = self.root / "48-haprion-traffic.conf"
         self.namespace["TRAFFIC_SOCKET"] = self.root / "t.sock"
+        self.namespace["TRAFFIC_SOCKET_LINK"] = self.root / "chroot" / "t.sock"
 
     def release(self, line: str) -> None:
         (self.root / "current" / "conf.d" / "1040-frontends.cfg").write_text(
@@ -111,6 +112,41 @@ class TheNodeReadsItsRelease(unittest.TestCase):
         stream = self.read()
         assert stream is not None
         self.assertFalse(stream["socket"])
+
+    def test_a_socket_haproxy_alone_may_write_is_not_ready_without_the_chroots_link(self) -> None:
+        """Review 2026-10-30-igen2, S5: pull-deploy refuses the same node, so status must say so."""
+
+        class Haproxys(type(Path())):  # type: ignore[misc]
+            def owner(self, **_: Any) -> str:
+                return "haproxy"
+
+            def group(self, **_: Any) -> str:
+                return "haproxy"
+
+        sock = self.root / "t.sock"
+        self.release(NEW_LINE.replace(traffic_stream.TRAFFIC_LOG_SOCKET, str(sock)))
+        held = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.addCleanup(held.close)
+        held.bind(str(sock))
+        os.chmod(sock, 0o660)
+        self.namespace["TRAFFIC_SOCKET"] = Haproxys(sock)
+
+        stream = self.read()
+        assert stream is not None
+        self.assertFalse(stream["socket"])
+
+        link = self.root / "chroot" / "t.sock"
+        link.parent.mkdir()
+        link.symlink_to("../elsewhere")
+        stream = self.read()
+        assert stream is not None
+        self.assertFalse(stream["socket"])
+
+        link.unlink()
+        link.symlink_to("../t.sock")
+        stream = self.read()
+        assert stream is not None
+        self.assertTrue(stream["socket"])
 
     def test_the_node_names_the_socket_the_generator_logs_to(self) -> None:
         text = SCRIPT.read_text()

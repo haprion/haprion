@@ -330,6 +330,17 @@ class WhatGoes(DeleteFixture):
         self.assertFalse((self.store / "imported.example").exists())
         self.assertEqual(self.certbot_calls, [])
 
+    def test_a_key_left_by_an_interrupted_swap_goes_with_the_certificate(self) -> None:
+        policy_path = self.prepared(
+            {"imported.example": {"source": {"kind": "import"}, "clusters": ["alpha"]}}
+        )
+        leftover = self.store / ".imported.example.replaced"
+        leftover.mkdir()
+        (leftover / "privkey.pem").write_text("KEY\n")
+        report = self.run_delete(policy_path, "imported.example")
+        self.assertEqual(report.removed, ("imported.example",))
+        self.assertFalse(leftover.exists())
+
     def test_an_ndes_request_goes_with_the_certificate_registered_or_not(self) -> None:
         """The request directory holds a key and the targets; left behind it
         made the ID unusable and the profile unremovable (review 2026-09-17,

@@ -481,13 +481,20 @@ def remove_source(
         if not CERTIFICATE_ID.fullmatch(certificate_id):
             return Layer("import store", "failed", "invalid certificate ID")
         directory = store / certificate_id
-        if not directory.is_dir():
-            return Layer(f"import {directory}", "absent")
+        #
+        # A swap that died between its two moves leaves the registered material
+        # as `.<id>.replaced`; it holds the private key and goes with the rest.
+        #
+        leftover = store / f".{certificate_id}.replaced"
+        removed = False
         try:
-            shutil.rmtree(directory)
+            for path in (directory, leftover):
+                if path.is_dir():
+                    shutil.rmtree(path)
+                    removed = True
         except OSError as exc:
             return Layer(f"import {directory}", "failed", exc.strerror or str(exc))
-        return Layer(f"import {directory}", "removed")
+        return Layer(f"import {directory}", "removed" if removed else "absent")
     return Layer(f"source {kind}", "kept", "unknown source kind; nothing removed")
 
 

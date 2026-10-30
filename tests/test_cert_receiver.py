@@ -15,12 +15,13 @@ needs root and a second host.
 from __future__ import annotations
 
 import dataclasses
+import fcntl
 import grp
 import json
 import os
 import pwd
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 from unittest import mock
@@ -153,7 +154,7 @@ class ReceiverFixture(Fixture):
         return policy, load_runtime_config(policy, require_secure=False)
 
     def add(self, receiver_id: str = "lb-02.example.net", **options: Any) -> Result:
-        policy, runtime = self.loaded()
+        policy, _ = self.loaded()
         arguments: dict[str, Any] = {
             "transport": "rsync",
             "public_key": self.key_file,
@@ -164,7 +165,6 @@ class ReceiverFixture(Fixture):
             arguments.setdefault("hashed_secret", cert_receiver.secret_hash("receiver password"))
         return cert_receiver.add(
             policy,
-            runtime,
             receiver_id=receiver_id,
             tools=self.tools,
             locations=self.locations,
@@ -181,6 +181,78 @@ class ReceiverFixture(Fixture):
         """The lock, inside the receiver's own directory (B160)."""
 
         return self.root / "receivers" / receiver_id / ".ssh" / "authorized_keys"
+
+
+class TheCertificateLockIsHeldAroundAChange(ReceiverFixture):
+    """E07: the snippet and the drop-in are rendered whole, so the registry is read under the lock."""
+
+    def lock_is_held(self) -> bool:
+        with open(self.root / "cert-publish.lock", "a") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            return False
+
+    def test_the_registry_is_read_while_the_lock_is_held(self) -> None:
+        seen: list[bool] = []
+        real = load_runtime_config
+
+        def spy(*args: Any, **kwargs: Any) -> RuntimeConfig:
+            seen.append(self.lock_is_held())
+            return real(*args, **kwargs)
+
+        with (
+            mock.patch.object(cert_receiver, "load_runtime_config", spy),
+            mock.patch.object(cert_receiver, "_own"),
+        ):
+            self.add(transport="sftp")
+            self.add("lb-03.example.net", transport="sftp", owner="crx-lb-03")
+
+        self.assertEqual(seen, [True, True])
+        block = self.locations.sshd_dropin.read_text(encoding="utf-8")
+        self.assertIn("lb-02.example.net", block)
+        self.assertIn("lb-03.example.net", block)
+
+    def test_every_change_waits_for_another_that_holds_it(self) -> None:
+        self.add()
+        policy, _ = self.loaded()
+        calls: dict[str, Callable[[], Result]] = {
+            "add": lambda: self.add("lb-03.example.net", owner="crx-lb-03"),
+            "remove": lambda: cert_receiver.remove(
+                policy,
+                receiver_id="lb-02.example.net",
+                tools=self.tools,
+                locations=self.locations,
+                require_secure=False,
+                lock_path=self.root / "cert-publish.lock",
+            ),
+            "key": lambda: cert_receiver.set_key(
+                policy,
+                receiver_id="lb-02.example.net",
+                public_key=KEY,
+                tools=self.tools,
+                require_secure=False,
+                lock_path=self.root / "cert-publish.lock",
+            ),
+            "secret": lambda: cert_receiver.set_secret(
+                policy,
+                receiver_id="lb-02.example.net",
+                hashed_secret=cert_receiver.secret_hash("x"),
+                tools=self.tools,
+                locations=self.locations,
+                require_secure=False,
+                lock_path=self.root / "cert-publish.lock",
+            ),
+        }
+        with (
+            cert_registry.locked(self.root / "cert-publish.lock"),
+            mock.patch.object(cert_registry, "LOCK_WAIT_SECONDS", 1),
+        ):
+            for name, call in calls.items():
+                with self.subTest(name), self.assertRaises(ReceiverError) as raised:
+                    call()
+                self.assertEqual(raised.exception.code, "operation_locked")
 
 
 class AddingAReceiver(ReceiverFixture):
@@ -603,14 +675,16 @@ class AnHttpsReceiversSecret(ReceiverFixture):
         with mock.patch.object(cert_receiver, "_own"):
             self.add(**self.HTTPS)
         old = self.secret().read_text()
-        _, runtime = self.loaded()
+        policy, _ = self.loaded()
         newer = cert_receiver.secret_hash("another password")
         result = cert_receiver.set_secret(
-            runtime,
+            policy,
             receiver_id="lb-02.example.net",
             hashed_secret=newer,
             tools=self.tools,
             locations=self.locations,
+            require_secure=False,
+            lock_path=self.root / "cert-publish.lock",
         )
         self.assertEqual(result.action, "secret")
         self.assertIn(newer, self.secret().read_text())
@@ -618,11 +692,13 @@ class AnHttpsReceiversSecret(ReceiverFixture):
         self.runner.failures["nginx -t"] = (1, "unknown directive")
         with self.assertRaises(ReceiverError):
             cert_receiver.set_secret(
-                runtime,
+                policy,
                 receiver_id="lb-02.example.net",
                 hashed_secret=cert_receiver.secret_hash("third"),
                 tools=self.tools,
                 locations=self.locations,
+                require_secure=False,
+                lock_path=self.root / "cert-publish.lock",
             )
         self.assertIn(newer, self.secret().read_text())
         self.assertNotEqual(old, self.secret().read_text())
@@ -630,11 +706,10 @@ class AnHttpsReceiversSecret(ReceiverFixture):
     def test_removing_the_receiver_removes_its_secret(self) -> None:
         with mock.patch.object(cert_receiver, "_own"):
             self.add(**self.HTTPS)
-        policy, runtime = self.loaded()
+        policy, _ = self.loaded()
         with mock.patch.object(cert_receiver, "_remove_directory", return_value=None):
             cert_receiver.remove(
                 policy,
-                runtime,
                 receiver_id="lb-02.example.net",
                 tools=self.tools,
                 locations=self.locations,
@@ -651,9 +726,14 @@ class AReceiversNewKey(ReceiverFixture):
     """26-10-18: a host installed again keeps its receiver and gets a new key."""
 
     def replace(self, key: str = NEW_KEY, receiver_id: str = "lb-02.example.net") -> Result:
-        _, runtime = self.loaded()
+        policy, _ = self.loaded()
         return cert_receiver.set_key(
-            runtime, receiver_id=receiver_id, public_key=key + "\n", tools=self.tools
+            policy,
+            receiver_id=receiver_id,
+            public_key=key + "\n",
+            tools=self.tools,
+            require_secure=False,
+            lock_path=self.root / "cert-publish.lock",
         )
 
     def test_only_the_key_changes_and_the_lock_stays_where_it_was(self) -> None:
@@ -744,10 +824,9 @@ class AReceiversNewKey(ReceiverFixture):
 
 class RemovingAReceiver(ReceiverFixture):
     def remove(self, receiver_id: str = "lb-02.example.net") -> Result:
-        policy, runtime = self.loaded()
+        policy, _ = self.loaded()
         return cert_receiver.remove(
             policy,
-            runtime,
             receiver_id=receiver_id,
             tools=self.tools,
             locations=self.locations,

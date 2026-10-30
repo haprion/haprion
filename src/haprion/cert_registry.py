@@ -36,7 +36,7 @@ import contextlib
 import os
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -286,8 +286,12 @@ def set_receiver(
     runtime: RuntimeConfig,
     require_secure: bool = True,
     lock_path: Path = DEFAULT_LOCK_PATH,
+    lock_held: bool = False,
 ) -> None:
     """Put one receiver into the registry, through the same checked write as the rest.
+
+    `lock_held` is for the receiver commands, which hold the lock around the
+    whole of a registration or removal and may not take it a second time.
 
     Registration is root work with its own command (C7), and this is its last
     layer: by the time it runs, the account, the directory and the lock exist,
@@ -296,7 +300,7 @@ def set_receiver(
     - a receiver block the engine would refuse is never the file on disk.
     """
 
-    with locked(lock_path):
+    with nullcontext() if lock_held else locked(lock_path):
         document = read_document(path)
         receivers = dict(document.get("receivers") or {})
         receivers[receiver_id] = dict(fields)
@@ -317,10 +321,11 @@ def drop_receiver(
     runtime: RuntimeConfig,
     require_secure: bool = True,
     lock_path: Path = DEFAULT_LOCK_PATH,
+    lock_held: bool = False,
 ) -> None:
     """Take one receiver out. Refused by the reader while a certificate names it."""
 
-    with locked(lock_path):
+    with nullcontext() if lock_held else locked(lock_path):
         document = read_document(path)
         receivers = dict(document.get("receivers") or {})
         receivers.pop(receiver_id, None)

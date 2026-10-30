@@ -231,7 +231,6 @@ def main(
         if action == "add":
             result = cert_receiver.add(
                 policy,
-                runtime,
                 receiver_id=receiver_id,
                 transport=transport or "",
                 public_key=public_key,
@@ -245,21 +244,27 @@ def main(
         elif action == "key":
             assert public_key is not None  # noqa: S101 - required above
             result = cert_receiver.set_key(
-                runtime, receiver_id=receiver_id, public_key=public_key, tools=tools
+                policy,
+                receiver_id=receiver_id,
+                public_key=public_key,
+                tools=tools,
+                require_secure=require_secure,
+                lock_path=lock_path,
             )
         elif action == "secret":
             assert hashed is not None  # noqa: S101 - required above
             result = cert_receiver.set_secret(
-                runtime,
+                policy,
                 receiver_id=receiver_id,
                 hashed_secret=hashed,
                 tools=tools,
                 locations=locations,
+                require_secure=require_secure,
+                lock_path=lock_path,
             )
         else:
             result = cert_receiver.remove(
                 policy,
-                runtime,
                 receiver_id=receiver_id,
                 tools=tools,
                 locations=locations,

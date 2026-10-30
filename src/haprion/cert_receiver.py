@@ -41,7 +41,8 @@ import secrets
 import shutil
 import socket
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,11 +55,13 @@ from haprion.config import (
     RECEIVER_ID,
     RECEIVER_TRANSPORTS,
     USERNAME,
+    ConfigError,
     PathPolicy,
     Receiver,
     Registry,
     RuntimeConfig,
     check_allow_entries,
+    load_runtime_config,
     receiver_id_names_a_host,
 )
 from haprion.envelope import Message, Outcome, envelope
@@ -867,9 +870,45 @@ def check_request(
         )
 
 
+@contextmanager
+def exclusive(
+    policy: PathPolicy, *, require_secure: bool, lock_path: Path
+) -> Iterator[RuntimeConfig]:
+    """The certificate lock, and the configuration as it reads once it is held.
+
+    Every receiver change renders the nginx snippet and the sshd drop-in whole
+    from the registry it started from, so a change that read the registry
+    before another one wrote it would write its own view over the other's
+    block. The reading is made here, under the lock, and nothing outside it is
+    trusted. The lock is held for the whole change, which is why the registry
+    writes it ends in are told not to take it again.
+    """
+
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(cert_registry.locked(lock_path))
+        except cert_registry.RegistryError as exc:
+            code, exit_code = _write_refusal(exc)
+            raise ReceiverError(code, str(exc), exit_code=exit_code) from exc
+        try:
+            runtime = load_runtime_config(policy, require_secure=require_secure)
+        except ConfigError as exc:
+            raise ReceiverError(
+                "bad_input" if exc.exit_code == exit_codes.USAGE else "dependency_unavailable",
+                str(exc),
+                exit_code=exc.exit_code,
+            ) from exc
+        if runtime.registry is None:
+            raise ReceiverError(
+                "dependency_unavailable",
+                "no certificate registry is configured",
+                exit_code=exit_codes.CONFIG,
+            )
+        yield runtime
+
+
 def add(
     policy: PathPolicy,
-    runtime: RuntimeConfig,
     *,
     receiver_id: str,
     transport: str,
@@ -894,6 +933,40 @@ def add(
     locations = locations or Locations()
     check_request(transport, allow, public_key, hashed_secret)
     check_identity(receiver_id, tools)
+
+    with exclusive(policy, require_secure=require_secure, lock_path=lock_path) as runtime:
+        return _add(
+            policy,
+            runtime,
+            receiver_id=receiver_id,
+            transport=transport,
+            public_key=public_key,
+            owner=owner,
+            path=path,
+            allow=allow,
+            hashed_secret=hashed_secret,
+            tools=tools,
+            locations=locations,
+            require_secure=require_secure,
+        )
+
+
+def _add(
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    *,
+    receiver_id: str,
+    transport: str,
+    public_key: Path | str | None,
+    owner: str | None,
+    path: Path | None,
+    allow: Sequence[str],
+    hashed_secret: str | None,
+    tools: Tools,
+    locations: Locations,
+    require_secure: bool,
+) -> Result:
+    """`add`, with the lock held and the registry read under it."""
 
     registry = runtime.registry
     if registry is None:
@@ -989,7 +1062,7 @@ def add(
             fields=_entry_fields(receiver),
             runtime=runtime,
             require_secure=require_secure,
-            lock_path=lock_path,
+            lock_held=True,
         )
         layers.append(Layer("registry", "created", receiver_id))
     except (ReceiverError, OSError, cert_registry.RegistryError) as exc:
@@ -1180,12 +1253,14 @@ def instructions(receiver: Receiver, locations: Locations) -> tuple[str, ...]:
 
 
 def set_secret(
-    runtime: RuntimeConfig,
+    policy: PathPolicy,
     *,
     receiver_id: str,
     hashed_secret: str,
     tools: Tools | None = None,
     locations: Locations | None = None,
+    require_secure: bool = True,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> Result:
     """Give an https receiver a new secret; the old one stops working at once.
 
@@ -1193,6 +1268,28 @@ def set_secret(
     rendered again with the secret's lines and nginx reloaded, checked first
     and put back if nginx refuses it.
     """
+
+    tools = tools or Tools()
+    locations = locations or Locations()
+    with exclusive(policy, require_secure=require_secure, lock_path=lock_path) as runtime:
+        return _set_secret(
+            runtime,
+            receiver_id=receiver_id,
+            hashed_secret=hashed_secret,
+            tools=tools,
+            locations=locations,
+        )
+
+
+def _set_secret(
+    runtime: RuntimeConfig,
+    *,
+    receiver_id: str,
+    hashed_secret: str,
+    tools: Tools,
+    locations: Locations,
+) -> Result:
+    """`set_secret`, with the lock held and the registry read under it."""
 
     tools = tools or Tools()
     locations = locations or Locations()
@@ -1234,11 +1331,13 @@ def set_secret(
 
 
 def set_key(
-    runtime: RuntimeConfig,
+    policy: PathPolicy,
     *,
     receiver_id: str,
     public_key: Path | str,
     tools: Tools | None = None,
+    require_secure: bool = True,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> Result:
     """Give an rsync or sftp receiver a new public key; the old one stops working at once.
 
@@ -1248,6 +1347,20 @@ def set_key(
     DNS change does not move it, and the forced command is the registry's,
     as at registration. The same key again changes nothing.
     """
+
+    tools = tools or Tools()
+    with exclusive(policy, require_secure=require_secure, lock_path=lock_path) as runtime:
+        return _set_key(runtime, receiver_id=receiver_id, public_key=public_key, tools=tools)
+
+
+def _set_key(
+    runtime: RuntimeConfig,
+    *,
+    receiver_id: str,
+    public_key: Path | str,
+    tools: Tools,
+) -> Result:
+    """`set_key`, with the lock held and the registry read under it."""
 
     tools = tools or Tools()
     registry = runtime.registry
@@ -1337,7 +1450,6 @@ def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:
 
 def remove(
     policy: PathPolicy,
-    runtime: RuntimeConfig,
     *,
     receiver_id: str,
     tools: Tools | None = None,
@@ -1362,6 +1474,30 @@ def remove(
     way is the same refusal `add()` gives, as an envelope rather than a
     traceback the worker cannot read.
     """
+
+    tools = tools or Tools()
+    locations = locations or Locations()
+    with exclusive(policy, require_secure=require_secure, lock_path=lock_path) as runtime:
+        return _remove(
+            policy,
+            runtime,
+            receiver_id=receiver_id,
+            tools=tools,
+            locations=locations,
+            require_secure=require_secure,
+        )
+
+
+def _remove(
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    *,
+    receiver_id: str,
+    tools: Tools,
+    locations: Locations,
+    require_secure: bool,
+) -> Result:
+    """`remove`, with the lock held and the registry read under it."""
 
     tools = tools or Tools()
     locations = locations or Locations()
@@ -1421,7 +1557,7 @@ def remove(
             receiver_id=receiver_id,
             runtime=runtime,
             require_secure=require_secure,
-            lock_path=lock_path,
+            lock_held=True,
         )
         layers.append(Layer("registry", "removed", receiver_id))
     except ReceiverError:

@@ -263,24 +263,27 @@ def main(
             if arguments.public_key is None:
                 return refuse("bad_input", "a new key needs --public-key <file>", exit_codes.USAGE)
             result = set_key(
-                runtime,
+                policy,
                 receiver_id=arguments.receiver_id,
                 public_key=arguments.public_key,
                 tools=tools,
+                require_secure=require_secure,
+                lock_path=lock_path,
             )
         elif arguments.action == "secret":
             assert hashed is not None  # noqa: S101 - made just above
             result = set_secret(
-                runtime,
+                policy,
                 receiver_id=arguments.receiver_id,
                 hashed_secret=hashed,
                 tools=tools,
                 locations=locations,
+                require_secure=require_secure,
+                lock_path=lock_path,
             )
         elif arguments.action == "add":
             result = add(
                 policy,
-                runtime,
                 receiver_id=arguments.receiver_id,
                 transport=arguments.transport,
                 public_key=arguments.public_key,
@@ -296,7 +299,6 @@ def main(
         else:
             result = remove(
                 policy,
-                runtime,
                 receiver_id=arguments.receiver_id,
                 tools=tools,
                 locations=locations,

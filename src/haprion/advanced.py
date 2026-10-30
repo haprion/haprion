@@ -880,13 +880,13 @@ def _counter_problem(
             if match["kind"] == "sc":
                 arguments = (match["arguments"] or "").split(",")
                 at = 1 if match["array"] == "" else 0
-                slot = arguments[at] if len(arguments) > at else ""
+                written = arguments[at] if len(arguments) > at else ""
             elif match["kind"].startswith("sc"):
-                slot = match["kind"].removeprefix("sc")
+                written = match["kind"].removeprefix("sc")
             else:
                 continue
             problem = _changed_slot_problem(
-                slot, rate_limit=rate_limit, dynamic_block=dynamic_block
+                written, rate_limit=rate_limit, dynamic_block=dynamic_block
             )
             if problem:
                 return problem

@@ -36,7 +36,7 @@ from haprion.helper_protocol import (
     write_failure,
 )
 from haprion.objects import ObjectsError, fingerprint, objects_result, unchanged_result
-from haprion.repo_snapshot import PublishError, read_tree_files, resolve_head
+from haprion.repo_snapshot import PublishError, first_parent, read_tree_files, resolve_head
 
 OPERATION = "objects"
 #
@@ -49,6 +49,7 @@ FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 
 type ReadTree = Callable[[Path, str], Mapping[str, bytes]]
 type ResolveHead = Callable[[Path], tuple[str, str]]
+type ResolveParent = Callable[[Path, str], str | None]
 
 
 def main(
@@ -62,6 +63,7 @@ def main(
     require_root: bool = True,
     tree_reader: ReadTree = read_tree_files,
     head_resolver: ResolveHead = resolve_head,
+    parent_resolver: ResolveParent = first_parent,
     waf_versions: Callable[[], Mapping[str, str | None]] = crs.manager_versions,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
@@ -144,8 +146,22 @@ def main(
         if known is not None and known == fingerprint(head, network, stamp, waf):
             result = unchanged_result(head, network, geo_stamp=stamp, waf=waf)
         else:
+            #
+            # What the head was made on (B411), so that the poller can tell a
+            # head one publish after the one it holds from one several later.
+            # Unknown is an answer too: nothing here fails for want of it.
+            #
+            try:
+                parent = parent_resolver(repo, head)
+            except GitError:
+                parent = None
             result = objects_result(
-                tree_reader(repo, head), head, network=network, geo_stamp=stamp, waf=waf
+                tree_reader(repo, head),
+                head,
+                network=network,
+                geo_stamp=stamp,
+                waf=waf,
+                parent=parent,
             )
     except PublishError as exc:
         return fail("objects_unavailable", str(exc), exc.exit_code)

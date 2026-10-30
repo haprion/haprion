@@ -18,6 +18,7 @@ import yaml
 
 from haprion import exit_codes
 from haprion.cli import objects, objects_helper
+from haprion.git_command import GitError
 from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
@@ -92,6 +93,7 @@ class ObjectsHelperTests(unittest.TestCase):
         *,
         tree_reader: Callable[[Path, str], Mapping[str, bytes]] | None = None,
         head_resolver: Callable[[Path], tuple[str, str]] | None = None,
+        parent_resolver: Callable[[Path, str], str | None] | None = None,
         cluster: str = "alpha",
         parameters: dict[str, object] | None = None,
         waf: dict[str, str] | None = None,
@@ -109,6 +111,7 @@ class ObjectsHelperTests(unittest.TestCase):
             require_root=False,
             tree_reader=read,
             head_resolver=resolve,
+            parent_resolver=parent_resolver or (lambda _repo, _commit: None),
             waf_versions=lambda: waf or {"engine": "0.9.0-2", "crs": "4.25.1"},
         )
         return code, out.getvalue(), err.getvalue()
@@ -127,6 +130,24 @@ class ObjectsHelperTests(unittest.TestCase):
         changed = json.loads(again)["result"]
         self.assertNotIn("unchanged", changed)
         self.assertEqual(changed["waf"]["engine"], "0.9.0-3")
+
+    def test_the_listing_names_the_commit_its_head_was_made_on(self) -> None:
+        """B411: the poller follows a rename only across one publish, which this tells it."""
+
+        _, out, _ = self.run_helper(parent_resolver=lambda _repo, _commit: "c" * 40)
+        self.assertEqual(assert_contract("haprion-objects", out)["result"]["parent"], "c" * 40)
+
+        _, out, _ = self.run_helper()
+        self.assertIsNone(assert_contract("haprion-objects", out)["result"]["parent"])
+
+    def test_a_parent_that_cannot_be_read_does_not_fail_the_listing(self) -> None:
+        def broken(_repo: Path, _commit: str) -> str | None:
+            raise GitError("git rev-list failed")
+
+        code, out, _ = self.run_helper(parent_resolver=broken)
+
+        self.assertEqual(code, 0)
+        self.assertIsNone(json.loads(out)["result"]["parent"])
 
     def test_it_reads_head_rather_than_the_published_release(self) -> None:
         """The base a publish checks its snapshot against.

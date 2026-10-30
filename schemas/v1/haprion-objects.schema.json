@@ -278,6 +278,17 @@
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
+        "parent": {
+          "description": "The one commit the listed commit was made on (B411); null for a first commit and for a merge. A caller that holds the listing of the parent knows that this one is a single publish later. Absent from an older release.",
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "unchanged": {
           "description": "Present and true only when the caller sent unchanged_since and it still matches: objects is then empty and the caller keeps the listing it holds.",
           "const": true

@@ -263,6 +263,7 @@ def objects_result(
     generated_at: datetime | None = None,
     geo_stamp: str | None = None,
     waf: Mapping[str, str | None] | None = None,
+    parent: str | None = None,
 ) -> dict[str, object]:
     """Every stored proxy object at one commit, keyed by the name it is filed under.
 
@@ -270,6 +271,11 @@ def objects_result(
     draft can record the base it was derived from. None means the repository has
     no commit yet, which is a new cluster rather than a broken one - the answer
     is an empty list, never a guess from somewhere else.
+
+    `parent` is the one commit `commit` was made on (B411), None for a first
+    commit or a merge. It is not part of the fingerprint: it follows from the
+    commit. A caller that compares two listings uses it to know that they are
+    one version apart.
     """
 
     timestamp = generated_at or datetime.now(UTC)
@@ -277,6 +283,7 @@ def objects_result(
         "commit": commit,
         "generated_at": timestamp.isoformat().replace("+00:00", "Z"),
         "fingerprint": fingerprint(commit, network, geo_stamp, waf),
+        "parent": parent,
         "objects": [],
         #
         # How fresh the cluster's country files are against the database

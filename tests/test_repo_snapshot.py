@@ -12,6 +12,7 @@ from haprion.repo_snapshot import (
     PublishError,
     build_candidate_tree,
     commit_and_swap,
+    first_parent,
     read_tree_files,
     resolve_head,
 )
@@ -54,6 +55,21 @@ class HeadTests(RepositoryFixture):
             branch, commit = resolve_head(repo)
             self.assertEqual(branch, "refs/heads/main")
             self.assertEqual(commit, git(repo, "rev-parse", "HEAD"))
+
+    def test_the_one_commit_a_head_was_made_on_is_named(self) -> None:
+        """B411: a first commit and a merge have none that can be named."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            repo = self.repository(Path(raw))
+            first = git(repo, "rev-parse", "HEAD")
+            self.assertIsNone(first_parent(repo, first))
+            git(repo, "commit", "-q", "--allow-empty", "-m", "Second")
+            second = git(repo, "rev-parse", "HEAD")
+            self.assertEqual(first_parent(repo, second), first)
+            git(repo, "checkout", "-q", "-b", "side", first)
+            git(repo, "commit", "-q", "--allow-empty", "-m", "Side")
+            git(repo, "merge", "-q", "--no-ff", "-m", "Merge", "main")
+            self.assertIsNone(first_parent(repo, git(repo, "rev-parse", "HEAD")))
 
     def test_a_detached_head_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

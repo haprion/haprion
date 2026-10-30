@@ -85,6 +85,18 @@ def resolve_head(repo: Path) -> tuple[str, str]:
     return branch, _git(repo, "rev-parse", "HEAD").decode().strip()
 
 
+def first_parent(repo: Path, commit: str) -> str | None:
+    """The one commit `commit` was made on, or None when that cannot be said.
+
+    None for a first commit and for a merge: a reader that wants to know
+    whether two heads are one version apart (B411) is told nothing it could
+    mistake for a yes.
+    """
+
+    parents = _git(repo, "rev-list", "--parents", "-n", "1", commit).decode().split()
+    return parents[1] if len(parents) == 2 else None
+
+
 def build_candidate_tree(
     repo: Path,
     base_commit: str,

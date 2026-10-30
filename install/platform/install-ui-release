@@ -2,7 +2,11 @@
 #
 # Activate a release of the web interface, or only prepare it.
 #
-#     sudo ./install-ui-release [--prepare] [--no-first-account] <release-id>
+#     sudo ./install-ui-release [--prepare] [--no-first-account] [--held] <release-id>
+#
+# --held is update-platform-release's: it holds the worker's claims already, and
+# lifts them itself once the release is proved. Without it this script pauses
+# them for the switch and lifts them when it ends.
 #
 # --no-first-account is haprion-setup's: it asks for the first account itself,
 # last, when everything else is done.
@@ -29,16 +33,18 @@ source ../lib.sh
 need_root
 prepare_only=0
 first_account=1
+held=0
 while [[ "${1:-}" == --* ]]; do
     case "$1" in
         --prepare) prepare_only=1 ;;
         --no-first-account) first_account=0 ;;
+        --held) held=1 ;;
         *) die "unknown option: $1" ;;
     esac
     shift
 done
 release_id="${1:-}"
-[[ -n "$release_id" ]] || die "usage: $(basename "$0") [--prepare] [--no-first-account] <release-id>"
+[[ -n "$release_id" ]] || die "usage: $(basename "$0") [--prepare] [--no-first-account] [--held] <release-id>"
 [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid release id: ${release_id}"
 release="${UI_ROOT}/releases/${release_id}"
 
@@ -119,7 +125,7 @@ hold_release_lock
 # Lifted again however this script ends. Only once a worker is installed - a
 # first installation has none yet.
 #
-if systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
+if [[ "$held" -eq 0 ]] && systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
     step "Holding the worker's claims"
     drain=(/usr/sbin/haprion-drain)
     # Before the call: a way out during its wait lifts it too (review 26-10-29, A5).

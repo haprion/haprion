@@ -385,6 +385,15 @@ if [[ "$schema_now" != "$schema_next" ]]; then
     /usr/sbin/haprion-backup dump-before-migration "$schema_now" "$schema_next"
 fi
 
+#
+# The pause ends a while after the wait, and the dump may have waited half an
+# hour for the backup lock: asked for again, it goes at once when nothing runs
+# (review 26-10-30, U4).
+#
+if [[ "${paused:-no}" == yes ]]; then
+    /usr/sbin/haprion-drain pause --wait "${DRAIN_SECONDS:-900}"
+fi
+
 step "Migrating from the prepared release"
 ./migrate --release "$release_id"
 
@@ -408,7 +417,7 @@ step "Checking the complete candidate before activation"
 ./check-compatibility --release "$release_id"
 
 step "Activating ${release_id}"
-if ! ./install-ui-release "$release_id"; then
+if ! ./install-ui-release --held "$release_id"; then
     if candidate_current; then
         undo_and_die "activation failed"
     fi

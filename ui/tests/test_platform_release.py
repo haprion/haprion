@@ -95,7 +95,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         migrate = self.update.index('./migrate --release "$release_id"')
         database = self.update.index("./03-verify")
         candidate = self.update.index('check-compatibility --release "$release_id"', database)
-        activate = self.update.index('./install-ui-release "$release_id"')
+        activate = self.update.index('./install-ui-release --held "$release_id"')
         self.assertLess(prepare, prerequisites)
         self.assertLess(prerequisites, migrate)
         self.assertLess(migrate, database)
@@ -144,6 +144,30 @@ class CoordinatedUpdateTests(unittest.TestCase):
         ending = ending[: ending.index("\n}\n")]
         self.assertIn('if [[ "${paused:-no}" == yes ]]; then', ending)
         self.assertIn("/usr/sbin/haprion-drain resume", ending)
+
+    def test_the_update_keeps_its_pause_through_the_activation_and_renews_it_before_the_migration(
+        self,
+    ) -> None:
+        """Review 26-10-30, U4: the activation lifted the pause before the proof, and it ran out.
+
+        The owner of the pause lifts it: the update hands the activation
+        `--held`, which neither takes nor lifts one, and the dump may wait
+        half an hour for the backup lock, longer than the pause lasts.
+        """
+
+        self.assertIn('./install-ui-release --held "$release_id"', self.update)
+        installer = (ROOT / "install/platform/install-ui-release").read_text()
+        self.assertIn("--held) held=1 ;;", installer)
+        block = installer[installer.index('step "Holding the worker\'s claims"') :]
+        guard = installer.rindex("\nif ", 0, installer.index('step "Holding the worker\'s claims"'))
+        self.assertIn('"$held" -eq 0', installer[guard : guard + 120])
+        self.assertLess(guard, installer.index("pause --wait"))
+        self.assertLess(installer.index("pause --wait"), installer.index('step "Activating"'))
+        self.assertIn("resume || true", block)
+        dump = self.update.index("haprion-backup dump-before-migration")
+        migrate = self.update.index('./migrate --release "$release_id"\n')
+        renewed = self.update.index("/usr/sbin/haprion-drain pause --wait", dump)
+        self.assertLess(renewed, migrate)
 
     def test_claims_are_held_before_anything_is_switched_or_restarted(self) -> None:
         """CR-12: the pause and the wait come before `current` moves and the worker restarts.
@@ -608,7 +632,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
 
         self.assertNotIn('warn "the candidate is not current', self.update)
         activation = self.update[
-            self.update.index('if ! ./install-ui-release "$release_id"; then') :
+            self.update.index('if ! ./install-ui-release --held "$release_id"; then') :
         ]
         activation = activation[: activation.index("\nfi\n")]
         self.assertLess(activation.index("candidate_current"), activation.index("undo_and_die"))
@@ -1409,7 +1433,7 @@ class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
 
     def test_nginx_takes_the_site_after_the_activation_and_before_the_proof(self) -> None:
         text = (ROOT / "install/platform/update-platform-release").read_text()
-        activated = text.index('./install-ui-release "$release_id"')
+        activated = text.index('./install-ui-release --held "$release_id"')
         reloaded = text.index("systemctl reload nginx")
         self.assertLess(activated, reloaded)
         self.assertLess(reloaded, text.index('step "Proving the running installation"'))
@@ -1420,7 +1444,7 @@ class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
         text = (ROOT / "install/platform/update-platform-release").read_text()
         refresh = text.index('./refresh-platform-files "$release_id" "$kept"')
         self.assertLess(refresh, text.index("./check-compatibility --release"))
-        self.assertLess(refresh, text.index('./install-ui-release "$release_id"'))
+        self.assertLess(refresh, text.index('./install-ui-release --held "$release_id"'))
         self.assertIn(
             "haprion-web.service.example",
             (ROOT / "install/platform/refresh-platform-files").read_text(),

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import posixpath
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -19,6 +21,7 @@ from haprion.generate import TRAFFIC_LOG_PROFILE
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_PREPARE = ROOT / "install" / "04-node-prepare"
+PULL_DEPLOY = ROOT / "install" / "node" / "haprion-pull-deploy"
 GENERATED = "managed/generated/1040-frontends.cfg"
 LOGGED = (
     b"frontend mgd-http\n"
@@ -150,6 +153,37 @@ class ACoreThatMissesTheSocketIsRefused(unittest.TestCase):
             **{"manual/conf.d/3000-users.cfg": b"userlist admins\n    user admin password x\n"},
         )
         self.assertIsNone(problem(files))
+
+
+class PullDeployReadsTheCoreToo(unittest.TestCase):
+    """Review 2026-10-30-igen3, T2: a log line in the core's haproxy.cfg counts as one in conf.d."""
+
+    def refused(self, where: str) -> bool:
+        """Whether `validate_traffic_stream_candidate` refuses a candidate with the line at `where`."""
+
+        text = PULL_DEPLOY.read_text(encoding="utf-8")
+        function = re.search(
+            r"^validate_traffic_stream_candidate\(\) \{\n.*?^\}\n", text, re.DOTALL | re.MULTILINE
+        )
+        assert function is not None
+        with tempfile.TemporaryDirectory() as raw:
+            candidate = Path(raw)
+            (candidate / "conf.d").mkdir()
+            line = "    log /var/lib/haproxy/dev/haprion-traffic len 2048 local2\n"
+            (candidate / where).write_text("defaults\n" + line, encoding="utf-8")
+            script = (
+                "log() { :; }\ntraffic_socket_ready() { return 1; }\n"
+                'TRAFFIC_SOCKET="/var/lib/haproxy/dev/haprion-traffic"\n'
+                f'{function.group(0)}\nvalidate_traffic_stream_candidate "{candidate}"\n'
+            )
+            done = subprocess.run(["/bin/bash", "-c", script], capture_output=True, check=False)
+        return done.returncode != 0
+
+    def test_a_line_in_conf_d_is_refused_on_an_unprepared_node(self) -> None:
+        self.assertTrue(self.refused("conf.d/10-x.cfg"))
+
+    def test_a_line_in_the_core_haproxy_cfg_is_refused_too(self) -> None:
+        self.assertTrue(self.refused("haproxy.cfg"))
 
 
 if __name__ == "__main__":

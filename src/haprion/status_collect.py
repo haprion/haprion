@@ -213,7 +213,12 @@ def read_traffic_published(publish_path: Path, node_path: str) -> bool | None:
     try:
         if not (node_root / "RELEASE").is_file():
             return None
-        for path in sorted((node_root / "conf.d").rglob("*")):
+        #
+        # Both places HAProxy reads: the core's haproxy.cfg and what the
+        # generator writes under conf.d, as haprion-node-status reads them.
+        #
+        paths = [node_root / "haproxy.cfg", *sorted((node_root / "conf.d").rglob("*"))]
+        for path in paths:
             if path.is_file() and needle in path.read_text(encoding="utf-8", errors="replace"):
                 return True
         return False

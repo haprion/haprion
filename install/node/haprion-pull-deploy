@@ -727,7 +727,7 @@ traffic_socket_ready() {
 validate_traffic_stream_candidate() {
     local candidate="$1"
 
-    grep -qsF -e "log ${TRAFFIC_SOCKET} " -r "${candidate}/conf.d" || return 0
+    grep -qsF -e "log ${TRAFFIC_SOCKET} " -r "${candidate}/haproxy.cfg" "${candidate}/conf.d" || return 0
     traffic_socket_ready && return 0
     log "ERROR: the release logs the traffic log to ${TRAFFIC_SOCKET}, which this node does not hold"
     log "ERROR: for HAProxy alone, so every traffic record would be dropped."

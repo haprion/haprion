@@ -1280,7 +1280,9 @@ Write each as a plain number; `size` also takes `k`, `m` or `g`.
 - **Stick counters.** `track-sc0` (the cluster's counter), `track-sc1` while the object's rate limit is on
   (the limit's counter), and `track-sc3` and `track-sc4` while its dynamic blocking is on. The text counts
   on `sc2`, with its tables in a backend of its own: `track-sc2 src table <object>-logins`. Reading `sc0`
-  and `sc1` is allowed; changing them is not.
+  and `sc1` is allowed; changing them is not, by an action such as `sc-inc-gpc0(0)` or by a fetch such as
+  `sc0_inc_gpc0`. A slot is read as HAProxy reads it, so `+0` is slot 0, and a slot written any other way
+  than as a number is refused.
 - **Stick tables.** A `stick-table` on the object's own lines is refused, because its pool already
   carries the rate limit's table. In a backend the text adds, a `stick-table` is read parameter by
   parameter, and a word HAProxy does not take there is refused.

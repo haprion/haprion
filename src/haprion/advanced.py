@@ -591,7 +591,7 @@ RATE_SLOT = 1
 # which is why a cluster with it needs `tune.stick-counters 5`.
 #
 BLOCK_SLOTS = (3, 4)
-TRACK = re.compile(r"^track-sc(\d+)$")
+TRACK = re.compile(r"^track-sc([0-9]+)$")
 COUNTER_ACTION = re.compile(r"^sc-[a-z0-9-]+\(([^)]*)\)$")
 STICK_RULES = frozenset({"on", "match", "store-request", "store-response"})
 
@@ -838,17 +838,55 @@ def _counter_problem(
         return ""
     counter = COUNTER_ACTION.fullmatch(action)
     if counter:
-        last = counter[1].split(",")[-1].strip()
-        slot_written = int(last) if is_digits(last) else None
-        if slot_written == CLUSTER_SLOT:
-            return "sc0 is the cluster's abuse brake; the text may read it but not change it"
-        if slot_written == RATE_SLOT and rate_limit:
-            return "sc1 is this object's rate limit; the text may read it but not change it"
-        if slot_written in BLOCK_SLOTS and dynamic_block:
-            return (
-                f"sc{slot_written} is this object's dynamic blocking; "
-                f"the text may read it but not change it"
+        problem = _changed_slot_problem(
+            counter[1].split(",")[-1], rate_limit=rate_limit, dynamic_block=dynamic_block
+        )
+        if problem:
+            return problem
+    #
+    # And the fetches that change the counter they read: `sc0_inc_gpc0`, or
+    # `sc_clr_gpc(<idx>,<slot>)`, anywhere on the line.
+    #
+    for word in tokens:
+        for match in _TABLE_WRITER.finditer(word):
+            if match["kind"] == "sc":
+                arguments = (match["arguments"] or "").split(",")
+                at = 1 if match["array"] == "" else 0
+                slot = arguments[at] if len(arguments) > at else ""
+            elif match["kind"].startswith("sc"):
+                slot = match["kind"].removeprefix("sc")
+            else:
+                continue
+            problem = _changed_slot_problem(
+                slot, rate_limit=rate_limit, dynamic_block=dynamic_block
             )
+            if problem:
+                return problem
+    return ""
+
+
+#
+# A slot as HAProxy reads one where a line changes a counter: an optional
+# sign, then digits - `sc-inc-gpc0(+0)` and `sc_inc_gpc0(-0)` are slot 0 to it
+# (measured on 3.4.7, code review 2026-10-30 again, R4). Anything else is
+# refused rather than guessed at.
+#
+_SLOT = re.compile(r"[+-]?[0-9]{1,6}")
+
+
+def _changed_slot_problem(written: str, *, rate_limit: bool, dynamic_block: bool) -> str:
+    """Why a line may not change the counter in this slot, or ""."""
+
+    written = written.strip()
+    if not _SLOT.fullmatch(written):
+        return f"write the counter's slot as a number, not {written!r}"
+    slot = int(written)
+    if slot == CLUSTER_SLOT:
+        return "sc0 is the cluster's abuse brake; the text may read it but not change it"
+    if slot == RATE_SLOT and rate_limit:
+        return "sc1 is this object's rate limit; the text may read it but not change it"
+    if slot in BLOCK_SLOTS and dynamic_block:
+        return f"sc{slot} is this object's dynamic blocking; the text may read it but not change it"
     return ""
 
 

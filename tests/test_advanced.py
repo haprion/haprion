@@ -347,6 +347,35 @@ class TheCountersBelongToWhoeverTracksThemFirst(unittest.TestCase):
         section = "backend shop-t\n    http-request track-sc4 src\n"
         self.assertEqual(fates(section, dynamic_block=True)[1][1], REFUSED_FATE)
 
+    def test_a_slot_is_read_as_haproxy_reads_it(self) -> None:
+        """Code review 26-10-30 again, R4: HAProxy reads `+0` and `-0` as slot 0."""
+
+        for line in (
+            "http-request sc-inc-gpc0(+0)",
+            "http-request sc-inc-gpc0(-0)",
+            "http-request sc-inc-gpc(0,+0)",
+            "http-request sc-set-gpt0(+0) 1",
+            "http-request sc-inc-gpc0(0x0)",
+            "http-request deny if { sc_inc_gpc0(+0) gt 1 }",
+            "http-request deny if { sc0_inc_gpc0 gt 1 }",
+            "http-request deny if { sc0_clr_gpc1 ge 0 }",
+            "http-request deny if { sc_clr_gpc(1,0) ge 0 }",
+            "http-request deny if { sc_inc_gpc1(00) gt 1 }",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line, rate_limit=True), REFUSED_FATE)
+        for line in (
+            "http-request deny if { sc1_inc_gpc0 gt 1 }",
+            "http-request deny if { sc_inc_gpc(1,+1) gt 1 }",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line, rate_limit=True), REFUSED_FATE)
+                self.assertEqual(fate(line, rate_limit=False), PLACED)
+        self.assertEqual(fate("http-request deny if { sc_inc_gpc(3,4) gt 1 }"), PLACED)
+        self.assertEqual(
+            fate("http-request deny if { sc_inc_gpc(3,4) gt 1 }", dynamic_block=True), REFUSED_FATE
+        )
+
     def test_the_counters_may_be_read(self) -> None:
         self.assertEqual(
             fate("http-request deny if { sc_http_req_rate(1) gt 5 }", rate_limit=True), PLACED

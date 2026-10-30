@@ -356,6 +356,12 @@ class AStepAfterTheReloadThatFailsIsRemembered(Node):
         self.assertEqual(code, 0, output)
         self.assertIs(self.read_release()["complete"], True)
 
+    def test_a_reboot_between_the_link_switch_and_the_reload_is_not_called_complete(self) -> None:
+        self.deploy(kill_at_check=2)
+        self.pending.unlink()  # a reboot empties /run; HAProxy then starts from `current`
+
+        self.assertIs(self.read_release()["complete"], False)
+
 
 class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):
     """Logic review 26-10-22, L1: a node added again started HAProxy and

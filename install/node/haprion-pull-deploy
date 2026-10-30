@@ -52,7 +52,7 @@ PENDING="/run/haprion-pull-deploy.pending"
 #
 # HAProxy has reloaded, but a step after it has not all succeeded: keepalived's
 # configuration, address list and IPVS file, the start of a rejoining node's
-# keepalived, or the log forwarding. Written when the reload is done and removed
+# keepalived, or the log forwarding. Written before the link moves and removed
 # only when all of them are in place. `haprion-node-status` reports it as
 # `release.complete: false`, so a node that failed after the reload is not
 # called current just because it runs the new release hash. On disk, unlike the
@@ -911,8 +911,8 @@ if (( ! REJOINING )) && diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
         sync_waf_engine 1
         sync_dns_listener "$RUNNING"
         "$SERVER_STATE" reload
-        rm -f "$PENDING"
         mark_incomplete
+        rm -f "$PENDING"
         sync_keepalived
         sync_rsyslog_forward
         rm -f "$INCOMPLETE"
@@ -998,6 +998,12 @@ find "$RELEASE" -type f -exec chmod 644 {} +
 #
 NEW_LINK="${HAPROXY_DIR}/current.new"
 
+#
+# The marker goes down before the link moves: PENDING is in /run, so a reboot
+# before the reload loses it, and HAProxy then starts from the new release with
+# the keepalived step never run.
+#
+mark_incomplete
 mark_pending "$RELEASE"
 rm -f "$NEW_LINK"
 ln -s "$RELEASE" "$NEW_LINK"
@@ -1089,7 +1095,6 @@ take_release() {
 
 if take_release; then
     rm -f "$PENDING"
-    mark_incomplete
     #
     # Explicitly, rather than by letting `set -e` end the script: a deploy that
     # activated the configuration and could not activate the addresses is a

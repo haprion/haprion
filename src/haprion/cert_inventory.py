@@ -52,6 +52,7 @@ from haprion.config import (
     AUTHORITY,
     DEFAULT_RECEIVER_FORMAT,
     Cluster,
+    PathPolicy,
     Receiver,
     RegisteredCertificate,
     Registry,
@@ -761,6 +762,18 @@ def registry_result(
             for receiver_id, receiver in sorted(registry.receivers.items())
         ],
     }
+
+
+def coverage_for(policy: PathPolicy, cluster: Cluster) -> dict[str, tuple[str, ...]] | None:
+    """`coverage` for the cluster's certificate directory; None where the policy names none.
+
+    The one place a writer of objects asks it, so a publish and a revert hold a
+    hostname to its certificate the same way (review 26-10-30, D6). None is
+    "not checked", which the generator reads as such.
+    """
+
+    directory = policy.certificate_directory(cluster.cluster_id)
+    return None if directory is None else coverage(directory, cluster)
 
 
 def coverage(root: Path, cluster: Cluster) -> dict[str, tuple[str, ...]]:

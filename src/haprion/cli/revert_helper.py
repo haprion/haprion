@@ -41,7 +41,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, TextIO
 
-from haprion import crs, exit_codes, geo, node_publish
+from haprion import crs, exit_codes, geo, held_ports, node_publish
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     VALIDATION_CERTIFICATE,
@@ -52,18 +52,21 @@ from haprion.candidate_validation import (
     validate_candidate,
     validate_in_sandbox,
 )
+from haprion.cert_inventory import coverage_for
 from haprion.cli.managed_helper import Refusal
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     Cluster,
     ConfigError,
+    PathPolicy,
     load_policy,
     load_runtime_config,
 )
 from haprion.envelope import envelope, failure
 from haprion.git_command import GitError
 from haprion.git_command import git as _git
+from haprion.held_ports import HeldPorts
 from haprion.helper_protocol import (
     HelperProtocolError,
     HelperRequest,
@@ -74,7 +77,7 @@ from haprion.helper_protocol import (
     write_document,
 )
 from haprion.managed_network import location as network_location
-from haprion.managed_publish import MANAGED_PREFIX
+from haprion.managed_publish import MANAGED_PREFIX, PROXY_PREFIX
 from haprion.release_install import (
     DEPLOYMENT_REQUIRED_AFTER_INSTALL,
     PUBLISH_GROUP,
@@ -314,6 +317,7 @@ def main(
             return _revert(
                 request=request,
                 names=names,
+                policy=policy,
                 cluster=cluster,
                 version=version,
                 expected_commit=expected_commit,
@@ -343,6 +347,7 @@ def _revert(
     *,
     request: HelperRequest,
     names: tuple[str, str],
+    policy: PathPolicy,
     cluster: Cluster,
     version: int,
     expected_commit: str,
@@ -445,19 +450,30 @@ def _revert(
     #
     if network_location() in target_files:
         carried = target_files
+        #
+        # Held to what a publish of the same objects is held to: a certificate
+        # that no longer answers for a hostname (B66) and ports a node already
+        # holds. The version was valid when it was published; the certificates
+        # and the nodes are today's (review 26-10-30, D6). Asked only when the
+        # version has objects, as a publish asks only when objects change.
+        #
+        has_objects = any(path.startswith(PROXY_PREFIX) for path in target_files)
+        held = held_ports.read(policy, cluster) if has_objects else HeldPorts()
         try:
             managed = node_publish.generated(
                 target_files,
                 cluster,
                 rule_set=lambda: crs.from_tree(carried) or crs.installed(),
                 country_reader=geo.tree_reader(carried, geo.location_database()),
+                certificate_sans=coverage_for(policy, cluster) if has_objects else None,
+                held_ports=held.held,
             )
         except Refusal as exc:
             return refuse(exc.code, str(exc), exc.exit_code)
         except ConfigError as exc:
             return refuse(
-                "candidate_invalid",
-                f"version {version} cannot be generated for this cluster's nodes today: {exc}. "
+                "changes_invalid",
+                f"version {version} cannot be generated for this cluster today: {exc}. "
                 "No version was created and nothing was published.",
                 exit_codes.REFUSED,
                 {"restored_version": version},

@@ -35,7 +35,7 @@ from haprion.candidate_validation import (
     SandboxValidator,
     validate_in_sandbox,
 )
-from haprion.cert_inventory import coverage
+from haprion.cert_inventory import coverage_for
 from haprion.cli import managed_helper
 from haprion.cli.managed_helper import (
     SUDO,
@@ -220,10 +220,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
         # rule the three single-document helpers this replaced applied.
         #
         certificate_sans = (
-            coverage(directory, cluster)
-            if (directory := policy.certificate_directory(cluster.cluster_id)) is not None
-            and (objects or network is not None)
-            else None
+            coverage_for(policy, cluster) if (objects or network is not None) else None
         )
 
         named: dict[str, Any] = {

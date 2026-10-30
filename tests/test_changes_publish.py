@@ -249,7 +249,9 @@ class ChangesPublishTests(ObjectsPublishFixture):
                 document["certificate_root"] = str(certificates)
                 policy.write_text(yaml.safe_dump(document))
                 self.seed()
-                with mock.patch.object(changes_publish, "coverage", return_value={}) as coverage:
+                with mock.patch.object(
+                    changes_publish, "coverage_for", return_value={}
+                ) as coverage:
                     code, _document, err = self.publish(policy, self.changes(**parts))
 
                 self.assertEqual((code, err), (0, ""))

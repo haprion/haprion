@@ -13,10 +13,11 @@ from unittest import mock
 
 import yaml
 
-from haprion import crs, node_publish
+from haprion import crs, exit_codes, node_publish
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import revert, revert_helper
 from haprion.config import Cluster, load_policy, load_runtime_config
+from haprion.held_ports import HeldPorts
 from haprion.helper_protocol import HelperRequest
 from haprion.repo_snapshot import read_tree_files, resolve_head
 from haprion.version_history import count_versions
@@ -186,6 +187,58 @@ class PublishingTheNodeList(ObjectsPublishFixture):
             self.assertEqual((self.repo / "core/haproxy.cfg").read_bytes(), HAPROXY_CFG)
             self.assertEqual(len(self.released("node-c")), 1)
             self.assertIn("192.0.2.3", self.released("node-a")[0].read_text())
+
+    def test_a_revert_is_held_to_the_certificates_a_publish_is_held_to(self) -> None:
+        """Review 26-10-30, D6: the version was valid once; the certificate is today's."""
+
+        secure = proxy("shop", "shop.example.com").replace(
+            "protocol: http", "protocol: https\n  certificate: example.com"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.site(Path(raw))
+            self.seed(shop=secure)
+            self.publish(self.cluster(policy_path))
+            commit = git(self.repo, "rev-parse", "HEAD").strip()
+            version = count_versions(self.repo)
+            (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # later\n")
+            git(self.repo, "commit", "-qam", "A later change")
+
+            with mock.patch.object(
+                revert_helper, "coverage_for", return_value={"example.com": ("other.example.org",)}
+            ):
+                code, answer = self.revert(policy_path, version, commit)
+
+            self.assertEqual(code, exit_codes.REFUSED, answer)
+            self.assertEqual(answer["error"]["code"], "changes_invalid")
+            self.assertIn("does not answer for that name", answer["error"]["message"])
+            self.assertEqual(count_versions(self.repo), version + 1)
+
+            with mock.patch.object(
+                revert_helper, "coverage_for", return_value={"example.com": ("shop.example.com",)}
+            ):
+                code, answer = self.revert(policy_path, version, commit)
+
+            self.assertEqual(code, 0, answer)
+
+    def test_a_revert_asks_the_nodes_for_held_ports_only_when_the_version_has_objects(self) -> None:
+        for objects, asked in (({}, False), ({"shop": proxy("shop", "shop.example.com")}, True)):
+            with self.subTest(objects=sorted(objects)), tempfile.TemporaryDirectory() as raw:
+                policy_path = self.site(Path(raw))
+                if objects:
+                    self.seed(**objects)
+                self.publish(self.cluster(policy_path))
+                commit = git(self.repo, "rev-parse", "HEAD").strip()
+                version = count_versions(self.repo)
+                (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # later\n")
+                git(self.repo, "commit", "-qam", "A later change")
+
+                with mock.patch.object(
+                    revert_helper.held_ports, "read", return_value=HeldPorts()
+                ) as read:
+                    code, answer = self.revert(policy_path, version, commit)
+
+                self.assertEqual(code, 0, answer)
+                self.assertEqual(read.called, asked)
 
     def test_a_revert_over_only_a_node_change_changes_nothing(self) -> None:
         """The node list is not configuration, so there is nothing to go back to."""

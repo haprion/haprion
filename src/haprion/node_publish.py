@@ -56,11 +56,15 @@ def generated(
     addresses: Addresses = peers.addresses,
     rule_set: Callable[[], crs.RuleSet | None] | None = None,
     country_reader: geo.CountryReader | None = None,
+    certificate_sans: Mapping[str, Sequence[str]] | None = None,
+    held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
 ) -> dict[str, bytes]:
     """The managed layer for `base_files` and the cluster's node list as it is now.
 
     The rule set and the countries' networks are today's unless the caller
-    says otherwise; a revert passes the version's own (B366).
+    says otherwise; a revert passes the version's own (B366). A revert also
+    passes what a publish is held to: the certificates' coverage and the
+    ports the nodes already hold (review 26-10-30, D6).
     """
 
     return managed_files(
@@ -70,6 +74,8 @@ def generated(
         country_reader=country_reader or geo.location_database(),
         rule_set=rule_set or crs.installed,
         node_addresses=lambda: addresses(cluster),
+        certificate_sans=certificate_sans,
+        held_ports=held_ports,
     )
 
 

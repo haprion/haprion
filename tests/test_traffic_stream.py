@@ -93,9 +93,37 @@ class ACoreThatMissesTheSocketIsRefused(unittest.TestCase):
         self.assertIn("chroot /var/lib/haproxy", said)
         self.assertIn("sudoedit /srv/config/alpha/core/haproxy.cfg", said)
 
-    def test_a_chroot_in_a_core_fragment_counts(self) -> None:
-        files = tree(UBUNTU_GLOBAL, **{"core/conf.d/0100-global.cfg": b"global\n  chroot /srv/x\n"})
+    def test_a_chroot_in_a_core_fragment_counts_when_the_core_has_none(self) -> None:
+        files = tree(
+            b"global\n    daemon\n", **{"core/conf.d/0100-g.cfg": b"global\n  chroot /srv/x\n"}
+        )
         self.assertIsNotNone(problem(files))
+
+    def test_the_first_chroot_wins_as_haproxy_reads_it(self) -> None:
+        later = b"global\n  chroot /srv/x\n"
+        self.assertIsNone(problem(tree(UBUNTU_GLOBAL, **{"manual/conf.d/9000-x.cfg": later})))
+        first = b"global\n    chroot /srv/jail\n"
+        self.assertIsNotNone(
+            problem(
+                tree(first, **{"manual/conf.d/9000-x.cfg": b"global\n  chroot /var/lib/haproxy\n"})
+            )
+        )
+
+    def test_the_first_account_wins_and_user_and_uid_are_one_setting(self) -> None:
+        late = b"global\n    user haproxy\n    group haproxy\n"
+        files = tree(
+            b"global\n    user nobody\n    group nogroup\n", **{"manual/conf.d/9000-x.cfg": late}
+        )
+        self.assertIsNotNone(problem(files))
+        self.assertIsNone(
+            problem(tree(late, **{"manual/conf.d/9000-x.cfg": b"global\n    user nobody\n"}))
+        )
+        uid_first = b"global\n    uid 65534\n    user haproxy\n    group haproxy\n"
+        user_late = {"manual/conf.d/9000-x.cfg": b"global\n    user haproxy\n"}
+        self.assertIsNotNone(problem(tree(b"global\n    uid 65534\n", **user_late)))
+        self.assertIsNotNone(problem(tree(uid_first.replace(b"    group haproxy\n", b""))))
+        gid_first = b"global\n    user www-data\n    gid 33\n    group haproxy\n"
+        self.assertIsNotNone(problem(tree(gid_first)))
 
     def test_another_account_is_refused_unless_its_group_is_haproxys(self) -> None:
         other = UBUNTU_GLOBAL.replace(b"user haproxy", b"user www-data")

@@ -61,7 +61,17 @@ SECTIONS = frozenset(
         "userlist",
     }
 )
-_GLOBAL_KEYWORDS = frozenset({"chroot", "user", "group", "uid", "gid"})
+#
+# `user` and `uid` name one setting, and so do `group` and `gid`: HAProxy keeps
+# the first line of either and warns of the rest.
+#
+_GLOBAL_SLOTS = {
+    "chroot": "chroot",
+    "user": "user",
+    "uid": "user",
+    "group": "group",
+    "gid": "group",
+}
 _TRAFFIC_LOG = re.compile(
     rf"^[ \t]*log[ \t]+(\S+)[ \t].*\bprofile[ \t]+{re.escape(TRAFFIC_LOG_PROFILE)}\b", re.MULTILINE
 )
@@ -83,9 +93,15 @@ def node_order(files: Mapping[str, bytes]) -> list[str]:
 
 
 def global_settings(texts: Iterable[str]) -> dict[str, str]:
-    """What `global` says of the chroot and the account HAProxy runs as, the last line winning."""
+    """What `global` says of the chroot and the account HAProxy runs as, the first line winning.
+
+    HAProxy keeps the first `chroot`, `user` or `uid`, and `group` or `gid`, it
+    reads and warns of later ones (measured on 3.4.7), so the first is what runs.
+    The key is the keyword that line used.
+    """
 
     found: dict[str, str] = {}
+    taken: set[str] = set()
     for text in texts:
         in_global = False
         for raw in text.splitlines():
@@ -95,7 +111,9 @@ def global_settings(texts: Iterable[str]) -> dict[str, str]:
             if words[0] in SECTIONS:
                 in_global = words[0] == "global"
                 continue
-            if in_global and words[0] in _GLOBAL_KEYWORDS and len(words) > 1:
+            slot = _GLOBAL_SLOTS.get(words[0])
+            if in_global and slot is not None and len(words) > 1 and slot not in taken:
+                taken.add(slot)
                 found[words[0]] = words[1]
     return found
 

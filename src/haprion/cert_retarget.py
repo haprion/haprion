@@ -66,7 +66,11 @@ from haprion.cert_delete import (
     read_guards,
     remove_node_copies,
 )
-from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE, receiver_files
+from haprion.cert_inventory import (
+    IMPORT_STORE,
+    LETSENCRYPT_LIVE,
+    receiver_files_in_any_format,
+)
 from haprion.cert_publish import (
     DEFAULT_LOCK_PATH,
     Deployer,
@@ -79,7 +83,6 @@ from haprion.cert_publish import (
 from haprion.certificates import authority_path, certificate_path
 from haprion.config import (
     AUTHORITY,
-    DEFAULT_RECEIVER_FORMAT,
     ConfigError,
     PathPolicy,
     RuntimeConfig,
@@ -268,18 +271,16 @@ def _unlink(path: Path) -> Layer:
 def _clear_receivers(
     certificate_id: str, receiver_ids: Sequence[str], runtime: RuntimeConfig
 ) -> tuple[Layer, ...]:
-    """A dropped receiver's files for this certificate, and its directory there."""
+    """A dropped receiver's files for this certificate in either format, and its directory there."""
 
     registry = runtime.registry
     assert registry is not None  # noqa: S101
-    entry = registry.certificates.get(certificate_id)
     layers: list[Layer] = []
     for receiver_id in receiver_ids:
         receiver = registry.receivers.get(receiver_id)
         if receiver is None:
             continue
-        form = entry.format_for(receiver_id) if entry is not None else DEFAULT_RECEIVER_FORMAT
-        for path in receiver_files(receiver, certificate_id, form=form):
+        for path in receiver_files_in_any_format(receiver, certificate_id):
             layers.append(_unlink(path))
         prune_receiver_directory(receiver, certificate_id)
     return tuple(layers)

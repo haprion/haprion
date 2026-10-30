@@ -441,6 +441,30 @@ class NothingHalfWritten(Fixture):
         self.assertEqual(deployed, ["alpha"])
         self.assertEqual(self.held(), {"alpha": ["example.com.pem"]})
 
+    def test_a_receiver_that_changes_format_loses_the_pair_of_the_old_one(self) -> None:
+        #
+        # E06: the pair a receiver was given before stays beside the new one
+        # otherwise, with the key in it and nothing renewing it.
+        #
+        issue(self.live / "example.com", "example.com")
+        pem = {"example.com": {"source": {"kind": "acme"}, "receivers": ["lb-01"]}}
+        bundle = {
+            "example.com": {
+                "source": {"kind": "acme"},
+                "receivers": [{"id": "lb-01", "format": "pkcs12"}],
+            }
+        }
+        held = self.receiver_dir / "example.com"
+
+        self.run_publish(self.write_config(pem))
+        self.assertEqual(sorted(p.name for p in held.iterdir()), ["fullchain.pem", "privkey.pem"])
+        self.run_publish(self.write_config(bundle))
+        self.assertEqual(
+            sorted(p.name for p in held.iterdir()), ["example.com.password", "example.com.pfx"]
+        )
+        self.run_publish(self.write_config(pem))
+        self.assertEqual(sorted(p.name for p in held.iterdir()), ["fullchain.pem", "privkey.pem"])
+
     def test_a_receiver_directory_anyone_can_write_to_is_refused(self) -> None:
         #
         # Root-owned or account-owned are both fine (the machine's real

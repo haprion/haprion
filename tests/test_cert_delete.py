@@ -705,3 +705,27 @@ class DeletingABundleFollowsTheLayout(DeleteFixture):
         (outcome,) = report.outcomes
         self.assertEqual(outcome.state, "removed", outcome)
         self.assertFalse(directory.exists())
+
+    def test_the_pair_of_a_format_the_receiver_left_goes_too(self) -> None:
+        """A receiver moved to PKCS#12 still has its old PEM pair (E06)."""
+
+        policy_path = self.prepared(
+            {"certserver1.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]}}
+        )
+        registry = self.root / "certificates.yaml"
+        raw = yaml.safe_load(registry.read_text())
+        raw["certificates"]["certserver1.example"]["receivers"] = [
+            {"id": "lb-01", "format": "pkcs12"}
+        ]
+        registry.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        registry.chmod(0o640)
+        directory = self.receiver_dir / "certserver1.example"
+        (directory / "certserver1.example.pfx").write_bytes(b"bundle")
+        (directory / "certserver1.example.password").write_text("pw\n", encoding="utf-8")
+        self.assertTrue((directory / PRIVKEY).exists())
+
+        report = self.run_delete(policy_path, "certserver1.example")
+
+        (outcome,) = report.outcomes
+        self.assertEqual(outcome.state, "removed", outcome)
+        self.assertFalse(directory.exists())

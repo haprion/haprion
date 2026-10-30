@@ -74,14 +74,13 @@ from pathlib import Path
 from typing import Any
 
 from haprion import cert_registry, exit_codes, labels, node_ssh
-from haprion.cert_inventory import IMPORT_STORE, receiver_files
+from haprion.cert_inventory import IMPORT_STORE, receiver_files_in_any_format
 from haprion.cert_publish import DEFAULT_LOCK_PATH, prune_receiver_directory, publish_lock
 from haprion.cert_publish import PublishError as LockError
 from haprion.certificates import authority_path, certificate_path
 from haprion.config import (
     AUTHORITY,
     CERTIFICATE_ID,
-    DEFAULT_RECEIVER_FORMAT,
     Cluster,
     ConfigError,
     DeployIdentity,
@@ -429,8 +428,7 @@ def remove_material(
         receiver = registry.receivers.get(receiver_id)
         if receiver is None:
             continue
-        form = entry.format_for(receiver_id) if entry is not None else DEFAULT_RECEIVER_FORMAT
-        for path in receiver_files(receiver, certificate_id, form=form):
+        for path in receiver_files_in_any_format(receiver, certificate_id):
             layers.append(_unlink(path))
         prune_receiver_directory(receiver, certificate_id)
     return tuple(layers)

@@ -51,6 +51,7 @@ from haprion.certificates import (
 from haprion.config import (
     AUTHORITY,
     DEFAULT_RECEIVER_FORMAT,
+    RECEIVER_FORMATS,
     Cluster,
     PathPolicy,
     Receiver,
@@ -104,6 +105,20 @@ def receiver_files(
             directory / f"{certificate_id}{PASSWORD_SUFFIX}",
         )
     return (directory / FULLCHAIN, directory / PRIVKEY)
+
+
+def receiver_files_in_any_format(receiver: Receiver, certificate_id: str) -> tuple[Path, ...]:
+    """Every file this receiver may hold for this certificate, whatever format it has now.
+
+    A receiver that was moved from one format to the other still has the first
+    pair beside the second until something takes it away; taking a certificate
+    off a receiver, or deleting it, has to take both.
+    """
+
+    paths: list[Path] = []
+    for form in RECEIVER_FORMATS:
+        paths.extend(receiver_files(receiver, certificate_id, form=form))
+    return tuple(paths)
 
 
 def receiver_witness(

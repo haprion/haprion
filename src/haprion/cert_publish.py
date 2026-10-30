@@ -860,6 +860,31 @@ def publish_bundle(target: Target, material: Material) -> bool:
     return True
 
 
+def _remove_other_format(target: Target, certificate_id: str) -> None:
+    """Take the other format's files out of a receiver's directory for this certificate.
+
+    A receiver that changed format keeps the pair it was given before unless
+    this does it: files nobody renews any more, with the private key in them,
+    that a script still fetching the old format would take for current. Only
+    the receiver's own per-certificate directory, which this module made.
+    """
+
+    if target.kind != "receiver":
+        return
+    stale = (
+        (target.directory / FULLCHAIN, target.directory / PRIVKEY)
+        if target.form == "pkcs12"
+        else receiver_bundle_paths(target, certificate_id)
+    )
+    for path in stale:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise PublishError("write_failed", f"{path}: {exc}") from exc
+
+
 def receiver_bundle_paths(target: Target, certificate_id: str) -> tuple[Path, Path]:
     """The bundle and its password file, named the way every reader names them."""
 
@@ -899,6 +924,7 @@ def publish_to(targets: Sequence[Target], material: Material) -> tuple[TargetRes
                 # pair, not to the certificate.
                 #
                 bundles[target.name] = publish_bundle(target, material)
+                _remove_other_format(target, material.certificate_id)
                 continue
             for path, content in target.files(material.certificate_id, material):
                 if path in written:
@@ -909,6 +935,7 @@ def publish_to(targets: Sequence[Target], material: Material) -> tuple[TargetRes
                     )
                 except OSError as exc:
                     raise PublishError("write_failed", f"{path}: {exc}") from exc
+            _remove_other_format(target, material.certificate_id)
         except PublishError as exc:
             failed.add((target.kind, target.name))
             first = first or exc

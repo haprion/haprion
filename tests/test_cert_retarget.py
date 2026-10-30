@@ -224,6 +224,23 @@ class RemovingFromATarget(RetargetFixture):
         self.assertFalse((self.receiver_dir / "shop.example" / PRIVKEY).exists())
         self.assertEqual(self.node_calls, [])
 
+    def test_both_formats_pairs_go_whichever_the_registry_names_now(self) -> None:
+        """A receiver moved to PKCS#12 still has its old PEM pair (E06)."""
+
+        registry = self.root / "certificates.yaml"
+        raw = yaml.safe_load(registry.read_text())
+        raw["certificates"]["shop.example"]["receivers"] = [{"id": "lb-01", "format": "pkcs12"}]
+        registry.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        registry.chmod(0o640)
+        directory = self.receiver_dir / "shop.example"
+        (directory / "shop.example.pfx").write_bytes(b"bundle")
+        (directory / "shop.example.password").write_text("pw\n", encoding="utf-8")
+        self.assertTrue((directory / PRIVKEY).exists())
+
+        self.retarget(self.policy_path, "remove", "shop.example", receivers=("lb-01",))
+
+        self.assertFalse(directory.exists())
+
     def test_another_certificate_on_the_receiver_keeps_its_own_directory(self) -> None:
         self.policy_path = self.prepared(
             {

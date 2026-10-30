@@ -3989,7 +3989,7 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
 
         self.assertIn(deploying.id, [job.id for job in recent])
         self.assertEqual(len(recent), 21)
-        self.assertIn("alpha", jobs.in_flight(recent))
+        self.assertIn("alpha", jobs.in_flight(recent, writes=True))
         self.assertEqual([job.id for job in db.recent_jobs(self.connection, cluster="beta")], [])
 
     def test_a_profile_s_evidence_is_found_behind_any_number_of_other_profiles_jobs(

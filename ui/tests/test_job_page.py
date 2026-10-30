@@ -70,7 +70,7 @@ class JobOverviewTests(unittest.TestCase):
         ]
         rows = newest_first(rows)
 
-        overview = jobs.build_job_overview(rows, now=datetime.now(UTC))
+        overview = jobs.build_job_overview(rows, now=datetime.now(UTC), writes=True)
 
         self.assertEqual(overview.active_count, 2)
         self.assertEqual(overview.completed_count, 1)
@@ -336,7 +336,7 @@ class WhatAFinishedJobStillOwes(unittest.TestCase):
     def view(
         self, *, awaiting: frozenset[str] = frozenset({"alpha"}), **kwargs: object
     ) -> jobs.JobView:
-        overview = jobs.build_job_overview([job(**kwargs)], awaiting=awaiting)  # type: ignore[arg-type]
+        overview = jobs.build_job_overview([job(**kwargs)], awaiting=awaiting, writes=True)  # type: ignore[arg-type]
         return overview.jobs[0]
 
     def test_a_revert_that_still_needs_a_deploy_says_so(self) -> None:
@@ -379,7 +379,7 @@ class WhatAFinishedJobStillOwes(unittest.TestCase):
             job(state="done", outcome="done", operation="revert", result=revert_result()),
             job(state="done", outcome="done", operation="revert", result=revert_result()),
         ]
-        overview = jobs.build_job_overview(rows, awaiting=frozenset({"alpha"}))
+        overview = jobs.build_job_overview(rows, awaiting=frozenset({"alpha"}), writes=True)
 
         self.assertIsNotNone(overview.jobs[0].follow_up)
         self.assertIsNone(overview.jobs[1].follow_up)
@@ -486,7 +486,9 @@ class WhatStillNeedsReview(unittest.TestCase):
             job(state="unknown", outcome="unknown"),
         ]
 
-        self.assertEqual(jobs.build_job_overview(newest_first(rows)).attention_count, 0)
+        self.assertEqual(
+            jobs.build_job_overview(newest_first(rows), writes=True).attention_count, 0
+        )
 
     def test_a_cluster_whose_latest_job_failed_is_counted_once(self) -> None:
         rows = [
@@ -494,7 +496,7 @@ class WhatStillNeedsReview(unittest.TestCase):
             job(state="failed", outcome="failed"),
         ]
 
-        self.assertEqual(jobs.build_job_overview(rows).attention_count, 1)
+        self.assertEqual(jobs.build_job_overview(rows, writes=True).attention_count, 1)
 
     def test_each_cluster_is_counted_on_its_own(self) -> None:
         rows = [
@@ -503,7 +505,7 @@ class WhatStillNeedsReview(unittest.TestCase):
             job(state="unknown", outcome="unknown", cluster="beta"),
         ]
 
-        self.assertEqual(jobs.build_job_overview(rows).attention_count, 1)
+        self.assertEqual(jobs.build_job_overview(rows, writes=True).attention_count, 1)
 
     def test_a_job_still_running_does_not_hide_the_outcome_under_it(self) -> None:
         """A running job is not yet an answer, so the last answer still stands."""
@@ -513,7 +515,7 @@ class WhatStillNeedsReview(unittest.TestCase):
             job(state="failed", outcome="failed"),
         ]
 
-        self.assertEqual(jobs.build_job_overview(rows).attention_count, 1)
+        self.assertEqual(jobs.build_job_overview(rows, writes=True).attention_count, 1)
 
 
 class WhatTheExitNumberMeans(unittest.TestCase):
@@ -526,7 +528,7 @@ class WhatTheExitNumberMeans(unittest.TestCase):
 
     def meaning(self, code: int | None) -> str:
         rows = [job(state="failed", outcome="failed", exit_code=code)]
-        return jobs.build_job_overview(rows).jobs[0].exit_meaning
+        return jobs.build_job_overview(rows, writes=True).jobs[0].exit_meaning
 
     def test_every_code_the_engine_returns_is_named_in_the_engine_s_words(self) -> None:
         """Review 2026-10-22, 4-1: 68 meant "no usable status" here, whatever the command said."""
@@ -880,7 +882,7 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
         self.assertEqual(jobs.certificate_blocks([running, newer, older])["alpha"].job_id, 20)
 
     def test_the_block_is_captioned_on_its_job(self) -> None:
-        overview = jobs.build_job_overview([blocked_deploy(20), blocked_deploy(19)])
+        overview = jobs.build_job_overview([blocked_deploy(20), blocked_deploy(19)], writes=True)
 
         newest, older = overview.jobs
         self.assertEqual(newest.next_command, "haprion-cert-deploy -c alpha")
@@ -897,11 +899,13 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
         #
         rows = [replace(job(state="done", outcome="done", operation="cert_deploy"), id=21)]
 
-        captioned = jobs.build_job_overview(rows, awaiting=frozenset({"alpha"})).jobs[0]
+        captioned = jobs.build_job_overview(rows, awaiting=frozenset({"alpha"}), writes=True).jobs[
+            0
+        ]
         self.assertEqual(captioned.next_command, "haprion-deploy -c alpha")
         self.assertIn("Certificates deployed, configuration not", captioned.follow_up or "")
 
-        converged = jobs.build_job_overview(rows).jobs[0]
+        converged = jobs.build_job_overview(rows, writes=True).jobs[0]
         self.assertIsNone(converged.follow_up)
 
 

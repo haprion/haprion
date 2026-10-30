@@ -347,7 +347,7 @@ def run_view(
     rows: Sequence[Job],
     *,
     now: datetime | None = None,
-    writes: bool = True,
+    writes: bool,
     pause: object | None = None,
 ) -> RestoreRun | None:
     """The run's state from its jobs, oldest first, or None when it has none.
@@ -594,7 +594,7 @@ def recent_runs(
     *,
     shown: Callable[[datetime], datetime],
     now: datetime,
-    writes: bool = True,
+    writes: bool,
     pause: object | None = None,
 ) -> dict[str, tuple[RecentRun, ...]]:
     """The runs that still ask something of somebody, per cluster, newest first.

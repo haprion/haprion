@@ -231,7 +231,11 @@ def build_router(config: Config) -> APIRouter:
                 "cluster_settings": cluster_settings_page.card_views(
                     *read_source(request, config, SETTINGS_SOURCE),
                     waiting=network.awaiting_deploy(recent, part="settings"),
-                    running=jobs.in_flight(recent, cluster_settings_page.SETTINGS_OPERATIONS),
+                    running=jobs.in_flight(
+                        recent,
+                        cluster_settings_page.SETTINGS_OPERATIONS,
+                        writes=config.management_writes,
+                    ),
                 ),
                 "cluster_nodes": cluster_nodes.card_rows(
                     *read_source(request, config, STATUS_SOURCE), creation_rows
@@ -701,7 +705,7 @@ def build_router(config: Config) -> APIRouter:
                 "removable_nodes": {
                     row.name for row in rows if cluster_nodes.removable(rows, row.name) is None
                 },
-                "running": jobs.in_flight(recent).get(cluster),
+                "running": jobs.in_flight(recent, writes=config.management_writes).get(cluster),
                 "addition": addition,
                 "removal": removal,
                 "node_package": first_cluster.node_package_name(),

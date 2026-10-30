@@ -239,7 +239,7 @@ def profile_status(
     jobs: Iterable[Any],
     *,
     operation: str = "dns_profile_apply",
-    writes: bool = True,
+    writes: bool,
 ) -> ProfileStatus:
     """Derive a profile's state from its apply jobs, newest first.
 

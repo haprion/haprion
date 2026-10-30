@@ -150,7 +150,7 @@ def not_finishing(exc: Exception, now: datetime | None = None) -> str | None:
     """The sentence for a busy queue whose job does not finish by itself, or None."""
 
     if isinstance(exc, db.ClusterBusy | db.CertificateBusy):
-        return jobs.not_finishing(exc.active, now or datetime.now(UTC))
+        return jobs.not_finishing(exc.active, now or datetime.now(UTC), writes=True)
     return None
 
 

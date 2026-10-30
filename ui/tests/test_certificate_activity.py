@@ -40,7 +40,7 @@ def verdict(identifier: str, state: str, reason: str = "") -> dict[str, Any]:
 
 class DeletionStates(unittest.TestCase):
     def states(self, *jobs: Any) -> dict[str, certificate_activity.DeletionState]:
-        return certificate_activity.deletion_states(jobs, now=NOW)
+        return certificate_activity.deletion_states(jobs, now=NOW, writes=True)
 
     def test_a_running_job_says_deleting_and_asks_for_a_refresh(self) -> None:
         state = self.states(delete_job("running", "old.example.com"))["old.example.com"]
@@ -116,7 +116,7 @@ class TheNewestJobHasTheLastWord(unittest.TestCase):
             },
             finished_at=NOW - timedelta(minutes=1),
         )
-        states = certificate_activity.deletion_states([published], now=NOW)
+        states = certificate_activity.deletion_states([published], now=NOW, writes=True)
         self.assertEqual(states["hq.example"].label, "Published to lb-01")
 
     def test_a_newer_finished_job_ends_an_older_failure_s_hour(self) -> None:
@@ -141,7 +141,7 @@ class TheNewestJobHasTheLastWord(unittest.TestCase):
             },
             finished_at=NOW - timedelta(minutes=2),
         )
-        states = certificate_activity.deletion_states([quiet, failed], now=NOW)
+        states = certificate_activity.deletion_states([quiet, failed], now=NOW, writes=True)
         self.assertNotIn("hq.example", states)
 
 
@@ -172,7 +172,9 @@ class EnrollmentStates(unittest.TestCase):
             payload={"id": "wait.example.com", "resume": True},
             finished_at=NOW,
         )
-        states = certificate_activity.deletion_states([running, failed, pending], now=NOW)
+        states = certificate_activity.deletion_states(
+            [running, failed, pending], now=NOW, writes=True
+        )
         self.assertEqual(states["web.example.com"].label, "Enrolling")
         self.assertTrue(states["web.example.com"].active)
         self.assertEqual(states["old.example.com"].label, "Enrollment failed")
@@ -201,7 +203,7 @@ class RequestStates(unittest.TestCase):
     """
 
     def states(self, *jobs: Any) -> dict[str, certificate_activity.DeletionState]:
-        return certificate_activity.deletion_states(jobs, now=NOW)
+        return certificate_activity.deletion_states(jobs, now=NOW, writes=True)
 
     def test_a_running_request_is_a_placeholder_drawn_from_the_payload(self) -> None:
         state = self.states(issue_job("running", "*.example.com"))["example.com"]
@@ -602,7 +604,7 @@ class AbandoningARequest(DeleteRouteTestCase):
             ):
                 view = registry_of(
                     certificates.with_deletion_states(
-                        overview(reading), certificate_activity.deletion_states(jobs)
+                        overview(reading), certificate_activity.deletion_states(jobs, writes=True)
                     )
                 ).certificates[0]
                 if label is None:
@@ -805,6 +807,7 @@ class PublishStates(unittest.TestCase):
                 )
             ],
             now=NOW,
+            writes=True,
         )["waiting.example.com"]
         self.assertEqual((state.label, state.tone, state.active), ("Publishing", "info", True))
 
@@ -821,7 +824,7 @@ class AFinishedPublishGivesWayToTheRegistry(unittest.TestCase):
             result={"result": {"certificates": [{"id": "example.com", "status": "published"}]}},
             finished_at=NOW - timedelta(seconds=5),
         )
-        return certificate_activity.deletion_states([job], now=NOW)["example.com"]
+        return certificate_activity.deletion_states([job], now=NOW, writes=True)["example.com"]
 
     def test_published_stays_while_the_reading_still_lacks_a_copy(self) -> None:
         stale = overview(
@@ -880,7 +883,7 @@ class AJustFinishedEnrollmentIsNotUnreadable(unittest.TestCase):
             payload={"id": "web.example.com", "profile": "ca", "domains": ["web.example.com"]},
             finished_at=NOW - timedelta(seconds=2),
         )
-        states = certificate_activity.deletion_states([job], now=NOW)
+        states = certificate_activity.deletion_states([job], now=NOW, writes=True)
 
         updated = certificates.with_deletion_states(self.unreadable(), states)
 
@@ -889,7 +892,7 @@ class AJustFinishedEnrollmentIsNotUnreadable(unittest.TestCase):
 
     def test_a_finished_request_does_the_same(self) -> None:
         states = certificate_activity.deletion_states(
-            [issue_job("done", "web.example.com")], now=NOW
+            [issue_job("done", "web.example.com")], now=NOW, writes=True
         )
 
         updated = certificates.with_deletion_states(self.unreadable(), states)
@@ -907,7 +910,7 @@ class AJustFinishedEnrollmentIsNotUnreadable(unittest.TestCase):
         read = overview(with_registry(certificate_reading(), registered("web.example.com")))
 
         updated = certificates.with_deletion_states(
-            read, certificate_activity.deletion_states([job], now=NOW)
+            read, certificate_activity.deletion_states([job], now=NOW, writes=True)
         )
 
         self.assertNotEqual(registry_of(updated).certificates[0].state_label, "Enrolled")
@@ -938,7 +941,7 @@ class AFinishedTargetChangeGivesWayToTheRegistry(unittest.TestCase):
             },
             finished_at=NOW - timedelta(seconds=5),
         )
-        return certificate_activity.deletion_states([job], now=NOW)["example.com"]
+        return certificate_activity.deletion_states([job], now=NOW, writes=True)["example.com"]
 
     def test_removed_from_disappears_as_soon_as_the_registry_has_caught_up(self) -> None:
         current = overview(with_registry(certificate_reading(), registered(clusters=("alpha",))))
@@ -996,7 +999,7 @@ class SigningRequestStates(unittest.TestCase):
                 **extra,
             )
 
-        running = certificate_activity.deletion_states([job("running")], now=NOW)
+        running = certificate_activity.deletion_states([job("running")], now=NOW, writes=True)
         state = running["csr.example.net"]
         self.assertEqual((state.label, state.active), ("Making request", True))
         self.assertIsNotNone(state.placeholder)
@@ -1006,13 +1009,14 @@ class SigningRequestStates(unittest.TestCase):
         )
         self.assertTrue(placeholder.wildcard if placeholder else False)
 
-        done = certificate_activity.deletion_states([job("done")], now=NOW)
+        done = certificate_activity.deletion_states([job("done")], now=NOW, writes=True)
         self.assertEqual(done["csr.example.net"].label, "Request made")
         self.assertTrue(done["csr.example.net"].placeholder_only)
 
         failed = certificate_activity.deletion_states(
             [job("failed", result={"error": {"code": "already_exists", "message": "taken"}})],
             now=NOW,
+            writes=True,
         )
         self.assertEqual(failed["csr.example.net"].label, "Request failed")
         self.assertIn("taken", failed["csr.example.net"].detail)
@@ -1130,7 +1134,7 @@ class EveryOverlaySaysAJobThatEndedBadly(unittest.TestCase):
                 with self.subTest(name, state=state):
                     job = self.ended(operation, state, payload)
 
-                    shown = certificate_activity.deletion_states([job], now=NOW)
+                    shown = certificate_activity.deletion_states([job], now=NOW, writes=True)
 
                     self.assertIn("web.example.com", shown)
                     self.assertFalse(shown["web.example.com"].active)
@@ -1142,7 +1146,7 @@ class EveryOverlaySaysAJobThatEndedBadly(unittest.TestCase):
             with self.subTest(state):
                 job = self.ended("cert_deploy", state, {}, cluster="alpha")
 
-                shown = certificate_activity.deploy_states([row], [job], now=NOW)
+                shown = certificate_activity.deploy_states([row], [job], now=NOW, writes=True)
 
                 self.assertNotIn("Done", shown["web.example.com"].detail)
                 self.assertFalse(shown["web.example.com"].active)
@@ -1150,14 +1154,14 @@ class EveryOverlaySaysAJobThatEndedBadly(unittest.TestCase):
     def test_a_refused_job_names_the_helper_s_reason(self) -> None:
         job = self.ended("cert_import", "blocked", {"id": "web.example.com"})
 
-        shown = certificate_activity.deletion_states([job], now=NOW)["web.example.com"]
+        shown = certificate_activity.deletion_states([job], now=NOW, writes=True)["web.example.com"]
 
         self.assertEqual((shown.label, shown.detail), ("Import refused", "the CA said no"))
 
     def test_an_enrollment_waiting_for_the_ca_is_still_not_the_job_s_to_say(self) -> None:
         job = self.ended("cert_scep", "partial", {"id": "web.example.com"})
 
-        self.assertEqual(certificate_activity.deletion_states([job], now=NOW), {})
+        self.assertEqual(certificate_activity.deletion_states([job], now=NOW, writes=True), {})
 
 
 class AJobThatDoesNotFinishByItself(unittest.TestCase):
@@ -1232,10 +1236,12 @@ class AJobThatDoesNotFinishByItself(unittest.TestCase):
                 (False, jobs.NO_WORKER, "critical"),
             ):
                 with self.subTest(name, held=held):
-                    asked = certificate_activity.deletion_states([self.stuck(row, held)], now=NOW)[
+                    asked = certificate_activity.deletion_states(
+                        [self.stuck(row, held)], now=NOW, writes=True
+                    )[identifier]
+                    working = certificate_activity.deletion_states([row], now=NOW, writes=True)[
                         identifier
                     ]
-                    working = certificate_activity.deletion_states([row], now=NOW)[identifier]
                     self.assertEqual((asked.label, asked.tone, asked.active), (label, tone, False))
                     self.assertEqual(asked.placeholder, working.placeholder)
 
@@ -1248,7 +1254,7 @@ class AJobThatDoesNotFinishByItself(unittest.TestCase):
         ):
             with self.subTest(held=held):
                 asked = certificate_activity.deploy_states(
-                    [row], [self.stuck(deploy, held)], now=NOW
+                    [row], [self.stuck(deploy, held)], now=NOW, writes=True
                 )["web.example.com"]
                 self.assertEqual((asked.label, asked.tone, asked.active), (label, tone, False))
 
@@ -1263,3 +1269,16 @@ class TheListingDoesNotWaitForAJobThatDoesNotFinish(DeleteRouteTestCase):
         self.assertNotIn('data-refresh="true"', page)
         self.assertIn('<span class="status-badge status-badge-warning">Held</span>', page)
         self.assertNotIn(">Deleting<", page)
+
+    def test_with_writes_off_a_job_that_stands_still_is_not_called_workerless(self) -> None:
+        """Review 26-10-30 (F2): the listing followed the rule only with writes on."""
+
+        row = replace(
+            delete_job("running", "old.example.com"),
+            lease_lapsed_since=datetime.now(UTC) - jobs.NO_WORKER_AFTER - timedelta(minutes=1),
+        )
+        for writes, said in ((True, True), (False, False)):
+            with self.subTest(writes=writes):
+                with mock.patch("haprion_ui.db.recent_jobs", return_value=[row]):
+                    page = self.writing_client(writes=writes).get("/certificates").text
+                self.assertEqual("No worker" in page, said)

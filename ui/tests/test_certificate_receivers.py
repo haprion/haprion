@@ -288,7 +288,9 @@ class TheActivityLine(unittest.TestCase):
                 "error": None,
             },
         )
-        activity = certificate_receivers.recent_activity([running, done, refused, partial])
+        activity = certificate_receivers.recent_activity(
+            [running, done, refused, partial], writes=True
+        )
         self.assertEqual(
             [(item.tone, item.label, item.message) for item in activity],
             [
@@ -315,7 +317,7 @@ class TheActivityLine(unittest.TestCase):
                 "public_key": "ssh-ed25519 A",
             },
         )
-        activity = certificate_receivers.recent_activity([running])
+        activity = certificate_receivers.recent_activity([running], writes=True)
         self.assertEqual(activity[0].label, "Replacing the key for lb-02.example.net")
 
     def test_a_new_secret_is_called_what_it_is(self) -> None:
@@ -334,7 +336,7 @@ class TheActivityLine(unittest.TestCase):
             outcome="done",
             result={"outcome": "done", "result": {"layers": []}, "error": None},
         )
-        activity = certificate_receivers.recent_activity([running, done])
+        activity = certificate_receivers.recent_activity([running, done], writes=True)
         self.assertEqual(
             [(item.label, item.badge) for item in activity],
             [
@@ -766,7 +768,7 @@ class AJobThatDoesNotFinishByItself(ReceiverRouteTestCase):
             (workerless_job, jobs.NO_WORKER, "critical"),
         ):
             with self.subTest(state=stuck.__name__):
-                (item,) = certificate_receivers.recent_activity([stuck(removing)])
+                (item,) = certificate_receivers.recent_activity([stuck(removing)], writes=True)
                 self.assertEqual((item.badge, item.tone), (label, tone))
                 self.assertTrue(item.busy)
                 self.assertFalse(item.working)

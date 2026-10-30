@@ -171,15 +171,15 @@ class TheForm(unittest.TestCase):
 
 class TheRunPage(unittest.TestCase):
     def view(self, *jobs: db.Job) -> node_restores.RestoreRun:
-        restore = node_restores.run_view(RUN, jobs)
+        restore = node_restores.run_view(RUN, jobs, writes=True)
         if restore is None:
             self.fail("the run has no view")
         return restore
 
     def test_a_run_with_no_prepare_job_does_not_exist(self) -> None:
-        self.assertIsNone(node_restores.run_view(RUN, []))
-        self.assertIsNone(node_restores.run_view(RUN, [PREVIEWED]))
-        self.assertIsNone(node_restores.run_view("r260101-0000bbbb", [PREPARED]))
+        self.assertIsNone(node_restores.run_view(RUN, [], writes=True))
+        self.assertIsNone(node_restores.run_view(RUN, [PREVIEWED], writes=True))
+        self.assertIsNone(node_restores.run_view("r260101-0000bbbb", [PREPARED], writes=True))
 
     def test_a_queued_job_is_working_and_names_its_step(self) -> None:
         restore = self.view(job("node_restore_prepare", "pending"))
@@ -221,7 +221,7 @@ class TheRunPage(unittest.TestCase):
             job("node_restore", "running", number=3),
             lease_lapsed_since=now - jobs.NO_WORKER_AFTER - timedelta(minutes=5),
         )
-        restore = node_restores.run_view(RUN, [PREPARED, PREVIEWED, gone], now=now)
+        restore = node_restores.run_view(RUN, [PREPARED, PREVIEWED, gone], now=now, writes=True)
         self.assertIsNotNone(restore)
         if restore is not None:
             self.assertEqual((restore.stage, restore.waiting_job), ("no_worker", 3))
@@ -236,7 +236,9 @@ class TheRunPage(unittest.TestCase):
         #
         for still in (replace(gone, worker_busy=True), replace(gone, lease_lapsed_since=now)):
             with self.subTest(still=still):
-                working = node_restores.run_view(RUN, [PREPARED, PREVIEWED, still], now=now)
+                working = node_restores.run_view(
+                    RUN, [PREPARED, PREVIEWED, still], now=now, writes=True
+                )
                 self.assertEqual(working.stage if working else None, "working")
 
     def test_prepared_asks_for_the_fingerprint_with_the_line_to_paste(self) -> None:
@@ -345,7 +347,7 @@ class RecentRuns(unittest.TestCase):
                 created_at=PREPARED.created_at + timedelta(minutes=5),
             ),
         ]
-        recent = node_restores.recent_runs(rows, shown=lambda moment: moment, now=SOON)
+        recent = node_restores.recent_runs(rows, shown=lambda moment: moment, now=SOON, writes=True)
         self.assertEqual([run.run for run in recent["alpha"]], [other, RUN])
         self.assertEqual(recent["alpha"][0].label, "Running")
         self.assertEqual(recent["alpha"][1].label, "Waiting for confirmation")
@@ -356,7 +358,10 @@ class RecentRuns(unittest.TestCase):
             "node_restore", "done", result=fixture("haprion-node-restore", "done.json"), number=3
         )
         self.assertEqual(
-            node_restores.recent_runs([PREPARED, PREVIEWED, done], shown=lambda m: m, now=SOON), {}
+            node_restores.recent_runs(
+                [PREPARED, PREVIEWED, done], shown=lambda m: m, now=SOON, writes=True
+            ),
+            {},
         )
 
     def test_a_rolled_back_run_says_so_and_a_cluster_lists_five(self) -> None:
@@ -367,7 +372,7 @@ class RecentRuns(unittest.TestCase):
             number=3,
         )
         recent = node_restores.recent_runs(
-            [PREPARED, PREVIEWED, failed], shown=lambda moment: moment, now=SOON
+            [PREPARED, PREVIEWED, failed], shown=lambda moment: moment, now=SOON, writes=True
         )
         self.assertEqual(recent["alpha"][0].label, "Failed · rolled back")
         many = [
@@ -375,13 +380,13 @@ class RecentRuns(unittest.TestCase):
             for index in range(10, 17)
         ]
         self.assertEqual(
-            len(node_restores.recent_runs(many, shown=lambda m: m, now=SOON)["alpha"]),
+            len(node_restores.recent_runs(many, shown=lambda m: m, now=SOON, writes=True)["alpha"]),
             node_restores.RECENT_PER_CLUSTER,
         )
 
 
 def viewed(rows: list[db.Job], now: datetime) -> node_restores.RestoreRun:
-    restore = node_restores.run_view(RUN, rows, now=now)
+    restore = node_restores.run_view(RUN, rows, now=now, writes=True)
     if restore is None:
         raise AssertionError("the run has no view")
     return restore
@@ -409,7 +414,9 @@ class TheHour(unittest.TestCase):
         self.assertEqual(node_restores.EXPIRES_AFTER.total_seconds(), 3600)
 
     def test_past_its_hour_a_run_leaves_the_list_unless_it_is_working(self) -> None:
-        self.assertEqual(node_restores.recent_runs([PREPARED], shown=lambda m: m, now=LATE), {})
+        self.assertEqual(
+            node_restores.recent_runs([PREPARED], shown=lambda m: m, now=LATE, writes=True), {}
+        )
         failed = job(
             "node_restore",
             "failed",
@@ -417,12 +424,14 @@ class TheHour(unittest.TestCase):
             number=3,
         )
         self.assertEqual(
-            node_restores.recent_runs([PREPARED, PREVIEWED, failed], shown=lambda m: m, now=LATE),
+            node_restores.recent_runs(
+                [PREPARED, PREVIEWED, failed], shown=lambda m: m, now=LATE, writes=True
+            ),
             {},
         )
         running = job("node_restore", "running", number=3)
         recent = node_restores.recent_runs(
-            [PREPARED, PREVIEWED, running], shown=lambda m: m, now=LATE
+            [PREPARED, PREVIEWED, running], shown=lambda m: m, now=LATE, writes=True
         )
         self.assertEqual(recent["alpha"][0].label, "Running")
         self.assertFalse(recent["alpha"][0].discardable)
@@ -436,7 +445,7 @@ class Discarding(unittest.TestCase):
         self.assertFalse(restore.discardable)
         self.assertEqual(
             node_restores.recent_runs(
-                [PREPARED, PREVIEWED, discarded], shown=lambda m: m, now=SOON
+                [PREPARED, PREVIEWED, discarded], shown=lambda m: m, now=SOON, writes=True
             ),
             {},
         )
@@ -484,7 +493,9 @@ class AskingForTheOutcome(unittest.TestCase):
         self.assertTrue(restore.askable)
         self.assertFalse(restore.discardable)
         self.assertEqual(node_restores.step_states(restore)["run"], "current")
-        recent = node_restores.recent_runs([PREPARED, PREVIEWED, LOST], shown=lambda m: m, now=SOON)
+        recent = node_restores.recent_runs(
+            [PREPARED, PREVIEWED, LOST], shown=lambda m: m, now=SOON, writes=True
+        )
         self.assertEqual(recent["alpha"][0].label, "Outcome unknown")
 
     def test_a_question_on_its_way_is_working(self) -> None:
@@ -938,7 +949,7 @@ class OverwritingANode(RestoreRouteTestCase):
         self.assertNotIn("overwrite", self.queued[0]["payload"])
 
     def test_before_its_preview_a_run_as_the_node_is_not_yet_an_overwrite(self) -> None:
-        restore = node_restores.run_view(RUN, [OVERWRITE_PREPARED])
+        restore = node_restores.run_view(RUN, [OVERWRITE_PREPARED], writes=True)
         if restore is None:
             self.fail("the run has a prepare job")
         self.assertEqual(restore.mode, "new_vm")
@@ -970,7 +981,9 @@ class OverwritingANode(RestoreRouteTestCase):
         self.assertNotIn("The node was not put back", page)
 
     def test_the_run_is_read_as_an_overwrite(self) -> None:
-        restore = node_restores.run_view(RUN, [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED])
+        restore = node_restores.run_view(
+            RUN, [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED], writes=True
+        )
         if restore is None:
             self.fail("the run has a prepare job")
         self.assertEqual((restore.mode, restore.stage), ("overwrite", "confirm"))

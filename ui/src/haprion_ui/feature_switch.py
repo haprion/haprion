@@ -60,7 +60,7 @@ def restore_waiting(connection: Any) -> bool:
         for operation in node_restores.OPERATIONS
         for job in db.operation_jobs(connection, operation, limit=100)
     ]
-    runs = node_restores.recent_runs(rows, shown=metrics.shown, now=datetime.now(UTC))
+    runs = node_restores.recent_runs(rows, shown=metrics.shown, now=datetime.now(UTC), writes=True)
     waiting = {
         node_restores.STAGE_LABELS[stage][0]
         for stage in ("working", "held", "fingerprint", "confirm")
@@ -148,7 +148,7 @@ def switch(
         # A3); merely busy, it names the clusters, since it queued on each.
         #
         raise features.SwitchRefused(
-            jobs.not_finishing(error.active, datetime.now(UTC))
+            jobs.not_finishing(error.active, datetime.now(UTC), writes=True)
             or "A job is running on one of the clusters. Try again when it has finished."
         ) from error
     db.record_audit_event(

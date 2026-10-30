@@ -418,7 +418,7 @@ def on_the_rows(
     return on_rows, tuple(ghosts)
 
 
-def recent_activity(rows: Sequence[Any], *, writes: bool = True) -> tuple[Activity, ...]:
+def recent_activity(rows: Sequence[Any], *, writes: bool) -> tuple[Activity, ...]:
     """The newest receiver jobs, newest first, with the helper's own sentence.
 
     Read defensively, as `jobs.error_code` is: the result was written by a

@@ -84,7 +84,7 @@ def creations(
     *,
     now: datetime,
     settle: timedelta,
-    writes: bool = True,
+    writes: bool,
 ) -> list[Creating]:
     """Clusters whose newest cluster job is a creation the list does not show yet.
 

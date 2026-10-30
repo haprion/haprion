@@ -372,7 +372,7 @@ def _queue(connection: Any, change: Change, *, actor: str) -> db.Job:
         ) from exc
     except db.CertificateBusy as exc:
         raise ApplyError(
-            jobs.not_finishing(exc.active, datetime.now(UTC))
+            jobs.not_finishing(exc.active, datetime.now(UTC), writes=True)
             or "A certificate job is already running. Wait for it to finish, then run this again.",
             code="operation_locked",
             exit_code=exit_codes.BLOCKED,

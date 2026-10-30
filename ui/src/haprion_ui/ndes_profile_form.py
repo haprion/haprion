@@ -51,6 +51,6 @@ def seal_submission(
 
 
 def profile_status(
-    profile_id: str, revision: int, jobs: Iterable[Any], *, writes: bool = True
+    profile_id: str, revision: int, jobs: Iterable[Any], *, writes: bool
 ) -> ProfileStatus:
     return _status(profile_id, revision, jobs, operation="ndes_profile_apply", writes=writes)

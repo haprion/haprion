@@ -263,7 +263,7 @@ def build_router(config: Config) -> APIRouter:
             request,
             session,
             recent=recent,
-            busy=jobs.in_flight(recent),
+            busy=jobs.in_flight(recent, writes=config.management_writes),
             status_rows=status_rows,
             network_readings=network_rows,
         )

@@ -150,7 +150,10 @@ class EachKindComesAndGoes(unittest.TestCase):
                 [item] = attention.from_jobs([failed])
                 self.assertEqual(item.message, f"Certificate {verb}; distribution failed")
                 self.assertEqual(jobs.failure_label(failed), item.message)
-                self.assertIn("Certificates", jobs.build_job_overview([failed]).jobs[0].note or "")
+                self.assertIn(
+                    "Certificates",
+                    jobs.build_job_overview([failed], writes=True).jobs[0].note or "",
+                )
 
                 published = ended(2, "cert_publish", 20, payload={"certificates": ["example.com"]})
                 self.assertEqual(attention.from_jobs([failed, published]), [])

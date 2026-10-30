@@ -143,34 +143,38 @@ class TheFormModule(unittest.TestCase):
             )
 
         status = dns_profile_form.profile_status
-        self.assertEqual(status("cf-main", 1, []).label, "Not applied")
-        self.assertTrue(status("cf-main", 1, [job("done", 1)]).usable)
-        self.assertEqual(status("cf-main", 2, [job("done", 1)]).label, "Replaced; not applied")
+        self.assertEqual(status("cf-main", 1, [], writes=True).label, "Not applied")
+        self.assertTrue(status("cf-main", 1, [job("done", 1)], writes=True).usable)
         self.assertEqual(
-            status("cf-main", 2, [job("pending", 2), job("done", 1)]).label, "Applying"
+            status("cf-main", 2, [job("done", 1)], writes=True).label, "Replaced; not applied"
         )
-        self.assertEqual(status("cf-main", 1, [job("failed", 1)]).label, "Apply failed")
+        self.assertEqual(
+            status("cf-main", 2, [job("pending", 2), job("done", 1)], writes=True).label, "Applying"
+        )
+        self.assertEqual(
+            status("cf-main", 1, [job("failed", 1)], writes=True).label, "Apply failed"
+        )
         removing = queued(
             operation="dns_profile_apply",
             cluster=None,
             state="pending",
             payload={"profile": "cf-main", "revision": 1, "remove": True},
         )
-        self.assertEqual(status("cf-main", 1, [removing]).label, "Removing")
+        self.assertEqual(status("cf-main", 1, [removing], writes=True).label, "Removing")
         refused = replace(
             removing,
             state="failed",
             result={"error": {"code": "profile_in_use"}},
         )
         applied = job("done", 1)
-        refused_status = status("cf-main", 1, [refused, applied])
+        refused_status = status("cf-main", 1, [refused, applied], writes=True)
         self.assertEqual(refused_status.label, "In effect")
         self.assertTrue(refused_status.usable)
         self.assertEqual(refused_status.attention_job, refused.id)
         failed = replace(refused, result={"error": {"code": "dependency_unavailable"}})
-        self.assertFalse(status("cf-main", 1, [failed]).usable)
+        self.assertFalse(status("cf-main", 1, [failed], writes=True).usable)
         self.assertEqual(
-            status("cf-main", 1, [queued(operation="cert_issue", cluster=None)]).label,
+            status("cf-main", 1, [queued(operation="cert_issue", cluster=None)], writes=True).label,
             "Not applied",
         )
         #
@@ -182,7 +186,7 @@ class TheFormModule(unittest.TestCase):
             (workerless_job, jobs.NO_WORKER, "critical"),
         ):
             with self.subTest(state=stuck.__name__):
-                said = status("cf-main", 1, [stuck(job("pending", 1))])
+                said = status("cf-main", 1, [stuck(job("pending", 1))], writes=True)
                 self.assertEqual((said.label, said.tone, said.usable), (label, tone, False))
 
 

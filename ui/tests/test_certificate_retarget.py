@@ -272,7 +272,7 @@ class TheStateCellFollowsTheJob(unittest.TestCase):
         )
 
     def states(self, *jobs: Any) -> dict[str, certificate_activity.DeletionState]:
-        return certificate_activity.deletion_states(jobs, now=NOW)
+        return certificate_activity.deletion_states(jobs, now=NOW, writes=True)
 
     def test_running_and_each_verdict(self) -> None:
         running = self.states(self.job("running"))

@@ -92,13 +92,13 @@ def build_router(config: Config) -> APIRouter:
         )
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection, limit=100)
-        running = jobs.in_flight(recent)
+        running = jobs.in_flight(recent, writes=config.management_writes)
         #
         # A row the queue is deleting says so in its State cell instead of
         # the page sending the person to the jobs list to watch; the page
         # refreshes itself while that is going on.
         #
-        deleting = certificate_activity.deletion_states(recent)
+        deleting = certificate_activity.deletion_states(recent, writes=config.management_writes)
         #
         # A cluster deploy asked for from a row is said on that row too, with
         # the page refreshing until it ends: the person who pressed Deploy to
@@ -106,7 +106,7 @@ def build_router(config: Config) -> APIRouter:
         #
         if overview.registry is not None:
             for identifier, state in certificate_activity.deploy_states(
-                overview.registry.certificates, recent
+                overview.registry.certificates, recent, writes=config.management_writes
             ).items():
                 deleting.setdefault(identifier, state)
         overview = certificates.with_deletion_states(overview, deleting)
@@ -810,7 +810,9 @@ def build_router(config: Config) -> APIRouter:
                 "accept": certificate_import_form.ACCEPT,
                 "max_kb": certificate_import_form.MAX_UPLOAD_BYTES // 1024,
                 "sealing_available": read_dns_public_key(config) is not None,
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -1067,7 +1069,9 @@ def build_router(config: Config) -> APIRouter:
                 "choices": choices,
                 "key_types": certificate_form.KEY_TYPE_LABELS,
                 "problem": problem,
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -1127,7 +1131,9 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "selection": picked,
                 "problem": problem,
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -1166,7 +1172,9 @@ def build_router(config: Config) -> APIRouter:
                 if renewal is not None
                 else "/certificates?view=registry",
                 "problem": problem,
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "settings"
                 if renewal is not None and renewal.row.interface
                 else "certificates",
@@ -1293,7 +1301,9 @@ def build_router(config: Config) -> APIRouter:
                 if row is not None
                 else "/certificates?view=registry",
                 "problem": problem,
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -1418,7 +1428,9 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "selection": picked,
                 "problem": problem,
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,

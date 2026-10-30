@@ -511,7 +511,7 @@ def stored_only(
 OBJECT_PUBLISHES = frozenset({"changes_publish"})
 
 
-def names_being_published(jobs: Iterable[Job], *, writes: bool = True) -> dict[str, InFlight]:
+def names_being_published(jobs: Iterable[Job], *, writes: bool) -> dict[str, InFlight]:
     """Objects with a publish job that has not finished, and how that job is drawn.
 
     Read from the payload rather than from a column, because the job table has

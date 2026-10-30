@@ -1171,7 +1171,7 @@ def build_router(config: Config) -> APIRouter:
         if servers is not None or blocked_card is not None:
             with request.app.state.pool.connection() as connection:
                 recent = db.recent_jobs(connection, cluster=cluster)
-            cluster_busy = jobs.in_flight(recent).get(cluster)
+            cluster_busy = jobs.in_flight(recent, writes=config.management_writes).get(cluster)
             #
             # The queue takes one job per cluster, so while any runs both
             # cards lose their buttons; the spinner says what runs on the card

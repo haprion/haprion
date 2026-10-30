@@ -115,7 +115,9 @@ def build_router(config: Config) -> APIRouter:
                 "just_removed": _just_removed(request, [profile.id for profile in profiles]),
                 "public_key": public_key,
                 "refresh": any(s.label in {"Applying", "Removing"} for s in statuses.values()),
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -181,7 +183,9 @@ def build_router(config: Config) -> APIRouter:
                 "role": gate.role,
                 "csrf_token": auth.csrf_token(token),
                 "profile": existing,
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -419,7 +423,9 @@ def build_router(config: Config) -> APIRouter:
                 "existing": existing,
                 "public_key": read_dns_public_key(config),
                 "problem": problem,
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -896,7 +902,9 @@ def build_router(config: Config) -> APIRouter:
                 "role": gate.role,
                 "csrf_token": auth.csrf_token(token),
                 "profile": existing,
-                "certificate_job": jobs.certificate_in_flight(recent),
+                "certificate_job": jobs.certificate_in_flight(
+                    recent, writes=config.management_writes
+                ),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,

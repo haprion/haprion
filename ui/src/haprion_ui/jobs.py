@@ -1205,7 +1205,7 @@ def build_job_overview(
     awaiting: frozenset[str] = frozenset(),
     diagnostics: bool = False,
     judged: list[Job] | None = None,
-    writes: bool = True,
+    writes: bool,
 ) -> JobOverview:
     """Build one bounded, newest-first operation history from database rows.
 
@@ -1540,7 +1540,7 @@ class InFlight:
         return self.not_finishing is None
 
 
-def busy_with(job: Job, now: datetime | None = None, *, writes: bool = True) -> InFlight:
+def busy_with(job: Job, now: datetime | None = None, *, writes: bool) -> InFlight:
     """What a pending or running job is called and how it is drawn, by one rule."""
 
     moment = now or datetime.now(UTC)
@@ -1549,7 +1549,7 @@ def busy_with(job: Job, now: datetime | None = None, *, writes: bool = True) -> 
     return InFlight(running_label(job, moment, writes=writes), sentence, tone, job.id)
 
 
-def certificate_in_flight(jobs: Iterable[Job], *, writes: bool = True) -> InFlight | None:
+def certificate_in_flight(jobs: Iterable[Job], *, writes: bool) -> InFlight | None:
     """What the one certificate slot is busy with, if anything.
 
     The counterpart of `in_flight` for jobs that belong to no cluster. The
@@ -1565,7 +1565,7 @@ def certificate_in_flight(jobs: Iterable[Job], *, writes: bool = True) -> InFlig
 
 
 def in_flight(
-    jobs: Iterable[Job], operations: Collection[str] | None = None, *, writes: bool = True
+    jobs: Iterable[Job], operations: Collection[str] | None = None, *, writes: bool
 ) -> dict[str, InFlight]:
     """What each cluster is busy with, by cluster - or only with these operations.
 
@@ -1635,7 +1635,7 @@ NO_WORKER_AFTER = timedelta(minutes=50)
 NO_WORKER = "No worker"
 
 
-def no_worker(job: Job, now: datetime, *, writes: bool = True) -> bool:
+def no_worker(job: Job, now: datetime, *, writes: bool) -> bool:
     """Running, not held, and no worker has held its lease for `NO_WORKER_AFTER`.
 
     Nor any other job meanwhile: a worker that runs one under a living lease is
@@ -1681,7 +1681,7 @@ def not_taken(job: Job, now: datetime, *, writes: bool, pause: object | None) ->
     )
 
 
-def not_finishing(job: Job | None, now: datetime, *, writes: bool = True) -> str | None:
+def not_finishing(job: Job | None, now: datetime, *, writes: bool) -> str | None:
     """The sentence for a queue's job that does not finish by itself, or None."""
 
     if job is None:
@@ -1693,7 +1693,7 @@ def not_finishing(job: Job | None, now: datetime, *, writes: bool = True) -> str
     return None
 
 
-def running_label(job: Job, now: datetime | None = None, *, writes: bool = True) -> str:
+def running_label(job: Job, now: datetime | None = None, *, writes: bool) -> str:
     """What a cluster's job is called while it is pending or running.
 
     A job held after a restart waits for an administrator's Run or Discard, and

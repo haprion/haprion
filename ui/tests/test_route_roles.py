@@ -3,7 +3,7 @@
 The role check is written by hand in each handler - 117 routes, five gate
 functions and the rest inline - so a route that forgot it would be found by
 nobody. These walk every route the application has and ask it the way the
-browser would: every form field filled, the CSRF token valid. A new route that
+browser would: every form field filled, the CSRF token valid - or, for the admin, wrong. A new route that
 lets a reader write, or shows a page without a sign-in, fails here until it is
 named below with its reason.
 """
@@ -14,6 +14,7 @@ import re
 import unittest
 from dataclasses import replace
 from typing import Any
+from unittest import mock
 
 from haprion_ui import auth
 from tests.test_login import LoginTestCase, configuration
@@ -38,6 +39,14 @@ PUBLIC = {
     "/status/metrics": 404,
     "/healthz": 503,
 }
+
+
+#
+# What does not answer 403 to a post with the wrong token: the sign-out, which
+# asks again before it ends anything, and the removal of a proxy, which refuses
+# with a page of its own (400).
+#
+REFUSED_ITS_OWN_WAY = {"/logout": 200, "/proxies/{cluster}/{name}/remove": 400}
 
 
 def routes(found: list[Any], out: list[Any]) -> list[Any]:
@@ -104,6 +113,48 @@ class EveryRouteAnswersAsTheRoleAllows(LoginTestCase):
 
         self.assertGreater(len(answered), 50)
         self.assertEqual({path: code for path, code in answered.items() if code != 403}, {})
+
+    def test_an_admin_s_post_without_the_session_s_token_does_nothing(self) -> None:
+        """Review 26-10-30, E5: the CSRF check is written by hand in each route, in
+        a different order in each. A route that forgot it lets a page on another
+        site write as the signed-in admin, and every other walk here would stay green."""
+
+        client = self.app_client()
+        self.assertEqual(self.sign_in(client).status_code, 303)
+        own = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        other = auth.csrf_token(auth.new_session_token())
+        self.assertNotEqual(own, other)
+
+        #
+        # A token that is only wrong: an empty one is the framework's refusal of
+        # a missing field, which never reaches the route's own check.
+        #
+        answered: dict[str, int] = {}
+        #
+        # The two replace forms look the profile up before they check the token;
+        # a profile for them to find, and no more.
+        #
+        with (
+            mock.patch("haprion_ui.db.queue_job") as queued,
+            mock.patch("haprion_ui.db.dns_profile", return_value=mock.Mock()),
+            mock.patch("haprion_ui.db.ndes_profile", return_value=mock.Mock()),
+        ):
+            for route in routes(client.app.routes, []):
+                if "POST" not in route.methods or route.path == "/login":
+                    continue
+                data, files = form(route, other)
+                audit_before = len(self.audit)
+                response = client.post(
+                    concrete(route), data=data, files=files or None, follow_redirects=False
+                )
+                self.assertEqual(len(self.audit), audit_before, f"{route.path} wrote an audit row")
+                answered[route.path] = response.status_code
+
+        queued.assert_not_called()
+        self.assertGreater(len(answered), 50)
+        self.assertEqual(
+            {path: code for path, code in answered.items() if code != 403}, REFUSED_ITS_OWN_WAY
+        )
 
     def test_nothing_answers_an_anonymous_visitor_but_the_public_routes(self) -> None:
         client = self.app_client()

@@ -2930,9 +2930,9 @@ overwrite something real. Then it compares the result with what the archive hold
 - **The schema version.** The restored database must hold it. It is the one row every installation
   has, including a new one with no account yet. A dump `haprion-backup restore` would refuse fails the
   check, and one it would migrate says so.
-- **One row read back in full.** The oldest local account's password hash must still be a valid
-  Argon2id hash, because counts can match while the contents are unusable. OIDC accounts have no hash
-  and are not read.
+- **One row compared whole.** The oldest local account's password hash, as the restored database holds
+  it, must be identical to the same row in the archive, because counts can match while the contents are
+  unusable. OIDC accounts have no hash and are not read.
 
 Any mismatch fails the unit. The scratch database is dropped either way.
 

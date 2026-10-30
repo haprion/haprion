@@ -149,39 +149,60 @@ class TheRestoredHashIsALocalAccounts(unittest.TestCase):
     oldest account was OIDC failed every restore check of a sound dump.
     """
 
-    def checked(self, answer: str) -> subprocess.CompletedProcess[str]:
+    HASH = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"
+
+    def checked(self, answer: str, archived: str | None = None) -> subprocess.CompletedProcess[str]:
+        """The restored row is `answer`; the archive holds `archived` (the same, if not given)."""
+
+        archived = answer if archived is None else archived
         source = SCRIPT.read_text()
+        copy = (
+            "COPY public.app_user (id, username, password_hash, role, source) FROM stdin;\n"
+            "2\tolder-oidc\t\\N\tviewer\toidc\n"
+            f"7\tadmin\t{archived}\tadmin\tlocal\n"
+            "9\toperator\t$argon2id$other\tadmin\tlocal\n"
+            "\\.\n"
+            if archived
+            else "COPY public.app_user (id, username, password_hash, role, source) FROM stdin;\n"
+            "\\.\n"
+        )
         program = (
             "set -Eeuo pipefail\n"
             'log() { echo "$*"; }\n'
             'die() { echo "ERROR: $*" >&2; exit 1; }\n'
             'psql_scratch() { printf "%s\\n" "$*" >&2; printf "%s" "$ANSWER"; }\n'
+            'pg_restore() { printf "%b" "$COPY"; }\n'
+            + function("archive_local_hash", source)
             + function("restored_hash_intact", source)
-            + "restored_hash_intact scratch\n"
+            + "restored_hash_intact scratch archive\n"
         )
         return subprocess.run(  # noqa: S603 - fixed program
             ["/bin/bash", "-c", program],
             capture_output=True,
             text=True,
             check=False,
-            env={**os.environ, "ANSWER": answer},
+            env={**os.environ, "ANSWER": answer, "COPY": copy},
         )
 
     def test_only_a_local_account_is_read(self) -> None:
-        done = self.checked("$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA")
+        done = self.checked(self.HASH)
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertIn("where source = 'local'", done.stderr)
-        self.assertIn("a restored password hash is intact", done.stdout)
+        self.assertIn("where id = 7", done.stderr)
+        self.assertIn("matches the archive", done.stdout)
 
     def test_no_local_account_is_not_a_failure(self) -> None:
-        done = self.checked("")
+        done = self.checked("", "")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("no local account", done.stdout)
 
-    def test_a_local_hash_that_is_not_argon2id_fails(self) -> None:
-        done = self.checked("plain")
+    def test_a_hash_cut_short_after_its_prefix_fails(self) -> None:
+        done = self.checked("$argon2id$x", self.HASH)
         self.assertEqual(done.returncode, 1)
-        self.assertIn("is not Argon2id", done.stderr)
+        self.assertIn("differs from the archive", done.stderr)
+
+    def test_a_hash_that_is_not_the_archives_fails(self) -> None:
+        done = self.checked(self.HASH.replace("aGFzaA", "b3RoZXI"), self.HASH)
+        self.assertEqual(done.returncode, 1)
 
 
 class OneRunAtATime(unittest.TestCase):

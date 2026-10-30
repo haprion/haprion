@@ -865,6 +865,24 @@ class TrafficCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(CollectorError, "mirror must be absolute"):
             load_config(path, require_secure=False)
 
+    def test_configuration_refuses_names_that_carry_the_file_separator(self) -> None:
+        """Review 2026-10-30, E4: `x--y` made node `x`'s cleanup delete its parts."""
+
+        path = Path(self.temporary.name) / "collector.json"
+        for cluster, node in (("alpha", "x--y"), ("alpha--b", "node-a"), ("alpha", "node-")):
+            value = {
+                "schema_version": 1,
+                "user": "svc-logread",
+                "key": "/etc/key",
+                "known_hosts": "/etc/known_hosts",
+                "mirror": "/srv/logs/mirror",
+                "staging": "/srv/logs/staging",
+                "nodes": [{"cluster": cluster, "node": node, "host": "node-a.example.com"}],
+            }
+            path.write_text(json.dumps(value))
+            with self.subTest(cluster=cluster, node=node), self.assertRaises(CollectorError):
+                load_config(path, require_secure=False)
+
     def test_missing_or_symlinked_working_directory_is_refused(self) -> None:
         self.staging.rmdir()
         with self.assertRaisesRegex(CollectorError, "cannot stat staging"):

@@ -18,7 +18,13 @@ from haprion import accounts, address_ranges, exit_codes, labels, safe_yaml
 
 DEFAULT_POLICY_PATH = Path("/etc/haprion/runtime-policy.yaml")
 MAX_CONFIG_BYTES = 1024 * 1024
-CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+#
+# No `--` and no trailing `-` in a cluster ID or a node name: the traffic
+# collector files a node's data as `<cluster>--<node>--<day>`, and a name that
+# carries the separator lets one node's cleanup take another's files (review
+# 2026-10-30, E4).
+#
+CLUSTER_ID = re.compile(r"^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){0,62}$")
 
 #
 # What a cluster's single VIP is called when it has never had to be named.
@@ -50,6 +56,7 @@ ABUSE_WINDOW = re.compile(r"^[1-9][0-9]{0,3}(s|m)$")
 DEFAULT_ABUSE_WINDOW = "10s"
 NODE_PATH = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+NODE_NAME = CLUSTER_ID
 #
 # How many nodes one cluster may have. keepalived sets no limit - one VRRP
 # instance shares its addresses between any number of nodes by priority - so
@@ -1775,7 +1782,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             raw_node = _mapping(raw_node_value, node_location)
             _only_keys(raw_node, {"name", "mgmt_host"}, node_location)
             name = _required_string(raw_node, "name", node_location)
-            if not NAME.fullmatch(name):
+            if not NODE_NAME.fullmatch(name):
                 raise ConfigError(f"{node_location}.name is invalid")
             nodes.append(
                 Node(

@@ -16,6 +16,7 @@ import yaml
 
 from haprion.cli.cluster_config import main as cluster_config_main
 from haprion.config import (
+    CLUSTER_ID,
     AbuseProtection,
     Cluster,
     ConfigError,
@@ -128,6 +129,26 @@ class ConfigTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ConfigError, "unique names"), self.temporary_runtime(mutate):
             pass
+
+    def test_a_name_cannot_carry_the_separator_the_traffic_files_use(self) -> None:
+        """Review 2026-10-30, E4: `<cluster>--<node>--<day>` is split by prefix,
+        so a node named `x--y` made `x`'s cleanup delete its files."""
+
+        for name in ("node--a", "node-", "a---b"):
+
+            def mutate(data: dict[str, Any], name: str = name) -> None:
+                data["clusters"]["alpha"]["nodes"][1]["name"] = name
+
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(ConfigError, "name is invalid"),
+                self.temporary_runtime(mutate),
+            ):
+                pass
+        for cluster in ("al--pha", "alpha-", "alpha--b"):
+            self.assertIsNone(CLUSTER_ID.fullmatch(cluster), cluster)
+        for cluster in ("alpha", "alpha-b", "a-b-c1"):
+            self.assertIsNotNone(CLUSTER_ID.fullmatch(cluster), cluster)
 
     def test_a_cluster_has_between_one_and_eight_nodes(self) -> None:
         def nodes(count: int) -> Mutate:

@@ -71,7 +71,7 @@ CLOSED_DAY_GRACE = timedelta(minutes=5)
 #
 FETCH_BUDGET_SECONDS = 30.0
 DATABASE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
-NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+NODE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.]|-(?=[A-Za-z0-9_.])){0,63}$")
 USER = re.compile(r"^[a-z_][a-z0-9_-]{0,30}$")
 HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$")
 

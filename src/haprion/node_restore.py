@@ -955,10 +955,11 @@ def overwrite_checks(cluster_id: str, cluster: Cluster, policy: PathPolicy) -> O
 
     def standing(name: str) -> Standing:
         others = [node.name for node in cluster.nodes if node.name != name]
-        neighbour = others[0] if len(others) == 1 else ", ".join(others)
         identity = policy.status_identity
         if identity is None:
-            return Standing(None, neighbour, False, "no status_identity in the runtime policy")
+            return Standing(
+                None, ", ".join(others), False, "no status_identity in the runtime policy"
+            )
         report = collect(
             cluster.nodes, lambda node: ask_node(node, identity), target=None, vip=cluster.vip
         )
@@ -966,20 +967,32 @@ def overwrite_checks(cluster_id: str, cluster: Cluster, policy: PathPolicy) -> O
             parsed = parse_status(report.as_envelope(cluster_id, request_id=new_request_id()))
             own = parsed.node(name).owns_vip
         except StatusError as exc:
-            return Standing(None, neighbour, False, str(exc))
+            return Standing(None, ", ".join(others), False, str(exc))
         raw = {entry["name"]: entry for entry in report.result.get("nodes", [])}
-        entry = raw.get(neighbour) or {}
-        status = entry.get("status") or {}
-        haproxy = bool((status.get("haproxy") or {}).get("active"))
-        keepalived = bool((status.get("keepalived") or {}).get("active"))
-        healthy = bool(entry.get("status_ok")) and haproxy and keepalived
-        detail = (
-            ""
-            if healthy
-            else f"reachable {bool(entry.get('reachable'))}, HAProxy active {haproxy}, "
-            f"keepalived active {keepalived}"
-        )
-        return Standing(own, neighbour, healthy, detail)
+
+        def reading(other: str) -> tuple[bool, str]:
+            entry = raw.get(other) or {}
+            status = entry.get("status") or {}
+            haproxy = bool((status.get("haproxy") or {}).get("active"))
+            keepalived = bool((status.get("keepalived") or {}).get("active"))
+            if bool(entry.get("status_ok")) and haproxy and keepalived:
+                return True, ""
+            return False, (
+                f"{other}: reachable {bool(entry.get('reachable'))}, HAProxy active {haproxy}, "
+                f"keepalived active {keepalived}"
+            )
+
+        #
+        # Any one other node that serves can take the VIP: the pair is the
+        # node and the rest, however many the rest are. The names shown are
+        # the ones that can; when none can, all of them, with why.
+        #
+        readings = {other: reading(other) for other in others}
+        healthy = [other for other, (good, _) in readings.items() if good]
+        if healthy:
+            return Standing(own, ", ".join(healthy), True, "")
+        detail = "; ".join(why for _, why in readings.values())
+        return Standing(own, ", ".join(others), False, detail)
 
     return OverwriteChecks(backup=backup, standing=standing)
 

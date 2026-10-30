@@ -969,6 +969,57 @@ class Status(Timed):
         self.assertIn("never began writing", text.getvalue())
 
 
+class TheNeighbourCheckIsForAnyNumberOfNodes(unittest.TestCase):
+    """A cluster of three joined its other two into one name no node has, so a healthy
+    pair read as sick and the run asked for a tick that was not true."""
+
+    @staticmethod
+    def standing(sick: frozenset[str] = frozenset()) -> node_restore.Standing:
+        names = ("node-a", "node-b", "node-c")
+
+        def entry(name: str) -> dict[str, Any]:
+            up = name not in sick
+            return {
+                "name": name,
+                "status_ok": up,
+                "reachable": up,
+                "status": {"haproxy": {"active": up}, "keepalived": {"active": up}},
+            }
+
+        report = mock.Mock()
+        report.result = {"nodes": [entry(name) for name in names]}
+        cluster = SimpleNamespace(nodes=tuple(SimpleNamespace(name=n) for n in names), vip="x")
+        policy = SimpleNamespace(status_identity=object())
+        with (
+            mock.patch.object(node_restore, "collect", return_value=report),
+            mock.patch.object(
+                node_restore,
+                "parse_status",
+                return_value=SimpleNamespace(
+                    node=lambda name: SimpleNamespace(owns_vip=name == "node-a")
+                ),
+            ),
+        ):
+            checks = node_restore.overwrite_checks("alpha", cluster, policy)  # type: ignore[arg-type]
+            return checks.standing("node-a")
+
+    def test_two_healthy_neighbours_are_healthy(self) -> None:
+        standing = self.standing()
+        self.assertTrue(standing.neighbour_healthy, standing)
+        self.assertEqual(standing.neighbour, "node-b, node-c")
+
+    def test_one_sick_neighbour_leaves_the_other_to_take_the_vip(self) -> None:
+        standing = self.standing(frozenset({"node-b"}))
+        self.assertTrue(standing.neighbour_healthy, standing)
+        self.assertEqual(standing.neighbour, "node-c")
+
+    def test_no_healthy_neighbour_says_why_for_each(self) -> None:
+        standing = self.standing(frozenset({"node-b", "node-c"}))
+        self.assertFalse(standing.neighbour_healthy)
+        self.assertIn("node-b: reachable False", standing.detail)
+        self.assertIn("node-c: reachable False", standing.detail)
+
+
 class Cli(unittest.TestCase):
     def test_usage_errors_are_64(self) -> None:
         errors = io.StringIO()

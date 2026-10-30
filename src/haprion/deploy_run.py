@@ -459,13 +459,20 @@ def run(
 
         if code != 0:
             entry.outcome = "failed"
+            #
+            # Said when the reading afterwards shows the node on the target
+            # anyway: the failure is then in what it did besides, and the
+            # operator should not go looking for a release that did not land.
+            #
+            runs_target = " (the node nonetheless runs the target release)" if landed else ""
             entry.error = Message(
                 code="trigger_failed",
-                message=f"the deploy trigger failed with exit {code}",
+                message=f"the deploy trigger failed with exit {code}{runs_target}",
                 node=node_name,
             )
             writer.write(
-                f"\nERROR: the deploy trigger failed on {node_name} with exit {code}.\n"
+                f"\nERROR: the deploy trigger failed on {node_name} with exit {code}"
+                f"{runs_target}.\n"
                 "The status was read again and the remaining nodes were not touched.\n"
             )
         elif landed is False:

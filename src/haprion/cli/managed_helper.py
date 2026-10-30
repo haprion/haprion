@@ -131,13 +131,16 @@ class Change:
     a no-op - a removal asked twice is a removal of something that is gone.
 
     `named` is added to the result, for a helper whose version is worth naming
-    in more words than a hash.
+    in more words than a hash. `on_retry` adds what `apply` would have named
+    that can be said without applying anything, so a retry's result is not
+    quieter than the first run's.
     """
 
     expected_head: str
     comment: str
     apply: Callable[[Mapping[str, bytes]], Mapping[str, bytes]]
     named: Mapping[str, Any] = field(default_factory=dict)
+    on_retry: Callable[[], Mapping[str, Any]] | None = None
 
 
 class Refuse:
@@ -307,11 +310,16 @@ def _publish(
 
     if retry:
         snapshot = committed_snapshot(repo, head)
+        named: Mapping[str, Any] = {
+            **change.named,
+            **(change.on_retry() if change.on_retry else {}),
+        }
     else:
         try:
             managed = change.apply(read_tree_files(repo, head))
         except Refusal as exc:
             return refuse(exc.code, str(exc), exc.exit_code)
+        named = dict(change.named)
         snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
     published_files = read_tree_files(repo, snapshot.tree)
     artifact = build_node_artifact(published_files)
@@ -472,7 +480,7 @@ def _publish(
                 comment=change.comment,
                 release=str(installed.release),
                 already_current=installed.already_current,
-                named=change.named,
+                named=named,
             ),
         ),
         0,

@@ -230,6 +230,22 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             "settings": settings is not None,
         }
 
+        def unresolved_servers() -> list[str]:
+            return server_names.unresolved(
+                load_proxy(name, document)
+                for name, document in objects.items()
+                if document is not None
+            )
+
+        def on_retry() -> Mapping[str, Any]:
+            #
+            # A retry applies nothing, so nothing was looked up and nothing was
+            # checked against the nodes; the server names are the request's own
+            # and can be read again (review 26-10-30). `ports_unchecked` is the
+            # first run's, and a retry has no way to know it.
+            #
+            return {"unresolved_servers": unresolved_servers()} if objects else {}
+
         def apply(base_files: Mapping[str, bytes]) -> Mapping[str, bytes]:
             #
             # Each document the package carries is read on its own first, so a
@@ -303,11 +319,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             # Read once the objects have been accepted above.
             #
             if objects:
-                named["unresolved_servers"] = server_names.unresolved(
-                    load_proxy(name, document)
-                    for name, document in objects.items()
-                    if document is not None
-                )
+                named["unresolved_servers"] = unresolved_servers()
             return files
 
         return Change(
@@ -320,6 +332,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             # and, filled in by `apply`, the nodes whose ports were not checked.
             #
             named=named,
+            on_retry=on_retry,
         )
 
     return change

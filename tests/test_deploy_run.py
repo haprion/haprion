@@ -469,6 +469,30 @@ class ReloadFailureTests(unittest.TestCase):
         self.assertIn("RESULT: FAILED", shown)
         self.assertIn("the deploy trigger failed on node-b", shown)
 
+    def test_a_trigger_that_fails_on_a_node_that_runs_the_target_says_so(self) -> None:
+        """Review 26-10-30, kosmetik: not a bare "failed" about a release that did land."""
+
+        cluster = pair()
+        original = cluster.trigger
+
+        def trigger(name: str) -> int:
+            original(name)
+            return 1
+
+        out = io.StringIO()
+        result = deploy_run.run(
+            lambda: parse_status(cluster.read_status()),
+            lambda node: trigger(node.name),
+            out,
+            target=TARGET,
+            pause=lambda seconds: None,
+        )
+
+        self.assertIn("nonetheless runs the target release", out.getvalue())
+        self.assertIn(
+            "nonetheless runs the target release", result.report.nodes["node-b"].error.message
+        )
+
     def test_a_failing_reload_leaves_the_node_on_what_it_had(self) -> None:
         cluster = pair()
         cluster.node("node-b").reload_fails = True

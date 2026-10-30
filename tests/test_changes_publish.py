@@ -131,6 +131,24 @@ class ChangesPublishTests(ObjectsPublishFixture):
             self.assertEqual(published["result"]["unresolved_servers"], ["typo.example.com"])
             self.assertTrue((self.repo / "managed/proxies/shop.yaml").exists())
 
+    def test_a_retry_names_the_unresolved_servers_as_the_first_run_did(self) -> None:
+        """Review 26-10-30, kosmetik: the retry's page said less than the first run's."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            document = proxy("shop", "shop.example.com", address="typo.example.com")
+            sent = self.changes(objects={"shop": document}).getvalue()
+            with mock.patch(
+                "haprion.server_names.resolves", side_effect=lambda host: host != "typo.example.com"
+            ):
+                self.publish(policy, io.BytesIO(sent))
+                code, published, err = self.publish(policy, io.BytesIO(sent))
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertFalse(published["result"]["changed"])
+            self.assertEqual(published["result"]["unresolved_servers"], ["typo.example.com"])
+
     def test_a_dependency_that_cannot_be_read_under_the_lock_is_named_as_one(self) -> None:
         """Review 26-10-24, 06-07: a configuration failure under the lock is not the request's."""
 

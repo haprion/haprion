@@ -589,6 +589,19 @@ class RestoreSchemaCommandTests(unittest.TestCase):
                 with self.subTest(revision=revision):
                     self.assertEqual(self.ask(root, revision), (0, f"migrate {head} new\n"))
 
+    def test_a_number_between_two_revisions_as_text_is_not_a_revision(self) -> None:
+        """Review 26-10-30, R5: 01020 sorts between 0100 and 0103; no migration takes it."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.installed(root)
+            for revision in ("01020", "0100999", "010", "0099"):
+                with self.subTest(revision=revision):
+                    code, said = self.ask(root, revision)
+                    self.assertEqual(code, 1)
+            self.assertIn("has no migration from 01020", self.ask(root, "01020")[1])
+            self.assertIn("has no migration from 0100999", self.ask(root, "0100999")[1])
+
     def test_a_dump_at_the_head_is_restored_as_it_is_and_an_older_one_migrated(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -1452,6 +1465,17 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
                 self.fail(f"{path.name} declares no revision")
             found[revision.group(1)] = down.group(1) if down and down.group(1) else None
         return found
+
+    def test_the_migrations_are_consecutive_four_digit_numbers(self) -> None:
+        """Review 26-10-30, R5: `restore_schema` takes every number between baseline and head."""
+
+        found = self.revisions()
+        for revision, down in found.items():
+            with self.subTest(revision=revision):
+                self.assertRegex(revision, r"^[0-9]{4}$")
+                if down is not None:
+                    self.assertEqual(down, f"{int(revision) - 1:04d}")
+        self.assertEqual(sum(down is None for down in found.values()), 1)
 
     def head(self) -> str:
         found = self.revisions()

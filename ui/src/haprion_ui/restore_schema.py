@@ -48,16 +48,27 @@ def plan(root: Path, packaged: str, revision: str) -> tuple[str, str]:
         raise CompatibilityError(f"{dump}: {refusal}")
     #
     # A dump migrates from any revision between the baseline and the head: the
-    # migrations are one chain. The revisions a release runs on are fewer -
-    # from the oldest the code still reads - and the dump is not run on, it is
-    # migrated first.
+    # migrations are one chain of consecutive numbers, each as long as the
+    # head's (a test holds them to it). The revisions a release runs on are
+    # fewer - from the oldest the code still reads - and the dump is not run
+    # on, it is migrated first. A number that is not one of them - "01020" and
+    # "0100999" sort between two real ones as text - is refused before any
+    # service is stopped (review 2026-10-30, R5).
     #
     baseline = release.database_baseline
     migrates = revision in release.database_revisions or (
-        baseline is not None and is_digits(revision) and baseline <= revision < head
+        baseline is not None
+        and is_digits(revision)
+        and len(revision) == len(head)
+        and int(baseline) <= int(revision) < int(head)
     )
     if not migrates:
-        if is_digits(revision) and is_digits(head) and int(revision) > int(head):
+        if (
+            is_digits(revision)
+            and is_digits(head)
+            and len(revision) == len(head)
+            and int(revision) > int(head)
+        ):
             raise CompatibilityError(
                 f"{dump}: it comes from a newer release, and no migration goes back"
             )

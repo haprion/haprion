@@ -67,6 +67,9 @@ def build_schedule_request(
     return _document(SCHEDULE, cluster, request_id, {**schedule.as_dict(), "enabled": enabled})
 
 
+STORAGE_CODES = frozenset({"backup_storage_failed"})
+
+
 def _node_message(node: state_backup.NodeResult) -> str:
     detail = f": {node.detail}" if node.detail else ""
     if node.error == "backup_storage_failed":
@@ -82,11 +85,17 @@ def run_document(
     """One backup run as its envelope and exit code: the helper's, and `haprion-state-backup --json`'s."""
 
     flagged = tuple(node for node in report.nodes if node.error)
-    error = (
-        Message(code="backup_failed", message="No node produced a valid state archive")
-        if report.outcome == "failed"
-        else None
+    #
+    # When every node failed the same way, the way is the answer: a full backup
+    # volume on the manager fails them all, and the nodes are not where to look.
+    #
+    codes = {node.error for node in flagged}
+    said = (
+        _node_message(flagged[0])
+        if report.outcome == "failed" and len(codes) == 1 and codes <= STORAGE_CODES
+        else "No node produced a valid state archive"
     )
+    error = Message(code="backup_failed", message=said) if report.outcome == "failed" else None
     warnings = tuple(
         Message(
             code=node.error or "backup_failed",

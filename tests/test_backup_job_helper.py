@@ -136,6 +136,24 @@ class BackupJobHelperTests(unittest.TestCase):
         self.assertIn("manager", warning["message"])
         self.assertNotIn("valid state archive", warning["message"])
 
+    def test_every_node_on_a_full_volume_says_the_manager_in_the_error(self) -> None:
+        report = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            tuple(
+                NodeResult(name, "failed", None, None, "backup_storage_failed", "No space left")
+                for name in ("node-a", "node-b")
+            ),
+        )
+        document, _ = backup_job_helper.run_document(
+            report, cluster="alpha", request_id=str(uuid4())
+        )
+
+        self.assertEqual(document["outcome"], "failed")
+        message = cast(dict[str, str], document["error"])["message"]
+        self.assertIn("manager", message)
+        self.assertNotIn("valid state archive", message)
+
     def test_schedule_change_uses_only_the_bounded_schedule_and_switch(self) -> None:
         request_id = str(uuid4())
         requested = Schedule("04:30", "weekly", ("Tue", "Thu"), None, 30)

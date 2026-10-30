@@ -609,6 +609,15 @@ class TheErrorCodeReachesThePage(LoginTestCase):
         quiet = job(state="done", outcome="done", result=warned, operation="cert_issue")
         self.assertNotIn("vip_not_owned", self.page([replace(quiet, cluster=None)]))
 
+    def test_a_backup_that_could_not_prune_says_so_on_the_page(self) -> None:
+        said = {
+            "warnings": [
+                {"code": "backup_retention_failed", "message": "The old ones could not be pruned"}
+            ]
+        }
+        body = self.page([job(state="done", outcome="done", result=said, operation="backup_run")])
+        self.assertIn("Warning:</span> <code>backup_retention_failed</code>", body)
+
     def test_what_the_worker_says_about_the_job_is_shown_whatever_its_step(self) -> None:
         """Review 26-10-29, B3 and O08: written by the worker and stored, and never drawn."""
 

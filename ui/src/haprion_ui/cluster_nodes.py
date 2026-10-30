@@ -39,6 +39,8 @@ class NodeRow:
     reachable: bool
     # Added and not answered yet (B329), as the poller marks it.
     joining: bool = False
+    # Gave a usable status: reachable alone also covers a command that failed on it.
+    answered: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +144,7 @@ def _nodes(result: Mapping[str, Any] | None) -> list[NodeRow]:
                 owner=vip.get("owner") is True,
                 reachable=bool(entry.get("reachable")),
                 joining=entry.get("joining") is True,
+                answered=entry.get("status_ok") is True and bool(status),
             )
         )
     return sorted(rows, key=lambda row: row.name)

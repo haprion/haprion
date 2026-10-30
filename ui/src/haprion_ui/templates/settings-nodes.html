@@ -33,7 +33,7 @@
       <tr>
         <td data-label="Node"><strong>{{ node.name }}</strong></td>
         <td data-label="Host">{{ node.host }}</td>
-        <td data-label="VIP">{% if node.owner %}Owner{% elif node.reachable %}Standby{% elif node.joining %}Joining{% else %}Not reporting{% endif %}</td>
+        <td data-label="VIP">{% if node.owner %}Owner{% elif node.answered %}Standby{% elif node.joining %}Joining{% else %}Not reporting{% endif %}</td>
         <td data-label=""><div class="row-actions">{% if not running %}<form method="post" action="/settings/nodes/{{ cluster }}/host" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="node" value="{{ node.name }}"><button type="submit" class="secondary-button">Change host</button></form>{% endif %}{% if not running and node.name in removable_nodes %}<form method="post" action="/settings/nodes/{{ cluster }}/remove" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="node" value="{{ node.name }}"><button type="submit" class="secondary-button">Remove</button></form>{% endif %}</div></td>
       </tr>
       {% endfor %}

@@ -203,6 +203,28 @@ class HealthDerivation(unittest.TestCase):
                 self.assertEqual(view.clusters[0].nodes[0].prepare_pending, pending)
                 self.assertFalse(view.clusters[0].nodes[1].prepare_pending)
 
+    def test_a_joining_node_whose_command_fails_is_joining_not_invalid(self) -> None:
+        """Review 26-10-30, R2: step 4 has no sudo in place yet, so the command exits 1."""
+
+        status = reading("done-single-owner.json")
+        nodes = [dict(node) for node in status.result["nodes"]]
+        nodes[0] = {
+            **nodes[0],
+            "reachable": True,
+            "status_ok": False,
+            "status": None,
+            "joining": True,
+            "error": {
+                "code": "node_status_invalid",
+                "message": "the status command failed on the node (exit 1): sudo: a password",
+                "node": nodes[0]["name"],
+                "details": None,
+            },
+        }
+        view = self.dashboard(replace(status, result={**status.result, "nodes": nodes}))
+        shown = view.clusters[0].nodes[0]
+        self.assertEqual((shown.label, shown.tone), ("Joining", "unknown"))
+
     def test_a_node_whose_status_command_failed_shows_what_failed(self) -> None:
         """Review 2026-10-30, E3."""
 

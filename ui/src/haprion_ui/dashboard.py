@@ -381,10 +381,11 @@ def _node_view(
     management_host = _text(node.get("mgmt_host"), "—")
     current = node.get("current") if isinstance(node.get("current"), bool) else None
 
-    if node.get("reachable") is not True and node.get("joining") is True:
+    if node.get("status_ok") is not True and node.get("joining") is True:
         #
-        # Added, and not answered yet (B329): the poller marks it, since the
-        # status helper only sees that the connection failed.
+        # Added, and not answered yet (B329): the poller marks it. A command that
+        # fails on a node still being prepared is not an answer either (review
+        # 2026-10-30, R2), the rule `node_events.compare` follows.
         #
         return NodeView(
             name=name,

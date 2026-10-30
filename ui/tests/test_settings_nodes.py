@@ -105,6 +105,33 @@ class ThePage(NodesPage):
             self.client_for(writes=False).get("/settings/nodes/edge-demo").status_code, 404
         )
 
+    def test_a_node_whose_command_failed_is_not_a_standby(self) -> None:
+        """Review 26-10-30, R2: reachable also covers a failed command; Standby needs a status."""
+
+        def failed(row: Any, joining: bool) -> Any:
+            if row.cluster != "edge-demo":
+                return row
+            result = copy.deepcopy(dict(row.result))
+            node = result["nodes"][1]
+            node.update(reachable=True, status_ok=False, status=None, joining=joining)
+            return replace(row, result=result)
+
+        def vip_cell(page: str) -> str:
+            return (
+                page.split("<strong>edge-b</strong>")[1]
+                .split('data-label="VIP">')[1]
+                .split("</td>")[0]
+            )
+
+        self.rows = [failed(row, False) for row in demo.status_rows(NOW)]
+        self.assertEqual(
+            vip_cell(self.client_for().get("/settings/nodes/edge-demo").text), "Not reporting"
+        )
+        self.rows = [failed(row, True) for row in demo.status_rows(NOW)]
+        self.assertEqual(
+            vip_cell(self.client_for().get("/settings/nodes/edge-demo").text), "Joining"
+        )
+
     def test_before_the_first_deploy_the_page_says_where_to_go(self) -> None:
         """Finding 69: after Joined it was not plain what comes next."""
 

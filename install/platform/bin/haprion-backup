@@ -271,24 +271,55 @@ do_dump() {
 BEFORE_MIGRATION_KEPT=3
 
 do_dump_before_migration() {
-    local from="$1" to="$2" directory index
+    local from="$1" to="$2" directory
     [[ "$from" =~ ^[0-9A-Za-z_]{1,32}$ && "$to" =~ ^[0-9A-Za-z_]{1,32}$ ]] \
         || die "dump-before-migration takes two schema revisions"
     directory="${DUMP_DIR}/before-migration"
     install -d -o root -g root -m 700 "$DUMP_DIR" "$directory"
     write_dump "${directory}/${DB_NAME}-${from}-to-${to}-$(date +%Y%m%d-%H%M%S).dump"
 
+    keep_newest "$directory" "$BEFORE_MIGRATION_KEPT"
+}
+
+#
+# The newest `count` dumps of `directory` by modification time, the rest removed.
+#
+keep_newest() {
+    local directory="$1" count="$2" index
     local -a dumps=()
     while IFS= read -r file; do dumps+=("$file"); done < <(
         find "$directory" -maxdepth 1 -name "${DB_NAME}-*.dump" -printf '%T@ %f\n' \
             | sort -rn | cut -d' ' -f2-
     )
     for index in "${!dumps[@]}"; do
-        if [[ "$index" -ge "$BEFORE_MIGRATION_KEPT" ]]; then
+        if [[ "$index" -ge "$count" ]]; then
             rm -f -- "${directory}/${dumps[$index]}"
             log "  removed  ${dumps[$index]}"
         fi
     done
+}
+
+#
+# Before a restore replaces the database (B399): a dump of what is about to be
+# replaced, so that the wrong dump chosen is a step back and not the loss of
+# everything since the one chosen. Its own directory, like before-migration, so
+# the daily retention neither counts nor removes it; the newest three kept.
+# Nothing to dump when the database does not exist yet (a restore onto a new
+# machine.
+#
+BEFORE_RESTORE_KEPT=3
+
+dump_before_restore() {
+    local directory="${DUMP_DIR}/before-restore" target
+    [[ "$(psql_scratch -d postgres -c \
+        "select 1 from pg_database where datname = '${DB_NAME}'")" == 1 ]] || {
+        log "  ${DB_NAME} does not exist; nothing to dump"
+        return
+    }
+    install -d -o root -g root -m 700 "$DUMP_DIR" "$directory"
+    target="${directory}/${DB_NAME}-$(date +%Y%m%d-%H%M%S).dump"
+    write_dump "$target"
+    keep_newest "$directory" "$BEFORE_RESTORE_KEPT"
 }
 
 #
@@ -675,6 +706,13 @@ do_restore() {
   See them with: sudo -u postgres psql -c \"select pid, usename, application_name from pg_stat_activity where datname = '${DB_NAME}'\""
     fi
 
+    step_log "Dumping what is about to be replaced"
+    if ! ( dump_before_restore ); then
+        start_units "${now[@]}"
+        remember_stopped "${before[@]}"
+        die "the database could not be dumped before it is replaced; nothing was restored${before[*]:+, and ${before[*]} stay stopped}"
+    fi
+
     step_log "Restoring ${dump}"
     #
     # Root opens the dump, which no other account may read, and postgres reads
@@ -725,6 +763,7 @@ do_restore() {
     fi
     echo
     log "restored from $(basename "$dump"); waiting jobs are held for an admin on Jobs"
+    log "the database it replaced is kept in ${DUMP_DIR}/before-restore/"
 }
 
 start_units() {

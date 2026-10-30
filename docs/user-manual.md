@@ -2999,6 +2999,10 @@ sudo haprion-backup restore /var/lib/haprion-ui/dumps/<dump>
 
 It stops everything that writes the database - the web and its socket, the worker, the poller, the
 traffic collector and the timers - and refuses while a connection to the database remains. It then
+dumps the database it is about to replace to `before-restore/` under the dump directory, so a wrong
+dump chosen can be undone; the newest three are kept, and the daily dumps' retention neither counts
+nor removes them. The last line of the command names the directory. If that dump cannot be made,
+nothing is restored and what was stopped is started again. The command then
 makes the database again from the dump, checks its privileges with `03-verify`, holds the waiting jobs
 and ends the sessions (`after-restore`), starts what it stopped, and replays the traffic log (below).
 A dump from before an update that changed the schema is migrated to the installed release's schema

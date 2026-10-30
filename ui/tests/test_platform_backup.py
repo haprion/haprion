@@ -301,6 +301,7 @@ class ADumpBeforeAMigration(unittest.TestCase):
             + kept.group(0)
             + "\n"
             + function("write_dump", source)
+            + function("keep_newest", source)
             + function("do_dump_before_migration", source)
             + f"do_dump_before_migration {before} {after}\n"
         )
@@ -328,6 +329,47 @@ class ADumpBeforeAMigration(unittest.TestCase):
             sorted(path.name for path in self.dumps.glob("*.dump")), ["haprion-20261022.dump"]
         )
 
+    def before_restore(self, exists: bool) -> subprocess.CompletedProcess[str]:
+        source = SCRIPT.read_text()
+        program = (
+            "set -Eeuo pipefail\n"
+            'log() { echo "$*"; }\nwarn() { echo "$*" >&2; }\n'
+            'die() { echo "ERROR: $*" >&2; exit 1; }\nstep_log() { :; }\n'
+            f"psql_scratch() {{ echo {1 if exists else 0}; }}\n"
+            f"DUMP_DIR={self.dumps}\nDB_NAME=haprion\nDB_ROLE=r\nDISK_WARN_PERCENT=101\n"
+            "BEFORE_RESTORE_KEPT=3\n"
+            + function("write_dump", source)
+            + function("keep_newest", source)
+            + function("dump_before_restore", source)
+            + "dump_before_restore\n"
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PATH": self.path},
+            cwd=self.root,
+        )
+
+    def test_the_database_a_restore_replaces_is_dumped_and_three_kept(self) -> None:
+        self.dumps.mkdir()
+        (self.dumps / "haprion-20261022.dump").write_text("daily")
+        for _ in range(4):
+            done = self.before_restore(True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            time.sleep(1.1)
+        self.assertEqual(len(list((self.dumps / "before-restore").iterdir())), 3)
+        self.assertEqual(
+            sorted(path.name for path in self.dumps.glob("*.dump")), ["haprion-20261022.dump"]
+        )
+
+    def test_no_database_means_nothing_to_dump(self) -> None:
+        self.dumps.mkdir()
+        done = self.before_restore(False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertFalse((self.dumps / "before-restore").exists())
+
     def test_a_revision_that_is_not_one_is_refused(self) -> None:
         done = self.dump("0084", "../x")
         self.assertEqual(done.returncode, 1)
@@ -352,6 +394,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         proved: bool = True,
         migrate_step: bool = True,
         remembered: Path | None = None,
+        dumped: bool = True,
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         """One run; `remembered` is the file the runs before it left, kept across runs."""
 
@@ -405,7 +448,8 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 )
                 + 'runuser() { record "runuser $*"; }\n'
                 'do_after_restore() { record "after-restore"; }\n'
-                "DB_NAME=haprion\n"
+                f'dump_before_restore() {{ record "dump-before-restore"; {"true" if dumped else "false"}; }}\n'
+                "DB_NAME=haprion\nDUMP_DIR=/dumps\n"
                 + re.search(r"^counted\(\) .*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
                 + units.group(0)
                 + f'RESTORE_STOPPED="{remembered or here / "restore-stopped"}"\n'
@@ -447,6 +491,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 "systemctl stop haprion-traffic-collector.timer",
                 "systemctl stop haprion-web.socket",
                 "systemctl stop haprion-worker.service",
+                "dump-before-restore",
                 "-u postgres pg_restore -d postgres --clean --create --if-exists --exit-on-error"
                 " <dump",
                 "03-verify",
@@ -458,6 +503,17 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 " <here>/traffic-collector.json",
             ],
         )
+
+    def test_a_dump_that_cannot_be_made_restores_nothing_and_starts_what_it_stopped(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, dumped=False)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("could not be dumped before it is replaced", done.stderr)
+        self.assertFalse(any("pg_restore" in line for line in said))
+        self.assertIn("systemctl start haprion-worker.service", said)
+
+    def test_the_last_sentence_says_where_the_replaced_database_is(self) -> None:
+        done, _ = self.restore(active=self.ACTIVE)
+        self.assertIn("kept in /dumps/before-restore/", done.stdout)
 
     def test_an_older_dump_is_migrated_before_its_privileges_are_proved(self) -> None:
         """Review 26-10-29, A1: a dump from before 0102 stopped on 03-verify, services down."""

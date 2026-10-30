@@ -952,6 +952,8 @@ def _written_problem(tokens: Sequence[str], own: Own, *, own_table: bool) -> str
             if table not in own["backend"]:
                 return NOT_OWN_TABLE.format(table=table)
         for match in _DEBUG.finditer(word):
+            if any(char in match["arguments"] for char in "'\"\\"):
+                return "write debug's arguments plainly, without quotes or backslashes"
             arguments = match["arguments"].split(",")
             if len(arguments) > 1:
                 ring = arguments[1].strip()

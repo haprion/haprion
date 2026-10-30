@@ -519,6 +519,20 @@ class WhatASectionAsksOfTheNodesMemoryIsBounded(unittest.TestCase):
             with self.subTest(text):
                 self.assertEqual({entry[1] for entry in fates(text)}, {PLACED})
 
+    def test_debug_arguments_are_read_without_quotes(self) -> None:
+        """Code review 26-10-30 again, S2: HAProxy unquotes `debug`'s arguments a second
+        time, so `'a,shop-r,b',bank-r` wrote to the ring `bank-r`."""
+
+        for line in (
+            r"http-request set-var(txn.x) src,debug(\'a,shop-r,b\',other-r)",
+            r"http-request set-var(txn.x) src,debug(\"a,shop-r,b\",other-r)",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate_beside_own(line), REFUSED_FATE)
+        self.assertEqual(
+            fate_beside_own("http-request set-var(txn.x) src,debug(msg,shop-r)"), PLACED
+        )
+
     def test_a_keyword_written_twice_is_refused(self) -> None:
         """Code review 26-10-30 again, S1: the cap read the first `total-max-size`, HAProxy
         takes the last, so `0` then `64` counted as nothing and took 64 MB."""

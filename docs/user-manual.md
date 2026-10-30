@@ -1300,7 +1300,7 @@ Write each as a plain number; `size` also takes `k`, `m` or `g`.
   covers `table <name>` in `track-sc2` and `stick` rules, a table's `write-to`, the fetches and converters
   that create or change an entry (`table_inc_gpc0`, `src_clr_gpc`, `sc_inc_gpc1` and their kin, and
   `src_updt_conn_cnt`), `log ring@<name>`, the `debug` converter's destination, and the cache in
-  `cache-use`, `cache-store` and `filter cache`. One object storing into another's cache would answer
+  `cache-use`, `cache-store` and `filter cache`. The arguments of `debug` are written without quotes. One object storing into another's cache would answer
   that object's visitors with its own content. On the object's own
   lines such a fetch or converter must name its table, since the pool's own is the rate limit's. Reading
   another table, as `table_http_req_rate(<name>)` does, is allowed.

@@ -654,6 +654,43 @@ class ARealDatabase(unittest.TestCase):
             connection.rollback()
         self.assertEqual(removable, {("vd-done", gone), ("vd-removed", other)})
 
+    def test_retention_clears_the_sealed_copy_of_a_finished_import_after_a_day(self) -> None:
+        """B395: the row stays as the record; only the sealed upload goes."""
+
+        clause = self.retention_clause("where_sealed_upload_spent", "UNUSED")
+        sealed = Jsonb({"id": "shop.example", "ciphertext": "c2VhbGVk"})
+        with self.connect() as connection, connection.cursor() as cursor:
+            rows = {}
+            for name, operation, state, age, payload in (
+                ("spent", "cert_import", "done", "25 hours", sealed),
+                ("failed", "cert_import", "failed", "3 days", sealed),
+                ("fresh", "cert_import", "done", "1 hour", sealed),
+                ("running", "cert_import", "pending", None, sealed),
+                ("keyless", "cert_import", "done", "3 days", Jsonb({"id": "x"})),
+            ):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "finished_at) values (%s, null, %s, %s, %s, "
+                    "case when %s::text is null then null else now() - %s::interval end) "
+                    "returning id",
+                    (operation, payload, uuid4(), state, age, age),
+                )
+                rows[name] = _first(cursor)
+            ids = tuple(rows.values())
+            cursor.execute(
+                f"update job set payload = payload - 'ciphertext' where id = any(%s) and {clause}",  # noqa: S608 - the script's own
+                (list(ids),),
+            )
+            cursor.execute(
+                "select id, payload ? 'ciphertext' from job where id = any(%s)", (list(ids),)
+            )
+            kept = {row[0]: row[1] for row in cursor.fetchall()}
+            connection.rollback()
+        self.assertEqual(
+            {name: kept[job] for name, job in rows.items()},
+            {"spent": False, "failed": False, "fresh": True, "running": True, "keyless": False},
+        )
+
     def test_the_poller_asks_for_the_newest_versions_it_has_no_diff_for(self) -> None:
         hashes = [f"{n:x}" * 40 for n in range(1, 5)]
         with self.connect() as connection, connection.cursor() as cursor:

@@ -2138,6 +2138,10 @@ the job row or the audit record, and none of those can reach the private key. Th
 promise than "the web never sees a key". If you want the key to stay off the web entirely, use the
 command-line import.
 
+The encrypted file stays in the finished job's row for a day. `haprion-retention prune` then removes it
+and keeps the row as the record of the import. A database dump taken before that holds the encrypted
+copy until the dump is rotated out (seven days); opening it takes the installation's private key.
+
 **A certificate without a key.** A file without a key is accepted for a name whose key the manager
 already holds. That covers an imported certificate renewed on the same key, and the certificate a CA
 returns for a signing request made here. *Renew…* under the list, with that row ticked, takes exactly
@@ -3383,6 +3387,9 @@ until it can fetch again.
 **The reports.** The quick report adds up estimated row counts and total storage (indexes included),
 from the leaf partitions only. It labels the counts as estimates, and lists partitions that have no
 statistics. Run `report --exact` when you need an exact log count. Neither report changes any data.
+
+**Uploaded keys.** `prune` also removes the encrypted file from each finished `cert_import` job a day after
+it finished. The job row stays; only the file in it goes.
 
 **Why it is a root command.** No application role may delete from the jobs, the audit trail or the
 sign-in records, and none is going to: a compromised web or worker process must not be able to remove

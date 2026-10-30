@@ -310,6 +310,39 @@ version_diffs() {
     log "  version_diff: removed $(counted "${removed}" row) for versions no longer listed"
 }
 
+#
+# The sealed copy of an uploaded key. The job row keeps it until the row goes
+# (a week, at least), but it is of no use after the import finished: the
+# helper has opened it, and a replaced or deleted key would otherwise stay in
+# the database and its dumps for as long as the row lives. The row itself
+# stays as the record of the import.
+#
+where_sealed_upload_spent() {
+    echo "operation = 'cert_import'
+    and payload ? 'ciphertext'
+    and state not in ('pending', 'running')
+    and finished_at < statement_timestamp() - interval '1 day'"
+}
+
+sealed_uploads() {
+    local spent removed
+    spent="$(psql_as -c "select count(*) from job where $(where_sealed_upload_spent)")"
+    if [[ "$command" == "report" ]]; then
+        log "  sealed uploads: ${spent} finished past a day"
+        return 0
+    fi
+    if [[ "$dry_run" -eq 1 ]]; then
+        log "  sealed uploads: dry run, would clear $(counted "${spent}" "sealed copy" "sealed copies")"
+        return 0
+    fi
+    removed="$(psql_as -c "with cleared as (
+                              update job set payload = payload - 'ciphertext'
+                               where $(where_sealed_upload_spent)
+                              returning 1
+                           ) select count(*) from cleared")"
+    log "  sealed uploads: cleared $(counted "${removed}" "sealed copy" "sealed copies")"
+}
+
 where_session_ended() {
     echo "coalesce(revoked_at, expires_at) < statement_timestamp() - make_interval(days => ${SESSION_KEEP_DAYS})"
 }
@@ -1051,6 +1084,7 @@ main() {
             metric_hours
             oidc_logins
             version_diffs
+            sealed_uploads
             account_history
             ;;
         prune)
@@ -1077,6 +1111,7 @@ main() {
             fi
             oidc_logins
             version_diffs
+            sealed_uploads
             account_history
             statistics
             if [[ "$dry_run" -eq 1 ]]; then

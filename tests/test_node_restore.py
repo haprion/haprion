@@ -983,9 +983,11 @@ class TheTestVmFetches(Timed):
         result = self.carry_out(run)
 
         self.assertEqual(result["outcome"], "done")
-        self.assertIn("still out", result["warning"])
+        self.assertNotIn("warning", result)
+        self.assertIn("still out", result["sessions"]["finish"]["warnings"][-1])
         self.assertIn(run, self.fetching.held)
-        self.assertIn("still out", node_restore.status(self.root, run)["result"]["warning"])
+        kept = node_restore.status(self.root, run)["result"]["sessions"]["finish"]["warnings"]
+        self.assertIn("still out", kept[-1])
         # A caller that cannot take them out leaves the run where it is.
         past = self.later(run, node_restore.START_WINDOW + 1)
         self.assertEqual(node_restore.sweep(self.root, past), [])

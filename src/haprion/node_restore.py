@@ -1233,7 +1233,11 @@ def _take_out(
             "two hours, and the next restore command takes them out"
         )
         if result is not None:
-            result["warning"] = note
+            # In a session's own warnings: the field every reader of a result
+            # already shows, and the frozen schema already allows.
+            sessions = result.setdefault("sessions", {})
+            finished = sessions.setdefault("finish", {})
+            finished["warnings"] = [*finished.get("warnings", []), note]
             if (directory / "result.json").exists():
                 _write_json(directory / "result.json", result)
         (progress or sys.stderr).write(f"WARNING: {note}\n")

@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haprion import exit_codes, keyring_package, node_package, node_restore
+from haprion import exit_codes, keyring_package, node_package, node_restore, restore_fetch
 from haprion.cli import node_restore_ask, node_restore_helper
 from haprion.cli.node_restore_helper import (
     DISCARD,
@@ -237,6 +237,23 @@ class ThreeJobs(HelperTest):
         self.assertEqual((document["outcome"], code), ("done", 0), document)
         self.assertEqual(document["result"]["address"], "192.0.2.29")
         self.assertNotIn("$y$", json.dumps(document))
+
+    def test_keys_that_would_not_come_out_are_said_in_a_document_that_keeps_its_contract(
+        self,
+    ) -> None:
+        def refuse(*_: object) -> None:
+            raise restore_fetch.FetchAccessError("the lock is busy")
+
+        self.access = node_restore.FetchAccess(lambda *_: None, refuse)
+        self.prepared()
+        self.ask(PREVIEW, {"run": RUN_ID, "fingerprint": FINGERPRINT})
+        FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
+        document, code = self.ask(RUN, {"run": RUN_ID, "confirm": "node-test"})
+        self.assertEqual((document["outcome"], code), ("done", 0), document)
+        said = document["result"]["sessions"]["finish"]["warnings"]
+        self.assertIn("still out", said[-1])
+        status, _code = self.ask(STATUS, {"run": RUN_ID})
+        self.assertIn("still out", status["result"]["result"]["sessions"]["finish"]["warnings"][-1])
 
     def test_a_rolled_back_run_is_failed_with_the_field(self) -> None:
         self.prepared()

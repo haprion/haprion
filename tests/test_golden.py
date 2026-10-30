@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -259,52 +260,8 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
 
     def test_every_case_validates(self) -> None:
         for case in cases():
-            with self.subTest(case.name), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                #
-                # The layout a release has: `conf.d` is what the node loads with
-                # `-f`, and the certificate lists sit beside it because `-f` on a
-                # directory reads every file in it. The bind lines reach them by
-                # a path relative to `conf.d`, which `default-path config` in the
-                # core file is what makes resolve.
-                #
-                (root / "conf.d").mkdir()
-                (root / "haproxy.cfg").write_text(CORE)
-                certificates = _certificate_directory(root)
-
-                def local(content: str, certificates: Path = certificates) -> str:
-                    #
-                    # The same substitution `candidate_validation` makes when it
-                    # validates a candidate in a sandbox that has no /etc: the
-                    # node's certificate directory becomes one that exists here.
-                    # HAProxy refuses to start on a certificate it cannot stat,
-                    # so without this an https case could not be validated at all.
-                    #
-                    return content.replace(NODE_CERTIFICATE_DIR, str(certificates))
-
-                for name, content in produced(case).items():
-                    (root / "conf.d" / name).write_text(local(content))
-                listings = produced_lists(case)
-                if listings:
-                    (root / "crt-lists").mkdir()
-                    for name, content in listings.items():
-                        (root / "crt-lists" / name).write_text(local(content))
-
-                arguments = [
-                    *peer_arguments(root / "conf.d"),
-                    "-f",
-                    str(root / "haproxy.cfg"),
-                    "-f",
-                    str(root / "conf.d"),
-                ]
-                binary = shutil.which("haproxy")
-                assert binary is not None
-                result = subprocess.run(
-                    [binary, "-c", *arguments],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
+            with self.subTest(case.name):
+                result = _haproxy_check(produced(case), produced_lists(case))
 
                 self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
                 #
@@ -338,6 +295,138 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+
+def _haproxy_check(
+    configuration: Mapping[str, str], listings: Mapping[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """`haproxy -c` on a generated layer, laid out as a release lays it out."""
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        #
+        # The layout a release has: `conf.d` is what the node loads with
+        # `-f`, and the certificate lists sit beside it because `-f` on a
+        # directory reads every file in it. The bind lines reach them by
+        # a path relative to `conf.d`, which `default-path config` in the
+        # core file is what makes resolve.
+        #
+        (root / "conf.d").mkdir()
+        (root / "haproxy.cfg").write_text(CORE)
+        certificates = _certificate_directory(root)
+
+        def local(content: str) -> str:
+            #
+            # The same substitution `candidate_validation` makes when it
+            # validates a candidate in a sandbox that has no /etc: the
+            # node's certificate directory becomes one that exists here.
+            # HAProxy refuses to start on a certificate it cannot stat,
+            # so without this an https case could not be validated at all.
+            #
+            return content.replace(NODE_CERTIFICATE_DIR, str(certificates))
+
+        for name, content in configuration.items():
+            (root / "conf.d" / name).write_text(local(content))
+        if listings:
+            (root / "crt-lists").mkdir()
+            for name, content in listings.items():
+                (root / "crt-lists" / name).write_text(local(content))
+
+        arguments = [
+            *peer_arguments(root / "conf.d"),
+            "-f",
+            str(root / "haproxy.cfg"),
+            "-f",
+            str(root / "conf.d"),
+        ]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        return subprocess.run(
+            [binary, "-c", *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+
+def _https(name: str, extra: str = "", policy: str | None = None) -> Proxy:
+    tls = f"\n  tls: {policy}" if policy else ""
+    return load_proxy(
+        name,
+        f"""schema: 1
+name: {name}
+hostnames: [{name}.example.com]
+listen:
+  protocol: https
+  certificate: example.com{tls}
+{extra}routes:
+  - path: /
+    backend: {name}-web
+backends:
+  {name}-web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 198.51.100.10
+        port: 8080
+""".encode(),
+    )
+
+
+class NoLineHoldsMoreWordsThanHAProxyReads(unittest.TestCase):
+    """Code review 26-10-30 again, R8: a network group of 70 written on one `acl` line, or
+    60 names in one TLS group's SNI guard, was refused by every node's `haproxy -c` -
+    "too many words, truncating after word 64" - and with it every publish of the
+    cluster until the list shrank."""
+
+    def test_no_line_of_any_golden_case_has_more_than_64_words(self) -> None:
+        for case in cases():
+            for name, content in produced(case).items():
+                for number, line in enumerate(content.split("\n"), start=1):
+                    with self.subTest(case=case.name, file=name, line=number):
+                        self.assertLessEqual(len(advanced.words(line)), 64)
+
+    def test_a_long_list_is_written_over_several_lines_of_one_acl(self) -> None:
+        networks = {"partners": tuple(f"203.0.113.{host}/32" for host in range(1, 71))}
+        files = _generate([_https("shop", "allow_from: [partners]\n")], networks=networks)
+
+        acl = [
+            line
+            for line in files["1000-frontends.cfg"].split("\n")
+            if line.startswith("    acl mgd-shop-allow src ")
+        ]
+        self.assertEqual(len(acl), 2)
+        self.assertEqual(sum(len(line.split()) - 3 for line in acl), 70)
+
+    def test_a_line_beyond_the_limit_is_refused_by_the_generator(self) -> None:
+        with self.assertRaisesRegex(GeneratorError, "x.cfg line 2 has 65 words"):
+            generate_module._refuse_long_lines({"x.cfg": "\n" + " ".join(["w"] * 65)})
+
+    @unittest.skipUnless(
+        shutil.which("haproxy") and shutil.which("openssl"),
+        "haproxy or openssl is not installed here",
+    )
+    def test_haproxy_takes_seventy_networks_and_sixty_names(self) -> None:
+        networks = {"partners": tuple(f"203.0.113.{host}/32" for host in range(1, 71))}
+        cases_ = {
+            "group": [_https("shop", "allow_from: [partners]\n")],
+            "sni": [
+                *(_https(f"s{number:02d}") for number in range(60)),
+                _https("legacy", policy="tls12only"),
+            ],
+        }
+        for which, proxies in cases_.items():
+            with self.subTest(which):
+                layer = generate(
+                    proxies,
+                    vips=dict(DEFAULT_VIPS),
+                    default_vip="main",
+                    certificates=CERTIFICATES,
+                    networks=networks,
+                )
+                result = _haproxy_check(layer.configuration, layer.certificate_lists)
+                self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
 def _generate(proxies: list[Proxy], **cluster: Any) -> dict[str, str]:

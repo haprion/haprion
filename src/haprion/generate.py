@@ -537,6 +537,7 @@ def generate(
     }
     parts.update(dns.parts)
     parts.update(ipvs.parts)
+    _refuse_long_lines(files)
     return GeneratedLayer(
         configuration=files,
         certificate_lists=listings,
@@ -1627,6 +1628,47 @@ def runtime_backends(proxy: Proxy) -> list[str]:
     return [backend_name(proxy, name) for name in (*proxy.backends, *redirects)]
 
 
+#
+# HAProxy reads at most 64 words of a line and refuses the file beyond that:
+# "too many words, truncating after word 64" (measured on 3.4.7: an `acl`
+# with 61 networks passes, with 62 it does not). A list of values - networks,
+# server names - is therefore written in lines of at most this many under the
+# same ACL name, which HAProxy reads as an OR, as it already reads a country's
+# file beside a group (code review 2026-10-30 again, R8).
+#
+MAX_WORDS = advanced_config.MAX_WORDS
+VALUES_PER_LINE = 48
+
+
+def _value_lines(start: str, values: Sequence[str]) -> list[str]:
+    """`start` followed by the values, in as many lines as HAProxy needs."""
+
+    return [
+        f"{start} {' '.join(values[at : at + VALUES_PER_LINE])}"
+        for at in range(0, len(values), VALUES_PER_LINE)
+    ]
+
+
+def _refuse_long_lines(files: Mapping[str, str]) -> None:
+    """No generated line holds more words than HAProxy reads.
+
+    The value lists are split above; this is the gate behind them, so a list
+    that grows somewhere else is refused here with its file and line rather
+    than by every node's `haproxy -c` on publish.
+    """
+
+    for name, content in sorted(files.items()):
+        for number, line in enumerate(content.split("\n"), start=1):
+            try:
+                count = len(advanced_config.words(line))
+            except advanced_config.TextError:
+                count = len(line.split())
+            if count > MAX_WORDS:
+                raise GeneratorError(
+                    f"{name} line {number} has {count} words, and HAProxy reads {MAX_WORDS}"
+                )
+
+
 def _acl_name(proxy: str, suffix: str) -> str:
     return f"{PREFIX}-{proxy}-{suffix}"
 
@@ -1951,7 +1993,7 @@ def _forwarded_rules(protocol: str, trusted_proxies: Sequence[str]) -> list[str]
     lines = []
     condition = ""
     if trusted_proxies:
-        lines.append(f"    acl {TRUSTED_ACL} src {' '.join(sorted(trusted_proxies))}")
+        lines.extend(_value_lines(f"    acl {TRUSTED_ACL} src", sorted(trusted_proxies)))
         condition = f" unless {TRUSTED_ACL}"
     return lines + [
         f"    http-request del-header X-Forwarded-For{condition}",
@@ -2220,7 +2262,7 @@ def _address_acl(
     lines = []
     cidrs = _cidrs(entries, networks)
     if cidrs:
-        lines.append(f"    acl {acl} {fetch} {' '.join(cidrs)}")
+        lines.extend(_value_lines(f"    acl {acl} {fetch}", cidrs))
     for entry in sorted(entry for entry in entries if geo.is_country(entry)):
         lines.append(f"    acl {acl} {fetch} -f {MAPS_DIRECTORY}/{geo.file_name(geo.code(entry))}")
     return lines
@@ -2942,7 +2984,7 @@ def _tls_sni_guard(proxy: Proxy, host_acl: str, tls_names: Mapping[str, str]) ->
     #
     # A subdomain in the group is matched as the Host header is (B278).
     #
-    lines = [f"    acl {sni_acl} ssl_fc_sni,lower -m str {' '.join(exact)}"] if exact else []
+    lines = _value_lines(f"    acl {sni_acl} ssl_fc_sni,lower -m str", exact)
     lines += [
         f"    acl {sni_acl} ssl_fc_sni,lower -m reg {wildcard_expression(name)}"
         for name in names
@@ -3215,7 +3257,7 @@ def _counter_lines(
     blocking = _http_block_lines(proxy, bool(trusted_proxies), networks)
     trust: list[str] = []
     if trusted_proxies and (blocking or rules):
-        trust = [f"    acl {TRUSTED_ACL} src {' '.join(sorted(trusted_proxies))}"]
+        trust = _value_lines(f"    acl {TRUSTED_ACL} src", sorted(trusted_proxies))
     return [*table, *trust, *blocking, *rules]
 
 

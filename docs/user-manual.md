@@ -1273,7 +1273,8 @@ Write each as a plain number; `size` also takes `k`, `m` or `g`.
 - on a tcp object, every HTTP keyword (`http-request`, `redirect`, `option forwardfor` and the like), since
   a tcp object has no requests;
 - a line that begins with `.` - conditional blocks and directives belong to the process;
-- a line longer than 4096 characters.
+- a line longer than 4096 characters, or of more than 64 words, which is all HAProxy reads of a line. Split
+  a long list over several lines of the same ACL; HAProxy reads them as one.
 
 **Lines that touch what the generator owns are refused too:**
 

@@ -270,6 +270,11 @@ class TheObjectSRowsLandInItsOwnSections(unittest.TestCase):
     def test_an_unknown_keyword_is_refused_rather_than_guessed(self) -> None:
         self.assertEqual(fate("frobnicate on"), REFUSED_FATE)
 
+    def test_a_line_of_more_words_than_haproxy_reads_is_refused(self) -> None:
+        networks = " ".join(f"192.0.2.{host}" for host in range(1, 63))
+        self.assertEqual(fate(f"acl a src {networks[: networks.rindex(' ')]}"), PLACED)
+        self.assertEqual(fate(f"acl a src {networks}"), REFUSED_FATE)
+
     def test_conditional_blocks_are_refused(self) -> None:
         self.assertEqual(fate(".if defined(X)"), REFUSED_FATE)
 

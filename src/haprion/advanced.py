@@ -666,6 +666,11 @@ BLOCK_COMMENT = "# advanced config of {name}: lines {lines}"
 _BLOCK = re.compile(r"^\s*# advanced config of (?P<name>\S+): lines (?P<lines>\d+(?: \d+)*)\s*$")
 
 MAX_LINE = 4096
+#
+# HAProxy reads at most 64 words of a line and refuses the file beyond that
+# (measured on 3.4.7; generate.MAX_WORDS for the generated lines).
+#
+MAX_WORDS = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -1623,6 +1628,13 @@ def place(
             continue
         if not tokens:
             record(IGNORED, reason="comment")
+            continue
+        if len(tokens) > MAX_WORDS:
+            record(
+                REFUSED_FATE,
+                reason=f"HAProxy reads at most {MAX_WORDS} words of a line; "
+                "split a list over several lines of the same ACL",
+            )
             continue
         if expands_variable(line):
             record(

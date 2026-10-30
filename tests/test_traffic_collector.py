@@ -869,7 +869,9 @@ class TrafficCollectorTests(unittest.TestCase):
                 }
             )
         )
-        with self.assertRaisesRegex(CollectorError, "schema_version must be 2"):
+        with self.assertRaisesRegex(
+            CollectorError, "schema_version must be 2: .*rerun platform step 13"
+        ):
             load_config(path, require_secure=False)
 
     def test_configuration_refuses_names_that_carry_the_file_separator(self) -> None:

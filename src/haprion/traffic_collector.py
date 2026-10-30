@@ -178,7 +178,10 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
     #
     schema_version = value.get("schema_version")
     if type(schema_version) is int and schema_version == 1:
-        raise CollectorError("collector configuration schema_version must be 2")
+        raise CollectorError(
+            "collector configuration schema_version must be 2: it predates database ingest;"
+            " rerun platform step 13"
+        )
     if set(value) != expected:
         raise CollectorError("collector configuration has unexpected or missing fields")
     if type(schema_version) is not int or schema_version != 2:

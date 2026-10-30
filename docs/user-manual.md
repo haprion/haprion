@@ -2613,7 +2613,9 @@ joined a second time. A join that stopped while preparing the node has not used 
 same block may be tried again within the 24 hours.
 
 The one-time key is valid for 24 hours and works once. Keep the block to yourself until it has been
-used: whoever holds it can join the node to a manager. The web never stores it. It is encrypted for the
+used: whoever holds it can join the node to a manager. apt also keeps the package output, block
+included, in its logs (`/var/log/apt/term.log` and the unattended-upgrades dpkg log) until the block is
+used or expires, so make the join within its 24 hours. The web never stores it. It is encrypted for the
 root helper (with the same key pair that protects DNS provider credentials) before the job is queued,
 so neither the job nor the audit record holds it. A node whose sshd limits who may log in
 (`AllowUsers`, `AllowGroups`) must let `_haprion-join` in.

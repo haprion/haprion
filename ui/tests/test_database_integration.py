@@ -5096,6 +5096,15 @@ class AccountsFromTheWeb(unittest.TestCase):
             first.close()
             second.close()
 
+    def locked_from(self, connection: Any, name: str, address: str, limit: int = 10) -> bool:
+        return db.login_locked(
+            connection,
+            username=name,
+            client_ip=address,
+            window_minutes=15,
+            max_failures=limit,
+        )
+
     def test_an_ipv6_source_is_its_prefix_and_an_account_counts_every_source(self) -> None:
         """B305 (security review S02): each address of a prefix was its own budget,
         and an account guessed at from many sources was never stopped."""
@@ -5110,31 +5119,62 @@ class AccountsFromTheWeb(unittest.TestCase):
             )
             connection.commit()
 
-            def per_source(address: str) -> int:
-                return db.failures_since_last_success(
-                    connection, username="dave", client_ip=address, window_minutes=15
+            self.assertTrue(self.locked_from(connection, "dave", "2001:db8:1:2::ffff", 2))
+            self.assertFalse(self.locked_from(connection, "dave", "2001:db8:1:2::ffff", 3))
+            self.assertFalse(self.locked_from(connection, "dave", "2001:db8:1:3::1", 2))
+            self.assertFalse(self.locked_from(connection, "dave", "192.0.2.8", 2))
+            self.assertFalse(self.locked_from(connection, "dave", "192.0.2.9", 1))
+            # The account's budget is the limit times the factor, from anywhere.
+            for address in (f"198.51.100.{n}" for n in range(1, 7)):
+                db.record_login_attempt(
+                    connection, username="dave", client_ip=address, succeeded=False
                 )
-
-            self.assertEqual(per_source("2001:db8:1:2::ffff"), 2)
-            self.assertEqual(per_source("2001:db8:1:3::1"), 1)
-            self.assertEqual(per_source("192.0.2.8"), 1)
-            self.assertEqual(per_source("192.0.2.9"), 0)
-            self.assertEqual(
-                db.account_failures_since_last_success(
-                    connection, username="Dave", window_minutes=15
-                ),
-                4,
-            )
+            connection.commit()
+            self.assertTrue(self.locked_from(connection, "Dave", "203.0.113.1", 1))
             db.record_login_attempt(
                 connection, username="dave", client_ip="192.0.2.9", succeeded=True
             )
             connection.commit()
-            self.assertEqual(
-                db.account_failures_since_last_success(
-                    connection, username="dave", window_minutes=15
-                ),
-                0,
-            )
+            self.assertFalse(self.locked_from(connection, "dave", "203.0.113.1", 1))
+
+    def test_settings_reads_the_same_lock_as_the_sign_in_for_a_prefix_and_an_account(
+        self,
+    ) -> None:
+        """Review 26-10-30, E1: the list counted per exact address and had no
+        account budget, so a name the sign-in refused showed as Active."""
+
+        with self.web_connection() as connection:
+            db.create_account(connection, username="dave", password_hash=self.HASH, role="reader")
+            for n in range(1, 11):
+                db.record_login_attempt(
+                    connection, username="carol", client_ip=f"2001:db8::{n:x}", succeeded=False
+                )
+            for n in range(1, 101):
+                db.record_login_attempt(
+                    connection, username="dave", client_ip=f"198.51.100.{n}", succeeded=False
+                )
+            connection.commit()
+            self.assertTrue(self.locked_from(connection, "carol", "2001:db8::ff"))
+            self.assertTrue(self.locked_from(connection, "dave", "203.0.113.7"))
+            rows = {
+                r.username: r
+                for r in db.account_rows(connection, window_minutes=15, max_failures=10)
+            }
+            self.assertTrue(rows["carol"].locked)
+            self.assertTrue(rows["dave"].locked)
+            self.assertFalse(rows["alice"].locked)
+            # An unlock clears both, in the list and at the sign-in.
+            for name in ("carol", "dave"):
+                db.unlock_account(connection, username=name, actor="alice")
+            connection.commit()
+            for name, address in (("carol", "2001:db8::ff"), ("dave", "203.0.113.7")):
+                self.assertFalse(self.locked_from(connection, name, address))
+            rows = {
+                r.username: r
+                for r in db.account_rows(connection, window_minutes=15, max_failures=10)
+            }
+            self.assertFalse(rows["carol"].locked)
+            self.assertFalse(rows["dave"].locked)
 
     def test_an_unlock_is_a_row_the_throttle_counts_from(self) -> None:
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
@@ -5143,22 +5183,12 @@ class AccountsFromTheWeb(unittest.TestCase):
                     connection, username="Carol", client_ip="192.0.2.7", succeeded=False
                 )
             connection.commit()
-            self.assertEqual(
-                db.failures_since_last_success(
-                    connection, username="carol", client_ip="192.0.2.7", window_minutes=15
-                ),
-                3,
-            )
+            self.assertTrue(self.locked_from(connection, "carol", "192.0.2.7", 3))
             connection.execute(
                 "insert into login_unlock (username_normalised, actor) values ('carol', 'alice')"
             )
             connection.commit()
-            self.assertEqual(
-                db.failures_since_last_success(
-                    connection, username="carol", client_ip="192.0.2.7", window_minutes=15
-                ),
-                0,
-            )
+            self.assertFalse(self.locked_from(connection, "carol", "192.0.2.7", 1))
         for statement in (
             "delete from login_attempt",
             "delete from login_unlock",

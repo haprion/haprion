@@ -134,74 +134,82 @@ def lock_sign_in(connection: Connection[Any], *, username: str) -> None:
         )
 
 
-def failures_since_last_success(
-    connection: Connection[Any], *, username: str, client_ip: str, window_minutes: int
-) -> int:
-    """How many failures this name and address have accumulated recently.
+#
+# The one rule for "locked", as a SQL expression over a name. The sign-in asks
+# it for one source address; Settings -> Users asks it for no source at all,
+# meaning any. Two budgets, and both are needed. A name and a source (an IPv6
+# address is its /64: one host given a prefix has as many addresses as it
+# likes, security review S02) reach `max_failures`; or the name from anywhere
+# reaches `max_failures * factor` (B305). The window keeps an old mistake from
+# counting forever; "since the last success" keeps a person who has proved they
+# know the password from being locked out by their own earlier typos. An unlock
+# (0039) counts as that success for every address: the failures stay in the
+# record, and stop counting.
+#
+ACCOUNT_FAILURE_FACTOR = 10
+_SOURCE_PREFIX = "case when family({ip}) = 6 then 64 else 32 end"
 
-    Two bounds, and both are needed. The window keeps an old mistake from
-    counting forever; "since the last success" keeps a person who has proved
-    they know the password from being locked out by their own earlier typos.
-    An unlock (0039) counts as that success for every address: the failures
-    stay in the record, and stop counting.
-    """
 
-    #
-    # An IPv6 source is its /64: one host given a prefix has as many addresses
-    # as it likes, and each was a budget of its own (security review S02).
-    #
+def _locked_sql(name: str) -> str:
+    """The expression that is true while `name` (a SQL expression holding a
+    normalised username) may not be tried; `%(source)s` is an address or NULL for any."""
+
+    own = _SOURCE_PREFIX.format(ip="a.client_ip")
+    asked = _SOURCE_PREFIX.format(ip="%(source)s::inet")
+    return (
+        "(exists ("  # noqa: S608 - `name` is a column expression in this file, never input
+        "select 1 from login_attempt a "
+        f" where a.username_normalised = {name} "
+        "   and not a.succeeded "
+        "   and a.at > statement_timestamp() - make_interval(mins => %(window)s) "
+        f"   and (%(source)s::inet is null or a.client_ip <<= set_masklen(%(source)s::inet, {asked})) "
+        "   and a.at > greatest( "
+        "         coalesce((select max(b.at) from login_attempt b "
+        f"                    where b.username_normalised = {name} and b.succeeded "
+        f"                      and b.client_ip <<= set_masklen(a.client_ip, {own})), "
+        "                  '-infinity'::timestamptz), "
+        "         coalesce((select max(l.at) from login_unlock l "
+        f"                    where l.username_normalised = {name}), "
+        "                  '-infinity'::timestamptz)) "
+        f" group by network(set_masklen(a.client_ip, {own})) "
+        " having count(*) >= %(limit)s) "
+        " or (select count(*) from login_attempt a "
+        f"      where a.username_normalised = {name} and not a.succeeded "
+        "         and a.at > statement_timestamp() - make_interval(mins => %(window)s) "
+        "         and a.at > greatest( "
+        "               coalesce((select max(b.at) from login_attempt b "
+        f"                          where b.username_normalised = {name} and b.succeeded), "
+        "                        '-infinity'::timestamptz), "
+        "               coalesce((select max(l.at) from login_unlock l "
+        f"                          where l.username_normalised = {name}), "
+        "                        '-infinity'::timestamptz))) "
+        "    >= %(limit)s * %(factor)s)"
+    )
+
+
+def login_locked(
+    connection: Connection[Any],
+    *,
+    username: str,
+    client_ip: str,
+    window_minutes: int,
+    max_failures: int,
+) -> bool:
+    """Whether `username` may not be tried from `client_ip` now: the sign-in's question."""
+
     with connection.cursor() as cursor:
         cursor.execute(
-            "select count(*) "
-            "  from login_attempt "
-            " where username_normalised = lower(%(username)s) "
-            "   and client_ip <<= set_masklen(%(client_ip)s::inet, "
-            "         case when family(%(client_ip)s::inet) = 6 then 64 else 32 end) "
-            "   and succeeded = false "
-            "   and at > statement_timestamp() - make_interval(mins => %(window)s) "
-            "   and at > greatest( "
-            "         coalesce((select max(at) from login_attempt "
-            "                    where username_normalised = lower(%(username)s) "
-            "                      and client_ip <<= set_masklen(%(client_ip)s::inet, "
-            "                    case when family(%(client_ip)s::inet) = 6 then 64 else 32 end) "
-            "                      and succeeded = true), '-infinity'::timestamptz), "
-            "         coalesce((select max(at) from login_unlock "
-            "                    where username_normalised = lower(%(username)s)), "
-            "                  '-infinity'::timestamptz))",
-            {"username": username, "client_ip": client_ip, "window": window_minutes},
+            "select " + _locked_sql("lower(%(username)s)"),
+            {
+                "username": username,
+                "source": client_ip,
+                "window": window_minutes,
+                "limit": max_failures,
+                "factor": ACCOUNT_FAILURE_FACTOR,
+            },
         )
         row = cursor.fetchone()
-    return int(row[0]) if row is not None else 0
-
-
-def account_failures_since_last_success(
-    connection: Connection[Any], *, username: str, window_minutes: int
-) -> int:
-    """How many failures this name has accumulated recently, from anywhere (B305).
-
-    The per-source count stops one address; this stops many guessing at one
-    account. Bounded by the same window and reset the same way, by a success
-    or an unlock, so it slows an attack rather than locking an account for good.
-    """
-
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "select count(*) "
-            "  from login_attempt "
-            " where username_normalised = lower(%(username)s) "
-            "   and succeeded = false "
-            "   and at > statement_timestamp() - make_interval(mins => %(window)s) "
-            "   and at > greatest( "
-            "         coalesce((select max(at) from login_attempt "
-            "                    where username_normalised = lower(%(username)s) "
-            "                      and succeeded = true), '-infinity'::timestamptz), "
-            "         coalesce((select max(at) from login_unlock "
-            "                    where username_normalised = lower(%(username)s)), "
-            "                  '-infinity'::timestamptz))",
-            {"username": username, "window": window_minutes},
-        )
-        row = cursor.fetchone()
-    return int(row[0]) if row is not None else 0
+    return bool(row[0]) if row is not None else False
 
 
 def create_session(
@@ -306,35 +314,22 @@ def change_password(
 
 
 #
-# *Locked* is the throttle's own question asked for every address at once: a
-# name is locked when any one address has reached the limit of failures since
-# the latest of its last success there and the name's last unlock. The same
-# bounds as `failures_since_last_success`, which is what the sign-in reads.
+# *Locked* is the sign-in's own rule (`_locked_sql`), asked with no source address.
 #
-_ACCOUNT_ROWS = """
+_ACCOUNT_ROWS = (
+    """
     select u.id, u.username, u.role, u.disabled, u.source, u.break_glass,
            (select count(*) from app_session s
              where s.user_id = u.id and s.revoked_at is null
                and s.expires_at > statement_timestamp()) as sessions,
            (select max(a.at) from login_attempt a
              where a.username_normalised = u.username_normalised and a.succeeded) as last_sign_in,
-           exists (
-             select 1 from login_attempt a
-              where a.username_normalised = u.username_normalised
-                and not a.succeeded
-                and a.at > statement_timestamp() - make_interval(mins => %(window)s)
-                and a.at > greatest(
-                      coalesce((select max(b.at) from login_attempt b
-                                 where b.username_normalised = a.username_normalised
-                                   and b.client_ip = a.client_ip and b.succeeded),
-                               '-infinity'::timestamptz),
-                      coalesce((select max(l.at) from login_unlock l
-                                 where l.username_normalised = a.username_normalised),
-                               '-infinity'::timestamptz))
-              group by a.client_ip
-             having count(*) >= %(limit)s) as locked
+           """  # noqa: S608 - joins a constant expression
+    + _locked_sql("u.username_normalised")
+    + """ as locked
       from app_user u
 """
+)
 
 
 def account_rows(
@@ -345,7 +340,12 @@ def account_rows(
     with connection.cursor(row_factory=class_row(AccountRow)) as cursor:
         cursor.execute(
             _ACCOUNT_ROWS + " order by u.username_normalised",
-            {"window": window_minutes, "limit": max_failures},
+            {
+                "window": window_minutes,
+                "limit": max_failures,
+                "factor": ACCOUNT_FAILURE_FACTOR,
+                "source": None,
+            },
         )
         return cursor.fetchall()
 
@@ -356,7 +356,13 @@ def account_row(
     with connection.cursor(row_factory=class_row(AccountRow)) as cursor:
         cursor.execute(
             _ACCOUNT_ROWS + " where u.username_normalised = lower(%(username)s)",
-            {"window": window_minutes, "limit": max_failures, "username": username},
+            {
+                "window": window_minutes,
+                "limit": max_failures,
+                "factor": ACCOUNT_FAILURE_FACTOR,
+                "source": None,
+                "username": username,
+            },
         )
         return cursor.fetchone()
 

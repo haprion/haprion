@@ -32,6 +32,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 
 from haprion_ui.config import Session as SessionPolicy
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.db.accounts import ACCOUNT_FAILURE_FACTOR as ACCOUNT_FACTOR
 
 #
 # `__Host-` names: a browser takes them only with Secure, Path=/ and no Domain,
@@ -132,7 +133,7 @@ def verify_password(password_hash: str, password: str) -> bool:
 HASHING_AT_ONCE = 2
 HASHING_WAIT_SECONDS = 5
 HASHING = threading.BoundedSemaphore(HASHING_AT_ONCE)
-ACCOUNT_FAILURE_FACTOR = 10
+ACCOUNT_FAILURE_FACTOR = ACCOUNT_FACTOR
 
 
 def burn_absent_user_time(password: str) -> None:

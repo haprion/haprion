@@ -151,11 +151,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.account_by_username", side_effect=self._account),
             mock.patch("haprion_ui.db.record_login_attempt", side_effect=self._attempt),
             mock.patch("haprion_ui.db.lock_sign_in"),
-            mock.patch("haprion_ui.db.failures_since_last_success", side_effect=self._failures),
-            mock.patch(
-                "haprion_ui.db.account_failures_since_last_success",
-                side_effect=lambda _c, **_: self.account_failures,
-            ),
+            mock.patch("haprion_ui.db.login_locked", side_effect=self._locked),
             mock.patch("haprion_ui.db.create_session", side_effect=self._create_session),
             mock.patch("haprion_ui.db.session_by_hash", side_effect=self._session),
             mock.patch("haprion_ui.db.touch_session"),
@@ -321,8 +317,11 @@ class LoginTestCase(unittest.TestCase):
     def _attempt(self, _c: object, *, username: str, client_ip: str, succeeded: bool) -> None:
         self.attempts.append((username, client_ip, succeeded))
 
-    def _failures(self, _c: object, **_: object) -> int:
-        return self.failures
+    def _locked(self, _c: object, *, max_failures: int, **_: object) -> bool:
+        return (
+            self.failures >= max_failures
+            or self.account_failures >= max_failures * auth.ACCOUNT_FAILURE_FACTOR
+        )
 
     def _create_session(
         self,

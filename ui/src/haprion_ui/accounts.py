@@ -167,12 +167,12 @@ def sign_in_throttled(connection: Any, config: Config, *, username: str, address
     (B305). The sign-in and the check of one's own password read the same two.
     """
 
-    window = config.throttle.window_minutes
-    return db.failures_since_last_success(
-        connection, username=username, client_ip=address, window_minutes=window
-    ) >= config.throttle.max_failures or (
-        db.account_failures_since_last_success(connection, username=username, window_minutes=window)
-        >= config.throttle.max_failures * auth.ACCOUNT_FAILURE_FACTOR
+    return db.login_locked(
+        connection,
+        username=username,
+        client_ip=address,
+        window_minutes=config.throttle.window_minutes,
+        max_failures=config.throttle.max_failures,
     )
 
 

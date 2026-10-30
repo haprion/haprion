@@ -344,9 +344,15 @@ PARAMETER = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 COOKIE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 #
-# An HTTP field name, as RFC 9110 defines a token.
+# An HTTP field name: RFC 9110's token, less the characters HAProxy's own
+# line grammar gives a meaning. A name is written into a configuration line as
+# it stands, and HAProxy reads `'` and `` ` `` as quotes - an empty pair
+# vanishes, so `X-Forwarded-For''` was the cluster's own header on the node
+# while the reserved-name check here saw another - `#` as the start of a
+# comment, `%` as a log-format variable and `$` as an environment variable
+# (code review 2026-10-30, E2). No field anybody sends needs them.
 #
-HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
+HEADER_NAME = re.compile(r"^[!&*+.^_|~0-9A-Za-z-]{1,64}$")
 
 #
 # What a header value may never hold. CR, LF and NUL are how a value stops

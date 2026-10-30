@@ -1257,6 +1257,34 @@ class EditingTheHeadersThatPassThrough(unittest.TestCase):
 
         self.assertIn("not a header name", str(raised.exception))
 
+    def test_a_name_haproxy_s_grammar_would_read_as_another_is_refused(self) -> None:
+        """Code review 26-10-30, E2: HAProxy drops an empty quote pair and ends a line at
+        `#`, so `X-Forwarded-For''` set the cluster's own header past the reserved-name
+        check, and `X-Keep#this` deleted `X-Keep`."""
+
+        for body in (
+            "  request:\n    set:\n      \"X-Forwarded-For''\": 203.0.113.9",
+            "  request:\n    delete: ['X-Keep#this']",
+            "  request:\n    delete: ['X-`a`']",
+            "  response:\n    delete: ['X-%a']",
+            "  response:\n    delete: ['X-$a']",
+        ):
+            with self.subTest(body):
+                with self.assertRaises(ModelError) as raised:
+                    load_proxy("shop", self.headers(body))
+
+                self.assertIn("not a header name", str(raised.exception))
+
+    def test_every_name_allowed_is_one_word_as_haproxy_reads_it(self) -> None:
+        from haprion import advanced
+        from haprion.proxy_model import HEADER_NAME
+
+        for code in range(0x21, 0x7F):
+            name = f"X-{chr(code)}a"
+            if HEADER_NAME.fullmatch(name):
+                with self.subTest(name):
+                    self.assertEqual(advanced.words(f"set-header {name}"), ["set-header", name])
+
 
 class ARouteMayAnswerInsteadOfForwarding(unittest.TestCase):
     """Exactly one of `backend` and `redirect`, never both and never neither."""

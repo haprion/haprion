@@ -13,6 +13,7 @@
     ],
     "plan": {
       "mode": "test",
+      "passwords": "not restored in test mode",
       "source_hostname": "node-a",
       "hostname": "node-test",
       "address": "192.0.2.29/24",

@@ -11,6 +11,7 @@
     "problems": [],
     "plan": {
       "mode": "overwrite",
+      "passwords": "restored",
       "source_hostname": "node-a",
       "hostname": "node-a",
       "address": "192.0.2.21/24",

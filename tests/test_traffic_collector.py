@@ -594,6 +594,35 @@ class TrafficCollectorTests(unittest.TestCase):
         for day in days[1:]:
             self.assertTrue((self.staging / f"alpha--node-a--{day}.done").exists())
 
+    def test_a_closed_day_that_stays_open_does_not_hold_back_the_days_after_it(self) -> None:
+        """Review 2026-10-30-igen, R4: only the budget ends the walk over the closed days.
+
+        The day before yesterday answers, every time, that it is not at its
+        end and has nothing to send, at the size the part already has - open
+        for a reason the half-line rule does not cover. Yesterday comes after
+        it and is fetched whole all the same.
+        """
+
+        calls: list[tuple[date, int]] = []
+        day_before = NOW.date() - 2 * date.resolution
+        yesterday = NOW.date() - date.resolution
+        whole = self.chunked({yesterday: 16}, calls)
+
+        def fetch(target: NodeTarget, wanted: date, offset: int) -> Response:
+            if wanted == day_before:
+                calls.append((wanted, offset))
+                return Response(offset, offset, 0, False, False, 0, b"")
+            return whole(target, wanted, offset)
+
+        collect_node(self.config, self.target, now=NOW, fetch=fetch)
+
+        self.assertIn(day_before, {day for day, _ in calls})
+        self.assertFalse((self.staging / f"alpha--node-a--{day_before}.done").exists())
+        self.assertEqual(
+            (self.staging / f"alpha--node-a--{yesterday}.jsonl").read_bytes(), b"1234567\n" * 2
+        )
+        self.assertTrue((self.staging / f"alpha--node-a--{yesterday}.done").exists())
+
     def test_yesterday_is_read_again_until_the_midnight_grace_has_passed(self) -> None:
         yesterday = NOW.date() - date.resolution
         for age in range(2, 14):

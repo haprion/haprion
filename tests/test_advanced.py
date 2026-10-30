@@ -357,6 +357,8 @@ class TheCountersBelongToWhoeverTracksThemFirst(unittest.TestCase):
 
         for line in (
             "http-request sc-inc-gpc0(+0)",
+            "http-request sc-inc-gpc0",
+            "http-request sc-set-gpt0 1",
             "http-request sc-inc-gpc0(-0)",
             "http-request sc-inc-gpc(0,+0)",
             "http-request sc-set-gpt0(+0) 1",

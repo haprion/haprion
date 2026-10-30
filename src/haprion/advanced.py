@@ -615,7 +615,7 @@ RATE_SLOT = 1
 #
 BLOCK_SLOTS = (3, 4)
 TRACK = re.compile(r"^track-sc([0-9]+)$")
-COUNTER_ACTION = re.compile(r"^sc-[a-z0-9-]+\(([^)]*)\)$")
+COUNTER_ACTION = re.compile(r"^sc-[a-z0-9-]+(?:\(([^)]*)\))?$")
 STICK_RULES = frozenset({"on", "match", "store-request", "store-response"})
 
 #
@@ -867,7 +867,10 @@ def _counter_problem(
     counter = COUNTER_ACTION.fullmatch(action)
     if counter:
         problem = _changed_slot_problem(
-            counter[1].split(",")[-1], rate_limit=rate_limit, dynamic_block=dynamic_block
+            # Without its parenthesis HAProxy writes slot 0.
+            "0" if counter[1] is None else counter[1].split(",")[-1],
+            rate_limit=rate_limit,
+            dynamic_block=dynamic_block,
         )
         if problem:
             return problem

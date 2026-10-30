@@ -1298,6 +1298,11 @@ its configuration, during the check before a publish too. So the text may not na
 
 Escapes count as HAProxy reads them: `\x67lobal` is `global`.
 
+A file the text may name - an error page, a list, a server's authority - is written as its directory and
+one plain file name: letters, digits, `.`, `_` and `-`, not beginning with a dot. A further `/`, a quote
+or a backslash in the name is refused. HAProxy reads a converter's arguments a second time and drops
+quotes again there, so a quoted `..` would otherwise leave the directory.
+
 **Lines that are skipped.** `mode` is skipped, since the form sets the protocol. So are the lines that set
 what the form owns for the pool - servers, balancing, health checks, cookie, and the connect, server,
 queue, tunnel and check timeouts - while the form writes the pool.

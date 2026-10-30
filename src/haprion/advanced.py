@@ -44,7 +44,6 @@ validation, is where those cases are caught.
 
 from __future__ import annotations
 
-import posixpath
 import re
 import string
 from collections.abc import Iterable, Mapping, Sequence
@@ -966,15 +965,25 @@ AUTHORITIES = "/etc/haproxy/certs/ca/"
 NOT_AN_ADDRESS = "a server is reached at a network address, not a socket or file on the node"
 
 
-def _within(path: str, directory: str) -> bool:
-    """Whether `path` names a file inside `directory` and nowhere else."""
+#
+# A file the text may name is held to the form the generator itself writes,
+# not read as a path: a directory, then one name of plain characters. With no
+# `/` after the directory and no leading dot, neither `..` nor any other way
+# out of it can be spelled, however the line is read. That matters because
+# HAProxy reads a converter's arguments twice - once as words, then again as
+# arguments, where `'` and `"` are taken away a second time - so `\'..\'` was
+# a name here and `..` to HAProxy, and a map read any file on the node as
+# root (code review 2026-10-30 again, R1). The class has no quote and no
+# backslash, so the second reading cannot change a name it lets through.
+#
+FILE_NAME = r"[A-Za-z0-9_-][A-Za-z0-9._-]*"
 
-    return (
-        path.startswith(directory)
-        and len(path) > len(directory)
-        and ".." not in path.split("/")
-        and posixpath.normpath(path) == path
-    )
+
+def _file_in(directory: str, name: str = FILE_NAME) -> re.Pattern[str]:
+    return re.compile(rf"{re.escape(directory)}{name}")
+
+
+AUTHORITY_FILE = _file_in(AUTHORITIES)
 
 
 def _server_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
@@ -1005,7 +1014,7 @@ def _server_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
             width = SERVER_PARAMETERS[parameter]
         else:
             return f"{parameter} is not a server parameter in HAProxy 3.4"
-        if parameter == "ca-file" and value != SYSTEM_CA and not _within(value, AUTHORITIES):
+        if parameter == "ca-file" and value != SYSTEM_CA and not AUTHORITY_FILE.fullmatch(value):
             return (
                 f"a server is verified against {SYSTEM_CA} or one of the cluster's "
                 f"authorities under {AUTHORITIES}"
@@ -1024,6 +1033,7 @@ def _server_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
 # object's certificate served its key (code review 2026-10-22, 5-2).
 #
 ERROR_PAGES = "/etc/haproxy/errors/"
+ERROR_PAGE = _file_in(ERROR_PAGES, r"[0-9]{3}\.http")
 #
 # Where a file follows: `errorfile <code> <file>` as a keyword, and the
 # payload words of `return` and `http-error`.
@@ -1043,7 +1053,7 @@ def _file_problem(tokens: Sequence[str], keyword: tuple[str, ...] | None) -> str
             tokens[index + 1] for index, word in enumerate(tokens[:-1]) if word in _FILE_WORDS
         )
     for path in named:
-        if not _within(path, ERROR_PAGES):
+        if not ERROR_PAGE.fullmatch(path):
             return f"a file the text names must be one of the error pages under {ERROR_PAGES}"
     return ""
 
@@ -1104,6 +1114,7 @@ def _filter_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
 # kin read a key or certificate file when they name one.
 #
 MAPS = "/etc/haproxy/maps/"
+MAP_FILE = _file_in(MAPS)
 _MAP_CONVERTER = re.compile(r"(?<![A-Za-z0-9_.-])map(?:_[a-z0-9_]+)?\(([^,)]*)")
 _LIST_ACTION = re.compile(r"^(?:set-map|del-map|add-acl|del-acl)\(")
 _JWT_FILE = re.compile(r"(?<![A-Za-z0-9_.-])jwt_(?:verify|verify_cert|decrypt_cert)\(([^)]*)\)")
@@ -1122,7 +1133,7 @@ def _list_problem(tokens: Sequence[str]) -> str:
         if any("/" in match[1] for match in _JWT_FILE.finditer(word)):
             return "a key or certificate file is one the node reads as root"
     for path in named:
-        if not _within(path, MAPS):
+        if not MAP_FILE.fullmatch(path):
             return f"a list the text reads must be one of the cluster's under {MAPS}"
     return ""
 

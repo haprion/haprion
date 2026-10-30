@@ -141,6 +141,95 @@ class AFileTheTextNamesIsAnErrorPage(unittest.TestCase):
                 self.assertEqual(fates(text)[1][1], REFUSED_FATE)
 
 
+class AFileIsNamedTheWayTheGeneratorNamesIt(unittest.TestCase):
+    """Code review 26-10-30 again, R1: HAProxy reads a converter's arguments a second
+    time and takes `'` and `"` away again, so `\\'..\\'` passed the path check as a
+    name and was `..` to HAProxy - a map read any file on the node as root, and the
+    candidate's rewrite of `/etc/haproxy/certs/` put a cluster certificate in reach.
+    Every path the text may name is now a directory and one plain name."""
+
+    def test_a_quoted_dot_dot_is_refused_wherever_a_file_is_named(self) -> None:
+        for line in (
+            r"http-request set-var(txn.x) req.hdr(x),map_str(/etc/haproxy/maps/\'..\'/certs/a.pem)",
+            r"http-request set-var(txn.x) req.hdr(x),map_str(/etc/haproxy/maps/\"..\"/certs/a.pem)",
+            r"http-request set-var(txn.x) req.hdr(x),map(/etc/haproxy/maps/\..)",
+            "http-request set-var(txn.x) req.hdr(x),map(/etc/haproxy/maps/..)",
+            "http-request set-var(txn.x) req.hdr(x),map(/etc/haproxy/maps/.)",
+            "http-request set-var(txn.x) req.hdr(x),map(/etc/haproxy/maps/sub/a.map)",
+            r"acl a req.hdr(x) -f /etc/haproxy/maps/\'..\'/x",
+            r"http-request return status 200 file /etc/haproxy/errors/\'..\'/hostname",
+            "http-request return status 200 file /etc/haproxy/errors/503.html",
+            r"server s1 192.0.2.5:443 ssl verify required ca-file /etc/haproxy/certs/ca/\'..\'",
+            "server s1 192.0.2.5:443 ssl verify required ca-file /etc/haproxy/certs/ca/x/../a",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line, handwritten=True), REFUSED_FATE)
+
+    def test_a_cluster_certificate_cannot_be_read_as_a_list(self) -> None:
+        up = "/".join([r"\'..\'"] * 3)
+        for line in (
+            rf"http-request set-var(txn.x) req.hdr(x),map_str(/etc/haproxy/maps/{up}/etc/haproxy/certs/site.pem)",
+            "http-request set-var(txn.x) req.hdr(x),map_str(/etc/haproxy/certs/site.pem)",
+            "acl a req.hdr(x) -f /etc/haproxy/certs/site.pem",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+
+    def test_the_generator_s_own_names_pass(self) -> None:
+        for line in (
+            "acl se src -f /etc/haproxy/maps/geo-se.lst",
+            "http-request set-var(txn.x) req.hdr(host),map_dom(/etc/haproxy/maps/hosts.map,none)",
+            "http-request return status 503 file /etc/haproxy/errors/503.http",
+            "server s1 192.0.2.5:443 ssl verify required ca-file /etc/haproxy/certs/ca/root-1.pem",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line, handwritten=True), PLACED)
+
+    @unittest.skipUnless(shutil.which("haproxy"), "HAProxy is not installed here")
+    def test_haproxy_itself_reads_the_quoted_dot_dot_as_dot_dot(self) -> None:
+        """What makes the refusal needed: the line `place` now refuses opens the file."""
+
+        import tempfile
+
+        haproxy = shutil.which("haproxy")
+        assert haproxy is not None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "maps").mkdir()
+            (root / "secret.txt").write_text("k v\n")
+            line = (
+                r"http-request set-var(txn.x) req.hdr(x),"
+                rf"map_str({root}/maps/\'..\'/secret.txt)"
+            )
+            config = root / "t.cfg"
+            config.write_text(
+                "defaults\n    mode http\n    timeout client 1s\n    timeout server 1s\n"
+                f"    timeout connect 1s\nbackend b\n    {line}\n"
+            )
+            checked = subprocess.run(
+                [haproxy, "-c", "-f", str(config)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            (root / "secret.txt").unlink()
+            missing = subprocess.run(
+                [haproxy, "-c", "-f", str(config)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+
+        self.assertNotIn("failed to open pattern file", checked.stdout + checked.stderr)
+        self.assertIn("/maps/../secret.txt", missing.stdout + missing.stderr)
+        self.assertEqual(
+            fate(line.replace(str(root), "/etc/haproxy").replace("/secret.txt", "/x")),
+            REFUSED_FATE,
+        )
+
+
 class TheObjectSRowsLandInItsOwnSections(unittest.TestCase):
     def test_http_rows_go_to_every_pool(self) -> None:
         self.assertEqual(fates("http-request deny\n"), [(1, PLACED, "every pool")])

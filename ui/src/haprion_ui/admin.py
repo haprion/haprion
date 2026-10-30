@@ -445,9 +445,18 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
             the_plan = account_apply.plan(
                 wanted, account_apply.stored_accounts(connection), prune=args.prune
             )
-            if not args.check and not the_plan.empty:
-                ended = account_apply.write(connection, the_plan, actor=actor_name())
-                connection.commit()
+            if not the_plan.empty:
+                #
+                # `--check` runs the writes too, so the guards of the last
+                # admin and of break-glass answer as they will, and rolls them
+                # back (review 26-10-30, E9).
+                #
+                written = account_apply.write(connection, the_plan, actor=actor_name())
+                if args.check:
+                    connection.rollback()
+                else:
+                    ended = written
+                    connection.commit()
     except account_apply.ApplyError as exc:
         #
         # 65 with or without --json: the file was refused, which is not a

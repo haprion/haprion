@@ -8334,6 +8334,29 @@ class TheAccountsFromAFile(AccountToolHarness):
         self.assertIn("0600", output)
         self.assertIsNone(self.account("admin"))
 
+    def test_check_runs_the_last_admin_guard_and_changes_nothing(self) -> None:
+        """Review 26-10-30, E9: a check that is green where the real run is refused."""
+
+        self.add("operator", role="admin")
+        demoting = self.write(
+            "accounts:\n  - username: operator\n    role: reader\n    password: another pw\n"
+        )
+
+        code, output = self.run_tool("apply", demoting, "--check", "--json")
+
+        self.assertEqual(code, 65, output)
+        self.assertIn("last active admin", json.loads(output)["error"]["message"])
+        self.assertEqual((self.account("operator") or ())[0], "admin")
+
+        harmless = self.write(
+            "accounts:\n  - username: operator\n    role: admin\n    break_glass: true\n"
+            "  - username: viewer\n    role: reader\n    password: viewer password\n"
+        )
+        code, output = self.run_tool("apply", harmless, "--check", "--json")
+        self.assertEqual(code, 0, output)
+        self.assertTrue(json.loads(output)["result"]["changed"])
+        self.assertIsNone(self.account("viewer"))
+
     def test_prune_removes_local_accounts_and_never_the_last_admin(self) -> None:
         self.add("operator", role="admin")
         self.add("sso-person", role="reader", source="oidc", password_hash=None)

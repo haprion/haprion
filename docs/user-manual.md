@@ -3912,7 +3912,7 @@ With a certificate running out and a failed node backup:
     {"kind": "certificate", "severity": "critical", "cluster": null, "subject": "shop.example.com",
      "message": "expires in 4 days", "since": null, "link": "/certificates?view=registry"},
     {"kind": "backup", "severity": "critical", "cluster": "beta", "subject": "beta",
-     "message": "node backup · Last run failed", "since": null, "link": "/backups"}
+     "message": "node backup · Last scheduled run failed", "since": null, "link": "/backups"}
   ]
 }
 ```

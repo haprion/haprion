@@ -448,6 +448,8 @@ def prepare(
     keygen: str = SSH_KEYGEN,
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
+    # Before anything is made: no route to the target leaves no directory and no key.
+    manager = source_of(request.target)
     _private_directory(root)
     at = int(now())
     directory = root / request.run
@@ -480,7 +482,6 @@ def prepare(
         detail = completed.stderr.strip().splitlines()[-1:] or [f"exit {completed.returncode}"]
         raise RestoreError(f"the one-time key could not be made: {detail[0]}")
     public = (directory / "key.pub").read_text(encoding="utf-8").strip()
-    manager = source_of(request.target)
     until = time.strftime("%Y%m%d%H%M", time.gmtime(at + KEY_LIFETIME))
     line = f'from="{manager}",restrict,expiry-time="{until}Z" {public}'
     _write_json(directory / "request.json", request.as_dict())

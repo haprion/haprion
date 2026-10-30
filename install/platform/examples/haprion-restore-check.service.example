@@ -1,14 +1,15 @@
 [Unit]
-# Restores the newest dump into a scratch database and compares it with the live
-# one. A dump nobody has restored is a belief, not a backup.
+# Restores the newest dump into a scratch database and compares it with what the
+# dump itself holds; the live database is shown beside it, not compared. A dump
+# nobody has restored is a belief, not a backup.
 Description=Verify that the newest interface dump restores
 Documentation=file:///opt/haprion-ui/current
 After=postgresql.service
 Requires=postgresql.service
-# Waits for the data directory's mount when it is one (the user manual's
-# "Where the data lives"): without it a late volume leaves this writing to the
-# root filesystem underneath it.
-RequiresMountsFor=/var/lib/haprion-ui
+# Waits for the dump directory's mount when it is one (the user manual's
+# "Where the data lives"): without it a late volume leaves this reading the
+# root filesystem underneath it. DUMP_DIR is filled in by 06-platform-backup.
+RequiresMountsFor=DUMP_DIR
 
 [Service]
 Type=oneshot

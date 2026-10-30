@@ -178,6 +178,25 @@ class RestoreTest(unittest.TestCase):
 
 
 class Prepare(RestoreTest):
+    def test_no_route_to_the_target_leaves_no_run_behind(self) -> None:
+        request = Request(
+            run="r260101-0000bbbb",
+            cluster="alpha",
+            node="node-a",
+            archive=VERSION,
+            target="192.0.2.120",
+            mode="new_vm",
+            profile=None,
+        )
+
+        def no_route(_: str) -> str:
+            raise RestoreError("no route to the target")
+
+        self.root.mkdir(mode=0o700, exist_ok=True)
+        with self.assertRaises(RestoreError):
+            node_restore.prepare(self.root, request, source_of=no_route)
+        self.assertEqual(list(self.root.iterdir()), [])
+
     def test_a_run_holds_a_private_key_and_the_paste_line_limits_it(self) -> None:
         request = Request(
             run="r260101-0000aaaa",

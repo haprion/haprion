@@ -39,7 +39,7 @@ step "Timers"
 for unit in haprion-backup haprion-restore-check; do
     for kind in service timer; do
         install_file "/etc/systemd/system/${unit}.${kind}" root:root 644 \
-            "$(cat "examples/${unit}.${kind}.example")"
+            "$(sed "s|DUMP_DIR|${DUMP_DIR}|g" "examples/${unit}.${kind}.example")"
     done
 done
 systemctl daemon-reload

@@ -196,6 +196,14 @@ put unit "${SYSTEMD_DIR}/${POLLER_UNIT}" 644 "$(cat examples/haprion-poller.serv
 put unit "${SYSTEMD_DIR}/${WEB_UNIT%.service}.socket" 644 "$(cat examples/haprion-web.socket.example)"
 put unit "${SYSTEMD_DIR}/${WEB_UNIT}" 644 "$(cat examples/haprion-web.service.example)"
 
+# The dump units wait for the mount of the directory the dumps are written to;
+# render_example fills it in.
+DUMP_DIR=""
+if [[ -e "${SYSTEMD_DIR}/haprion-backup.timer" ]]; then
+    DUMP_DIR="$(admin_value /etc/haprion/ui-admin.conf DUMP_DIR)"
+    [[ -n "$DUMP_DIR" ]] || die "DUMP_DIR is not in /etc/haprion/ui-admin.conf; step 02 writes it"
+fi
+
 step "Helper sockets"
 for name in "${SOCKETS[@]}"; do
     socket_pair "$name"

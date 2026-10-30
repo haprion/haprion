@@ -325,6 +325,7 @@ render_example() {
         -e "s|WORKER_USER|${WORKER_USER}|g" \
         -e "s|OIDC_USER|${OIDC_USER}|g" \
         -e "s|COLLECTOR_USER|${COLLECTOR_USER}|g" \
+        -e "s|DUMP_DIR|${DUMP_DIR}|g" \
         "$1"
 }
 

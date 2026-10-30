@@ -431,7 +431,7 @@ def _schedule_view(
         # would show it: the archives simply stop getting newer, which reads as
         # an old backup rather than as a broken one.
         #
-        label, tone = "Last run failed", "critical"
+        label, tone = "Last scheduled run failed", "critical"
     elif schedule.get("active") is not True:
         label, tone = "Not running", "warning"
     else:

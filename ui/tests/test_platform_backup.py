@@ -205,6 +205,18 @@ class TheRestoredHashIsALocalAccounts(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
 
 
+class TheUnitsWaitForTheDumpDirectory(unittest.TestCase):
+    """`RequiresMountsFor` named a fixed path while DUMP_DIR is a setting."""
+
+    def test_the_services_name_the_dump_directory_and_the_step_fills_it_in(self) -> None:
+        examples = SCRIPT.parents[1] / "examples"
+        for unit in ("haprion-backup", "haprion-restore-check"):
+            text = (examples / f"{unit}.service.example").read_text()
+            self.assertIn("RequiresMountsFor=DUMP_DIR\n", text)
+        step = (SCRIPT.parents[1] / "06-platform-backup").read_text()
+        self.assertIn('sed "s|DUMP_DIR|${DUMP_DIR}|g"', step)
+
+
 class OneRunAtATime(unittest.TestCase):
     """Review 2026-10-20, R3: a run by hand beside the timer's shared its files."""
 

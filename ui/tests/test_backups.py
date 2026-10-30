@@ -420,7 +420,7 @@ class ScheduleTests(unittest.TestCase):
         schedule_view = timer_of(overview(reading(timer=schedule(last_result="exit-code"))))
 
         self.assertEqual(schedule_view.tone, "critical")
-        self.assertEqual(schedule_view.label, "Last run failed")
+        self.assertEqual(schedule_view.label, "Last scheduled run failed")
 
     def test_a_missing_timer_and_a_disabled_one_are_worded_differently(self) -> None:
         missing = timer_of(overview(reading(timer=schedule(known=False, enabled=False))))

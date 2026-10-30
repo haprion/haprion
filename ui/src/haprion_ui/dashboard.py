@@ -339,6 +339,16 @@ def node_package_words(installation: object, carried: object) -> tuple[str, str]
     )
 
 
+def _failed_command(node: Mapping[str, Any]) -> str | None:
+    """What the node's status command said when it ran and failed (review 2026-10-30, E3)."""
+
+    error = _mapping(node.get("error"))
+    message = error.get("message")
+    if error.get("code") == "node_status_invalid" and isinstance(message, str) and message:
+        return message[:240]
+    return None
+
+
 def _node_view(
     value: Any,
     target_hash: str | None = None,
@@ -389,7 +399,7 @@ def _node_view(
             management_host=management_host,
             label="Invalid status",
             tone="critical",
-            detail="The node answered without usable status",
+            detail=_failed_command(node) or "The node answered without usable status",
             keepalived="Unknown",
             vip="Unknown",
             version="—",

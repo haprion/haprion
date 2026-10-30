@@ -392,6 +392,29 @@ class AStatusReadIsBounded(unittest.TestCase):
         self.assertEqual(error["code"], "ssh_unreachable")
         self.assertEqual(error["message"], "SSH gave no answer within 1 seconds")
 
+    def test_a_status_command_that_failed_on_the_node_is_not_an_unreachable_node(self) -> None:
+        """Review 2026-10-30, E3: only ssh's own exit 255 and a timeout are the connection."""
+
+        failed = NodeResponse(
+            exit_code=1,
+            stdout="",
+            stderr="ERROR: node.conf names no cluster\nrun 04-node-prepare\n",
+        )
+        report = collect(NODES[:1], lambda _node: failed, target=None)
+        entry = report.result["nodes"][0]
+        self.assertTrue(entry["reachable"])
+        self.assertFalse(entry["status_ok"])
+        self.assertEqual(entry["error"]["code"], "node_status_invalid")
+        self.assertIn("exit 1", entry["error"]["message"])
+        self.assertIn("ERROR: node.conf names no cluster", entry["error"]["message"])
+        self.assertIn("run 04-node-prepare", entry["error"]["details"]["stderr"])
+
+    def test_what_a_failed_command_said_is_bounded(self) -> None:
+        noisy = NodeResponse(exit_code=2, stdout="", stderr="x" * 100_000)
+        entry = collect(NODES[:1], lambda _node: noisy, target=None).result["nodes"][0]
+        self.assertLess(len(entry["error"]["details"]["stderr"]), 2100)
+        self.assertLess(len(entry["error"]["message"]), 300)
+
     def test_a_document_nested_past_the_parser_is_one_node_without_status(self) -> None:
         """Code review 26-10-22, 5-6: `RecursionError` is not a `JSONDecodeError`,
         and one node's answer stopped the read of every node."""

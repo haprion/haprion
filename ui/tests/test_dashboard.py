@@ -192,6 +192,28 @@ class HealthDerivation(unittest.TestCase):
                 self.assertEqual(view.clusters[0].nodes[0].prepare_pending, pending)
                 self.assertFalse(view.clusters[0].nodes[1].prepare_pending)
 
+    def test_a_node_whose_status_command_failed_shows_what_failed(self) -> None:
+        """Review 2026-10-30, E3."""
+
+        status = reading("done-single-owner.json")
+        nodes = [dict(node) for node in status.result["nodes"]]
+        nodes[0] = {
+            **nodes[0],
+            "reachable": True,
+            "status_ok": False,
+            "status": None,
+            "error": {
+                "code": "node_status_invalid",
+                "message": "the status command failed on the node (exit 1): ERROR: no cluster",
+                "node": nodes[0]["name"],
+                "details": None,
+            },
+        }
+        view = self.dashboard(replace(status, result={**status.result, "nodes": nodes}))
+        shown = view.clusters[0].nodes[0]
+        self.assertEqual(shown.label, "Invalid status")
+        self.assertIn("exit 1", shown.detail)
+
     def test_done_and_converged_is_only_green_when_node_services_are_healthy(self) -> None:
         status = reading("done-single-owner.json")
         result = dict(status.result)

@@ -281,7 +281,13 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
             writer.write("  Reachable:    NO\n  Status:       UNREACHABLE\n\n")
             continue
         if not node["status_ok"]:
-            writer.write("  Reachable:    YES\n  Status:       INVALID\n\n")
+            writer.write("  Reachable:    YES\n  Status:       INVALID\n")
+            error = node.get("error") or {}
+            if error.get("message"):
+                writer.write(f"  Reason:       {error['message']}\n")
+            for line in str((error.get("details") or {}).get("stderr") or "").splitlines():
+                writer.write(f"    {line}\n")
+            writer.write("\n")
             continue
 
         status = node["status"]

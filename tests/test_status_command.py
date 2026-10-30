@@ -647,6 +647,22 @@ class CallerTests(HelperFixture):
         self.assertIn("Published:      8", out)
         self.assertIn("every node runs the published version", out)
 
+    def test_a_node_whose_status_command_failed_says_why(self) -> None:
+        """Review 2026-10-30, E3: not UNREACHABLE, and the node's own words follow."""
+
+        def read(node: Node) -> NodeResponse:
+            if node.name == "node-b":
+                return NodeResponse(exit_code=1, stdout="", stderr="ERROR: names no cluster\n")
+            return self.reader(
+                **{"node-a": node_status("node-a", owner=True, release_hash=TARGET_HASH)}
+            )(node)
+
+        payload = self.envelope(node_reader=read)
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+        self.assertIn("Status:       INVALID", out)
+        self.assertNotIn("UNREACHABLE", out)
+        self.assertIn("ERROR: names no cluster", out)
+
     def test_the_address_list_is_named_when_it_is_the_half_that_is_behind(self) -> None:
         """Otherwise BEHIND on a matching version reads as a contradiction."""
 

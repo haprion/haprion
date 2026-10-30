@@ -114,9 +114,10 @@ def ask_node(node: Node, identity: DeployIdentity) -> NodeResponse:
     """One node's status, as it answered. Its stderr is not the operator's.
 
     The status account is a forced command: connecting is the whole request, and
-    what comes back on stdout is the answer. stderr is dropped because a
-    connection failure is already an exit code, and ssh's own text about it
-    would arrive in the middle of a status report as noise nobody can act on.
+    what comes back on stdout is the answer. stderr is kept for a command that
+    ran and failed (`_node_result` shows what it said); for ssh's own failure,
+    exit 255, it is not shown, since a connection failure is already an exit
+    code.
     """
 
     try:
@@ -131,7 +132,9 @@ def ask_node(node: Node, identity: DeployIdentity) -> NodeResponse:
         )
     except subprocess.TimeoutExpired:
         return NodeResponse(exit_code=exit_codes.TIMED_OUT, stdout="")
-    return NodeResponse(exit_code=completed.returncode, stdout=completed.stdout)
+    return NodeResponse(
+        exit_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr
+    )
 
 
 def read_target(publish_path: Path, node_path: str) -> ReleaseTarget | None:
@@ -423,6 +426,20 @@ def _normalised(status: Mapping[str, Any]) -> dict[str, Any]:
     return copy
 
 
+SSH_FAILED = 255
+STDERR_LINE_CHARS = 200
+STDERR_DETAIL_CHARS = 2000
+
+
+def _said(stderr: str) -> str:
+    """What a node's command said on stderr, as printable lines and cut short."""
+
+    text = "".join(c if c == "\n" or c.isprintable() else " " for c in stderr).strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    joined = "\n".join(lines)
+    return joined if len(joined) <= STDERR_DETAIL_CHARS else joined[:STDERR_DETAIL_CHARS] + " […]"
+
+
 def _node_result(
     node: Node, response: NodeResponse, target: ReleaseTarget | None
 ) -> tuple[dict[str, Any], Message | None]:
@@ -437,6 +454,27 @@ def _node_result(
         "current": None,
         "error": None,
     }
+
+    #
+    # ssh says 255 for its own failure; any other code is the node's command,
+    # which ran and failed: the node is reachable and its status is not usable,
+    # and what it said on stderr is the reason (review 2026-10-30, E3).
+    #
+    if response.exit_code not in (0, SSH_FAILED, exit_codes.TIMED_OUT):
+        said = _said(response.stderr)
+        entry["reachable"] = True
+        entry["error"] = {
+            "code": "node_status_invalid",
+            "message": f"the status command failed on the node (exit {response.exit_code})"
+            + (f": {said.splitlines()[0][:STDERR_LINE_CHARS]}" if said else ""),
+            "node": node.name,
+            "details": {"stderr": said} if said else None,
+        }
+        return entry, Message(
+            code="node_status_invalid",
+            message=f"{node.name}: the status command failed on the node",
+            node=node.name,
+        )
 
     if response.exit_code != 0:
         entry["error"] = {

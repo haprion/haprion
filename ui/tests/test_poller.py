@@ -94,6 +94,27 @@ class GoodAnswers(unittest.TestCase):
         self.assertNotIn("joining", marked["nodes"][0])
         self.assertIs(poller.with_joining(result, frozenset()), result)
 
+    def test_what_a_node_said_about_its_failure_is_redacted_before_it_is_stored(self) -> None:
+        """Review 2026-10-30, E3."""
+
+        said = "ERROR: failed\napi_token = hunter2"
+        body = json.loads(envelope("partial"))
+        body["result"]["nodes"] = [
+            {
+                "name": "n1",
+                "error": {
+                    "code": "node_status_invalid",
+                    "message": "failed: api_token = hunter2",
+                    "node": "n1",
+                    "details": {"stderr": said},
+                },
+            }
+        ]
+        reading = poller.poll_cluster("alpha", lambda *_: completed(json.dumps(body)))
+        stored = json.dumps(reading["result"])
+        self.assertNotIn("hunter2", stored)
+        self.assertIn("ERROR: failed", stored)
+
     def test_a_healthy_cluster_is_recorded_with_its_result(self) -> None:
         reading = poller.poll_cluster("alpha", lambda *_: completed(envelope()))
         self.assertEqual(reading["outcome"], "done")

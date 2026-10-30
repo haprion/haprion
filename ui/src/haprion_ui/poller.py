@@ -234,6 +234,36 @@ def _excerpt(text: str) -> str:
     return text if len(text) <= MAX_ERROR_BYTES else text[:MAX_ERROR_BYTES] + " […]"
 
 
+def _nodes_redacted(result: Any) -> Any:
+    """The reading, with what a node said about its own failure redacted before it is stored.
+
+    The words are the node's (its stderr, in `error.details`): redacted as a
+    helper's are, since every signed-in role can read the dashboard.
+    """
+
+    if not isinstance(result, dict) or not isinstance(result.get("nodes"), list):
+        return result
+    nodes = []
+    for node in result["nodes"]:
+        error = node.get("error") if isinstance(node, dict) else None
+        if isinstance(error, dict):
+            details = error.get("details")
+            node = {
+                **node,
+                "error": {
+                    **error,
+                    "message": diagnostics.redact(str(error.get("message", ""))),
+                    "details": (
+                        {**details, "stderr": diagnostics.redact(str(details.get("stderr", "")))}
+                        if isinstance(details, dict) and "stderr" in details
+                        else details
+                    ),
+                },
+            }
+        nodes.append(node)
+    return {**result, "nodes": nodes}
+
+
 def poll_cluster(
     cluster: str,
     run_helper: RunHelper = run_status_helper,
@@ -319,7 +349,7 @@ def _judge(
 
     return {
         "outcome": outcome,
-        "result": envelope.get("result") or {},
+        "result": _nodes_redacted(envelope.get("result") or {}),
         "warnings": envelope.get("warnings") or [],
         "error": envelope.get("error"),
         "poll_error": None,

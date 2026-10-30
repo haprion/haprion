@@ -345,6 +345,165 @@ DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q ipvsadm >/
     || die "ipvsadm: the package could not be installed"
 log "  ok       $(/usr/sbin/ipvsadm --version 2>/dev/null | head -n 1)"
 
+step "HAProxy's log sockets"
+
+#
+# Held before the rsyslog rules below read them: a socket rsyslog finds there
+# when it restarts on an input is handed to it, and one that is not yet there is
+# made by rsyslog itself, open to every account (review 2026-10-30-igen2, S4).
+#
+TRAFFIC_SOCKET_PATH="/var/lib/haproxy/dev/haprion-traffic"
+#
+# Both nodes run HAProxy continuously; the virtual address decides which one
+# traffic reaches. That only works if the node NOT holding the address can still
+# bind it - otherwise HAProxy fails to start there, and the pair is a single node
+# with a spare that has never been proven to work.
+#
+LOG_SOCKET_QUEUE=8192
+sysctl_file="/etc/sysctl.d/60-haproxy.conf"
+sysctl_content="# Installed by install/04-node-prepare.
+#
+# Let HAProxy bind the virtual address on the node that does not currently own
+# it. Without this the standby node cannot start, and the failover it exists for
+# has never been exercised.
+net.ipv4.ip_nonlocal_bind = 1
+
+# How many lines HAProxy's log socket holds while rsyslog is not reading it:
+# through a restart of rsyslog (65 ms measured, ~1 600 lines at 25 000 a
+# second) and a burst. Read when a socket is created, so it is set before the
+# log socket below; the kernel's 512 dropped lines on every restart.
+net.unix.max_dgram_qlen = ${LOG_SOCKET_QUEUE}"
+
+install_file "$sysctl_file" root:root 644 "$sysctl_content"
+for setting in net.ipv4.ip_nonlocal_bind=1 "net.unix.max_dgram_qlen=${LOG_SOCKET_QUEUE}"; do
+    if [[ "$(sysctl -n "${setting%%=*}")" != "${setting#*=}" ]]; then
+        sysctl -q -w "$setting"
+        log "  applied  ${setting}"
+    else
+        log "  ok       ${setting}"
+    fi
+done
+
+#
+# HAProxy chrooted in /var/lib/haproxy, as Ubuntu's packaged haproxy.cfg has
+# it, reaches its `log /dev/log` at /var/lib/haproxy/dev/log - a socket
+# Ubuntu's 49-haproxy.conf has rsyslog create, and remove again whenever
+# rsyslog stops. Every restart of rsyslog, which a deploy that changes the log
+# receivers does, lost the lines HAProxy wrote in between: 43 to 93 a restart,
+# locally and at every receiver (measured 26-10-12). Here systemd holds the
+# socket, as syslog.socket holds the system log's: rsyslog is handed it at
+# start and the lines wait in it while rsyslog is away. rsyslog takes a socket
+# handed over for a path it is told to listen on, by `$AddUnixListenSocket` as
+# by `input()`, and leaves the path alone when it stops (measured with rsyslog
+# 8.2512 and systemd's socket activation).
+#
+# systemd does not bind over a socket rsyslog made itself, so taking one over
+# stops rsyslog and syslog.socket first - otherwise the journal could start
+# rsyslog again in between - and starts both after the socket. That is only
+# when the unit is new or changed or the socket is not held yet.
+#
+#
+# A unit that does not start is taken away again and rsyslog is started as it
+# was. `failed_hook`, when given, is a function run first, and `failed_note` is
+# what the error then says rsyslog does: the traffic socket's has to take the
+# input that would make rsyslog create the socket itself away as well.
+#
+hold_log_socket() {
+    local unit="$1" path="$2" content="$3" failed_hook="${4:-}"
+    local failed_note="${5:-rsyslog runs as before}"
+    local file="/etc/systemd/system/${unit}" before
+    before="$(sha256sum "$file" 2>/dev/null || true)"
+    install_file "$file" root:root 644 "$content"
+    systemctl daemon-reload
+    systemctl enable --quiet "$unit"
+    if [[ "$before" != "$(sha256sum "$file")" ]] || ! systemctl is-active --quiet "$unit"; then
+        systemctl stop syslog.socket rsyslog.service "$unit"
+        rm -f "$path"
+        if ! systemctl start "$unit"; then
+            # Never leave the node without rsyslog: back to the socket it makes.
+            systemctl disable --quiet "$unit" || true
+            rm -f "$file"
+            systemctl daemon-reload
+            [[ -z "$failed_hook" ]] || "$failed_hook"
+            systemctl start syslog.socket rsyslog.service || true
+            die "${unit} could not be started; removed it, ${failed_note}"
+        fi
+        systemctl start syslog.socket rsyslog.service || die "rsyslog could not be started"
+        log "  applied  ${unit}; rsyslog restarted on it"
+    else
+        log "  ok       ${unit}"
+    fi
+}
+
+LOG_SOCKET_PATH="/var/lib/haproxy/dev/log"
+LOG_SOCKET_UNIT="haprion-haproxy-log.socket"
+if ! grep -qsx "\$AddUnixListenSocket ${LOG_SOCKET_PATH}" /etc/rsyslog.d/49-haproxy.conf; then
+    warn "/etc/rsyslog.d/49-haproxy.conf does not have rsyslog listen on ${LOG_SOCKET_PATH}"
+    warn "  (it comes with Ubuntu's haproxy package); the log socket is left to rsyslog."
+else
+    hold_log_socket "$LOG_SOCKET_UNIT" "$LOG_SOCKET_PATH" "# Installed by install/04-node-prepare.
+[Unit]
+Description=HAProxy's log socket in its chroot, held across rsyslog restarts
+
+[Socket]
+ListenDatagram=${LOG_SOCKET_PATH}
+SocketMode=0666
+ReceiveBuffer=16M
+Service=rsyslog.service
+
+[Install]
+WantedBy=sockets.target"
+fi
+#
+# The traffic stream's socket (TRAFFIC_SOCKET_PATH above) is held the same
+# way, in a unit of its own: writable by the haproxy account alone, which is
+# what lets its input mark a line as HAProxy's. Not tied to 49-haproxy.conf -
+# the input that reads it is this step's own - so every node has it. The
+# ordinary socket above keeps mode 0666: a core that runs HAProxy as another
+# account still logs there, and nothing trusts a line on it.
+#
+# Without the socket the input that reads it must not be there either: rsyslog
+# would make the socket itself, writable by every local account.
+#
+TRAFFIC_SOCKET_UNIT="haprion-traffic-log.socket"
+RSYSLOG_FORWARD_RULE="/etc/rsyslog.d/47-haprion-forward.conf"
+traffic_input_off() {
+    rm -f "$RSYSLOG_FORWARD_RULE"
+}
+hold_log_socket "$TRAFFIC_SOCKET_UNIT" "$TRAFFIC_SOCKET_PATH" "# Installed by install/04-node-prepare.
+[Unit]
+Description=HAProxy's traffic log socket, writable by HAProxy alone
+
+[Socket]
+ListenDatagram=${TRAFFIC_SOCKET_PATH}
+SocketUser=haproxy
+SocketGroup=haproxy
+SocketMode=0660
+ReceiveBuffer=16M
+Service=rsyslog.service
+
+[Install]
+WantedBy=sockets.target" traffic_input_off \
+    "the traffic input as well, so rsyslog does not make the socket itself (open to every account); the traffic log stays off on this node until this step succeeds"
+#
+# HAProxy names the traffic socket by its path on the host. A HAProxy chrooted
+# in /var/lib/haproxy looks that path up inside the chroot, so the same path
+# there is a link to the socket - relative, so it leads to the socket from the
+# host too. The generated line is then right with Ubuntu's chroot and without
+# one, and a core that gains or loses the chroot needs no new configuration.
+#
+TRAFFIC_SOCKET_LINK="/var/lib/haproxy/var/lib/haproxy/dev/haprion-traffic"
+TRAFFIC_SOCKET_LINK_TARGET="../../../../dev/haprion-traffic"
+ensure_dir "${TRAFFIC_SOCKET_LINK%/*}" root:root 755
+if [[ "$(readlink "$TRAFFIC_SOCKET_LINK" 2>/dev/null)" == "$TRAFFIC_SOCKET_LINK_TARGET" ]]; then
+    log "  ok       ${TRAFFIC_SOCKET_LINK}"
+else
+    ln -sfn "$TRAFFIC_SOCKET_LINK_TARGET" "$TRAFFIC_SOCKET_LINK"
+    log "  linked   ${TRAFFIC_SOCKET_LINK} -> ${TRAFFIC_SOCKET_LINK_TARGET}"
+fi
+[[ "$(realpath -e "$TRAFFIC_SOCKET_LINK" 2>/dev/null)" == "$TRAFFIC_SOCKET_PATH" ]] \
+    || die "${TRAFFIC_SOCKET_LINK} does not lead to ${TRAFFIC_SOCKET_PATH}"
+
 step "Forwarding the traffic log"
 
 #
@@ -361,7 +520,6 @@ step "Forwarding the traffic log"
 # hour. rsyslog-gnutls, for receivers over TLS, is the package's dependency.
 #
 RSYSLOG_FORWARD_DIR="/etc/rsyslog.d/haprion"
-RSYSLOG_FORWARD_RULE="/etc/rsyslog.d/47-haprion-forward.conf"
 RSYSLOG_STATS="${TRAFFIC_LOG_ROOT}/rsyslog-stats.json"
 RSYSLOG_STATS_ROTATE="/etc/logrotate.d/haprion-rsyslog-stats"
 ensure_dir "$RSYSLOG_FORWARD_DIR" root:root 755
@@ -373,7 +531,7 @@ ensure_dir "$RSYSLOG_FORWARD_DIR" root:root 755
 # account that writes a line under the same tag to /dev/log (`logger -t
 # haproxy-traffic`) is not forwarded and is not written to the day file.
 # Nothing a message says can set the mark: `$!` is rsyslog's own. The socket is
-# held by systemd and writable by the haproxy account alone (below), so only
+# held by systemd and writable by the haproxy account alone (above), so only
 # HAProxy reaches this input. No rate limit on it: it is the traffic itself.
 #
 # A socket of its own, and not an input on HAProxy's dev/log: Ubuntu's
@@ -383,7 +541,6 @@ ensure_dir "$RSYSLOG_FORWARD_DIR" root:root 755
 # chrooted HAProxy reaches it as /dev/haprion-traffic; one without a chroot
 # names the whole path (the generator reads which from the core).
 #
-TRAFFIC_SOCKET_PATH="/var/lib/haproxy/dev/haprion-traffic"
 TRAFFIC_INPUT="$(sed "s|@SOCKET@|${TRAFFIC_SOCKET_PATH}|" <<'CONF'
 input(type="imuxsock" Socket="@SOCKET@" ruleset="haprion-traffic-in"
       RateLimit.Interval="0")
@@ -554,37 +711,6 @@ log "  installed /etc/sudoers.d/haprion-node"
 
 step "HAProxy baseline"
 
-#
-# Both nodes run HAProxy continuously; the virtual address decides which one
-# traffic reaches. That only works if the node NOT holding the address can still
-# bind it - otherwise HAProxy fails to start there, and the pair is a single node
-# with a spare that has never been proven to work.
-#
-LOG_SOCKET_QUEUE=8192
-sysctl_file="/etc/sysctl.d/60-haproxy.conf"
-sysctl_content="# Installed by install/04-node-prepare.
-#
-# Let HAProxy bind the virtual address on the node that does not currently own
-# it. Without this the standby node cannot start, and the failover it exists for
-# has never been exercised.
-net.ipv4.ip_nonlocal_bind = 1
-
-# How many lines HAProxy's log socket holds while rsyslog is not reading it:
-# through a restart of rsyslog (65 ms measured, ~1 600 lines at 25 000 a
-# second) and a burst. Read when a socket is created, so it is set before the
-# log socket below; the kernel's 512 dropped lines on every restart.
-net.unix.max_dgram_qlen = ${LOG_SOCKET_QUEUE}"
-
-install_file "$sysctl_file" root:root 644 "$sysctl_content"
-for setting in net.ipv4.ip_nonlocal_bind=1 "net.unix.max_dgram_qlen=${LOG_SOCKET_QUEUE}"; do
-    if [[ "$(sysctl -n "${setting%%=*}")" != "${setting#*=}" ]]; then
-        sysctl -q -w "$setting"
-        log "  applied  ${setting}"
-    else
-        log "  ok       ${setting}"
-    fi
-done
-
 if systemctl is-enabled haproxy >/dev/null 2>&1; then
     log "  ok       haproxy is enabled"
 else
@@ -702,109 +828,6 @@ while read -r port program; do
     warn "  cannot bind the virtual address. $(wildcard_advice "$program")"
 done <<<"$wildcard_report"
 
-#
-# HAProxy chrooted in /var/lib/haproxy, as Ubuntu's packaged haproxy.cfg has
-# it, reaches its `log /dev/log` at /var/lib/haproxy/dev/log - a socket
-# Ubuntu's 49-haproxy.conf has rsyslog create, and remove again whenever
-# rsyslog stops. Every restart of rsyslog, which a deploy that changes the log
-# receivers does, lost the lines HAProxy wrote in between: 43 to 93 a restart,
-# locally and at every receiver (measured 26-10-12). Here systemd holds the
-# socket, as syslog.socket holds the system log's: rsyslog is handed it at
-# start and the lines wait in it while rsyslog is away. rsyslog takes a socket
-# handed over for a path it is told to listen on, by `$AddUnixListenSocket` as
-# by `input()`, and leaves the path alone when it stops (measured with rsyslog
-# 8.2512 and systemd's socket activation).
-#
-# systemd does not bind over a socket rsyslog made itself, so taking one over
-# stops rsyslog and syslog.socket first - otherwise the journal could start
-# rsyslog again in between - and starts both after the socket. That is only
-# when the unit is new or changed or the socket is not held yet.
-#
-hold_log_socket() {
-    local unit="$1" path="$2" content="$3"
-    local file="/etc/systemd/system/${unit}" before
-    before="$(sha256sum "$file" 2>/dev/null || true)"
-    install_file "$file" root:root 644 "$content"
-    systemctl daemon-reload
-    systemctl enable --quiet "$unit"
-    if [[ "$before" != "$(sha256sum "$file")" ]] || ! systemctl is-active --quiet "$unit"; then
-        systemctl stop syslog.socket rsyslog.service "$unit"
-        rm -f "$path"
-        if ! systemctl start "$unit"; then
-            # Never leave the node without rsyslog: back to the socket it makes.
-            systemctl disable --quiet "$unit" || true
-            rm -f "$file"
-            systemctl daemon-reload
-            systemctl start syslog.socket rsyslog.service || true
-            die "${unit} could not be started; removed it, rsyslog runs as before"
-        fi
-        systemctl start syslog.socket rsyslog.service || die "rsyslog could not be started"
-        log "  applied  ${unit}; rsyslog restarted on it"
-    else
-        log "  ok       ${unit}"
-    fi
-}
-
-LOG_SOCKET_PATH="/var/lib/haproxy/dev/log"
-LOG_SOCKET_UNIT="haprion-haproxy-log.socket"
-if ! grep -qsx "\$AddUnixListenSocket ${LOG_SOCKET_PATH}" /etc/rsyslog.d/49-haproxy.conf; then
-    warn "/etc/rsyslog.d/49-haproxy.conf does not have rsyslog listen on ${LOG_SOCKET_PATH}"
-    warn "  (it comes with Ubuntu's haproxy package); the log socket is left to rsyslog."
-else
-    hold_log_socket "$LOG_SOCKET_UNIT" "$LOG_SOCKET_PATH" "# Installed by install/04-node-prepare.
-[Unit]
-Description=HAProxy's log socket in its chroot, held across rsyslog restarts
-
-[Socket]
-ListenDatagram=${LOG_SOCKET_PATH}
-SocketMode=0666
-ReceiveBuffer=16M
-Service=rsyslog.service
-
-[Install]
-WantedBy=sockets.target"
-fi
-#
-# The traffic stream's socket (TRAFFIC_SOCKET_PATH above) is held the same
-# way, in a unit of its own: writable by the haproxy account alone, which is
-# what lets its input mark a line as HAProxy's. Not tied to 49-haproxy.conf -
-# the input that reads it is this step's own - so every node has it. The
-# ordinary socket above keeps mode 0666: a core that runs HAProxy as another
-# account still logs there, and nothing trusts a line on it.
-#
-TRAFFIC_SOCKET_UNIT="haprion-traffic-log.socket"
-hold_log_socket "$TRAFFIC_SOCKET_UNIT" "$TRAFFIC_SOCKET_PATH" "# Installed by install/04-node-prepare.
-[Unit]
-Description=HAProxy's traffic log socket, writable by HAProxy alone
-
-[Socket]
-ListenDatagram=${TRAFFIC_SOCKET_PATH}
-SocketUser=haproxy
-SocketGroup=haproxy
-SocketMode=0660
-ReceiveBuffer=16M
-Service=rsyslog.service
-
-[Install]
-WantedBy=sockets.target"
-#
-# HAProxy names the traffic socket by its path on the host. A HAProxy chrooted
-# in /var/lib/haproxy looks that path up inside the chroot, so the same path
-# there is a link to the socket - relative, so it leads to the socket from the
-# host too. The generated line is then right with Ubuntu's chroot and without
-# one, and a core that gains or loses the chroot needs no new configuration.
-#
-TRAFFIC_SOCKET_LINK="/var/lib/haproxy/var/lib/haproxy/dev/haprion-traffic"
-TRAFFIC_SOCKET_LINK_TARGET="../../../../dev/haprion-traffic"
-ensure_dir "${TRAFFIC_SOCKET_LINK%/*}" root:root 755
-if [[ "$(readlink "$TRAFFIC_SOCKET_LINK" 2>/dev/null)" == "$TRAFFIC_SOCKET_LINK_TARGET" ]]; then
-    log "  ok       ${TRAFFIC_SOCKET_LINK}"
-else
-    ln -sfn "$TRAFFIC_SOCKET_LINK_TARGET" "$TRAFFIC_SOCKET_LINK"
-    log "  linked   ${TRAFFIC_SOCKET_LINK} -> ${TRAFFIC_SOCKET_LINK_TARGET}"
-fi
-[[ "$(realpath -e "$TRAFFIC_SOCKET_LINK" 2>/dev/null)" == "$TRAFFIC_SOCKET_PATH" ]] \
-    || die "${TRAFFIC_SOCKET_LINK} does not lead to ${TRAFFIC_SOCKET_PATH}"
 
 #
 # The traffic log is a base function (Fas 18, 26-10-16): a node given the

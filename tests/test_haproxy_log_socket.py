@@ -172,6 +172,65 @@ class TheNodeHoldsTheSocket(unittest.TestCase):
         )
 
 
+class RsyslogNeverMakesTheTrafficSocketItself(unittest.TestCase):
+    """Review 2026-10-30-igen2, S4: rsyslog creates a socket it is not handed, open to every account."""
+
+    def test_the_socket_is_held_before_rsyslog_is_restarted_on_the_input(self) -> None:
+        text = NODE_PREPARE.read_text(encoding="utf-8")
+        held = text.index('hold_log_socket "$TRAFFIC_SOCKET_UNIT"')
+        self.assertLess(held, text.index("${TRAFFIC_INPUT}"))
+        self.assertLess(held, text.index("systemctl restart rsyslog.service"))
+        self.assertLess(text.index("net.unix.max_dgram_qlen="), held)
+
+    def run_hold(self, unit: str, hook: str = "") -> tuple[int, list[str]]:
+        """hold_log_socket with its systemctl stubbed to fail starting `unit`; what it did."""
+
+        text = NODE_PREPARE.read_text(encoding="utf-8")
+        function = re.search(r"^hold_log_socket\(\) \{\n.*?^\}\n", text, re.DOTALL | re.MULTILINE)
+        assert function is not None
+        with tempfile.TemporaryDirectory() as raw:
+            script = (
+                f'did() {{ echo "$*" >>{raw}/did; }}\n'
+                f'systemctl() {{ did systemctl "$@"; [[ "$1" == is-active ]] && return 1; '
+                f'[[ "$1 $2" != "start {unit}" ]]; }}\n'
+                f'install_file() {{ :; }}\nrm() {{ did rm "$@"; }}\n'
+                f'die() {{ did DIE "$*"; exit 3; }}\n'
+                f"RSYSLOG_FORWARD_RULE=/etc/rsyslog.d/47-haprion-forward.conf\n"
+                f'traffic_input_off() {{ rm -f "$RSYSLOG_FORWARD_RULE"; }}\n'
+                f"{function.group(0)}\n"
+                f"hold_log_socket {unit} {raw}/socket content {hook}\n"
+            )
+            done = subprocess.run(["/bin/bash", "-c", script], capture_output=True, check=False)
+            did = Path(raw, "did").read_text(encoding="utf-8").splitlines()
+        return done.returncode, did
+
+    def test_a_traffic_socket_that_does_not_start_takes_the_input_away_too(self) -> None:
+        code, did = self.run_hold(
+            "haprion-traffic-log.socket", 'traffic_input_off "the input is off"'
+        )
+
+        self.assertEqual(code, 3)
+        self.assertIn("rm -f /etc/rsyslog.d/47-haprion-forward.conf", did)
+        self.assertTrue(any(line.startswith("DIE") and "the input is off" in line for line in did))
+        self.assertNotIn("rsyslog runs as before", " ".join(did))
+        self.assertLess(
+            did.index("rm -f /etc/rsyslog.d/47-haprion-forward.conf"),
+            did.index("systemctl start syslog.socket rsyslog.service"),
+        )
+
+    def test_the_traffic_unit_names_the_input_hook_and_a_true_note(self) -> None:
+        text = NODE_PREPARE.read_text(encoding="utf-8")
+        self.assertIn('WantedBy=sockets.target" traffic_input_off \\\n', text)
+        self.assertIn("does not make the socket itself", text)
+
+    def test_the_ordinary_socket_still_falls_back_to_rsyslog_as_before(self) -> None:
+        code, did = self.run_hold("haprion-haproxy-log.socket")
+
+        self.assertEqual(code, 3)
+        self.assertNotIn("rm -f /etc/rsyslog.d/47-haprion-forward.conf", did)
+        self.assertTrue(any("rsyslog runs as before" in line for line in did))
+
+
 PROFILE = Path("/etc/apparmor.d/usr.sbin.rsyslogd")
 
 

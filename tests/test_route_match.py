@@ -213,6 +213,7 @@ class AHeaderNameIsATokenAndAValueHasNoLineEnding(unittest.TestCase):
         self.assertFalse(header_name_is_usable("X Request Id"))
         self.assertFalse(header_name_is_usable("X-Request-Id:"))
         self.assertFalse(header_name_is_usable(""))
+        self.assertFalse(header_name_is_usable("X-Request-Id\n"))
 
     def test_a_value_carrying_cr_lf_or_nul_is_not_usable(self) -> None:
         """A value with a line ending in it is a second header.

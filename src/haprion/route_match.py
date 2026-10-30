@@ -180,7 +180,7 @@ def rewrite(route: Route, target: str) -> str:
 def header_name_is_usable(name: str) -> bool:
     """Whether a header name can be written into configuration at all."""
 
-    return bool(HEADER_NAME.match(name))
+    return bool(HEADER_NAME.fullmatch(name))
 
 
 def header_value_is_usable(value: str) -> bool:

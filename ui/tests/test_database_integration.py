@@ -46,6 +46,7 @@ from haprion_ui import (
     db,
     feature_switch,
     metrics,
+    poller,
     search_index,
     timing,
     traffic_logs,
@@ -7576,6 +7577,88 @@ class ThePollerFollowsRenamesTheWebDidNotMake(unittest.TestCase):
                 " where cluster = 'twice' and old_name = 'a'"
             ).fetchone()
         self.assertEqual(row, (True,), "a name given out again stays closed")
+
+    @staticmethod
+    def listing(commit: str, parent: str | None, pool: str) -> dict[str, Any]:
+        document = (
+            "schema: 1\nname: shop\nhostnames: [shop.example.com]\n"
+            f"listen:\n  protocol: http\nroutes:\n  - path: /\n    backend: {pool}\n"
+            f"backends:\n  {pool}:\n    balance: roundrobin\n    servers:\n"
+            "      - host: 198.51.100.10\n        port: 8080\n"
+        )
+        return {
+            "commit": commit,
+            "parent": parent,
+            "objects": [{"name": "shop", "document": document, "readable": True}],
+        }
+
+    def poll(self, cluster: str, *steps: tuple[str, str | None, str]) -> None:
+        for commit, parent, pool in steps:
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+                poller.record_objects(
+                    connection,
+                    cluster=cluster,
+                    outcome="done",
+                    result=self.listing(commit * 40, None if parent is None else parent * 40, pool),
+                )
+                connection.commit()
+
+    def aliases(self, cluster: str) -> dict[str, set[str]]:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            found = db.read_backend_aliases(connection, cluster=cluster)
+        return {name: {item.name for item in earlier} for name, earlier in found.items()}
+
+    def test_a_rename_and_its_revert_are_one_chain_without_a_cut(self) -> None:
+        self.poll("revert", ("a", None, "front"), ("b", "a", "back"), ("c", "b", "front"))
+
+        self.assertEqual(self.aliases("revert"), {"back": {"front"}, "front": {"back"}})
+
+    def test_two_publishes_between_readings_record_no_pair(self) -> None:
+        self.poll("net", ("a", None, "front"), ("c", "b", "back"))
+
+        self.assertEqual(self.aliases("net"), {})
+
+    def test_an_sql_error_in_the_comparison_does_not_lose_the_reading(self) -> None:
+        def broken(connection: Any, _cluster: str) -> str:
+            connection.execute("select * from no_such_table")
+            return "never"
+
+        with (
+            self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
+            mock.patch.object(db, "objects_head", broken),
+        ):
+            poller.record_objects(
+                connection,
+                cluster="sqlfail",
+                outcome="done",
+                result=self.listing("b" * 40, "a" * 40, "front"),
+            )
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            stored = db.objects_head(connection, "sqlfail")
+        self.assertEqual(stored, "b" * 40)
+
+    def test_a_rename_the_database_refuses_does_not_lose_the_reading(self) -> None:
+        self.poll("long", ("a", None, "front"))
+        long = "n" * 129
+        with (
+            self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
+            mock.patch.object(
+                poller.pending, "backend_renames", return_value=({"front": long}, [long])
+            ),
+            mock.patch.object(poller, "_backend_name", return_value=True),
+        ):
+            poller.record_objects(
+                connection,
+                cluster="long",
+                outcome="done",
+                result=self.listing("b" * 40, "a" * 40, "back"),
+            )
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            stored = db.objects_head(connection, "long")
+        self.assertEqual(stored, "b" * 40)
+        self.assertEqual(self.aliases("long"), {})
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

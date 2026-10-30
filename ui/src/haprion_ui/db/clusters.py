@@ -1122,6 +1122,23 @@ def objects_fingerprint(connection: Connection[Any], cluster: str) -> str | None
     return row[0] if row is not None and isinstance(row[0], str) else None
 
 
+def objects_head(connection: Connection[Any], cluster: str) -> str | None:
+    """The commit of the good objects reading the poller holds, without the reading (B411).
+
+    A reading is up to eight megabytes; whether it is worth reading is a
+    question of one commit.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select result ->> 'commit' from cluster_objects "
+            " where cluster = %(cluster)s and outcome = 'done' and poll_error is null",
+            {"cluster": cluster},
+        )
+        row = cursor.fetchone()
+    return row[0] if row is not None and isinstance(row[0], str) and row[0] else None
+
+
 def cluster_objects(
     connection: Connection[Any], *, cluster: str | None = None
 ) -> list[ClusterObjects]:

@@ -181,27 +181,62 @@ def _nothing(_extra: Mapping[str, Any]) -> dict[str, Any]:
     return {}
 
 
+#
+# What the alias table accepts of a name (its check), which a publish made
+# outside the web is not held to before it reaches the poller.
+#
+MAX_BACKEND_NAME = 128
+
+
+def _one_publish_after(result: Mapping[str, Any]) -> str | None:
+    """The head `result` was made on, when it is a listing of a head that moved (B411).
+
+    Nothing for a listing answered `unchanged`, for one without the commit it
+    was made on (a first commit, a merge, a helper from before), and for one
+    that is its own parent. The caller compares what it holds to this: only a
+    stored head that *is* this commit's parent is one publish away.
+    """
+
+    head, parent = result.get("commit"), result.get("parent")
+    if (
+        result.get("unchanged") is True
+        or not isinstance(head, str)
+        or not head
+        or not isinstance(parent, str)
+        or not parent
+        or parent == head
+    ):
+        return None
+    return parent
+
+
+def _backend_name(value: str) -> bool:
+    return 0 < len(value) <= MAX_BACKEND_NAME
+
+
 def outside_renames(
     before: db.ClusterObjects | None, result: Mapping[str, Any]
 ) -> tuple[dict[str, str], list[str]]:
     """What a publish made outside the web renamed, from the objects read before and now (B411).
 
-    Nothing unless both readings are good and at different heads: a publish
-    changes the head, and the same head seen twice is the same publish. The
-    objects are paired by name and judged by `metrics.renamed_backends`, as a
-    web publish's are; an object that was renamed or is new has no earlier
-    document to compare with and only brings its names into use.
+    Nothing unless both readings are good and the head now is made directly on
+    the one before: the objects are then the two sides of one publish. With
+    two publishes between the readings the difference is their net, and a pool
+    one removed and the other added would look like a rename that neither made -
+    one backend's history drawn under another's name, which is worse than a
+    history that stops. The objects are paired by name and judged by
+    `metrics.renamed_backends`, as a web publish's are; an object that was
+    renamed or is new has no earlier document to compare with and only brings
+    its names into use. A name the alias table would refuse is left out.
     """
 
-    head = result.get("commit")
+    parent = _one_publish_after(result)
     if (
-        before is None
+        parent is None
+        or before is None
         or before.outcome != "done"
         or before.poll_error
-        or result.get("unchanged") is True
-        or not isinstance(head, str)
-        or not head
-        or before.result.get("commit") in (None, "", head)
+        or before.result.get("commit") != parent
     ):
         return {}, []
     stored = objects.cluster_object_views(before)
@@ -212,8 +247,10 @@ def outside_renames(
         if view is None or not view.readable:
             continue
         more, new = pending.backend_renames(stored, view.name, view.document, view.name)
-        renamed.update(more)
-        introduced.extend(name for name in new if name not in introduced)
+        renamed.update(
+            (old, name) for old, name in more.items() if _backend_name(old) and _backend_name(name)
+        )
+        introduced.extend(name for name in new if name not in introduced and _backend_name(name))
     return renamed, introduced
 
 
@@ -233,13 +270,27 @@ def record_objects(
     this database, so the worker has not written its renames down. They are
     written in the transaction that replaces the objects, so a head is
     compared once; one the worker recorded already is left as it is.
+
+    The reading is never the price of this. What is read to compare, and what
+    is written, each run in a savepoint with its failure caught: a Python error
+    leaves the transaction as it was, and an SQL error is rolled back to the
+    savepoint and not to the start, so the reading is stored whatever happens.
+    The rename is lost then, as it was before B411.
     """
 
     renamed: dict[str, str] = {}
     introduced: list[str] = []
-    if outcome == "done":
+    parent = _one_publish_after(result) if outcome == "done" else None
+    if parent is not None:
         try:
-            before = next(iter(db.cluster_objects(connection, cluster=cluster)), None)
+            with connection.transaction():
+                #
+                # The reading held is fetched only when it is the parent: the
+                # commit alone says so, and the reading is up to eight megabytes.
+                #
+                before = None
+                if db.objects_head(connection, cluster) == parent:
+                    before = next(iter(db.cluster_objects(connection, cluster=cluster)), None)
             renamed, introduced = outside_renames(before, result)
         except Exception as exc:  # noqa: BLE001 - the reading is stored whatever this finds
             logger.warning("cluster %s renames not followed: %s", cluster, exc)
@@ -253,9 +304,17 @@ def record_objects(
         poll_error=poll_error,
     )
     if renamed or introduced:
-        db.record_backend_renames(
-            connection, cluster=cluster, renamed=renamed, introduced=introduced, keep_recorded=True
-        )
+        try:
+            with connection.transaction():
+                db.record_backend_renames(
+                    connection,
+                    cluster=cluster,
+                    renamed=renamed,
+                    introduced=introduced,
+                    keep_recorded=True,
+                )
+        except Exception as exc:  # noqa: BLE001 - the reading stays, the rename is lost
+            logger.warning("cluster %s renames not recorded: %s", cluster, exc)
 
 
 SOURCES: tuple[Source, ...] = (

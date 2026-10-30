@@ -3826,8 +3826,12 @@ publish renamed. What counts as a rename:
 - for a redirect: its object is renamed.
 
 The pair is recorded when the publish is done. A publish made outside the web, such as
-`haprion-objects apply`, is followed too: the interface sees the new version at its next read and
-records the same pairs, so the history follows there as well. A publish that is refused or fails renames nothing. A name
+`haprion-objects apply`, is followed too, but only when the interface reads the version straight
+after the one it read before: it then records the same pairs. When two versions were published
+between two reads, or a read in between failed, no pair is recorded and the history of the renamed
+backend stops at the rename, because a pair from the sum of two publishes could draw one backend's
+history under another's name. A revert is a publish like any other and is followed the same way. A
+publish that is refused or fails renames nothing. A name
 given to a backend again stops counting for the backend that had it before. A dashboard reading the
 exporter sees a new series under the new name, because HAProxy's counters begin again with it.
 

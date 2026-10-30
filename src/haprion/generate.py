@@ -416,6 +416,7 @@ def generate(
     _refuse_shared_hostnames(ordered)
     _refuse_shared_backend_names(ordered)
     _refuse_shared_section_names(ordered)
+    _refuse_cache_beyond_the_cluster_s(ordered)
 
     unsupported = [
         proxy
@@ -1551,6 +1552,31 @@ def _refuse_shared_section_names(proxies: Sequence[Proxy]) -> None:
                     f"{other} and {proxy.name} both add a section called {section.name} "
                     f"in their advanced config"
                 )
+
+
+def _refuse_cache_beyond_the_cluster_s(proxies: Sequence[Proxy]) -> None:
+    """The caches the objects' texts add, together, within what one node may give them.
+
+    Each cache is held to its own most by the model; this is the sum, which
+    only the whole cluster shows (code review 2026-10-30 again, R3).
+    """
+
+    sizes = {
+        proxy.name: sum(
+            advanced_config.cache_megabytes(section)
+            for section in proxy.advanced.placement.sections
+            if section.kind == "cache"
+        )
+        for proxy in proxies
+        if proxy.advanced is not None
+    }
+    total = sum(sizes.values())
+    if total > advanced_config.CLUSTER_CACHE_MAX_MB:
+        named = ", ".join(f"{name} {size} MB" for name, size in sorted(sizes.items()) if size)
+        raise GeneratorError(
+            f"the caches the advanced config adds come to {total} MB, and a cluster has "
+            f"{advanced_config.CLUSTER_CACHE_MAX_MB} MB for them: {named}"
+        )
 
 
 def _refuse_shared_hostnames(proxies: Sequence[Proxy]) -> None:

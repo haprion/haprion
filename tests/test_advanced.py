@@ -454,6 +454,48 @@ class ALineWritesOnlyToSectionsOfItsOwnText(unittest.TestCase):
         self.assertEqual(named | {"len"}, set(advanced.STICK_TABLE_PARAMETERS))
 
 
+class WhatASectionAsksOfTheNodesMemoryIsBounded(unittest.TestCase):
+    """Code review 26-10-30 again, R3: `cache ... total-max-size 4095` was placed.
+    `haproxy -c` allocates no cache, so the check passed, and the reload maps the
+    whole size at once on every node together."""
+
+    def test_a_size_beyond_the_most_is_refused(self) -> None:
+        for text in (
+            "cache shop-c\n    total-max-size 4095\n",
+            "cache shop-c\n    total-max-size 65\n",
+            "cache shop-c\n    total-max-size +4\n",
+            "cache shop-c\n    max-object-size 33554433\n",
+            "ring shop-r\n    size 1g\n",
+            "ring shop-r\n    size 16777217\n",
+            "backend shop-t\n    stick-table type ip size 2000m\n",
+            "backend shop-t\n    stick-table type ip size 102401\n",
+            "backend shop-t\n    stick-table type string len 300000 size 1k\n",
+            "backend shop-t\n    stick-table type ip size 0x10\n",
+        ):
+            with self.subTest(text):
+                self.assertEqual(fates(text)[1][1], REFUSED_FATE)
+
+    def test_a_size_within_the_most_is_placed(self) -> None:
+        for text in (
+            "cache shop-c\n    total-max-size 64\n    max-object-size 33554432\n",
+            "ring shop-r\n    size 16m\n",
+            "backend shop-t\n    stick-table type ip size 100k\n",
+            "backend shop-t\n    stick-table type string len 256 size 102400\n",
+        ):
+            with self.subTest(text):
+                self.assertEqual({entry[1] for entry in fates(text)}, {PLACED})
+
+    def test_the_caches_of_a_cluster_are_bounded_together(self) -> None:
+        from haprion.generate import GeneratorError
+
+        def cached(name: str) -> tuple[str, str]:
+            return name, _object(name, f"cache {name}-c\n    total-max-size 64")
+
+        _generate(*(cached(name) for name in ("a", "b", "c", "d")))
+        with self.assertRaisesRegex(GeneratorError, "come to 320 MB, and a cluster has 256 MB"):
+            _generate(*(cached(name) for name in ("a", "b", "c", "d", "e")))
+
+
 class TheWafEngineNamesAreTheGenerators(unittest.TestCase):
     """B232: the engine's verdict is read from `txn.coraza.*`; nothing else writes it."""
 

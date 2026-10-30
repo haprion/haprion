@@ -1247,6 +1247,21 @@ Each line of an added section must be a keyword that section takes. Any other wo
 
 A ring's `backing-file` is refused: HAProxy creates and overwrites that file as root.
 
+**How much memory the sections may take.** `haproxy -c` reserves none of it, so the check before a publish
+passes any size. At the reload HAProxy reserves a cache whole, on every node at once, and the old and new
+process run side by side while it reloads. A larger value is refused:
+
+| What | At most |
+|---|---|
+| a cache's `total-max-size` | 64 MB |
+| a cache's `max-object-size` | 32 MB (33554432 bytes) |
+| all the caches the objects' texts add, together | 256 MB per cluster |
+| a ring's `size` | 16 MB |
+| a `stick-table`'s `size` | 100k entries |
+| a `stick-table`'s `len`, for a `string` or `binary` key | 256 bytes |
+
+Write each as a plain number; `size` also takes `k`, `m` or `g`.
+
 **Lines that are refused:**
 
 - routing, listening and the outgoing address, which belong to the form: `use_backend`, `default_backend`,

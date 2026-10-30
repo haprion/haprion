@@ -138,6 +138,82 @@ SECTION_REFUSED: dict[tuple[str, ...], str] = {("ring", "backing-file"): BACKING
 SECTION_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 #
+# How much memory the text's sections may ask for (code review 2026-10-30
+# again, R3). `haproxy -c` allocates none of it, so the check before a
+# publish passes whatever is written; at the reload HAProxy maps a cache's
+# whole size at once - a 1024 MB cache was 1.16 GB resident a second after
+# start - and the old and the new process live side by side while it
+# reloads. The same text runs on every node, so a size that does not fit
+# takes every node down together. Tables and rings fill as traffic comes,
+# but fill they do. Sized for a small site:
+#
+# * a cache: 64 MB, an object in it half of that, and 256 MB for all the
+#   caches of a cluster together (the generator adds them up);
+# * a ring: 16 MB;
+# * a stick table: 100k entries, with string and binary keys of 256 bytes at
+#   most - some 30 MB full.
+#
+MEGABYTE = 1024 * 1024
+CACHE_MAX_MB = 64
+CACHE_OBJECT_MAX = CACHE_MAX_MB * MEGABYTE // 2
+CLUSTER_CACHE_MAX_MB = 256
+RING_MAX = 16 * MEGABYTE
+TABLE_MAX_ENTRIES = 100 * 1024
+TABLE_MAX_KEY = 256
+MEMORY = "HAProxy reserves this on every node at the reload, and `haproxy -c` does not"
+_PLAIN = re.compile(r"[0-9]{1,12}")
+_SIZED = re.compile(r"(?P<number>[0-9]{1,12})(?P<unit>[kKmMgG]?)")
+_UNITS = {"": 1, "k": 1024, "m": MEGABYTE, "g": 1024 * MEGABYTE}
+
+
+def size_of(value: str, *, units: bool) -> int | None:
+    """A size as HAProxy reads it - with a k, m or g suffix where it takes one - or None."""
+
+    match = (_SIZED if units else _PLAIN).fullmatch(value)
+    if match is None:
+        return None
+    if not units:
+        return int(value)
+    return int(match["number"]) * _UNITS[match["unit"].lower()]
+
+
+#
+# Per section and keyword: the most it may be, whether it takes a suffix, and
+# what the number counts.
+#
+_LIMITS: dict[tuple[str, str], tuple[int, bool, str]] = {
+    ("cache", "total-max-size"): (CACHE_MAX_MB, False, "MB"),
+    ("cache", "max-object-size"): (CACHE_OBJECT_MAX, False, "bytes"),
+    ("ring", "size"): (RING_MAX, True, "bytes"),
+    ("stick-table", "size"): (TABLE_MAX_ENTRIES, True, "entries"),
+    ("stick-table", "len"): (TABLE_MAX_KEY, False, "bytes"),
+}
+
+
+def _limit_problem(kind: str, keyword: str, value: str) -> str:
+    limit = _LIMITS.get((kind, keyword))
+    if limit is None:
+        return ""
+    most, units, counted = limit
+    size = size_of(value, units=units)
+    if size is None:
+        return f"write {keyword} as a plain number" + (" with k, m or g" if units else "")
+    if size > most:
+        return f"{keyword} is at most {most} {counted} here: {MEMORY}"
+    return ""
+
+
+def cache_megabytes(section: Section) -> int:
+    """What an added cache section asks for, in MB, for the cluster's sum."""
+
+    for line in section.lines:
+        tokens = words(line.text)
+        if tokens[:1] == ["total-max-size"] and len(tokens) > 1:
+            return size_of(tokens[1], units=False) or 0
+    return 0
+
+
+#
 # HAProxy 3.4's proxy keyword matrix, configuration.txt section 4.1, as it is
 # printed: keyword, then defaults, frontend, listen and backend. Kept as the
 # manual's own rows so a test can hold this against the installed manual line
@@ -852,6 +928,9 @@ def _stick_table_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: O
         value = tokens[index + 1] if index + 1 < len(tokens) else ""
         if parameter == "write-to" and value not in own["backend"]:
             return NOT_OWN_TABLE.format(table=value)
+        problem = _limit_problem("stick-table", parameter, value)
+        if problem:
+            return problem
         index += 1 + width
     return ""
 
@@ -1287,7 +1366,11 @@ def _section_problem(kind: str, tokens: Sequence[str]) -> str:
         if (kind, *words_) in SECTION_REFUSED:
             return SECTION_REFUSED[(kind, *words_)]
         if words_ in allowed:
-            return _server_problem(tokens, words_) or _file_problem(tokens, None)
+            return (
+                _server_problem(tokens, words_)
+                or _file_problem(tokens, None)
+                or (_limit_problem(kind, tokens[0], tokens[1]) if len(tokens) > 1 else "")
+            )
     return f"not a keyword HAProxy 3.4 takes in a {kind} section"
 
 

@@ -493,7 +493,7 @@ def _node_result(
             "message": f"the status command failed on the node (exit {response.exit_code})"
             + (f": {said.splitlines()[0][:STDERR_LINE_CHARS]}" if said else ""),
             "node": node.name,
-            "details": {"stderr": said} if said else None,
+            "details": {"exit_code": response.exit_code, **({"stderr": said} if said else {})},
         }
         return entry, Message(
             code="node_status_invalid",

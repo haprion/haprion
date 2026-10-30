@@ -1343,6 +1343,34 @@ class FrozenSchemaTests(unittest.TestCase):
         self.assertIn("did not answer", printed)
         self.assertIn("PASS  node/alpha/node-b", printed)
 
+    def test_a_node_whose_status_command_failed_is_a_warning_not_a_failure(self) -> None:
+        """Review 26-10-30, R1: exit 1 became "reachable, no status" and failed the update."""
+
+        failed = {
+            "name": "node-a",
+            "reachable": True,
+            "status_ok": False,
+            "status": None,
+            "error": {
+                "code": "node_status_invalid",
+                "message": "the status command failed on the node (exit 1): sudo: a password",
+                "details": {"exit_code": 1, "stderr": "sudo: a password is required"},
+            },
+        }
+        failures, printed = self.nodes_checked(failed)
+        self.assertEqual(failures, 0)
+        self.assertIn("WARN  node/alpha/node-a", printed)
+        self.assertIn("its status command failed (exit 1: sudo: a password)", printed)
+
+        not_a_status = {
+            "name": "node-a",
+            "reachable": True,
+            "status": None,
+            "error": {"code": "node_status_invalid", "message": "not a node status"},
+        }
+        failures, printed = self.nodes_checked(not_a_status)
+        self.assertEqual(failures, 1)
+
     def test_a_helper_slower_than_the_check_waits_is_a_warning_not_a_traceback(self) -> None:
         """Review 26-10-30, U1: `TimeoutExpired` ended the check, and a final check rolled back."""
 

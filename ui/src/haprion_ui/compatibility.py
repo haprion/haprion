@@ -640,6 +640,27 @@ def _scripts_behind(entry: object, expected: Mapping[str, str]) -> list[str]:
     return behind
 
 
+def _command_failure(entry: object) -> str | None:
+    """What a node's own failed status command said, or None when it did not fail.
+
+    A node whose status command ran and failed left no document to judge. It
+    is told from JSON that is not a node status (exit 0, still a failure here)
+    by the exit code the collector records for the first.
+    """
+
+    if not isinstance(entry, dict) or isinstance(entry.get("status"), dict):
+        return None
+    error = entry.get("error")
+    if not isinstance(error, dict) or error.get("code") != "node_status_invalid":
+        return None
+    details = error.get("details")
+    code = details.get("exit_code") if isinstance(details, dict) else None
+    if not isinstance(code, int):
+        return None
+    _, _, said = str(error.get("message") or "").partition("): ")
+    return f"exit {code}: {said}" if said else f"exit {code}"
+
+
 def check_cluster_nodes(
     report: Report,
     *,
@@ -668,8 +689,11 @@ def check_cluster_nodes(
     A node that does not answer is a warning too: what it runs is unknown, not
     wrong. As a failure it stopped the update, or rolled back a release that
     worked, just when a node was down and the interface was needed to bring
-    it back (review 2026-10-22, 6-2). A node that answers without the metadata,
-    or with an older API, still fails.
+    it back (review 2026-10-22, 6-2). So is a node whose status command failed
+    on it: a crash or a refused sudo says nothing about what it runs, and the
+    interface is installed before the nodes (B335), so a node still on the old
+    script must not stop the update (review 2026-10-30). A node that answers
+    without the metadata, or with an older API, still fails.
     """
 
     request = json.dumps(
@@ -707,6 +731,14 @@ def check_cluster_nodes(
             report.warn(
                 subject,
                 "did not answer; what it runs is unknown - check again when it is back",
+            )
+            continue
+        failure = _command_failure(entry)
+        if failure is not None:
+            report.warn(
+                subject,
+                f"its status command failed ({failure}); "
+                "what it runs is unknown - check again when it is fixed",
             )
             continue
         if api is None:

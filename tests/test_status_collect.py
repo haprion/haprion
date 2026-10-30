@@ -408,6 +408,7 @@ class AStatusReadIsBounded(unittest.TestCase):
         self.assertIn("exit 1", entry["error"]["message"])
         self.assertIn("ERROR: node.conf names no cluster", entry["error"]["message"])
         self.assertIn("run 04-node-prepare", entry["error"]["details"]["stderr"])
+        self.assertEqual(entry["error"]["details"]["exit_code"], 1)
 
     def test_what_a_failed_command_said_is_bounded(self) -> None:
         noisy = NodeResponse(exit_code=2, stdout="", stderr="x" * 100_000)

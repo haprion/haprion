@@ -557,9 +557,9 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
                 (
                     "critical",
                     "node-a → loki",
-                    "traffic log to loki: 7 lines dropped in the last hour",
+                    "traffic log: 7 lines dropped in the last hour",
                 ),
-                ("warning", "node-a → loki", "traffic log to loki: 20 000 lines queued"),
+                ("warning", "node-a → loki", "traffic log: 20 000 lines queued"),
             ],
         )
 
@@ -756,7 +756,7 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
         listed = self.items(self.reading(3, self.NOW - timedelta(minutes=7)))
         self.assertEqual(
             [(item.severity, item.subject, item.message) for item in listed],
-            [("warning", "node-a → graylog", "traffic log to graylog: 3 lines not delivered")],
+            [("warning", "node-a → graylog", "traffic log: 3 lines not delivered")],
         )
         self.assertEqual(listed[0].since, self.NOW - timedelta(minutes=7))
 
@@ -768,17 +768,23 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
             [(item.message, item.link) for item in listed],
             [
                 (
-                    "traffic log to graylog: 3 lines not delivered (Connection timed out)",
+                    "traffic log: 3 lines not delivered (Connection timed out)",
                     "/settings/clusters/external#delivery",
                 )
             ],
         )
 
+    def test_the_row_does_not_name_the_receiver_twice(self) -> None:
+        """Cosmetic, review 26-10-30: the subject is "node-a → graylog" already."""
+
+        (item,) = self.items(self.reading(1, self.NOW - timedelta(minutes=7)))
+        self.assertIn("graylog", item.subject)
+        self.assertNotIn("graylog", item.message)
+        self.assertIn("1 line not delivered", item.message)
+
     def test_a_long_queue_is_said_once(self) -> None:
         listed = self.items(self.reading(20000, self.NOW - timedelta(minutes=30)))
-        self.assertEqual(
-            [item.message for item in listed], ["traffic log to graylog: 20 000 lines queued"]
-        )
+        self.assertEqual([item.message for item in listed], ["traffic log: 20 000 lines queued"])
 
 
 class EveryKindHasALabel(unittest.TestCase):

@@ -859,10 +859,6 @@ class HoldingAfterARestore(unittest.TestCase):
         self.assertIn("sessions ended: 2", done.stdout)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AFailedRunLeavesAMarker(unittest.TestCase):
     """B407: the interface lists a failed database job until a run of it works, through a reboot."""
 
@@ -894,3 +890,7 @@ class AFailedRunLeavesAMarker(unittest.TestCase):
             worked = self.run_recorded(state, "dump", "true")
             self.assertEqual(worked.returncode, 0)
             self.assertFalse(marker.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -250,7 +250,7 @@ DATABASE_UNITS = {
 
 
 #
-# What `haprion-backup` leaves in the dump directory when a run of a job fails
+# What `haprion-backup` leaves in the job-state directory when a run of a job fails
 # and removes when one succeeds (B407). systemd's own `Result` is the state of
 # its last run since the machine started: after a reboot it says `success`
 # for a job that last failed, and the row about it would go until the next run

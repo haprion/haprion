@@ -734,6 +734,14 @@ def _receiver_subject(node: str, receiver: str | None) -> str:
     return f"{node}{RECEIVER_ARROW}{receiver}" if receiver else node
 
 
+def _traffic_log(message: str, receiver: str | None) -> str:
+    """The engine's line without the receiver, which the row's subject already names."""
+
+    return (
+        message.replace(f"traffic log to {receiver}: ", "traffic log: ", 1) if receiver else message
+    )
+
+
 def from_log_forwarding(
     status_rows: Iterable[Any], *, now: datetime, unread: Collection[str] = ()
 ) -> list[Item]:
@@ -768,7 +776,7 @@ def from_log_forwarding(
                         severity=problem.severity,
                         cluster=row.cluster,
                         subject=_receiver_subject(str(entry.get("name", "")), problem.receiver),
-                        message=problem.message,
+                        message=_traffic_log(problem.message, problem.receiver),
                         since=None,
                         link=f"/settings/clusters/{row.cluster}#delivery",
                     )
@@ -805,8 +813,12 @@ def from_log_forwarding(
                         severity="warning",
                         cluster=row.cluster,
                         subject=_receiver_subject(str(entry.get("name", "")), name),
-                        message=f"traffic log to {name}: "
-                        + (f"{lines} lines " if isinstance(lines, int) else "")
+                        message="traffic log: "
+                        + (
+                            f"{labels.counted(lines, 'line')} "
+                            if isinstance(lines, int) and not isinstance(lines, bool)
+                            else ""
+                        )
                         + "not delivered"
                         + (f" ({reasons[name]})" if reasons.get(name) else ""),
                         since=since,

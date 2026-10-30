@@ -865,6 +865,40 @@ class EveryLineIsHeldToAListOfWhatItMayBe(unittest.TestCase):
             fates('ring shop-r\n    "${X-backing-file}" /etc/shadow\n')[1][1], REFUSED_FATE
         )
 
+    def test_the_env_fetch_is_refused_wherever_an_expression_goes(self) -> None:
+        """Code review 26-10-30, slutkoll P3-1: `%[env(PATH)]` put the node's environment
+        into a response, as `"${PATH}"` would have."""
+
+        for line in (
+            "http-request set-header X-Env %[env(PATH)] if { path /x }",
+            'http-request return status 200 content-type text/plain lf-string "%[env(PATH)]" '
+            "if { path /x }",
+            "http-request set-header X-Env %[env(PATH)]",
+            "http-request set-var(txn.x) env(PATH)",
+            "http-request deny if { env(STOP) -m found }",
+            "acl stop env(STOP) -m found",
+            "http-response set-header X %[str(a),concat(-,txn.x,)]%[ env(HOME)]",
+            "tcp-check connect port 8081 sni env(HOME)",
+            "server s1 192.0.2.5:443 ssl verify none sni env(HOME)",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line, handwritten=True), REFUSED_FATE)
+        self.assertEqual(fate('log-format "%[env(PATH)]"', protocol="tcp"), REFUSED_FATE)
+        self.assertEqual(
+            fates("backend shop-b\n    http-request set-header X %[env(PATH)]\n")[1][1],
+            REFUSED_FATE,
+        )
+        self.assertEqual(
+            fates("ring shop-r\n    server s 192.0.2.5:514 sni env(HOME)\n")[1][1], REFUSED_FATE
+        )
+        for line in (
+            "http-request set-header X-Env %[req.hdr(env)]",
+            "http-request set-header X-Server %[hostname]",
+            "http-request set-var(txn.x) str(environment)",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), PLACED)
+
     def test_a_dollar_haproxy_does_not_expand_is_text(self) -> None:
         for line in (
             "http-request set-header X '${HOME}'",

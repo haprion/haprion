@@ -1347,8 +1347,8 @@ its configuration, during the check before a publish too. So the text may not na
 - `external-check command`, `external-check path` and `option external-check`, which run a program;
 - the `spoe` and `opentracing` filters, which read a configuration file, and the `fcgi-app` filter.
   The text may add `compression`, `comp-req`, `comp-res`, `cache`, `bwlim-in`, `bwlim-out` and `trace`;
-- an environment variable in double quotes, such as `"${HOME}"`. HAProxy fills it in from the node, and
-  what it holds is not checked.
+- an environment variable in double quotes, such as `"${HOME}"`, or read by the `env` fetch, such as
+  `%[env(HOME)]`, anywhere in a line. HAProxy fills it in from the node, and what it holds is not checked.
 
 Escapes count as HAProxy reads them: `\x67lobal` is `global`.
 

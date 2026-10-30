@@ -1659,6 +1659,24 @@ def expands_variable(line: str) -> bool:
     return False
 
 
+#
+# The `env` sample fetch reads the same environment as `"${VAR}"`, and puts it
+# wherever an expression goes - a header to the visitor, a variable, a log
+# line (code review 2026-10-30, slutkoll P3-1). A fetch is a name followed by
+# its parenthesis, so `env(` is found as such in any word of any line, the way
+# HAProxy finds it. `hostname` is let through: the node's name, which says
+# which node answered, is no more the node's secret than its address.
+#
+_ENVIRONMENT = re.compile(r"(?<![A-Za-z0-9_.-])env\(")
+ENVIRONMENT = "an environment variable is the node's, and what it holds is not checked here"
+
+
+def reads_environment(tokens: Sequence[str]) -> bool:
+    """Whether a word of the line calls the `env` fetch."""
+
+    return any(_ENVIRONMENT.search(word) for word in tokens)
+
+
 def _line_problem(
     tokens: Sequence[str], keyword: tuple[str, ...], own: Own, *, own_table: bool
 ) -> str:
@@ -1848,11 +1866,8 @@ def place(
                 "split a list over several lines of the same ACL",
             )
             continue
-        if expands_variable(line):
-            record(
-                REFUSED_FATE,
-                reason="an environment variable is the node's, and what it holds is not checked here",
-            )
+        if expands_variable(line) or reads_environment(tokens):
+            record(REFUSED_FATE, reason=ENVIRONMENT)
             continue
 
         first = tokens[0]

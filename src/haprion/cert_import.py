@@ -1281,6 +1281,19 @@ def import_authority(
         )
     try:
         with cert_registry.locked(lock_path):
+            # Asked under the lock, as an import of a pair asks: material in the
+            # store that is not an authority's own is a waiting signing request's
+            # key or another way's, and writing the store would take it away.
+            holder = cert_request_state.id_holder(
+                certificate_id,
+                registered_kind=None,
+                live=live,
+                store=store,
+                request_root=policy.ndes.state_root if policy.ndes is not None else None,
+                allow=(cert_request_state.HELD_BY_MATERIAL,) if existing is not None else (),
+            )
+            if holder is not None:
+                raise ImportError_("already_exists", holder.message)
             replaced = write_authority_store(store, certificate_id, blocks)
             _register_authority(
                 policy.certificate_registry,

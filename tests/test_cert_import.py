@@ -753,6 +753,23 @@ class AnAuthorityIsImportedWithoutAKey(ImportFixture):
             published = (self.dist / cluster_id / "ca" / "corp-root.pem").read_text()
             self.assertEqual(published.count("BEGIN CERTIFICATE"), 2, cluster_id)
 
+    def test_a_ca_cannot_be_imported_over_a_waiting_signing_request(self) -> None:
+        directory = self.store / "corp-root"
+        directory.mkdir(parents=True)
+        files = {"privkey.pem": "CSR KEY", "request.csr": "CSR", "request.json": "{}"}
+        for name, text in files.items():
+            (directory / name).write_text(text)
+
+        with self.assertRaises(ImportError_) as caught:
+            self.run_authority("corp-root", self.blocks(self.pki.root), clusters=["alpha"])
+
+        self.assertEqual(caught.exception.code, "already_exists")
+        self.assertEqual(
+            {path.name: path.read_text() for path in directory.iterdir()},
+            files,
+        )
+        self.assertNotIn("corp-root", self.registered())
+
     def test_the_command_takes_a_file_and_says_what_it_imported(self) -> None:
         output, errors = io.StringIO(), io.StringIO()
         code = command.main(

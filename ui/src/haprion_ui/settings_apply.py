@@ -309,8 +309,8 @@ def _form(wanted: Mapping[str, Any], current: db.OidcProvider, *, secret: str) -
     return form
 
 
-def _identity(wanted: Mapping[str, Any], current: db.OidcProvider) -> tuple[str, str]:
-    """The issuer and client the file names, as `oidc_web.parse` will store them.
+def _identity(wanted: Mapping[str, Any], current: db.OidcProvider) -> tuple[str, str, str | None]:
+    """The issuer, client and CA the file names, as `oidc_web.parse` will store them.
 
     Compared before parsing, to know whether the sealed secret still fits: an
     issuer written with a trailing slash is the stored one, and must not ask
@@ -320,7 +320,8 @@ def _identity(wanted: Mapping[str, Any], current: db.OidcProvider) -> tuple[str,
     issuer = str(wanted.get("issuer", current.issuer) or "").strip()
     with contextlib.suppress(oidc.OidcError):
         issuer = oidc.issuer_url(issuer)
-    return issuer, str(wanted.get("client_id", current.client_id) or "").strip()
+    ca_pem = str(wanted.get("ca_pem", current.ca_pem) or "").strip() or None
+    return issuer, str(wanted.get("client_id", current.client_id) or "").strip(), ca_pem
 
 
 def _failed_verify(trouble: str, checks: list[dict[str, Any]]) -> str:
@@ -361,7 +362,7 @@ def apply_oidc(
         needs_secret = (
             replace_secret
             or current.client_secret_sealed is None
-            or _identity(wanted, current) != (current.issuer, current.client_id)
+            or _identity(wanted, current) != (current.issuer, current.client_id, current.ca_pem)
         )
         parsed = oidc_web.parse(
             _form(wanted, current, secret=secret if needs_secret else ""),

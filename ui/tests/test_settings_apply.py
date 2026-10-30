@@ -14,11 +14,18 @@ import json
 import tempfile
 import unittest
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
-from haprion_ui import db, settings_apply, tool_answer
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
+from haprion import oidc
+
+from haprion_ui import db, oidc_web, settings_apply, tool_answer
 from haprion_ui.settings_apply import ApplyError, Outcome
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures/haprion-settings-apply/valid/done.json"
@@ -83,35 +90,88 @@ class TheFile(unittest.TestCase):
         settings_apply.read_file(self.write("oidc:\n  enabled: false\n", mode=0o644))
 
 
+def stored_provider() -> db.OidcProvider:
+    return db.OidcProvider(
+        enabled=False,
+        issuer="https://idp.example.com/realms/main",
+        client_id="haprion",
+        client_secret_sealed=b"sealed",
+        key_id="k1",
+        auth_method="client_secret_basic",
+        scopes="openid",
+        username_claim="preferred_username",
+        groups_claim="groups",
+        admin_group="admins",
+        reader_group=None,
+        button_text="Sign in",
+        prompt_login=False,
+        logout_mode="app",
+        local_login="break_glass_only",
+        ca_pem=None,
+        revision=3,
+        verified_revision=3,
+        updated_at=datetime.now(UTC),
+        updated_by="admin",
+    )
+
+
+def a_ca_pem() -> str:
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Example CA")])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(1)
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
 class TheIdentity(unittest.TestCase):
     def test_the_issuer_is_compared_as_it_is_stored(self) -> None:
-        stored = db.OidcProvider(
-            enabled=False,
-            issuer="https://idp.example.com/realms/main",
-            client_id="haprion",
-            client_secret_sealed=b"sealed",
-            key_id="k1",
-            auth_method="client_secret_basic",
-            scopes="openid",
-            username_claim="preferred_username",
-            groups_claim="groups",
-            admin_group="admins",
-            reader_group=None,
-            button_text="Sign in",
-            prompt_login=False,
-            logout_mode="app",
-            local_login="break_glass_only",
-            ca_pem=None,
-            revision=3,
-            verified_revision=3,
-            updated_at=datetime.now(UTC),
-            updated_by="admin",
+        self.assertEqual(
+            settings_apply._identity(
+                {"issuer": " https://idp.example.com/realms/main "}, stored_provider()
+            ),
+            ("https://idp.example.com/realms/main", "haprion", None),
         )
 
-        self.assertEqual(
-            settings_apply._identity({"issuer": " https://idp.example.com/realms/main "}, stored),
-            ("https://idp.example.com/realms/main", "haprion"),
-        )
+    def test_a_new_ca_is_a_new_identity_and_a_blank_one_is_none(self) -> None:
+        stored = stored_provider()
+
+        self.assertEqual(settings_apply._identity({"ca_pem": " X \n"}, stored)[2], "X")
+        self.assertIsNone(settings_apply._identity({"ca_pem": "  "}, stored)[2])
+
+    def test_a_file_with_a_new_ca_and_the_secret_replaces_the_secret(self) -> None:
+        """Review 26-10-30, E3: the secret in the file was dropped, and the save refused."""
+
+        pem = a_ca_pem()
+        with (
+            mock.patch.object(db, "oidc_provider", return_value=stored_provider()),
+            mock.patch.object(
+                oidc_web, "read_public_key", return_value=mock.Mock(key_id="0123456789abcdef")
+            ),
+            mock.patch.object(oidc, "seal_client_secret", return_value=b"sealed-again"),
+        ):
+            answer = settings_apply.apply_oidc(
+                object(),
+                {"ca_pem": pem, "client_secret": "the secret"},
+                actor="admin",
+                check=True,
+                public_key=Path("/nonexistent/public.pem"),
+                replace_secret=False,
+                piped_secret=None,
+            )
+
+        assert answer is not None  # noqa: S101 - the file changes the CA
+        self.assertEqual(answer["sealing"], "replaced")
+        self.assertIn("client_secret", answer["fields"])
+        self.assertIn("ca_pem", answer["fields"])
 
 
 class TheAnswer(unittest.TestCase):

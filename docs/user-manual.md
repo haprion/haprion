@@ -1122,8 +1122,8 @@ command takes it from `interface_url`, the address people sign in at. Settings s
 stay saved when Verify then fails, and the command says why sign-in did not turn on.
 
 The stored client secret is encrypted for the helper, so the command cannot compare it with the file. The
-secret from the file is therefore stored only when none is stored yet, when the issuer or the client
-changes, or with `--replace-oidc-secret`. Otherwise the stored one is kept, and the answer says
+secret from the file is therefore stored only when none is stored yet, when the issuer, the client or the CA
+certificate changes, or with `--replace-oidc-secret`. Otherwise the stored one is kept, and the answer says
 `"sealing": "kept"`. A file that carries the secret is refused unless only its owner may read it (mode
 `0600`). `--oidc-secret-stdin` reads the secret from one line on standard input instead.
 

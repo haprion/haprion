@@ -29,7 +29,7 @@ from fastapi.exception_handlers import (
     request_validation_exception_handler,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -160,14 +160,21 @@ def create_app(config: Config | None = None) -> FastAPI:
     # A value PostgreSQL cannot hold - a NUL in text - is a refused form, not a
     # bare 500 with a traceback in the journal (review 26-10-30, E4). Routes that
     # know their field refuse it themselves; this is for the next one that does not.
+    # Logged, since the cause may be a bug or stored data and not what was typed,
+    # and the form page only for a POST: anything else has no form to go back to,
+    # and a route that committed earlier in its request saved part of it, so the
+    # answer there claims nothing (review 26-10-30, R2). No detail in the answer.
     #
     @app.exception_handler(psycopg.DataError)
     async def unstorable_values(request: Request, exc: psycopg.DataError) -> Response:
+        logger.warning("%s %s: %s", request.method, request.url.path, exc)
+        if request.method != "POST":
+            return PlainTextResponse("A value could not be processed.", status_code=400)
         return await run_in_threadpool(
             refusals.refusal_page,
             request,
             settings,
-            "A value could not be stored. Nothing was saved; go back to correct it.",
+            "A value could not be stored. Go back and correct it, and check what was kept before you save again.",
             back=request.url.path,
         )
 

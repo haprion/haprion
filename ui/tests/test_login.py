@@ -772,16 +772,42 @@ class RefusingToSignIn(LoginTestCase):
         self.assertIn("Sign-in failed", response.text)
         self.assertEqual(self.attempts, [])
 
-    def test_a_value_the_database_cannot_hold_is_a_refused_page_not_a_500(self) -> None:
+    def test_a_value_the_database_cannot_hold_is_a_refused_form_and_is_logged(self) -> None:
+        client = self.client()
+        self.sign_in(client)
+        csrf = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        client.get("/")
+        with (
+            mock.patch(
+                "haprion_ui.db.revoke_session",
+                side_effect=psycopg.errors.DataError("secret detail NUL"),
+            ),
+            self.assertLogs("haprion_ui", level="WARNING") as logged,
+        ):
+            response = client.post("/logout", data={auth.CSRF_FIELD: csrf})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("could not be stored", response.text)
+        self.assertNotIn("Nothing was saved", response.text)
+        self.assertNotIn("secret detail", response.text)
+        self.assertTrue(any("POST /logout" in line for line in logged.output))
+
+    def test_a_value_the_database_cannot_hold_on_a_read_is_a_plain_400_that_claims_no_save(
+        self,
+    ) -> None:
         client = self.client()
         self.assertEqual(self.sign_in(client).status_code, 303)
-        with mock.patch(
-            "haprion_ui.db.cluster_statuses",
-            side_effect=psycopg.errors.DataError("cannot contain NUL"),
+        with (
+            mock.patch(
+                "haprion_ui.db.cluster_statuses",
+                side_effect=psycopg.errors.DataError("secret detail"),
+            ),
+            self.assertLogs("haprion_ui", level="WARNING") as logged,
         ):
             response = client.get("/")
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Nothing was saved", response.text)
+        self.assertNotIn("Nothing was saved", response.text)
+        self.assertNotIn("secret detail", response.text)
+        self.assertTrue(any("GET /" in line for line in logged.output))
 
     def test_the_attempt_is_counted_before_the_password_is_hashed(self) -> None:
         """Review 26-10-22, 3-3: counted after the hash, every attempt sent at once read

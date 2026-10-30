@@ -52,6 +52,12 @@ def locked(name: str, clusters: Iterable[str]) -> bool:
     return name == features.CLUSTER_COLOURS and not cluster_identity.fits(clusters)
 
 
+def shown_on(name: str, stored: bool, clusters: Iterable[str]) -> bool:
+    """Whether the interface shows `name` on: a locked switch shows off whatever its row says."""
+
+    return stored and not locked(name, clusters)
+
+
 def restore_waiting(connection: Any) -> bool:
     """Whether a node restore is running or waiting for an answer."""
 
@@ -85,13 +91,17 @@ def switch(
     current = db.feature_switches(connection).get(name)
     if name not in features.BY_NAME or current is None:
         raise UnknownFeature(name)
+    #
+    # No change is no change, locked or not: only an attempt to turn a locked
+    # switch on is refused, so a file that says what is stored applies.
+    #
+    if current.enabled == want:
+        return None
     if want and locked(name, readings.clusters()):
         raise features.SwitchRefused(
             f"Cluster colours cover {cluster_identity.ACCENT_COUNT} clusters, "
             "and this installation lists more."
         )
-    if current.enabled == want:
-        return None
     #
     # A WAF the interface no longer shows still filters traffic (B231).
     #

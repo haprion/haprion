@@ -197,9 +197,18 @@ def _saved_then_stopped(
     return exit_codes.PARTIAL
 
 
+SHOW_OPERATION = "settings_show"
+
+
 def command_show(args: argparse.Namespace) -> int:
+    try:
+        settings = config.load()
+    except config.ConfigError as exc:
+        return tool_answer.refusal(
+            args, SHOW_OPERATION, "dependency_unavailable", str(exc), exc.exit_code
+        )
     with connect(load_environment()) as connection:
-        shown = settings_apply.document(connection)
+        shown = settings_apply.document(connection, known_clusters(connection, settings)[0])
         provider = db.oidc_provider(connection)
     access: list[str] = shown["status_access"]
     switches: dict[str, bool] = shown["features"]

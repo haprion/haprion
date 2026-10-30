@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import contextlib
 import stat
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -187,8 +187,11 @@ def read_file(path: Path) -> Wanted:
     return Wanted(status_access=access, features=switches, oidc=provider)
 
 
-def document(connection: Any) -> dict[str, Any]:
+def document(connection: Any, clusters: Iterable[str]) -> dict[str, Any]:
     """What is set now as the file `read_file` takes; the client secret never.
+
+    A switch is as the interface shows it: a locked one (cluster colours past
+    six clusters) says off, whatever its row holds.
 
     The provider section only when an issuer is stored: a provider that was
     never configured has nothing a file could say. Without the secret, the
@@ -197,10 +200,12 @@ def document(connection: Any) -> dict[str, Any]:
     `interface_url` to turn sign-in on.
     """
 
+    listed = tuple(clusters)
     shown: dict[str, Any] = {
         "status_access": [entry.network for entry in db.status_access(connection)],
         "features": {
-            name: switch.enabled for name, switch in sorted(db.feature_switches(connection).items())
+            name: feature_switch.shown_on(name, switch.enabled, listed)
+            for name, switch in sorted(db.feature_switches(connection).items())
         },
     }
     provider = db.oidc_provider(connection)

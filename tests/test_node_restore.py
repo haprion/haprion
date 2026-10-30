@@ -838,6 +838,16 @@ class Overwrite(RestoreTest):
         self.assertIn("keepalived may be stopped on node-a", result["error"])
         self.assertIn("/before/", result["error"])
 
+    def test_a_failure_before_anything_was_sent_asks_for_no_rollback(self) -> None:
+        run = self.previewed()
+        with mock.patch.object(
+            node_restore, "payload", side_effect=RestoreError("the archive cannot read x")
+        ):
+            result = self.carry_out(run, confirm="node-a", checks=self.checks)
+        self.assertEqual(result["outcome"], "failed", result)
+        self.assertNotIn("rollback", [c[1]["op"] for c in FakeSession.calls])
+        self.assertNotIn("keepalived", result["error"])
+
     def test_a_backup_node_with_a_sick_neighbour_goes_ahead(self) -> None:
         run = self.previewed()
         self.standing = node_restore.Standing(False, "node-b", False)

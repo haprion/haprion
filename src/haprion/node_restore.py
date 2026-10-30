@@ -1391,6 +1391,7 @@ def _run(
     #
     _write_json(directory / "started.json", {"at": time.time()})
     stage = "apply"
+    sent = False
     try:
         stream.write(f"apply on {request.target}\n")
         carried = PlannedFile(
@@ -1429,10 +1430,12 @@ def _run(
                 ),
             )
         )
+        body = payload(checked.source, (*plan.files, carried, *engine, *keyring))
+        sent = True
         applied = session.call(
             request.target,
             apply_header,
-            payload(checked.source, (*plan.files, carried, *engine, *keyring)),
+            body,
             progress=stream,
         )
         result["sessions"]["apply"] = {
@@ -1533,7 +1536,8 @@ def _run(
         )
     except (RestoreError, OSError) as exc:
         result["sessions"].setdefault(stage, {})
-        if not overwrite:
+        if not overwrite or not sent:
+            # Nothing was sent to the node when it did not get as far as apply.
             return finish_with("failed", error=str(exc), stage=stage)
         #
         # A session that broke from this side - out of time, or the connection
@@ -1541,7 +1545,9 @@ def _run(
         # before it writes, and only `finish` starts it. The agent puts the
         # node back by itself only on an error it caught, so it is asked to,
         # as the network step asks after its timer. A short wait first lets an
-        # agent still at work come to its own end.
+        # agent still at work come to its own end; the rollback then waits for
+        # that agent's lock on the run (restore_agent.run_lock) and puts nothing
+        # back while it still writes.
         #
         clock.sleep(min(pause * 2, 6.0))
         try:

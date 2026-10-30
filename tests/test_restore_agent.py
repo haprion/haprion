@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import fcntl
 import hashlib
 import io
 import json
@@ -1148,6 +1149,22 @@ class Overwrite(AgentTest):
         result = self.serve({"op": "rollback", "run": RUN})
         self.assertTrue(result["ok"], result)
         self.assertEqual(self.host.path("/etc/haprion/node.conf").read_text(), "CLUSTER=drifted\n")
+
+    def test_a_rollback_waits_for_an_agent_still_working_on_the_run(self) -> None:
+        self.apply()
+        node = self.host.path("/etc/haprion/node.conf")
+        node.write_text("CLUSTER=written-by-the-first-agent\n")
+        lock = self.host.path(f"/run/haprion-restore-{RUN}.lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "w", encoding="utf-8") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            with mock.patch.object(restore_agent, "ROLLBACK_LOCK_WAIT", 0.3):
+                result = self.serve({"op": "rollback", "run": RUN})
+        self.assertFalse(result["ok"], result)
+        self.assertIn("still being worked on", result["error"])
+        self.assertEqual(node.read_text(), "CLUSTER=written-by-the-first-agent\n")
+        again = self.serve({"op": "rollback", "run": RUN})
+        self.assertTrue(again["ok"], again)
 
     def finish(self) -> dict[str, Any]:
         header = {

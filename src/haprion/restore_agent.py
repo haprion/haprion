@@ -44,6 +44,7 @@ target's own.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import hashlib
 import io
 import ipaddress
@@ -1680,6 +1681,40 @@ OPERATIONS: dict[str, Callable[[Host, dict[str, Any], IO[bytes]], dict[str, Any]
 }
 
 
+#: How long a rollback waits for an agent that is still working on the same run.
+ROLLBACK_LOCK_WAIT = 120.0
+
+
+@contextlib.contextmanager
+def run_lock(host: Host, run: str, wait: float) -> Iterator[None]:
+    """One agent at a time works on a run.
+
+    A manager whose session broke leaves its agent running on the node, and its
+    rollback is a second agent. Without this it would put the files back while
+    the first still writes them. `wait` is how long to wait for the first to end;
+    when it does not, nothing has been touched and the caller is told so.
+    """
+
+    path = host.path(f"/run/haprion-restore-{run}.lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise Refused(
+                        "the run is still being worked on by an earlier session; nothing was changed"
+                    ) from None
+                time.sleep(0.2)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def serve(host: Host, stdin: IO[bytes]) -> dict[str, Any]:
     line = stdin.readline(MAX_HEADER + 1)
     if len(line) > MAX_HEADER or not line.endswith(b"\n"):
@@ -1694,7 +1729,12 @@ def serve(host: Host, stdin: IO[bytes]) -> dict[str, Any]:
     if operation != "inspect" and not RUN_ID.fullmatch(str(header.get("run", ""))):
         return {"ok": False, "op": operation, "error": "the run ID is not usable"}
     try:
-        result = OPERATIONS[operation](host, header, stdin)
+        if operation == "inspect":
+            result = OPERATIONS[operation](host, header, stdin)
+        else:
+            wait = ROLLBACK_LOCK_WAIT if operation == "rollback" else 0.0
+            with run_lock(host, header["run"], wait):
+                result = OPERATIONS[operation](host, header, stdin)
     except Refused as exc:
         return {"ok": False, "op": operation, "refused": True, "error": str(exc)}
     except RolledBack as exc:

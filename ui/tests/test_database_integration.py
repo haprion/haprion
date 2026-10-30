@@ -5737,6 +5737,19 @@ class TheAccountToolAgainstARealDatabase(AccountToolHarness):
         self.assertIn("last active admin", output)
         self.assertIsNotNone(self.account("alice"))
 
+    def test_the_last_admin_is_refused_with_one_exit_and_one_sentence(self) -> None:
+        self.add("alice", role="admin")
+        answers = [
+            self.run_tool("role", "alice", "reader"),
+            self.run_tool("disable", "alice"),
+            self.run_tool("delete", "alice", "--yes"),
+        ]
+
+        for code, output in answers:
+            self.assertEqual(code, 65)
+            self.assertIn("the last active admin cannot be demoted, disabled or deleted", output)
+        self.assertEqual(self.run_tool("disable", "ghost")[0], 66)
+
     def test_break_glass_marks_and_unmarks_a_local_account_only(self) -> None:
         self.add("alice")
         self.add("bob", role="reader", source="oidc", password_hash=None)
@@ -5747,14 +5760,14 @@ class TheAccountToolAgainstARealDatabase(AccountToolHarness):
         self.assertFalse((self.account("alice") or ())[2])
 
         code, output = self.run_tool("break-glass", "bob")
-        self.assertEqual(code, 64)
+        self.assertEqual(code, 65)
         self.assertIn("only local accounts", output)
 
     def test_reset_refuses_a_provider_account_before_asking_for_a_password(self) -> None:
         self.add("bob", role="reader", source="oidc", password_hash=None)
         with mock.patch.object(self.admin, "read_new_password") as asked:
             code, output = self.run_tool("reset", "bob")
-        self.assertEqual(code, 64)
+        self.assertEqual(code, 65)
         self.assertIn("has no password", output)
         asked.assert_not_called()
 

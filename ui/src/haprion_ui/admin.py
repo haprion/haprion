@@ -57,6 +57,18 @@ class AdminError(tool_answer.ToolError):
         super().__init__(message, code=code, exit_code=exit_code)
 
 
+def refused(message: str) -> AdminError:
+    """The request was understood and the installation says no (65): a name taken, the last admin."""
+
+    return AdminError(message, exit_code=exit_codes.REFUSED)
+
+
+def guard_refusal(error: db.LastAdmin) -> AdminError:
+    """What the database's guard said, in the one sentence and the one exit every verb uses."""
+
+    return refused(account_apply.guard_message(error))
+
+
 UI_CONFIG_PATH = config.DEFAULT_CONFIG_PATH
 
 
@@ -179,41 +191,10 @@ def _user_id(connection: psycopg.Connection[tuple[Any, ...]], username: str) -> 
         cursor.execute("select id from app_user where username_normalised = lower(%s)", (username,))
         row = cursor.fetchone()
     if row is None:
-        raise AdminError(f"no such account: {username}")
+        raise AdminError(
+            f"no such account: {username}", code="not_found", exit_code=exit_codes.NOT_FOUND
+        )
     return int(row[0])
-
-
-def _revoke_sessions(connection: psycopg.Connection[tuple[Any, ...]], user_id: int) -> int:
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "update app_session set revoked_at = statement_timestamp() "
-            " where user_id = %s and revoked_at is null",
-            (user_id,),
-        )
-        return cursor.rowcount
-
-
-def _insert_local(
-    connection: psycopg.Connection[tuple[Any, ...]],
-    username: str,
-    password: str,
-    role: str,
-    *,
-    break_glass: bool,
-) -> bool:
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "insert into app_user (username, password_hash, role, break_glass) "
-            "values (%(username)s, %(hash)s, %(role)s, %(break_glass)s) "
-            "on conflict do nothing returning id",
-            {
-                "username": username,
-                "hash": auth.hash_password(password),
-                "role": role,
-                "break_glass": break_glass,
-            },
-        )
-        return cursor.fetchone() is not None
 
 
 def command_add(environment: Environment, args: argparse.Namespace) -> int:
@@ -223,10 +204,14 @@ def command_add(environment: Environment, args: argparse.Namespace) -> int:
     password = read_new_password(piped=args.password_stdin)
     break_glass = not args.no_break_glass
     with connect(environment) as connection:
-        if not _insert_local(
-            connection, args.username, password, args.role, break_glass=break_glass
+        if not db.create_account(
+            connection,
+            username=args.username,
+            password_hash=auth.hash_password(password),
+            role=args.role,
+            break_glass=break_glass,
         ):
-            raise AdminError(f"an account named {args.username} already exists")
+            raise refused(f"an account named {args.username} already exists")
         _audit(
             connection, "account_created", args.username, role=args.role, break_glass=break_glass
         )
@@ -274,7 +259,13 @@ def command_init_admin(environment: Environment, _: argparse.Namespace) -> int:
         if _any_account(connection):
             print("accounts exist; no first account created")
             return 0
-        _insert_local(connection, FIRST_ADMIN, password, "admin", break_glass=True)
+        db.create_account(
+            connection,
+            username=FIRST_ADMIN,
+            password_hash=auth.hash_password(password),
+            role="admin",
+            break_glass=True,
+        )
         _audit(connection, "account_created", FIRST_ADMIN, role="admin", break_glass=True)
         connection.commit()
     print(f"created break-glass {FIRST_ADMIN} with role admin")
@@ -290,8 +281,10 @@ def command_delete(environment: Environment, args: argparse.Namespace) -> int:
         if not args.yes:
             print(f"would delete {args.username} and its sessions; repeat with --yes to do it")
             return exit_codes.USAGE
-        with connection.cursor() as cursor:
-            cursor.execute("delete from app_user where id = %s", (user_id,))
+        try:
+            db.delete_account(connection, user_id=user_id)
+        except db.LastAdmin as exc:
+            raise guard_refusal(exc) from exc
         _audit(connection, "account_deleted", args.username)
         connection.commit()
     print(f"deleted {args.username}")
@@ -306,19 +299,19 @@ def command_break_glass(environment: Environment, args: argparse.Namespace) -> i
             cursor.execute("select source from app_user where id = %s", (user_id,))
             row = cursor.fetchone()
             if row is not None and row[0] != "local":
-                raise AdminError(
+                raise refused(
                     f"{args.username} signs in through the provider; only local "
                     "accounts can be break-glass"
                 )
-            cursor.execute(
-                "update app_user set break_glass = %s where id = %s", (break_glass, user_id)
-            )
         #
         # As the web does it: where the provider's sign-in is on with
         # break-glass accounts only, the account can no longer sign in, so its
         # sessions end with the mark.
         #
-        ended = 0 if break_glass else db.end_locked_out_sessions(connection, user_id=user_id)
+        try:
+            ended = db.set_break_glass(connection, user_id=user_id, break_glass=break_glass)
+        except db.LastAdmin as exc:
+            raise guard_refusal(exc) from exc
         _audit(
             connection,
             "break_glass_changed",
@@ -340,20 +333,16 @@ def command_reset(environment: Environment, args: argparse.Namespace) -> int:
             cursor.execute("select source from app_user where id = %s", (user_id,))
             row = cursor.fetchone()
         if row is not None and row[0] != "local":
-            raise AdminError(f"{args.username} signs in through the provider and has no password")
+            raise refused(f"{args.username} signs in through the provider and has no password")
         password = read_new_password(piped=args.password_stdin)
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "update app_user set password_hash = %(hash)s, "
-                "       updated_at = statement_timestamp() where id = %(id)s",
-                {"hash": auth.hash_password(password), "id": user_id},
-            )
         #
         # Sessions go with the password. A reset that leaves existing cookies
         # working has not taken the account back from whoever had it - which is
         # the situation a reset is usually a response to.
         #
-        ended = _revoke_sessions(connection, user_id)
+        ended = db.reset_password(
+            connection, user_id=user_id, password_hash=auth.hash_password(password)
+        )
         _audit(connection, "password_reset", args.username, sessions_revoked=ended)
         connection.commit()
     print(f"password reset for {args.username}; {labels.counted(ended, 'session')} revoked")
@@ -363,13 +352,10 @@ def command_reset(environment: Environment, args: argparse.Namespace) -> int:
 def command_disable(environment: Environment, args: argparse.Namespace) -> int:
     with connect(environment) as connection:
         user_id = _user_id(connection, args.username)
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "update app_user set disabled = true, updated_at = statement_timestamp() "
-                " where id = %s",
-                (user_id,),
-            )
-        ended = _revoke_sessions(connection, user_id)
+        try:
+            ended = db.set_disabled(connection, user_id=user_id, disabled=True)
+        except db.LastAdmin as exc:
+            raise guard_refusal(exc) from exc
         _audit(connection, "account_disabled", args.username, sessions_revoked=ended)
         connection.commit()
     print(f"disabled {args.username}; {labels.counted(ended, 'session')} revoked")
@@ -379,12 +365,10 @@ def command_disable(environment: Environment, args: argparse.Namespace) -> int:
 def command_enable(environment: Environment, args: argparse.Namespace) -> int:
     with connect(environment) as connection:
         user_id = _user_id(connection, args.username)
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "update app_user set disabled = false, updated_at = statement_timestamp() "
-                " where id = %s",
-                (user_id,),
-            )
+        try:
+            db.set_disabled(connection, user_id=user_id, disabled=False)
+        except db.LastAdmin as exc:
+            raise guard_refusal(exc) from exc
         _audit(connection, "account_enabled", args.username)
         connection.commit()
     print(f"enabled {args.username}")
@@ -402,11 +386,7 @@ def command_unlock(environment: Environment, args: argparse.Namespace) -> int:
     """
 
     with connect(environment) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "insert into login_unlock (username_normalised, actor) values (lower(%s), %s)",
-                (args.username, actor_name()),
-            )
+        db.unlock_account(connection, username=args.username, actor=actor_name())
         _audit(connection, "throttle_cleared", args.username)
         connection.commit()
     print(f"unlocked {args.username}")
@@ -416,7 +396,7 @@ def command_unlock(environment: Environment, args: argparse.Namespace) -> int:
 def command_revoke(environment: Environment, args: argparse.Namespace) -> int:
     with connect(environment) as connection:
         user_id = _user_id(connection, args.username)
-        ended = _revoke_sessions(connection, user_id)
+        ended = db.revoke_sessions_for_user(connection, user_id)
         _audit(connection, "sessions_revoked", args.username, sessions_revoked=ended)
         connection.commit()
     print(f"revoked {labels.counted(ended, 'session')} for {args.username}")
@@ -432,14 +412,14 @@ def command_role(environment: Environment, args: argparse.Namespace) -> int:
             cursor.execute("select role, source from app_user where id = %s", (user_id,))
             row = cursor.fetchone()
         if row is not None and row[1] != "local":
-            raise AdminError(f"{args.username} signs in through the provider, which sets its role")
+            raise refused(f"{args.username} signs in through the provider, which sets its role")
         if row is not None and row[0] == args.role:
             print(f"{args.username} already has role {args.role}")
             return 0
         try:
             db.set_role(connection, user_id=user_id, role=args.role)
         except db.LastAdmin as exc:
-            raise AdminError("the last active admin cannot be demoted") from exc
+            raise guard_refusal(exc) from exc
         _audit(
             connection,
             "role_changed",

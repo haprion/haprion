@@ -253,6 +253,14 @@ def plan(wanted: Sequence[Wanted], current: Sequence[Stored], *, prune: bool) ->
     )
 
 
+def guard_message(error: db.LastAdmin) -> str:
+    """What the database's guard refused, in the one sentence every way to change an account uses."""
+
+    if isinstance(error, db.NoBreakGlass):
+        return "sign-in through the provider is on and needs an active break-glass admin"
+    return "the last active admin cannot be demoted, disabled or deleted"
+
+
 def write(connection: Any, the_plan: Plan, *, actor: str) -> int:
     """Every change of the plan, audited as the web audits it, in the caller's
     transaction. Returns how many sessions the changes ended."""
@@ -323,12 +331,8 @@ def write(connection: Any, the_plan: Plan, *, actor: str) -> int:
         for row in the_plan.deleted:
             if db.delete_account(connection, user_id=row.id):
                 audit("account_deleted", row.username, role=row.role, source=row.source)
-    except db.NoBreakGlass as exc:
-        raise ApplyError(
-            "sign-in through the provider is on and needs an active break-glass admin"
-        ) from exc
     except db.LastAdmin as exc:
-        raise ApplyError("the last active admin cannot be demoted, disabled or deleted") from exc
+        raise ApplyError(guard_message(exc)) from exc
     return ended_total
 
 

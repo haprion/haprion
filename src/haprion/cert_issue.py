@@ -24,8 +24,10 @@ Order, and why
 --------------
 certbot first, the registry second, publish third. A registry entry for a
 lineage that does not exist would make every later publish fail on that
-entry; a lineage without an entry is invisible and harmless - `cert-list`
-reports it as unregistered so it can be registered by hand. certbot's own
+entry; a lineage without an entry is harmless to publishing, but no listing shows
+it, certbot's timer keeps renewing it, and the ID stays taken until the lineage
+is removed (`haprion-cert-delete` sweeps a lineage the registry does not name)
+or registered by hand. certbot's own
 directory hooks are turned off for this one run: the renewal hook would
 publish the whole registry before this entry is in it, and the publish that
 follows here does that work once, with the entry present.
@@ -650,7 +652,10 @@ def add_to_registry(
         raise IssueError(
             exc.code,
             f"certbot issued {request.certificate_id!r} but the registry did not take it: "
-            f"{str(exc).rstrip('.')}. Register the lineage by hand, then publish it.",
+            f"{str(exc).rstrip('.')}. Remove the lineage with "
+            f"'haprion-cert-delete {request.certificate_id}' and issue again, or add "
+            f"'{request.certificate_id}: {{source: {{kind: acme}}, ...}}' to the registry "
+            "by hand and publish it.",
             exit_code=exit_codes.after_a_change(exc.exit_code),
         ) from exc
 

@@ -68,7 +68,7 @@
           {% for step in steps %}
           <li><span class="receiver-step-title">{{ step.title }}</span>
             {% if step.windows_command %}<span class="receiver-os">Linux:</span>{% endif %}{% if step.command %}<pre class="receiver-command"><code>{{ step.command }}</code></pre>{% endif %}
-            {% if step.windows_command %}<span class="receiver-os">Windows (PowerShell):</span><pre class="receiver-command"><code>{{ step.windows_command }}</code></pre>{% endif %}
+            {% if step.windows_command %}<span class="receiver-os">Windows (PowerShell as Administrator):</span><pre class="receiver-command"><code>{{ step.windows_command }}</code></pre>{% endif %}
             {% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
           {% endfor %}
         </ol>

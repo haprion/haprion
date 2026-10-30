@@ -49,7 +49,7 @@
           {% for step in key_steps %}
           <li><span class="receiver-step-title">{{ step.title }}</span>
             <span class="receiver-os" data-os="linux">Linux:</span><pre class="receiver-command" data-os="linux"><code data-key-command>{{ step.command }}</code></pre>
-            <span class="receiver-os" data-os="windows"{% if not windows %} hidden{% endif %}>Windows (PowerShell, OpenSSH client installed):</span><pre class="receiver-command" data-os="windows"{% if not windows %} hidden{% endif %}><code data-key-command>{{ step.windows_command }}</code></pre>
+            <span class="receiver-os" data-os="windows"{% if not windows %} hidden{% endif %}>Windows (PowerShell as Administrator, OpenSSH client installed):</span><pre class="receiver-command" data-os="windows"{% if not windows %} hidden{% endif %}><code data-key-command>{{ step.windows_command }}</code></pre>
             {% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
           {% endfor %}
         </ol>

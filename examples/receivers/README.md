@@ -32,11 +32,13 @@ All of them are written to be run from a timer. Some properties are worth keepin
   no prompt, and a `get` that fails aborts the run with a non-zero exit instead of leaving the
   next command to run against half a pair. The same form works on Windows, where there is no
   heredoc: a here-string piped in, `@"…"@ | sftp -b - -i C:\certs\certfetch …` - the
-  receivers page in the interface shows it with the real names filled in.
-- **The Windows directory is the administrators'.** The commands the interface shows set `C:\certs`
-  to be owned by Administrators with only Administrators and SYSTEM granted, whatever was there
-  before, ahead of every command that writes a key or a password into it and stopping if that fails:
-  a directory made under `C:\` otherwise inherits read for every local account.
+  receivers page in the interface shows it with the real names filled in. Run the Windows
+  commands in an elevated PowerShell (Run as Administrator).
+- **The Windows directory is the administrators'.** Each command the interface shows for Windows is
+  one script block that stops at the first failure. Before anything is written it sets `C:\certs`
+  and what it already holds to be owned by Administrators with only Administrators and SYSTEM
+  granted, whatever was there before: a directory made under `C:\` otherwise inherits read for
+  every local account.
 - **The names are made up.** Host names under `example.net`, the `crx-` accounts, addresses from
   `192.0.2.0/24`, `/etc/ssl/haproxy` and `C:\certs\` are placeholders; nothing here is a real host,
   account or path.

@@ -206,6 +206,7 @@ class WhatTheHostRuns(unittest.TestCase):
         self.assertIn("get /app.example.com/app.example.com.pfx", step.command)
         self.assertIn("get /app.example.com/app.example.com.password", step.command)
         self.assertIn('@"', step.windows_command)
+        self.assertIn("throw 'sftp failed'", step.windows_command)
         self.assertIn("C:\\certs\\app.example.com\\app.example.com.pfx", step.windows_command)
         self.assertIn("install-pkcs12.ps1", step.note)
 
@@ -256,7 +257,8 @@ class WhatTheHostRuns(unittest.TestCase):
             steps[0].windows_command,
             certificate_receivers.windows_prepared(
                 "curl.exe -k -o C:\\certs\\manager-ui.pem "
-                "https://mgr.example.net/certdist/manager-ui.pem"
+                "https://mgr.example.net/certdist/manager-ui.pem",
+                certificate_receivers.windows_check("curl"),
             ),
         )
         self.assertEqual(steps[0].note.count("\n"), 1)
@@ -284,10 +286,15 @@ class WhatTheHostRuns(unittest.TestCase):
 
     def test_the_windows_directory_is_closed_to_all_but_administrators_and_system(self) -> None:
         prepare = certificate_receivers.WINDOWS_MKDIR
-        self.assertNotIn("\n", prepare)
         self.assertIn("O:BAG:SYD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)", prepare)
-        self.assertIn("Set-Acl -Path C:\\certs -AclObject $acl -ErrorAction Stop", prepare)
-        self.assertIn("icacls C:\\certs\\* /reset /T /C", prepare)
+        self.assertIn("Set-Acl -Path C:\\certs -AclObject $acl", prepare)
+        self.assertIn("Get-ChildItem C:\\certs -Force) {", prepare)
+        lines = prepare.splitlines()
+        owner = "icacls C:\\certs\\* /setowner *S-1-5-32-544 /T /C | Out-Null"
+        reset = "icacls C:\\certs\\* /reset /T /C | Out-Null"
+        self.assertLess(lines.index(owner), lines.index(reset))
+        for native in (owner, reset):
+            self.assertIn("$LASTEXITCODE", lines[lines.index(native) + 1])
         self.assertIn("throw", prepare)
         self.assertNotIn("Users", prepare)
 
@@ -307,15 +314,31 @@ class WhatTheHostRuns(unittest.TestCase):
                 row = replace(row, holds=(certificate_receivers.Held("app.example.com", fmt),))
                 for step in certificate_receivers.fetch_steps(row, "m.example.net"):
                     commands.append((f"{transport}/{fmt}", step.windows_command))
-        self.assertGreater(len(commands), 6)
-        for label, command in commands:
-            if not command or "C:\\certs" not in command:
-                continue
+        # password 1, ssh-keygen 1, https 3 per format (trust, then two
+        # files), sftp 1 per format; the public half is only read, rsync has
+        # no Windows command.
+        writing = [
+            (label, c) for label, c in commands if "C:\\certs" in c and not c.startswith("Get-")
+        ]
+        self.assertEqual(len(writing), 1 + 1 + 2 * 3 + 2)
+        for label, command in writing:
             with self.subTest(label, command=command[:60]):
-                first = command.splitlines()[0]
-                if first.startswith("Get-Content"):
-                    continue
-                self.assertTrue(first.startswith(prepare + "; "), first)
+                lines = command.splitlines()
+                self.assertEqual(lines[0], "& {")
+                self.assertEqual(lines[1], "$ErrorActionPreference = 'Stop'")
+                self.assertEqual(lines[-1], "}")
+                self.assertEqual(command.count("& {"), 1)
+                body = "\n".join(lines[2:-1])
+                self.assertTrue(body.startswith(prepare + "\n"), body[:60])
+                rest = body[len(prepare) + 1 :]
+                self.assertIn("C:\\certs", rest)
+                # Nothing writes before the preparation, and the block is one
+                # statement: braces balance.
+                self.assertEqual(command.count("{"), command.count("}"))
+                if "sftp" in rest or "curl.exe" in rest or "ssh-keygen" in rest:
+                    self.assertIn("if ($LASTEXITCODE -ne 0) { throw", rest)
+                if '@"' in rest:
+                    self.assertLess(rest.index("New-Item"), rest.index('@"'))
 
     def test_the_key_is_made_on_the_receiver_and_named_after_it_on_both_systems(self) -> None:
         first, second = certificate_receivers.key_steps("lb-02.example.net")
@@ -326,15 +349,14 @@ class WhatTheHostRuns(unittest.TestCase):
         self.assertEqual(
             first.windows_command,
             certificate_receivers.windows_prepared(
-                "ssh-keygen -t ed25519 -N '\"\"' -C lb-02.example.net -f C:\\certs\\certfetch"
+                "ssh-keygen -t ed25519 -N '\"\"' -C lb-02.example.net -f C:\\certs\\certfetch",
+                certificate_receivers.windows_check("ssh-keygen"),
             ),
         )
         self.assertEqual(second.command, "cat /root/.ssh/certfetch.pub")
         self.assertEqual(second.windows_command, "Get-Content C:\\certs\\certfetch.pub")
         # The first Windows command makes the directory the rest write into.
-        self.assertTrue(
-            first.windows_command.startswith(certificate_receivers.WINDOWS_MKDIR + "; ")
-        )
+        self.assertIn(certificate_receivers.WINDOWS_MKDIR, first.windows_command)
         self.assertEqual(certificate_receivers.WINDOWS_TRANSPORTS, {"sftp"})
 
 
@@ -664,7 +686,7 @@ class ThePage(ReceiverRouteTestCase):
         self.assertIn("Register the receiver", page)
         self.assertIn('href="/certificates/receivers">Cancel', page)
         self.assertIn('data-os="linux">Linux:</span>', page)
-        self.assertIn("Windows (PowerShell, OpenSSH client installed):", page)
+        self.assertIn("Windows (PowerShell as Administrator, OpenSSH client installed):", page)
         self.assertIn(
             "ssh-keygen -t ed25519 -N &#39;&#34;&#34;&#39; -C &lt;receiver&gt; -f C:\\certs\\certfetch",
             page,

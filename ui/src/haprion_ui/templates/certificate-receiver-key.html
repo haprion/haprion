@@ -36,7 +36,7 @@
           {% for step in key_steps %}
           <li><span class="receiver-step-title">{{ step.title }}</span>
             <span class="receiver-os" data-os="linux">Linux:</span><pre class="receiver-command" data-os="linux"><code data-key-command>{{ step.command }}</code></pre>
-            {% if windows %}<span class="receiver-os" data-os="windows">Windows (PowerShell, OpenSSH client installed):</span><pre class="receiver-command" data-os="windows"><code data-key-command>{{ step.windows_command }}</code></pre>{% endif %}
+            {% if windows %}<span class="receiver-os" data-os="windows">Windows (PowerShell as Administrator, OpenSSH client installed):</span><pre class="receiver-command" data-os="windows"><code data-key-command>{{ step.windows_command }}</code></pre>{% endif %}
             {% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
           {% endfor %}
         </ol>

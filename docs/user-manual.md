@@ -1307,11 +1307,12 @@ Write each as a plain number; `size` also takes `k`, `m` or `g`.
   exactly. A name that begins with `<object>-` is not enough: `shop` and `shop-api` are two objects. This
   covers `table <name>` in `track-sc2` and `stick` rules, a table's `write-to`, the fetches and converters
   that create or change an entry (`table_inc_gpc0`, `src_clr_gpc`, `sc_inc_gpc1` and their kin, and
-  `src_updt_conn_cnt`), `log ring@<name>`, the `debug` converter's destination, and the cache in
-  `cache-use`, `cache-store` and `filter cache`. The arguments of `debug` are written without quotes. One object storing into another's cache would answer
-  that object's visitors with its own content. On the object's own
-  lines such a fetch or converter must name its table, since the pool's own is the rate limit's. Reading
-  another table, as `table_http_req_rate(<name>)` does, is allowed.
+  `src_updt_conn_cnt`), the `table` of a `bwlim-in` or `bwlim-out` filter, `log ring@<name>`, the `debug`
+  converter's destination, and the cache in `cache-use`, `cache-store` and `filter cache`. The arguments of
+  `debug` are written without quotes. One object storing into another's cache would answer that object's
+  visitors with its own content. On the object's own lines such a fetch, converter or bandwidth limit must
+  name its table, since the pool's own is the rate limit's. Reading another table, as
+  `table_http_req_rate(<name>)` does, is allowed.
 - **The WAF engine's wiring.** The engine's SPOE filter, and the `txn.coraza.*` variables its verdict is
   read from. A line that set them could make the engine's answer say something it did not.
 - **HAProxy's statistics page.** Every `stats` keyword, and `use-service prometheus-exporter`. The page

@@ -1584,8 +1584,54 @@ FILTERS = frozenset(
 )
 
 
-def _filter_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
-    if keyword != ("filter",) or len(tokens) < 2 or tokens[1] in FILTERS:
+#
+# A bandwidth limit's parameters, from the synopsis in configuration.txt 9.7
+# (a test holds it there), read after the filter's name. A shared limit
+# counts in a stick table, its own section's by default, and is held to the
+# text's own tables like a counter is (code review 2026-10-30, slutkoll
+# P3-2): on the object's rows the pool's table is the rate limit's, so a
+# table must be named there.
+#
+BWLIM_PARAMETERS = {
+    "default-limit": 1,
+    "default-period": 1,
+    "limit": 1,
+    "key": 1,
+    "table": 1,
+    "min-size": 1,
+}
+
+
+def _bwlim_problem(tokens: Sequence[str], own: Own, *, own_table: bool) -> str:
+    index = 3
+    named = keyed = False
+    while index < len(tokens):
+        parameter = tokens[index]
+        value = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if parameter not in BWLIM_PARAMETERS:
+            return f"{parameter} is not a parameter of the {tokens[1]} filter in HAProxy 3.4"
+        if parameter == "table":
+            if value not in own["backend"]:
+                return NOT_OWN_TABLE.format(table=value)
+            named = True
+        keyed = keyed or parameter == "key"
+        index += 1 + BWLIM_PARAMETERS[parameter]
+    if keyed and not named and not own_table:
+        return (
+            "a shared bandwidth limit here needs `table <name>` of a backend the text adds: "
+            "the pool's own table is the rate limit's"
+        )
+    return ""
+
+
+def _filter_problem(
+    tokens: Sequence[str], keyword: tuple[str, ...], own: Own, *, own_table: bool
+) -> str:
+    if keyword != ("filter",) or len(tokens) < 2:
+        return ""
+    if tokens[1] in ("bwlim-in", "bwlim-out"):
+        return _bwlim_problem(tokens, own, own_table=own_table)
+    if tokens[1] in FILTERS:
         return ""
     if tokens[1] in ("spoe", "opentracing"):
         return f"the {tokens[1]} filter reads its configuration from a file on the node"
@@ -1689,7 +1735,7 @@ def _line_problem(
         or _variable_problem(tokens)
         or _service_problem(tokens)
         or _cache_problem(tokens, keyword, own)
-        or _filter_problem(tokens, keyword)
+        or _filter_problem(tokens, keyword, own, own_table=own_table)
         or _file_problem(tokens, keyword)
         or _log_problem(tokens, keyword, own)
         or _list_problem(tokens)

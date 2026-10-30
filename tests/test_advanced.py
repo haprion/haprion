@@ -477,6 +477,47 @@ class ALineWritesOnlyToSectionsOfItsOwnText(unittest.TestCase):
         in_own_backend = "backend shop-t\n    http-request deny if { src,table_inc_gpc0 gt 0 }\n"
         self.assertEqual(fates(in_own_backend)[1][1], PLACED)
 
+    def test_a_bandwidth_limit_counts_only_in_its_own_table(self) -> None:
+        """Code review 26-10-30, slutkoll P3-2: the bwlim filter's `table` was not read,
+        so a limit could count in a table another object's text adds."""
+
+        for line in (
+            "filter bwlim-in lim limit 100k key src table notmine-table",
+            "filter bwlim-out lim limit 1k key src table shop-api-t",
+            "filter bwlim-in lim limit 1k key src table shop-t table other",
+            "filter bwlim-in lim limit 1k key src",
+            "filter bwlim-in lim limit 1k key src frobnicate 1",
+        ):
+            for protocol in ("http", "tcp"):
+                with self.subTest(line, protocol=protocol):
+                    self.assertEqual(fate_beside_own(line, protocol=protocol), REFUSED_FATE)
+        for line in (
+            "filter bwlim-in lim limit 1k key src table shop-t min-size 1k",
+            "filter bwlim-out lim default-limit 1m default-period 1s",
+            "filter bwlim-in lim default-limit 1m default-period 1s min-size 1k",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate_beside_own(line), PLACED)
+        in_own_backend = (
+            "backend shop-t\n"
+            "    stick-table type ip size 1k store bytes_in_rate(1s)\n"
+            "    filter bwlim-in lim limit 1k key src\n"
+        )
+        self.assertEqual(fates(in_own_backend)[2][1], PLACED)
+        elsewhere = "backend shop-t\n    filter bwlim-in lim limit 1k key src table other\n"
+        self.assertEqual(fates(elsewhere)[1][1], REFUSED_FATE)
+
+    @unittest.skipUnless(MANUAL.exists(), "the HAProxy manual is not installed here")
+    def test_the_bandwidth_limit_parameters_are_the_manual_s_synopsis(self) -> None:
+        import re
+
+        with gzip.open(MANUAL, "rt", encoding="utf-8") as manual:
+            text = manual.read()
+        chapter = text[text.index("9.7. Bandwidth limitation") :]
+        synopsis = chapter[: chapter.index("  Arguments :")]
+        named = set(re.findall(r"[\s\[]([a-z][a-z-]+) <", synopsis)) - {"bwlim-in", "bwlim-out"}
+        self.assertEqual(named, set(advanced.BWLIM_PARAMETERS))
+
     @unittest.skipUnless(MANUAL.exists(), "the HAProxy manual is not installed here")
     def test_the_table_parameters_are_the_manual_s_synopsis(self) -> None:
         import re

@@ -253,6 +253,11 @@ What the block contains, and how to prepare a node without the web interface, is
 A node accepts the manager's keys only from the manager's address. If the manager moves to another address, run
 `sudo haprion-node-prepare --manager <new name or address>` on each node.
 
+A rotated manager key, or one added after the join, reaches a joined node only by hand: on the node,
+`sudo haprion-node-prepare --key <purpose>="<public key>"`, where the purpose is `deploy`, `cert_deploy`,
+`server_state`, `status`, `probe`, `backup` or `traffic_log`. It replaces that one key with the binding the
+join gives it, leaves the others, and refuses a node that has not joined.
+
 ## 4. Sign in
 
 Open `https://<server name>` and sign in as `admin`. Until you install a certificate of your own, nginx uses a

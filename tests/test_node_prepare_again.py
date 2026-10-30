@@ -134,7 +134,7 @@ class WhatStopsIt(unittest.TestCase):
         )
 
 
-class TheCommand(unittest.TestCase):
+class CommandFixture(unittest.TestCase):
     """main() with a stand-in step 4."""
 
     def setUp(self) -> None:
@@ -162,6 +162,8 @@ class TheCommand(unittest.TestCase):
         step.chmod(0o755)
         return seen
 
+
+class TheCommand(CommandFixture):
     def test_it_runs_step_four_with_the_answers_and_the_cluster(self) -> None:
         seen = self.step(0)
         self.assertEqual(PREPARE.main([]), 0)
@@ -219,6 +221,124 @@ class TheCommand(unittest.TestCase):
             mock.patch.object(PREPARE.sys, "stderr"),
         ):
             self.assertEqual(PREPARE.main([]), 77)
+
+
+class TheKeyOption(CommandFixture):
+    """`--key <purpose>=<key>`: one manager key, on a node that has joined (review 26-10-30)."""
+
+    KEY = "ssh-ed25519 " + "A" * 68
+    OTHER = "ssh-ed25519 " + "B" * 68
+
+    def test_a_key_is_an_answer_of_step_four_with_the_node_s_own_answers(self) -> None:
+        seen = self.step(0)
+        self.assertEqual(PREPARE.main(["--key", f"status={self.KEY}"]), 0)
+        answers = (self.state / "prepare.env").read_text()
+        self.assertIn(f"STATUS_PUBKEY='{self.KEY}'\n", answers)
+        self.assertIn("PREPARED_AGAIN=yes", answers)
+        self.assertEqual(seen.read_text().split()[1], "alpha")
+
+    def test_a_comment_after_the_key_is_dropped(self) -> None:
+        self.step(0)
+        self.assertEqual(PREPARE.main(["--key", f"deploy={self.KEY} manager deploy"]), 0)
+        answers = (self.state / "prepare.env").read_text()
+        self.assertIn(f"DEPLOY_PUBKEY='{self.KEY}'\n", answers)
+
+    def test_every_purpose_the_join_knows_is_one_and_no_other(self) -> None:
+        join = importlib.machinery.SourceFileLoader(
+            "haprion_node_join", str(INSTALL / "node" / "haprion-node-join")
+        )
+        spec = importlib.util.spec_from_loader("haprion_node_join", join)
+        assert spec is not None
+        module = importlib.util.module_from_spec(spec)
+        join.exec_module(module)
+        self.assertEqual(PREPARE.PURPOSES, module.PURPOSES)
+        table = subprocess.run(  # node-lib.sh's own table
+            [
+                "/bin/bash",
+                "-c",
+                f'source "{INSTALL / "node-lib.sh"}"; printf "%s\\n" "${{NODE_KEY_PURPOSES[@]}}"',
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        names = {line.split()[0] + "_PUBKEY" for line in table.stdout.splitlines()}
+        self.assertEqual(names, set(PREPARE.PURPOSES.values()))
+
+    def refused(self, argument: str, said: str) -> None:
+        seen = self.step(0)
+        with mock.patch("sys.stderr") as stderr:
+            self.assertEqual(PREPARE.main(["--key", argument]), 64)
+        written = "".join(call.args[0] for call in stderr.write.call_args_list)
+        self.assertIn(said, written)
+        self.assertFalse(seen.exists())
+
+    def test_an_unknown_purpose_is_refused(self) -> None:
+        self.refused(f"admin={self.KEY}", "is not a purpose")
+        self.refused(self.KEY, "is not a purpose")
+
+    def test_a_malformed_key_is_refused(self) -> None:
+        for bad in (
+            "",
+            "ssh-rsa AAAA",
+            "ssh-ed25519 short",
+            f"ssh-ed25519 {'A' * 68}'; id",
+            self.KEY.split()[1],
+        ):
+            with self.subTest(bad=bad):
+                self.refused(f"status={bad}", "not one ssh-ed25519 public key")
+
+    def test_a_node_that_has_not_joined_is_refused(self) -> None:
+        self.state.mkdir()
+        (self.state / "join_key").write_text("private")
+        self.refused(f"status={self.KEY}", "has not joined")
+
+    def test_a_node_never_prepared_is_refused(self) -> None:
+        self.node_conf.unlink()
+        self.refused(f"status={self.KEY}", "never prepared")
+
+    def test_only_root(self) -> None:
+        with mock.patch.object(PREPARE.os, "geteuid", return_value=1000):
+            self.assertEqual(PREPARE.main(["--key", f"status={self.KEY}"]), 77)
+
+    def test_step_four_replaces_that_key_alone_and_a_second_run_changes_nothing(self) -> None:
+        home = self.root / "home"
+        for user in ("_haprion-trigger", "_haprion-status", "_haprion-backup"):
+            (home / user / ".ssh").mkdir(parents=True)
+            (home / user / ".ssh" / "authorized_keys").write_text("")
+
+        def loop(**answers: str) -> subprocess.CompletedProcess[str]:
+            assigned = "".join(f'{name}="{value}"\n' for name, value in answers.items())
+            return subprocess.run(  # step 4's own function, on scratch files
+                [
+                    "/bin/bash",
+                    "-c",
+                    f'source "{INSTALL / "node-lib.sh"}"\nKEYS_HOME="{home}"\n'
+                    f'MANAGER_SOURCES="mgr.example.com,192.0.2.10"\n{assigned}write_manager_keys\n',
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(loop(DEPLOY_PUBKEY=self.KEY, STATUS_PUBKEY=self.KEY).returncode, 0)
+        status = home / "_haprion-status" / ".ssh" / "authorized_keys"
+        deploy = home / "_haprion-trigger" / ".ssh" / "authorized_keys"
+        deploy_before = deploy.read_text()
+        replaced = loop(STATUS_PUBKEY=self.OTHER)
+        self.assertEqual(replaced.returncode, 0, replaced.stdout + replaced.stderr)
+        self.assertEqual(deploy.read_text(), deploy_before)
+        [line] = status.read_text().splitlines()
+        self.assertTrue(
+            line.startswith(
+                'from="mgr.example.com,192.0.2.10",restrict,command="sudo -n /usr/sbin/haprion-node-status --json" '
+            )
+        )
+        self.assertTrue(line.endswith(self.OTHER))
+        self.assertEqual(oct(status.stat().st_mode & 0o777), "0o644")
+        again = loop(STATUS_PUBKEY=self.OTHER)
+        self.assertIn("ok       sudo -n /usr/sbin/haprion-node-status", again.stdout + again.stderr)
+        self.assertEqual(status.read_text().splitlines(), [line])
 
 
 class TheRecordOfTheStep(unittest.TestCase):

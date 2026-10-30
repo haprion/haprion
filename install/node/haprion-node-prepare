@@ -3,6 +3,7 @@
 
     sudo haprion-node-prepare
     sudo haprion-node-prepare --manager <new name or address>
+    sudo haprion-node-prepare --key <purpose>=<public key>
     sudo haprion-node-prepare --remove [--yes]
 
 Step 4 (04-node-prepare) sets up what the node scripts need beside them: the
@@ -23,6 +24,13 @@ traffic log's route, are left as they are.
 address, node.conf records it, the keys are bound to it, and the manager's
 host key is carried over from the old one's line in root's known_hosts - the
 key did not change, only where it is (review 26-10-25, 3-01).
+
+`--key` installs or replaces one of the manager's keys on a node that has
+joined: the purpose is one the join knows (deploy, cert_deploy, server_state,
+status, probe, backup, traffic_log), and the key is written by step 4's own
+`write_manager_keys` with the same forced command, `from=` and modes the join
+gives it. The other keys stay. It is the node's side of a rotated or added
+manager key: the manager has no way to send one.
 
 The package's postinst says when to run this: when the step it brings is not
 the one that last ran here.
@@ -66,7 +74,24 @@ NODE_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # A name or an IPv4 address, as step 4's MANAGER_HOST is.
 HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 HOST_KEY = re.compile(r"^ssh-ed25519 [A-Za-z0-9+/]+=*$")
-USAGE = "usage: sudo haprion-node-prepare [--manager <new name or address>] | --remove [--yes]"
+USAGE = (
+    "usage: sudo haprion-node-prepare [--manager <new name or address>]"
+    " | --key <purpose>=<public key> | --remove [--yes]"
+)
+#
+# The manager's purposes and step 4's answer for each, as haprion-node-join
+# has them (a test holds the two together, and both to node-lib.sh's table).
+#
+PURPOSES = {
+    "deploy": "DEPLOY_PUBKEY",
+    "cert_deploy": "CERT_DEPLOY_PUBKEY",
+    "server_state": "SERVER_STATE_PUBKEY",
+    "status": "STATUS_PUBKEY",
+    "probe": "PROBE_PUBKEY",
+    "backup": "BACKUP_PUBKEY",
+    "traffic_log": "TRAFFIC_LOG_PUBKEY",
+}
+PUBKEY = re.compile(r"^ssh-ed25519 [A-Za-z0-9+/]{68}$")
 REMOVE = INSTALL.parent / "node-remove"
 REQUIRED = (
     "CLUSTER",
@@ -175,6 +200,19 @@ def cluster_vip() -> str | None:
     return None
 
 
+def manager_key(argument: str) -> tuple[str, str]:
+    """`<purpose>=<public key>` as the answer name and the key it installs."""
+
+    purpose, equals, rest = argument.partition("=")
+    if not equals or purpose not in PURPOSES:
+        raise Refused(f"{purpose!r} is not a purpose; the purposes are {', '.join(PURPOSES)}")
+    fields = rest.split()
+    key = " ".join(fields[:2])
+    if len(fields) < 2 or not PUBKEY.fullmatch(key):
+        raise Refused(f"the {purpose} key is not one ssh-ed25519 public key")
+    return PURPOSES[purpose], key
+
+
 def carried_host_key(old: str) -> str | None:
     """The manager's ed25519 host key, as root's known_hosts holds it for `old`."""
 
@@ -201,11 +239,18 @@ def main(argv: list[str] | None = None) -> int:
     if argv[:1] == ["--remove"]:
         os.execv("/usr/bin/python3", ["/usr/bin/python3", "-I", str(REMOVE), *argv[1:]])  # noqa: S606 - this package's own removal, by its full path
     manager: str | None = None
+    new_key: str | None = None
     if argv:
-        if len(argv) != 2 or argv[0] != "--manager" or not HOST.fullmatch(argv[1]):
+        if len(argv) != 2 or argv[0] not in ("--manager", "--key"):
             print(USAGE, file=sys.stderr)
             return 64
-        manager = argv[1]
+        if argv[0] == "--key":
+            new_key = argv[1]
+        elif HOST.fullmatch(argv[1]):
+            manager = argv[1]
+        else:
+            print(USAGE, file=sys.stderr)
+            return 64
     if os.geteuid() != 0:
         print("haprion-node-prepare: run as root:  sudo haprion-node-prepare", file=sys.stderr)
         return 77
@@ -217,6 +262,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 64
     try:
+        replacement = None if new_key is None else manager_key(new_key)
+        if replacement is not None and (STATE_DIR / "join_key").exists():
+            raise Refused(
+                "this node has not joined a manager (its one-time key is still here); join it"
+                " with its block, or make a new one with  sudo haprion-node-key --again"
+            )
         conf = NODE_CONF.read_text(encoding="utf-8")
         host_key = None
         if manager is not None:
@@ -225,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
         vip = cluster_vip()
         if vip is not None:
             text += f'VIP_{cluster.replace("-", "_")}="{vip}"\n'
+        if replacement is not None:
+            text += f"{replacement[0]}='{replacement[1]}'\n"
     except (Refused, UnicodeDecodeError) as refused:
         print(f"haprion-node-prepare: {refused}", file=sys.stderr)
         return 64

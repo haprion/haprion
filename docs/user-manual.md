@@ -6251,6 +6251,19 @@ from another machine. A manager that moves to another address reaches no node un
 each of them with the new name or address: `sudo haprion-node-prepare --manager <new name or address>`. The
 node then fetches from the new address too, and the manager's host key is carried over from the old one.
 
+**A manager key that was rotated, or added after the join,** reaches a joined node only by hand, because
+the manager has no way to send one. On the manager the public key is the `.pub` file next to the identity
+the runtime policy names for that purpose. On the node:
+
+```bash
+sudo haprion-node-prepare --key status="ssh-ed25519 AAAA..."
+```
+
+The purpose is one of `deploy`, `cert_deploy`, `server_state`, `status`, `probe`, `backup` and
+`traffic_log`. The key replaces that purpose's line, with the same forced command and the manager's
+addresses as the join gives it; the other keys stay, and running it again changes nothing. A node that
+has not joined, a purpose it does not know and a key that is not one ssh-ed25519 public key are refused.
+
 A node also has a one-time join key. It is part of the enrollment block the node prints, and lets a manager
 join the node once, as `_haprion-join`, within 24 hours; the join removes it after use.
 

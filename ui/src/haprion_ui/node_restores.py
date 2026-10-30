@@ -37,7 +37,7 @@ from haprion.cli.node_restore_helper import DISCARD, PREPARE, PREVIEW, RUN, STAT
 from haprion_ui import moments
 
 from .db import Job
-from .jobs import NO_WORKER, RUNNING_LABELS, no_worker
+from .jobs import NO_WORKER, RUNNING_LABELS, no_worker, not_taken
 
 OPERATIONS = (PREPARE, PREVIEW, RUN, DISCARD, STATUS)
 MODES = ("new_vm", "test")
@@ -47,7 +47,7 @@ EXPIRES_AFTER = timedelta(seconds=node_restore.START_WINDOW)
 # The stages with a job of the run still in the queue: the page refreshes
 # until it ends, and the step it is at is the current one.
 #
-WAITING = frozenset({"working", "held", "no_worker"})
+WAITING = frozenset({"working", "held", "no_worker", "not_taken"})
 #
 # What Discard is offered for: every stage but one that is working, one that
 # restored the node, and one already discarded.
@@ -214,6 +214,7 @@ class RestoreRun:
     ``held``               that job waits for an admin's Run or Discard on Jobs
                            (`waiting_job`), held after a restart or a restore
     ``no_worker``          that job is running and no worker holds it (`waiting_job`)
+    ``not_taken``          that job waits and no worker takes it (`waiting_job`)
     ``prepare_failed``     the run was never created on the manager
     ``fingerprint``        paste the line on the target, then enter its fingerprint
     ``confirm``            the preview found no problems; type the node's name
@@ -259,7 +260,7 @@ class RestoreRun:
     overwrite: Mapping[str, Any] | None = None
     # With stage `unknown`: what the last question found, or "" before one was asked.
     standing: str = ""
-    # With stage `held` or `no_worker`: the job the run waits on.
+    # With stage `held`, `no_worker` or `not_taken`: the job the run waits on.
     waiting_job: int | None = None
 
     @property
@@ -342,7 +343,12 @@ def warning_command(warning: str) -> str:
 
 
 def run_view(
-    run: str, rows: Sequence[Job], *, now: datetime | None = None, writes: bool = True
+    run: str,
+    rows: Sequence[Job],
+    *,
+    now: datetime | None = None,
+    writes: bool = True,
+    pause: object | None = None,
 ) -> RestoreRun | None:
     """The run's state from its jobs, oldest first, or None when it has none.
 
@@ -438,10 +444,17 @@ def run_view(
         #
         held = [job for job in jobs if job.state in ACTIVE_STATES and job.waits_for_decision]
         gone = [job for job in jobs if now is not None and no_worker(job, now, writes=writes)]
+        untaken = [
+            job
+            for job in jobs
+            if now is not None and not_taken(job, now, writes=writes, pause=pause)
+        ]
         if held:
             stage, waiting_job = "held", held[-1].id
         elif gone:
             stage, waiting_job = "no_worker", gone[-1].id
+        elif untaken:
+            stage, waiting_job = "not_taken", untaken[-1].id
 
     target_facts = preview.get("target") if isinstance(preview.get("target"), dict) else None
     return RestoreRun(
@@ -551,6 +564,7 @@ STAGE_LABELS: dict[str, tuple[str, str]] = {
     "working": ("Running", "info"),
     "held": ("Held", "warning"),
     "no_worker": (NO_WORKER, "critical"),
+    "not_taken": (NO_WORKER, "critical"),
     "prepare_failed": ("Not prepared", "critical"),
     "fingerprint": ("Waiting for the fingerprint", "warning"),
     "confirm": ("Waiting for confirmation", "warning"),
@@ -581,6 +595,7 @@ def recent_runs(
     shown: Callable[[datetime], datetime],
     now: datetime,
     writes: bool = True,
+    pause: object | None = None,
 ) -> dict[str, tuple[RecentRun, ...]]:
     """The runs that still ask something of somebody, per cluster, newest first.
 
@@ -605,7 +620,7 @@ def recent_runs(
             by_run.setdefault(run, []).append(job)
     views = []
     for run, jobs in by_run.items():
-        restore = run_view(run, jobs, now=now, writes=writes)
+        restore = run_view(run, jobs, now=now, writes=writes, pause=pause)
         if restore is None or restore.stage in {"done", "discarded", "expired"}:
             continue
         if not restore.active and restore.expires_at is not None and now > restore.expires_at:

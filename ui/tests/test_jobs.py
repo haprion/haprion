@@ -425,6 +425,25 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
         self.assertEqual(view.state_label, "Running")
         self.assertEqual(jobs.build_job_overview([stood], now=now).jobs[0].state_label, "No worker")
 
+    def test_a_queued_job_no_worker_takes(self) -> None:
+        """P3-2: waiting past WORKER_WAITING, with writes on, no release pause, no living worker."""
+
+        now = datetime.now(UTC)
+        old = replace(
+            self.job("alpha", "deploy", "pending"),
+            created_at=now - jobs.WORKER_WAITING - timedelta(minutes=1),
+        )
+        self.assertTrue(jobs.not_taken(old, now, writes=True, pause=None))
+        self.assertFalse(jobs.not_taken(old, now, writes=False, pause=None))
+        self.assertFalse(jobs.not_taken(old, now, writes=True, pause=object()))
+        self.assertFalse(
+            jobs.not_taken(replace(old, worker_busy=True), now, writes=True, pause=None)
+        )
+        self.assertFalse(jobs.not_taken(replace(old, held_since=now), now, writes=True, pause=None))
+        self.assertFalse(
+            jobs.not_taken(replace(old, state="running"), now, writes=True, pause=None)
+        )
+
     def test_a_job_no_worker_holds_is_named_so_and_neither_is_said_to_finish(self) -> None:
         """Review 26-10-29, A3: the badge named the operation, with a spinner, and the
         certificate forms said "is in progress" of a job that does not finish by itself."""

@@ -54,7 +54,7 @@ FORWARD_WAITING = timedelta(minutes=3)
 # A job the worker would have taken in seconds. Ten minutes leaves room for a
 # restart and for a long job ahead of it holding the cluster.
 #
-WORKER_WAITING = timedelta(minutes=10)
+WORKER_WAITING = jobs_module.WORKER_WAITING
 #
 # How many days ahead `haprion-retention` creates each table's daily
 # partitions (its TRAFFIC_AHEAD_DAYS and METRIC_AHEAD_DAYS; a test holds the
@@ -817,20 +817,22 @@ def from_manager(
         job.state == "running" and not job.waits_for_decision and job.lease_lapsed_since is None
         for job in rows
     )
-    if writes and waiting and not running and claim_pause is None:
+    untaken = [
+        job for job in waiting if jobs_module.not_taken(job, now, writes=writes, pause=claim_pause)
+    ]
+    if untaken and not running:
         oldest = min(job.created_at for job in waiting)
-        if now - oldest > WORKER_WAITING:
-            items.append(
-                Item(
-                    kind="manager",
-                    severity="critical",
-                    cluster=None,
-                    subject="worker",
-                    message=f"{labels.counted(len(waiting), 'job')} waiting and the worker takes none",
-                    since=oldest,
-                    link="/jobs",
-                )
+        items.append(
+            Item(
+                kind="manager",
+                severity="critical",
+                cluster=None,
+                subject="worker",
+                message=f"{labels.counted(len(waiting), 'job')} waiting and the worker takes none",
+                since=oldest,
+                link="/jobs",
             )
+        )
     today = now.date()
     for table, ahead in MAINTENANCE_AHEAD.items():
         horizon = horizons.get(table)

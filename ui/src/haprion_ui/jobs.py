@@ -1654,6 +1654,33 @@ def no_worker(job: Job, now: datetime, *, writes: bool = True) -> bool:
     )
 
 
+#
+# How long a queued job may wait before it is said that no worker takes it
+# (Needs attention's row of the worker, and a node restore's page).
+#
+WORKER_WAITING = timedelta(minutes=10)
+NOT_TAKEN = "No worker has taken this job; see Events → Jobs."
+
+
+def not_taken(job: Job, now: datetime, *, writes: bool, pause: object | None) -> bool:
+    """Queued, not held, and no worker has taken it for `WORKER_WAITING`.
+
+    Not while a living worker runs another job (`worker_busy`), with writes off,
+    or while a release pauses the claims: the worker then does as it should.
+    The queue holds one active job per cluster, so a waiting job is only ever
+    behind other clusters' jobs.
+    """
+
+    return (
+        writes
+        and pause is None
+        and job.state == "pending"
+        and not job.waits_for_decision
+        and not job.worker_busy
+        and now - job.created_at > WORKER_WAITING
+    )
+
+
 def not_finishing(job: Job | None, now: datetime, *, writes: bool = True) -> str | None:
     """The sentence for a queue's job that does not finish by itself, or None."""
 

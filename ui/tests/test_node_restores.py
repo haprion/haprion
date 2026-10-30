@@ -556,6 +556,7 @@ class RestoreRouteTestCase(DeleteRouteTestCase):
             mock.patch("haprion_ui.db.job_for_key", side_effect=for_key),
             mock.patch("haprion_ui.db.cluster_backups", return_value=[reading()]),
             mock.patch("haprion_ui.db.restore_jobs", side_effect=lambda _c, _run: list(self.runs)),
+            mock.patch("haprion_ui.db.claim_pause", return_value=None),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -725,6 +726,28 @@ class FollowingARun(RestoreRouteTestCase):
             'Held until an admin answers on <a href="/jobs#job-4">Events → Jobs</a>.', page
         )
         self.assertNotIn("Preparing restore.", page)
+
+    def test_a_job_no_worker_takes_is_not_called_working(self) -> None:
+        """P3-2: a waiting job nobody takes was drawn as a step at work."""
+
+        waiting = job("node_restore_preview", "pending", number=5)
+        for age, busy, said in (
+            (timedelta(minutes=15), False, True),
+            (timedelta(minutes=5), False, False),
+            (timedelta(minutes=15), True, False),
+        ):
+            with self.subTest(age=age, busy=busy):
+                self.runs = [
+                    job("node_restore_prepare", "done", number=4),
+                    replace(waiting, created_at=datetime.now(UTC) - age, worker_busy=busy),
+                ]
+                page = self.writing_client().get(f"/backups/restore/{RUN}").text
+                self.assertEqual(
+                    'No worker has taken this job; see <a href="/jobs#job-5">Events → Jobs</a>.'
+                    in page,
+                    said,
+                )
+                self.assertEqual("This page refreshes by itself." in page, not said)
 
     def test_a_run_no_worker_holds_says_where_its_job_is(self) -> None:
         """Review 26-10-29, B2."""

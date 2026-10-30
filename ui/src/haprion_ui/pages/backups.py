@@ -59,6 +59,7 @@ def build_router(config: Config) -> APIRouter:
                 for operation in node_restores.OPERATIONS
                 for job in db.operation_jobs(connection, operation, limit=100)
             ]
+            pause = db.claim_pause(connection)
         return TEMPLATES.TemplateResponse(
             request,
             "backups.html",
@@ -73,6 +74,7 @@ def build_router(config: Config) -> APIRouter:
                     shown=metrics.shown,
                     now=datetime.now(UTC),
                     writes=config.management_writes,
+                    pause=pause,
                 ),
                 #
                 # The zone the schedule form's time is read in: the manager's,
@@ -176,6 +178,7 @@ def build_router(config: Config) -> APIRouter:
                 db.restore_jobs(connection, run),
                 now=datetime.now(UTC),
                 writes=config.management_writes,
+                pause=db.claim_pause(connection),
             )
         if restore is None:
             return PlainTextResponse("Not found", status_code=404)
@@ -379,6 +382,7 @@ def build_router(config: Config) -> APIRouter:
                 db.restore_jobs(connection, run),
                 now=datetime.now(UTC),
                 writes=config.management_writes,
+                pause=db.claim_pause(connection),
             )
         if restore is None:
             return PlainTextResponse("Not found", status_code=404)

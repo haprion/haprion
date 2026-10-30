@@ -601,6 +601,12 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         self.assertFalse(any(line.startswith("systemctl start") for line in said))
         self.assertNotIn("after-restore", said)
 
+    def test_a_failed_restore_with_nothing_running_says_so_rather_than_none(self) -> None:
+        done, _ = self.restore(active="", restored=False)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("the restore stopped; no service was running.", done.stderr)
+        self.assertNotIn(": none", done.stderr)
+
     def test_the_command_is_offered(self) -> None:
         source = SCRIPT.read_text()
         self.assertIn("#     haprion-backup restore <dump>", source)

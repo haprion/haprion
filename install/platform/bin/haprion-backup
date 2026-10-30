@@ -574,7 +574,9 @@ restore_stopped() {
         hold="
   Before starting any of them by hand, hold the restored jobs: sudo haprion-backup after-restore"
     fi
-    die "${reason}; the services stay stopped: ${*:-none}.
+    local stopped="the services stay stopped: $*"
+    [[ $# -gt 0 ]] || stopped="no service was running"
+    die "${reason}; ${stopped}.
   Correct what ${names} names and run this again; it starts them once a restore finishes.${hold}"
 }
 

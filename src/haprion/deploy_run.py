@@ -167,6 +167,15 @@ class DeployRun:
 #
 CERTIFICATES_NOT_DEPLOYED = "certificates_not_deployed"
 
+#
+# The code a configuration deploy blocks with when the release logs to the
+# traffic socket and a node's package is too old to say whether the node holds
+# it (B403). Such a node would install the release and drop every traffic
+# record, so it is refused before anything is sent.
+#
+TRAFFIC_STREAM_NOT_PREPARED = "traffic_stream_not_prepared"
+TRAFFIC_STREAM_NEXT_COMMAND = "sudo haprion-node-prepare"
+
 
 @dataclass(frozen=True, slots=True)
 class CertificatePreflight:
@@ -258,6 +267,7 @@ def run(
     operation: str = OPERATION,
     lifeline: Lifeline | None = None,
     preflight: CertificatePreflight | None = None,
+    logs_traffic_stream: bool = False,
     pause: Callable[[float], None] = time.sleep,
     budget: Budget | None = None,
     clock: Callable[[], float] = time.monotonic,
@@ -268,6 +278,10 @@ def run(
     the first status read and before any node is touched. It is given rather
     than derived because the loop is shared with `cert-deploy`, which is the
     command that fixes what the check finds and must not be blocked by it.
+
+    `logs_traffic_stream` is True when the published release logs to the
+    traffic socket: the nodes are then checked once, in the same place, for a
+    package new enough to refuse it themselves.
     """
 
     deadline = clock() + budget.seconds if budget is not None else None
@@ -306,6 +320,7 @@ def run(
     announced: tuple[str, ...] = ()
     first_deploy = served_nothing(status.observation())
     certificates_checked = preflight is None
+    traffic_checked = not logs_traffic_stream
 
     while True:
         #
@@ -359,6 +374,12 @@ def run(
             certificates_checked = True
             assert preflight is not None  # noqa: S101 - the flag starts true without one
             blocked = _certificate_preflight(writer, status, report, preflight)
+            if blocked is not None:
+                return blocked
+
+        if not traffic_checked:
+            traffic_checked = True
+            blocked = _traffic_stream_preflight(writer, status, report)
             if blocked is not None:
                 return blocked
 
@@ -798,6 +819,42 @@ def _certificate_preflight(
         writer.write(f"WARNING: {warning}\n")
         report.warnings.append(Message(code="certificates_unverified", message=warning, node=name))
     return None
+
+
+def _traffic_stream_preflight(
+    writer: TextIO, status: ClusterStatus, report: DeployReport
+) -> DeployRun | None:
+    """Block before the first node if a readable node's package cannot hold the traffic socket.
+
+    A node installed before `traffic_stream` was reported also lacks the check
+    `haprion-pull-deploy` makes of a release that logs to the socket, so it
+    would install the release and HAProxy would send every traffic record to a
+    path nobody holds. Told apart by the key the node leaves out of its status.
+    A node that could not be read is not judged; the loop deals with it.
+    """
+
+    behind = [
+        node.name
+        for node in status.nodes
+        if node.status_ok and node.traffic_stream_reported is False
+    ]
+    if not behind:
+        return None
+    named = ", ".join(behind)
+    reason = (
+        f"the release logs the traffic log to HAProxy's own socket, and the package on {named} "
+        f"is too old to hold it. Update haprion-node on each of them and run "
+        f"{TRAFFIC_STREAM_NEXT_COMMAND} there first, then deploy again"
+    )
+    writer.write(f"\nERROR: [{TRAFFIC_STREAM_NOT_PREPARED}] {reason}\n")
+    report.outcome = Outcome.BLOCKED
+    report.final_summary = status.summary
+    report.error = Message(
+        code=TRAFFIC_STREAM_NOT_PREPARED,
+        message=reason,
+        details={"nodes": behind, "next_command": TRAFFIC_STREAM_NEXT_COMMAND},
+    )
+    return DeployRun(exit_codes.BLOCKED, report)
 
 
 def _released(

@@ -6558,7 +6558,10 @@ not made the socket, or whose socket other accounts can write, refuses a release
 the deploy fails on that node and says to run `haprion-node-prepare` there first. The other way
 round - a node prepared with this release while its configuration was published by an older
 manager - the node drops the traffic log until the cluster is published again, and *Needs
-attention* says so. After an upgrade, publish each cluster once the manager is updated.
+attention* says so. A node still on the old package cannot make that refusal itself, so the deploy
+refuses it first: it stops before any node is touched and names the nodes that need
+`sudo haprion-node-prepare` after an update. After an upgrade, update and prepare the nodes, then
+publish each cluster.
 
 The generated configuration names the socket by its full path, `/var/lib/haproxy/dev/haprion-traffic`.
 A HAProxy chrooted in `/var/lib/haproxy` looks that path up inside its chroot, so step 4 puts a link

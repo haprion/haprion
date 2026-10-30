@@ -135,6 +135,11 @@ ending in `ubuntu26.04_amd64.deb` or `deb13_amd64.deb`. To build the packages yo
 time, starting with a node that does not hold the VIP: a new WAF engine restarts the engine on that node. The web
 interface's package updates the running interface by itself.
 
+Publish a cluster again only once its nodes are updated and prepared: `sudo apt upgrade` on each node, then
+`sudo haprion-node-prepare` on it when the update asks for it. A release that logs the traffic stream to HAProxy's
+socket is not sent to a node still on the old package. The deploy stops before it touches any node and names them
+(`traffic_stream_not_prepared`).
+
 A new HAProxy is the exception. The manager checks each configuration with its own HAProxy before a node gets it,
 so the manager must not be the newer of the two. When `apt list --upgradable` on the manager shows `haproxy`, update
 the nodes first and the manager last ([Keeping HAProxy current](user-manual.md#keeping-haproxy-current)).
@@ -390,7 +395,8 @@ is dropped. rsyslogd's AppArmor profile gets a rule for the traffic socket in
 `/etc/apparmor.d/rsyslog.d/haprion-haproxy-log`. HAProxy logs the stream to the socket's full path; for a HAProxy
 chrooted in `/var/lib/haproxy`, step 4 links the same path inside the chroot to the socket. A publish that logs the
 stream refuses a core that chroots HAProxy elsewhere or runs it as an account that may not write the socket
-(`traffic_log_unreachable`). `haprion-pull-deploy` refuses a release that logs to the traffic socket on a node
+(`traffic_log_unreachable`). The manager's deploy refuses such a release for a node whose package is too old to
+report `traffic_stream`, before anything is sent. `haprion-pull-deploy` refuses a release that logs to the traffic socket on a node
 where the socket or its link is missing, or the socket is not `haproxy:haproxy` mode `0660`. The node's status
 reports `traffic_stream`: whether the release logs to the socket, whether the node keeps only marked lines, and
 whether the socket is held. A node that keeps only marked lines while its release logs elsewhere drops the traffic

@@ -192,6 +192,13 @@ class NodeStatus:
     # did not say - an older status script, or `ss` it could not read.
     #
     wildcard_listeners: tuple[tuple[str, int, str | None], ...] | None = None
+    #
+    # Whether the node's status carries the `traffic_stream` key at all, null or
+    # not (B403). A node installed before it was reported leaves it out, and
+    # that is what tells a deploy the node's package is too old to refuse a
+    # release that logs to the traffic socket. None when the status is unusable.
+    #
+    traffic_stream_reported: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -679,6 +686,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         frontends=_frontends(status),
         peers=_peers(status),
         wildcard_listeners=_wildcard_listeners(status),
+        traffic_stream_reported=("traffic_stream" in status) if usable else None,
         error_code=_text(_mapping(entry.get("error")).get("code"))
         or (None if usable else "node_status_invalid"),
     )

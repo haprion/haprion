@@ -509,6 +509,39 @@ class HelperBehaviourTests(HelperFixture):
         self.assertIn("ServerAliveInterval=15", node_ssh.SSH_OPTIONS)
 
 
+class TrafficStreamPreflightTests(HelperFixture):
+    """A published release that logs to the traffic socket is not sent to an old node (B403)."""
+
+    def publish_logging(self, policy_path: Path) -> None:
+        conf = self.root / "published" / "alpha" / "current" / "alpha" / "conf.d"
+        conf.mkdir(parents=True, exist_ok=True)
+        (conf / "10-x.cfg").write_text(
+            "frontend x\n    log /var/lib/haproxy/dev/haprion-traffic len 2048 format local "
+            "profile mgd-traffic-json local2\n",
+            encoding="utf-8",
+        )
+
+    def test_a_node_without_the_new_package_blocks_the_deploy_in_the_envelope(self) -> None:
+        self.cluster.node("node-b").reports_traffic_stream = False
+        policy_path = self.runtime()
+        self.publish_logging(policy_path)
+
+        code, out, _ = self.run_helper(request(json=True), policy_path=policy_path)
+
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual(self.triggered, [])
+        document = assert_contract("haprion-deploy", out)
+        self.assertEqual(document["error"]["code"], "traffic_stream_not_prepared")
+        self.assertEqual(document["error"]["details"]["nodes"], ["node-b"])
+
+    def test_a_release_without_the_log_line_is_deployed_to_it(self) -> None:
+        self.cluster.node("node-b").reports_traffic_stream = False
+
+        code, _, _ = self.run_helper(request(json=True))
+
+        self.assertEqual(code, 0)
+
+
 class CertificatePreflightTests(HelperFixture):
     """The preflight resolves inside the boundary, from the distribution root.
 

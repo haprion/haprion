@@ -33,6 +33,7 @@ def deploy(
     expected_hash: str | None = None,
     allow_vip_unknown: bool = False,
     preflight: CertificatePreflight | None = None,
+    logs_traffic_stream: bool = False,
     pause: Any = None,
 ) -> tuple[int, str]:
     """Run one deploy. The report is kept aside for the cases that inspect it."""
@@ -60,6 +61,7 @@ def deploy(
         target=ReleaseTarget(version=8, hash=expected_hash) if expected_hash else None,
         allow_vip_unknown=allow_vip_unknown,
         preflight=preflight,
+        logs_traffic_stream=logs_traffic_stream,
         pause=sleep,
         clock=lambda: now,
     )
@@ -927,6 +929,50 @@ def carrying(*published: tuple[str, str]) -> FakeCluster:
     for node in cluster.nodes:
         node.certificates = published
     return cluster
+
+
+class TrafficStreamPreflightTests(unittest.TestCase):
+    """A release that logs to the traffic socket is not sent to a node whose package is too old."""
+
+    def test_a_node_that_does_not_report_the_stream_is_refused_before_anything_is_sent(
+        self,
+    ) -> None:
+        cluster = pair()
+        cluster.node("node-b").reports_traffic_stream = False
+
+        code, shown = deploy(cluster, logs_traffic_stream=True)
+
+        self.assertEqual(cluster.triggered, [])
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertIn("ERROR: [traffic_stream_not_prepared]", shown)
+        self.assertIn("node-b", shown)
+        self.assertIn("sudo haprion-node-prepare", shown)
+        self.assertNotIn("node-a is", shown)
+        report = LAST_REPORT[0]
+        self.assertEqual(report.outcome.value, "blocked")
+        assert report.error is not None
+        self.assertEqual(report.error.code, "traffic_stream_not_prepared")
+        self.assertEqual(
+            report.error.details,
+            {"nodes": ["node-b"], "next_command": "sudo haprion-node-prepare"},
+        )
+
+    def test_a_release_that_logs_no_stream_is_sent_to_an_old_node(self) -> None:
+        cluster = pair()
+        cluster.node("node-b").reports_traffic_stream = False
+
+        code, _ = deploy(cluster)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(cluster.triggered), ["node-a", "node-b"])
+
+    def test_nodes_that_report_the_stream_are_deployed_as_usual(self) -> None:
+        cluster = pair()
+
+        code, _ = deploy(cluster, logs_traffic_stream=True)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(cluster.triggered), ["node-a", "node-b"])
 
 
 class CertificatePreflightTests(unittest.TestCase):

@@ -103,6 +103,11 @@ class FakeNode:
     # node does whose status script predates it.
     #
     peers: list[dict[str, Any]] | None = None
+    #
+    # Whether the node reports `traffic_stream` at all. False is a node whose
+    # package predates the field and the check pull-deploy makes with it.
+    #
+    reports_traffic_stream: bool = True
 
     def status(self) -> Any:
         if self.answers == "null":
@@ -138,6 +143,7 @@ class FakeNode:
             "certificates": self._certificates(),
             **({} if self.authorities is None else {"authorities": self._listed(self.authorities)}),
             **({} if self.peers is None else {"peers": self.peers}),
+            **({"traffic_stream": None} if self.reports_traffic_stream else {}),
         }
 
     def _addresses(self) -> Any:

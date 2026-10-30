@@ -58,6 +58,7 @@ from haprion.object_manifest import (
 )
 from haprion.object_manifest import parse as parse_manifest
 from haprion.release_layout import parse_release_file
+from haprion.traffic_stream import TRAFFIC_LOG_SOCKET
 
 OPERATION = "status"
 
@@ -195,6 +196,27 @@ def read_dns_published(publish_path: Path, node_path: str) -> bool | None:
         if not (node_root / "RELEASE").is_file():
             return None
         return (node_root / "dns" / "dnsdist.conf").is_file()
+    except OSError:
+        return None
+
+
+def read_traffic_published(publish_path: Path, node_path: str) -> bool | None:
+    """Whether the published release logs to the traffic socket; None when it cannot be read.
+
+    The question `haprion-pull-deploy` asks of a candidate (B403), asked here
+    of what is published so a node whose package cannot ask it is not sent a
+    release it would install and then drop every traffic record under.
+    """
+
+    node_root = publish_path / "current" / node_path
+    needle = f"log {TRAFFIC_LOG_SOCKET} "
+    try:
+        if not (node_root / "RELEASE").is_file():
+            return None
+        for path in sorted((node_root / "conf.d").rglob("*")):
+            if path.is_file() and needle in path.read_text(encoding="utf-8", errors="replace"):
+                return True
+        return False
     except OSError:
         return None
 

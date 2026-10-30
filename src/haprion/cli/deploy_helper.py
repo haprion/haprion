@@ -63,7 +63,13 @@ from haprion.helper_protocol import (
 )
 from haprion.labels import counted
 from haprion.release_install import prune_releases
-from haprion.status_collect import STATUS_TIMEOUT_SECONDS, ask_node, collect, read_target
+from haprion.status_collect import (
+    STATUS_TIMEOUT_SECONDS,
+    ask_node,
+    collect,
+    read_target,
+    read_traffic_published,
+)
 
 OPERATION = "deploy_cluster"
 PARAMETERS = frozenset({"allow_vip_unknown", "json", "expected_version"})
@@ -427,6 +433,9 @@ def main(
                 allow_vip_unknown=allow_vip_unknown,
                 lifeline=lifeline,
                 preflight=preflight,
+                logs_traffic_stream=(
+                    read_traffic_published(Path(cluster.publish_path), cluster.node_path) is True
+                ),
                 budget=BUDGET,
             )
             prune_published_releases(cluster, outcome, target, stream)

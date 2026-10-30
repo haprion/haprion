@@ -45,7 +45,17 @@ from haprion.cli.status import run_status_helper
 from haprion.envelope import new_request_id
 from haprion.version_history import MAX_LIST_LIMIT
 
-from haprion_ui import answers, db, diagnostics, labels, search_index, service, update_check
+from haprion_ui import (
+    answers,
+    db,
+    diagnostics,
+    labels,
+    objects,
+    pending,
+    search_index,
+    service,
+    update_check,
+)
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
@@ -171,6 +181,83 @@ def _nothing(_extra: Mapping[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def outside_renames(
+    before: db.ClusterObjects | None, result: Mapping[str, Any]
+) -> tuple[dict[str, str], list[str]]:
+    """What a publish made outside the web renamed, from the objects read before and now (B411).
+
+    Nothing unless both readings are good and at different heads: a publish
+    changes the head, and the same head seen twice is the same publish. The
+    objects are paired by name and judged by `metrics.renamed_backends`, as a
+    web publish's are; an object that was renamed or is new has no earlier
+    document to compare with and only brings its names into use.
+    """
+
+    head = result.get("commit")
+    if (
+        before is None
+        or before.outcome != "done"
+        or before.poll_error
+        or result.get("unchanged") is True
+        or not isinstance(head, str)
+        or not head
+        or before.result.get("commit") in (None, "", head)
+    ):
+        return {}, []
+    stored = objects.cluster_object_views(before)
+    renamed: dict[str, str] = {}
+    introduced: list[str] = []
+    for value in result.get("objects") or ():
+        view = objects.object_view(value)
+        if view is None or not view.readable:
+            continue
+        more, new = pending.backend_renames(stored, view.name, view.document, view.name)
+        renamed.update(more)
+        introduced.extend(name for name in new if name not in introduced)
+    return renamed, introduced
+
+
+def record_objects(
+    connection: Any,
+    *,
+    cluster: str,
+    outcome: str,
+    result: Mapping[str, Any],
+    warnings: Any = None,
+    error: Mapping[str, Any] | None = None,
+    poll_error: str | None = None,
+) -> None:
+    """Store the objects reading, and with it the renames a publish outside the web made (B411).
+
+    `haprion-objects apply` publishes through the engine, which never touches
+    this database, so the worker has not written its renames down. They are
+    written in the transaction that replaces the objects, so a head is
+    compared once; one the worker recorded already is left as it is.
+    """
+
+    renamed: dict[str, str] = {}
+    introduced: list[str] = []
+    if outcome == "done":
+        try:
+            before = next(iter(db.cluster_objects(connection, cluster=cluster)), None)
+            renamed, introduced = outside_renames(before, result)
+        except Exception as exc:  # noqa: BLE001 - the reading is stored whatever this finds
+            logger.warning("cluster %s renames not followed: %s", cluster, exc)
+    db.record_cluster_objects(
+        connection,
+        cluster=cluster,
+        outcome=outcome,
+        result=result,
+        warnings=warnings,
+        error=error,
+        poll_error=poll_error,
+    )
+    if renamed or introduced:
+        db.record_backend_renames(
+            connection, cluster=cluster, renamed=renamed, introduced=introduced, keep_recorded=True
+        )
+
+
 SOURCES: tuple[Source, ...] = (
     Source(
         "status",
@@ -210,7 +297,7 @@ SOURCES: tuple[Source, ...] = (
     Source(
         "objects",
         None,
-        db.record_cluster_objects,
+        record_objects,
         asks=lambda connection, cluster: (
             {"unchanged_since": known}
             if (known := db.objects_fingerprint(connection, cluster))

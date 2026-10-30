@@ -258,13 +258,31 @@ def record_backend_renames(
     cluster: str,
     renamed: Mapping[str, str],
     introduced: Iterable[str],
+    keep_recorded: bool = False,
 ) -> None:
     """Write down a publish's renames, and close the earlier names it gives out again.
 
     `renamed` maps an old backend name to its new one; `introduced` is every
     name the publish brings into use. A name that was renamed away and is now
     given to a backend again stops counting for the renamed card from now on.
+
+    `keep_recorded` is for a writer that may be seeing a publish the worker
+    wrote down already (B411): a pair that is recorded with the same new name
+    is left as it is, so it is neither dated again nor reopened after a later
+    publish gave its old name out again.
     """
+
+    set_rename = (
+        "insert into metric_backend_alias (cluster, old_name, new_name) "
+        "values (%(cluster)s, %(old)s, %(new)s) "
+        "on conflict (cluster, old_name) do update "
+        "   set new_name = excluded.new_name, renamed_at = statement_timestamp(), "
+        "       reused_at = null"
+    )
+    #
+    # The same, but a pair already recorded with this new name is left alone (B411).
+    #
+    keep_rename = set_rename + " where metric_backend_alias.new_name <> excluded.new_name"
 
     with connection.cursor() as cursor:
         cursor.execute(
@@ -275,11 +293,7 @@ def record_backend_renames(
         )
         for old, new in renamed.items():
             cursor.execute(
-                "insert into metric_backend_alias (cluster, old_name, new_name) "
-                "values (%(cluster)s, %(old)s, %(new)s) "
-                "on conflict (cluster, old_name) do update "
-                "   set new_name = excluded.new_name, renamed_at = statement_timestamp(), "
-                "       reused_at = null",
+                keep_rename if keep_recorded else set_rename,
                 {"cluster": cluster, "old": old, "new": new},
             )
 

@@ -268,7 +268,7 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
         for row in saved:
             if row.deleted:
                 continue
-            more, new = _backend_renames(
+            more, new = backend_renames(
                 state.stored, row.object_id, row.yaml, row.replaces or row.object_id
             )
             renamed.update(more)
@@ -364,7 +364,7 @@ def _network_changes(
     return network.changes(reading.result, saved, network.usage(after))
 
 
-def _backend_renames(
+def backend_renames(
     stored: Sequence[objects.ObjectView], name: str, document: str, before_name: str
 ) -> tuple[dict[str, str], list[str]]:
     """What a publish renames, and what names it brings into use (`metrics.renamed_backends`).

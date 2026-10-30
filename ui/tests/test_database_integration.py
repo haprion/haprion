@@ -7535,6 +7535,50 @@ class TheLatencyIsGoneAndTheWorkerAloneRecordsRenames(unittest.TestCase):
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class ThePollerFollowsRenamesTheWebDidNotMake(unittest.TestCase):
+    """Migration 0104 (B411): the poller writes the alias table, and keeps what the worker wrote."""
+
+    @staticmethod
+    def connect(role_variable: str) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def test_a_rename_the_poller_writes_is_read_back_as_a_chain(self) -> None:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            db.record_backend_renames(
+                connection, cluster="cli", renamed={"a": "b"}, introduced=["b"], keep_recorded=True
+            )
+            db.record_backend_renames(
+                connection, cluster="cli", renamed={"b": "c"}, introduced=["c"], keep_recorded=True
+            )
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            found = db.read_backend_aliases(connection, cluster="cli")
+        self.assertEqual({item.name for item in found["c"]}, {"a", "b"})
+
+    def test_a_pair_the_worker_wrote_is_not_written_again(self) -> None:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
+            db.record_backend_renames(
+                connection, cluster="twice", renamed={"a": "b"}, introduced=["b"]
+            )
+            db.record_backend_renames(connection, cluster="twice", renamed={}, introduced=["a"])
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            db.record_backend_renames(
+                connection,
+                cluster="twice",
+                renamed={"a": "b"},
+                introduced=["b"],
+                keep_recorded=True,
+            )
+            connection.commit()
+            row = connection.execute(
+                "select reused_at is not null from metric_backend_alias "
+                " where cluster = 'twice' and old_name = 'a'"
+            ).fetchone()
+        self.assertEqual(row, (True,), "a name given out again stays closed")
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
     """Migration 0057: dnsdist's counters in the backend rows (Fas 19a B4).
 
@@ -9698,3 +9742,6 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
     def test_a_dump_at_0102_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0102", grants_differ="0102 already grants what 0103 does")
+
+    def test_a_dump_at_0103_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0103", grants_differ="0103 already grants what 0104 does")

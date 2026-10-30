@@ -112,6 +112,9 @@ app_poller	feature_switch	SELECT	enabled, name
 app_poller	manager_certificates	INSERT	error, outcome, poll_error, result, warnings
 app_poller	manager_certificates	SELECT	error, id, observed_at, outcome, poll_error, result, warnings
 app_poller	manager_certificates	UPDATE	error, outcome, poll_error, result, warnings
+app_poller	metric_backend_alias	INSERT	cluster, new_name, old_name
+app_poller	metric_backend_alias	SELECT	cluster, new_name, old_name, renamed_at, reused_at
+app_poller	metric_backend_alias	UPDATE	new_name, renamed_at, reused_at
 app_poller	metric_backend_hour	SELECT	backend, bin, bout, bucket_at, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, floor_uptime_sec, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_poller	metric_backend_member	INSERT	backend, bin, bout, check_code, check_status, cluster, counters_kept, dns_answered, dns_queries, dns_refused, dns_tcp, dreq, dresp, econ, ereq, eresp, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, qcur, req_tot, scur, status, stot, syslog_bytes, syslog_messages, uptime_sec, wredis, wretr
 app_poller	metric_backend_member	SELECT	backend, bin, bout, check_code, check_status, cluster, dns_answered, dns_queries, dns_refused, dns_tcp, dreq, dresp, econ, ereq, eresp, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, syslog_bytes, syslog_messages, uptime_sec, wredis, wretr

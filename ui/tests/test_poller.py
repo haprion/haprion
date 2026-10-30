@@ -501,7 +501,7 @@ class Passes(unittest.TestCase):
         #
         source = next(item for item in poller.SOURCES if item.operation == "objects")
 
-        self.assertIs(source.record, db.record_cluster_objects)
+        self.assertIs(source.record, poller.record_objects)
         self.assertIsNot(source.record, db.record_cluster_inventory)
 
 

@@ -13,10 +13,17 @@ esac
 
 STATE_DIR="/run/haproxy"
 STATE_FILE="${STATE_DIR}/keepalived.state"
-TMP="${STATE_FILE}.$$"
 
 mkdir -p "$STATE_DIR"
 
+#
+# /run/haproxy is group-writable (haproxy), so a name made here must not be
+# one somebody can predict and link elsewhere: mktemp makes a new file under
+# a random name, and the rename replaces the state file's name itself, a link
+# or not (review 26-10-30, E5).
+#
+TMP="$(mktemp "${STATE_DIR}/.keepalived.state.XXXXXX")"
+trap 'rm -f "$TMP"' EXIT
 printf '%s\n' "$STATE" > "$TMP"
 chmod 644 "$TMP"
 mv -f "$TMP" "$STATE_FILE"

@@ -190,8 +190,25 @@ class TheTree(unittest.TestCase):
                 self.assertTrue((share / "install" / step).is_file(), step)
             self.assertIn("sudo haprion-setup", postinst)
 
+    PARTS = (
+        "venv/bin/python",
+        "migration/alembic.ini",
+        "migration/migrations/env.py",
+        "migration/lib/alembic",
+    )
+
     def configure(self, *, current: bool, marker: bool) -> str:
-        """The package's postinst run for real, its fixed paths moved into a directory."""
+        return self.configured(current=current, marker=marker)[0].stdout
+
+    def configured(
+        self, *, current: bool, marker: bool, missing: str | None = None
+    ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        """The package's postinst run for real, its fixed paths moved into a directory.
+
+        The release on disk has its four parts but `missing`; the archive that
+        unpacks it again holds all four, and a file in the unpacked one says
+        which of the two the release on disk came from.
+        """
 
         with tempfile.TemporaryDirectory() as raw:
             here = Path(raw)
@@ -202,9 +219,23 @@ class TheTree(unittest.TestCase):
                 .replace(f"/{TOOL.SHARE}", f"{here}/share")
             )
             (here / "lib").mkdir()
-            (here / "lib/PAYLOAD").write_text("RELEASE_ID=0.1.0-0123456789ab\n")
             release = here / "opt/releases/0.1.0-0123456789ab"
             release.mkdir(parents=True)
+            archive = here / "lib/release.tar"
+            with tarfile.open(archive, "w") as packed:
+                for part in self.PARTS:
+                    source = here / "source" / part
+                    source.parent.mkdir(parents=True, exist_ok=True)
+                    source.write_text("from the archive\n")
+                    packed.add(source, f"{here}/opt/releases/0.1.0-0123456789ab/{part}".lstrip("/"))
+            (here / "lib/PAYLOAD").write_text(
+                "RELEASE_ID=0.1.0-0123456789ab\nRELEASE_ARCHIVE=release.tar\n"
+                f"RELEASE_SHA256={TOOL.sha256(archive)}\n"
+            )
+            for part in self.PARTS:
+                if part != missing:
+                    (release / part).parent.mkdir(parents=True, exist_ok=True)
+                    (release / part).write_text("on disk\n")
             (here / "opt/releases/0.0.9-ba9876543210").mkdir()
             (here / "opt/current").symlink_to(
                 release if current else here / "opt/releases/0.0.9-ba9876543210"
@@ -221,9 +252,13 @@ class TheTree(unittest.TestCase):
                 ["/bin/sh", "-c", script, "postinst", "configure"],
                 capture_output=True,
                 text=True,
-                check=True,
+                check=False,
             )
-        return done.stdout
+            parts = [
+                (release / part).read_text() if (release / part).exists() else ""
+                for part in self.PARTS
+            ]
+        return done, parts
 
     def test_an_update_under_way_is_run_again_with_its_release_current(self) -> None:
         """Review 26-10-29, A02: `dpkg --configure -a` after a failed restore said "already current"."""
@@ -241,6 +276,26 @@ class TheTree(unittest.TestCase):
         update = (BASE / "install/platform/update-platform-release").read_text()
         self.assertEqual(TOOL.UPDATE_MARKER, f"{accounts.UI_DATA}/platform-update/update")
         self.assertIn('state="${UI_DATA}/platform-update"\nmarker="${state}/update"\n', update)
+
+    def test_a_release_with_a_part_missing_is_unpacked_again_unless_it_runs(self) -> None:
+        """Review 26-10-30, U5: "reinstall the haprion-ui package" found the directory and left it."""
+
+        whole, parts = self.configured(current=False, marker=False)
+        self.assertEqual(whole.returncode, 0, whole.stderr)
+        self.assertEqual(parts, ["on disk\n"] * 4)
+        for part in self.PARTS:
+            with self.subTest(part=part):
+                damaged, parts = self.configured(current=False, marker=False, missing=part)
+                self.assertEqual(damaged.returncode, 0, damaged.stderr)
+                self.assertIn(f"has no {part}; unpacking it again", damaged.stdout)
+                self.assertIn("updating to 0.1.0-0123456789ab", damaged.stdout)
+                self.assertEqual(parts, ["from the archive\n"] * 4)
+                running, parts = self.configured(current=True, marker=False, missing=part)
+                self.assertEqual(running.returncode, 1)
+                self.assertIn(f"has no {part}", running.stderr)
+                self.assertIn("sudo haprion-rollback", running.stderr)
+                self.assertIn("sudo dpkg --configure -a", running.stderr)
+                self.assertNotIn("already current", running.stdout)
 
     def test_a_purge_takes_the_update_s_state_with_the_releases(self) -> None:
         """Review 26-10-29, AA04: the marker outlived the releases it names.

@@ -211,12 +211,33 @@ UPDATE_MARKER = f"{UPDATE_STATE}/update"
 # Its digest is checked first: PAYLOAD came in the same package, and a damaged
 # archive must stop here rather than half-way through an update.
 #
+# A release on disk is unpacked over only when it is not whole - the four parts
+# `install-ui-release` asks for - and does not run: the directory is moved
+# aside, so that "reinstall the package", which that script says, does what it
+# says. One that runs is said so and left alone (review 26-10-30, U5).
+#
 POSTINST = f"""\
 #!/bin/sh
 set -e
 if [ "$1" = configure ]; then
     . /{LIB}/PAYLOAD
     release="{ROOT}/releases/$RELEASE_ID"
+    if [ -d "$release" ]; then
+        missing=""
+        for part in venv/bin/python migration/alembic.ini migration/migrations/env.py migration/lib/alembic; do
+            [ -e "$release/$part" ] || missing="$part"
+        done
+        if [ -n "$missing" ]; then
+            if [ "$(readlink {ROOT}/current || true)" = "$release" ]; then
+                echo "haprion-ui: release $RELEASE_ID runs and has no $missing; it is not unpacked over while it runs." >&2
+                echo "haprion-ui: switch to another release first: sudo haprion-rollback, then: sudo dpkg --configure -a" >&2
+                exit 1
+            fi
+            echo "haprion-ui: release $RELEASE_ID has no $missing; unpacking it again"
+            rm -rf {ROOT}/.unpack.*
+            mv -T "$release" {ROOT}/.unpack.damaged
+        fi
+    fi
     if [ ! -d "$release" ]; then
         echo "$RELEASE_SHA256  /{LIB}/$RELEASE_ARCHIVE" | sha256sum --check --quiet
         mkdir -p {ROOT}/releases

@@ -34,8 +34,15 @@ of shell myself; the rest was done by AI.
 </picture>
 
 The **manager** is a machine of its own. It holds the configuration, the published versions, the
-keys and the certificates, and runs the web interface; one manager can look after several
-clusters. The **nodes** carry the traffic: the one holding the virtual address answers, and when it
+keys and the certificates, and runs the web interface.
+
+One manager looks after several clusters, each with its own nodes and virtual addresses: one for
+the internal network, one in the DMZ, one for IoT devices - one for each network segment that needs
+a proxy. You run them all from the same interface, and a certificate is issued once and goes to
+every cluster that uses it. Nothing limits how many clusters there are; the manager is built for
+up to about ten clusters and twenty nodes ([how many](docs/user-manual.md#how-many-nodes-and-clusters)).
+
+The **nodes** carry the traffic: the one holding the virtual address answers, and when it
 fails keepalived moves the address to another. Clients never pass through the manager, so without
 it the nodes go on serving - what stops is changing anything.
 

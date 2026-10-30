@@ -746,6 +746,23 @@ def certificate_refusal(
     }
 
 
+def traffic_refusal() -> dict[str, Any]:
+    """What `haprion-deploy` answers when a node's package cannot hold the traffic socket."""
+
+    return {
+        "outcome": "blocked",
+        "error": {
+            "code": "traffic_stream_not_prepared",
+            "message": (
+                "the release logs the traffic log to HAProxy's own socket, and the package on "
+                "node-b is too old to hold it. Update haprion-node on each of them and run "
+                "sudo haprion-node-prepare there first, then deploy again"
+            ),
+            "details": {"nodes": ["node-b"], "next_command": "sudo haprion-node-prepare"},
+        },
+    }
+
+
 def blocked_deploy(job_id: int = 19, **changes: object) -> db.Job:
     return replace(
         job(state="blocked", outcome="blocked", exit_code=65, result=certificate_refusal()),
@@ -941,6 +958,21 @@ class TheBlockReachesThePages(LoginTestCase):
         self.assertNotIn('action="/operations"', body)
         self.assertIn("certificates_not_deployed", body)
         self.assertNotIn("haprion-cert-deploy -c", body)
+
+    def test_a_deploy_refused_for_the_traffic_socket_names_the_node_and_the_command(self) -> None:
+        """Beside the certificate block: the code reaches the page with its message and command."""
+
+        refused = replace(
+            job(state="blocked", outcome="blocked", exit_code=65, result=traffic_refusal()), id=19
+        )
+        for writes in (True, False):
+            with self.subTest(writes=writes):
+                body = self.page("/jobs", [refused], writes=writes)
+
+                self.assertIn("traffic_stream_not_prepared", body)
+                self.assertIn("the package on node-b is too old to hold it", body)
+                self.assertIn("then deploy again.", body)
+                self.assertIn("<code>sudo haprion-node-prepare</code>", body)
 
     def test_where_nobody_may_press_it_the_command_is_named(self) -> None:
         body = self.page("/jobs", [blocked_deploy()], writes=False)

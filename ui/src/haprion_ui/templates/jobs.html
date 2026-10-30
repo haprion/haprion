@@ -160,7 +160,7 @@
         <td colspan="8">
           <div class="follow-up-line">
             <span><span class="status-dot status-warning" aria-hidden="true"></span>{{ job.follow_up }}</span>
-            {% if not (management_writes and role == 'admin') and job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
+            {% if (job.command_for_all or not (management_writes and role == 'admin')) and job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
           </div>
         </td>
       </tr>

@@ -28,7 +28,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import exit_codes, node_enrollment, server_names
-from haprion.deploy_run import CERTIFICATES_NOT_DEPLOYED
+from haprion.deploy_run import (
+    CERTIFICATES_NOT_DEPLOYED,
+    TRAFFIC_STREAM_NEXT_COMMAND,
+    TRAFFIC_STREAM_NOT_PREPARED,
+)
 from haprion.restore_agent import RUN_ID
 
 from haprion_ui import diagnostics, moments
@@ -62,6 +66,12 @@ class JobView:
     #
     follow_up: str | None = None
     next_command: str | None = None
+    #
+    # True where nothing on the page does what the command does, so that every
+    # reader is told it (a refusal no button can fix), not only one who cannot
+    # press a button.
+    #
+    command_for_all: bool = False
     #
     # Who queued it (B275), from the `queue_job` row beside it; empty for a
     # job nobody queued from the interface.
@@ -716,6 +726,33 @@ def _newest_finished(rows: Iterable[Job]) -> dict[str, int]:
     return newest
 
 
+def traffic_stream_block(job: Job) -> tuple[str, str] | None:
+    """The sentence and the command of a deploy refused for a node that cannot hold the traffic socket.
+
+    Nothing on the page fixes it - the command is run on the node - so, unlike
+    the certificate block, every reader is given both, whether or not they have
+    diagnostics. Read defensively like `certificate_block`.
+    """
+
+    if ending_step(job) != "deploy" or job.state != "blocked":
+        return None
+    if error_code(job) != TRAFFIC_STREAM_NOT_PREPARED:
+        return None
+    message = error_message(job)
+    if message is None:
+        return None
+    details: object = None
+    if isinstance(job.result, dict):
+        error = job.result.get("error")
+        if isinstance(error, dict):
+            details = error.get("details")
+    command = details.get("next_command") if isinstance(details, dict) else None
+    return (
+        message[:1].upper() + message[1:].rstrip(".") + ".",
+        command if isinstance(command, str) and command else TRAFFIC_STREAM_NEXT_COMMAND,
+    )
+
+
 def certificate_blocks(rows: list[Job]) -> dict[str, CertificateBlock]:
     """Clusters whose newest finished job is a deploy the preflight blocked.
 
@@ -1085,6 +1122,7 @@ def _view(
     next_command: str | None,
     diagnostics: bool,
     writes: bool,
+    command_for_all: bool = False,
 ) -> JobView:
     label, tone = _state(job.state)
     held = job.waits_for_decision
@@ -1129,9 +1167,15 @@ def _view(
         exit_meaning=_exit_meaning(job.exit_code),
         follow_up=follow_up,
         next_command=next_command,
+        command_for_all=command_for_all,
         link=_link(job),
         error_code=error_code(job) if ended_badly else None,
-        error_message=error_message(job) if diagnostics and ended_badly else None,
+        #
+        # Not again under the code when the follow-up line says it.
+        #
+        error_message=(
+            error_message(job) if diagnostics and ended_badly and not command_for_all else None
+        ),
         warning_codes=", ".join(dict.fromkeys(code for code, _ in warned)),
         warning_message=(
             "; ".join(message for _, message in warned if message) or None if diagnostics else None
@@ -1256,13 +1300,17 @@ def build_job_overview(
         blocked = block is not None and block.job_id == job.id
         if blocked and cluster is not None:
             captioned.add(cluster)
+        traffic = traffic_stream_block(job)
         views.append(
             _view(
                 job,
                 current,
+                command_for_all=traffic is not None,
                 follow_up=(
                     block.sentence
                     if blocked and block is not None
+                    else traffic[0]
+                    if traffic is not None
                     else _owed_sentence(job)
                     if show
                     else None
@@ -1270,6 +1318,8 @@ def build_job_overview(
                 next_command=(
                     block.next_command
                     if blocked and block is not None
+                    else traffic[1]
+                    if traffic is not None
                     else command
                     if show
                     else None

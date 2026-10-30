@@ -26,6 +26,7 @@ from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, Locati
 from haprion.status_collect import NodeResponse
 from haprion.version_history import count_versions
 from tests.contract_schema import assert_contract, published
+from tests.test_managed_network import LINK_LOCAL, MULTICAST
 from tests.test_node_enrollment import key
 
 BASE = Path(__file__).resolve().parents[1]
@@ -553,6 +554,15 @@ class CreatingACluster(unittest.TestCase):
                     cluster_definition.check_name(cluster, display_name="Alpha", vip="192.0.2.10")
                 self.assertEqual(caught.exception.code, "cluster_invalid")
                 self.assertIn("cannot contain '--' or end in '-'", str(caught.exception))
+
+    def test_a_vip_the_network_does_not_reach_is_refused(self) -> None:
+        """Code review 26-10-30 again, R9: not every address, loopback or multicast."""
+
+        every = "0.0.0.0"  # noqa: S104 - the address refused, not one bound
+        for vip in (every, "127.0.0.1", MULTICAST, LINK_LOCAL):
+            with self.subTest(vip), self.assertRaises(EnrollmentError) as caught:
+                cluster_definition.check_name("alpha", display_name="Alpha", vip=vip)
+            self.assertEqual(caught.exception.code, "cluster_invalid")
 
     def test_an_editing_policy_visudo_refuses_changes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

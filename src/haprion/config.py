@@ -765,6 +765,39 @@ def _address(value: Any, location: str) -> str:
         raise ConfigError(f"{location} must be an IP address") from exc
 
 
+def served_address_problem(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
+    """Why this address cannot be one the cluster serves on or connects out from, or "".
+
+    A VIP and a source are one address on the network the nodes share.
+    `0.0.0.0` and `::` would make every `bind` take every address of the node,
+    management included, and keepalived would carry them as a VIP; loopback,
+    link-local, multicast and the reserved range are not reached from the
+    network at all (code review 2026-10-30 again, R9).
+    """
+
+    if address.is_unspecified:
+        return "is every address of the node, not one"
+    if address.is_loopback:
+        return "is a loopback address"
+    if address.is_link_local:
+        return "is a link-local address"
+    if address.is_multicast:
+        return "is a multicast address"
+    if address.is_reserved:
+        return "is in a reserved range"
+    return ""
+
+
+def _served_address(value: Any, location: str) -> str:
+    """An address the cluster serves on or leaves from, in its one spelling."""
+
+    address = _address(value, location)
+    problem = served_address_problem(ipaddress.ip_address(address))
+    if problem:
+        raise ConfigError(f"{location} {address} {problem}")
+    return address
+
+
 #
 # A Linux interface name. Fifteen characters is the kernel's own limit, and the
 # character class is what `ip link` accepts without quoting.
@@ -852,8 +885,8 @@ def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str,
             )
         vips[name] = Vip(
             name=name,
-            address=_address(entry.get("address"), f"{where}.address"),
-            source=None if source is None else _address(source, f"{where}.source"),
+            address=_served_address(entry.get("address"), f"{where}.address"),
+            source=None if source is None else _served_address(source, f"{where}.source"),
             tls_policy=policy,
             http3=http3,
         )
@@ -898,7 +931,7 @@ def _sources(raw: Mapping[str, Any], location: str) -> Mapping[str, str]:
         where = f"{location}.sources.{name}"
         if not NAME.fullmatch(name):
             raise ConfigError(f"{where} is not a usable source name")
-        sources[name] = _address(value, where)
+        sources[name] = _served_address(value, where)
     return sources
 
 
@@ -1710,6 +1743,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             ipaddress.ip_address(vip)
         except ValueError as exc:
             raise ConfigError(f"{location}.vip must be an IP address") from exc
+        _served_address(vip, f"{location}.vip")
         vips, default_vip = _vips(raw, vip, location)
         address_prefix, address_interface = _address_form(raw, location)
         resolvers = raw.get("resolvers")

@@ -578,6 +578,10 @@ shows what it touches before it is saved.
 
 *not used* means nothing names the value. A dash means the objects could not be read.
 
+**Which addresses a VIP or source can be.** One address on the network the nodes share. `0.0.0.0` and `::`
+are refused, since a frontend would then listen on every address of every node, management included. So
+are loopback, link-local, multicast and reserved addresses, which the network does not reach.
+
 ### Ports the cluster takes itself
 
 A VIP carries its objects' ports and nothing else. What the cluster runs for itself listens on the nodes'

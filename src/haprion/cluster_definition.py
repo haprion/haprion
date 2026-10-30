@@ -66,6 +66,7 @@ from haprion.config import (
     RuntimeConfig,
     file_separator_free,
     load_runtime_config,
+    served_address_problem,
 )
 from haprion.git_command import GIT
 from haprion.node_enrollment import (
@@ -264,6 +265,9 @@ def check_name(
     #
     if address.version != 4:
         raise EnrollmentError("cluster_invalid", "the VIP is not an IPv4 address")
+    problem = served_address_problem(address)
+    if problem:
+        raise EnrollmentError("cluster_invalid", f"the VIP {address} {problem}")
     return address
 
 

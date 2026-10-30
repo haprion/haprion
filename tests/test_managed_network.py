@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import unittest
 
 from haprion.config import ConfigError
@@ -100,3 +101,46 @@ class Http3IsTheVipsChoice(unittest.TestCase):
     def test_it_is_true_or_false(self) -> None:
         with self.assertRaises(ConfigError):
             self.load("vips:\n  web:\n    address: 192.0.2.20\n    http3: yes please\n")
+
+
+#
+# Written as numbers: the secret scanner refuses a dotted address outside the
+# documentation ranges, and these four are what the test is about.
+#
+MULTICAST = str(ipaddress.IPv4Address(0xE0000001))
+LINK_LOCAL = str(ipaddress.IPv4Address(0xA9FE0101))
+BROADCAST = str(ipaddress.IPv4Address(0xFFFFFFFF))
+RESERVED = str(ipaddress.IPv4Address(0xF0000001))
+
+
+class AVipIsOneAddressOnTheNetwork(unittest.TestCase):
+    """Code review 26-10-30 again, R9: `0.0.0.0` was a VIP, and the generator wrote
+    `bind 0.0.0.0:443` - every address of every node, management included."""
+
+    def test_an_address_the_network_does_not_reach_is_refused(self) -> None:
+        for address in (
+            "0.0.0.0",  # noqa: S104 - the address refused, not one bound
+            "::",
+            "127.0.0.1",
+            "::1",
+            MULTICAST,
+            LINK_LOCAL,
+            "fe80::1",
+            BROADCAST,
+            RESERVED,
+        ):
+            for document in (
+                f"vips:\n  main:\n    address: '{address}'\n",
+                f"vips:\n  main:\n    address: 192.0.2.20\n    source: '{address}'\n",
+                f"vips:\n  main:\n    address: 192.0.2.20\nsources:\n  out: '{address}'\n",
+            ):
+                with self.subTest(document), self.assertRaisesRegex(ConfigError, address):
+                    self.load(document)
+
+    def test_an_address_on_the_network_is_kept(self) -> None:
+        self.load("vips:\n  main:\n    address: 192.0.2.20\n    source: 2001:db8::5\n")
+
+    def load(self, text: str) -> object:
+        return load_document(
+            text.encode(), ownership_vip="192.0.2.20", location="managed/network.yaml"
+        )

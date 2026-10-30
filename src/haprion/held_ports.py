@@ -9,8 +9,7 @@ anything is deployed.
 
 A node that does not answer is not a reason to stop a publish: the deploy's
 rollback still catches the collision, and a node that is down must not block
-every change to the cluster. It is named instead (`unread`), and the publish
-says the ports were not checked there.
+every change to the cluster. Its ports are simply not checked there.
 """
 
 from __future__ import annotations
@@ -26,33 +25,26 @@ type Holders = tuple[tuple[str, str | None], ...]
 
 @dataclass(frozen=True, slots=True)
 class HeldPorts:
-    """(protocol, port) to the (node, program) pairs holding it, and the nodes not read."""
+    """(protocol, port) to the (node, program) pairs holding it."""
 
     held: Mapping[tuple[str, int], Holders] = field(default_factory=dict)
-    unread: tuple[str, ...] = ()
 
 
 def from_status(status: ClusterStatus) -> HeldPorts:
     held: dict[tuple[str, int], list[tuple[str, str | None]]] = {}
-    unread: list[str] = []
     for node in status.nodes:
         if not node.status_ok or node.wildcard_listeners is None:
-            unread.append(node.name)
             continue
         for protocol, port, program in node.wildcard_listeners:
             held.setdefault((protocol, port), []).append((node.name, program))
-    return HeldPorts(
-        held={key: tuple(holders) for key, holders in sorted(held.items())},
-        unread=tuple(unread),
-    )
+    return HeldPorts(held={key: tuple(holders) for key, holders in sorted(held.items())})
 
 
 def read(policy: PathPolicy, cluster: Cluster) -> HeldPorts:
     """The nodes' answer, by the status identity the deploy reads them with."""
 
-    names = tuple(node.name for node in cluster.nodes)
     if policy.status_identity is None:
-        return HeldPorts(unread=names)
+        return HeldPorts()
     #
     # Imported here: the deploy helper is a command module, and the reading is
     # its `read_status` so a publish and a deploy ask the nodes one way.
@@ -62,4 +54,4 @@ def read(policy: PathPolicy, cluster: Cluster) -> HeldPorts:
     try:
         return from_status(read_status(cluster, policy.status_identity))
     except (StatusError, OSError):
-        return HeldPorts(unread=names)
+        return HeldPorts()

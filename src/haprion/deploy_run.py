@@ -593,8 +593,13 @@ def _node_lost(
     made one node go silent is not one to put on it too.
     """
 
-    message = (
-        f"{node_name} could not be read after its deploy; the remaining nodes were not touched"
+    others_waiting = any(
+        entry.outcome == "not_attempted"
+        for name, entry in report.nodes.items()
+        if name != node_name
+    )
+    message = f"{node_name} could not be read after its deploy" + (
+        "; the remaining nodes were not touched" if others_waiting else ""
     )
     writer.write(f"\nERROR: {message}.\n")
     entry = report.nodes[node_name]

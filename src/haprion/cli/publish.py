@@ -258,25 +258,23 @@ def main(
     result = document.get("result") or {}
     if not result.get("changed"):
         _say_what_the_promise_misses(writer, result)
-        if result.get("deployment_required"):
-            #
-            # Nothing new was recorded, but the head's release was not the
-            # published one and now is: a retry, or a version made by hand.
-            # "No changes" left the nodes behind a release nobody mentioned
-            # (review 2026-10-22, 1A-6).
-            #
-            repeated = (
-                f"version {result['version']} is already the published release"
-                if result.get("already_current")
-                else f"version {result['version']} was not the published release and now is"
-            )
-            writer.write(
-                f"No changes to record for cluster '{cluster_id}'; {repeated}.\n\n"
-                "No node deployment has run. If the nodes are behind, bring them into step with:\n\n"
-                f"  {result['next_command']}\n"
-            )
-            return 0
-        writer.write(f"No changes to publish for cluster '{cluster_id}'.\n")
+        #
+        # Nothing new was recorded, but the head's release was not the
+        # published one and now is: a retry, or a version made by hand.
+        # "No changes" left the nodes behind a release nobody mentioned
+        # (review 2026-10-22, 1A-6). Every successful answer asks for a deploy
+        # (`DEPLOYMENT_REQUIRED_AFTER_INSTALL`), so there is no other branch.
+        #
+        repeated = (
+            f"version {result['version']} is already the published release"
+            if result.get("already_current")
+            else f"version {result['version']} was not the published release and now is"
+        )
+        writer.write(
+            f"No changes to record for cluster '{cluster_id}'; {repeated}.\n\n"
+            "No node deployment has run. If the nodes are behind, bring them into step with:\n\n"
+            f"  {result['next_command']}\n"
+        )
         return 0
 
     _say_what_the_promise_misses(writer, result)

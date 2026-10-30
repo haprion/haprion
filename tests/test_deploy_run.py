@@ -182,6 +182,33 @@ class TheEndIsJudgedOnTheLastReading(unittest.TestCase):
         codes = [warning["code"] for warning in document["warnings"]]
         self.assertIn("node_lost_after_deploy", codes)
 
+    def test_the_last_node_lost_does_not_speak_of_remaining_nodes(self) -> None:
+        """Review 26-10-30, K2: nothing was left to be spared."""
+
+        cluster = pair()
+        original = cluster.trigger
+
+        def trigger(name: str) -> int:
+            code = original(name)
+            if name == "node-a":
+                cluster.node("node-a").reachable = False
+            return code
+
+        out = io.StringIO()
+        now = [0.0]
+        result = deploy_run.run(
+            lambda: parse_status(cluster.read_status()),
+            lambda node: trigger(node.name),
+            out,
+            target=TARGET,
+            pause=lambda seconds: now.__setitem__(0, now[0] + seconds),
+            clock=lambda: now[0],
+        )
+
+        self.assertEqual(result.exit_code, 69)
+        self.assertIn("node-a could not be read after its deploy.", out.getvalue())
+        self.assertNotIn("remaining", out.getvalue())
+
     def test_the_wait_for_a_silent_node_is_thirty_seconds_of_the_clock(self) -> None:
         """Review 26-10-30, E3: a reading of a node that is down takes its connect timeout."""
 

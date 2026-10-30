@@ -241,8 +241,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             #
             # A retry applies nothing, so nothing was looked up and nothing was
             # checked against the nodes; the server names are the request's own
-            # and can be read again (review 26-10-30). `ports_unchecked` is the
-            # first run's, and a retry has no way to know it.
+            # and can be read again (review 26-10-30).
             #
             return {"unresolved_servers": unresolved_servers()} if objects else {}
 
@@ -291,12 +290,11 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             #
             # Asked when objects or the network change, as coverage is: what
             # binds on a VIP is decided there. A node that did not answer is
-            # named in the result, not a refusal (26-10-15).
+            # not a refusal (26-10-15).
             #
             held = HeldPorts()
             if objects or network is not None:
                 held = held_ports.read(policy, cluster)
-                named["ports_unchecked"] = list(held.unread)
             try:
                 files = managed_files(
                     base_files,

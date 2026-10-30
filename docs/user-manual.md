@@ -606,8 +606,8 @@ instead:
   Turn it off with `LLMNR=no` in a file under `/etc/systemd/resolved.conf.d/`, then restart
   `systemd-resolved`.
 
-A node that does not answer does not stop the publish. The result names it under `ports_unchecked`, and
-the deploy still rolls back if the port is taken there. `haprion-node-status` on a node shows the same
+A node that does not answer does not stop the publish; its ports are not checked, and the deploy still
+rolls back if the port is taken there. `haprion-node-status` on a node shows the same
 list, as *Every address*.
 
 ### HTTP/3

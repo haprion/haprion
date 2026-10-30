@@ -101,15 +101,14 @@ class TheManagerReadsIt(unittest.TestCase):
         self.assertIsNone(parse_status(reported(...)).nodes[0].wildcard_listeners)
         self.assertIsNone(parse_status(reported(None)).nodes[0].wildcard_listeners)
 
-    def test_held_ports_name_the_node_and_the_unread(self) -> None:
+    def test_held_ports_name_the_node_and_leave_out_the_unread(self) -> None:
         held = from_status(
             parse_status(reported([{"protocol": "tcp", "port": 6556, "program": "cmk-agent-ctl"}]))
         )
         self.assertEqual(held.held, {("tcp", 6556): (("node-a", "cmk-agent-ctl"),)})
-        self.assertEqual(held.unread, ())
 
         silent = from_status(parse_status(reported(...)))
-        self.assertEqual((silent.held, silent.unread), ({}, ("node-a",)))
+        self.assertEqual(silent.held, {})
 
 
 def tcp_object(port: int, protocol: str = "tcp") -> Any:
@@ -192,18 +191,18 @@ class ThePublishAsksTheNodes(ObjectsPublishFixture):
             self.assertIn("cmk-agent-ctl holds on every address of node-a", json.dumps(document))
             self.assertEqual(self.head(), head)
 
-    def test_a_node_that_did_not_answer_is_named_and_the_publish_goes_on(self) -> None:
+    def test_a_node_that_did_not_answer_does_not_stop_the_publish(self) -> None:
         with tempfile.TemporaryDirectory() as raw, mock.patch("haprion.held_ports.read") as read:
-            read.return_value = HeldPorts(unread=("node-b",))
+            read.return_value = HeldPorts()
             policy = self.runtime(Path(raw))
             self.seed()
 
             code, document, err = self.publish_objects(policy, self.request())
 
             self.assertEqual((code, err), (0, ""))
-            self.assertEqual(document["result"]["ports_unchecked"], ["node-b"])
+            self.assertNotIn("ports_unchecked", document["result"])
 
-    def test_without_a_status_identity_every_node_is_unchecked(self) -> None:
+    def test_without_a_status_identity_the_publish_goes_on_unchecked(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
             self.seed()
@@ -211,7 +210,7 @@ class ThePublishAsksTheNodes(ObjectsPublishFixture):
             code, document, _err = self.publish_objects(policy, self.request())
 
             self.assertEqual(code, 0)
-            self.assertEqual(document["result"]["ports_unchecked"], ["node-a", "node-b"])
+            self.assertNotIn("ports_unchecked", document["result"])
 
     def head(self) -> str:
         from tests.test_publish_helper import git

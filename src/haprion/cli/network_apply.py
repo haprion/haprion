@@ -35,6 +35,7 @@ from haprion.config import ConfigError
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
 from haprion.managed_network import MAX_NETWORK_BYTES, load_document, location
+from haprion.release_install import DEPLOYMENT_REQUIRED_AFTER_INSTALL
 
 OPERATION = "network_apply"
 COMMENT = "From the terminal: the network"
@@ -138,7 +139,7 @@ def main(
             {"version": v.get("version"), "hash": v.get("hash"), "changed": v.get("changed")}
             for v in versions
         ],
-        "deployment_required": bool(published),
+        "deployment_required": DEPLOYMENT_REQUIRED_AFTER_INSTALL and bool(published),
     }
     if args.json:
         return write_document(writer, envelope(OPERATION, cluster, summary, None), 0)

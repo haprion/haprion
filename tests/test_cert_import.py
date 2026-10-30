@@ -29,6 +29,7 @@ from haprion.cert_import import (
     split_blocks,
 )
 from haprion.cert_inventory import FULLCHAIN, PRIVKEY
+from haprion.certificates import CertificateError
 from haprion.cli import cert_import as command
 from haprion.config import load_policy, load_runtime_config
 from tests.contract_schema import assert_contract
@@ -272,6 +273,18 @@ class ReadingTheMaterial(ImportFixture):
         with self.assertRaises(ImportError_) as refused:
             assemble(certificates, keys)
         self.assertEqual(refused.exception.code, "key_mismatch")
+
+    def test_a_certificate_openssl_cannot_read_is_a_refusal_not_a_traceback(self) -> None:
+        certificates, _ = split_blocks(self.pki.leaf.read_text())
+        _, keys = split_blocks(self.pki.leaf_key.read_text())
+        with (
+            mock.patch.object(
+                cert_import, "describe", side_effect=CertificateError("openssl timed out")
+            ),
+            self.assertRaises(ImportError_) as refused,
+        ):
+            assemble(certificates, keys)
+        self.assertEqual(refused.exception.code, "bad_input")
 
     def test_two_keys_or_no_certificate_are_refused(self) -> None:
         _, keys = split_blocks(self.pki.leaf_key.read_text() + self.pki.root_key.read_text())

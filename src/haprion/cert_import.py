@@ -517,7 +517,10 @@ def assemble(certificates: Sequence[str], keys: Sequence[str]) -> Material:
     # A file may carry an old and a renewed certificate for the one key (a PFX
     # exported with both): the one that runs longest is the one to serve.
     #
-    leaf = max(leaves, key=lambda candidate: describe(candidate).not_after)
+    try:
+        leaf = max(leaves, key=lambda candidate: describe(candidate).not_after)
+    except CertificateError as exc:
+        raise ImportError_("bad_input", f"a certificate could not be read: {exc}") from exc
     others = [c for c in certificates if c != leaf]
     named = {c: _names(c) for c in others}
     chain: list[str] = []

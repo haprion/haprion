@@ -153,6 +153,29 @@ class TheNetworkFromAFile(NetworkPublishFixture):
             self.assertIn("host bits must be zero", err)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
 
+    def test_a_network_saved_before_the_host_bit_rule_applies_unchanged(self) -> None:
+        """Review 26-10-30, E1: the write rules apply to a changed document only."""
+
+        old = NETWORK.replace("198.51.100.0/24", "198.51.100.7/24")
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
+            policy = self.runtime(Path(raw))
+            self.published(policy)
+            (self.repo / "managed/network.yaml").write_text(old)
+            git(self.repo, "commit", "-a", "-m", "saved before the rule")
+            path = Path(files, "network.yaml")
+            path.write_text(old)
+            head = git(self.repo, "rev-parse", "HEAD")
+
+            code, out, _ = self.run_apply(policy, path, "--json")
+
+            self.assertEqual(code, 0)
+            self.assertFalse(assert_contract("haprion-network-apply", out)["result"]["changed"])
+            path.write_text(old.replace("office", "branch"))
+            code, _, err = self.run_apply(policy, path)
+            self.assertEqual(code, 65)
+            self.assertIn("host bits must be zero", err)
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+
     def test_a_derived_network_has_nothing_to_change(self) -> None:
         with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
             policy = self.runtime(Path(raw))

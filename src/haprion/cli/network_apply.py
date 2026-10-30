@@ -108,12 +108,21 @@ def main(
         # Read as the publish will read it, so a mistake is named by the file
         # before anything is asked of the manager.
         #
+        # The write rules apply to a document that changes; a file equal to what
+        # is stored is read as the stored one is (a network saved before a write
+        # rule must still accept its own export).
+        #
+        changed = wanted != current
         try:
-            with address_ranges.writing():
+            if changed:
+                with address_ranges.writing():
+                    load_document(
+                        wanted.encode("utf-8"), ownership_vip=ownership, location=str(path)
+                    )
+            else:
                 load_document(wanted.encode("utf-8"), ownership_vip=ownership, location=str(path))
         except ConfigError as exc:
             raise Refused("network_invalid", str(exc)) from exc
-        changed = wanted != current
         versions: list[Mapping[str, Any]] = []
         if changed and not args.check:
             request = changes_publish.build_request(

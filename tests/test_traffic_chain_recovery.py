@@ -133,6 +133,31 @@ class ADayThatRollsOverMidTransfer(ChainTestCase):
             "the assembled mirror is not in day order",
         )
 
+    def test_a_closed_day_ending_in_half_a_record_does_not_hold_back_the_newer_days(self) -> None:
+        """Review 2026-10-30, E2: a node killed mid-write leaves a last line
+        that is never finished. That closed day never reached end of file, and
+        the loop stopped at it on every run, so no newer closed day was fetched
+        until the stuck one left the window."""
+
+        node = self.chain.node
+        day_before = self.chain.today - timedelta(days=2)
+        yesterday = self.chain.today - timedelta(days=1)
+        node.append(day_before, 5)
+        node.append_raw(day_before, record(at=0, request=999)[:30])
+        node.append(yesterday, 100)
+        node.append(self.chain.today, 1)
+
+        for minute in range(4):
+            self.assertEqual(self.collect(now=self.NOW + timedelta(minutes=minute)), 0)
+
+        staged = {path.name for path in self.chain.staging.iterdir()}
+        self.assertIn("alpha--node-a--2026-09-08.jsonl", staged)
+        part = self.chain.staging / "alpha--node-a--2026-09-08.jsonl"
+        self.assertEqual(len(part.read_bytes().splitlines()), 100)
+        self.assertIn("alpha--node-a--2026-09-07.done", staged)
+        self.assertIn("alpha--node-a--2026-09-08.done", staged)
+        self.assertEqual(self.chain.meta()["pending_days"], 0)
+
     def test_a_cold_start_fills_the_window_in_the_first_runs(self) -> None:
         """Today first, then the closed days oldest first, within one run's budget.
 

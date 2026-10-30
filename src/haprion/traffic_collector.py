@@ -364,7 +364,12 @@ def _append(path: Path, payload: bytes) -> None:
 
 
 def _update_day(
-    config: CollectorConfig, target: NodeTarget, wanted: date, fetch: Fetch
+    config: CollectorConfig,
+    target: NodeTarget,
+    wanted: date,
+    fetch: Fetch,
+    *,
+    closed: bool = False,
 ) -> tuple[bool, int]:
     path = _part(config, target, wanted)
     offset = _safe_size(path)
@@ -378,11 +383,26 @@ def _update_day(
         _replace(path, b"", 0o600)
         return False, response.size
     _append(path, response.payload)
+    if closed and not response.eof and not response.payload and response.size > _safe_size(path):
+        #
+        # A day nothing is writing to any more, and the node has nothing whole
+        # left to send: what remains is the line a killed writer left half
+        # written (review 2026-10-30, E2). It never gets its end, so waiting
+        # for it would keep the day open - and hold back every day after it -
+        # until the day left the window. The part stops at its last whole line.
+        #
+        return True, 0
     return response.eof, response.size - _safe_size(path)
 
 
 def _catch_up(
-    config: CollectorConfig, target: NodeTarget, wanted: date, fetch: Fetch, deadline: float
+    config: CollectorConfig,
+    target: NodeTarget,
+    wanted: date,
+    fetch: Fetch,
+    deadline: float,
+    *,
+    closed: bool = False,
 ) -> tuple[bool, int]:
     """Fetch one day until it is complete, the deadline passes or a response brings nothing.
 
@@ -395,10 +415,10 @@ def _catch_up(
     """
 
     path = _part(config, target, wanted)
-    complete, remaining = _update_day(config, target, wanted, fetch)
+    complete, remaining = _update_day(config, target, wanted, fetch, closed=closed)
     while not complete and time.monotonic() < deadline:
         before = _safe_size(path)
-        complete, remaining = _update_day(config, target, wanted, fetch)
+        complete, remaining = _update_day(config, target, wanted, fetch, closed=closed)
         if _safe_size(path) <= before:
             break
     return complete, remaining
@@ -589,14 +609,21 @@ def collect_node(
             if marker.exists() or marker.is_symlink():
                 _regular(marker, maximum=1)
                 continue
-            complete, _ = _catch_up(config, target, wanted, fetch, deadline)
             yesterday_still_open = (
                 wanted == today - timedelta(days=1)
                 and utc_now - datetime.combine(today, datetime.min.time(), UTC) < CLOSED_DAY_GRACE
             )
+            complete, _ = _catch_up(
+                config, target, wanted, fetch, deadline, closed=not yesterday_still_open
+            )
             if complete and not yesterday_still_open:
                 _replace(marker, b"", 0o600)
-            if not complete or time.monotonic() >= deadline:
+            #
+            # Only the budget ends the walk. A day that gave nothing new for
+            # another reason must not hold back the days after it; asking
+            # costs one request each.
+            #
+            if time.monotonic() >= deadline:
                 break
         #
         # The joined file is for a reader of files. With the database as the

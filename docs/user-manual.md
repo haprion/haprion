@@ -7705,6 +7705,10 @@ byte count is an observation, not a prediction of how much new traffic arrived a
 - reads at least one block of today and one of the oldest open day, so both make progress even
   while today's file grows.
 
+A closed day whose last line was never finished (the node's logger was killed or lost power
+mid-write) is taken as complete once everything whole in it has been fetched; the unfinished line is
+left out, and it does not hold back the days after it.
+
 The transfer cap per response stays the same.
 
 With the database configured, the collector keeps the day files in staging and one metadata file

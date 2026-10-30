@@ -56,7 +56,7 @@ from __future__ import annotations
 
 import re
 import string
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from haprion.digits import is_digits
@@ -219,7 +219,7 @@ _RATES = frozenset(
         "sess_rate",
     }
 )
-_STORED = re.compile(r"(?P<name>[a-z_0-9]+)(?:\((?P<arguments>[^)]*)\))?")
+_STORED = re.compile(r"[a-z_0-9]+")
 _KEYS = {"ip": 4, "ipv6": 16, "integer": 4}
 
 
@@ -229,10 +229,19 @@ def stored_bytes(value: str) -> int | None:
     total = 0
     position = 0
     while position < len(value):
+        #
+        # A name, and its parenthesis when it is closed - read as
+        # `[a-z_0-9]+(?:\(([^)]*)\))?` reads it, without the pattern
+        # (CodeQL py/polynomial-redos; see _calls).
+        #
         match = _STORED.match(value, position)
         if match is None:
             return None
-        name, arguments = match["name"], match["arguments"]
+        name, arguments, position = match[0], None, match.end()
+        if value.startswith("(", position):
+            closing = value.find(")", position + 1)
+            if closing >= 0:
+                arguments, position = value[position + 1 : closing], closing + 1
         parts = arguments.split(",") if arguments is not None else []
         elements = 1
         if name in ("gpc", "gpt", "gpc_rate"):
@@ -247,7 +256,6 @@ def stored_bytes(value: str) -> int | None:
         else:
             return None
         total += width * elements
-        position = match.end()
         if position < len(value):
             if value[position] != ",":
                 return None
@@ -762,10 +770,93 @@ NOT_OWN_RING = "{ring} is not a ring this text adds; a line writes only to its o
 # argument, at the position given by the form of the name.
 #
 _TABLE_WRITER = re.compile(
-    r"(?<![A-Za-z0-9_.-])(?P<function>(?P<kind>sc[0-9]*|src|table)_"
-    r"(?:(?:inc|clr)_gpc(?P<array>[01]?)|updt_conn_cnt))(?:\((?P<arguments>[^)]*)\))?"
+    r"(?P<kind>sc[0-9]*|src|table)_(?:(?:inc|clr)_gpc(?P<array>[01]?)|updt_conn_cnt)"
 )
-_DEBUG = re.compile(r"(?<![A-Za-z0-9_.-])debug\((?P<arguments>[^)]*)\)")
+_DEBUG = re.compile(r"debug")
+
+#
+# A call in a word - a fetch's or converter's name, and what its parenthesis
+# holds - read without a pattern that is tried again from every position
+# (CodeQL py/polynomial-redos). With the name and `\(([^)]*)\)` in one
+# pattern under `finditer`, a word of `debug(debug(debug(...` without a `)`
+# was scanned to its end once for every opening: quadratic in the word, some
+# 4 ms for a line of 4096 characters and four times that for twice the
+# length. Here the word is cut into runs of `[A-Za-z0-9_.-]`, the characters
+# a name may not follow, so a name can only begin a run; the name is matched
+# within its run, and the next `)` or `,` is looked for from positions that
+# only grow, so each search passes a character once at most. What is found is
+# exactly what `(?<![A-Za-z0-9_.-])<name>` with its parenthesis found under
+# `finditer`; a test holds the two against each other on a generated corpus.
+#
+# How a name's parenthesis is read:
+#
+# * OPTIONAL: the name alone is a call, and its arguments are what lies up to
+#   the first `)` when it is followed by one;
+# * CLOSED: a call only when the parenthesis is closed;
+# * OPEN: the arguments are what lies up to the first `,` or `)`, or to the
+#   end of the word, as `\(([^,)]*)` reads it.
+#
+OPTIONAL, CLOSED, OPEN = "optional", "closed", "open"
+_NAME_RUN = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+class _Next:
+    """Where a character next occurs in a word, asked from positions that only grow."""
+
+    def __init__(self, word: str, char: str) -> None:
+        self.word = word
+        self.char = char
+        self.found = -1
+
+    def __call__(self, start: int) -> int:
+        """The position at or after `start`, or the word's length when there is none."""
+
+        if self.found < start:
+            found = self.word.find(self.char, start)
+            self.found = len(self.word) if found < 0 else found
+        return self.found
+
+
+def _calls(
+    word: str, name: re.Pattern[str], *, whole: bool, reading: str
+) -> Iterator[tuple[re.Match[str], str | None]]:
+    """Each call of `name` in `word`, with its arguments as `reading` says they are read.
+
+    `whole` is whether the name is the whole run of name characters, as it
+    is when a parenthesis must follow it; otherwise it begins the run.
+    """
+
+    closing = _Next(word, ")")
+    comma = _Next(word, ",")
+    resume = 0
+    for run in _NAME_RUN.finditer(word):
+        if run.start() < resume:
+            continue
+        found = (name.fullmatch if whole else name.match)(word, run.start(), run.end())
+        if found is None:
+            continue
+        #
+        # A name that ends before its run is followed by a name character,
+        # never by a parenthesis.
+        #
+        start = found.end() + 1
+        if not word.startswith("(", found.end()):
+            if reading == OPTIONAL:
+                yield found, None
+            continue
+        if reading == OPEN:
+            end = min(closing(start), comma(start))
+            resume = end
+            yield found, word[start:end]
+            continue
+        end = closing(start)
+        if end == len(word):
+            if reading == OPTIONAL:
+                yield found, None
+            continue
+        resume = end + 1
+        yield found, word[start:end]
+
 
 #
 # Fates a line can have, as the dialog and the CLI say them.
@@ -1005,9 +1096,9 @@ def _counter_problem(
     # `sc_clr_gpc(<idx>,<slot>)`, anywhere on the line.
     #
     for word in tokens:
-        for match in _TABLE_WRITER.finditer(word):
+        for match, given in _calls(word, _TABLE_WRITER, whole=False, reading=OPTIONAL):
             if match["kind"] == "sc":
-                arguments = (match["arguments"] or "").split(",")
+                arguments = (given or "").split(",")
                 at = 1 if match["array"] == "" else 0
                 written = arguments[at] if len(arguments) > at else ""
             elif match["kind"].startswith("sc"):
@@ -1065,14 +1156,14 @@ def _written_problem(tokens: Sequence[str], own: Own, *, own_table: bool) -> str
     """Why a fetch or converter on this line writes to a table or ring not the text's, or ""."""
 
     for word in tokens:
-        for match in _TABLE_WRITER.finditer(word):
-            arguments = [part.strip() for part in (match["arguments"] or "").split(",")]
+        for match, given in _calls(word, _TABLE_WRITER, whole=False, reading=OPTIONAL):
+            arguments = [part.strip() for part in (given or "").split(",")]
             at = (match["kind"] == "sc") + (match["array"] == "")
             table = arguments[at] if len(arguments) > at and arguments[at] else None
             if table is None:
                 if match["kind"] in ("src", "table") and not own_table:
                     return (
-                        f"{match['function']} here needs a table of a backend the text adds: "
+                        f"{match[0]} here needs a table of a backend the text adds: "
                         "the pool's own table is the rate limit's"
                     )
                 continue
@@ -1080,10 +1171,11 @@ def _written_problem(tokens: Sequence[str], own: Own, *, own_table: bool) -> str
                 return "write a table's name plainly, without quotes or backslashes"
             if table not in own["backend"]:
                 return NOT_OWN_TABLE.format(table=table)
-        for match in _DEBUG.finditer(word):
-            if any(char in match["arguments"] for char in "'\"\\"):
+        for _, given in _calls(word, _DEBUG, whole=True, reading=CLOSED):
+            debugged = given or ""
+            if any(char in debugged for char in "'\"\\"):
                 return "write debug's arguments plainly, without quotes or backslashes"
-            arguments = match["arguments"].split(",")
+            arguments = debugged.split(",")
             if len(arguments) > 1:
                 ring = arguments[1].strip()
                 if ring not in own["ring"]:
@@ -1649,9 +1741,9 @@ def _filter_problem(
 #
 MAPS = "/etc/haproxy/maps/"
 MAP_FILE = _file_in(MAPS)
-_MAP_CONVERTER = re.compile(r"(?<![A-Za-z0-9_.-])map(?:_[a-z0-9_]+)?\(([^,)]*)")
+_MAP_CONVERTER = re.compile(r"map(?:_[a-z0-9_]+)?")
 _LIST_ACTION = re.compile(r"^(?:set-map|del-map|add-acl|del-acl)\(")
-_JWT_FILE = re.compile(r"(?<![A-Za-z0-9_.-])jwt_(?:verify|verify_cert|decrypt_cert)\(([^)]*)\)")
+_JWT_FILE = re.compile(r"jwt_(?:verify|verify_cert|decrypt_cert)")
 
 
 def _list_problem(tokens: Sequence[str]) -> str:
@@ -1663,8 +1755,12 @@ def _list_problem(tokens: Sequence[str]) -> str:
             return (
                 "a list is shared by every line that reads it; the text may read one, not change it"
             )
-        named.extend(match[1] for match in _MAP_CONVERTER.finditer(word))
-        if any("/" in match[1] for match in _JWT_FILE.finditer(word)):
+        named.extend(
+            given or "" for _, given in _calls(word, _MAP_CONVERTER, whole=True, reading=OPEN)
+        )
+        if any(
+            "/" in (given or "") for _, given in _calls(word, _JWT_FILE, whole=True, reading=CLOSED)
+        ):
             return "a key or certificate file is one the node reads as root"
     for path in named:
         if not MAP_FILE.fullmatch(path):

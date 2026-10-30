@@ -10,6 +10,7 @@ a sentence in the plan.
 from __future__ import annotations
 
 import gzip
+import re
 import shutil
 import subprocess
 import unittest
@@ -654,6 +655,135 @@ class WhatASectionAsksOfTheNodesMemoryIsBounded(unittest.TestCase):
         _generate(*(cached(name) for name in ("a", "b", "c", "d")))
         with self.assertRaisesRegex(GeneratorError, "come to 320 MB, and a cluster has 256 MB"):
             _generate(*(cached(name) for name in ("a", "b", "c", "d", "e")))
+
+
+#
+# The patterns the calls were read with before 26-10-30, which CodeQL flagged as
+# polynomial (py/polynomial-redos): `advanced._calls` must find what they found.
+#
+_BEFORE = "(?<![A-Za-z0-9_.-])"
+_OLD_TABLE_WRITER = re.compile(
+    _BEFORE + r"(?P<function>(?P<kind>sc[0-9]*|src|table)_"
+    r"(?:(?:inc|clr)_gpc(?P<array>[01]?)|updt_conn_cnt))(?:\((?P<arguments>[^)]*)\))?"
+)
+_OLD_DEBUG = re.compile(_BEFORE + r"debug\((?P<arguments>[^)]*)\)")
+_OLD_MAP_CONVERTER = re.compile(_BEFORE + r"map(?:_[a-z0-9_]+)?\(([^,)]*)")
+_OLD_JWT_FILE = re.compile(_BEFORE + r"jwt_(?:verify|verify_cert|decrypt_cert)\(([^)]*)\)")
+_OLD_STORED = re.compile(r"(?P<name>[a-z_0-9]+)(?:\((?P<arguments>[^)]*)\))?")
+
+
+def _old_stored_bytes(value: str) -> int | None:
+    total = 0
+    position = 0
+    while position < len(value):
+        match = _OLD_STORED.match(value, position)
+        if match is None:
+            return None
+        name, arguments = match["name"], match["arguments"]
+        parts = arguments.split(",") if arguments is not None else []
+        elements = 1
+        if name in ("gpc", "gpt", "gpc_rate"):
+            if not parts or not re.fullmatch(r"[0-9]{1,12}", parts[0]):
+                return None
+            elements = int(parts[0])
+            width = 12 if name == "gpc_rate" else 4
+        elif name in advanced._COUNTERS:
+            width = 4
+        elif name in advanced._RATES:
+            width = 12
+        else:
+            return None
+        total += width * elements
+        position = match.end()
+        if position < len(value):
+            if value[position] != ",":
+                return None
+            position += 1
+    return total
+
+
+_CALL_PIECES = (
+    *("sc", "sc0", "sc12", "sc_", "src", "src_", "table", "table_", "_inc", "_clr", "_gpc"),
+    *("inc_gpc", "clr_gpc0", "_gpc1", "updt_conn_cnt", "0", "1", "2", "_", "sc0_inc_gpc0"),
+    *("sc_inc_gpc", "src_clr_gpc1", "table_updt_conn_cnt", "debug", "debug(", "map", "map_"),
+    *("map_ip(", "map(", "ip", "jwt_", "jwt_verify(", "verify", "_cert", "decrypt_cert("),
+    *("(", ")", ",", ".", "-", "x", "A", "/", " ", "%[", "]", "{", "'", '"', "\\", "#"),
+)
+_STORE_PIECES = (
+    *("gpc", "gpt", "gpc_rate", "gpc0", "gpt0", "http_req_rate", "conn_cnt", "bytes_in_rate"),
+    *("gpc(1)", "gpt(3)", "gpc_rate(10,1m)", "http_req_rate(10s)", "gpc0,", "conn_cnt,"),
+    *("frob", "(", ")", ",", "1", "10", "10s", "x", "_", "A", " ", "999999999999", "1234567890123"),
+)
+
+
+class CallsAreReadAsThePatternsBeforeThemRead(unittest.TestCase):
+    """CodeQL py/polynomial-redos on the patterns that read calls: they are now read
+    in one pass over a word (`advanced._calls`), and must find what the patterns found -
+    held here on a generated corpus, seeded so a failure can be repeated."""
+
+    def _corpus(self, pieces: tuple[str, ...], count: int) -> list[str]:
+        import random
+
+        chance = random.Random(261030)  # noqa: S311 - a fixed draw of cases, not a secret
+        words = ["".join(chance.choices(pieces, k=chance.randint(0, 24))) for _ in range(count)]
+        return [*pieces, *words]
+
+    def test_each_call_and_its_arguments_are_what_the_pattern_found(self) -> None:
+        from haprion.advanced import CLOSED, OPEN, OPTIONAL, _calls
+
+        readings = (
+            (
+                _OLD_TABLE_WRITER,
+                advanced._TABLE_WRITER,
+                False,
+                OPTIONAL,
+                lambda m: (m.start(), m["function"], m["kind"], m["array"], m["arguments"]),
+                lambda m, given: (m.start(), m[0], m["kind"], m["array"], given),
+            ),
+            (
+                _OLD_DEBUG,
+                advanced._DEBUG,
+                True,
+                CLOSED,
+                lambda m: (m.start(), m["arguments"]),
+                lambda m, given: (m.start(), given),
+            ),
+            (
+                _OLD_MAP_CONVERTER,
+                advanced._MAP_CONVERTER,
+                True,
+                OPEN,
+                lambda m: (m.start(), m[1]),
+                lambda m, given: (m.start(), given),
+            ),
+            (
+                _OLD_JWT_FILE,
+                advanced._JWT_FILE,
+                True,
+                CLOSED,
+                lambda m: (m.start(), m[1]),
+                lambda m, given: (m.start(), given),
+            ),
+        )
+        found = 0
+        for word in self._corpus(_CALL_PIECES, 20000):
+            for old, name, whole, reading, before, now in readings:
+                expected = [before(match) for match in old.finditer(word)]
+                found += len(expected)
+                actual = [
+                    now(m, given) for m, given in _calls(word, name, whole=whole, reading=reading)
+                ]
+                if actual != expected:
+                    self.fail(f"{name.pattern} in {word!r}: {actual} != {expected}")
+        self.assertGreater(found, 10000)
+
+    def test_what_a_store_keeps_is_what_the_pattern_read(self) -> None:
+        read = 0
+        for value in self._corpus(_STORE_PIECES, 20000):
+            kept = _old_stored_bytes(value)
+            self.assertEqual(advanced.stored_bytes(value), kept, value)
+            read += kept is not None and "(" in value
+        self.assertGreater(read, 100)
 
 
 class TheWafEngineNamesAreTheGenerators(unittest.TestCase):

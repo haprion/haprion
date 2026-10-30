@@ -68,9 +68,7 @@ class TheLinesAreTheNodesOwnFormat(Access):
 
     def test_an_unfinished_node_change_is_left_for_its_own_commands(self) -> None:
         journal = self.site.locations.journal
-        change_journal._write_record(
-            journal, change_journal.Record("add", "alpha", ())
-        )
+        change_journal._write_record(journal, change_journal.Record("add", "alpha", ()))
         accounts_before = {
             account: self.site.authorized_keys(account).read_bytes()
             for account in ("_haprion-pull", "_haprion-cert-pull")

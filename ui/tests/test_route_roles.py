@@ -138,6 +138,15 @@ class EveryRouteAnswersAsTheRoleAllows(LoginTestCase):
             mock.patch("haprion_ui.db.queue_job") as queued,
             mock.patch("haprion_ui.db.dns_profile", return_value=mock.Mock()),
             mock.patch("haprion_ui.db.ndes_profile", return_value=mock.Mock()),
+            #
+            # A removal refuses an unread repository with the same status as an
+            # expired form; with a repository to remove from, only the token's
+            # refusal is left to say 400 (review 26-10-30, R5).
+            #
+            mock.patch(
+                "haprion_ui.editor_flow.editor_state",
+                return_value=mock.Mock(commit="0" * 40, stored=[]),
+            ),
         ):
             for route in routes(client.app.routes, []):
                 if "POST" not in route.methods or route.path == "/login":
@@ -149,6 +158,8 @@ class EveryRouteAnswersAsTheRoleAllows(LoginTestCase):
                 )
                 self.assertEqual(len(self.audit), audit_before, f"{route.path} wrote an audit row")
                 answered[route.path] = response.status_code
+                if route.path in REFUSED_ITS_OWN_WAY and response.status_code == 400:
+                    self.assertIn("That form had expired", response.text, route.path)
 
         queued.assert_not_called()
         self.assertGreater(len(answered), 50)

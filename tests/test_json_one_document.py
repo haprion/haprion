@@ -10,6 +10,7 @@ envelope in its contract with the reason in it.
 from __future__ import annotations
 
 import ast
+import contextlib
 import io
 import subprocess
 import unittest
@@ -20,9 +21,11 @@ from unittest import mock
 
 from haprion import exit_codes
 from haprion.cli import (
+    cert_deploy,
     cert_list,
     cluster,
     cluster_settings,
+    deploy,
     history_reset,
     inventory,
     list_backups,
@@ -32,6 +35,9 @@ from haprion.cli import (
     probe,
     server_state,
     status,
+)
+from haprion.cli import (
+    list as list_command,
 )
 from tests.contract_schema import assert_contract
 
@@ -104,6 +110,80 @@ class AHelperThatNeverAnswered(unittest.TestCase):
                 out = io.StringIO()
                 code = main(argv, stdout=out, stderr=io.StringIO(), run=silent)
                 self.assert_one_refusal(schema, code, out.getvalue())
+
+
+class AnUnknownClusterOrARefusingSudo(unittest.TestCase):
+    """Review 26-10-30, E7: the four that stopped on the cluster lookup and the two that streamed."""
+
+    def test_an_unknown_cluster_is_a_document_with_the_lookup_s_exit(self) -> None:
+        def unknown(_cluster: str) -> Path:
+            raise SystemExit(exit_codes.USAGE)
+
+        for name, schema in (
+            ("deploy", "haprion-deploy"),
+            ("cert_deploy", "haprion-cert-deploy"),
+            ("list", "haprion-list"),
+            ("history_reset", "haprion-history-reset"),
+        ):
+            with self.subTest(name):
+                out = io.StringIO()
+                if name == "list":
+                    with self.assertRaises(SystemExit) as stopped:
+                        list_command.main(
+                            ["-c", "nowhere", "--json"], stream_out=out, config_path=unknown
+                        )
+                    code = int(stopped.exception.code or 0)
+                elif name == "history_reset":
+                    code = history_reset.main(
+                        ["-c", "nowhere", "--confirm", "x", "--json"],
+                        stream_out=out,
+                        stream_err=io.StringIO(),
+                        config_path=unknown,
+                    )
+                else:
+                    module = {"deploy": deploy, "cert_deploy": cert_deploy}[name]
+                    with (
+                        mock.patch.object(module, "_config_path", unknown),
+                        contextlib.redirect_stdout(out),
+                        self.assertRaises(SystemExit) as stopped,
+                    ):
+                        module.main(["-c", "nowhere", "--json"])
+                    code = int(stopped.exception.code or 0)
+                self.assertEqual(code, exit_codes.USAGE)
+                answer = assert_contract(schema, out.getvalue())
+                self.assertEqual(answer["error"]["code"], "bad_input")
+
+    def test_a_sudo_that_refuses_leaves_the_document_the_helper_could_not(self) -> None:
+        refused = subprocess.CompletedProcess(["sudo"], 1, b"", f"{SUDO_SAYS}\n".encode())
+        for module, schema in ((deploy, "haprion-deploy"), (cert_deploy, "haprion-cert-deploy")):
+            with self.subTest(module.__name__):
+                out = io.StringIO()
+                with (
+                    mock.patch.object(module, "_config_path", lambda _cluster: Path("/x")),
+                    mock.patch.object(subprocess, "run", return_value=refused),
+                    contextlib.redirect_stdout(out),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    code = module.main(["-c", "alpha", "--json"])
+                self.assertEqual(code, exit_codes.UNAVAILABLE)
+                answer = assert_contract(schema, out.getvalue())
+                self.assertEqual(answer["error"]["code"], "dependency_unavailable")
+                self.assertIn(SUDO_SAYS, answer["error"]["message"])
+
+    def test_a_helper_ended_by_a_signal_leaves_an_exit_the_table_has(self) -> None:
+        killed = subprocess.CompletedProcess(["sudo"], -9, b"", b"")
+        out = io.StringIO()
+        with (
+            mock.patch.object(deploy, "_config_path", lambda _cluster: Path("/x")),
+            mock.patch.object(subprocess, "run", return_value=killed),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = deploy.main(["-c", "alpha", "--json"])
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
+        self.assertIn(
+            "signal 9", assert_contract("haprion-deploy", out.getvalue())["error"]["message"]
+        )
 
 
 class AHistoryResetPublishesOnStderr(unittest.TestCase):

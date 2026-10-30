@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import subprocess
 import sys
+from collections.abc import Callable
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import NoReturn, TextIO
@@ -26,7 +27,7 @@ from typing import NoReturn, TextIO
 from haprion import exit_codes
 from haprion.cli import cluster_config
 from haprion.envelope import failure, new_request_id
-from haprion.helper_protocol import write_document
+from haprion.helper_protocol import config_error_code, write_document
 
 
 class CallerError(Exception):
@@ -113,3 +114,87 @@ def without_answer(
             exit_codes.UNAVAILABLE,
         )
     return exit_codes.UNAVAILABLE
+
+
+def looked_up(
+    resolve: Callable[[str], Path],
+    cluster_id: str,
+    *,
+    operation: str,
+    json_mode: bool,
+    writer: TextIO | None = None,
+) -> Path:
+    """`resolve(cluster_id)`, and with `--json` the one document when it stops the command.
+
+    `cluster-config` says why on stderr and the lookup ends the process; with
+    `--json` that left stdout empty (review 26-10-30, E7). The exit stays the
+    lookup's, the document says the same.
+    """
+
+    try:
+        return resolve(cluster_id)
+    except SystemExit as stopped:
+        code = stopped.code if isinstance(stopped.code, int) else exit_codes.USAGE
+        exit_code = exit_codes.of_process(code, exit_codes.USAGE)
+        if json_mode:
+            write_document(
+                writer or sys.stdout,
+                failure(
+                    operation=operation,
+                    cluster=cluster_id,
+                    request_id=new_request_id(),
+                    code=config_error_code(exit_code),
+                    message=f"cluster {cluster_id} could not be looked up",
+                    exit_code=exit_code,
+                ),
+                exit_code,
+            )
+        raise SystemExit(exit_code) from stopped
+
+
+def through_sudo(
+    command: list[str], request: bytes, *, operation: str, cluster: str, json_mode: bool
+) -> int:
+    """Run a root helper that streams its answer, and still owe `--json` its one document.
+
+    In text mode the helper's output is inherited, which is the streaming. With
+    `--json` it is held until the helper has ended: a helper that wrote no
+    document - sudo refused it, it was never installed, a signal ended it -
+    leaves the document here, as the read commands do (review 26-10-30, E7). A
+    return code this table does not have is passed on as one it does.
+    """
+
+    if not json_mode:
+        completed = subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
+            command, input=request, check=False
+        )
+        return _known_exit(completed.returncode)
+    held = subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
+        command, input=request, check=False, capture_output=True
+    )
+    out = held.stdout.decode("utf-8", errors="replace")
+    err = held.stderr.decode("utf-8", errors="replace")
+    if out.strip():
+        sys.stderr.write(err)
+        sys.stdout.write(out)
+        sys.stdout.flush()
+        return _known_exit(held.returncode)
+    _, stopped = exit_codes.foreign(held.returncode, "helper")
+    return without_answer(
+        subprocess.CompletedProcess(command, held.returncode, "", err),
+        operation=operation,
+        cluster=cluster,
+        json_mode=True,
+        writer=sys.stdout,
+        errors=sys.stderr,
+        fallback=stopped or f"the helper ended with {held.returncode} and wrote no answer",
+    )
+
+
+def _known_exit(returncode: int) -> int:
+    """The return code as the exit table has it, and why on stderr when it had none."""
+
+    code, stopped = exit_codes.foreign(returncode, "helper")
+    if stopped:
+        sys.stderr.write(f"ERROR: {stopped}\n")
+    return code

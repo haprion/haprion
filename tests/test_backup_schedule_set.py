@@ -87,7 +87,9 @@ class TheScheduleCommand(unittest.TestCase):
                     stream_err=err,
                     require_root=False,
                 )
-                self.assertEqual((code, out.getvalue()), (exit_codes.FAILED, ""))
+                self.assertEqual(code, exit_codes.FAILED)
+                answer = assert_contract("haprion-backup-schedule", out.getvalue())
+                self.assertEqual(answer["error"]["code"], "helper_silent")
                 self.assertIn("[helper_silent]", err.getvalue())
                 self.assertIn("outcome is unknown", err.getvalue())
                 self.assertIn("haprion-backup-schedule -c alpha", err.getvalue())

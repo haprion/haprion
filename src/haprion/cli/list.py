@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TextIO
 
 from haprion import exit_codes
-from haprion.cli.caller import CallerError, usage
+from haprion.cli.caller import CallerError, looked_up, usage
 from haprion.cli.caller import config_path as _config_path
 from haprion.cli.caller import field as _field
 from haprion.digits import is_digits
@@ -106,7 +106,9 @@ def main(
         return _diff(writer, cluster_id, diff_version, config_path)
 
     try:
-        repo = config_path(cluster_id)
+        repo = looked_up(
+            config_path, cluster_id, operation=OPERATION, json_mode=json_mode, writer=writer
+        )
         if not is_repo_root(repo):
             raise CallerError(describe_problem(cluster_id, repo), exit_code=exit_codes.UNAVAILABLE)
         versions = recent_versions(repo)

@@ -13,12 +13,11 @@ that could put key material on a node the configuration never referenced.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import uuid
 
 from haprion.cli.caller import config_path as _config_path
-from haprion.cli.caller import usage
+from haprion.cli.caller import looked_up, through_sudo, usage
 
 OPERATION = "cert_deploy_cluster"
 
@@ -97,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     cluster_id, allow_vip_unknown, json_mode = _parse(argv)
 
-    _config_path(cluster_id)
+    looked_up(_config_path, cluster_id, operation="cert_deploy", json_mode=json_mode)
 
     request = build_request(
         cluster_id,
@@ -106,12 +105,13 @@ def main(argv: list[str] | None = None) -> int:
         json_mode=json_mode,
     ).encode()
 
-    completed = subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
+    return through_sudo(
         [SUDO, "--", HELPER],
-        input=request,
-        check=False,
+        request,
+        operation="cert_deploy",
+        cluster=cluster_id,
+        json_mode=json_mode,
     )
-    return completed.returncode
 
 
 if __name__ == "__main__":

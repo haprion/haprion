@@ -21,12 +21,11 @@ booleans; the rest is decided inside the boundary, from readings taken there.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import uuid
 
 from haprion.cli.caller import config_path as _config_path
-from haprion.cli.caller import usage
+from haprion.cli.caller import looked_up, through_sudo, usage
 
 OPERATION = "deploy_cluster"
 
@@ -119,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     # Looked up only to fail early and clearly on a cluster that does not exist.
     # The privileged half resolves it again and does not trust this answer.
     #
-    _config_path(cluster_id)
+    looked_up(_config_path, cluster_id, operation="deploy", json_mode=json_mode)
 
     request = build_request(
         cluster_id,
@@ -129,17 +128,15 @@ def main(argv: list[str] | None = None) -> int:
     ).encode()
 
     #
-    # stdout and stderr are inherited rather than captured, which is the whole
-    # streaming mechanism: the helper's output is already going to the right
-    # place, and anything this process did with it in between would only add
-    # latency.
+    # Without --json, stdout and stderr are inherited rather than captured,
+    # which is the whole streaming mechanism: the helper's output is already
+    # going to the right place, and anything this process did with it in
+    # between would only add latency. With --json its one document is held and
+    # passed on, or written here when the helper never wrote one.
     #
-    completed = subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
-        [SUDO, "--", HELPER],
-        input=request,
-        check=False,
+    return through_sudo(
+        [SUDO, "--", HELPER], request, operation="deploy", cluster=cluster_id, json_mode=json_mode
     )
-    return completed.returncode
 
 
 if __name__ == "__main__":

@@ -223,11 +223,12 @@ def main(
         # 26-10-24, 06-11).
         #
         said = str(exc) if isinstance(exc, helper_socket.HelperSilent) else "it gave no answer."
-        errors.write(
-            f"ERROR: [helper_silent] {said} It may have changed the schedule; its outcome is "
-            f"unknown. Run haprion-backup-schedule -c {args.cluster} again to see it.\n"
+        return refuse(
+            "helper_silent",
+            f"{said} It may have changed the schedule; its outcome is unknown. "
+            f"Run haprion-backup-schedule -c {args.cluster} again to see it.",
+            exit_codes.FAILED,
         )
-        return exit_codes.FAILED
     except helper_socket.HelperUnavailable as exc:
         return refuse("dependency_unavailable", str(exc) or "no answer", exit_codes.UNAVAILABLE)
     if isinstance(answer.get("result"), dict):
@@ -243,5 +244,5 @@ def main(
         )
     else:
         error = answer.get("error") or {}
-        writer.write(f"ERROR: [{error.get('code')}] {error.get('message')}\n")
+        errors.write(f"ERROR: [{error.get('code')}] {error.get('message')}\n")
     return exit_code

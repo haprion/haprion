@@ -51,7 +51,7 @@ from haprion import exit_codes
 from haprion.cli.caller import config_path as _config_path
 from haprion.cli.caller import usage
 from haprion.envelope import Message, envelope, failure
-from haprion.helper_protocol import write_document
+from haprion.helper_protocol import config_error_code, write_document
 from haprion.history_reset import ResetError, preview
 
 CONFIRMATION = "please reset me"
@@ -167,7 +167,20 @@ def main(
         return write_document(writer, document, exit_code)
 
     try:
-        plan = preview(cluster_id, config_path(cluster_id))
+        try:
+            repo = config_path(cluster_id)
+        except SystemExit as lookup:
+            #
+            # cluster-config has said why on stderr; with --json the answer is
+            # still a document (review 26-10-30, E7).
+            #
+            code = lookup.code if isinstance(lookup.code, int) else exit_codes.USAGE
+            return refuse(
+                config_error_code(code),
+                f"cluster {cluster_id} could not be looked up",
+                exit_codes.of_process(code, exit_codes.USAGE),
+            )
+        plan = preview(cluster_id, repo)
     except ResetError as exc:
         return refuse("bad_input", str(exc), exc.exit_code)
 

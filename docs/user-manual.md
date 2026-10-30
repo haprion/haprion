@@ -1267,7 +1267,15 @@ A ring's `backing-file` is refused: HAProxy creates and overwrites that file as 
   on `sc2`, with its tables in a backend of its own: `track-sc2 src table <object>-logins`. Reading `sc0`
   and `sc1` is allowed; changing them is not.
 - **Stick tables.** A `stick-table` on the object's own lines is refused, because its pool already
-  carries the rate limit's table.
+  carries the rate limit's table. In a backend the text adds, a `stick-table` is read parameter by
+  parameter, and a word HAProxy does not take there is refused.
+- **Other objects' sections.** A line writes only to a table, ring or cache the same text adds, named
+  exactly. A name that begins with `<object>-` is not enough: `shop` and `shop-api` are two objects. This
+  covers `table <name>` in `track-sc2` and `stick` rules, a table's `write-to`, the fetches and converters
+  that create or change an entry (`table_inc_gpc0`, `src_clr_gpc`, `sc_inc_gpc1` and their kin, and
+  `src_updt_conn_cnt`), `log ring@<name>`, and the `debug` converter's destination. On the object's own
+  lines such a fetch or converter must name its table, since the pool's own is the rate limit's. Reading
+  another table, as `table_http_req_rate(<name>)` does, is allowed.
 - **The WAF engine's wiring.** The engine's SPOE filter, and the `txn.coraza.*` variables its verdict is
   read from. A line that set them could make the engine's answer say something it did not.
 - **Files.** A file HAProxy is told to serve - `errorfile`, and `file`, `lf-file` or `errorfile` in a

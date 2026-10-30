@@ -37,6 +37,16 @@ def fate(line: str, **options: object) -> str:
     return fates(line + "\n", **options)[0][1]
 
 
+#
+# A table, a ring and a cache of the text's own, for a line that names one.
+#
+OWN = "backend shop-t\nring shop-r\ncache shop-c\n"
+
+
+def fate_beside_own(line: str, **options: object) -> str:
+    return fates(line + "\n" + OWN, **options)[0][1]
+
+
 class TheKeywordTableIsTheManualS(unittest.TestCase):
     @unittest.skipUnless(MANUAL.exists(), "the HAProxy manual is not installed here")
     def test_the_matrix_equals_section_4_1_of_the_installed_manual(self) -> None:
@@ -322,7 +332,7 @@ class TheCountersBelongToWhoeverTracksThemFirst(unittest.TestCase):
     def test_sc1_is_the_text_s_only_while_the_form_has_no_rate_limit(self) -> None:
         line = "http-request track-sc1 src table shop-t"
         self.assertEqual(fate(line, rate_limit=True), REFUSED_FATE)
-        self.assertEqual(fate(line, rate_limit=False), PLACED)
+        self.assertEqual(fate_beside_own(line, rate_limit=False), PLACED)
         self.assertEqual(fate("http-request sc-set-gpt(0,1) 1", rate_limit=True), REFUSED_FATE)
 
     def test_sc3_and_sc4_are_the_text_s_only_while_the_form_has_no_dynamic_blocking(self) -> None:
@@ -330,7 +340,7 @@ class TheCountersBelongToWhoeverTracksThemFirst(unittest.TestCase):
             line = f"http-request track-sc{slot} src table shop-t"
             with self.subTest(slot):
                 self.assertEqual(fate(line, dynamic_block=True), REFUSED_FATE)
-                self.assertEqual(fate(line, dynamic_block=False), PLACED)
+                self.assertEqual(fate_beside_own(line, dynamic_block=False), PLACED)
                 self.assertEqual(
                     fate(f"http-request sc-inc-gpc0({slot})", dynamic_block=True), REFUSED_FATE
                 )
@@ -345,14 +355,103 @@ class TheCountersBelongToWhoeverTracksThemFirst(unittest.TestCase):
     def test_a_counter_on_the_object_s_rows_names_a_table_of_the_text_s(self) -> None:
         self.assertEqual(fate("http-request track-sc2 src"), REFUSED_FATE)
         self.assertEqual(fate("http-request track-sc2 src table other-t"), REFUSED_FATE)
-        self.assertEqual(fate("http-request track-sc2 src table shop-t"), PLACED)
+        self.assertEqual(fate_beside_own("http-request track-sc2 src table shop-t"), PLACED)
 
     def test_a_stick_rule_on_the_object_s_rows_names_a_table_of_the_text_s(self) -> None:
         self.assertEqual(fate("stick on src"), REFUSED_FATE)
-        self.assertEqual(fate("stick on src table shop-t"), PLACED)
+        self.assertEqual(fate_beside_own("stick on src table shop-t"), PLACED)
 
     def test_a_table_on_the_object_s_rows_is_refused(self) -> None:
         self.assertEqual(fate("stick-table type ip size 1k"), REFUSED_FATE)
+
+
+class ALineWritesOnlyToSectionsOfItsOwnText(unittest.TestCase):
+    """Code review 26-10-30 again, R2 and R5: a table was the text's when its name began
+    with the object's, so object `shop` counted into `shop-api`'s tables, and a
+    `stick-table ... write-to` copied every peer update into another object's dynamic
+    blocking table - a visitor of one object was blocked on another. A name is now held
+    to the sections the same text adds."""
+
+    def test_a_table_another_text_adds_is_refused_though_its_name_begins_with_ours(
+        self,
+    ) -> None:
+        for line in (
+            "http-request track-sc2 src table shop-api-t",
+            "stick on src table shop-api-t",
+            "log ring@shop-api-r local0",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate_beside_own(line), REFUSED_FATE)
+
+    def test_the_same_table_added_by_the_text_is_placed(self) -> None:
+        text = "http-request track-sc2 src table shop-api-t\nbackend shop-api-t\n"
+        self.assertEqual(fates(text)[0][1], PLACED)
+
+    def test_write_to_names_a_table_of_the_text_s_own(self) -> None:
+        for table in ("mgd-x-dynblock", "shop-api-t"):
+            with self.subTest(table):
+                text = f"backend shop-t\n    stick-table type ip size 1k write-to {table}\n"
+                self.assertEqual(fates(text)[1][1], REFUSED_FATE)
+        text = (
+            "backend shop-t\n    stick-table type ip size 1k write-to shop-u store gpc0\n"
+            "backend shop-u\n    stick-table type ip size 1k store gpc0\n"
+        )
+        self.assertEqual({entry[1] for entry in fates(text)}, {PLACED})
+
+    def test_a_table_is_read_parameter_by_parameter(self) -> None:
+        refused = "backend shop-t\n    stick-table type ip size 1k frobnicate 1\n"
+        self.assertEqual(fates(refused)[1][1], REFUSED_FATE)
+        placed = (
+            "backend shop-t\n    stick-table type string len 64 size 1k expire 10m nopurge "
+            "srvkey name brates-factor 2 store gpc0,http_req_rate(10s) store gpt0 recv-only\n"
+        )
+        self.assertEqual(fates(placed)[1][1], PLACED)
+
+    def test_a_fetch_or_converter_that_creates_entries_writes_only_to_its_own_table(
+        self,
+    ) -> None:
+        for line in (
+            "http-request deny if { src,table_inc_gpc0(mgd-bank-dynblock) gt 0 }",
+            "http-request deny if { src,table_inc_gpc(1,mgd-bank-dynblock) gt 0 }",
+            "http-request deny if { src,table_clr_gpc1(other-t) ge 0 }",
+            "http-request deny if { src_inc_gpc0(other-t) gt 0 }",
+            "http-request deny if { src_updt_conn_cnt(other-t) gt 0 }",
+            "http-request deny if { sc_inc_gpc0(2,other-t) gt 0 }",
+            "http-request deny if { sc_inc_gpc(1,2,other-t) gt 0 }",
+            "http-request deny if { sc2_clr_gpc0(other-t) ge 0 }",
+            r"http-request deny if { src,table_inc_gpc0(\'mgd-x\') gt 0 }",
+            "http-request deny if { src,table_inc_gpc0 gt 0 }",
+            "http-request deny if { src_inc_gpc0 gt 0 }",
+            "http-request set-var(txn.x) src,debug(x,other-r)",
+            "http-request set-var(txn.x) src,debug(x,stderr)",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate_beside_own(line), REFUSED_FATE)
+        for line in (
+            "http-request deny if { src,table_inc_gpc0(shop-t) gt 0 }",
+            "http-request deny if { src,table_inc_gpc(1,shop-t) gt 0 }",
+            "http-request deny if { sc_inc_gpc(1,2,shop-t) gt 0 }",
+            "http-request deny if { sc2_inc_gpc0 gt 0 }",
+            "http-request deny if { src,table_http_req_rate(other-t) gt 10 }",
+            "http-request set-var(txn.x) src,debug(x,shop-r)",
+            "http-request set-var(txn.x) src,debug(x)",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate_beside_own(line), PLACED)
+        in_own_backend = "backend shop-t\n    http-request deny if { src,table_inc_gpc0 gt 0 }\n"
+        self.assertEqual(fates(in_own_backend)[1][1], PLACED)
+
+    @unittest.skipUnless(MANUAL.exists(), "the HAProxy manual is not installed here")
+    def test_the_table_parameters_are_the_manual_s_synopsis(self) -> None:
+        import re
+
+        with gzip.open(MANUAL, "rt", encoding="utf-8") as manual:
+            text = manual.read()
+        chapter = text[text.index("11.1. stick-table declaration") :]
+        synopsis = chapter[chapter.index("stick-table type") : chapter.index('In a "peers"')]
+        named = set(re.findall(r"(?:^|[\s\[])([a-z][a-z-]+) <", synopsis))
+        named |= set(re.findall(r"\[([a-z-]+)\]", synopsis))
+        self.assertEqual(named | {"len"}, set(advanced.STICK_TABLE_PARAMETERS))
 
 
 class TheWafEngineNamesAreTheGenerators(unittest.TestCase):
@@ -568,7 +667,7 @@ class EveryLineIsHeldToAListOfWhatItMayBe(unittest.TestCase):
             "log ring@shop-r local0",
         ):
             with self.subTest(line):
-                self.assertEqual(fate(line), PLACED)
+                self.assertEqual(fate_beside_own(line), PLACED)
 
     def test_a_server_is_reached_at_a_network_address(self) -> None:
         for line in (

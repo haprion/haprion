@@ -520,6 +520,29 @@ COUNTER_ACTION = re.compile(r"^sc-[a-z0-9-]+\(([^)]*)\)$")
 STICK_RULES = frozenset({"on", "match", "store-request", "store-response"})
 
 #
+# What a line may write to by name: a table, a ring or a cache this same text
+# adds, and nothing else (code review 2026-10-30 again, R2, R5, B3). A name
+# that merely begins with the object's is not enough - `shop` and `shop-api`
+# are two objects, and a pool may be called anything - so the text's own
+# sections are read first and a name is held to them exactly. A table is a
+# backend the text adds; HAProxy names a table after its section.
+#
+Own = Mapping[str, frozenset[str]]
+NOT_OWN_TABLE = "{table} is not a table this text adds; a line writes only to its own"
+NOT_OWN_RING = "{ring} is not a ring this text adds; a line writes only to its own"
+#
+# The sample fetches and converters that change a table rather than read it:
+# they create the entry when it is missing, so `src,table_inc_gpc0(<table>)`
+# put a visitor into another object's dynamic blocking. The table is the last
+# argument, at the position given by the form of the name.
+#
+_TABLE_WRITER = re.compile(
+    r"(?<![A-Za-z0-9_.-])(?P<function>(?P<kind>sc[0-9]*|src|table)_"
+    r"(?:(?:inc|clr)_gpc(?P<array>[01]?)|updt_conn_cnt))(?:\((?P<arguments>[^)]*)\))?"
+)
+_DEBUG = re.compile(r"(?<![A-Za-z0-9_.-])debug\((?P<arguments>[^)]*)\)")
+
+#
 # Fates a line can have, as the dialog and the CLI say them.
 #
 PLACED = "placed"
@@ -697,7 +720,7 @@ def _starts(words_: tuple[str, ...], prefixes: Iterable[tuple[str, ...]]) -> boo
 def _counter_problem(
     tokens: Sequence[str],
     keyword: tuple[str, ...],
-    name: str,
+    own: Own,
     rate_limit: bool,
     *,
     own_table: bool,
@@ -734,8 +757,8 @@ def _counter_problem(
                 "a counter here needs `table <name>` of a backend the text adds: "
                 "the pool's own table is the rate limit's"
             )
-        if table is not None and not table.startswith(f"{name}-"):
-            return f"the table must be one this text adds, named {name}-…"
+        if table is not None and table not in own["backend"]:
+            return NOT_OWN_TABLE.format(table=table)
         return ""
     counter = COUNTER_ACTION.fullmatch(action)
     if counter:
@@ -753,7 +776,7 @@ def _counter_problem(
     return ""
 
 
-def _stick_problem(tokens: Sequence[str], keyword: tuple[str, ...], name: str) -> str:
+def _stick_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: Own) -> str:
     if keyword[:1] != ("stick",) or len(keyword) < 2 or keyword[1] not in STICK_RULES:
         return ""
     if "table" not in tokens[:-1]:
@@ -762,8 +785,74 @@ def _stick_problem(tokens: Sequence[str], keyword: tuple[str, ...], name: str) -
             "the pool's own table is the rate limit's"
         )
     table = tokens[tokens.index("table") + 1]
-    if not table.startswith(f"{name}-"):
-        return f"the table must be one this text adds, named {name}-…"
+    if table not in own["backend"]:
+        return NOT_OWN_TABLE.format(table=table)
+    return ""
+
+
+def _written_problem(tokens: Sequence[str], own: Own, *, own_table: bool) -> str:
+    """Why a fetch or converter on this line writes to a table or ring not the text's, or ""."""
+
+    for word in tokens:
+        for match in _TABLE_WRITER.finditer(word):
+            arguments = [part.strip() for part in (match["arguments"] or "").split(",")]
+            at = (match["kind"] == "sc") + (match["array"] == "")
+            table = arguments[at] if len(arguments) > at and arguments[at] else None
+            if table is None:
+                if match["kind"] in ("src", "table") and not own_table:
+                    return (
+                        f"{match['function']} here needs a table of a backend the text adds: "
+                        "the pool's own table is the rate limit's"
+                    )
+                continue
+            if any(char in table for char in "'\"\\"):
+                return "write a table's name plainly, without quotes or backslashes"
+            if table not in own["backend"]:
+                return NOT_OWN_TABLE.format(table=table)
+        for match in _DEBUG.finditer(word):
+            arguments = match["arguments"].split(",")
+            if len(arguments) > 1:
+                ring = arguments[1].strip()
+                if ring not in own["ring"]:
+                    return NOT_OWN_RING.format(ring=ring)
+    return ""
+
+
+#
+# A stick table's parameters, with how many words each takes, from the
+# synopsis in configuration.txt 11.1 (a test holds it there). `len` follows a
+# `string` or `binary` type. Read parameter by parameter like a server line,
+# so `write-to` - which copies every update a peer sends into the named table
+# and creates the entry there (R2) - is seen whatever comes before it.
+#
+STICK_TABLE_PARAMETERS = {
+    "type": 1,
+    "len": 1,
+    "size": 1,
+    "expire": 1,
+    "nopurge": 0,
+    "recv-only": 0,
+    "write-to": 1,
+    "srvkey": 1,
+    "store": 1,
+    "brates-factor": 1,
+    "peers": 1,
+}
+
+
+def _stick_table_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: Own) -> str:
+    if keyword != ("stick-table",):
+        return ""
+    index = 1
+    while index < len(tokens):
+        parameter = tokens[index]
+        width = STICK_TABLE_PARAMETERS.get(parameter)
+        if width is None:
+            return f"{parameter} is not a stick-table parameter in HAProxy 3.4"
+        value = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if parameter == "write-to" and value not in own["backend"]:
+            return NOT_OWN_TABLE.format(table=value)
+        index += 1 + width
     return ""
 
 
@@ -1067,7 +1156,7 @@ def _file_problem(tokens: Sequence[str], keyword: tuple[str, ...] | None) -> str
 LOG_STREAMS = frozenset({"stdout", "stderr"})
 
 
-def _log_problem(tokens: Sequence[str], keyword: tuple[str, ...], name: str) -> str:
+def _log_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: Own) -> str:
     if keyword != ("log",):
         return ""
     at = tokens.index("log") + 1
@@ -1077,9 +1166,8 @@ def _log_problem(tokens: Sequence[str], keyword: tuple[str, ...], name: str) -> 
     if target == "global":
         return ""
     if target.startswith("ring@"):
-        if target.removeprefix("ring@").startswith(f"{name}-"):
-            return ""
-        return f"a log ring must be one this text adds, named {name}-…"
+        ring = target.removeprefix("ring@")
+        return "" if ring in own["ring"] else NOT_OWN_RING.format(ring=ring)
     if target in LOG_STREAMS or not LOG_ADDRESS.fullmatch(target):
         return "a log goes to global, a ring of the text's or a syslog server's network address"
     return ""
@@ -1171,7 +1259,9 @@ def expands_variable(line: str) -> bool:
     return False
 
 
-def _line_problem(tokens: Sequence[str], keyword: tuple[str, ...], name: str) -> str:
+def _line_problem(
+    tokens: Sequence[str], keyword: tuple[str, ...], own: Own, *, own_table: bool
+) -> str:
     """What every proxy line is held to, on the object's rows and in an added backend."""
 
     return (
@@ -1179,8 +1269,10 @@ def _line_problem(tokens: Sequence[str], keyword: tuple[str, ...], name: str) ->
         or _waf_problem(tokens, keyword)
         or _filter_problem(tokens, keyword)
         or _file_problem(tokens, keyword)
-        or _log_problem(tokens, keyword, name)
+        or _log_problem(tokens, keyword, own)
         or _list_problem(tokens)
+        or _written_problem(tokens, own, own_table=own_table)
+        or _stick_table_problem(tokens, keyword, own)
     )
 
 
@@ -1209,6 +1301,45 @@ def _server_fact(tokens: Sequence[str]) -> tuple[str, str] | None:
     return tokens[1], f"{host.strip('[]')}:{port}"
 
 
+def _header_problem(kind: str, tokens: Sequence[str], name: str) -> str:
+    """Why the header of a section the text adds cannot be written, or ""."""
+
+    section_name = tokens[1] if len(tokens) > 1 else ""
+    if len(tokens) != 2 or not SECTION_NAME.fullmatch(section_name):
+        return f"a {kind} section needs one name"
+    if not section_name.startswith(f"{name}-"):
+        return (
+            f"a section the text adds must be named {name}-…; it is not renamed, "
+            "since other files may refer to it by name"
+        )
+    return ""
+
+
+def _readable(line: str) -> list[str] | None:
+    """The words of a line `place` reads at all, or None for one it ignores or refuses whole."""
+
+    if not line or line.startswith(("#", ".")) or len(line) > MAX_LINE:
+        return None
+    try:
+        tokens = words(line)
+    except TextError:
+        return None
+    if not tokens or expands_variable(line):
+        return None
+    return tokens
+
+
+def _own_sections(raw: Sequence[str], name: str) -> Own:
+    """The sections the text adds, by kind: what its lines may write to by name."""
+
+    found: dict[str, set[str]] = {kind: set() for kind in EXTRA_SECTIONS}
+    for original in raw:
+        tokens = _readable(original.strip())
+        if tokens and tokens[0] in EXTRA_SECTIONS and not _header_problem(tokens[0], tokens, name):
+            found[tokens[0]].add(tokens[1])
+    return {kind: frozenset(names) for kind, names in found.items()}
+
+
 def place(
     text: str,
     *,
@@ -1230,6 +1361,7 @@ def place(
     raw = text.replace("\r\n", "\n").split("\n")
     if raw and raw[-1] == "":
         raw.pop()
+    own = _own_sections(raw, name)
 
     lines: list[Line] = []
     frontend: list[Line] = []
@@ -1300,15 +1432,8 @@ def place(
                 record(REFUSED_FATE, reason=f"a {first} section is the cluster's or the process's")
                 continue
             section_name = tokens[1] if len(tokens) > 1 else ""
-            problem = ""
-            if len(tokens) != 2 or not SECTION_NAME.fullmatch(section_name):
-                problem = f"a {first} section needs one name"
-            elif not section_name.startswith(f"{name}-"):
-                problem = (
-                    f"a section the text adds must be named {name}-…; it is not renamed, "
-                    "since other files may refer to it by name"
-                )
-            elif section_name in seen_sections:
+            problem = _header_problem(first, tokens, name)
+            if not problem and section_name in seen_sections:
                 problem = f"the text names {section_name} twice"
             if problem:
                 current = ("refused", first)
@@ -1353,10 +1478,10 @@ def place(
                     else REFUSED[keyword]
                 )
             else:
-                problem = _line_problem(tokens, keyword, name) or _counter_problem(
+                problem = _line_problem(tokens, keyword, own, own_table=True) or _counter_problem(
                     tokens,
                     keyword,
-                    name,
+                    own,
                     rate_limit,
                     own_table=True,
                     dynamic_block=dynamic_block,
@@ -1392,11 +1517,11 @@ def place(
             record(REFUSED_FATE, reason="HTTP only: a tcp object has no requests")
             continue
         problem = (
-            _line_problem(tokens, keyword, name)
+            _line_problem(tokens, keyword, own, own_table=False)
             or _counter_problem(
-                tokens, keyword, name, rate_limit, own_table=False, dynamic_block=dynamic_block
+                tokens, keyword, own, rate_limit, own_table=False, dynamic_block=dynamic_block
             )
-            or _stick_problem(tokens, keyword, name)
+            or _stick_problem(tokens, keyword, own)
         )
         if problem:
             record(REFUSED_FATE, reason=problem)

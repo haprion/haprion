@@ -46,6 +46,7 @@ from typing import Any
 import psycopg
 import yaml
 from haprion import exit_codes, ndes_profiles, safe_yaml
+from haprion.cli import apply_common
 from haprion.config import load_policy
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.dns_profiles import ProfileError
@@ -158,7 +159,11 @@ def read_file(path: Path) -> dict[str, list[Wanted]]:
             raise ApplyError(f"{path}: larger than {MAX_FILE_BYTES} bytes")
         document = safe_yaml.load(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise ApplyError(f"{path}: {exc.strerror}") from exc
+        raise ApplyError(
+            f"{path}: {exc.strerror}",
+            code=apply_common.unreadable_code(exc),
+            exit_code=exit_codes.NOT_FOUND,
+        ) from exc
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
         raise ApplyError(f"{path}: not UTF-8 YAML") from exc
     sections = BY_SECTION

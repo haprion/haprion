@@ -53,7 +53,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from haprion import oidc, safe_yaml
+from haprion import exit_codes, oidc, safe_yaml
+from haprion.cli import apply_common
 
 from haprion_ui import attention, db, feature_switch, features, labels, oidc_web, tool_answer
 
@@ -116,7 +117,11 @@ def read_file(path: Path) -> Wanted:
             raise ApplyError(f"{path}: larger than {MAX_FILE_BYTES} bytes")
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ApplyError(f"{path}: {exc.strerror}") from exc
+        raise ApplyError(
+            f"{path}: {exc.strerror}",
+            code=apply_common.unreadable_code(exc),
+            exit_code=exit_codes.NOT_FOUND,
+        ) from exc
     except UnicodeDecodeError as exc:
         raise ApplyError(f"{path}: not UTF-8") from exc
     try:

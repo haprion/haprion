@@ -53,6 +53,27 @@ class TheRootToolsAnswer(unittest.TestCase):
                     self.assertEqual(answer["error"]["code"], "not_root")
                     self.assertIn("sudo", answer["error"]["message"])
 
+    def test_a_file_that_is_not_there_is_not_found_by_every_apply(self) -> None:
+        """Review 26-10-30, E4: the engine's applies say 66 `not_found`; so do these."""
+
+        missing = "/nonexistent/file.yaml"
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(
+                admin, "load_environment", return_value=admin.Environment("test", "test")
+            ),
+            mock.patch.object(config, "load", return_value=SimpleNamespace()),
+        ):
+            for main, argv in (
+                (admin.main, ["apply", missing, "--json"]),
+                (settings_tool.main, ["apply", missing, "--json"]),
+                (profile_apply.main, ["apply", missing, "--json"]),
+            ):
+                with self.subTest(argv=argv[0], tool=main.__module__):
+                    code, out = run(main, argv)
+                    self.assertEqual(code, exit_codes.NOT_FOUND)
+                    self.assertEqual(json.loads(out)["error"]["code"], "not_found")
+
     def test_without_the_installation_s_database_file(self) -> None:
         with (
             mock.patch("os.geteuid", return_value=0),

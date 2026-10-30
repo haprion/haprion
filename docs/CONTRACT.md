@@ -152,6 +152,8 @@ Command-specific stable codes:
 | `dynamic_unblock` | `server_not_found`, `server_state_unavailable`, `blocking_not_on_node`, `node_unblock_failed` |
 | `cert_issue` | `already_exists`, `certbot_failed`, `publish_failed` |
 | `probe` | `probe_unavailable`, `probe_node_error`, `dns_unresolved` |
+| `objects_apply`, `network_apply`, `cluster_settings_apply` | the file named is not there: `not_found` (66); it is there and cannot be read: `unreadable` (66); `too_long`; `nothing` (no object files, or `--prune` would remove every object); `invalid_name`, `duplicate`, `object_invalid` (objects); `network_not_managed`, `network_invalid`; `settings_invalid`; `no_head` (the cluster has nothing committed to publish against); `helper_silent` (the publish helper gave no answer, so whether it published is unknown: look at `haprion-list` before running it again); anything else is the publish helper's own code (`candidate_invalid`, `base_version_changed`, `expected_target_changed`, `operation_locked`) |
+| `user_apply`, `settings_apply`, `profiles_apply` | the same file rule: `not_found` or `unreadable` (66); a file or change refused is `bad_input` (65); `dependency_unavailable` (the installation's database file or settings cannot be used); `job_not_done` (`settings_apply` only: the settings were saved and a backup schedule job they started did not finish, answered `partial`); `not_root` (77) |
 
 New codes may be added in schema v1 only when an older caller can safely show them as a generic
 failure or warning. Removing or changing the meaning of a code requires a new schema version.

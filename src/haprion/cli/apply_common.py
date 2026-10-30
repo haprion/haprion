@@ -69,6 +69,22 @@ class PartlyDone(Refused):
         self.done = done
 
 
+def unreadable_code(error: OSError) -> str:
+    """`not_found` for a file that is not there, `unreadable` for one that cannot be read.
+
+    Both leave with `NOT_FOUND`, in every apply, so a script has one answer
+    for a misspelt path (review 26-10-30, E4).
+    """
+
+    return (
+        "not_found" if isinstance(error, FileNotFoundError | NotADirectoryError) else "unreadable"
+    )
+
+
+def unreadable(path: object, error: OSError) -> Refused:
+    return Refused(unreadable_code(error), f"{path}: {error.strerror}", exit_codes.NOT_FOUND)
+
+
 def envelope(operation: str, cluster: str, result: Any, error: Refused | None) -> dict[str, Any]:
     """The command's one document: `done` with its result, or the refusal it stopped at.
 

@@ -34,7 +34,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from haprion import safe_yaml
+from haprion import exit_codes, safe_yaml
+from haprion.cli import apply_common
 
 from haprion_ui import auth, db, labels, tool_answer, users
 
@@ -97,7 +98,11 @@ def read_file(path: Path) -> list[Wanted]:
             raise ApplyError(f"{path}: larger than {MAX_FILE_BYTES} bytes")
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ApplyError(f"{path}: {exc.strerror}") from exc
+        raise ApplyError(
+            f"{path}: {exc.strerror}",
+            code=apply_common.unreadable_code(exc),
+            exit_code=exit_codes.NOT_FOUND,
+        ) from exc
     except UnicodeDecodeError as exc:
         raise ApplyError(f"{path}: not UTF-8") from exc
     try:

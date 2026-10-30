@@ -176,6 +176,18 @@ class TheNetworkFromAFile(NetworkPublishFixture):
             self.assertIn("host bits must be zero", err)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
 
+    def test_a_file_that_is_not_there_is_not_found(self) -> None:
+        """Review 26-10-30, E4: the same answer as haprion-objects apply gives."""
+
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
+            policy = self.runtime(Path(raw))
+            self.published(policy)
+
+            code, out, _ = self.run_apply(policy, Path(files, "none.yaml"), "--json")
+
+            self.assertEqual(code, 66)
+            self.assertEqual(json.loads(out)["error"]["code"], "not_found")
+
     def test_a_derived_network_has_nothing_to_change(self) -> None:
         with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
             policy = self.runtime(Path(raw))

@@ -26,6 +26,7 @@ from haprion.cli.apply_common import (
     RunPublish,
     answer_of,
     envelope,
+    unreadable,
 )
 from haprion.cluster_settings import (
     LOCATION,
@@ -79,7 +80,7 @@ def main(
         try:
             text = path.read_bytes()
         except OSError as exc:
-            raise Refused("unreadable", f"{path}: {exc.strerror}", exit_codes.NOT_FOUND) from exc
+            raise unreadable(path, exc) from exc
         if len(text) > MAX_BYTES:
             raise Refused("too_long", f"{path}: larger than {MAX_BYTES} bytes")
         try:

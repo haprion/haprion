@@ -29,6 +29,7 @@ from haprion.cli.apply_common import (
     answer_of,
     diff,
     envelope,
+    unreadable,
 )
 from haprion.cli.cluster_settings import run_publish_helper
 from haprion.config import ConfigError
@@ -58,7 +59,7 @@ def read_file(path: Path) -> str:
     try:
         data = path.read_bytes()
     except OSError as exc:
-        raise Refused("unreadable", f"{path}: {exc.strerror}", exit_codes.NOT_FOUND) from exc
+        raise unreadable(path, exc) from exc
     if len(data) > MAX_NETWORK_BYTES:
         raise Refused("too_long", f"{path}: larger than {MAX_NETWORK_BYTES} bytes")
     try:

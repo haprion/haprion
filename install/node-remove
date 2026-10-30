@@ -72,6 +72,8 @@ FIXED_PATHS = (
     "/var/lib/haprion-restore",
     "/var/log/haprion",
     "/var/log/haprion-node",
+    # The link to the traffic socket in HAProxy's chroot, and the directories it is in.
+    "/var/lib/haproxy/var",
     "/root/.ssh/id_ed25519_config_pull",
     "/root/.ssh/id_ed25519_config_pull.pub",
     "/root/.ssh/id_ed25519_cert_pull",

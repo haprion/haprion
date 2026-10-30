@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import advanced, exit_codes, tls_policy
+from haprion import advanced, exit_codes, tls_policy, traffic_stream
 from haprion.candidate_validation import (
     VALIDATION_CERTIFICATE,
     SandboxValidator,
@@ -355,6 +355,15 @@ def _publish(
     )
     if short is not None:
         return refuse("stick_counters_short", short, exit_codes.BLOCKED)
+    #
+    # And where HAProxy would start and serve while every traffic record went
+    # nowhere (`traffic_stream`).
+    #
+    unreachable = traffic_stream.problem(
+        published_files, cluster=request.cluster, config_path=str(cluster.config_path)
+    )
+    if unreachable is not None:
+        return refuse("traffic_log_unreachable", unreachable, exit_codes.BLOCKED)
 
     def invalid() -> int | None:
         """The sandbox's verdict on the artifact, as a refusal; None when it passes."""

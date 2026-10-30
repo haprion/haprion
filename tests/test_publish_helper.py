@@ -337,6 +337,43 @@ class PublishTests(PublishFixture):
             code, _stdout, stderr = self.run_publish(policy_path, self.request())
             self.assertEqual((code, stderr), (0, ""))
 
+    def test_a_core_haproxy_could_not_log_traffic_from_is_refused(self) -> None:
+        """Review 2026-10-30-igen, R2: every record dropped on every node, and nothing said."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit(
+                "managed/generated/1040-managed.cfg",
+                GENERATED + b"  log /var/lib/haproxy/dev/haprion-traffic len 2048 format local"
+                b" profile mgd-traffic-json local2\n",
+            )
+            git(self.repo, "commit", "-qam", "An object whose traffic is logged")
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            for core in (
+                HAPROXY_CFG.replace(b"  daemon\n", b"  daemon\n  chroot /srv/haproxy\n"),
+                HAPROXY_CFG.replace(b"  daemon\n", b"  daemon\n  user www-data\n"),
+            ):
+                with self.subTest(core=core[:40]):
+                    self.edit("core/haproxy.cfg", core)
+                    code, stdout, _stderr = self.run_publish(policy_path, self.request())
+
+                    self.assertEqual(code, 75)
+                    error = json.loads(stdout)["error"]
+                    self.assertEqual(error["code"], "traffic_log_unreachable")
+                    self.assertEqual(self.sandbox_roots, [])
+                    self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+            self.edit(
+                "core/haproxy.cfg",
+                HAPROXY_CFG.replace(
+                    b"  daemon\n",
+                    b"  daemon\n  chroot /var/lib/haproxy\n  user haproxy\n  group haproxy\n",
+                ),
+            )
+            code, _stdout, stderr = self.run_publish(policy_path, self.request())
+            self.assertEqual((code, stderr), (0, ""))
+
     def test_an_unchanged_retry_is_held_to_the_same_policy(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))

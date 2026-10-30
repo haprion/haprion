@@ -41,8 +41,8 @@ ENABLE = ROOT / "install" / "node" / "haprion-traffic-log-enable"
 NODE_PREPARE = ROOT / "install" / "04-node-prepare"
 HOSTNAME = "shop.example.com"
 NODE_LOG_ROOT = "/var/log/haprion/"
-# The chroot-relative socket the generator logs the structured stream to.
-TRAFFIC_LOG_SOCKET = "/dev/haprion-traffic"
+# The node's socket the generator logs the structured stream to, by its host path.
+TRAFFIC_LOG_SOCKET = "/var/lib/haproxy/dev/haprion-traffic"
 _PR_SET_PDEATHSIG = 1
 
 OBJECT = """

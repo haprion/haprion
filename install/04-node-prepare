@@ -787,6 +787,24 @@ Service=rsyslog.service
 
 [Install]
 WantedBy=sockets.target"
+#
+# HAProxy names the traffic socket by its path on the host. A HAProxy chrooted
+# in /var/lib/haproxy looks that path up inside the chroot, so the same path
+# there is a link to the socket - relative, so it leads to the socket from the
+# host too. The generated line is then right with Ubuntu's chroot and without
+# one, and a core that gains or loses the chroot needs no new configuration.
+#
+TRAFFIC_SOCKET_LINK="/var/lib/haproxy/var/lib/haproxy/dev/haprion-traffic"
+TRAFFIC_SOCKET_LINK_TARGET="../../../../dev/haprion-traffic"
+ensure_dir "${TRAFFIC_SOCKET_LINK%/*}" root:root 755
+if [[ "$(readlink "$TRAFFIC_SOCKET_LINK" 2>/dev/null)" == "$TRAFFIC_SOCKET_LINK_TARGET" ]]; then
+    log "  ok       ${TRAFFIC_SOCKET_LINK}"
+else
+    ln -sfn "$TRAFFIC_SOCKET_LINK_TARGET" "$TRAFFIC_SOCKET_LINK"
+    log "  linked   ${TRAFFIC_SOCKET_LINK} -> ${TRAFFIC_SOCKET_LINK_TARGET}"
+fi
+[[ "$(realpath -e "$TRAFFIC_SOCKET_LINK" 2>/dev/null)" == "$TRAFFIC_SOCKET_PATH" ]] \
+    || die "${TRAFFIC_SOCKET_LINK} does not lead to ${TRAFFIC_SOCKET_PATH}"
 
 #
 # The traffic log is a base function (Fas 18, 26-10-16): a node given the

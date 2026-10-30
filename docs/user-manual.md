@@ -6552,6 +6552,14 @@ allows HAProxy's `dev/log` but not this socket, so step 4 adds a rule for it in
 release before the manager publishes a configuration that logs to the new socket: until then that
 node's structured stream has no reader.
 
+The generated configuration names the socket by its full path, `/var/lib/haproxy/dev/haprion-traffic`.
+A HAProxy chrooted in `/var/lib/haproxy` looks that path up inside its chroot, so step 4 puts a link
+there, `/var/lib/haproxy/var/lib/haproxy/dev/haprion-traffic`, that leads to the same socket. The
+same line therefore works with Ubuntu's chroot and without one. Two kinds of core would still miss
+the socket, and a publish that logs the traffic stream refuses them with the line to change: a core
+that chroots HAProxy anywhere else, and a core that runs HAProxy as an account that may not write
+the socket (`user` other than `haproxy`, unless `group` is `haproxy`).
+
 **The HAProxy unit must load `conf.d`, and load it exactly once.**
 
 A node's configuration is a main file plus a directory of fragments. systemd has to be told about

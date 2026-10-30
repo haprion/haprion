@@ -79,6 +79,7 @@ from haprion.release_layout import CRT_LIST_TARGET
 from haprion.reservations import NOTHING_RESERVED, Reservations
 from haprion.route_match import order_routes
 from haprion.tls_policy import BACKEND_POLICIES, TLS_POLICIES
+from haprion.traffic_stream import TRAFFIC_LOG_SOCKET
 
 #
 # Marks everything this module writes. A generated section can then never
@@ -248,13 +249,13 @@ RETRIES = 3
 # is a useful ordering key on its own.
 TRAFFIC_LOG_PROFILE = f"{PREFIX}-traffic-json"
 #
-# The structured stream goes to a socket of its own in HAProxy's chroot, held by
-# the node's log socket unit and writable by the haproxy account alone. The
-# node's rsyslog marks what arrives there as HAProxy's, and only a marked line
-# is forwarded or written to the day file: the same tag sent to /dev/log by
-# another local account is not (review 2026-10-30, E1).
+# The structured stream goes to a socket of its own, held by the node's traffic
+# socket unit and writable by the haproxy account alone. The node's rsyslog
+# marks what arrives there as HAProxy's, and only a marked line is forwarded or
+# written to the day file: the same tag sent to /dev/log by another local
+# account is not (review 2026-10-30, E1). Named by its path on the host, which
+# a HAProxy chrooted in /var/lib/haproxy finds too (`traffic_stream`).
 #
-TRAFFIC_LOG_SOCKET = "/dev/haprion-traffic"
 HTTP_TRAFFIC_LOG_FORMAT = (
     '"%{+json}o %(schema)[int(1)] %(at)Ts %(request)rt %(client)ci %(method)HM '
     "%(host)[var(txn.traffic_host)] %(path)HPO %(frontend)f %(backend)b "

@@ -134,12 +134,12 @@ class TheNodeHoldsTheSocket(unittest.TestCase):
         self.assertGreater(text.index('hold_log_socket "$TRAFFIC_SOCKET_UNIT"'), end)
 
     def test_haproxy_logs_the_traffic_stream_to_the_socket_only_it_can_write(self) -> None:
-        """The generated `log` target, seen from the chroot, is the traffic unit's socket."""
+        """The generated `log` target is the traffic unit's socket, by its host path."""
 
         from haprion.generate import TRAFFIC_LOG_SOCKET
 
         self.assertEqual(
-            ["ListenDatagram=/var/lib/haproxy" + TRAFFIC_LOG_SOCKET],
+            ["ListenDatagram=" + TRAFFIC_LOG_SOCKET],
             [
                 line
                 for line in unit_text("TRAFFIC_SOCKET_UNIT").splitlines()

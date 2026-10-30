@@ -387,7 +387,10 @@ writable by the `haproxy` account alone (mode `0660`). `net.unix.max_dgram_qlen`
 rsyslog input and ruleset to the traffic socket and marks what arrives there as HAProxy's; the forwarding rule and
 `48-haprion-traffic.conf` act only on a marked line, so the same tag written to `/dev/log` by another local account
 is dropped. rsyslogd's AppArmor profile gets a rule for the traffic socket in
-`/etc/apparmor.d/rsyslog.d/haprion-haproxy-log`. Nodes take this release before the manager publishes a
+`/etc/apparmor.d/rsyslog.d/haprion-haproxy-log`. HAProxy logs the stream to the socket's full path; for a HAProxy
+chrooted in `/var/lib/haproxy`, step 4 links the same path inside the chroot to the socket. A publish that logs the
+stream refuses a core that chroots HAProxy elsewhere or runs it as an account that may not write the socket
+(`traffic_log_unreachable`). Nodes take this release before the manager publishes a
 configuration whose HAProxy logs to the traffic socket.
 
 ## Step by step, without haprion-setup

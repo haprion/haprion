@@ -36,7 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Protocol, TextIO
 
-from haprion import exit_codes, tls_policy
+from haprion import exit_codes, tls_policy, traffic_stream
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     MAX_CANDIDATE_BYTES,
@@ -548,6 +548,11 @@ def _publish(
         )
         if short is not None:
             return refuse("stick_counters_short", short, exit_codes.BLOCKED)
+        unreachable = traffic_stream.problem(
+            current_files, cluster=request.cluster, config_path=str(cluster.config_path)
+        )
+        if unreachable is not None:
+            return refuse("traffic_log_unreachable", unreachable, exit_codes.BLOCKED)
         #
         # A head whose release was never installed was never checked either: a
         # commit made by hand, a cluster's first version whose publish failed
@@ -626,6 +631,15 @@ def _publish(
     )
     if short is not None:
         return refuse("stick_counters_short", short, exit_codes.BLOCKED)
+    #
+    # And where HAProxy would start and serve while every traffic record went
+    # nowhere (`traffic_stream`).
+    #
+    unreachable = traffic_stream.problem(
+        published_files, cluster=request.cluster, config_path=str(cluster.config_path)
+    )
+    if unreachable is not None:
+        return refuse("traffic_log_unreachable", unreachable, exit_codes.BLOCKED)
 
     #
     # 4. Validation, in the sandbox, on exactly those bytes.

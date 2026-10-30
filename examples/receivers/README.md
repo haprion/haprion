@@ -23,6 +23,11 @@ All of them are written to be run from a timer. Some properties are worth keepin
 - **Nothing is restarted unless something changed.** The `fetch-` scripts compare with `cmp`, and
   `install-pkcs12.ps1` compares the certificate's thumbprint, so a run that fetched the same
   certificate is silent and costs nothing.
+- **A failed reload is retried.** A `fetch-` script writes `.reload-pending` in the target before it
+  replaces the first file and removes it after the reload has succeeded. If the reload fails, the
+  next run finds the files identical and would otherwise do nothing; it sees the marker and reloads.
+  The two files are installed under temporary names and renamed, so the service does not read a
+  key beside the wrong certificate for longer than the two renames take.
 - **sftp runs as a batch.** `fetch-sftp` hands its commands to `sftp -b -`: read from stdin,
   no prompt, and a `get` that fails aborts the run with a non-zero exit instead of leaving the
   next command to run against half a pair. The same form works on Windows, where there is no

@@ -21,8 +21,10 @@ CERTIFICATE=${CERTIFICATE:-app.example.net}
 RELOAD=${RELOAD:-systemctl reload nginx}
 NETRC=${NETRC:-/root/.certfetch.netrc}
 
+PENDING=${PENDING:-${TARGET}/.reload-pending}
+
 staging=$(mktemp -d)
-trap 'rm -rf -- "$staging"' EXIT INT TERM
+trap 'rm -rf -- "$staging"; rm -f "${TARGET}/fullchain.pem.new" "${TARGET}/privkey.pem.new"' EXIT INT TERM
 
 for name in fullchain.pem privkey.pem; do
     curl --fail --silent --show-error --netrc-file "$NETRC" --cacert "$CA" \
@@ -38,12 +40,28 @@ private_key=$(openssl pkey -in "${staging}/privkey.pem" -pubout)
 
 changed=0
 for name in fullchain.pem privkey.pem; do
-    if ! cmp -s "${staging}/${name}" "${TARGET}/${name}"; then
-        install -o root -g root -m 600 "${staging}/${name}" "${TARGET}/${name}"
-        changed=1
-    fi
+    cmp -s "${staging}/${name}" "${TARGET}/${name}" || changed=1
 done
 
-[ "$changed" -eq 1 ] || exit 0
-chmod 644 "${TARGET}/fullchain.pem"
+#
+# The marker is written before the first file is replaced and removed once the
+# reload has succeeded. A reload that failed leaves it, and the next run reloads
+# even though the files are by then identical: otherwise the service would keep
+# the old certificate until someone noticed.
+#
+[ "$changed" -eq 1 ] || [ -e "$PENDING" ] || exit 0
+
+if [ "$changed" -eq 1 ]; then
+    : > "$PENDING"
+    # Both under temporary names first, so the service never meets one new file
+    # beside one old one for longer than the two renames take.
+    for name in fullchain.pem privkey.pem; do
+        install -o root -g root -m 600 "${staging}/${name}" "${TARGET}/${name}.new"
+    done
+    chmod 644 "${TARGET}/fullchain.pem.new"
+    mv "${TARGET}/privkey.pem.new" "${TARGET}/privkey.pem"
+    mv "${TARGET}/fullchain.pem.new" "${TARGET}/fullchain.pem"
+fi
+
 $RELOAD
+rm -f "$PENDING"

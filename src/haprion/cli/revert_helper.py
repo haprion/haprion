@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, TextIO
@@ -101,6 +101,7 @@ from haprion.repo_snapshot import (
     read_tree_files,
     resolve_head,
 )
+from haprion.status_collect import read_target
 from haprion.version_history import (
     count_versions,
     recent_versions,
@@ -484,6 +485,40 @@ def _revert(
         ).tree
         target_files = read_tree_files(repo, target_tree)
 
+    def sandboxed(artifact: Mapping[str, bytes]) -> int | None:
+        """The refusal when the content is not valid for this cluster today, else None."""
+
+        certificate = read_validation_certificate(
+            cluster.validation_certs / VALIDATION_CERTIFICATE,
+            require_secure=require_secure,
+        )
+        prepare_run_root(run_root, require_secure=require_secure)
+        result = validate_candidate(
+            candidate_from_files(artifact),
+            run_root=run_root,
+            certificate_ids=cluster.certificate_ids,
+            authority_ids=cluster.authority_ids,
+            validation_certificate=certificate,
+            request_id=request.request_id,
+            validator=validator,
+        )
+        if result.valid:
+            return None
+        #
+        # The content was valid when it was published, which is exactly why this
+        # is checked again: what a node can accept depends on the certificates
+        # and maps present now. The diagnostics travel in the error's details
+        # because they are the whole answer to "why not", and a reader that only
+        # understands the stable code can still show the refusal.
+        #
+        return refuse(
+            "candidate_invalid",
+            f"the content of version {version} is not valid for this cluster today. "
+            "No version was created and nothing was published.",
+            exit_codes.REFUSED,
+            {"diagnostics": result.diagnostics, "restored_version": version},
+        )
+
     if target_tree == _tree_of(repo, head):
         #
         # The contract's successful no-op, and the shape a retry takes.
@@ -497,10 +532,22 @@ def _revert(
         # place that repair can happen. `install_release` is idempotent, so when
         # nothing was missing it verifies the stamp and returns.
         #
+        # A head whose release was never installed was never checked either (a
+        # cluster's first version, version 1 after a history reset, a commit
+        # made by hand): it goes through the sandbox before it goes out, as the
+        # publish and managed paths' no-ops do. The command reaches here now
+        # for the newest version (review 26-10-30, E6).
+        #
+        noop_artifact = build_node_artifact(target_files)
+        published = read_target(cluster.publish_path, cluster.node_path)
+        if published is None or published.hash != head:
+            refused = sandboxed(noop_artifact)
+            if refused is not None:
+                return refused
         installed = install_release(
             cluster.publish_path,
             node_path=cluster.node_path,
-            artifact=build_node_artifact(target_files),
+            artifact=noop_artifact,
             index=build_release_index(target_files),
             metadata=ReleaseMetadata(
                 cluster=request.cluster,
@@ -558,35 +605,9 @@ def _revert(
     artifact = build_node_artifact(target_files)
     index = build_release_index(target_files)
 
-    certificate = read_validation_certificate(
-        cluster.validation_certs / VALIDATION_CERTIFICATE,
-        require_secure=require_secure,
-    )
-    prepare_run_root(run_root, require_secure=require_secure)
-    result = validate_candidate(
-        candidate_from_files(artifact),
-        run_root=run_root,
-        certificate_ids=cluster.certificate_ids,
-        authority_ids=cluster.authority_ids,
-        validation_certificate=certificate,
-        request_id=request.request_id,
-        validator=validator,
-    )
-    if not result.valid:
-        #
-        # The content was valid when it was published, which is exactly why this
-        # is checked again: what a node can accept depends on the certificates
-        # and maps present now. The diagnostics travel in the error's details
-        # because they are the whole answer to "why not", and a reader that only
-        # understands the stable code can still show the refusal.
-        #
-        return refuse(
-            "candidate_invalid",
-            f"the content of version {version} is not valid for this cluster today. "
-            "No version was created and nothing was published.",
-            exit_codes.REFUSED,
-            {"diagnostics": result.diagnostics, "restored_version": version},
-        )
+    refused = sandboxed(artifact)
+    if refused is not None:
+        return refused
 
     commit = commit_and_swap(
         repo,

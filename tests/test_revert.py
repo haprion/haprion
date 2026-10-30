@@ -225,6 +225,22 @@ class RevertTests(RevertFixture):
             self.assertEqual(code, 0)
             self.assertTrue((self.publish_path / "current").exists())
 
+    def test_the_current_version_never_installed_goes_through_the_sandbox(self) -> None:
+        """Review 26-10-30, E6: the publish and managed no-ops check a head nobody installed."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+
+            code, _ = self.run_caller(
+                policy_path, "-c", "alpha", "3", valid=False, diagnostics="[ALERT] invalid\n"
+            )
+
+            self.assertEqual(code, 65)
+            document = assert_contract("haprion-revert", self.helper_stdout)
+            self.assertEqual(document["error"]["code"], "candidate_invalid")
+            self.assertFalse((self.publish_path / "current").exists())
+
 
 class WindowTests(RevertFixture):
     def test_a_version_that_moved_after_the_preview_is_refused(self) -> None:

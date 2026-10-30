@@ -60,6 +60,7 @@ from haprion.helper_protocol import (
     require_no_arguments,
     write_document,
 )
+from haprion.labels import counted
 from haprion.release_install import KEEP_RELEASES, prune_releases
 from haprion.status_collect import STATUS_TIMEOUT_SECONDS, ask_node, collect, read_target
 
@@ -150,7 +151,7 @@ def prune_published_releases(cluster: Cluster, read: ReadStatus, stream: TextIO)
         stream.write(f"Old releases were not cleaned up: {exc}\n")
         return
     if removed:
-        stream.write(f"Removed {len(removed)} old published release(s).\n")
+        stream.write(f"Removed {counted(len(removed), 'old published release')}.\n")
 
 
 def trigger_node(node: NodeStatus, identity: DeployIdentity, writer: TextIO) -> int:

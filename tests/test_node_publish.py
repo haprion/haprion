@@ -13,7 +13,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import crs, exit_codes, node_publish
+from haprion import crs, exit_codes, held_ports, node_publish
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import revert, revert_helper
 from haprion.config import Cluster, load_policy, load_runtime_config
@@ -232,9 +232,7 @@ class PublishingTheNodeList(ObjectsPublishFixture):
                 (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # later\n")
                 git(self.repo, "commit", "-qam", "A later change")
 
-                with mock.patch.object(
-                    revert_helper.held_ports, "read", return_value=HeldPorts()
-                ) as read:
+                with mock.patch.object(held_ports, "read", return_value=HeldPorts()) as read:
                     code, answer = self.revert(policy_path, version, commit)
 
                 self.assertEqual(code, 0, answer)

@@ -519,9 +519,9 @@ class ReloadFailureTests(unittest.TestCase):
         )
 
         self.assertIn("nonetheless runs the target release", out.getvalue())
-        self.assertIn(
-            "nonetheless runs the target release", result.report.nodes["node-b"].error.message
-        )
+        error = result.report.nodes["node-b"].error
+        assert error is not None
+        self.assertIn("nonetheless runs the target release", error.message)
 
     def test_a_failing_reload_leaves_the_node_on_what_it_had(self) -> None:
         cluster = pair()

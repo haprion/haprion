@@ -190,6 +190,29 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertIn("-> socket:[", result.stdout)
         self.assertIn("failed: demo/test_kept.py", result.stderr)
 
+    def test_a_library_this_process_runs_kept_open_is_not_a_leak(self) -> None:
+        """CI 26-10-30: libffi keeps libffi.so open when it is linked, not built in."""
+
+        keeping = (
+            "import os, unittest\n"
+            "KEPT = []\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_library(self) -> None:\n"
+            "        with open('/proc/self/maps') as maps:\n"
+            "            fields = [line.split(maxsplit=5) for line in maps]\n"
+            "        library = next(\n"
+            "            f[5].strip() for f in fields\n"
+            "            if len(f) == 6 and 'x' in f[1] and '.so' in f[5]\n"
+            "        )\n"
+            "        KEPT.append(os.open(library, os.O_RDONLY))\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tests = self.suite(root, {"test_a.py": PASSING, "test_library.py": keeping})
+            result = self.execute(tests, root / "durations.json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("left open after its tests ran", result.stdout)
+
     def test_a_module_that_reads_this_machine_s_configuration_fails(self) -> None:
         """Review 26-10-29, A09: a test that passes on the manager by reading its policy."""
 

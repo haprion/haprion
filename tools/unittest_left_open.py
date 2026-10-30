@@ -59,11 +59,28 @@ from collections.abc import Callable
 from typing import Any
 
 #
-# The interpreter's own binary, which a library opens from C to read itself
-# and keeps for the life of the process - measured 26-10-29: importing psycopg
-# does, with no audit event to say from where. No test opens it.
+# Code this process runs: libffi's trampolines open the file that holds
+# libffi and keep it for the life of the process. Built into the interpreter,
+# as uv's Python has it, that is the interpreter's own binary (measured
+# 26-10-29: importing psycopg does, with no audit event to say from where);
+# linked, as setup-python's has it, it is libffi.so (CI, 26-10-30). Either is
+# mapped executable in /proc/self/maps, which no file a test opens is.
 #
-INTERPRETER = os.path.realpath(sys.executable)
+MAPS = "/proc/self/maps"
+
+
+def mapped_code() -> set[str]:
+    """The files this process has mapped executable: its binary and its libraries."""
+
+    found = set()
+    with open(MAPS, encoding="utf-8", errors="replace") as maps:
+        for line in maps:
+            fields = line.split(maxsplit=5)
+            if len(fields) == 6 and "x" in fields[1] and fields[5].startswith("/"):
+                found.add(fields[5].rstrip("\n"))
+    return found
+
+
 #
 # No test reads this machine's configuration (review 26-10-29, A09). The
 # suites run on a manager, where /etc/haprion exists, and a test that read it
@@ -288,6 +305,7 @@ def descriptors() -> dict[int, str]:
     """What this process has open, by number, each with what it points at."""
 
     found = {}
+    code = mapped_code()
     directory = "/proc/self/fd"
     for name in os.listdir(directory):
         descriptor = int(name)
@@ -299,7 +317,7 @@ def descriptors() -> dict[int, str]:
             continue
         if stat.S_ISDIR(mode) and target == "/proc/self/fd":
             continue
-        if stat.S_ISREG(mode) and target == INTERPRETER:
+        if stat.S_ISREG(mode) and target in code:
             continue
         found[descriptor] = target
     return found

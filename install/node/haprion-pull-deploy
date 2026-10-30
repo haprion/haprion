@@ -704,6 +704,38 @@ sync_dns_listener() {
 }
 
 #
+# The traffic stream's socket (review 2026-10-30-igen, R3). A release built by
+# a manager of this version logs the structured stream to the socket step 4
+# holds for the haproxy account alone, and finds it inside HAProxy's chroot
+# through step 4's link. A node prepared by an older step 4 has neither, and
+# HAProxy would send every traffic record to a path that is not there: no day
+# file, no receiver, and nothing said. Refused instead, as a release that
+# names receivers is on a node without the forwarding include. A socket that
+# is there but open to other accounts is refused too: rsyslog made it itself,
+# and its lines would be trusted as HAProxy's.
+#
+TRAFFIC_SOCKET="/var/lib/haproxy/dev/haprion-traffic"
+TRAFFIC_SOCKET_LINK="/var/lib/haproxy/var/lib/haproxy/dev/haprion-traffic"
+TRAFFIC_SOCKET_OWNER="haproxy:haproxy 660"
+
+traffic_socket_ready() {
+    [[ -S "$TRAFFIC_SOCKET" ]] || return 1
+    [[ "$(stat -c '%U:%G %a' "$TRAFFIC_SOCKET")" == "$TRAFFIC_SOCKET_OWNER" ]] || return 1
+    [[ "$(realpath -e "$TRAFFIC_SOCKET_LINK" 2>/dev/null)" == "$(realpath -e "$TRAFFIC_SOCKET")" ]]
+}
+
+validate_traffic_stream_candidate() {
+    local candidate="$1"
+
+    grep -qsF -e "log ${TRAFFIC_SOCKET} " -r "${candidate}/conf.d" || return 0
+    traffic_socket_ready && return 0
+    log "ERROR: the release logs the traffic log to ${TRAFFIC_SOCKET}, which this node does not hold"
+    log "ERROR: for HAProxy alone, so every traffic record would be dropped."
+    log "ERROR: run  sudo haprion-node-prepare  on this node, then deploy again."
+    return 1
+}
+
+#
 # rsyslog, which sends the traffic log to the cluster's external receivers
 # with a queue on disk (B286). Prepared by 04-node-prepare: a fixed
 # 47-haprion-forward.conf includes the file below when it is there. A release
@@ -974,6 +1006,7 @@ log "Candidate configuration OK."
 validate_waf_candidate "$VALIDATE" || exit 1
 validate_dns_candidate "$VALIDATE" || exit 1
 validate_rsyslog_candidate "$VALIDATE" || exit 1
+validate_traffic_stream_candidate "$VALIDATE" || exit 1
 validate_ipvs_candidate "$VALIDATE" || exit 1
 
 #

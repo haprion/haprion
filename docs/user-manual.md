@@ -6548,9 +6548,9 @@ it, and both act only on a marked line. A local account on a node that writes a 
 file nor a log receiver, so it cannot add records to the traffic log or make the manager's import
 skip them. The system's `/dev/log` is not changed. rsyslogd runs under AppArmor, and its profile
 allows HAProxy's `dev/log` but not this socket, so step 4 adds a rule for it in
-`/etc/apparmor.d/rsyslog.d/haprion-haproxy-log` and reloads the profile. A node must have this
-release before the manager publishes a configuration that logs to the new socket: until then that
-node's structured stream has no reader.
+`/etc/apparmor.d/rsyslog.d/haprion-haproxy-log` and reloads the profile. A node whose step 4 has
+not made the socket, or whose socket other accounts can write, refuses a release that logs to it:
+the deploy fails on that node and says to run `haprion-node-prepare` there first.
 
 The generated configuration names the socket by its full path, `/var/lib/haproxy/dev/haprion-traffic`.
 A HAProxy chrooted in `/var/lib/haproxy` looks that path up inside its chroot, so step 4 puts a link

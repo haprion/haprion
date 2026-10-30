@@ -15,8 +15,12 @@ status side is `haprion-node-status`'s reader, extracted verbatim.
 
 from __future__ import annotations
 
+import grp
+import os
+import pwd
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -450,3 +454,69 @@ class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AReleaseThatLogsTrafficNeedsTheNodesSocket(Node):
+    """Review 2026-10-30-igen, R3: a new manager's release on a node an older step 4 prepared."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.socket_path = self.root / "t.sock"
+        self.link = self.root / "chroot" / "t.sock"
+        owner = f"{pwd.getpwuid(os.getuid()).pw_name}:{grp.getgrgid(os.getgid()).gr_name} 660"
+        self.script.write_text(
+            self.script.read_text()
+            .replace(
+                'TRAFFIC_SOCKET="/var/lib/haproxy/dev/haprion-traffic"',
+                f'TRAFFIC_SOCKET="{self.socket_path}"',
+            )
+            .replace(
+                'TRAFFIC_SOCKET_LINK="/var/lib/haproxy/var/lib/haproxy/dev/haprion-traffic"',
+                f'TRAFFIC_SOCKET_LINK="{self.link}"',
+            )
+            .replace(
+                'TRAFFIC_SOCKET_OWNER="haproxy:haproxy 660"', f'TRAFFIC_SOCKET_OWNER="{owner}"'
+            )
+        )
+        (self.offered / "conf.d" / "1040-frontends.cfg").write_text(
+            "frontend mgd-http\n"
+            f"    log {self.socket_path} len 2048 format local profile mgd-traffic-json local2\n"
+        )
+
+    def hold(self, mode: int, *, linked: bool = True) -> None:
+        held = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.addCleanup(held.close)
+        held.bind(str(self.socket_path))
+        self.socket_path.chmod(mode)
+        if linked:
+            self.link.parent.mkdir()
+            self.link.symlink_to("../t.sock")
+
+    def assert_refused(self) -> None:
+        code, said = self.deploy()
+        self.assertNotEqual(code, 0, said)
+        self.assertIn("run  sudo haprion-node-prepare  on this node", said)
+        self.assertEqual(self.read_release()["version"], "7")
+        self.assertEqual(self.reloads(), 0)
+
+    def test_on_a_node_without_the_socket_it_is_refused(self) -> None:
+        self.assert_refused()
+
+    def test_a_socket_open_to_every_account_is_refused(self) -> None:
+        self.hold(0o666)
+        self.assert_refused()
+
+    def test_a_socket_without_the_link_in_the_chroot_is_refused(self) -> None:
+        self.hold(0o660, linked=False)
+        self.assert_refused()
+
+    def test_with_the_socket_and_its_link_it_is_deployed(self) -> None:
+        self.hold(0o660)
+        code, said = self.deploy()
+        self.assertEqual(code, 0, said)
+        self.assertEqual(self.read_release()["version"], "8")
+
+    def test_a_release_that_logs_no_traffic_needs_no_socket(self) -> None:
+        (self.offered / "conf.d" / "1040-frontends.cfg").write_text("frontend mgd-http\n")
+        code, said = self.deploy()
+        self.assertEqual(code, 0, said)

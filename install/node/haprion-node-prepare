@@ -191,7 +191,9 @@ def answers(
 def cluster_vip() -> str | None:
     """The cluster's VIP as keepalived has it: the first address of addresses.conf.
 
-    The node status reads it the same way. Step 4 refuses to put sshd on it.
+    The node status reads keepalived.conf's virtual_ipaddress, which for the
+    product's own file is the same address; a handwritten keepalived.conf with
+    the addresses in the block gives none here. Step 4 refuses to put sshd on it.
     """
 
     try:

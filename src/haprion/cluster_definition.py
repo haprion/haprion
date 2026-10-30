@@ -1040,7 +1040,7 @@ def add(
                         raise
                     raise EnrollmentError(
                         failed.code,
-                        f"{failed} Joined before it, and rolled back on the manager: "
+                        f"{str(failed).rstrip('.')}. Joined before it, and rolled back on the manager: "
                         f"{', '.join(joined)}. Their blocks are used up; add the cluster again "
                         "with the same blocks once they answer over SSH.",
                         failed.exit_code,

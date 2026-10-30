@@ -511,6 +511,7 @@ class CreatingACluster(unittest.TestCase):
                 if not joined_before:
                     self.assertIn("node-c", str(caught.exception))
                     self.assertIn("rolled back on the manager", str(caught.exception))
+                    self.assertRegex(str(caught.exception), r"--again\. Joined before it")
 
     def test_a_block_without_the_certificate_key_is_refused_as_an_added_node_is(self) -> None:
         """Review 26-10-30, E4: one rule for creating a cluster and adding a node."""

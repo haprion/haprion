@@ -605,7 +605,7 @@ sshd_off_the_virtual_address() {
             [[ -n "$own_address" ]] || die "no route to the management host ${manager_address}"
         fi
         [[ "$own_address" != "$(cluster_value VIP "$CLUSTER")" ]] \
-            || die "this node reaches the management host from the virtual address ${own_address}"
+            || die "${own_address} is the virtual address; sshd cannot be put on it"
         ip -4 -o addr show | grep -qF " inet ${own_address}/" \
             || die "${own_address} is not an address of this node"
         ssh_port="$(awk '$1 == "port" { print $2; exit }' <<<"$sshd_settings")"

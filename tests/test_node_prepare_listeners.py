@@ -184,6 +184,7 @@ class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
     def test_the_virtual_address_is_refused_as_an_arrival_address_too(self) -> None:
         run = self.run_step(NODE_LISTEN_ADDRESS="192.0.2.20")
         self.assertEqual(run.returncode, 1)
+        self.assertIn("192.0.2.20 is the virtual address", run.stderr)
         self.assertFalse(self.drop_in.exists())
 
     def test_sshd_already_on_chosen_addresses_is_left_alone(self) -> None:
@@ -196,7 +197,7 @@ class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
     def test_the_virtual_address_is_never_written(self) -> None:
         run = self.run_step(SOURCE="192.0.2.20")
         self.assertEqual(run.returncode, 1)
-        self.assertIn("from the virtual address", run.stderr)
+        self.assertIn("192.0.2.20 is the virtual address", run.stderr)
         self.assertFalse(self.drop_in.exists())
         self.assertEqual(self.restarts(), [])
 

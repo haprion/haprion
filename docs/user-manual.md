@@ -6253,7 +6253,8 @@ node then fetches from the new address too, and the manager's host key is carrie
 
 **A manager key that was rotated, or added after the join,** reaches a joined node only by hand, because
 the manager has no way to send one. On the manager the public key is the `.pub` file next to the identity
-the runtime policy names for that purpose. On the node:
+the runtime policy names for that purpose; for `traffic_log` it is the collector's key,
+`/etc/haprion/traffic-collector/id_ed25519.pub`. On the node:
 
 ```bash
 sudo haprion-node-prepare --key status="ssh-ed25519 AAAA..."

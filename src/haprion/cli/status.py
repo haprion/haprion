@@ -35,6 +35,7 @@ from haprion.cluster_status import (
     parse_status,
     release_complete,
     traffic_stream_problem,
+    traffic_stream_unguarded,
 )
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
@@ -336,6 +337,9 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         dropped = traffic_stream_problem(status)
         if dropped is not None:
             writer.write(f"  Traffic log:  DROPPED - {dropped}\n")
+        unguarded = traffic_stream_unguarded(status)
+        if unguarded is not None:
+            writer.write(f"  Traffic log:  UNGUARDED - {unguarded}\n")
         forwarding = log_forwarding.status_line(status.get("log_forwarding"))
         if forwarding is not None:
             writer.write(f"  Log forward:  {forwarding}\n")

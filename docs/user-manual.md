@@ -3953,6 +3953,10 @@ box is not shown.
   this version, or one a revert put back. Publish the cluster again. Or the release logs to that socket
   and the node does not hold it for HAProxy alone: run `sudo haprion-node-prepare` on the node.
   `haprion-status` says the same on the node's *Traffic log* line.
+- **A node whose traffic log is unguarded**, as a warning: its release logs to HAProxy's own socket, and
+  its day file's rule still takes traffic lines from any local account. Nothing is lost, but another
+  account on the node can add records. Run `sudo haprion-node-prepare` on the node. `haprion-status`
+  says *UNGUARDED* on the node's *Traffic log* line.
 - **A traffic log receiver** whose queue on the node has neither emptied nor shrunk for three minutes, or
   holds 10 000 lines or more - with the reason the node's rsyslog gave, when it gave one. One that dropped
   lines in the last hour is critical.
@@ -6640,7 +6644,11 @@ not made the socket, or whose socket other accounts can write, refuses a release
 the deploy fails on that node and says to run `haprion-node-prepare` there first. The other way
 round - a node prepared with this release while its configuration was published by an older
 manager - the node drops the traffic log until the cluster is published again, and *Needs
-attention* says so. A node still on the old package cannot make that refusal itself, so the deploy
+attention* says so. Step 4 writes the day file's rule whenever the traffic log is on, so
+`sudo haprion-node-prepare` after an update brings it to the rule that checks the mark; a
+traffic log turned off with `haprion-traffic-log-enable --disable` stays off. A node whose release
+logs to the socket while its day file's rule still takes unmarked lines is listed under *Needs
+attention* as unguarded until the step has run there. A node still on the old package cannot make that refusal itself, so the deploy
 refuses it first: it stops before any node is touched and names the nodes that need
 `sudo haprion-node-prepare` after an update. After an upgrade, update and prepare the nodes, then
 publish each cluster.

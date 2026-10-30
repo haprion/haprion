@@ -851,11 +851,17 @@ done <<<"$wildcard_report"
 #
 # The traffic log is a base function (Fas 18, 26-10-16): a node given the
 # collector's key turns its own route on, so the records reach the manager
-# with nothing done by hand. Run only when the rule is not already the one the
-# script writes, since turning it on restarts rsyslog.
+# with nothing done by hand. A node whose route is already on - the rule is
+# there - gets the rule of this package too, key or not: prepared again
+# (haprion-node-prepare reads no key out of node.conf) it would otherwise keep
+# an older rule, one that writes a line under the traffic tag whichever
+# account sent it (B403, measured on a node 2026-10-30). A route turned off
+# (`haprion-traffic-log-enable --disable` removes the rule) stays off. Run only
+# when the rule is not already the one the script writes, since writing it
+# restarts rsyslog.
 #
 TRAFFIC_RULE="/etc/rsyslog.d/48-haprion-traffic.conf"
-if [[ -n "${TRAFFIC_LOG_PUBKEY:-}" ]]; then
+if [[ -n "${TRAFFIC_LOG_PUBKEY:-}" || -e "$TRAFFIC_RULE" ]]; then
     if cmp -s <("${SBIN}/haprion-traffic-log-enable" --print) "$TRAFFIC_RULE"; then
         log "  ok       ${TRAFFIC_RULE}"
     else

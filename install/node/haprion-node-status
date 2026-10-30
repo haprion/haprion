@@ -1363,15 +1363,23 @@ SHM_STATS_FILE = re.compile(r"^\s*shm-stats-file\s+(\S+)\s*(?:#.*)?$")
 # version has run, the node's rsyslog keeps a traffic line only when it came in
 # on HAProxy's own socket. A release published by an older manager - or one a
 # revert put back - still logs the stream to /dev/log, and every record of it
-# is then dropped on this node until the cluster is published again. The node
-# says what it has; the manager says what that means
-# (`cluster_status.traffic_stream_problem`).
+# is then dropped on this node until the cluster is published again. The other
+# way round, a release that logs to the socket protects nothing while the day
+# file's rule is still one from before: that rule takes the traffic tag from
+# any local account. The node says what it has; the manager says what that
+# means (`cluster_status.traffic_stream_problem`, `traffic_stream_unguarded`).
 #
 CURRENT_CONFIG = Path("/etc/haproxy/current")
 TRAFFIC_RULE = Path("/etc/rsyslog.d/48-haprion-traffic.conf")
 TRAFFIC_SOCKET = Path("/var/lib/haproxy/dev/haprion-traffic")
 TRAFFIC_SOCKET_LINK = Path("/var/lib/haproxy/var/lib/haproxy/dev/haprion-traffic")
-TRAFFIC_ORIGIN = "$!haprion!origin"
+#
+# A rule keeps only HAProxy's lines when a condition, not a comment, asks for
+# the mark: the day file's rule and the forwarding rule each open with one.
+#
+TRAFFIC_MARK_CONDITION = re.compile(
+    r'^[ \t]*if[ \t]*\(.*\$!haprion!origin[ \t]*==[ \t]*"haproxy"', re.MULTILINE
+)
 TRAFFIC_LOG_LINE = re.compile(
     r"^[ \t]*log[ \t]+(\S+)[ \t].*\bprofile[ \t]+mgd-traffic-json\b", re.MULTILINE
 )
@@ -1384,14 +1392,31 @@ def _text(path: Path) -> str:
         return ""
 
 
+def marked_only(path: Path) -> bool | None:
+    """Whether an rsyslog rule keeps only lines that came in on HAProxy's socket; None when absent."""
+
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return False
+    return TRAFFIC_MARK_CONDITION.search(text) is not None
+
+
 def read_traffic_stream() -> dict[str, Any] | None:
     """Where the release logs the traffic stream and whether rsyslog here takes it; null for none.
 
     `to_socket`: every structured `log` line names HAProxy's own socket.
     `marked_only`: the day file's or the forwarding rule keeps only a line
-    that came in there. `socket`: the socket is there for HAProxy alone and
-    HAProxy's chroot reaches it through the link step 4 makes, as
-    `haprion-pull-deploy` checks before it takes a release.
+    that came in there - so a stream logged elsewhere is dropped by it.
+    `day_rule_marked_only` and `forward_marked_only`: each of the two rules on
+    its own, null when it is not there. A day-file rule from before B403 takes
+    a line under the traffic tag from any local account, whatever the release
+    says; step 4 writes the current one (B403, measured on a node 2026-10-30).
+    `socket`: the socket is there for HAProxy alone and HAProxy's chroot
+    reaches it through the link step 4 makes, as `haprion-pull-deploy` checks
+    before it takes a release.
     """
 
     files = [CURRENT_CONFIG / "haproxy.cfg", *sorted((CURRENT_CONFIG / "conf.d").glob("*.cfg"))]
@@ -1409,11 +1434,13 @@ def read_traffic_stream() -> dict[str, Any] | None:
         )
     except (OSError, KeyError):
         ready = False
+    day_rule = marked_only(TRAFFIC_RULE)
+    forward = marked_only(RSYSLOG_FORWARD)
     return {
         "to_socket": all(target == str(TRAFFIC_SOCKET) for target in targets),
-        "marked_only": any(
-            TRAFFIC_ORIGIN in _text(path) for path in (TRAFFIC_RULE, RSYSLOG_FORWARD)
-        ),
+        "marked_only": day_rule is True or forward is True,
+        "day_rule_marked_only": day_rule,
+        "forward_marked_only": forward,
         "socket": ready,
     }
 
@@ -1424,7 +1451,14 @@ def traffic_stream_summary(stream: dict[str, Any] | None) -> str:
     if stream is None:
         return "not logged by this release"
     if stream["to_socket"]:
-        return "to HAProxy's socket" if stream["socket"] else "DROPPED: HAProxy's socket is missing"
+        if not stream["socket"]:
+            return "DROPPED: HAProxy's socket is missing"
+        if stream["day_rule_marked_only"] is False:
+            return (
+                "to HAProxy's socket; the day file's rule also takes lines from other"
+                " accounts: run  sudo haprion-node-prepare"
+            )
+        return "to HAProxy's socket"
     if stream["marked_only"]:
         return "DROPPED: the release logs to /dev/log; publish the cluster again"
     return "to /dev/log"

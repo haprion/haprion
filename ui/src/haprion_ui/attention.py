@@ -26,7 +26,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import address_ranges, log_forwarding
-from haprion.cluster_status import traffic_stream_problem
+from haprion.cluster_status import traffic_stream_problem, traffic_stream_unguarded
 from haprion.node_package import short_version
 
 from haprion_ui import jobs as jobs_module
@@ -684,11 +684,13 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
 
 
 def from_traffic_stream(status_rows: Iterable[Any], *, unread: Collection[str] = ()) -> list[Item]:
-    """Each node that drops every traffic record its release logs (review 2026-10-30-igen, R3).
+    """Each node that drops its traffic stream (R3) or leaves its day file unguarded (B403).
 
-    The reading is the engine's (`cluster_status.traffic_stream_problem`), the
-    same `haprion-status` prints. Critical: nothing reaches the node's own log
-    or any receiver until it is put right, and nothing else says so. A cluster
+    Unguarded: the day file still takes traffic lines from any local account.
+    The readings are the engine's (`cluster_status.traffic_stream_problem`,
+    `traffic_stream_unguarded`), the same `haprion-status` prints. Dropping is
+    critical: nothing reaches the node's own log or any receiver until it is
+    put right, and nothing else says so (review 2026-10-30-igen). A cluster
     whose reading is old (`unread`) is not judged by it: its own row says it
     was not read (review 2026-10-30, E5).
     """
@@ -705,19 +707,35 @@ def from_traffic_stream(status_rows: Iterable[Any], *, unread: Collection[str] =
             if not isinstance(status, Mapping):
                 continue
             reason = traffic_stream_problem(status)
-            if reason is None:
-                continue
-            items.append(
-                Item(
-                    kind="traffic_stream",
-                    severity="critical",
-                    cluster=row.cluster,
-                    subject=str(entry.get("name", "")),
-                    message=f"drops its traffic log: {reason}",
-                    since=None,
-                    link=card_link(row.cluster),
+            if reason is not None:
+                items.append(
+                    Item(
+                        kind="traffic_stream",
+                        severity="critical",
+                        cluster=row.cluster,
+                        subject=str(entry.get("name", "")),
+                        message=f"drops its traffic log: {reason}",
+                        since=None,
+                        link=card_link(row.cluster),
+                    )
                 )
-            )
+            #
+            # A warning: nothing is lost, and the node takes HAProxy's lines;
+            # what is missing is the guard against another account's (B403).
+            #
+            unguarded = traffic_stream_unguarded(status)
+            if unguarded is not None:
+                items.append(
+                    Item(
+                        kind="traffic_stream",
+                        severity="warning",
+                        cluster=row.cluster,
+                        subject=str(entry.get("name", "")),
+                        message=f"traffic log unguarded: {unguarded}",
+                        since=None,
+                        link=card_link(row.cluster),
+                    )
+                )
     return items
 
 

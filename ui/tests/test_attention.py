@@ -567,7 +567,7 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
 class ANodeThatDropsItsTrafficStream(unittest.TestCase):
     """Review 2026-10-30-igen, R3: nodes prepared first, or a revert, drop every record."""
 
-    def items(self, **stream: bool) -> list[Any]:
+    def items(self, **stream: bool | None) -> list[Any]:
         row = SimpleNamespace(
             cluster="alpha",
             result={
@@ -600,6 +600,31 @@ class ANodeThatDropsItsTrafficStream(unittest.TestCase):
     def test_the_dashboard_lists_it(self) -> None:
         source = (Path(attention.__file__).parent / "views.py").read_text()
         self.assertIn("attention.from_traffic_stream(status_rows, unread=unread)", source)
+
+    def test_a_day_file_that_takes_any_account_s_lines_is_a_warning(self) -> None:
+        """B403, measured on a node 2026-10-30: upgraded, prepared again, old day-file rule."""
+
+        items = self.items(
+            to_socket=True,
+            marked_only=True,
+            day_rule_marked_only=False,
+            forward_marked_only=True,
+            socket=True,
+        )
+        self.assertEqual(
+            [(item.kind, item.severity, item.subject) for item in items],
+            [("traffic_stream", "warning", "node-a")],
+        )
+        self.assertIn("run  sudo haprion-node-prepare  on the node", items[0].message)
+
+    def test_a_current_day_file_or_none_is_not_listed(self) -> None:
+        for day_rule in (True, None):
+            self.assertEqual(
+                self.items(
+                    to_socket=True, marked_only=True, day_rule_marked_only=day_rule, socket=True
+                ),
+                [],
+            )
 
 
 class AQueueThatIsNotEmptied(unittest.TestCase):

@@ -742,6 +742,46 @@ class CallerTests(HelperFixture):
             out,
         )
 
+    def test_a_node_whose_day_file_takes_any_account_s_lines_says_what_to_do(self) -> None:
+        """B403, measured on a node 2026-10-30: what the interface's Needs attention says."""
+
+        guarded = {"to_socket": True, "marked_only": True, "socket": True}
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a",
+                        owner=True,
+                        release_hash=TARGET_HASH,
+                        traffic_stream={
+                            **guarded,
+                            "day_rule_marked_only": False,
+                            "forward_marked_only": True,
+                        },
+                    ),
+                    "node-b": node_status(
+                        "node-b",
+                        owner=False,
+                        release_hash=TARGET_HASH,
+                        traffic_stream={
+                            **guarded,
+                            "day_rule_marked_only": True,
+                            "forward_marked_only": None,
+                        },
+                    ),
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertEqual(out.count("Traffic log:"), 1)
+        self.assertIn(
+            "Traffic log:  UNGUARDED - its day file's rule also takes traffic lines from other"
+            " local accounts; run  sudo haprion-node-prepare  on the node",
+            out,
+        )
+
     def test_a_node_to_prepare_again_is_named_with_the_command(self) -> None:
         """B363: the CLI says what the interface's Needs attention says."""
 

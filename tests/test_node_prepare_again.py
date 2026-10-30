@@ -11,6 +11,7 @@ import base64
 import importlib.machinery
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -484,6 +485,93 @@ class TheStatusSaysIt(TheRecordOfTheStep):
         self.assertIn('"preparation": read_preparation(),', text)
         schema = (BASE / "schemas/v1/haprion-status.schema.json").read_text()
         self.assertIn('"preparation": {', schema)
+
+
+class TheTrafficRuleIsThePackagesWhenTheRouteIsOn(unittest.TestCase):
+    """B403, measured on a node 2026-10-30: prepared again, the node kept the old day-file rule.
+
+    Step 4 refreshed 48-haprion-traffic.conf only when the answers carried the
+    collector's key, and the answers haprion-node-prepare reads out of
+    node.conf never do. The step's own block runs here against the
+    prepare-again answers, with the enable script standing in.
+    """
+
+    current: str
+    old: str
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.current = subprocess.run(
+            [str(INSTALL / "node" / "haprion-traffic-log-enable"), "--print"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        #
+        # The day-file rule as it was before B403: any line under the tag.
+        #
+        cls.old = cls.current.replace('$!haprion!origin == "haproxy" and ', "")
+        assert cls.old != cls.current, "the rule no longer has the origin condition"
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="traffic-rule-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.sbin = self.root / "sbin"
+        self.sbin.mkdir()
+        self.rule = self.root / "48-haprion-traffic.conf"
+        self.wanted = self.root / "wanted.conf"
+        self.wanted.write_text(self.current)
+        self.calls = self.root / "calls"
+        enable = self.sbin / "haprion-traffic-log-enable"
+        enable.write_text(
+            "#!/bin/bash\n"
+            f'[[ "${{1:-}}" == --print ]] && exec cat {self.wanted}\n'
+            f'echo "enable $*" >> {self.calls}\n'
+            f"cp {self.wanted} {self.rule}\n"
+        )
+        enable.chmod(0o755)
+
+    def block(self) -> str:
+        text = (INSTALL / "04-node-prepare").read_text(encoding="utf-8")
+        found = re.search(
+            r'^TRAFFIC_RULE="/etc/rsyslog\.d/48-haprion-traffic\.conf"\n.*?^fi\n',
+            text,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert found, "04-node-prepare no longer has the traffic rule's block"
+        return found.group(0).replace("/etc/rsyslog.d/48-haprion-traffic.conf", str(self.rule))
+
+    def run_step(self, extra: str = "") -> list[str]:
+        answers, _ = PREPARE.answers(NODE_CONF)
+        (self.root / "answers.env").write_text(answers + extra, encoding="utf-8")
+        script = (
+            "set -Eeuo pipefail\n"
+            'log() { echo "$*"; }\n'
+            'die() { echo "DIE $*"; exit 3; }\n'
+            f"source {self.root / 'answers.env'}\n"
+            f"SBIN={self.sbin}\n"
+            f"{self.block()}"
+        )
+        subprocess.run(["/bin/bash", "-c", script], check=True, capture_output=True, text=True)
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def test_prepared_again_an_older_rule_is_rewritten(self) -> None:
+        self.rule.write_text(self.old)
+        self.assertEqual(self.run_step(), ["enable "])
+        self.assertEqual(self.rule.read_text(), self.current)
+
+    def test_prepared_again_the_current_rule_is_left_and_rsyslog_not_restarted(self) -> None:
+        self.rule.write_text(self.current)
+        self.assertEqual(self.run_step(), [])
+
+    def test_a_route_turned_off_stays_off(self) -> None:
+        self.assertEqual(self.run_step(), [])
+        self.assertFalse(self.rule.exists())
+
+    def test_the_collector_s_key_turns_it_on(self) -> None:
+        self.assertEqual(
+            self.run_step("TRAFFIC_LOG_PUBKEY='ssh-ed25519 AAAAexample'\n"), ["enable "]
+        )
 
 
 if __name__ == "__main__":

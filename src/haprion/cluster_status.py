@@ -551,6 +551,34 @@ def traffic_stream_problem(status: Mapping[str, Any]) -> str | None:
     return None
 
 
+def traffic_stream_unguarded(status: Mapping[str, Any]) -> str | None:
+    """Why the node's day file takes traffic lines from any local account, or None (B403).
+
+    The reason only, as `traffic_stream_problem`'s. The release logs to
+    HAProxy's own socket, which is there, and the day file's rule is still one
+    from before that socket: it writes a line under the traffic tag whoever
+    sent it, so the socket protects nothing. Step 4 writes the current rule
+    whenever the traffic log is on (measured on a node 2026-10-30: an upgrade
+    prepared again by an older step kept the old rule, and nothing said so).
+    A node that does not report the rule on its own, whose traffic log is
+    off, or that drops the stream anyway (`traffic_stream_problem`) says
+    nothing here. The forwarding rule is not judged: it comes with the
+    release, and one older than the release is `forwarding_current`'s.
+    """
+
+    stream = status.get("traffic_stream")
+    if not isinstance(stream, Mapping):
+        return None
+    if stream.get("to_socket") is not True or stream.get("socket") is not True:
+        return None
+    if stream.get("day_rule_marked_only") is False:
+        return (
+            "its day file's rule also takes traffic lines from other local accounts;"
+            " run  sudo haprion-node-prepare  on the node"
+        )
+    return None
+
+
 def release_complete(status: Mapping[str, Any]) -> bool | None:
     """Did every step after the HAProxy reload succeed on the node?
 

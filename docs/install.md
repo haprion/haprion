@@ -391,16 +391,20 @@ writable by the `haproxy` account alone (mode `0660`). `net.unix.max_dgram_qlen`
 `/etc/sysctl.d/60-haproxy.conf`; taking a socket over restarts rsyslog once. `47-haprion-forward.conf` binds an
 rsyslog input and ruleset to the traffic socket and marks what arrives there as HAProxy's; the forwarding rule and
 `48-haprion-traffic.conf` act only on a marked line, so the same tag written to `/dev/log` by another local account
-is dropped. rsyslogd's AppArmor profile gets a rule for the traffic socket in
+is dropped. Step 4 writes `48-haprion-traffic.conf` whenever the traffic log is on: when the answers carry the
+collector's key, and when the rule is already there, as on a node prepared again. A route turned off with
+`haprion-traffic-log-enable --disable` stays off. rsyslogd's AppArmor profile gets a rule for the traffic socket in
 `/etc/apparmor.d/rsyslog.d/haprion-haproxy-log`. HAProxy logs the stream to the socket's full path; for a HAProxy
 chrooted in `/var/lib/haproxy`, step 4 links the same path inside the chroot to the socket. A publish that logs the
 stream refuses a core that chroots HAProxy elsewhere or runs it as an account that may not write the socket
 (`traffic_log_unreachable`). The manager's deploy refuses such a release for a node whose package is too old to
 report `traffic_stream`, before anything is sent. `haprion-pull-deploy` refuses a release that logs to the traffic socket on a node
 where the socket or its link is missing, or the socket is not `haproxy:haproxy` mode `0660`. The node's status
-reports `traffic_stream`: whether the release logs to the socket, whether the node keeps only marked lines, and
-whether the socket is held. A node that keeps only marked lines while its release logs elsewhere drops the traffic
-log; *Needs attention* lists it until the cluster is published again.
+reports `traffic_stream`: whether the release logs to the socket, whether the day file's rule and the forwarding rule
+each keep only marked lines, and whether the socket is held. A node that keeps only marked lines while its release
+logs elsewhere drops the traffic log; *Needs attention* lists it until the cluster is published again. A node whose
+release logs to the socket while its day file's rule still takes unmarked lines is listed as a warning until
+`sudo haprion-node-prepare` has run on it.
 
 ## Step by step, without haprion-setup
 

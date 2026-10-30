@@ -6504,17 +6504,24 @@ How the step treats sshd:
 Any other program listening on every address is reported, not changed, and a publish refuses an
 object on its port ([Ports the cluster takes itself](#ports-the-cluster-takes-itself)).
 
-**HAProxy's log socket survives an rsyslog restart.** HAProxy runs chrooted (locked into)
-`/var/lib/haproxy`, so its `log /dev/log` is really `/var/lib/haproxy/dev/log`. Ubuntu's
-`/etc/rsyslog.d/49-haproxy.conf` has rsyslog listen on that socket. Left to rsyslog, the socket
-disappears whenever rsyslog stops, and every line HAProxy writes until rsyslog is back is lost -
-from the node's day file and from every log receiver. So `04-node-prepare` has systemd hold the
-socket instead, the way `syslog.socket` holds the system log's:
+**HAProxy's log socket survives an rsyslog restart.** HAProxy chrooted (locked into)
+`/var/lib/haproxy`, as Ubuntu's packaged configuration has it, reaches its `log /dev/log` at
+`/var/lib/haproxy/dev/log`. Ubuntu's `/etc/rsyslog.d/49-haproxy.conf` has rsyslog listen on that
+socket. Left to rsyslog, the socket disappears whenever rsyslog stops, and every line HAProxy writes
+until rsyslog is back is lost - from the node's day file and from every log receiver. So
+`04-node-prepare` has systemd hold the socket instead, the way `syslog.socket` holds the system
+log's:
 
 ```text
 # /etc/systemd/system/haprion-haproxy-log.socket
 [Socket]
 ListenDatagram=/var/lib/haproxy/dev/log
+SocketMode=0666
+ReceiveBuffer=16M
+Service=rsyslog.service
+
+# /etc/systemd/system/haprion-traffic-log.socket
+[Socket]
 ListenDatagram=/var/lib/haproxy/dev/haprion-traffic
 SocketUser=haproxy
 SocketGroup=haproxy
@@ -6526,11 +6533,12 @@ Service=rsyslog.service
 net.unix.max_dgram_qlen = 8192
 ```
 
-When rsyslog starts, systemd hands it the socket. While rsyslog restarts, HAProxy's lines wait in
-the socket, so none are lost. The queue length is how many lines can wait: enough for a restart at
-25 000 requests a second. Like `syslog.socket`, the unit also starts rsyslog when a line arrives
+When rsyslog starts, systemd hands it the sockets. While rsyslog restarts, HAProxy's lines wait in
+them, so none are lost. The queue length is how many lines can wait: enough for a restart at
+25 000 requests a second. Like `syslog.socket`, the units also start rsyslog when a line arrives
 and rsyslog is not running. If `49-haproxy.conf` lacks its listen line, the step warns and leaves
-the socket to rsyslog, and that node can lose lines during an rsyslog restart.
+the first socket to rsyslog, and that node can lose classic log lines during an rsyslog restart.
+The second socket is held on every node.
 
 **Only HAProxy's own socket is trusted for traffic lines.** The structured stream goes to the second
 socket above, `haprion-traffic`, which only the `haproxy` account can write. The rsyslog rule that
@@ -6538,10 +6546,11 @@ listens there marks each line as HAProxy's before the forwarding rule and the da
 it, and both act only on a marked line. A local account on a node that writes a line under the tag
 `haproxy-traffic` to `/dev/log` (`logger -t haproxy-traffic`) therefore reaches neither the day
 file nor a log receiver, so it cannot add records to the traffic log or make the manager's import
-skip them. A node must have this release before the manager publishes a configuration that logs to
-the new socket: until then that node's structured stream has no reader. If `49-haproxy.conf` lacks
-its listen line, step 4 warns that the traffic socket is then made by rsyslog and open to every local
-account.
+skip them. The system's `/dev/log` is not changed. rsyslogd runs under AppArmor, and its profile
+allows HAProxy's `dev/log` but not this socket, so step 4 adds a rule for it in
+`/etc/apparmor.d/rsyslog.d/haprion-haproxy-log` and reloads the profile. A node must have this
+release before the manager publishes a configuration that logs to the new socket: until then that
+node's structured stream has no reader.
 
 **The HAProxy unit must load `conf.d`, and load it exactly once.**
 

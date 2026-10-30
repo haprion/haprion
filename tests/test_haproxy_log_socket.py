@@ -44,11 +44,15 @@ HANDOVER = (
 )
 
 
-def unit_text() -> str:
+def unit_text(unit: str = "LOG_SOCKET_UNIT") -> str:
+    """The socket unit 04-node-prepare holds under this variable, its paths filled in."""
+
     text = NODE_PREPARE.read_text(encoding="utf-8")
-    found = re.search(r'install_file "\$LOG_SOCKET_FILE" root:root 644 "(.*?)"\n', text, re.DOTALL)
+    found = re.search(
+        rf'^ *hold_log_socket "\${unit}" "\$[A-Z_]+" "(.*?)"\n', text, re.DOTALL | re.MULTILINE
+    )
     if found is None:
-        raise AssertionError("04-node-prepare installs no log socket unit")
+        raise AssertionError(f"04-node-prepare holds no socket unit for {unit}")
     path = re.search(r'^LOG_SOCKET_PATH="([^"]+)"$', text, re.MULTILINE)
     assert path is not None
     traffic = re.search(r'^TRAFFIC_SOCKET_PATH="([^"]+)"$', text, re.MULTILINE)
@@ -57,6 +61,22 @@ def unit_text() -> str:
         found.group(1)
         .replace("${LOG_SOCKET_PATH}", path.group(1))
         .replace("${TRAFFIC_SOCKET_PATH}", traffic.group(1))
+    )
+
+
+def apparmor_rule() -> str:
+    """The AppArmor rule 04-node-prepare writes for rsyslogd, its paths filled in."""
+
+    text = NODE_PREPARE.read_text(encoding="utf-8")
+    found = re.search(r'^RSYSLOG_APPARMOR_TEXT="(.*?)"\n', text, re.DOTALL | re.MULTILINE)
+    if found is None:
+        raise AssertionError("04-node-prepare writes no AppArmor rule for rsyslogd")
+    traffic = re.search(r'^TRAFFIC_SOCKET_PATH="([^"]+)"$', text, re.MULTILINE)
+    assert traffic is not None
+    return (
+        found.group(1)
+        .replace("${TRAFFIC_SOCKET_PATH}", traffic.group(1))
+        .replace("${RSYSLOG_FORWARD_RULE}", "/etc/rsyslog.d/47-haprion-forward.conf")
     )
 
 
@@ -73,37 +93,58 @@ def traffic_input(socket_path: str) -> str:
 class TheNodeHoldsTheSocket(unittest.TestCase):
     def test_the_unit_listens_where_ubuntus_rule_has_rsyslog_listen(self) -> None:
         unit = unit_text()
-        self.assertIn("ListenDatagram=" + UBUNTU_LINE.split()[-1], unit.splitlines())
-        self.assertIn("Service=rsyslog.service", unit.splitlines())
-        #
-        # Only HAProxy writes either socket: the rule on the traffic one trusts
-        # what arrives there (review 2026-10-30, E1).
-        #
         self.assertEqual(
             [line for line in unit.splitlines() if line.startswith("ListenDatagram=")],
-            [
-                "ListenDatagram=/var/lib/haproxy/dev/log",
-                "ListenDatagram=/var/lib/haproxy/dev/haprion-traffic",
-            ],
+            ["ListenDatagram=" + UBUNTU_LINE.split()[-1]],
         )
-        for line in ("SocketUser=haproxy", "SocketGroup=haproxy", "SocketMode=0660"):
+        self.assertIn("Service=rsyslog.service", unit.splitlines())
+        #
+        # Open to every account, as rsyslog makes it: a core that runs HAProxy
+        # as another account still logs there, and nothing trusts its lines.
+        #
+        self.assertIn("SocketMode=0666", unit.splitlines())
+
+    def test_the_traffic_socket_is_held_for_haproxy_alone(self) -> None:
+        """Review 2026-10-30, E1: only HAProxy writes the socket whose lines are trusted."""
+
+        unit = unit_text("TRAFFIC_SOCKET_UNIT")
+        self.assertEqual(
+            [line for line in unit.splitlines() if line.startswith("ListenDatagram=")],
+            ["ListenDatagram=/var/lib/haproxy/dev/haprion-traffic"],
+        )
+        for line in (
+            "SocketUser=haproxy",
+            "SocketGroup=haproxy",
+            "SocketMode=0660",
+            "Service=rsyslog.service",
+        ):
             self.assertIn(line, unit.splitlines())
-        self.assertNotIn("SocketMode=0666", unit)
+
+    def test_every_node_holds_the_traffic_socket(self) -> None:
+        """Not only one whose 49-haproxy.conf listens: else rsyslog makes it, open to all.
+
+        Fails with the socket in the ordinary unit, which a node without
+        Ubuntu's listen line never gets (review 2026-10-30-igen, R1).
+        """
+
+        text = NODE_PREPARE.read_text(encoding="utf-8")
+        self.assertRegex(text, r'(?m)^hold_log_socket "\$TRAFFIC_SOCKET_UNIT" ')
+        check = text.index('grep -qsx "\\$AddUnixListenSocket ${LOG_SOCKET_PATH}"')
+        end = text.index("\nfi\n", check)
+        self.assertGreater(text.index('hold_log_socket "$TRAFFIC_SOCKET_UNIT"'), end)
 
     def test_haproxy_logs_the_traffic_stream_to_the_socket_only_it_can_write(self) -> None:
-        """The generated `log` target, seen from the chroot, is the unit's second socket."""
+        """The generated `log` target, seen from the chroot, is the traffic unit's socket."""
 
         from haprion.generate import TRAFFIC_LOG_SOCKET
 
-        listened = [
-            line.split("=", 1)[1]
-            for line in unit_text().splitlines()
-            if line.startswith("ListenDatagram=")
-        ]
-        self.assertEqual("/var/lib/haproxy" + TRAFFIC_LOG_SOCKET, listened[1])
         self.assertEqual(
-            listened[1],
-            re.search(r'^TRAFFIC_SOCKET_PATH="([^"]+)"$', NODE_PREPARE.read_text(), re.M)[1],  # type: ignore[index]
+            ["ListenDatagram=/var/lib/haproxy" + TRAFFIC_LOG_SOCKET],
+            [
+                line
+                for line in unit_text("TRAFFIC_SOCKET_UNIT").splitlines()
+                if line.startswith("ListenDatagram=")
+            ],
         )
 
     def test_the_check_names_ubuntus_line_exactly(self) -> None:
@@ -123,8 +164,67 @@ class TheNodeHoldsTheSocket(unittest.TestCase):
         # Read when a socket is made: the setting has to come first.
         #
         self.assertLess(
-            text.index("net.unix.max_dgram_qlen="), text.index('systemctl start "$LOG_SOCKET_UNIT"')
+            text.index("net.unix.max_dgram_qlen="), text.index('hold_log_socket "$LOG_SOCKET_UNIT"')
         )
+        self.assertLess(
+            text.index("net.unix.max_dgram_qlen="),
+            text.index('hold_log_socket "$TRAFFIC_SOCKET_UNIT"'),
+        )
+
+
+PROFILE = Path("/etc/apparmor.d/usr.sbin.rsyslogd")
+
+
+class RsyslogMayReadTheTrafficSocket(unittest.TestCase):
+    """rsyslogd's AppArmor profile names HAProxy's dev/log and not the traffic socket.
+
+    Review 2026-10-30-igen, R1: step 4 writes a rule for it into the profile's
+    include directory and loads it before rsyslog first restarts on the input.
+    """
+
+    def test_the_rule_names_the_traffic_socket_as_ubuntu_names_dev_log(self) -> None:
+        self.assertIn("/var/lib/haproxy/dev/haprion-traffic rwl,", apparmor_rule().splitlines())
+
+    def test_the_rule_is_loaded_before_rsyslog_restarts_on_the_input(self) -> None:
+        text = NODE_PREPARE.read_text(encoding="utf-8")
+        self.assertIn('RSYSLOG_APPARMOR="/etc/apparmor.d/rsyslog.d/haprion-haproxy-log"', text)
+        written = text.index('install -o root -g root -m 644 /dev/stdin "$RSYSLOG_APPARMOR"')
+        reloaded = text.index("/usr/lib/rsyslog/reload-apparmor-profile", written)
+        self.assertLess(text.index("${TRAFFIC_INPUT}"), written)
+        self.assertLess(reloaded, text.index("systemctl restart rsyslog.service"))
+
+    @unittest.skipUnless(
+        PROFILE.is_file() and shutil.which("apparmor_parser"), "no rsyslogd profile here"
+    )
+    def test_the_installed_profile_takes_the_rule(self) -> None:
+        """Parsed into the real profile, through its `rsyslog.d` include, never loaded."""
+
+        import fnmatch
+
+        parser = shutil.which("apparmor_parser")
+        assert parser is not None
+        rules = PROFILE.read_text(encoding="utf-8")
+        self.assertIn("include if exists <rsyslog.d>", rules)
+        self.assertIn("/var/lib/*/dev/log", rules)
+        self.assertFalse(
+            fnmatch.fnmatchcase("/var/lib/haproxy/dev/haprion-traffic", "/var/lib/*/dev/log")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "rsyslog.d").mkdir()
+            (Path(directory) / "rsyslog.d" / "haprion-haproxy-log").write_text(
+                apparmor_rule() + "\n"
+            )
+            parsed = subprocess.run(
+                [
+                    parser, "-Q", "-T", "-p",
+                    "-I", directory, "-I", str(PROFILE.parent), str(PROFILE),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )  # fmt: skip
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+        self.assertIn("/var/lib/haproxy/dev/haprion-traffic rwl,", parsed.stdout.splitlines())
 
 
 @unittest.skipUnless(shutil.which("rsyslogd"), "rsyslog is not installed here")

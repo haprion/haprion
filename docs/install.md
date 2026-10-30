@@ -379,14 +379,16 @@ there. The deploy copies that file from the release into `/etc/rsyslog.d/haprion
 profile cannot read the releases under `/etc/haproxy`. The queues are in rsyslog's work directory
 (`/var/spool/rsyslog` on Ubuntu). Receivers over TLS need `rsyslog-gnutls`, which the node package depends on. A
 release that names receivers is refused on a node without the include. A site that already loads `impstats` itself
-gets a refusal from `rsyslogd -N1` when `04-node-prepare` runs. The log socket is `haprion-haproxy-log.socket`,
-with `net.unix.max_dgram_qlen` set in `/etc/sysctl.d/60-haproxy.conf`; taking it over restarts rsyslog once.
-The unit holds two sockets in HAProxy's chroot, both writable by the `haproxy` account alone (mode `0660`):
-`dev/log` for the ordinary log and `dev/haprion-traffic` for the structured traffic stream. `47-haprion-forward.conf`
-binds an rsyslog input and ruleset to the second one and marks what arrives there as HAProxy's; the forwarding
-rule and `48-haprion-traffic.conf` act only on a marked line, so the same tag written to `/dev/log` by another
-local account is dropped. Nodes take this release before the manager publishes a configuration whose HAProxy
-logs to `/dev/haprion-traffic`.
+gets a refusal from `rsyslogd -N1` when `04-node-prepare` runs. Two units hold HAProxy's log sockets in its chroot
+across rsyslog restarts: `haprion-haproxy-log.socket` holds `dev/log` for the classic log (when `49-haproxy.conf`
+listens there) and `haprion-traffic-log.socket` holds `dev/haprion-traffic` for the structured traffic stream,
+writable by the `haproxy` account alone (mode `0660`). `net.unix.max_dgram_qlen` is set in
+`/etc/sysctl.d/60-haproxy.conf`; taking a socket over restarts rsyslog once. `47-haprion-forward.conf` binds an
+rsyslog input and ruleset to the traffic socket and marks what arrives there as HAProxy's; the forwarding rule and
+`48-haprion-traffic.conf` act only on a marked line, so the same tag written to `/dev/log` by another local account
+is dropped. rsyslogd's AppArmor profile gets a rule for the traffic socket in
+`/etc/apparmor.d/rsyslog.d/haprion-haproxy-log`. Nodes take this release before the manager publishes a
+configuration whose HAProxy logs to the traffic socket.
 
 ## Step by step, without haprion-setup
 

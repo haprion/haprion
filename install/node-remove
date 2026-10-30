@@ -64,6 +64,7 @@ FIXED_PATHS = (
     "/etc/rsyslog.d/48-haprion-traffic.conf",
     "/etc/rsyslog.d/haprion",
     "/etc/apparmor.d/rsyslog.d/haprion-traffic",
+    "/etc/apparmor.d/rsyslog.d/haprion-haproxy-log",
     "/etc/logrotate.d/haprion-rsyslog-stats",
     "/etc/haprion",
     "/var/lib/haprion-node",

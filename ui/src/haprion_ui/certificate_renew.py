@@ -120,6 +120,9 @@ def payload(renewal: Renewal) -> tuple[str, dict[str, Any]]:
         if row.interface:
             # The interface's own certificate (B188): no targets, the mark kept.
             body["interface"] = True
+        if row.exportable:
+            # An exportable one has no targets either (B255): the mark is its way out.
+            body["exportable"] = True
         return "cert_scep", body
     raise SelectionProblem("This certificate is renewed with a file, not a job.")
 

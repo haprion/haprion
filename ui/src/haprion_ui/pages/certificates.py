@@ -1230,8 +1230,10 @@ def build_router(config: Config) -> APIRouter:
             operations.prepare(
                 operation=operation, cluster=None, request_id=uuid4(), payload=payload
             )
-        except operations.BadPayload:
-            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        except operations.BadPayload as refused:
+            return _certificate_renew_page(
+                request, gate, chosen=tuple(certificate), problem=str(refused)
+            )
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(

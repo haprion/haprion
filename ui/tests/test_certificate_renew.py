@@ -10,8 +10,9 @@ from __future__ import annotations
 import unittest
 from typing import Any
 from unittest import mock
+from uuid import uuid4
 
-from haprion_ui import auth, certificate_renew
+from haprion_ui import auth, certificate_renew, operations
 from haprion_ui.certificates import RegistryCertificateView
 from tests.test_certificate_activity import csr_pending_row
 from tests.test_certificate_delete import DeleteRouteTestCase
@@ -120,6 +121,21 @@ class TheWay(unittest.TestCase):
         )
         with self.assertRaises(certificate_renew.SelectionProblem):
             certificate_renew.payload(certificate_renew.selection(["imported.example"], registry))
+
+    def test_an_exportable_ndes_row_is_enrolled_again_as_exportable(self) -> None:
+        entry = ndes_row("device.example.net")
+        entry["exportable"] = True
+        entry["sans"] = ["device.example.net"]
+        entry["targets"] = {"clusters": [], "receivers": []}
+        registry = rows(entry)
+
+        operation, body = certificate_renew.payload(
+            certificate_renew.selection(["device.example.net"], registry)
+        )
+
+        self.assertTrue(body["exportable"])
+        self.assertEqual((body["clusters"], body["receivers"]), ([], []))
+        operations.prepare(operation=operation, cluster=None, request_id=uuid4(), payload=body)
 
 
 class TheRoutes(DeleteRouteTestCase):

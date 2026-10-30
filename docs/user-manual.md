@@ -2408,8 +2408,9 @@ On a receiver's row:
 
 The form takes the name, the transport and the key or the addresses, and nothing else. The account
 name is made from the receiver's name, and the directory goes under `receiver_root`, as below. A
-receiver whose account name would be too long, or that needs a particular account or directory, is
-registered from the command line with `--owner` or `--path`.
+receiver whose account name would be too long, or that needs a name of its own or a directory
+elsewhere, is registered from the command line with `--owner` or `--path`. The command creates the
+account, so `--owner` must name one that does not exist; a name already in use is refused.
 
 **From the command line.** A receiver is four things at once: an account, a directory only that
 account may read, a lock that binds its key to that directory, and the registry entry.
@@ -2436,7 +2437,7 @@ sudo haprion-cert-receiver remove lb-02.example.net
 (`crx-lb-02-example-net`). *crx* stands for *certificate receiver*, a prefix nothing else on the
 machine uses, so `ls -l` under the receiver root names the receiver. Linux limits an account name to
 32 characters. An ID that would not fit is refused rather than cut short, and `--owner` names the
-account instead: two long IDs must never quietly become one account. An `https` receiver has no
+new account instead: two long IDs must never quietly become one account. An `https` receiver has no
 account of its own; nginx serves it.
 
 **The ID is the fetching host**: its DNS name or its IPv4 address, and nothing else. That is what the

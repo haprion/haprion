@@ -922,13 +922,11 @@ def add(
         account = owner or default_owner(receiver_id)
         if not USERNAME.fullmatch(account):
             raise ReceiverError("bad_input", f"{account!r} is not a valid account name")
-        if account_exists(account) and any(
-            other.owner == account for other in registry.receivers.values()
-        ):
+        if account_exists(account):
             raise ReceiverError(
                 "already_exists",
-                f"account {account} already fetches for another receiver. One account per "
-                "receiver, or a receiver reads its neighbour's key material.",
+                f"account {account} already exists. A receiver's account is created by this "
+                "command, so give --owner a name that is not in use.",
             )
 
     directory = path
@@ -1402,7 +1400,7 @@ def remove(
             secret_file(receiver_id, locations).unlink(missing_ok=True)
             layers.append(Layer("secret", "removed", str(secret_file(receiver_id, locations))))
         else:
-            home = tools.home(receiver.owner) or receiver.path
+            home = _own_home(policy, receiver, tools)
             layers.append(_remove_lock(home))
             if receiver.transport == "sftp":
                 _write_checked(
@@ -1442,6 +1440,23 @@ def remove(
             details={"removed": [layer.as_dict() for layer in layers]},
         ) from exc
     return Result(receiver_id, "removed", tuple(layers))
+
+
+def _own_home(policy: PathPolicy, receiver: Receiver, tools: Tools) -> Path:
+    """The account's home when it is the receiver's own, otherwise the receiver's directory.
+
+    The lock and the home are removed on this answer. An account whose home is
+    somewhere the receiver does not own (a registry entry from before accounts
+    were refused when they already existed) must not have that home cleared.
+    """
+
+    home = tools.home(receiver.owner)
+    if home is None:
+        return receiver.path
+    root = policy.receiver_root
+    if home == receiver.path or (root is not None and home.is_relative_to(root)):
+        return home
+    return receiver.path
 
 
 def _remove_lock(home: Path) -> Layer:

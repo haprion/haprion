@@ -72,7 +72,8 @@ USAGE = (
     "  --public-key <file>   The .pub file the receiver's own ssh-keygen wrote.\n"
     "  --allow <cidr>        An address or network that may fetch over https.\n"
     "                        May be repeated. Required for https, refused otherwise.\n"
-    "  --owner <name>        The account. Defaults to crx- and the ID.\n"
+    "  --owner <name>        The new account. Defaults to crx- and the ID.\n"
+    "                        A name already in use is refused.\n"
     "  --path <dir>          The directory. Defaults to receiver_root/<id>.\n"
     "  --json                Print the result envelope on stdout.\n"
 )

@@ -83,6 +83,17 @@ class ReceiverFixture(Fixture):
         group.start()
         self.addCleanup(group.stop)
         self.runner = Runner()
+        #
+        # An account exists here when this run's useradd made it: the test's
+        # own account is a real one, and add() refuses real ones (E01).
+        #
+        exists = mock.patch.object(
+            cert_receiver,
+            "account_exists",
+            lambda owner: owner in self.runner.homes or owner == cert_receiver.HTTPS_OWNER,
+        )
+        exists.start()
+        self.addCleanup(exists.stop)
         self.etc = self.root / "etc"
         (self.etc / "nginx" / "sites-enabled").mkdir(parents=True)
         (self.etc / "haprion").mkdir(parents=True)
@@ -499,11 +510,18 @@ class WhatRegistrationRefuses(ReceiverFixture):
         self.key_file.write_text("-----" + "BEGIN OPENSSH PRIVATE KEY-----\n", encoding="ascii")
         self.assertEqual(self.refusal().code, "bad_input")
 
+    def test_an_account_that_already_exists_is_refused(self) -> None:
+        self.runner.homes[ME] = self.root / "home" / ME
+        error = self.refusal()
+        self.assertEqual(error.code, "already_exists")
+        self.assertIn("is created by this command", str(error))
+        self.assertFalse(self.runner.ran("useradd"))
+        self.assertNotIn("lb-02.example.net", self.registered())
+
     def test_an_account_that_already_fetches_for_another_receiver(self) -> None:
         self.add()
         error = self.refusal(receiver_id="lb-03.example.net")
         self.assertEqual(error.code, "already_exists")
-        self.assertIn("One account per receiver", str(error))
 
 
 class WhenALayerRefuses(ReceiverFixture):
@@ -736,6 +754,20 @@ class RemovingAReceiver(ReceiverFixture):
             require_secure=False,
             lock_path=self.root / "cert-publish.lock",
         )
+
+    def test_a_home_outside_the_receivers_own_is_left_alone(self) -> None:
+        self.add()
+        home = self.root / "home" / ME
+        (home / ".ssh").mkdir(parents=True)
+        (home / ".ssh" / "authorized_keys").write_text("ssh-ed25519 AAAA own-key\n")
+        (home / "precious.txt").write_text("the account's own data\n")
+        self.runner.homes[ME] = home
+
+        self.remove()
+
+        self.assertTrue((home / ".ssh" / "authorized_keys").exists())
+        self.assertTrue((home / "precious.txt").exists())
+        self.assertFalse((self.root / "receivers" / "lb-02.example.net").exists())
 
     def test_a_receiver_a_certificate_still_names_is_refused(self) -> None:
         self.add()

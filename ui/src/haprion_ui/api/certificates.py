@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from haprion_ui import api_tokens
+from haprion_ui.api import contract
 from haprion_ui.api.answers import answer
 from haprion_ui.api.caller import Caller, needs
 from haprion_ui.certificates import RegistryCertificateView, TargetView
@@ -97,7 +98,9 @@ def visible(entry: RegistryCertificateView, caller: Caller) -> bool:
     )
 
 
-@router.get("/certificates", name="certificate_list")
+@router.get(
+    "/certificates", name="certificate_list", responses=contract.responses("certificate_list")
+)
 def certificate_list(
     request: Request,
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),

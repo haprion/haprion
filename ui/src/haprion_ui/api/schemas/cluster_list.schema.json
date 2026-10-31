@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/cluster_list.schema.json",
+  "title": "GET /api/v1/clusters: result",
+  "description": "The clusters the token may see, as the dashboard shows them.",
+  "type": "object",
+  "required": ["clusters"],
+  "properties": {
+    "clusters": { "type": "array", "items": { "$ref": "definitions.schema.json#/$defs/cluster" }, "description": "The clusters, by name." }
+  },
+  "additionalProperties": true
+}

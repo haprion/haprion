@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_show.schema.json",
+  "title": "GET /api/v1/clusters/{cluster}/objects/{name}: result",
+  "description": "One object: its row in the list, and what its page adds. The document, the definition and the servers' states are given to a write token only.",
+  "allOf": [
+    { "$ref": "definitions.schema.json#/$defs/object_entry" },
+    {
+      "type": "object",
+      "required": ["document", "definition", "publication", "commit", "observed_at", "stale", "server_states"],
+      "properties": {
+        "document": { "type": ["string", "null"], "description": "Value. The object's stored YAML document; null for a read token, or for a proxy the platform did not write." },
+        "definition": { "description": "Value. The document parsed into JSON, for a script that does not read YAML; null where document is null or cannot be read. Its shape is the object schema's, not this API's." },
+        "publication": {
+          "type": ["object", "null"],
+          "description": "How far the object has travelled: written, released, serving; null where the version listing has not been read.",
+          "required": ["label", "detail", "tone", "version"],
+          "properties": {
+            "label": { "type": "string", "description": "Text. The page's word, such as Serving or Awaiting publish." },
+            "detail": { "type": "string", "description": "Text. The sentence under the word." },
+            "tone": { "$ref": "definitions.schema.json#/$defs/tone", "description": "Code. healthy, warning, critical or unknown." },
+            "version": { "type": ["string", "null"], "description": "Value. The version that carries the object, such as v24; null where none does." }
+          },
+          "additionalProperties": true
+        },
+        "commit": { "type": ["string", "null"], "description": "Value. The commit the object was read at; null where unknown." },
+        "observed_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the object was last read; null where it never was." },
+        "stale": { "type": "boolean", "description": "Value. True where the reading is older than two polls." },
+        "server_states": {
+          "type": ["object", "null"],
+          "description": "What each node says of each server of the object; null for a read token, or where the object has none to show.",
+          "required": ["current", "observed_at", "servers"],
+          "properties": {
+            "current": { "type": "boolean", "description": "Value. False where the nodes do not run this version of the object yet, so no node's word is given." },
+            "observed_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the nodes were read." },
+            "servers": {
+              "type": "array",
+              "description": "The servers, in the order the object lists them.",
+              "items": {
+                "type": "object",
+                "required": ["pool", "address", "backup", "weight", "sessions", "nodes"],
+                "properties": {
+                  "pool": { "type": "string", "description": "Value. The backend the server belongs to." },
+                  "address": { "type": "string", "description": "Value. The server's address and port." },
+                  "backup": { "type": "boolean", "description": "Value. True for a backup server." },
+                  "weight": { "type": "integer", "description": "Value. The server's weight." },
+                  "sessions": { "type": ["integer", "null"], "description": "Value. Sessions now open on the server; null where not reported." },
+                  "nodes": {
+                    "type": "array",
+                    "description": "What each node says of the server.",
+                    "items": {
+                      "type": "object",
+                      "required": ["node", "state", "lost", "check", "label", "tone", "detail"],
+                      "properties": {
+                        "node": { "type": "string", "description": "Value. The node's name." },
+                        "state": { "enum": ["ready", "drain", "maintenance", "unknown"], "description": "Code. What the node does with the server: ready, drain, maintenance, or unknown where it did not say." },
+                        "lost": { "type": "boolean", "description": "Value. True where the node was told to hold the server and has lost that setting." },
+                        "check": { "enum": ["up", "down", "no_check", "standby", "unknown"], "description": "Code. What the node's health check found." },
+                        "label": { "type": "string", "description": "Text. The page's word for the server on this node, such as UP or DRAIN. Match on state and check instead." },
+                        "tone": { "$ref": "definitions.schema.json#/$defs/tone", "description": "Code. healthy, warning, critical or unknown." },
+                        "detail": { "type": ["string", "null"], "description": "Text. The hover sentence under the word; null where there is none." }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      }
+    }
+  ]
+}

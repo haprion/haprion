@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/waf_exceptions.schema.json",
+  "title": "GET /api/v1/clusters/{cluster}/waf/exceptions: result",
+  "description": "The exceptions the cluster's objects carry, with what each let through over the last days.",
+  "type": "object",
+  "required": ["days", "exceptions"],
+  "properties": {
+    "days": { "type": "integer", "minimum": 1, "description": "Value. How many days back the counts reach." },
+    "exceptions": {
+      "type": "array",
+      "description": "The exceptions, by object.",
+      "items": {
+        "type": "object",
+        "required": ["object", "rule", "kind", "explanation", "message", "severity", "field", "paths", "reason", "added_by", "added_at", "in_draft", "not_working", "let_through"],
+        "properties": {
+          "object": { "type": "string", "description": "Value. The object that carries the exception." },
+          "rule": { "type": "integer", "description": "Value. The rule set's number for the rule the exception lets through." },
+          "kind": { "type": "string", "description": "Text. The page's name for the kind of attack the rule's file covers. Match on rule instead." },
+          "explanation": { "type": "string", "description": "Text. The page's sentence on that kind." },
+          "message": { "type": "string", "description": "Text. The rule set's own message for the rule." },
+          "severity": { "enum": ["critical", "error", "warning", "notice", ""], "description": "Code. The rule set's severity for the rule; empty where the installed rule set does not define it." },
+          "field": { "type": ["string", "null"], "description": "Value. The part of the request the exception is limited to, in the engine's name for it, such as ARGS:q; null where it covers every part." },
+          "paths": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. The paths the exception is limited to; empty where it covers every path." },
+          "reason": { "type": ["string", "null"], "description": "Value. The reason written with the exception; null where none was." },
+          "added_by": { "type": ["string", "null"], "description": "Value. Who added it; null where not recorded." },
+          "added_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When it was added; null where not recorded." },
+          "in_draft": { "type": "boolean", "description": "Value. True where it was made in the draft and is not yet published." },
+          "not_working": { "type": "boolean", "description": "Value. True where the rule still matched what the exception covers after it reached the nodes." },
+          "let_through": {
+            "type": "object",
+            "description": "What the exception let through over the period.",
+            "required": ["counted", "requests", "clients", "last_seen"],
+            "properties": {
+              "counted": { "type": "boolean", "description": "Value. Whether the engine counts what this exception lets through; false means requests and clients are not measured." },
+              "requests": { "type": "integer", "minimum": 0, "description": "Value. How many requests it let through." },
+              "clients": { "type": "integer", "minimum": 0, "description": "Value. How many clients made them." },
+              "last_seen": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When a request last passed through it; null where none did or it is not counted." }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

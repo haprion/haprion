@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from haprion_ui import api_tokens, dashboard
+from haprion_ui.api import contract
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import Caller, in_scope, needs
 from haprion_ui.attention import Item
@@ -90,7 +91,7 @@ def cluster_entries(request: Request, names: list[str]) -> list[dict[str, Any]]:
     return [_cluster(views[name], items) for name in names if name in views]
 
 
-@router.get("/clusters", name="cluster_list")
+@router.get("/clusters", name="cluster_list", responses=contract.responses("cluster_list"))
 def cluster_list(request: Request, caller: Caller = Depends(needs("read"))) -> JSONResponse:  # noqa: B008
     names = [
         cluster
@@ -100,7 +101,9 @@ def cluster_list(request: Request, caller: Caller = Depends(needs("read"))) -> J
     return answer(request, {"clusters": cluster_entries(request, names)})
 
 
-@router.get("/clusters/{cluster}", name="cluster_show")
+@router.get(
+    "/clusters/{cluster}", name="cluster_show", responses=contract.responses("cluster_show")
+)
 def cluster_show(
     request: Request,
     cluster: str,
@@ -116,7 +119,7 @@ def cluster_show(
     return answer(request, entries[0], cluster=cluster)
 
 
-@router.get("/attention", name="attention_list")
+@router.get("/attention", name="attention_list", responses=contract.responses("attention_list"))
 def attention_list(request: Request, caller: Caller = Depends(needs("read"))) -> JSONResponse:  # noqa: B008
     """Needs attention as the dashboard lists it, within the token's clusters.
 

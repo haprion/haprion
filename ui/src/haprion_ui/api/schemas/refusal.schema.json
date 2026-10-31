@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/refusal.schema.json",
+  "title": "A refused API call",
+  "description": "What every route answers when it does not give a result: the envelope with ok false, no result, and an error. The HTTP status says the kind of answer; error.code says which.",
+  "type": "object",
+  "required": ["ok", "outcome", "operation", "result", "error"],
+  "properties": {
+    "ok": { "const": false, "description": "Value. Always false for a refusal." },
+    "outcome": { "enum": ["blocked", "failed"], "description": "Code. blocked: refused before anything was done (a 4xx). failed: this side's fault (a 5xx)." },
+    "operation": { "type": "string", "description": "Value. The route's name, or api where no route matched." },
+    "result": { "type": "null", "description": "Value. Always null for a refusal." },
+    "error": {
+      "type": "object",
+      "description": "Which refusal it is, and the sentence that goes with it.",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "enum": ["unauthorized", "forbidden", "not_found", "bad_input", "method_not_allowed", "rate_limited", "busy", "internal_error", "database_unavailable", "query_timeout"], "description": "Code. unauthorized: 401, the token is not valid here. forbidden: 403, the token's level does not reach the route. not_found: 404, no such cluster, object or job, or outside the token's scope. bad_input: 400. method_not_allowed: 405. rate_limited: 429, too many guesses from the source; Retry-After says when. busy: 429, too many calls at once; Retry-After says when. internal_error: 500. database_unavailable: 503. query_timeout: 503, the query took too long." },
+        "message": { "type": "string", "description": "Text. The sentence that goes with the code." }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

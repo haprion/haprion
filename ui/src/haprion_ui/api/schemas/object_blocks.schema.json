@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_blocks.schema.json",
+  "title": "GET /api/v1/clusters/{cluster}/objects/{name}/blocks: result",
+  "description": "The addresses blocked on an object, as the object page's Blocked card shows them.",
+  "type": "object",
+  "required": ["object", "block_for", "count", "addresses", "truncated", "observed_at"],
+  "properties": {
+    "object": { "type": "string", "description": "Value. The object's name." },
+    "block_for": { "type": "string", "description": "Value. How long a new block lasts, as the object writes it (such as 2h) or the engine's default." },
+    "count": { "type": "integer", "minimum": 0, "description": "Value. How many addresses the nodes hold blocked, listed or not." },
+    "addresses": {
+      "type": "array",
+      "description": "The blocked addresses the nodes listed.",
+      "items": {
+        "type": "object",
+        "required": ["address", "until", "seconds_left", "ending", "nodes"],
+        "properties": {
+          "address": { "type": "string", "description": "Value. The blocked client address." },
+          "until": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the longest of the nodes' blocks ends, from the reading's time." },
+          "seconds_left": { "type": ["integer", "null"], "minimum": 0, "description": "Value. Seconds until until, at the time of the answer; 0 once passed." },
+          "ending": { "type": "boolean", "description": "Value. True where the time ran out by the reading's account and no reading has said since." },
+          "nodes": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. The nodes that hold the block." }
+        },
+        "additionalProperties": true
+      }
+    },
+    "truncated": { "type": "boolean", "description": "Value. True where the nodes hold more addresses than they listed (at most a hundred each)." },
+    "observed_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the nodes were read; null where they never were." }
+  },
+  "additionalProperties": true
+}

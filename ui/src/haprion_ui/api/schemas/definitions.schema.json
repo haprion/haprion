@@ -1,0 +1,679 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/definitions.schema.json",
+  "title": "Haprion API shared definitions",
+  "description": "Every field of an API answer says in its description what kind it is. Code: a stable enumeration or identifier, safe to match on. Text: the page's own words, which may be reworded at any time; show it, never match on it. Value: a name, number, time, address or flag whose meaning and format are fixed.",
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "nullable_timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "tone": {
+      "enum": [
+        "healthy",
+        "warning",
+        "critical",
+        "unknown"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "critical",
+        "warning"
+      ]
+    },
+    "names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "name",
+        "state",
+        "tone",
+        "detail",
+        "holds_vip",
+        "release_version",
+        "on_published_version",
+        "haproxy_version",
+        "node_package_version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Value. The node's name."
+        },
+        "state": {
+          "type": "string",
+          "description": "Text. The dashboard's word for the node, such as Online or Behind. Match on tone, holds_vip and on_published_version instead."
+        },
+        "tone": {
+          "$ref": "#/$defs/tone",
+          "description": "Code. The colour the dashboard gives the node: healthy, warning, critical or unknown."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Text. The sentence under the node's state."
+        },
+        "holds_vip": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Value. True for the node that owns the address, false for a standby, null where the node was not read or never deployed."
+        },
+        "release_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Value. The published version the node reports it runs; null where it did not say."
+        },
+        "on_published_version": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Value. Whether the node runs the published version; null where it did not say."
+        },
+        "haproxy_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Value. The HAProxy version the node reports; null where it did not say."
+        },
+        "node_package_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Value. The haprion-node version installed on the node; null where it did not say."
+        }
+      },
+      "additionalProperties": true
+    },
+    "attention_item": {
+      "type": "object",
+      "required": [
+        "kind",
+        "severity",
+        "cluster",
+        "subject",
+        "message",
+        "since",
+        "variant"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "certificate",
+            "job",
+            "node",
+            "cluster",
+            "reading",
+            "service",
+            "waf",
+            "backup",
+            "logs",
+            "forwarding",
+            "manager",
+            "preparation",
+            "node_package",
+            "traffic_stream",
+            "api_token"
+          ],
+          "description": "Code. What kind of fault the row reports."
+        },
+        "severity": {
+          "$ref": "#/$defs/severity",
+          "description": "Code. critical or warning."
+        },
+        "cluster": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Value. The cluster the row belongs to; null for a row that belongs to the installation."
+        },
+        "subject": {
+          "type": "string",
+          "description": "Text. What the row is about, as the dashboard names it: a node, a certificate, a link between two."
+        },
+        "message": {
+          "type": "string",
+          "description": "Text. The sentence the dashboard shows."
+        },
+        "since": {
+          "$ref": "#/$defs/nullable_timestamp",
+          "description": "Value. When the fault was first seen; null where that is not known."
+        },
+        "variant": {
+          "type": "string",
+          "description": "Text. What tells this row from the same row made worse; an acknowledgement names it. Compare it for equality, do not interpret it."
+        }
+      },
+      "additionalProperties": true
+    },
+    "cluster": {
+      "type": "object",
+      "required": [
+        "name",
+        "status",
+        "fresh",
+        "observed_at",
+        "published_version",
+        "release_state",
+        "vip_holder",
+        "vip_count",
+        "nodes",
+        "attention"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Value. The cluster's name."
+        },
+        "status": {
+          "type": "object",
+          "description": "The cluster's verdict as the dashboard card gives it.",
+          "required": [
+            "label",
+            "tone",
+            "detail"
+          ],
+          "properties": {
+            "label": {
+              "type": "string",
+              "description": "Text. The card's word for the cluster, such as Healthy or Behind."
+            },
+            "tone": {
+              "$ref": "#/$defs/tone",
+              "description": "Code. healthy, warning, critical or unknown."
+            },
+            "detail": {
+              "type": "string",
+              "description": "Text. The sentence under the card's word."
+            }
+          },
+          "additionalProperties": true
+        },
+        "fresh": {
+          "type": "boolean",
+          "description": "Value. Whether the reading is recent (within two polls); false means last known, not now."
+        },
+        "observed_at": {
+          "$ref": "#/$defs/nullable_timestamp",
+          "description": "Value. When the nodes were last read; null for a cluster never read."
+        },
+        "published_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Value. The published version number; null where nothing is published or it is unknown."
+        },
+        "release_state": {
+          "enum": [
+            "converged",
+            "behind",
+            "incomplete",
+            "unknown"
+          ],
+          "description": "Code. converged: every node runs the published version. behind: some node does not. incomplete: a node could not be read. unknown: nothing is published or no node said."
+        },
+        "vip_holder": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Value. The node that owns the address; null where none or more than one does, or it is unknown."
+        },
+        "vip_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Value. How many addresses the cluster keeps."
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          },
+          "description": "The cluster's nodes."
+        },
+        "attention": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attention_item"
+          },
+          "description": "The dashboard's Needs attention rows for this cluster."
+        }
+      },
+      "additionalProperties": true
+    },
+    "object_entry": {
+      "type": "object",
+      "required": [
+        "name",
+        "managed",
+        "protocol",
+        "state",
+        "serving",
+        "readable",
+        "problem",
+        "hostnames",
+        "ports",
+        "servers",
+        "backend_count",
+        "redirect_http",
+        "vip",
+        "source_address",
+        "health",
+        "draft",
+        "publishing",
+        "publish_refused"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Value. The object's name."
+        },
+        "managed": {
+          "type": "boolean",
+          "description": "Value. False for a proxy the platform did not write."
+        },
+        "protocol": {
+          "enum": [
+            "http",
+            "https",
+            "tcp",
+            "dns",
+            "syslog",
+            "unknown",
+            null
+          ],
+          "description": "Code. The object's protocol; null for a draft or a pending removal; unknown for a proxy the platform did not write and could not classify."
+        },
+        "state": {
+          "enum": [
+            "serving",
+            "inactive",
+            "reconfigured",
+            "unreadable",
+            "include_missing",
+            "disabled",
+            "draft",
+            "removal_pending",
+            null
+          ],
+          "description": "Code. serving: the nodes serve it. inactive: stored, not served yet. reconfigured: served, the nodes await the newest release. unreadable: the stored document cannot be read. include_missing: a syslog object whose forwarding is not set. disabled: an unmanaged proxy that is off. draft: edited, not stored yet. removal_pending: a published removal the nodes have not taken."
+        },
+        "serving": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Value. Whether the nodes serve the object; null for a draft or a pending removal."
+        },
+        "readable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Value. Whether the stored document can be read; null for a draft, a pending removal or a proxy the platform did not write."
+        },
+        "problem": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Text. The engine's sentence on an unreadable object; given to a write token only, null otherwise."
+        },
+        "hostnames": {
+          "$ref": "#/$defs/names",
+          "description": "Value. The names the object answers to."
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "Value. The ports the object listens on."
+        },
+        "servers": {
+          "$ref": "#/$defs/names",
+          "description": "Text. A tcp, dns or syslog object's servers as the Proxies page writes them; empty for the other protocols."
+        },
+        "backend_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Value. How many backends the object has; null where that is not known."
+        },
+        "redirect_http": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Value. Whether an https object redirects plain http; null for the other protocols."
+        },
+        "vip": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The address the object is served on; null where it is not known.",
+          "required": [
+            "name",
+            "address",
+            "is_default"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Value. The address's name in the cluster."
+            },
+            "address": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Value. The address; null where the engine did not give it."
+            },
+            "is_default": {
+              "type": "boolean",
+              "description": "Value. True where the object names none and the cluster's default is used."
+            }
+          },
+          "additionalProperties": true
+        },
+        "source_address": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Value. The address the object's requests to its servers leave from; null where none is set."
+        },
+        "health": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The object's servers rolled up to one lamp, as the Proxies page draws it; null where there is none.",
+          "required": [
+            "tone",
+            "label",
+            "detail",
+            "up",
+            "total"
+          ],
+          "properties": {
+            "tone": {
+              "$ref": "#/$defs/tone",
+              "description": "Code. healthy, warning, critical or unknown."
+            },
+            "label": {
+              "type": "string",
+              "description": "Text. The lamp's word, such as 2/2 up. Use up and total."
+            },
+            "detail": {
+              "type": "string",
+              "description": "Text. The sentence under the lamp."
+            },
+            "up": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Value. Servers the nodes report up."
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Value. Servers the object has."
+            }
+          },
+          "additionalProperties": true
+        },
+        "draft": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Work on the object that is not released; null for a read token, which is shown no drafts.",
+          "required": [
+            "stage",
+            "removal",
+            "replaces",
+            "updated_by",
+            "updated_at"
+          ],
+          "properties": {
+            "stage": {
+              "enum": [
+                "draft",
+                "saved"
+              ],
+              "description": "Code. draft: still being edited. saved: waiting for a publish."
+            },
+            "removal": {
+              "type": "boolean",
+              "description": "Value. True where the change removes the object."
+            },
+            "replaces": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Value. The object this one replaces when it is renamed; null otherwise."
+            },
+            "updated_by": {
+              "type": "string",
+              "description": "Value. Who last changed it."
+            },
+            "updated_at": {
+              "$ref": "#/$defs/timestamp",
+              "description": "Value. When it was last changed."
+            }
+          },
+          "additionalProperties": true
+        },
+        "publishing": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The job that is publishing the object now; null where none is.",
+          "required": [
+            "label",
+            "job"
+          ],
+          "properties": {
+            "label": {
+              "type": "string",
+              "description": "Text. The badge's word for the running job."
+            },
+            "job": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Value. The job's number, for /jobs/{id}."
+            }
+          },
+          "additionalProperties": true
+        },
+        "publish_refused": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "description": "Code. The engine's error code for the object's newest publish when it was refused and changed nothing; null otherwise."
+        }
+      },
+      "additionalProperties": true
+    },
+    "job_operation": {
+      "enum": [
+        "deploy",
+        "cert_deploy",
+        "revert",
+        "changes_publish",
+        "cert_issue",
+        "cert_scep",
+        "cert_import",
+        "cert_request",
+        "cert_publish",
+        "cert_target",
+        "cert_delete",
+        "cert_receiver",
+        "dns_profile_apply",
+        "ndes_profile_apply",
+        "cluster_node",
+        "cluster_define",
+        "server_state",
+        "dynamic_unblock",
+        "block_client",
+        "backup_run",
+        "backup_schedule",
+        "node_restore_prepare",
+        "node_restore_preview",
+        "node_restore",
+        "node_restore_discard",
+        "node_restore_status"
+      ]
+    },
+    "job_state": {
+      "enum": [
+        "pending",
+        "running",
+        "done",
+        "partial",
+        "blocked",
+        "failed",
+        "unknown"
+      ]
+    },
+    "job_summary": {
+      "type": "object",
+      "required": [
+        "id",
+        "operation",
+        "label",
+        "cluster",
+        "state",
+        "state_label",
+        "outcome",
+        "finished",
+        "held",
+        "queued_at",
+        "started_at",
+        "finished_at",
+        "actor",
+        "subjects",
+        "error_code",
+        "error_message"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Value. The job's number, for /jobs/{id}."
+        },
+        "operation": {
+          "$ref": "#/$defs/job_operation",
+          "description": "Code. What the job does: the command it runs, such as deploy or cert_publish."
+        },
+        "label": {
+          "type": "string",
+          "description": "Text. The Jobs page's name for the operation, such as Deploy configuration. Match on operation instead."
+        },
+        "cluster": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Value. The cluster the job works on; null for a job that belongs to no cluster, such as a certificate publish."
+        },
+        "state": {
+          "$ref": "#/$defs/job_state",
+          "description": "Code. pending and running: not finished. done, partial, blocked, failed: how it ended. unknown: it ended and its answer cannot be trusted."
+        },
+        "state_label": {
+          "type": "string",
+          "description": "Text. The Jobs page's word for the state, such as Completed. Match on state instead."
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "partial",
+            "failed",
+            "blocked",
+            "unknown",
+            null
+          ],
+          "description": "Code. The outcome the job's answer reports; null while the job has no answer."
+        },
+        "finished": {
+          "type": "boolean",
+          "description": "Value. False while the job is pending or running."
+        },
+        "held": {
+          "type": "boolean",
+          "description": "Value. True where the job waits for an administrator to run or discard it, after a restart or a restore."
+        },
+        "queued_at": {
+          "$ref": "#/$defs/timestamp",
+          "description": "Value. When the job was queued."
+        },
+        "started_at": {
+          "$ref": "#/$defs/nullable_timestamp",
+          "description": "Value. When it started; null while pending."
+        },
+        "finished_at": {
+          "$ref": "#/$defs/nullable_timestamp",
+          "description": "Value. When it ended; null while not finished."
+        },
+        "actor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Value. Who queued it; null where nobody did from the interface."
+        },
+        "subjects": {
+          "$ref": "#/$defs/names",
+          "description": "Value. What the job works on, such as the certificates or nodes it names; may be empty."
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "description": "Code. The engine's error code when the job failed or was refused; open-ended, as the commands' error codes are. null otherwise."
+        },
+        "error_message": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Text. The engine's sentence with the code; given to a write token only, null otherwise."
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

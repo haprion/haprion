@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/attention_list.schema.json",
+  "title": "GET /api/v1/attention: result",
+  "description": "Needs attention as the dashboard lists it, within the token's clusters. Rows that belong to no cluster are given to a token limited to no cluster only.",
+  "type": "object",
+  "required": ["items"],
+  "properties": {
+    "items": { "type": "array", "items": { "$ref": "definitions.schema.json#/$defs/attention_item" }, "description": "The rows, the worst first." }
+  },
+  "additionalProperties": true
+}

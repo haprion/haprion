@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/job_show.schema.json",
+  "title": "GET /api/v1/jobs/{id}: result",
+  "description": "One job with its steps: enough to tell running, done, partial and failed apart. The helper's own error sentence is given to a write token only, and its raw output never.",
+  "allOf": [
+    { "$ref": "definitions.schema.json#/$defs/job_summary" },
+    {
+      "type": "object",
+      "required": ["exit_code", "exit_meaning", "waiting_for", "follow_up", "next_command", "warning_codes", "warning_message", "note", "step_states", "keyed_states", "step_note", "distribution_note"],
+      "properties": {
+        "exit_code": { "type": ["integer", "null"], "description": "Value. The helper's exit status; null while the job has none." },
+        "exit_meaning": { "type": "string", "description": "Text. The engine's words for the exit status; may be empty." },
+        "waiting_for": { "type": ["string", "null"], "description": "Text. What a partial job waits on, when every warning it carries is a wait; null otherwise." },
+        "follow_up": { "type": ["string", "null"], "description": "Text. What is still owed after a job that succeeded, such as a deploy; null where nothing is." },
+        "next_command": { "type": ["string", "null"], "description": "Text. The command that does what is owed; null where none." },
+        "warning_codes": { "type": "array", "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "description": "Code. The engine's warning codes the job's answer carries; open-ended, as the commands' codes are." },
+        "warning_message": { "type": ["string", "null"], "description": "Text. The engine's warning sentence; given to a write token only, null otherwise." },
+        "note": { "type": ["string", "null"], "description": "Text. What a batch operation did row by row, in one line; null where there is nothing to add." },
+        "step_states": {
+          "type": "array",
+          "description": "The steps the job ran and how each ended: its own, then the one after it, if any.",
+          "items": {
+            "type": "object",
+            "required": ["step", "state"],
+            "properties": {
+              "step": { "$ref": "definitions.schema.json#/$defs/job_operation", "description": "Code. The operation the step ran." },
+              "state": { "$ref": "definitions.schema.json#/$defs/job_state", "description": "Code. How the step ended." }
+            },
+            "additionalProperties": true
+          }
+        },
+        "keyed_states": {
+          "type": "array",
+          "description": "How each step ended for each thing the job named.",
+          "items": {
+            "type": "object",
+            "required": ["step", "subject", "state"],
+            "properties": {
+              "step": { "$ref": "definitions.schema.json#/$defs/job_operation", "description": "Code. The operation the step ran." },
+              "subject": { "type": ["string", "null"], "description": "Value. The certificate, node or object the step settled; null where it names none." },
+              "state": { "$ref": "definitions.schema.json#/$defs/job_state", "description": "Code. How the step ended for the subject." }
+            },
+            "additionalProperties": true
+          }
+        },
+        "step_note": { "type": ["string", "null"], "description": "Text. What stands when the step after the job's own ended it badly; null otherwise." },
+        "distribution_note": { "type": ["string", "null"], "description": "Text. What stands when an issued or imported certificate was not distributed; null otherwise." }
+      }
+    }
+  ]
+}

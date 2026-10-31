@@ -4485,6 +4485,9 @@ What a token can read:
 Times are ISO 8601 with their offset, and `from` and `to` take the same. A server's check is given as a
 code in `check` (`up`, `down`, `no_check`, `standby`, `unknown`) beside the word the interface shows. The
 full description of the calls, generated from the code, is `/api/v1/openapi.json`, for any valid token.
+It describes each field as a code (a fixed set of values, listed there), as text (the interface's own words,
+which may change) or as a plain value such as a name, a number or a time; a script matches on codes and
+values and shows text, never matches on it.
 
 ### The answers
 

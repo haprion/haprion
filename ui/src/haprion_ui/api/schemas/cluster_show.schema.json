@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/cluster_show.schema.json",
+  "title": "GET /api/v1/clusters/{cluster}: result",
+  "description": "One cluster as the dashboard shows it.",
+  "$ref": "definitions.schema.json#/$defs/cluster"
+}

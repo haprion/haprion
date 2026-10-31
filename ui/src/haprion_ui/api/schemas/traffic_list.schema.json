@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/traffic_list.schema.json",
+  "title": "GET /api/v1/clusters/{cluster}/traffic: result",
+  "description": "The traffic log's requests, newest first, as the Traffic logs page reads them. A row names the client that made the request.",
+  "type": "object",
+  "required": ["enabled", "from", "to", "requests", "truncated", "limit", "nodes"],
+  "properties": {
+    "enabled": { "type": "boolean", "description": "Value. False where this installation keeps no traffic log; the list is then empty." },
+    "from": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. The start of the window read: as asked, or an hour before to." },
+    "to": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. The end of the window read: as asked, or now." },
+    "requests": {
+      "type": "array",
+      "description": "The requests in the window, newest first.",
+      "items": {
+        "type": "object",
+        "required": ["time", "node", "request_number", "client", "method", "host", "path", "frontend", "backend", "server", "status", "request_time", "queue_time", "connect_time", "response_time", "total_time", "bytes", "rule", "rule_name", "rule_action", "termination", "ended"],
+        "properties": {
+          "time": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. When the request was accepted." },
+          "node": { "type": "string", "description": "Value. The node that served it." },
+          "request_number": { "type": "integer", "description": "Value. The node's own counter for the request." },
+          "client": { "type": "string", "description": "Value. The client's address." },
+          "method": { "type": "string", "description": "Value. The HTTP method." },
+          "host": { "type": "string", "description": "Value. The Host the client asked for." },
+          "path": { "type": "string", "description": "Value. The path and query the client asked for." },
+          "frontend": { "type": "string", "description": "Value. HAProxy's frontend that took the request." },
+          "backend": { "type": "string", "description": "Value. HAProxy's backend that served it." },
+          "server": { "type": "string", "description": "Value. The server that answered, with its port." },
+          "status": { "type": "integer", "description": "Value. The HTTP status sent to the client." },
+          "request_time": { "type": "integer", "description": "Value. Milliseconds for the client to send the request; -1 where it never did." },
+          "queue_time": { "type": "integer", "description": "Value. Milliseconds in the queue; -1 where the request never queued." },
+          "connect_time": { "type": "integer", "description": "Value. Milliseconds to connect to the server; -1 where it never did." },
+          "response_time": { "type": "integer", "description": "Value. Milliseconds for the server's response; -1 where there was none." },
+          "total_time": { "type": "integer", "description": "Value. Milliseconds for the whole request." },
+          "bytes": { "type": "integer", "minimum": 0, "description": "Value. Bytes sent to the client." },
+          "rule": { "type": "string", "description": "Value. The access rule the request met, as name:log or name:deny; empty where none." },
+          "rule_name": { "type": "string", "description": "Value. The rule's name; empty where none." },
+          "rule_action": { "enum": ["", "denied", "logged"], "description": "Code. What the rule did: denied the request, logged it, or empty where no rule applied." },
+          "termination": { "type": "string", "pattern": "^[A-Za-z-]{0,4}$", "description": "Code. HAProxy's termination state, two letters for who ended the session and where (-- normally); empty where not recorded. Its values are HAProxy's, not this API's." },
+          "ended": { "type": "string", "description": "Text. The termination state in words; empty where the session ended normally. Match on termination instead." }
+        },
+        "additionalProperties": true
+      }
+    },
+    "truncated": { "type": "boolean", "description": "Value. True where more requests match than were listed." },
+    "limit": { "type": "integer", "minimum": 1, "description": "Value. The most this answer lists, as asked or the default." },
+    "nodes": {
+      "type": "array",
+      "description": "How fresh the log is, node by node.",
+      "items": {
+        "type": "object",
+        "required": ["node", "last_attempt", "last_success", "outcome", "catching_up"],
+        "properties": {
+          "node": { "type": "string", "description": "Value. The node's name." },
+          "last_attempt": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the manager last tried to fetch the node's log; null where it never did." },
+          "last_success": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When it last succeeded; null where it never did." },
+          "outcome": { "enum": ["ok", "ssh", "protocol", "disk", "budget", "database", "unknown"], "description": "Code. How the last attempt ended: ok, or what went wrong (ssh: the node did not answer, protocol, disk, budget: ran out of time, database), unknown where no record was kept." },
+          "catching_up": { "type": "boolean", "description": "Value. True where the manager has not yet fetched everything the node holds, so the newest rows may be missing." }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

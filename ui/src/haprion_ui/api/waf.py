@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from haprion_ui import api_tokens
+from haprion_ui.api import contract
 from haprion_ui.api.answers import answer
 from haprion_ui.api.caller import Caller, in_scope, needs
 from haprion_ui.api.traffic import known_cluster, moment
@@ -77,7 +78,11 @@ def _exception(row: ExceptionRow) -> dict[str, Any]:
     }
 
 
-@router.get("/clusters/{cluster}/waf/findings", name="waf_findings")
+@router.get(
+    "/clusters/{cluster}/waf/findings",
+    name="waf_findings",
+    responses=contract.responses("waf_findings"),
+)
 def waf_findings(
     request: Request,
     cluster: str,
@@ -102,7 +107,11 @@ def waf_findings(
     )
 
 
-@router.get("/clusters/{cluster}/waf/exceptions", name="waf_exceptions")
+@router.get(
+    "/clusters/{cluster}/waf/exceptions",
+    name="waf_exceptions",
+    responses=contract.responses("waf_exceptions"),
+)
 def waf_exceptions(
     request: Request,
     cluster: str,

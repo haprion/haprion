@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from haprion_ui.api import contract
 from haprion_ui.api.answers import answer
 from haprion_ui.api.caller import Caller, current_caller
 
@@ -28,6 +29,6 @@ def token_fields(token: Any) -> dict[str, Any]:
     }
 
 
-@router.get("/token", name="token_show")
+@router.get("/token", name="token_show", responses=contract.responses("token_show"))
 def show(request: Request, caller: Caller = Depends(current_caller)) -> JSONResponse:  # noqa: B008
     return answer(request, {"token": token_fields(caller.issued)})

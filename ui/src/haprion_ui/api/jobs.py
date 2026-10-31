@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import JSONResponse
 
 from haprion_ui import api_tokens, db, jobs
+from haprion_ui.api import contract
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import Caller, in_scope, needs
 
@@ -82,7 +83,7 @@ def _overview(
     )
 
 
-@router.get("/jobs", name="job_list")
+@router.get("/jobs", name="job_list", responses=contract.responses("job_list"))
 def job_list(
     request: Request,
     cluster: str | None = None,
@@ -121,7 +122,7 @@ def job_list(
     )
 
 
-@router.get("/jobs/{job_id}", name="job_show")
+@router.get("/jobs/{job_id}", name="job_show", responses=contract.responses("job_show"))
 def job_show(
     request: Request,
     job_id: Annotated[int, Path(ge=1, le=LARGEST_ID)],

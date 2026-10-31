@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from haprion.proxy_model import ModelError, load_proxy, read_document
 
 from haprion_ui import db, history, objects, server_card
+from haprion_ui.api import contract
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import Caller, in_scope, needs
 from haprion_ui.health import ObjectHealth
@@ -255,7 +256,9 @@ def _listing(request: Request, cluster: str, caller: Caller) -> list[dict[str, A
     return entries
 
 
-@router.get("/clusters/{cluster}/objects", name="object_list")
+@router.get(
+    "/clusters/{cluster}/objects", name="object_list", responses=contract.responses("object_list")
+)
 def object_list(
     request: Request,
     cluster: str,
@@ -343,7 +346,11 @@ def _definition(document: str) -> Any:
         return None
 
 
-@router.get("/clusters/{cluster}/objects/{name}", name="object_show")
+@router.get(
+    "/clusters/{cluster}/objects/{name}",
+    name="object_show",
+    responses=contract.responses("object_show"),
+)
 def object_show(
     request: Request,
     cluster: str,
@@ -407,7 +414,11 @@ def object_show(
     )
 
 
-@router.get("/clusters/{cluster}/objects/{name}/history", name="object_history")
+@router.get(
+    "/clusters/{cluster}/objects/{name}/history",
+    name="object_history",
+    responses=contract.responses("object_history"),
+)
 def object_history(
     request: Request,
     cluster: str,

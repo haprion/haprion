@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/waf_findings.schema.json",
+  "title": "GET /api/v1/clusters/{cluster}/waf/findings: result",
+  "description": "What the WAF found per object and rule over the last days, still needing a decision. A finding quotes what the engine matched in a request, so it can hold a visitor's input.",
+  "type": "object",
+  "required": ["days", "objects"],
+  "properties": {
+    "days": { "type": "integer", "minimum": 1, "description": "Value. How many days back the findings reach." },
+    "objects": {
+      "type": "array",
+      "description": "The objects with findings, by name.",
+      "items": {
+        "type": "object",
+        "required": ["object", "mode", "requests_judged", "clients", "findings"],
+        "properties": {
+          "object": { "type": "string", "description": "Value. The object's name." },
+          "mode": { "enum": ["log", "block"], "description": "Code. What the WAF does on a match: log it or block the request." },
+          "requests_judged": { "type": "integer", "minimum": 0, "description": "Value. How many requests the WAF judged for the object in the period." },
+          "clients": { "type": "integer", "minimum": 0, "description": "Value. How many clients made them." },
+          "findings": {
+            "type": "array",
+            "description": "The findings, one per rule and field.",
+            "items": {
+              "type": "object",
+              "required": ["rule", "kind", "explanation", "message", "severity", "field", "field_label", "matched", "paths", "more_paths", "requests", "clients", "last_seen", "in_draft", "not_working"],
+              "properties": {
+                "rule": { "type": "integer", "description": "Value. The rule set's number for the rule; stable, and the number an exception names." },
+                "kind": { "type": "string", "description": "Text. The page's name for the kind of attack the rule's file covers, such as SQL injection. Match on rule instead." },
+                "explanation": { "type": "string", "description": "Text. The page's sentence on that kind." },
+                "message": { "type": "string", "description": "Text. The rule set's own message for the rule." },
+                "severity": { "enum": ["critical", "error", "warning", "notice", ""], "description": "Code. The rule set's severity for the rule; empty where the installed rule set does not define it." },
+                "field": { "type": "string", "description": "Value. The part of the request the rule matched, in the engine's name for it, such as ARGS:q; empty where the rule names none." },
+                "field_label": { "type": "string", "description": "Text. The same part as a person names it, such as q." },
+                "matched": { "type": "string", "description": "Value. What the engine matched, as the visitor sent it; may be empty." },
+                "paths": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. Paths the finding was made on, the most frequent first." },
+                "more_paths": { "type": "integer", "minimum": 0, "description": "Value. How many more paths there were than are listed." },
+                "requests": { "type": "integer", "minimum": 0, "description": "Value. How many requests matched." },
+                "clients": { "type": "integer", "minimum": 0, "description": "Value. How many clients made them." },
+                "last_seen": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. When a request last matched." },
+                "in_draft": { "type": "boolean", "description": "Value. True where an exception in the object's unpublished draft already covers the finding." },
+                "not_working": { "type": "boolean", "description": "Value. True where a published exception covers the finding and it is still matched after the exception reached the nodes." }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

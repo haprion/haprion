@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from haprion.proxy_model import NAME_BODY
 
 from haprion_ui import objects, traffic_logs
+from haprion_ui.api import contract
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import Caller, in_scope, needs
 from haprion_ui.reading import OBJECTS_SOURCE, listed_clusters, read_source
@@ -94,7 +95,9 @@ def _node(item: traffic_logs.Freshness) -> dict[str, Any]:
     }
 
 
-@router.get("/clusters/{cluster}/traffic", name="traffic_list")
+@router.get(
+    "/clusters/{cluster}/traffic", name="traffic_list", responses=contract.responses("traffic_list")
+)
 def traffic_list(
     request: Request,
     cluster: str,

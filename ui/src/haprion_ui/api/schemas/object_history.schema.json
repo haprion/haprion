@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_history.schema.json",
+  "title": "GET /api/v1/clusters/{cluster}/objects/{name}/history: result",
+  "description": "The cluster's versions, newest first. A version holds every object, so this is the one history.",
+  "type": "object",
+  "required": ["versions", "published_version", "total", "limit", "truncated"],
+  "properties": {
+    "versions": {
+      "type": "array",
+      "description": "The versions, newest first.",
+      "items": {
+        "type": "object",
+        "required": ["version", "saved_by", "saved_at", "comment", "published", "current"],
+        "properties": {
+          "version": { "type": "integer", "minimum": 1, "description": "Value. The version number." },
+          "saved_by": { "type": ["string", "null"], "description": "Value. Who saved the version; null for one recorded before that was kept." },
+          "saved_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the version was saved; null where the engine did not say." },
+          "comment": { "type": "string", "description": "Text. The comment written with the version; may be empty." },
+          "published": { "type": "boolean", "description": "Value. True for the version the nodes are told to run." },
+          "current": { "type": "boolean", "description": "Value. True for the newest saved version, the one a publish would build on; not the same as published." }
+        },
+        "additionalProperties": true
+      }
+    },
+    "published_version": { "type": ["integer", "null"], "description": "Value. The published version number; null where nothing is published or it is unknown." },
+    "total": { "type": "integer", "minimum": 0, "description": "Value. How many versions the cluster has." },
+    "limit": { "type": "integer", "minimum": 1, "description": "Value. The most this answer lists, as asked or the default." },
+    "truncated": { "type": "boolean", "description": "Value. True where older versions exist than are listed." }
+  },
+  "additionalProperties": true
+}

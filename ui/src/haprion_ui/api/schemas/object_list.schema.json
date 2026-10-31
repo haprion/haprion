@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_list.schema.json",
+  "title": "GET /api/v1/clusters/{cluster}/objects: result",
+  "description": "Every row the Proxies page draws for one cluster, by name.",
+  "type": "object",
+  "required": ["objects", "total", "offset", "limit", "truncated"],
+  "properties": {
+    "objects": { "type": "array", "items": { "$ref": "definitions.schema.json#/$defs/object_entry" }, "description": "The page of objects asked for, by name." },
+    "total": { "type": "integer", "minimum": 0, "description": "Value. How many objects the cluster has in all." },
+    "offset": { "type": "integer", "minimum": 0, "description": "Value. How many objects were skipped, as asked." },
+    "limit": { "type": "integer", "minimum": 1, "description": "Value. The most this answer lists, as asked or the default." },
+    "truncated": { "type": "boolean", "description": "Value. True where more objects follow at offset plus limit." }
+  },
+  "additionalProperties": true
+}

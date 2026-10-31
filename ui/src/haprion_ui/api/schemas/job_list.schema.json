@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/job_list.schema.json",
+  "title": "GET /api/v1/jobs: result",
+  "description": "The newest jobs, as the Jobs page lists them, newest first.",
+  "type": "object",
+  "required": ["jobs", "limit", "truncated"],
+  "properties": {
+    "jobs": { "type": "array", "items": { "$ref": "definitions.schema.json#/$defs/job_summary" }, "description": "The jobs, newest first." },
+    "limit": { "type": "integer", "minimum": 1, "description": "Value. The most this answer lists, as asked or the default." },
+    "truncated": { "type": "boolean", "description": "Value. True where older jobs match than are listed." }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/token_show.schema.json",
+  "title": "GET /api/v1/token: result",
+  "description": "The calling token itself, never its hash and only the prefix of its secret.",
+  "type": "object",
+  "required": ["token"],
+  "properties": {
+    "token": {
+      "type": "object",
+      "description": "The calling token.",
+      "required": ["name", "level", "clusters", "objects", "sources", "prefix", "created_at", "expires_at"],
+      "properties": {
+        "name": { "type": "string", "description": "Value. The token's name." },
+        "level": { "enum": ["read", "block", "write"], "description": "Code. What the token may do: read, block or write; each level reaches the ones below it." },
+        "clusters": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. The clusters the token is limited to; empty means all." },
+        "objects": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. The objects a block token is limited to; empty means all." },
+        "sources": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. The addresses or networks the token may be used from; empty means anywhere." },
+        "prefix": { "type": "string", "description": "Value. The first characters of the secret, to tell tokens apart." },
+        "created_at": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. When the token was made." },
+        "expires_at": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. When the token stops working." }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

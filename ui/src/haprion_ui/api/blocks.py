@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from haprion.proxy_model import ModelError, load_proxy
 
 from haprion_ui import blocked, objects
+from haprion_ui.api import contract
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import Caller, in_scope, needs
 from haprion_ui.preview import DEFAULTS
@@ -88,7 +89,11 @@ def object_blocks(
     }
 
 
-@router.get("/clusters/{cluster}/objects/{name}/blocks", name="object_blocks")
+@router.get(
+    "/clusters/{cluster}/objects/{name}/blocks",
+    name="object_blocks",
+    responses=contract.responses("object_blocks"),
+)
 def object_block_list(
     request: Request,
     cluster: str,

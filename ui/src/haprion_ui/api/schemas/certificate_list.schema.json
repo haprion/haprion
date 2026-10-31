@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/certificate_list.schema.json",
+  "title": "GET /api/v1/certificates: result",
+  "description": "The registry as the Certificates page lists it, within the token's clusters. A token limited to some clusters is given the certificates deployed to those clusters, and their targets and State judged over those clusters alone.",
+  "type": "object",
+  "required": ["certificates", "count", "truncated", "observed_at", "stale"],
+  "properties": {
+    "certificates": {
+      "type": "array",
+      "description": "The certificates, as the page lists them.",
+      "items": {
+        "type": "object",
+        "required": ["id", "common_name", "names", "issuer", "source", "lifecycle", "readable", "problem", "not_after", "days_left", "expired", "expiry_state", "state", "needs_publish", "targets"],
+        "properties": {
+          "id": { "type": "string", "description": "Value. The certificate's identifier in the registry." },
+          "common_name": { "type": "string", "description": "Value. The name the certificate is issued to." },
+          "names": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. Every name the certificate covers." },
+          "issuer": { "type": ["string", "null"], "description": "Value. The issuing authority's name; null where the certificate cannot be read." },
+          "source": { "enum": ["acme", "import", "authority", "unknown"], "description": "Code. Where the material comes from: acme (issued by the manager), import (uploaded), authority (a CA file), unknown." },
+          "lifecycle": { "enum": ["acme", "static", "unknown"], "description": "Code. Whether the certificate is renewed automatically (acme) or stays as it is (static), judged against certbot's archive." },
+          "readable": { "type": "boolean", "description": "Value. Whether the certificate's material can be read." },
+          "problem": { "type": ["string", "null"], "description": "Text. Why the material cannot be read; null where it can." },
+          "not_after": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the certificate expires; null where unreadable." },
+          "days_left": { "type": ["integer", "null"], "description": "Value. Whole days to expiry, negative once expired; null where unreadable." },
+          "expired": { "type": "boolean", "description": "Value. True once not_after has passed." },
+          "expiry_state": { "$ref": "definitions.schema.json#/$defs/tone", "description": "Code. The expiry's colour: healthy, warning (inside the renewal margin) or critical (a week or less, or expired); unknown where there is no date." },
+          "state": {
+            "type": "object",
+            "description": "Whether the nodes carry the certificate, judged over the certificate's targets.",
+            "required": ["label", "detail", "tone"],
+            "properties": {
+              "label": { "type": "string", "description": "Text. The page's word, such as Published." },
+              "detail": { "type": "string", "description": "Text. The sentence under the word." },
+              "tone": { "$ref": "definitions.schema.json#/$defs/tone", "description": "Code. healthy, warning, critical or unknown." }
+            },
+            "additionalProperties": true
+          },
+          "needs_publish": { "type": "boolean", "description": "Value. True where some target lacks a current copy." },
+          "targets": {
+            "type": "array",
+            "description": "Where the certificate goes.",
+            "items": {
+              "type": "object",
+              "required": ["name", "kind", "published_at", "current"],
+              "properties": {
+                "name": { "type": "string", "description": "Value. The cluster's or the receiver's name." },
+                "kind": { "enum": ["cluster", "receiver"], "description": "Code. cluster: rolled out by the manager. receiver: fetches on its own schedule and reports nothing back." },
+                "published_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the file was written for the target; null where it never was." },
+                "current": { "type": ["boolean", "null"], "description": "Value. Whether the target carries the current copy; null where that is not known, always so for a receiver." }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "count": { "type": "integer", "minimum": 0, "description": "Value. How many certificates the token may see in all." },
+    "truncated": { "type": "boolean", "description": "Value. True where more certificates exist than are listed." },
+    "observed_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the registry was last read; null where it never was." },
+    "stale": { "type": "boolean", "description": "Value. True where the registry reading is older than two polls." }
+  },
+  "additionalProperties": true
+}

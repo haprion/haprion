@@ -163,6 +163,8 @@ Then `sudo apt install haprion-ui` and `sudo haprion-setup` on the manager, and
   OpenID Connect provider with a local break-glass account kept
 - every change to a cluster is a job, and how every job ended is recorded – even when the process
   running it died
+- an HTTPS API for other systems to read status, objects, certificates, the traffic log and jobs, with
+  tokens you make, limit and revoke in the interface ([The API](docs/user-manual.md#the-api))
 - Debian packages from a signed apt repository; `apt upgrade` is the update. Every package is built
   twice, on separate machines, and published only when both builds are identical
 

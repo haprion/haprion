@@ -65,6 +65,11 @@ names used below, that is a bug in the software, not in this guide.
   - [Events: jobs, the nodes and the audit record](#events-jobs-the-nodes-and-the-audit-record)
   - [How often status is refreshed](#how-often-status-is-refreshed)
   - [The worker](#the-worker)
+- [The API](#the-api)
+  - [Tokens](#tokens)
+  - [Calling it](#calling-it)
+  - [The answers](#the-answers)
+  - [From the terminal](#from-the-terminal)
 - [Automation from the terminal](#automation-from-the-terminal)
   - [Automating with Ansible](#automating-with-ansible)
 - [Maintenance](#maintenance)
@@ -4384,6 +4389,140 @@ matches on the publish's idempotency key, which carries the draft's revision. A 
 publish was asked for therefore has a different key and is left alone. A draft and a saved change of the
 same object are two rows (`stage`), each cleared by its own publish.
 
+## The API
+
+Other systems can read Haprion over HTTPS. A monitoring system reads a cluster's status, a script follows a
+job, a dashboard lists the certificates that run out. Each one calls with a token you made for it, and you
+can take that token back at any time.
+
+The API answers on the manager's own address, under `/api/v1/`, through the same nginx and certificate as
+the interface. There is no extra port to open.
+
+This release reads. Blocking an address and changing objects through the API come in later releases.
+
+### Tokens
+
+A token is made under *Settings* → *API tokens* → *Add token*. It has:
+
+- **a name**, which is what the audit record shows for every call it makes, as `token:` and the name;
+- **a level**: *Read* sees what a reader sees. *Block* blocks addresses on its proxies, nothing else.
+  *Write* does what an admin does;
+- **a scope**, optional: the clusters it may see, and for a *Block* token the proxies it may block on.
+  Without one it sees every cluster;
+- **where it may be called from**, optional: addresses or networks. From anywhere else the token is
+  refused, as if it did not exist;
+- **how long it is valid**: 30 days to two years, one year unless you choose otherwise. It cannot be
+  extended. Make a new one before it ends.
+
+After *Save* the token is shown once, with a button to copy it. Haprion keeps only a hash of it, so it
+cannot show it again. A lost token is replaced, not recovered.
+
+The list shows each token's level, scope, end date and when and from where it was last used. *Revoke*
+stops a token at once, and a revoked token never works again. *Remove* takes a revoked or ended token off
+the list. A token that ends within 30 days, or has ended and is still listed, is under *Needs attention*.
+
+**A Read token sees visitors' addresses.** The traffic log carries every client's address. Treat a read
+token as you would access to that log.
+
+### Calling it
+
+Every call carries the token in a header:
+
+```bash
+# A cluster's status (a token with the level Read)
+curl -sS https://mgr.example.com/api/v1/clusters/alpha \
+     -H "Authorization: Bearer $HAPRION_TOKEN"
+```
+
+```bash
+# The token itself: its level, scope and when it ends
+curl -sS https://mgr.example.com/api/v1/token \
+     -H "Authorization: Bearer $HAPRION_TOKEN"
+```
+
+```bash
+# The last hour's requests to one proxy that ended in a 5xx, newest first
+curl -sS -G https://mgr.example.com/api/v1/clusters/alpha/traffic \
+     -H "Authorization: Bearer $HAPRION_TOKEN" \
+     --data-urlencode 'object=shop' --data-urlencode 'status=5xx' \
+     --data-urlencode "from=$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)"
+```
+
+```bash
+# How a job went
+curl -sS https://mgr.example.com/api/v1/jobs/1042 \
+     -H "Authorization: Bearer $HAPRION_TOKEN"
+```
+
+What a token can read:
+
+| Path under `/api/v1` | What it answers |
+|---|---|
+| `/token` | The calling token: level, scope, end date |
+| `/clusters`, `/clusters/{cluster}` | Status: nodes, which holds the VIP, versions, what needs attention |
+| `/clusters/{cluster}/objects` | The objects, as *Proxies* lists them (`limit`, `offset`) |
+| `/clusters/{cluster}/objects/{name}` | One object and its servers' states; its document only for a *Write* token |
+| `/clusters/{cluster}/objects/{name}/history` | The cluster's published versions (`limit`) |
+| `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now |
+| `/certificates` | The certificates, when they end and where they are (`limit`) |
+| `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`) |
+| `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through |
+| `/jobs`, `/jobs/{job_id}` | Jobs and how they went (`cluster`, `state`, `limit`) |
+
+Times are ISO 8601 with their offset, and `from` and `to` take the same. The full description, generated
+from the code, is `/api/v1/openapi.json`, for any valid token.
+
+### The answers
+
+Every answer is the same envelope the command-line tools write with `--json`:
+
+```json
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cluster_show",
+  "cluster": "alpha",
+  "request_id": "6f1c…",
+  "result": { "…": "…" },
+  "warnings": [],
+  "error": null
+}
+```
+
+A list that could grow without end takes `limit`, and says in `truncated` whether more was left out.
+
+When a call is refused, `ok` is false and `error.code` says why:
+
+| Status | `error.code` | Why |
+|---|---|---|
+| 401 | `unauthorized` | No token, or one that is unknown, revoked, ended or called from elsewhere - one answer for all, the reason is in the manager's log |
+| 403 | `forbidden` | The token's level does not reach the call |
+| 404 | `not_found` | No such cluster, object or job - or one outside the token's scope |
+| 400 | `bad_input` | A parameter that is not valid, named in the message |
+| 429 | `rate_limited` | Ten calls with a token that is not valid within a minute; the address waits a minute |
+| 503 | `database_unavailable` | The manager's database did not answer |
+
+nginx also limits every address to ten calls a second, with room for fifty at once.
+
+**Details:** the API reads no cookie, and the interface reads no token. nginx removes any cookie on the
+way in and refuses to pass one out. That is why the API needs no CSRF token: a browser sends cookies by
+itself, never this header. A token is 256 random bits behind `hap_`, so a leaked one is recognisable.
+
+### From the terminal
+
+`haprion-api-token` makes, lists, revokes and removes tokens on the manager, with the same rules as the
+page. It is for scripts and for when the interface cannot be reached:
+
+```bash
+sudo haprion-api-token add monitoring --level read --cluster alpha --days 365
+sudo haprion-api-token list
+sudo haprion-api-token revoke monitoring
+```
+
+`add` prints the token alone on standard output, so it can be captured. With `--json`, each verb answers
+in the envelope.
+
 ## Automation from the terminal
 
 Everything the interface sets can also be set from a shell on the management host. A configuration tool
@@ -4894,6 +5033,8 @@ in the section linked.
   ([Syslog objects](#syslog-objects)).
 - **Two DNS objects cannot share an address and port.** dnsdist tells them apart by where a query arrives
   ([DNS objects](#dns-objects)).
+- **The API does not call out.** It answers questions and says nothing on its own: no webhooks or events
+  to other systems. A system that wants to know polls ([The API](#the-api)).
 - **The update check does not go through a proxy.** A manager that reaches the internet only through one
   cannot use it; its row says GitHub has not answered
   ([Features and advanced configuration](#features-and-advanced-configuration)).
@@ -7651,6 +7792,11 @@ it - the socket admits the group `www-data`, so step 5 requires nginx's workers 
 `www-data`. The plain leg is deliberate: it never leaves the host. A request that arrives while the
 web service restarts waits in the socket for the new process.
 
+The API has a location of its own, `/api/`, on the same socket ([The API](#the-api)). It is limited
+per address to ten calls a second with room for fifty at once, and nginx strips cookies from what goes
+in and from what comes out, so the API cannot be reached with a browser session. An update rewrites
+the site with it; nothing has to be done by hand.
+
 The rendered site also includes `/etc/nginx/snippets/haprion-receivers.conf`. Step 5 creates it
 empty, and afterwards only `haprion-cert-receiver` writes it
 ([Registering a receiver](#registering-a-receiver)). Running the step again leaves an existing
@@ -7696,7 +7842,7 @@ while a proper certificate is being arranged.
 
 A proxy in front - another nginx, Nginx Proxy Manager, a load balancer - is an additional path; the
 direct one stays. Unless it is told about the proxy, the management host knows every user by the
-proxy's address, and three things go wrong:
+proxy's address, and four things go wrong:
 
 - The sign-in throttle (`[throttle]` in `ui.toml`, failed sign-ins per address) is shared by
   everyone, so one person, or an attacker, locks every user out. The audit log names the proxy for
@@ -7705,6 +7851,8 @@ proxy's address, and three things go wrong:
   a receiver fetching through the proxy is refused. Naming the proxy there instead would open
   certificates, and sometimes keys, to everyone who can reach the proxy.
 - The sign-in provider (SSO) sends the browser back to the name the request arrived with.
+- An API token limited to some addresses ([Tokens](#tokens)) sees only the proxy's, and the API's
+  limit on tokens that are not valid closes the proxy's address for everyone.
 
 **Name the proxy** in the answers file and run step 5 again:
 

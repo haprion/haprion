@@ -74,6 +74,17 @@ def build_api(config: Config) -> FastAPI:
             Refusal(503, "database_unavailable", "The database did not answer; try again shortly."),
         )
 
+    #
+    # Anything else is this side's fault: logged with its traceback, answered
+    # in the envelope without one, so a script is never handed a text page.
+    #
+    @api.exception_handler(Exception)
+    async def unexpected(request: Request, exc: Exception) -> Response:
+        logger.error("api: %s %s failed", request.method, request.url.path, exc_info=exc)
+        return refusal(
+            request, Refusal(500, "internal_error", "The request failed on the manager.")
+        )
+
     for module in (token, clusters, objects, certificates, blocks, traffic, waf, jobs):
         api.include_router(module.router)
 

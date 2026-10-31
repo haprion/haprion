@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 
+from fastapi.testclient import TestClient
+
 from haprion_ui import api_tokens, db
 from haprion_ui.api import caller
 from tests.test_login import LoginTestCase, configuration
@@ -268,3 +270,20 @@ class TheApiAnswers(ApiTestCase):
         wrong = client.post("/api/v1/clusters", headers={"Authorization": f"Bearer {secret}"})
         self.assertEqual(wrong.status_code, 405)
         self.assertEqual(wrong.json()["error"]["code"], "method_not_allowed")
+
+    def test_a_failure_of_this_side_is_a_500_in_the_envelope_and_a_logged_traceback(self) -> None:
+        client = self.api()
+        client = TestClient(
+            client.app, base_url=str(client.base_url), raise_server_exceptions=False
+        )
+        secret = self.issue()
+        with (
+            mock.patch("haprion_ui.db.cluster_list", side_effect=RuntimeError("boom")),
+            self.assertLogs("haprion_ui.api", "ERROR") as logged,
+        ):
+            response = client.get("/api/v1/clusters", headers={"Authorization": f"Bearer {secret}"})
+        self.assertEqual(response.status_code, 500)
+        body = response.json()
+        self.assertEqual((body["outcome"], body["error"]["code"]), ("failed", "internal_error"))
+        self.assertNotIn("boom", response.text)
+        self.assertIn("RuntimeError: boom", "\n".join(logged.output))

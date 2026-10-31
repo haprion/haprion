@@ -9,8 +9,11 @@ every route on both sides.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+from unittest import mock
 
+from fastapi.testclient import TestClient
 from starlette.routing import Mount
 
 from haprion_ui import api, api_tokens
@@ -104,7 +107,18 @@ class EachRouteAnswersOnlyItsLevel(ApiTestCase):
         self.assertEqual(unnamed, [])
 
     def test_a_token_below_a_route_s_level_is_refused_and_one_at_it_is_not(self) -> None:
+        #
+        # A token that reaches a route runs it, against a pool that is no
+        # database: whatever that answers is the route's business, only not
+        # a 401 or a 403. Answered rather than raised, as the service would.
+        #
         client = self.client()
+        client = TestClient(
+            client.app, base_url=str(client.base_url), raise_server_exceptions=False
+        )
+        quiet = mock.patch.object(logging.getLogger("haprion_ui.api"), "disabled", True)
+        quiet.start()
+        self.addCleanup(quiet.stop)
         secrets = {held: self.issue(level=held) for held in api_tokens.LEVELS}
         walked = 0
         for route in api_routes(client):

@@ -633,14 +633,17 @@ WAF_BASE = (
 # refuses as the rule set's do: the engine says deny, and `mode` decides.
 # HAProxy marks a body it cut on a `large_bodies` path (WAF_BODY_CUT), where
 # the operator chose to inspect what fitted, so the half body is not refused
-# as unparseable; a client's own copy of the header is removed first.
+# as unparseable; a client's own copy of the header is removed first. A cut
+# upload is also an unfinished multipart body - its closing boundary never
+# arrives - and was refused as one until 2026-10-31, every photo upload with it.
 #
 WAF_BODY_CUT = "x-haprion-body-cut"
 WAF_BODY_CUT_RULE = 190001
 WAF_PARSE = (
     f"SecArgumentsLimit {crs.ENGINE_ARGUMENTS_LIMIT}",
     f'SecRule REQUEST_HEADERS:{WAF_BODY_CUT} "@streq 1" '
-    f'"id:{WAF_BODY_CUT_RULE},phase:1,t:none,pass,nolog,ctl:ruleRemoveById=190002"',
+    f'"id:{WAF_BODY_CUT_RULE},phase:1,t:none,pass,nolog,'
+    f'ctl:ruleRemoveById=190002,ctl:ruleRemoveById=190003"',
     *(
         f'SecRule {rule.condition} "id:{rule.id},phase:{rule.phase},t:none,log,deny,'
         f"status:400,msg:'{rule.message}'\""

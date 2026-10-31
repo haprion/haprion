@@ -3257,6 +3257,23 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             (403, "crs:deny"),
         )
 
+    def test_an_upload_cut_on_a_large_body_path_is_not_refused_as_unreadable(self) -> None:
+        # A photo upload: multipart, far past the buffer, its closing boundary
+        # never reaching the engine. Measured 2026-10-31 against a real object.
+        cut = (
+            b'--b\r\nContent-Disposition: form-data; name="assetData"; filename="a.jpg"\r\n'
+            b"Content-Type: image/jpeg\r\n\r\n" + b"x" * 20_000 + b"\r\n--b--\r\n"
+        )
+        self.assertEqual(
+            self.ask("/upload", name="blocks", body=cut, content_type=MULTIPART),
+            (200, "", ""),
+        )
+        # Whole, and still broken: the path does not excuse it.
+        self.assertEqual(
+            self.ask("/upload", name="blocks", body=MULTIPART_TWICE, content_type=MULTIPART)[:2],
+            (403, "crs:deny"),
+        )
+
     def test_the_engine_hands_its_transaction_id_back_to_haproxy(self) -> None:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
         connection.request("GET", SQLI, headers={"Host": "looks.example.com"})
@@ -3279,6 +3296,9 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
         self.skipTest("the engine is not running")
 
     def test_a_body_cut_on_a_large_body_path_is_not_refused_as_unreadable(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_an_upload_cut_on_a_large_body_path_is_not_refused_as_unreadable(self) -> None:
         self.skipTest("the engine is not running")
 
     def test_an_ordinary_request_is_served_and_named_by_nothing(self) -> None:

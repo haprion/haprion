@@ -6,6 +6,7 @@
     haprion-server-state reapply
     haprion-server-state update-certs <certificate-id>...
     haprion-server-state unblock <object> <address>...
+    haprion-server-state block <object> <address>...
 
 Runs as root. `set` is what the manager asks for, through the trigger account's
 forced command (`haprion-server-state-trigger`), which validated the words
@@ -55,7 +56,10 @@ configuration", measured on 3.4.6) - and answers EXIT_NOT_HELD for it, so the
 caller reloads as before. Any other failure is aborted and answered too; the
 files on disk are the new ones either way, and a reload reads them.
 
-**`unblock` lifts an object's dynamic block on addresses** (B271): each is
+**`block` places addresses in an object's blocked table** (B412), as going over
+the object's limit would, for the table's own `block_for`; another system (an
+intrusion detector) asks for it through the manager. The answer reads the table
+back. **`unblock` lifts an object's dynamic block on addresses** (B271): each is
 cleared from the object's blocked table and from its count, and the blocked
 table is read again. The count too, or the address is blocked again by its
 first request inside the window (measured). A `clear` is not shared with the
@@ -648,11 +652,13 @@ def block_tables(name: str) -> tuple[str, str]:
     return f"mgd-{name}-dynblock-rate", f"mgd-{name}-dynblock"
 
 
-def command_unblock(name: str, words: list[str]) -> int:
+def block_addresses(words: list[str]) -> list[str]:
+    """The addresses of a block or an unblock, once each, or nothing if any is not one."""
+
     try:
         parsed = [ipaddress.ip_address(word) for word in words]
     except ValueError:
-        parsed = []
+        return []
     #
     # A scoped IPv6 address carries its zone verbatim - `fe80::1%x;shutdown`
     # parses - and the addresses are joined into one admin-socket line. The
@@ -660,8 +666,28 @@ def command_unblock(name: str, words: list[str]) -> int:
     # 2026-10-22, 5-15).
     #
     if any(getattr(address, "scope_id", None) is not None for address in parsed):
-        parsed = []
-    addresses = list(dict.fromkeys(str(address) for address in parsed))
+        return []
+    return list(dict.fromkeys(str(address) for address in parsed))
+
+
+def command_unblock(name: str, words: list[str]) -> int:
+    return change_block(name, words, placing=False)
+
+
+def command_block(name: str, words: list[str]) -> int:
+    """Place an address in the object's blocked table, as going over its limit does (B412).
+
+    The entry lives the table's own `expire`, which is the object's `block_for`:
+    HAProxy's `set table` takes no expiry of its own. Placed whatever the
+    exemptions say - the generated rules test them before the table, so an
+    exempt address is never refused; the manager refuses one before asking.
+    """
+
+    return change_block(name, words, placing=True)
+
+
+def change_block(name: str, words: list[str], *, placing: bool) -> int:
+    addresses = block_addresses(words)
     if not OBJECT.fullmatch(name) or not addresses or len(words) > MAX_UNBLOCK:
         return answer(
             {
@@ -685,6 +711,9 @@ def command_unblock(name: str, words: list[str]) -> int:
             )
         for start in range(0, len(addresses), UNBLOCK_BATCH):
             batch = addresses[start : start + UNBLOCK_BATCH]
+            if placing:
+                ask([f"set table {blocked} key {address} data.gpc[0] 1" for address in batch])
+                continue
             ask(
                 [
                     command
@@ -697,8 +726,10 @@ def command_unblock(name: str, words: list[str]) -> int:
             )
         results = []
         for address in addresses:
-            left = "key=" in ask([f"show table {blocked} key {address}"])
-            results.append({"address": address, "outcome": "failed" if left else "done"})
+            there = "key=" in ask([f"show table {blocked} key {address}"])
+            results.append(
+                {"address": address, "outcome": "done" if there == placing else "failed"}
+            )
         failed = any(entry["outcome"] == "failed" for entry in results)
         return answer(
             {
@@ -727,6 +758,8 @@ def main(argv: list[str]) -> int:
         return command_update_certs(argv[1:])
     if len(argv) >= 3 and argv[0] == "unblock":
         return command_unblock(argv[1], argv[2:])
+    if len(argv) >= 3 and argv[0] == "block":
+        return command_block(argv[1], argv[2:])
     print(__doc__.split("\n\n")[1], file=sys.stderr)
     return EXIT_USAGE
 

@@ -703,8 +703,8 @@ step "Sudo rules"
 # places - unprivileged in haprion-cert-trigger, then again in the root helper.
 # The server state rule is the same shape (Fas 20, B263): the verb `set` is
 # fixed, the GUID and the state behind it are validated by
-# haprion-server-state-trigger and again by the helper. So is `unblock` (B271):
-# an object name and addresses behind a fixed verb. A command a key forces with
+# haprion-server-state-trigger and again by the helper. So are `unblock` (B271)
+# and `block` (B412): an object name and addresses behind a fixed verb. A command a key forces with
 # no arguments ends in `""`, which lets sudo pass it none (review 2026-10-22,
 # 5-15).
 #
@@ -718,6 +718,7 @@ ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-cert-pull
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-cert-remove
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-server-state set *
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-server-state unblock *
+${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-server-state block *
 ${STATUS_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-node-status --json
 ${BACKUP_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-state-export \"\""
 

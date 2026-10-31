@@ -370,11 +370,41 @@ class TheHelperLiftsABlock(RunningHaproxy):
         self.assertNotIn("key=2001:db8::7 ", held)
         self.assertEqual(held.count("key=::ffff:192.0.2.8 "), 2, "the neighbour stays in both")
 
-    def test_an_object_without_dynamic_blocking_is_refused(self) -> None:
-        code, out = self.run_helper("unblock", "api", "192.0.2.7")
+    def test_a_block_places_the_addresses_in_the_blocked_table(self) -> None:
+        """B412: what going over the limit does, asked for from outside."""
 
-        self.assertEqual(code, self.helper.EXIT_UNKNOWN_SERVER)
-        self.assertEqual(json.loads(out)["outcome"], "refused")
+        code, out = self.run_helper("block", "shop", "192.0.2.9", "2001:db8::9")
+
+        self.assertEqual(code, 0, out)
+        answer = json.loads(out)
+        self.assertEqual(answer["outcome"], "done")
+        self.assertEqual(
+            answer["addresses"],
+            [
+                {"address": "192.0.2.9", "outcome": "done"},
+                {"address": "2001:db8::9", "outcome": "done"},
+            ],
+        )
+        blocked = str(self.helper.ask(["show table mgd-shop-dynblock"]))
+        self.assertIn("key=::ffff:192.0.2.9 ", blocked)
+        self.assertIn("key=2001:db8::9 ", blocked)
+        self.assertNotIn(
+            "192.0.2.9", str(self.helper.ask(["show table mgd-shop-dynblock-rate"])),
+            "the count is not touched: the block is the blocked table's alone",
+        )  # fmt: skip
+
+        code, out = self.run_helper("unblock", "shop", "192.0.2.9")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn(
+            "key=::ffff:192.0.2.9 ", str(self.helper.ask(["show table mgd-shop-dynblock"]))
+        )
+
+    def test_an_object_without_dynamic_blocking_is_refused(self) -> None:
+        for verb in ("unblock", "block"):
+            with self.subTest(verb):
+                code, out = self.run_helper(verb, "api", "192.0.2.7")
+                self.assertEqual(code, self.helper.EXIT_UNKNOWN_SERVER)
+                self.assertEqual(json.loads(out)["outcome"], "refused")
 
     def test_words_that_are_not_a_request_are_refused(self) -> None:
         for argv in (
@@ -386,6 +416,9 @@ class TheHelperLiftsABlock(RunningHaproxy):
             # A zone is carried verbatim into the admin-socket line (5-15).
             ("unblock", "shop", "fe80::1%x;shutdown"),
             ("unblock", "shop", "192.0.2.7", "fe80::1%eth0"),
+            ("block", "shop"),
+            ("block", "shop", "example.com"),
+            ("block", "shop", "fe80::1%x;shutdown"),
         ):
             with self.subTest(argv[:3]):
                 code, _out = self.run_helper(*argv)
@@ -606,6 +639,14 @@ class TheTriggerValidatesBeforeSudo(unittest.TestCase):
             "-n /usr/sbin/haprion-server-state unblock shop 192.0.2.7 2001:db8::7",
         )
 
+    def test_a_block_reaches_the_helper_with_its_addresses(self) -> None:
+        done = self.trigger("block shop 192.0.2.7")
+
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(
+            done.stdout.strip(), "-n /usr/sbin/haprion-server-state block shop 192.0.2.7"
+        )
+
     def test_an_unblock_that_is_not_one_is_refused_before_sudo(self) -> None:
         for request in (
             "unblock",
@@ -615,6 +656,10 @@ class TheTriggerValidatesBeforeSudo(unittest.TestCase):
             "unblock shop $(id)",
             "unblock ../x 192.0.2.7",
             "unblock shop " + " ".join(f"192.0.2.{index}" for index in range(65)),
+            "block",
+            "block shop",
+            "block shop 192.0.2.7;id",
+            "blocks shop 192.0.2.7",
         ):
             with self.subTest(request[:40]):
                 done = self.trigger(request)

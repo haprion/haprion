@@ -10,6 +10,7 @@
 #
 #     server-state <guid> <ready|drain|maint>
 #     unblock <object> <address>...      (dynamic blocking, B271; at most 64)
+#     block <object> <address>...        (an outside block, B412; at most 64)
 #
 set -Eeuo pipefail
 
@@ -34,14 +35,14 @@ request="${SSH_ORIGINAL_COMMAND:-}"
 read -r -a parts <<< "$request"
 (( ${#parts[@]} > 0 )) || fail "no server state request was sent"
 
-if [[ "${parts[0]}" == "unblock" ]]; then
+if [[ "${parts[0]}" == "unblock" || "${parts[0]}" == "block" ]]; then
     (( ${#parts[@]} >= 3 && ${#parts[@]} <= MAX_ADDRESSES + 2 )) \
-        || fail "expected: unblock <object> <address>... (at most ${MAX_ADDRESSES})"
+        || fail "expected: ${parts[0]} <object> <address>... (at most ${MAX_ADDRESSES})"
     [[ "${parts[1]}" =~ $OBJECT_PATTERN ]] || fail "invalid object name"
     for address in "${parts[@]:2}"; do
         [[ "$address" =~ $ADDRESS_PATTERN ]] || fail "invalid address"
     done
-    exec sudo -n "$HELPER" unblock "${parts[@]:1}"
+    exec sudo -n "$HELPER" "${parts[0]}" "${parts[@]:1}"
 fi
 
 (( ${#parts[@]} == 3 )) || fail "expected: server-state <guid> <ready|drain|maint>"

@@ -268,6 +268,35 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
                 self.assertNotIn(">Unblock</button>", page)
                 self.assertNotIn('name="state" value="drain"', page)
 
+    def test_the_rows_a_running_change_is_about_stay_ticked(self) -> None:
+        """The page draws itself again once the job is queued; the choice stays (26-10-31)."""
+
+        first = self.writing_client().get("/proxies/edge-demo/public-web").text
+        server = first.split('name="server" value="')[1].split('"')[0]
+        for operation, key, chosen, field in (
+            ("dynamic_unblock", "addresses", "198.51.100.23", "address"),
+            ("server_state", "servers", server, "server"),
+        ):
+            with self.subTest(operation):
+                running = replace(
+                    queued(operation=operation, cluster="edge-demo"),
+                    state="running",
+                    payload={"object": "public-web", key: [chosen]},
+                )
+                with mock.patch("haprion_ui.db.recent_jobs", return_value=[running]):
+                    page = self.writing_client().get("/proxies/edge-demo/public-web").text
+                boxes = [
+                    box.split(">")[0]
+                    for box in page.split(f'<input type="checkbox" name="{field}" ')[1:]
+                ]
+                held = [box for box in boxes if f'value="{chosen}"' in box]
+                self.assertEqual(len(held), 1)
+                self.assertIn("checked disabled", held[0])
+                others = [box for box in boxes if f'value="{chosen}"' not in box]
+                self.assertTrue(others or field == "server")
+                for box in others:
+                    self.assertNotIn("checked", box)
+
     def test_a_job_that_does_not_finish_by_itself_does_not_spin_on_its_card(self) -> None:
         """Review 26-10-29 (rig): Held and No worker spun as the operation does."""
 

@@ -80,6 +80,22 @@ from haprion_ui.views import (
 )
 
 
+def _held(recent: Sequence[db.Job], name: str, operation: str, key: str) -> frozenset[str]:
+    """What a pending or running job on this object is about, by `key` in its payload."""
+
+    for job in recent:
+        if (
+            job.operation == operation
+            and job.payload.get("object") == name
+            and job.state in {"pending", "running"}
+        ):
+            chosen = job.payload.get(key)
+            return (
+                frozenset(str(one) for one in chosen) if isinstance(chosen, list) else frozenset()
+            )
+    return frozenset()
+
+
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
 
@@ -1153,6 +1169,8 @@ def build_router(config: Config) -> APIRouter:
         #
         servers_busy: jobs.InFlight | None = None
         blocked_busy: jobs.InFlight | None = None
+        servers_held: frozenset[str] = frozenset()
+        blocked_held: frozenset[str] = frozenset()
         cluster_busy: jobs.InFlight | None = None
         servers_missed = ""
         #
@@ -1188,6 +1206,14 @@ def build_router(config: Config) -> APIRouter:
             )
             servers_busy = cluster_busy if in_progress != server_state.UNBLOCK_OPERATION else None
             blocked_busy = cluster_busy if in_progress != server_state.OPERATION else None
+            #
+            # The rows the running change is about stay ticked, and cannot be
+            # unticked, until it ends: the page draws itself again when the
+            # job is queued, and an empty box read as "nothing was chosen"
+            # (2026-10-31).
+            #
+            servers_held = _held(recent, name, server_state.OPERATION, "servers")
+            blocked_held = _held(recent, name, server_state.UNBLOCK_OPERATION, "addresses")
             unblocked = next(
                 (
                     job
@@ -1235,6 +1261,8 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 "servers_busy": servers_busy,
                 "blocked_busy": blocked_busy,
+                "servers_held": servers_held,
+                "blocked_held": blocked_held,
                 "cluster_busy": cluster_busy,
                 "servers_missed": servers_missed,
                 "blocked": blocked_card,

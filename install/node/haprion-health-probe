@@ -427,8 +427,7 @@ def connect(target: dict[str, Any], timeout: float, source: str | None) -> socke
     if not target["verify"]:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-        return context.wrap_socket(sock)
-    return context.wrap_socket(sock, server_hostname=target["host"])
+    return context.wrap_socket(sock, server_hostname=target["host"] if target["verify"] else None)
 
 
 def http_status(

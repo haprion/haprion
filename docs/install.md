@@ -43,6 +43,7 @@ Behind a firewall that lets out only what it names, open these. All of them are 
 | manager on Debian 13 | `apt.postgresql.org` | installing and upgrading: PostgreSQL 18 |
 | manager | each node, SSH | always: the manager asks for deploys, reads status and logs, and takes backups |
 | nodes | the manager, SSH | always: each node fetches its releases and certificates |
+| block clients | the manager, SSH | when you use them: a host that blocks an address from outside, such as fail2ban beside an application ([user manual](user-manual.md#blocking-from-outside)) |
 | manager | `acme-v02.api.letsencrypt.org` | issuing and renewing ACME certificates |
 | manager | the DNS provider's API, such as `api.cloudflare.com` | issuing and renewing ACME certificates |
 | manager | `location.ipfire.org` | once a day, for countries in access rules; without it the database ages but keeps working |

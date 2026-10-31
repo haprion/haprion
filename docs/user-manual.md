@@ -34,6 +34,7 @@ names used below, that is a bug in the software, not in this guide.
   - [What the advanced layer does, line by line](#what-the-advanced-layer-does-line-by-line)
 - [Access rules](#access-rules)
 - [Dynamic blocking](#dynamic-blocking)
+  - [Blocking from outside](#blocking-from-outside)
 - [The WAF engine](#the-waf-engine)
 - [Certificates](#certificates)
   - [Publishing certificates](#publishing-certificates)
@@ -1095,7 +1096,7 @@ how many ended; so does the answer of `haprion-settings apply` and `haprion-user
 in `--json`).
 
 **Settings from a file**, for automation. `haprion-settings`, run as root on the manager, sets what three
-parts of the settings set: *External monitoring*, *Features* and the OIDC configuration. It uses the same
+parts of the settings set: *External monitoring*, *External blocking*, *Features* and the OIDC configuration. It uses the same
 code and the same refusals, and is audited with `via: cli`.
 
 - Each of the three sections is optional. A section the file leaves out is left alone.
@@ -1597,6 +1598,68 @@ haprion-server-state -c alpha -o shop unblock 203.0.113.7 2001:db8::7
 server state key's forced command allows. It clears the address from both tables, since an address left
 in the count would be blocked again by its next request. A cleared entry is not shared, and another node
 can send the block back, so a block is lifted on every node and then checked again.
+
+### Blocking from outside
+
+Another system can ask for a block too: an intrusion detector such as fail2ban beside an application, which
+sees an address fail to sign in and wants it stopped at the edge. Behind Haprion it cannot firewall the
+nodes, and it sees the nodes' address rather than the visitor's. So it asks the management host, and the
+address is blocked on every node exactly as if it had gone over the object's own limit: for the object's
+*Block for*, listed on the object's page, and lifted there with *Unblock*.
+
+Such a system is a **block client**. It is registered under *Settings* → *External blocking* → *Edit*:
+
+- *Name* is how the client is known: lowercase letters, digits and hyphens.
+- *Connects from* is the host the client's key may be used from. The key works from that host's
+  addresses and nowhere else.
+- *Proxies* are the proxies with dynamic blocking that the client may block on, all in one cluster. A proxy
+  without dynamic blocking has nothing to put an address in, and is not offered.
+- *Public key* is the client's ed25519 key, the `.pub` file `ssh-keygen -t ed25519` wrote.
+
+*Remove* takes a client and its key away. A change is a job, shown on the page while it runs.
+
+**What a client runs.** One ssh command, to the account `_haprion-block` on the management host:
+
+```bash
+ssh -i /etc/fail2ban/haprion-block _haprion-block@mgr.example.com block shop 203.0.113.7
+```
+
+It answers `done`, `partial` with the nodes that did not take it, or `refused` with why. Nothing else is
+reached that way. There is no HTTP API and no new port: the key is locked in `authorized_keys` with
+`restrict` (no shell, no terminal, no forwarding), `from=` (its host only) and a forced command that names
+the client. The client can block, on its own proxies, and do nothing else - not lift a block, not touch a
+server, not read anything. An address the proxy exempts is refused, since the proxy would never block it.
+The client's host needs to reach the management host on port 22.
+
+**fail2ban.** An action that asks for the block, in `/etc/fail2ban/action.d/haprion.local` on the
+client's host:
+
+```ini
+[Definition]
+actionban = ssh -i /etc/fail2ban/haprion-block -o BatchMode=yes _haprion-block@mgr.example.com block <proxy> <ip>
+actionunban =
+
+[Init]
+proxy = shop
+```
+
+`actionunban` is empty on purpose: the block ends by itself after *Block for*, and an admin lifts one
+earlier on the proxy's page.
+
+**From the command line**, as root on the management host:
+
+```bash
+haprion-block-client add -c alpha --id app-f2b --host app.example.com --object shop --key app-f2b.pub
+haprion-block-client list
+haprion-block-client remove -c alpha --id app-f2b
+```
+
+*Details:* the clients are listed in `/etc/haprion/block-clients/clients.yaml`, and their keys in
+`/etc/haprion/block-clients/.ssh/authorized_keys`, the account's home. Both are written whole by
+`haprion-block-client-helper`. The forced command is `haprion-block-ask <client>`. It starts
+`haprion-block-helper` through sudo, which checks the client and the proxy again, then asks each node
+`block <proxy> <address>...` over the server state key. The node places the address in the proxy's
+blocked table.
 
 ## The WAF engine
 

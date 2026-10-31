@@ -15,7 +15,8 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <section class="cluster-card">
     <div class="form-grid">
-      <label><span class="field-title">Valid for</span><select name="days">{% for count in day_choices %}<option value="{{ count }}"{% if count | string == days | string %} selected{% endif %}>{{ count }} days</option>{% endfor %}</select></label>
+      {% if until %}<div class="field"><span class="field-title">{% if ended %}Ended{% else %}Valid until{% endif %}</span><span>{{ until }}</span></div>{% endif %}
+      <label><span class="field-title">Valid for, from today</span><select name="days">{% for count in day_choices %}<option value="{{ count }}"{% if count | string == days | string %} selected{% endif %}>{{ count }} days</option>{% endfor %}</select></label>
     </div>
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/settings/api-tokens">Cancel</a><button type="submit" class="secondary-button deploy-button">Extend</button></div>

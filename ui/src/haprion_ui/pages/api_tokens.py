@@ -277,12 +277,15 @@ def build_router(config: Config) -> APIRouter:
         problem: str = "",
         status_code: int = 200,
     ) -> Response:
+        row = found(request, name)
         return TEMPLATES.TemplateResponse(
             request,
             "settings-api-token-extend.html",
             {
                 **context(request, gate),
                 "name": name,
+                "until": moments.day(row.expires_at) if row is not None else "",
+                "ended": row is not None and row.expires_at <= datetime.now(UTC),
                 "days": days,
                 "day_choices": DAY_CHOICES,
                 "problem": problem,
@@ -338,7 +341,7 @@ def build_router(config: Config) -> APIRouter:
                 if refused.code == "not_found":
                     return list_page(request, gate, problem=str(refused), status_code=404)
                 return extend_form(
-                    request, gate, name, days=days, problem=str(refused), status_code=409
+                    request, gate, name, days=days, problem=str(refused), status_code=400
                 )
             connection.commit()
         return RedirectResponse(LIST, status_code=303)

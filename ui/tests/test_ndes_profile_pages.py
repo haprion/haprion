@@ -208,7 +208,9 @@ class TheNdesServers(NdesRoutes):
         client = self.writing_client()
         page = client.get("/ndes-profiles").text
         self.assertIn('<th scope="col" class="expires-column">CA expires</th>', page)
-        self.assertIn(f'<span class="certificate-date">{soon:%y-%m-%d}</span>', page)
+        # The day in the zone the page writes in - the host's, without the reader's cookie -
+        # not in UTC: an hour before midnight here it is already the next day there.
+        self.assertIn(f'<span class="certificate-date">{soon.astimezone():%y-%m-%d}</span>', page)
         self.assertIn('<span class="status-badge status-badge-warning">in 10 days</span>', page)
         row = page[page.index(f'value="{other}"') :]
         row = row[: row.index("</tr>")]

@@ -10370,6 +10370,25 @@ class ApiTokensInTheDatabase(unittest.TestCase):
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             self.assertIsNone(db.extend_api_token(connection, "nobody", days=30))
 
+    def test_a_token_in_use_is_never_extended_to_an_earlier_end(self) -> None:
+        """Review 26-10-31, P2-1: 30 days on a token with a year left ended it sooner."""
+
+        self.make(days=365)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.extend_api_token(connection, "monitoring", days=30)
+            connection.rollback()
+        for statement in (
+            "update api_token set expires_at = expires_at - interval '1 day'",
+            "update api_token set expires_at = expires_at",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                self.web(statement)
+        self.web("update api_token set expires_at = expires_at + interval '1 day'")
+
     def test_a_revoked_token_is_not_extended(self) -> None:
         self.make()
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:

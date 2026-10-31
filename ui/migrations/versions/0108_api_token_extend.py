@@ -55,6 +55,10 @@ def upgrade() -> None:
                 raise exception 'an API token is extended to a date that has not passed'
                     using errcode = 'check_violation';
             end if;
+            if old.expires_at > statement_timestamp() and new.expires_at <= old.expires_at then
+                raise exception 'an API token in use is extended to a later date, never an earlier one'
+                    using errcode = 'check_violation';
+            end if;
             new.valid_from := statement_timestamp();
             return new;
         end;

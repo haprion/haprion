@@ -15,7 +15,7 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import address_ranges
@@ -169,6 +169,16 @@ def extend(connection: Any, name: str, *, days: int, actor: str, via: str) -> db
         raise Refused(f"{name} is revoked and cannot be extended.")
     if text := api_tokens.days_problem(days):
         raise Refused(f"The validity {text}.")
+    #
+    # Extending gives a token more time, never less (review 26-10-31, P2-1); the
+    # table refuses it too. An ended token may be given any length.
+    #
+    now = datetime.now(UTC)
+    if token.expires_at > now and now + timedelta(days=days) <= token.expires_at:
+        raise Refused(
+            f"{name} already runs until {moments.day(token.expires_at)}; "
+            f"{days} days from today would end it sooner."
+        )
     try:
         extended = db.extend_api_token(connection, name, days=days)
     except db.TokenRevoked:

@@ -354,13 +354,16 @@ class Extending(TokensPage):
         self.tokens = [
             a_token(name="live"),
             a_token(name="old", revoked_at=NOW, revoked_by="admin"),
+            a_token(name="long", expires_at=NOW + timedelta(days=400)),
         ]
         client = self.admin()
         cases = (
             ("nobody", "365", 404, "There is no token named nobody."),
-            ("old", "365", 409, "old is revoked and cannot be extended."),
-            ("live", "731", 409, "The validity must be between 1 and 730 days."),
-            ("live", "0", 409, "The validity must be between 1 and 730 days."),
+            ("old", "365", 400, "old is revoked and cannot be extended."),
+            ("live", "731", 400, "The validity must be between 1 and 730 days."),
+            ("live", "0", 400, "The validity must be between 1 and 730 days."),
+            # Review 26-10-31, P2-1: extending gives more time, never less.
+            ("long", "365", 400, "365 days from today would end it sooner."),
             ("live", "soon", 400, "The validity must be a number of days."),
         )
         for name, days, status, message in cases:

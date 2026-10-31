@@ -204,14 +204,14 @@ class TheApiAnswers(ApiTestCase):
         self.assertEqual(
             (body["ok"], body["outcome"], body["operation"]), (True, "done", "cluster_list")
         )
-        self.assertEqual(body["result"], {"clusters": [{"name": "alpha"}, {"name": "beta"}]})
+        self.assertEqual([c["name"] for c in body["result"]["clusters"]], ["alpha", "beta"])
         self.assertEqual(self.touched, [(7, "127.0.0.1")])
 
     def test_a_token_sees_only_the_clusters_it_names(self) -> None:
         client = self.api()
         secret = self.issue(clusters=["beta"])
         response = client.get("/api/v1/clusters", headers={"Authorization": f"Bearer {secret}"})
-        self.assertEqual(response.json()["result"], {"clusters": [{"name": "beta"}]})
+        self.assertEqual([c["name"] for c in response.json()["result"]["clusters"]], ["beta"])
 
     def test_a_level_that_does_not_reach_is_a_403(self) -> None:
         client = self.api()

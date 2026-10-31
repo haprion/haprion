@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from starlette.routing import Mount
 
 from haprion_ui import api, api_tokens
+from haprion_ui.api import caller
 from haprion_ui.api.caller import Needs
 from tests.test_api import ApiTestCase
 from tests.test_route_roles import PUBLIC, concrete, routes
@@ -53,6 +54,11 @@ def declared_level(route: Any) -> str | None:
 
 class TheCookieAndTheTokenStayOnTheirSides(ApiTestCase):
     def test_a_signed_in_browser_is_no_caller_of_the_api(self) -> None:
+        # Every refusal is a failure counted against the source; the walk
+        # passes more routes than the count allows in a minute.
+        patch = mock.patch.object(caller, "FAILURES", caller.Failures(limit=10_000))
+        patch.start()
+        self.addCleanup(patch.stop)
         client = self.client()
         self.assertEqual(self.sign_in(client).status_code, 303)
         walked = 0

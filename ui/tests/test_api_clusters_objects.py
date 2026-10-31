@@ -58,14 +58,18 @@ class ReadingTestCase(ApiTestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def get(self, path: str, *, scope: list[str] | None = None, **query: Any) -> Any:
-        secret = self.issue(clusters=scope or [])
+    def get(
+        self, path: str, *, scope: list[str] | None = None, level: str = "read", **query: Any
+    ) -> Any:
+        secret = self.issue(clusters=scope or [], level=level)
         return self.api().get(
             "/api/v1" + path, params=query, headers={"Authorization": f"Bearer {secret}"}
         )
 
-    def result(self, path: str, *, scope: list[str] | None = None, **query: Any) -> Any:
-        response = self.get(path, scope=scope, **query)
+    def result(
+        self, path: str, *, scope: list[str] | None = None, level: str = "read", **query: Any
+    ) -> Any:
+        response = self.get(path, scope=scope, level=level, **query)
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["result"]
 
@@ -286,7 +290,13 @@ class TheObjectList(ReadingTestCase):
             for name, stage, deleted in (("blog", "draft", False), ("shop", "saved", True))
         ]
         with mock.patch("haprion_ui.db.cluster_drafts", return_value=drafts):
-            objects = {o["name"]: o for o in self.result("/clusters/alpha/objects")["objects"]}
+            listed = self.result("/clusters/alpha/objects", level="write")["objects"]
+            read = self.result("/clusters/alpha/objects")["objects"]
+        objects = {o["name"]: o for o in listed}
+
+        # A reader is shown no drafts; a `read` token neither (B416).
+        self.assertNotIn("blog", {o["name"] for o in read})
+        self.assertEqual({o["draft"] for o in read if o["name"] == "shop"}, {None})
 
         self.assertEqual(objects["blog"]["state"], "draft")
         self.assertEqual(
@@ -320,11 +330,11 @@ class TheObjectList(ReadingTestCase):
 
 class TheObject(ReadingTestCase):
     def test_an_object_has_its_listing_fields_its_document_and_its_servers_states(self) -> None:
-        result = self.result("/clusters/alpha/objects/public-web")
+        result = self.result("/clusters/alpha/objects/public-web", level="write")
 
         listed = next(
             o
-            for o in self.result("/clusters/alpha/objects")["objects"]
+            for o in self.result("/clusters/alpha/objects", level="write")["objects"]
             if o["name"] == "public-web"
         )
         self.assertEqual({key: result[key] for key in listed}, listed)
@@ -374,11 +384,20 @@ class TheObject(ReadingTestCase):
         )
 
     def test_an_object_that_cannot_be_read_has_its_document_and_no_states(self) -> None:
-        result = self.result("/clusters/alpha/objects/staging")
+        result = self.result("/clusters/alpha/objects/staging", level="write")
 
         self.assertEqual((result["state"], result["readable"]), ("unreadable", False))
         self.assertIn("protocol: https", result["document"])
         self.assertIsNone(result["server_states"])
+
+    def test_a_read_token_is_shown_the_object_but_not_its_document(self) -> None:
+        """B416: `read` sees what a reader sees, and the document is an admin's (B68)."""
+
+        result = self.result("/clusters/alpha/objects/public-web")
+
+        self.assertEqual(
+            (result["name"], result["document"], result["definition"]), ("public-web", None, None)
+        )
 
     def test_a_proxy_the_platform_did_not_write_has_no_document(self) -> None:
         result = self.result("/clusters/alpha/objects/metrics")
@@ -389,7 +408,7 @@ class TheObject(ReadingTestCase):
         self.assertIsNone(result["server_states"])
 
     def test_an_object_waiting_for_the_nodes_says_so(self) -> None:
-        result = self.result("/clusters/alpha/objects/shop")
+        result = self.result("/clusters/alpha/objects/shop", level="write")
 
         self.assertEqual((result["state"], result["serving"]), ("inactive", False))
         self.assertIsNotNone(result["document"])

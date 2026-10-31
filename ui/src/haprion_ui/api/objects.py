@@ -229,15 +229,23 @@ def object_entries(listing: dict[str, Any], cluster: str) -> list[dict[str, Any]
     return sorted(entries, key=lambda entry: entry["name"])
 
 
-def _listing(request: Request, cluster: str) -> list[dict[str, Any]]:
+def _as_admin(caller: Caller) -> bool:
+    """Whether the token is given what the pages give an admin and not a reader.
+
+    A `read` token sees what a reader sees (B416); a `write` token is the
+    admin's level. The object's document and its drafts are an admin's
+    (B68): the YAML names certificates and backend addresses.
+    """
+
+    return caller.issued.level == "write"
+
+
+def _listing(request: Request, cluster: str, caller: Caller) -> list[dict[str, Any]]:
     config = request.app.state.config
     if cluster not in listed_clusters(request, config):
         raise NOT_FOUND
-    #
-    # The administrator's listing, because that is the one with the drafts a
-    # caller wants to see; it reads and shows nothing a draft's editor does not.
-    #
-    listing = proxy_listing(request, config, "admin", {}, only=cluster)
+    role = "admin" if _as_admin(caller) else "reader"
+    listing = proxy_listing(request, config, role, {}, only=cluster)
     return object_entries(listing, cluster)
 
 
@@ -250,7 +258,7 @@ def object_list(
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
     in_scope(caller, cluster)
-    entries = _listing(request, cluster)
+    entries = _listing(request, cluster, caller)
     shown = entries[offset : offset + limit]
     return answer(
         request,
@@ -335,7 +343,7 @@ def object_show(
     caller: Caller = Depends(needs("read")),  # noqa: B008
 ) -> JSONResponse:
     in_scope(caller, cluster, name)
-    entries = {entry["name"]: entry for entry in _listing(request, cluster)}
+    entries = {entry["name"]: entry for entry in _listing(request, cluster, caller)}
     entry = entries.get(name)
     if entry is None:
         raise NOT_FOUND
@@ -365,12 +373,13 @@ def object_show(
             "is_default": detail.vip_is_default,
         }
     publication = detail.publication
+    document = stored.document if stored is not None and _as_admin(caller) else None
     return answer(
         request,
         {
             **entry,
-            "document": stored.document if stored is not None else None,
-            "definition": _definition(stored.document) if stored is not None else None,
+            "document": document,
+            "definition": _definition(document) if document is not None else None,
             "publication": (
                 {
                     "label": publication.label,
@@ -401,7 +410,7 @@ def object_history(
     """The cluster's versions, newest first: a version holds every object, so this is the one history."""
 
     in_scope(caller, cluster, name)
-    if name not in {entry["name"] for entry in _listing(request, cluster)}:
+    if name not in {entry["name"] for entry in _listing(request, cluster, caller)}:
         raise NOT_FOUND
     config = request.app.state.config
     clusters, history_rows = read_source(request, config, HISTORY_SOURCE)

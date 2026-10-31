@@ -4076,6 +4076,48 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
         self.assertIn("alpha", jobs.in_flight(recent, writes=True))
         self.assertEqual([job.id for job in db.recent_jobs(self.connection, cluster="beta")], [])
 
+    def leave_no_jobs(self) -> None:
+        """Jobs in flight would be another test's busy cluster."""
+
+        with self.connection.cursor() as cursor:
+            cursor.execute("delete from job")
+        self.connection.commit()
+
+    def test_the_api_lists_a_cluster_s_jobs_by_state_and_reads_one_by_its_id(self) -> None:
+        """B416: the web role reads exactly `limit` rows, in a state, of the clusters named."""
+
+        self.addCleanup(self.leave_no_jobs)
+        first = self.queue("deploy", "alpha")
+        self.finish(first)
+        second = self.queue("deploy", "alpha")
+        other = self.queue("deploy", "beta")
+        certificate = self.queue("cert_publish", None, certificates=["example.com"])
+        self.finish(certificate)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            everything = db.listed_jobs(web, limit=10)
+            self.assertEqual(
+                [job.id for job in everything], [certificate.id, other.id, second.id, first.id]
+            )
+            self.assertEqual(
+                [job.id for job in db.listed_jobs(web, clusters=["alpha"], limit=10)],
+                [second.id, first.id],
+            )
+            self.assertEqual(
+                [job.id for job in db.listed_jobs(web, clusters=["alpha", "beta"], limit=2)],
+                [other.id, second.id],
+            )
+            self.assertEqual(
+                [job.id for job in db.listed_jobs(web, state="done", limit=10)],
+                [certificate.id, first.id],
+            )
+            self.assertEqual(db.listed_jobs(web, clusters=["gamma"], limit=10), [])
+            found = db.job_by_id(web, second.id)
+            self.assertEqual(
+                (found and found.id, found and found.cluster, found and found.state),
+                (second.id, "alpha", "pending"),
+            )
+            self.assertIsNone(db.job_by_id(web, certificate.id + 1000))
+
     def test_a_profile_s_evidence_is_found_behind_any_number_of_other_profiles_jobs(
         self,
     ) -> None:

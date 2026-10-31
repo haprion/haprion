@@ -224,6 +224,57 @@ def recent_jobs(
         return cursor.fetchall()
 
 
+def listed_jobs(
+    connection: Connection[Any],
+    *,
+    clusters: Collection[str] | None = None,
+    state: str | None = None,
+    limit: int,
+) -> list[Job]:
+    """The newest jobs of these clusters, optionally in one state: exactly `limit` at most.
+
+    `clusters` None is every job, those with no cluster among them; a list is
+    the jobs of those clusters alone. Unlike `recent_jobs` nothing in flight
+    is added beyond the limit, since a caller that asks for a number is
+    owed no more than it.
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "  # noqa: S608 - constant
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by, "
+            f"       {_LEASE_COLUMNS} "
+            "  from job "
+            " where (%(clusters)s::text[] is null or cluster = any(%(clusters)s)) "
+            "   and (%(state)s::text is null or state = %(state)s) "
+            " order by created_at desc, id desc "
+            " limit %(limit)s",
+            {
+                "clusters": None if clusters is None else sorted(clusters),
+                "state": state,
+                "limit": limit,
+            },
+        )
+        return cursor.fetchall()
+
+
+def job_by_id(connection: Connection[Any], job_id: int) -> Job | None:
+    """One job as the Jobs page reads it, or None when there is no such job."""
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "  # noqa: S608 - constant
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by, "
+            f"       {_LEASE_COLUMNS} "
+            "  from job "
+            " where id = %(job_id)s",
+            {"job_id": job_id},
+        )
+        return cursor.fetchone()
+
+
 @dataclass(frozen=True, slots=True)
 class ClaimPause:
     """A release holding the worker's claims (`haprion-drain pause`) until `until`."""

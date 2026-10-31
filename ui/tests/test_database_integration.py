@@ -41,6 +41,9 @@ from haprion.traffic_collector import (
 from psycopg.types.json import Jsonb
 
 from haprion_ui import (
+    api_token_apply,
+    api_token_tool,
+    api_tokens,
     attention,
     auth,
     db,
@@ -8997,6 +9000,110 @@ class TheSettingsFromAFile(unittest.TestCase):
             )
             connection.execute("delete from job where operation = 'backup_schedule'")
             connection.commit()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class ApiTokenRulesInTheDatabase(unittest.TestCase):
+    """`api_token_apply` (B416): what the page and `haprion-api-token` write, for real."""
+
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_WEB_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def setUp(self) -> None:
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
+            connection.execute("truncate api_token")
+            connection.execute("delete from audit_event where action like 'api_token_%'")
+            connection.commit()
+
+    tearDown = setUp
+
+    def new(self, name: str = "monitoring", **changes: Any) -> api_token_apply.NewToken:
+        values: dict[str, Any] = {
+            "name": name,
+            "level": "block",
+            "clusters": ("alpha",),
+            "objects": ("shop",),
+            "sources": ("192.0.2.0/24", "198.51.100.7"),
+            "days": 90,
+        }
+        values.update(changes)
+        return api_token_apply.NewToken(**values)
+
+    def audited(self) -> list[tuple[str, str, dict[str, Any]]]:
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
+            rows = connection.execute(
+                "select action, actor, detail from audit_event where action like 'api_token_%' order by id"
+            ).fetchall()
+        return [(action, actor, detail) for action, actor, detail in rows]
+
+    def test_a_token_lives_its_life_through_the_web_role_with_an_event_for_each_step(self) -> None:
+        with self.connect() as connection:
+            made, secret = api_token_apply.issue(connection, self.new(), actor="admin", via="web")
+            connection.commit()
+        self.assertEqual(made.sources, ["192.0.2.0/24", "198.51.100.7/32"])
+        self.assertEqual(made.prefix, secret[:12])
+        with self.connect() as connection:
+            self.assertEqual(db.api_token_by_hash(connection, api_tokens.secret_hash(secret)), made)
+            self.assertEqual(api_token_apply.state(made, datetime.now(UTC)), "active")
+            with self.assertRaises(api_token_apply.Refused) as taken:
+                api_token_apply.issue(connection, self.new(), actor="admin", via="web")
+            self.assertEqual(taken.exception.code, "already_exists")
+            connection.rollback()
+            with self.assertRaises(api_token_apply.Refused) as live:
+                api_token_apply.remove(connection, "monitoring", actor="admin", via="web")
+            self.assertIn("still in use", str(live.exception))
+            connection.rollback()
+            api_token_apply.revoke(connection, "monitoring", actor="admin", via="web")
+            connection.commit()
+            with self.assertRaises(api_token_apply.Refused):
+                api_token_apply.revoke(connection, "monitoring", actor="admin", via="web")
+            connection.rollback()
+        with self.connect() as connection:
+            self.assertEqual(db.api_tokens(connection)[0].revoked_by, "admin")
+            api_token_apply.remove(connection, "monitoring", actor="admin", via="web")
+            connection.commit()
+            with self.assertRaises(api_token_apply.Refused) as gone:
+                api_token_apply.remove(connection, "monitoring", actor="admin", via="web")
+            self.assertEqual(gone.exception.code, "not_found")
+            connection.rollback()
+        events = self.audited()
+        self.assertEqual(
+            [action for action, _, _ in events],
+            ["api_token_created", "api_token_revoked", "api_token_removed"],
+        )
+        self.assertEqual({actor for _, actor, _ in events}, {"admin"})
+        # Name, level and reach in every event; the hash and the secret in none.
+        self.assertEqual(events[0][2]["objects"], ["shop"])
+        self.assertNotIn(secret, repr(events))
+        self.assertNotIn("hash", repr(events))
+
+    def test_the_command_writes_as_the_migration_role_with_the_sudo_user_as_actor(self) -> None:
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.dict(os.environ, {"SUDO_USER": "ops"}),
+            mock.patch.object(api_token_tool, "load_environment", return_value=mock.Mock()),
+            mock.patch.object(
+                api_token_tool,
+                "connect",
+                side_effect=lambda _environment: self.connect("HAPRION_UI_TEST_MIGRATION_ROLE"),
+            ),
+            mock.patch("haprion_ui.config.load") as loaded,
+        ):
+            loaded.return_value.clusters = ("alpha",)
+            codes, answers = [], []
+            for argv in (
+                ["add", "monitoring", "--level", "read", "--source", "192.0.2.0/24", "--json"],
+                ["list", "--json"],
+                ["revoke", "monitoring", "--json"],
+                ["remove", "monitoring", "--json"],
+            ):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                    codes.append(api_token_tool.main(argv))
+                answers.append(json.loads(out.getvalue()))
+        self.assertEqual(codes, [0, 0, 0, 0])
+        self.assertEqual(answers[1]["result"]["tokens"][0]["created_by"], "ops")
+        self.assertEqual({actor for _, actor, _ in self.audited()}, {"ops"})
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

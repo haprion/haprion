@@ -221,6 +221,8 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.node_event_count", return_value=0),
             # Nobody may ask /status/ (B274) unless a test says otherwise.
             mock.patch("haprion_ui.db.status_access", return_value=[]),
+            # No API token, so none ends soon (B416).
+            mock.patch("haprion_ui.db.api_tokens", return_value=[]),
             mock.patch("haprion_ui.db.attention_acks", side_effect=lambda _c: set(self.acks)),
             #
             # The manager's own services as healthy (B333): the poller wrote the

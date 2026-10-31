@@ -29,9 +29,9 @@ from haprion import address_ranges, log_forwarding
 from haprion.cluster_status import traffic_stream_problem, traffic_stream_unguarded
 from haprion.node_package import short_version
 
+from haprion_ui import api_tokens, labels, moments
 from haprion_ui import jobs as jobs_module
-from haprion_ui import labels
-from haprion_ui.db import ClaimPause, Job, PackageWaiting
+from haprion_ui.db import ApiToken, ClaimPause, Job, PackageWaiting
 
 type Severity = Literal["critical", "warning"]
 SEVERITIES: tuple[Severity, ...] = ("critical", "warning")
@@ -210,6 +210,7 @@ PAGES = {
     "preparation": "Dashboard",
     "node_package": "Dashboard",
     "traffic_stream": "Dashboard",
+    "api_token": "Settings",
 }
 KINDS = tuple(PAGES)
 
@@ -865,6 +866,39 @@ def from_packages(rows: Sequence[PackageWaiting]) -> list[Item]:
         )
         for row in rows
     ]
+
+
+def from_api_tokens(rows: Sequence[ApiToken], *, now: datetime) -> list[Item]:
+    """API tokens that end within the warning, or ended and are still listed (B416).
+
+    A revoked token was ended on purpose and says nothing. The variant tells
+    "ending" from "ended", so an acknowledgement of the warning does not hide
+    the day the token stops working.
+    """
+
+    items: list[Item] = []
+    for token in sorted(rows, key=lambda row: row.name):
+        if not api_tokens.ends_soon(token, now):
+            continue
+        if token.expires_at <= now:
+            message, variant = f"expired {moments.day(token.expires_at)}", "ended"
+        else:
+            days = (token.expires_at - now).days
+            when = f"in {labels.counted(days, 'day')}" if days else "within a day"
+            message, variant = f"expires {when}", "ending"
+        items.append(
+            Item(
+                kind="api_token",
+                severity="warning",
+                cluster=None,
+                subject=token.name,
+                message=message,
+                since=None,
+                link="/settings/api-tokens",
+                variant=variant,
+            )
+        )
+    return items
 
 
 def from_manager(

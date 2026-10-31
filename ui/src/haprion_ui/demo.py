@@ -18,6 +18,7 @@ from haprion.objects import objects_result
 from haprion.proxy_model import server_name
 
 from haprion_ui.db import (
+    ApiToken,
     ClusterBackups,
     ClusterCertificates,
     ClusterHistory,
@@ -1057,5 +1058,61 @@ def object_rows(now: datetime | None = None) -> tuple[ClusterObjects, ...]:
             warnings=[],
             error=None,
             poll_error=None,
+        ),
+    )
+
+
+def api_token_rows(now: datetime | None = None) -> tuple[ApiToken, ...]:
+    """A few tokens in each state for Settings -> API tokens: in use, ending soon, revoked."""
+
+    now = now or datetime.now(UTC)
+
+    def token(number: int, name: str, level: str, **fields: Any) -> ApiToken:
+        values: dict[str, Any] = {
+            "id": number,
+            "name": name,
+            "level": level,
+            "clusters": [],
+            "objects": [],
+            "sources": [],
+            "prefix": f"hap_demo{number:04d}",
+            "created_at": now - timedelta(days=120),
+            "created_by": "admin",
+            "expires_at": now + timedelta(days=245),
+            "revoked_at": None,
+            "revoked_by": None,
+            "last_used_at": None,
+            "last_used_from": None,
+        }
+        values.update(fields)
+        return ApiToken(**values)
+
+    return (
+        token(
+            1,
+            "monitoring",
+            "read",
+            last_used_at=now - timedelta(minutes=3),
+            last_used_from="192.0.2.20",
+            sources=["192.0.2.0/24"],
+        ),
+        token(
+            2,
+            "docker1-fail2ban",
+            "block",
+            clusters=["edge-demo"],
+            objects=["shop"],
+            expires_at=now + timedelta(days=12),
+            last_used_at=now - timedelta(hours=5),
+            last_used_from="198.51.100.7",
+        ),
+        token(
+            3,
+            "old-pipeline",
+            "write",
+            revoked_at=now - timedelta(days=9),
+            revoked_by="admin",
+            last_used_at=now - timedelta(days=10),
+            last_used_from="203.0.113.5",
         ),
     )

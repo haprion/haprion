@@ -20,6 +20,7 @@ from haprion.config import CLUSTER_ID, ConfigError
 from haprion.digits import is_digits
 
 from haprion_ui import (
+    api_token_apply,
     attention,
     auth,
     certificates,
@@ -369,6 +370,7 @@ def build_router(config: Config) -> APIRouter:
             recent = db.recent_jobs(connection)
             status_access = db.status_access(connection)
             update_row = db.update_check(connection)
+            token_rows = db.api_tokens(connection)
         creation_rows = cluster_creations(request, recent)
         response = TEMPLATES.TemplateResponse(
             request,
@@ -384,6 +386,10 @@ def build_router(config: Config) -> APIRouter:
                 # Who may block an address from outside (B412).
                 #
                 "block_clients": external_blocking.read(config.block_clients_file),
+                #
+                # Who may call the API: how many tokens work, how many end soon (B416).
+                #
+                "api_token_counts": api_token_apply.summary(token_rows, datetime.now(UTC)),
                 "served": served,
                 "entry": entry,
                 "waiting": registry.interface_request if registry else None,

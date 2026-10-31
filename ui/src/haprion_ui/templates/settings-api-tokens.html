@@ -1,0 +1,40 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}API tokens — Haprion{% endblock %}
+{% block content %}
+{#
+  Who may call the API (B416). No detail page, so the rows are plain; the
+  action for a row is its own button. A token's secret is shown once, on the
+  page that made it, and never here.
+#}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings#api-tokens', 'Settings') }}<h1>API tokens</h1></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<section class="cluster-card settings-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Tokens</h3></div></div><div class="cluster-state"><a class="secondary-button" href="/settings/api-tokens/new">Add token</a></div></header>
+  {% if tokens %}
+  <div class="table-scroll"><table class="node-table api-token-table">
+    <thead><tr><th>Name</th><th>Level</th><th>Scope</th><th>From</th><th>Valid until</th><th>Last used</th><th>State</th><th class="api-token-action"><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      {% for token in tokens %}
+      <tr>
+        <td data-label="Name" title="{{ token.name }}"><strong>{{ token.name }}</strong></td>
+        <td data-label="Level">{{ token.level }}</td>
+        <td data-label="Scope" title="{{ token.scope }}">{{ token.scope }}</td>
+        <td data-label="From" title="{{ token.sources }}">{{ token.sources }}</td>
+        <td data-label="Valid until"><span class="users-date{% if token.ending %} warning-text{% endif %}"{% if token.ending %} title="{{ token.ending_title }}"{% endif %}>{{ token.valid_until }}</span></td>
+        <td data-label="Last used" title="{{ token.last_used }}"><span class="users-date">{{ token.last_used }}</span></td>
+        <td data-label="State"><span class="status-badge status-badge-{{ token.tone }}">{{ token.state }}</span></td>
+        <td data-label="" class="api-token-action">{% if token.state == 'Active' %}<a class="secondary-button settings-edit" href="/settings/api-tokens/{{ token.name }}/revoke">Revoke</a>{% else %}<form method="post" action="/settings/api-tokens/{{ token.name }}/remove" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button settings-edit">Remove</button></form>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="table-empty">No API token.</p>{% endif %}
+</section>
+{% endblock %}

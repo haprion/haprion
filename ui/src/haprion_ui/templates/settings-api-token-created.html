@@ -1,0 +1,21 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}Token {{ name }} — Haprion{% endblock %}
+{% block head_extra %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block content %}
+{#
+  The one place the secret is shown (B416): this response to the form that
+  made the token. It is not stored, so a reload of the list cannot show it.
+#}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings/api-tokens', 'API tokens') }}<h1>Token {{ name }}</h1></div>
+</section>
+
+<section class="cluster-card">
+  <p class="feature-consequence">Copy the token now. It will not be shown again.</p>
+  <div class="copy-row api-token-secret"><pre class="receiver-command" data-copy-beside><code>{{ secret }}</code></pre></div>
+  <div class="editor-actions editor-submit">
+    <div class="form-buttons"><a class="secondary-button deploy-button" href="/settings/api-tokens">Done</a></div>
+  </div>
+</section>
+{% endblock %}

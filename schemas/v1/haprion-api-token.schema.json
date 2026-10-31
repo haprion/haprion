@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-api-token.schema.json",
+  "title": "haprion-api-token JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "api_token" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/api_token_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/api_token_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$" },
+    "level": { "enum": ["read", "block", "write"] },
+    "names": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+    "api_token_result": {
+      "description": "One token made (with its secret, shown once), the tokens listed (never a secret or a hash), or one revoked or removed.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["action", "token", "secret"],
+          "properties": {
+            "action": { "const": "add" },
+            "token": {
+              "type": "object",
+              "required": ["name", "level", "clusters", "objects", "sources", "prefix", "expires_at"],
+              "properties": {
+                "name": { "$ref": "#/$defs/name" },
+                "level": { "$ref": "#/$defs/level" },
+                "clusters": { "$ref": "#/$defs/names" },
+                "objects": { "$ref": "#/$defs/names" },
+                "sources": { "$ref": "#/$defs/names" },
+                "prefix": { "type": "string", "pattern": "^hap_[A-Za-z0-9_-]{8}$" },
+                "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" }
+              },
+              "additionalProperties": false
+            },
+            "secret": { "type": "string", "pattern": "^hap_[A-Za-z0-9_-]{43}$" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action", "tokens"],
+          "properties": {
+            "action": { "const": "list" },
+            "tokens": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "level", "clusters", "objects", "sources", "prefix", "state", "created_at", "created_by", "expires_at", "revoked_at", "last_used_at", "last_used_from"],
+                "properties": {
+                  "name": { "$ref": "#/$defs/name" },
+                  "level": { "$ref": "#/$defs/level" },
+                  "clusters": { "$ref": "#/$defs/names" },
+                  "objects": { "$ref": "#/$defs/names" },
+                  "sources": { "$ref": "#/$defs/names" },
+                  "prefix": { "type": "string", "pattern": "^hap_[A-Za-z0-9_-]{8}$" },
+                  "state": { "enum": ["active", "revoked", "expired"] },
+                  "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+                  "created_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+                  "revoked_at": { "oneOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+                  "last_used_at": { "oneOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+                  "last_used_from": { "type": ["string", "null"] }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action", "name"],
+          "properties": {
+            "action": { "enum": ["revoke", "remove"] },
+            "name": { "$ref": "#/$defs/name" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

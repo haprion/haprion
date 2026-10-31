@@ -1301,6 +1301,29 @@ def check_server_state_semantics(document: dict[str, object], path: Path) -> Non
             )
 
 
+def check_api_token_semantics(document: dict[str, object], path: Path) -> None:
+    """A secret is shown once and begins with the prefix the list shows; a token is listed once."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] != "failed":
+            raise AssertionError(f"{path}: only a failed api_token may carry no result")
+        return
+    assert isinstance(result, dict)
+    if document["outcome"] != "done":
+        raise AssertionError(f"{path}: an api_token change is done or failed, never partial")
+    if result["action"] == "add":
+        if not str(result["secret"]).startswith(str(result["token"]["prefix"])):
+            raise AssertionError(f"{path}: the prefix is the first characters of the secret")
+    elif result["action"] == "list":
+        names = [token["name"] for token in result["tokens"]]
+        if len(set(names)) != len(names):
+            raise AssertionError(f"{path}: a token is listed once")
+        for token in result["tokens"]:
+            if (token["state"] == "revoked") != (token["revoked_at"] is not None):
+                raise AssertionError(f"{path}: a token is revoked exactly when it has a revoked_at")
+
+
 SEMANTIC_CHECKS = {
     "status": check_status_semantics,
     "list": check_list_semantics,
@@ -1322,6 +1345,7 @@ SEMANTIC_CHECKS = {
     "settings_apply": check_settings_apply_semantics,
     "profiles_apply": check_profiles_apply_semantics,
     "user_list": check_user_list_semantics,
+    "api_token": check_api_token_semantics,
     "settings_show": check_settings_show_semantics,
     "profiles_list": check_profiles_list_semantics,
     "export": check_export_semantics,
@@ -1396,6 +1420,13 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["changed"] = not result["changed"]
     elif operation == "user_list":
         result["accounts"].append(deepcopy(result["accounts"][0]))
+    elif operation == "api_token":
+        if result["action"] == "add":
+            result["secret"] = "hap_" + "Z" * 43
+        elif result["action"] == "list":
+            result["tokens"].append(deepcopy(result["tokens"][0]))
+        else:
+            invalid["outcome"] = "partial"
     elif operation == "settings_show":
         result["oidc"]["verified"] = False
     elif operation == "profiles_list":

@@ -185,6 +185,7 @@ TOOLS = (
     "certbot/",
 )
 COMMANDS = (
+    "api-token",
     "backup",
     "drain",
     "export",

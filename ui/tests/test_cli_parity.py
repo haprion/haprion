@@ -171,6 +171,9 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/settings/external-blocking/remove": Command(
         "haprion-block-client remove", "haprion-block-client"
     ),
+    "/settings/api-tokens/new": Command("haprion-api-token add", "haprion-api-token"),
+    "/settings/api-tokens/{name}/revoke": Command("haprion-api-token revoke", "haprion-api-token"),
+    "/settings/api-tokens/{name}/remove": Command("haprion-api-token remove", "haprion-api-token"),
     "/backups/restore/new": Command("haprion-node-restore prepare", "haprion-node-restore-prepare"),
     "/backups/restore/{run}/preview": Command(
         "haprion-node-restore preview", "haprion-node-restore-preview"

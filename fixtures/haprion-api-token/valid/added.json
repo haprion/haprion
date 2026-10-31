@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "api_token",
+  "cluster": null,
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "warnings": [],
+  "error": null,
+  "result": {
+    "action": "add",
+    "token": {
+      "name": "docker1-fail2ban",
+      "level": "block",
+      "clusters": [
+        "alpha"
+      ],
+      "objects": [
+        "shop"
+      ],
+      "sources": [
+        "192.0.2.0/24"
+      ],
+      "prefix": "hap_01234567",
+      "expires_at": "2027-10-31T12:00:00+00:00"
+    },
+    "secret": "hap_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+  }
+}

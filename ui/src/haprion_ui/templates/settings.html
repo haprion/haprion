@@ -195,6 +195,19 @@
     </tbody>
   </table></div>
 </section>
+<section class="cluster-card settings-card" id="api-tokens">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>API tokens</h3></div></div></header>
+  <div class="table-scroll"><table class="node-table settings-cluster-table">
+    <thead><tr><th>Active</th><th>Ending</th><th class="settings-actions"><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      <tr data-href="/settings/api-tokens">
+        <td data-label="Active"{% if not api_token_counts[0] %} class="table-empty"{% endif %}>{{ api_token_counts[0] if api_token_counts[0] else 'No token' }}</td>
+        <td data-label="Ending">{% if api_token_counts[1] %}<span class="warning-text">{{ api_token_counts[1] }}</span>{% else %}<span class="table-empty">None</span>{% endif %}</td>
+        <td data-label="" class="settings-actions"><a class="secondary-button settings-edit" href="/settings/api-tokens">Edit</a></td>
+      </tr>
+    </tbody>
+  </table></div>
+</section>
 {#
   What this installation offers (B193). Off hides a feature; node backups off
   also stops the clusters' timers, so that one asks first on its own page.

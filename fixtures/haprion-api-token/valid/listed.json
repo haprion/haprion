@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "api_token",
+  "cluster": null,
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "warnings": [],
+  "error": null,
+  "result": {
+    "action": "list",
+    "tokens": [
+      {
+        "name": "monitoring",
+        "level": "read",
+        "clusters": [],
+        "objects": [],
+        "sources": [],
+        "prefix": "hap_abcdefgh",
+        "state": "active",
+        "created_at": "2026-10-31T12:00:00+00:00",
+        "created_by": "admin",
+        "expires_at": "2027-10-31T12:00:00+00:00",
+        "revoked_at": null,
+        "last_used_at": "2026-10-31T12:30:00+00:00",
+        "last_used_from": "192.0.2.20"
+      },
+      {
+        "name": "old-pipeline",
+        "level": "write",
+        "clusters": [
+          "alpha",
+          "beta"
+        ],
+        "objects": [],
+        "sources": [
+          "198.51.100.0/24"
+        ],
+        "prefix": "hap_ijklmnop",
+        "state": "revoked",
+        "created_at": "2026-09-01T08:00:00+00:00",
+        "created_by": "admin",
+        "expires_at": "2027-09-01T08:00:00+00:00",
+        "revoked_at": "2026-10-20T09:00:00+00:00",
+        "last_used_at": null,
+        "last_used_from": null
+      }
+    ]
+  }
+}

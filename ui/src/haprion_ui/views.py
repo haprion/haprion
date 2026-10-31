@@ -772,6 +772,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
             claim_pause=db.claim_pause(connection),
         )
         items += attention.from_packages(db.package_waiting(connection))
+        items += attention.from_api_tokens(db.api_tokens(connection), now=now)
         if config.traffic_logs.enabled:
             items += attention.from_waf(
                 waf_not_working(request, config, connection, clusters),

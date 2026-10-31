@@ -168,6 +168,11 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "oidc_tested": lambda _detail: "Tried signing in with the identity provider",
     "oidc_enabled": lambda _detail: "Turned on sign-in with the identity provider",
     "feature_switched": _feature,
+    "api_token_created": lambda detail: (
+        f"Created the API token {_text(detail, 'name', '?')} ({_text(detail, 'level', '?')})"
+    ),
+    "api_token_revoked": lambda detail: f"Revoked the API token {_text(detail, 'name', '?')}",
+    "api_token_removed": lambda detail: f"Removed the API token {_text(detail, 'name', '?')}",
     "attention_acknowledged": lambda detail: (
         f"Acknowledged {_text(detail, 'subject', 'a row')}: {_text(detail, 'message', '')}"
     ),

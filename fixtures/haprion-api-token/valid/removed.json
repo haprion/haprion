@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "api_token",
+  "cluster": null,
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "warnings": [],
+  "error": null,
+  "result": {
+    "action": "remove",
+    "name": "old-pipeline"
+  }
+}

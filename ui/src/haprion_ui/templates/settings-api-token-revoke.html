@@ -1,0 +1,19 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}Revoke {{ name }} — Haprion{% endblock %}
+{% block content %}
+{# The question before a token is ended for good (B416). #}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings/api-tokens', 'API tokens') }}<h1>Revoke {{ name }}</h1></div>
+</section>
+
+<form method="post" action="/settings/api-tokens/{{ name }}/revoke" class="preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="cluster-card">
+    <p class="feature-consequence">Calls with this token are refused from now on, and it cannot be used again.</p>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings/api-tokens">Cancel</a><button type="submit" class="danger-button">Revoke</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

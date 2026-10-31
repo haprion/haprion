@@ -1,0 +1,48 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}Add token — Haprion{% endblock %}
+{% block head_extra %}<script defer src="{{ url_for('static', path='/api-token-form.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block content %}
+{# A token's name, level, reach and life (B416). The secret is made on save and shown once, on the page that follows. #}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings/api-tokens', 'API tokens') }}<h1>Add token</h1></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<form method="post" action="/settings/api-tokens/new" class="preview-form certificate-form api-token-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="cluster-card">
+    <div class="form-grid">
+      <label><span class="field-title">Name</span><input name="name" value="{{ form.name }}" maxlength="64" spellcheck="false" placeholder="monitoring" required></label>
+      <label><span class="field-title">Valid for</span><select name="days">{% for count in day_choices %}<option value="{{ count }}"{% if count | string == form.days | string %} selected{% endif %}>{{ count }} days</option>{% endfor %}</select></label>
+      <div class="field field-wide">
+        <span class="field-title">Level</span>
+        <div class="form-checks form-checks-stacked">
+          {% for value, help in levels.items() %}
+          <label class="check"><input type="radio" name="level" value="{{ value }}"{% if form.level == value %} checked{% endif %} data-level> <span><strong>{{ value | capitalize }}</strong> — {{ help }}</span></label>
+          {% endfor %}
+        </div>
+      </div>
+      {% if clusters %}
+      <div class="field field-wide">
+        <span class="field-title">Clusters <span class="optional">(optional, all if none is chosen)</span></span>
+        <div class="form-checks">{% for cluster in clusters %}<label class="check"><input type="checkbox" name="clusters" value="{{ cluster }}"{% if cluster in form.clusters %} checked{% endif %}> {{ cluster }}</label>{% endfor %}</div>
+      </div>
+      {% endif %}
+      {% if proxies %}
+      <div class="field field-wide" data-for-level="block">
+        <span class="field-title">Proxies <span class="optional">(optional, all if none is chosen)</span></span>
+        <div class="form-checks">{% for item, where in proxies.items() %}<label class="check" title="{{ where | join(', ') }}"><input type="checkbox" name="objects" value="{{ item }}"{% if item in form.objects %} checked{% endif %}> {{ item }}</label>{% endfor %}</div>
+      </div>
+      {% endif %}
+      <label class="field-wide"><span class="field-title">Called from <span class="optional">(optional)</span></span><textarea name="sources" rows="3" spellcheck="false" placeholder="One address or network per line">{{ form.sources }}</textarea></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings/api-tokens">Cancel</a><button type="submit" class="secondary-button deploy-button">Add token</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

@@ -1,8 +1,8 @@
 """haprion-api-token - API tokens, from a root shell (B416).
 
 The same table and the same rules as Settings -> API tokens (`api_token_apply`):
-`add` makes a token and prints its secret once, `list` shows them, `revoke`
-ends one for good, `remove` deletes one that is revoked or has expired. Root
+`add` makes a token and prints its secret once, `list` shows them, `extend`
+gives one a new end date and keeps its secret, `revoke` ends one for good, `remove` deletes one that is revoked or has expired. Root
 connects as the migration role, as `haprion-user` does, and the actor recorded
 is the login that ran sudo.
 
@@ -146,6 +146,29 @@ def _change(
     return 0
 
 
+def command_extend(args: argparse.Namespace) -> int:
+    with connect(load_environment()) as connection:
+        try:
+            extended = api_token_apply.extend(
+                connection, args.name, days=args.days, actor=actor_name(), via="cli"
+            )
+        except api_token_apply.Refused as error:
+            connection.rollback()
+            raise _refusal(error) from error
+        connection.commit()
+    if args.json:
+        return tool_answer.done(
+            OPERATION,
+            {
+                "action": "extend",
+                "name": extended.name,
+                "expires_at": extended.expires_at.isoformat(),
+            },
+        )
+    print(f"extended {extended.name}, valid until {moments.day(extended.expires_at)}")
+    return 0
+
+
 def command_revoke(args: argparse.Namespace) -> int:
     return _change(args, "revoke", api_token_apply.revoke, "revoked")
 
@@ -157,6 +180,7 @@ def command_remove(args: argparse.Namespace) -> int:
 COMMANDS = {
     "add": command_add,
     "list": command_list,
+    "extend": command_extend,
     "revoke": command_revoke,
     "remove": command_remove,
 }
@@ -187,6 +211,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = subcommands.add_parser("list", help="show the tokens, never their secrets")
     listing.add_argument("--json", action="store_true")
+
+    extend = subcommands.add_parser(
+        "extend", help="give a token a new end date, from today; its secret stays"
+    )
+    extend.add_argument("name")
+    extend.add_argument(
+        "--days",
+        type=int,
+        default=api_tokens.DEFAULT_DAYS,
+        help=f"valid for this many days from today (at most {api_tokens.LONGEST_DAYS})",
+    )
+    extend.add_argument("--json", action="store_true")
 
     for name, help_text in (
         ("revoke", "end a token for good"),

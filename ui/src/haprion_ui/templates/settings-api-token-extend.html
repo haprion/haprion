@@ -1,0 +1,25 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}Extend {{ name }} — Haprion{% endblock %}
+{% block content %}
+{# The length a token is given from today (B416); its secret stays. #}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings/api-tokens', 'API tokens') }}<h1>Extend {{ name }}</h1></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<form method="post" action="/settings/api-tokens/{{ name }}/extend" class="preview-form certificate-form api-token-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="cluster-card">
+    <div class="form-grid">
+      <label><span class="field-title">Valid for</span><select name="days">{% for count in day_choices %}<option value="{{ count }}"{% if count | string == days | string %} selected{% endif %}>{{ count }} days</option>{% endfor %}</select></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings/api-tokens">Cancel</a><button type="submit" class="secondary-button deploy-button">Extend</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

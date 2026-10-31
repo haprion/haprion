@@ -1,4 +1,4 @@
-"""Settings -> API tokens: who may call `/api/v1`, made, revoked and removed here (B416).
+"""Settings -> API tokens: who may call `/api/v1`, made, extended, revoked and removed here (B416).
 
 The rules, the audit events and the sentences a refusal is made of are
 `api_token_apply`'s, shared with `haprion-api-token`. What is the page's own is
@@ -267,6 +267,81 @@ def build_router(config: Config) -> APIRouter:
         return TEMPLATES.TemplateResponse(
             request, "settings-api-token-revoke.html", {**context(request, gate), "name": name}
         )
+
+    def extend_form(
+        request: Request,
+        gate: AuthenticatedSession,
+        name: str,
+        *,
+        days: str | int = api_tokens.DEFAULT_DAYS,
+        problem: str = "",
+        status_code: int = 200,
+    ) -> Response:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-api-token-extend.html",
+            {
+                **context(request, gate),
+                "name": name,
+                "days": days,
+                "day_choices": DAY_CHOICES,
+                "problem": problem,
+            },
+            status_code=status_code,
+        )
+
+    @router.get(LIST + "/{name}/extend", response_class=HTMLResponse)
+    def extend_page(request: Request, name: str) -> Response:
+        """The length a token is given, before it is extended."""
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        row = found(request, name)
+        if row is None:
+            return PlainTextResponse("Not found", status_code=404)
+        if row.revoked_at is not None:
+            return RedirectResponse(LIST, status_code=303)
+        return extend_form(request, gate, name)
+
+    @router.post(LIST + "/{name}/extend")
+    def extend_token(
+        request: Request,
+        name: str,
+        days: Annotated[str, Form(max_length=8)] = "",
+        csrf_token: Annotated[str, Form(alias=auth.CSRF_FIELD, max_length=128)] = "",
+    ) -> Response:
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        try:
+            length = int(days.strip())
+        except ValueError:
+            return extend_form(
+                request,
+                gate,
+                name,
+                days=days,
+                problem="The validity must be a number of days.",
+                status_code=400,
+            )
+        with request.app.state.pool.connection() as connection:
+            try:
+                api_token_apply.extend(
+                    connection, name, days=length, actor=gate.username, via="web"
+                )
+            except api_token_apply.Refused as refused:
+                connection.rollback()
+                if refused.code == "not_found":
+                    return list_page(request, gate, problem=str(refused), status_code=404)
+                return extend_form(
+                    request, gate, name, days=days, problem=str(refused), status_code=409
+                )
+            connection.commit()
+        return RedirectResponse(LIST, status_code=303)
 
     def change(request: Request, name: str, csrf_token: str, action: str) -> Response:
         gate = admin_write_gate(config, request)

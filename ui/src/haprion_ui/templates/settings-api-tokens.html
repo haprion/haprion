@@ -31,7 +31,7 @@
         <td data-label="Valid until"><span class="users-date{% if token.ending %} warning-text{% endif %}"{% if token.ending %} title="{{ token.ending_title }}"{% endif %}>{{ token.valid_until }}</span></td>
         <td data-label="Last used" title="{{ token.last_used }}"><span class="users-date">{{ token.last_used }}</span></td>
         <td data-label="State"><span class="status-badge status-badge-{{ token.tone }}">{{ token.state }}</span></td>
-        <td data-label="" class="api-token-action">{% if token.state == 'Active' %}<a class="secondary-button settings-edit" href="/settings/api-tokens/{{ token.name }}/revoke">Revoke</a>{% else %}<form method="post" action="/settings/api-tokens/{{ token.name }}/remove" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button settings-edit">Remove</button></form>{% endif %}</td>
+        <td data-label="" class="api-token-action">{% if token.state != 'Revoked' %}<a class="secondary-button settings-edit" href="/settings/api-tokens/{{ token.name }}/extend">Extend</a>{% endif %}{% if token.state == 'Active' %}<a class="secondary-button settings-edit" href="/settings/api-tokens/{{ token.name }}/revoke">Revoke</a>{% else %}<form method="post" action="/settings/api-tokens/{{ token.name }}/remove" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button settings-edit">Remove</button></form>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

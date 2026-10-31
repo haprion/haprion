@@ -4434,15 +4434,16 @@ A token is made under *Settings* → *API tokens* → *Add token*. It has:
   leaving the choice out. Without clusters a token sees every cluster;
 - **where it may be called from**, optional: addresses or networks. From anywhere else the token is
   refused, as if it did not exist;
-- **how long it is valid**: 30 days to two years, one year unless you choose otherwise. It cannot be
-  extended. Make a new one before it ends.
+- **how long it is valid**: 30 days to two years, one year unless you choose otherwise.
 
 After *Save* the token is shown once, with a button to copy it. Haprion keeps only a hash of it, so it
 cannot show it again. A lost token is replaced, not recovered.
 
 The list shows each token's prefix (`hap_` and eight characters of it, which is how you tell which token
-you have found in a file or a log), level, scope, end date and when and from where it was last used. *Revoke*
-stops a token at once, and a revoked token never works again. *Remove* takes a revoked or ended token off
+you have found in a file or a log), level, scope, end date and when and from where it was last used. *Extend* gives a
+token a new end date, counted from the day it is extended and at most two years away. It is the same
+token with the same secret, so what holds it needs no change, and one that has already ended works again.
+A revoked token cannot be extended. *Revoke* stops a token at once, and a revoked token never works again. *Remove* takes a revoked or ended token off
 the list. A token that ends within 30 days, or has ended and is still listed, is under *Needs attention*.
 
 **A Read token sees visitors' addresses.** The traffic log carries every client's address, and the
@@ -4555,12 +4556,13 @@ itself, never this header. A token is 256 random bits behind `hap_`, so a leaked
 
 ### From the terminal
 
-`haprion-api-token` makes, lists, revokes and removes tokens on the manager, with the same rules as the
+`haprion-api-token` makes, lists, extends, revokes and removes tokens on the manager, with the same rules as the
 page. It is for scripts and for when the interface cannot be reached:
 
 ```bash
 sudo haprion-api-token add monitoring --level read --cluster alpha --days 365
 sudo haprion-api-token list
+sudo haprion-api-token extend monitoring --days 365
 sudo haprion-api-token revoke monitoring
 ```
 

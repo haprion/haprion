@@ -171,6 +171,47 @@ class ListingRevokingRemoving(AsRoot):
         self.assertIn("live is still in use; revoke it first.", err)
 
 
+class Extending(AsRoot):
+    def test_extend_writes_what_the_page_writes_and_answers_the_new_date(self) -> None:
+        self.tokens = [a_token(name="monitoring", expires_at=NOW + timedelta(days=3))]
+        code, out, _ = run(["extend", "monitoring", "--days", "90", "--json"])
+
+        self.assertEqual(code, 0)
+        result = assert_contract("haprion-api-token", out)["result"]
+        self.assertEqual((result["action"], result["name"]), ("extend", "monitoring"))
+        self.assertEqual(self.extended, [("monitoring", 90)])
+        self.assertEqual(
+            datetime.fromisoformat(result["expires_at"]).date(), (NOW + timedelta(days=90)).date()
+        )
+        ((action, detail),) = [(a, d) for a, d in self.audit_details if a.startswith("api_token")]
+        self.assertEqual(
+            (action, detail["name"], detail["via"]), ("api_token_extended", "monitoring", "cli")
+        )
+
+    def test_the_default_is_a_year_and_the_text_says_until_when(self) -> None:
+        self.tokens = [a_token(name="monitoring")]
+        code, out, _ = run(["extend", "monitoring"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.extended, [("monitoring", api_tokens.DEFAULT_DAYS)])
+        self.assertTrue(out.startswith("extended monitoring, valid until "))
+
+    def test_unknown_is_not_found_and_revoked_or_a_bad_length_is_refused(self) -> None:
+        code, out, _ = run(["extend", "nobody", "--json"])
+        self.assertEqual(code, exit_codes.NOT_FOUND)
+        self.assertEqual(assert_contract("haprion-api-token", out)["error"]["code"], "not_found")
+
+        self.tokens = [
+            a_token(name="old", revoked_at=NOW, revoked_by="ops"),
+            a_token(name="live"),
+        ]
+        for argv in (["old"], ["live", "--days", "731"]):
+            code, _, err = run(["extend", *argv])
+            self.assertEqual(code, exit_codes.REFUSED)
+            self.assertTrue(err.startswith("ERROR: "))
+        self.assertEqual(self.extended, [])
+
+
 class PageAndCommandRefuseAlike(AsRoot):
     """The same input is refused in the same words, whichever way it comes in."""
 
@@ -213,6 +254,18 @@ class PageAndCommandRefuseAlike(AsRoot):
             response = self.post(self.admin(), "/settings/api-tokens/new", **self.fill())
         self.assertIn(err.strip().removeprefix("ERROR: "), response.text)
 
+    def test_extending_reads_alike(self) -> None:
+        self.tokens = [
+            a_token(name="old", revoked_at=NOW, revoked_by="admin"),
+            a_token(name="live"),
+        ]
+        client = self.admin()
+        for name, days in (("old", 365), ("nobody", 365), ("live", 0), ("live", 731)):
+            with self.subTest(name=name, days=days):
+                _, _, err = run(["extend", name, "--days", str(days)])
+                response = self.post(client, f"/settings/api-tokens/{name}/extend", days=days)
+                self.assertIn(err.strip().removeprefix("ERROR: "), html.unescape(response.text))
+
     def test_revoking_and_removing_read_alike(self) -> None:
         self.tokens = [a_token(name="old", revoked_at=NOW, revoked_by="admin")]
         client = self.admin()
@@ -226,7 +279,7 @@ class PageAndCommandRefuseAlike(AsRoot):
 
 class TheContractHoldsTheTool(AsRoot):
     def test_the_help_of_every_verb_offers_json(self) -> None:
-        for verb in ("add", "list", "revoke", "remove"):
+        for verb in ("add", "list", "extend", "revoke", "remove"):
             with self.subTest(verb), contextlib.suppress(SystemExit):
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):

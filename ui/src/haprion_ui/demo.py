@@ -1077,6 +1077,7 @@ def api_token_rows(now: datetime | None = None) -> tuple[ApiToken, ...]:
             "sources": [],
             "prefix": f"hap_demo{number:04d}",
             "created_at": now - timedelta(days=120),
+            "valid_from": now - timedelta(days=120),
             "created_by": "admin",
             "expires_at": now + timedelta(days=245),
             "revoked_at": None,

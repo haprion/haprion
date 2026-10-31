@@ -135,8 +135,8 @@ app_poller	version_diff	INSERT	cluster, commit, diff
 app_poller	version_diff	SELECT	cluster, commit, diff, recorded_at
 app_web	alembic_version	SELECT	version_num
 app_web	api_token	INSERT	clusters, created_by, expires_at, level, name, objects, prefix, sources, token_hash
-app_web	api_token	SELECT	clusters, created_at, created_by, expires_at, id, last_used_at, last_used_from, level, name, objects, prefix, revoked_at, revoked_by, sources, token_hash
-app_web	api_token	UPDATE	last_used_at, last_used_from, revoked_at, revoked_by
+app_web	api_token	SELECT	clusters, created_at, created_by, expires_at, id, last_used_at, last_used_from, level, name, objects, prefix, revoked_at, revoked_by, sources, token_hash, valid_from
+app_web	api_token	UPDATE	expires_at, last_used_at, last_used_from, revoked_at, revoked_by
 app_web	app_session	INSERT	expires_at, id_token, token_hash, user_id
 app_web	app_session	SELECT	created_at, expires_at, id_token, last_seen_at, revoked_at, token_hash, user_id
 app_web	app_session	UPDATE	last_seen_at, revoked_at
@@ -410,14 +410,14 @@ refuse "$WEB_USER"    "cannot backdate a session" \
        "insert into app_session (token_hash, user_id, expires_at, created_at)
         values (repeat('x', 32)::bytea, 1, now(), now())"
 #
-# An API token's life is fixed when it is made (0107): the web cannot backdate
-# one, move its expiry or give it back a key.
+# An API token's life begins when it is made or extended (0107, 0108): the web
+# cannot backdate one, set where its life begins or give it back a key.
 #
 refuse "$WEB_USER"    "cannot backdate an API token" \
        "insert into api_token (name, level, token_hash, prefix, created_by, expires_at, created_at)
         values ('probe', 'read', repeat('x', 32)::bytea, 'hap_aaaaaaaa', 'probe', now(), now())"
-refuse "$WEB_USER"    "cannot extend an API token" \
-       "update api_token set expires_at = expires_at"
+refuse "$WEB_USER"    "cannot set an API token's start" \
+       "update api_token set valid_from = now()"
 refuse "$WEB_USER"    "cannot change an API token's key" \
        "update api_token set token_hash = token_hash"
 refuse "$WORKER_USER" "cannot read the API tokens" \

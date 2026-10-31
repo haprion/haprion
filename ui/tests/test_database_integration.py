@@ -10149,6 +10149,23 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(self.tokens(), [])
 
+    def test_a_token_made_before_0108_begins_its_life_when_it_was_made(self) -> None:
+        self.alembic("upgrade", "0107")
+        with self.scratch() as connection:
+            connection.execute(
+                "insert into api_token (name, level, token_hash, prefix, created_by, expires_at, "
+                "created_at) values ('older', 'read', %s, 'hap_abcdefgh', 'admin', "
+                "now() + interval '65 days', now() - interval '300 days')",
+                (b"o" * 32,),
+            )
+            connection.commit()
+
+        self.alembic("upgrade", "head")
+
+        with self.scratch() as connection:
+            row = connection.execute("select valid_from = created_at from api_token").fetchone()
+        self.assertEqual(row, (True,))
+
     def test_a_restore_run_again_after_a_failed_one_still_revokes_the_token_revoked_after_the_dump(
         self,
     ) -> None:
@@ -10202,7 +10219,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class ApiTokensInTheDatabase(unittest.TestCase):
-    """0107 (B416): a token's life is fixed when it is made, and its end is final."""
+    """0107, 0108 (B416): a token's life is at most two years from when it was made or extended."""
 
     def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
@@ -10237,6 +10254,21 @@ class ApiTokensInTheDatabase(unittest.TestCase):
     def web(self, statement: str, parameters: tuple[Any, ...] = ()) -> None:
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             connection.execute(statement, parameters)
+            connection.commit()
+
+    def lived(self, began: str, ends: str, name: str | None = None) -> None:
+        """Set a token's life as the owner does; the extension trigger is for the web's updates."""
+
+        with self.connect() as connection:
+            connection.execute("alter table api_token disable trigger api_token_extension")
+            connection.execute(
+                "update api_token set created_at = now() - %(began)s::interval, "
+                "valid_from = now() - %(began)s::interval, "
+                "expires_at = now() + %(ends)s::interval "
+                "where %(name)s::text is null or name = %(name)s",
+                {"began": began, "ends": ends, "name": name},
+            )
+            connection.execute("alter table api_token enable trigger api_token_extension")
             connection.commit()
 
     def test_the_web_makes_a_token_and_finds_it_by_its_hash(self) -> None:
@@ -10278,13 +10310,17 @@ class ApiTokensInTheDatabase(unittest.TestCase):
     def test_the_longest_life_is_two_years(self) -> None:
         self.assertEqual(self.make(days=730).name, "monitoring")
 
-    def test_the_web_cannot_backdate_extend_or_rekey_a_token(self) -> None:
+    def test_the_web_cannot_backdate_start_or_rekey_a_token(self) -> None:
         self.make()
         for statement in (
             "insert into api_token (name, level, token_hash, prefix, created_by, expires_at, "
             "created_at) values ('probe', 'read', repeat('x', 32)::bytea, 'hap_aaaaaaaa', "
             "'admin', now(), now() - interval '1 year')",
-            "update api_token set expires_at = expires_at + interval '1 day'",
+            "insert into api_token (name, level, token_hash, prefix, created_by, expires_at, "
+            "valid_from) values ('probe', 'read', repeat('x', 32)::bytea, 'hap_aaaaaaaa', "
+            "'admin', now() + interval '10 years', now() + interval '9 years')",
+            "update api_token set valid_from = now() + interval '1 year'",
+            "update api_token set created_at = now()",
             "update api_token set token_hash = token_hash",
             "update api_token set level = 'write'",
             "update api_token set clusters = '{}'",
@@ -10292,6 +10328,78 @@ class ApiTokensInTheDatabase(unittest.TestCase):
             with (
                 self.subTest(statement=statement),
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                self.web(statement)
+
+    def test_a_token_made_has_its_life_begin_when_it_was_made(self) -> None:
+        made = self.make()
+        self.assertEqual(made.valid_from, made.created_at)
+
+    def test_extending_keeps_the_key_and_the_life_begins_again(self) -> None:
+        digest = os.urandom(32)
+        self.make(token_hash=digest, days=30)
+        self.lived("20 days", "10 days")
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            before = db.api_token_by_hash(connection, digest)
+            extended = db.extend_api_token(connection, "monitoring", days=730)
+            connection.commit()
+            after = db.api_token_by_hash(connection, digest)
+        self.assertIsNotNone(before)
+        self.assertIsNotNone(extended)
+        assert before is not None and extended is not None  # noqa: S101 - narrows for mypy
+        self.assertEqual(after, extended)
+        self.assertGreater(extended.valid_from, before.valid_from)
+        self.assertEqual(extended.created_at, before.created_at)
+        self.assertEqual(extended.expires_at - extended.valid_from, timedelta(days=730))
+        self.assertEqual(
+            (extended.id, extended.prefix, extended.level), (before.id, before.prefix, before.level)
+        )
+
+    def test_a_token_that_has_ended_is_extended(self) -> None:
+        digest = os.urandom(32)
+        self.make(token_hash=digest, days=30)
+        self.lived("40 days", "-10 days")
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            extended = db.extend_api_token(connection, "monitoring", days=365)
+            connection.commit()
+        self.assertIsNotNone(extended)
+        assert extended is not None  # noqa: S101 - narrows for mypy
+        self.assertGreater(extended.expires_at, datetime.now(UTC))
+
+    def test_no_such_token_is_none(self) -> None:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertIsNone(db.extend_api_token(connection, "nobody", days=30))
+
+    def test_a_revoked_token_is_not_extended(self) -> None:
+        self.make()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            db.revoke_api_token(connection, "monitoring", by="admin")
+            connection.commit()
+            before = db.api_tokens(connection)[0]
+            with self.assertRaises(db.TokenRevoked):
+                db.extend_api_token(connection, "monitoring", days=30)
+            connection.rollback()
+            self.assertEqual(db.api_tokens(connection)[0], before)
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.web("update api_token set expires_at = now() + interval '30 days'")
+
+    def test_an_extension_reaches_at_most_two_years_from_now(self) -> None:
+        self.make()
+        self.lived("300 days", "65 days")
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.extend_api_token(connection, "monitoring", days=731 + 366)
+            connection.rollback()
+        # Two years from the original start would have been too soon; from now it is not.
+        self.web("update api_token set expires_at = statement_timestamp() + interval '2 years'")
+        for statement in (
+            "update api_token set expires_at = now() + interval '2 years 1 day'",
+            "update api_token set expires_at = now() - interval '1 day'",
+            "update api_token set expires_at = now()",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.CheckViolation),
             ):
                 self.web(statement)
 
@@ -10326,12 +10434,7 @@ class ApiTokensInTheDatabase(unittest.TestCase):
 
     def test_an_expired_token_may_be_removed(self) -> None:
         self.make()
-        with self.connect() as connection:
-            connection.execute(
-                "update api_token set created_at = now() - interval '2 days', "
-                "expires_at = now() - interval '1 day'"
-            )
-            connection.commit()
+        self.lived("2 days", "-1 day")
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             self.assertTrue(db.delete_api_token(connection, "monitoring"))
             connection.commit()
@@ -10357,11 +10460,8 @@ class ApiTokensInTheDatabase(unittest.TestCase):
         self.make("revived", token_hash=b"r" * 32)
         self.make("late", token_hash=b"l" * 32)
         self.make("old", token_hash=b"o" * 32)
+        self.lived("2 days", "-1 day", "late")
         with self.connect() as connection:
-            connection.execute(
-                "update api_token set created_at = now() - interval '2 days', "
-                "expires_at = now() - interval '1 day' where name = 'late'"
-            )
             connection.execute(
                 "update api_token set revoked_at = now(), revoked_by = 'admin' where name = 'old'"
             )

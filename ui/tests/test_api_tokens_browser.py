@@ -112,7 +112,11 @@ class TheTokensPage(LoginTestCase):
                 self.assertTrue(page.is_visible(".api-token-table tbody tr >> nth=0"))
 
     def test_the_form_and_the_settings_card_fit(self) -> None:
-        for path in ("/settings/api-tokens/new", "/settings"):
+        for path in (
+            "/settings/api-tokens/new",
+            "/settings/api-tokens/monitoring/extend",
+            "/settings",
+        ):
             for width in (1280, 760):
                 with self.subTest(path=path, width=width), self.signed_in(width, path) as page:
                     self.assertTrue(page.evaluate(NO_SIDEWAYS))

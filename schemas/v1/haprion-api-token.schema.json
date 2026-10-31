@@ -20,7 +20,7 @@
     "level": { "enum": ["read", "block", "write"] },
     "names": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
     "api_token_result": {
-      "description": "One token made (with its secret, shown once), the tokens listed (never a secret or a hash), or one revoked or removed.",
+      "description": "One token made (with its secret, shown once), the tokens listed (never a secret or a hash), one extended (its new end date), or one revoked or removed.",
       "oneOf": [
         {
           "type": "object",
@@ -73,6 +73,16 @@
                 "additionalProperties": false
               }
             }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action", "name", "expires_at"],
+          "properties": {
+            "action": { "const": "extend" },
+            "name": { "$ref": "#/$defs/name" },
+            "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" }
           },
           "additionalProperties": false
         },

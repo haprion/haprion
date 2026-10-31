@@ -29,6 +29,7 @@ def a_token(**changes: Any) -> db.ApiToken:
         prefix="hap_abcdefgh",
         created_at=NOW - timedelta(days=1),
         created_by="admin",
+        valid_from=NOW - timedelta(days=1),
         expires_at=NOW + timedelta(days=364),
         revoked_at=None,
         revoked_by=None,

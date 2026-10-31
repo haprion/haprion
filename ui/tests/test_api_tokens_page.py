@@ -1,4 +1,4 @@
-"""Settings -> API tokens (B416): the list, the form, the one showing of a secret, revoke and remove."""
+"""Settings -> API tokens (B416): the list, the form, the one showing of a secret, extend, revoke and remove."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ class TokensPage(LoginTestCase):
         self.audit_details: list[tuple[str, dict[str, Any]]] = []
         self.revoked: list[str] = []
         self.deleted: list[str] = []
+        self.extended: list[tuple[str, int]] = []
 
         def create(_c: object, **values: Any) -> db.ApiToken:
             self.made.append(values)
@@ -42,6 +43,15 @@ class TokensPage(LoginTestCase):
             self.revoked.append(name)
             return True
 
+        def extend(_c: object, name: str, *, days: int) -> db.ApiToken | None:
+            held = next((row for row in self.tokens if row.name == name), None)
+            if held is not None and held.revoked_at is not None:
+                raise db.TokenRevoked(name)
+            self.extended.append((name, days))
+            if held is None:
+                return None
+            return replace(held, valid_from=NOW, expires_at=NOW + timedelta(days=days))
+
         def delete(_c: object, name: str) -> bool:
             self.deleted.append(name)
             return True
@@ -54,6 +64,7 @@ class TokensPage(LoginTestCase):
             mock.patch("haprion_ui.db.api_tokens", side_effect=lambda _c: list(self.tokens)),
             mock.patch("haprion_ui.db.create_api_token", side_effect=create),
             mock.patch("haprion_ui.db.revoke_api_token", side_effect=revoke),
+            mock.patch("haprion_ui.db.extend_api_token", side_effect=extend),
             mock.patch("haprion_ui.db.delete_api_token", side_effect=delete),
             mock.patch("haprion_ui.db.record_audit_event", side_effect=record),
             mock.patch(
@@ -289,6 +300,98 @@ class MakingATokenOnThePage(TokensPage):
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(self.made, [])
+
+
+class Extending(TokensPage):
+    def test_the_button_is_on_a_token_in_use_or_ended_and_not_on_a_revoked_one(self) -> None:
+        self.tokens = [
+            a_token(name="live"),
+            a_token(name="late", expires_at=NOW - timedelta(days=2)),
+            a_token(name="gone", revoked_at=NOW, revoked_by="admin"),
+        ]
+        page = self.admin().get("/settings/api-tokens").text
+
+        self.assertIn('href="/settings/api-tokens/live/extend"', page)
+        self.assertIn('href="/settings/api-tokens/late/extend"', page)
+        self.assertNotIn("/settings/api-tokens/gone/extend", page)
+
+    def test_the_form_offers_the_lengths_and_the_post_extends_and_records_it(self) -> None:
+        held = a_token(name="monitoring", expires_at=NOW + timedelta(days=3))
+        self.tokens = [held]
+        client = self.admin()
+
+        form = client.get("/settings/api-tokens/monitoring/extend")
+        self.assertEqual(form.status_code, 200)
+        self.assertIn('action="/settings/api-tokens/monitoring/extend"', form.text)
+        self.assertIn('<option value="365" selected>365 days</option>', form.text)
+        self.assertEqual(self.extended, [])
+
+        response = self.post(client, "/settings/api-tokens/monitoring/extend", days="90")
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/settings/api-tokens")
+        self.assertEqual(self.extended, [("monitoring", 90)])
+        ((action, detail),) = self.audit_details
+        self.assertEqual(action, "api_token_extended")
+        self.assertEqual(
+            detail,
+            {
+                "name": "monitoring",
+                "previous_expires_at": held.expires_at.isoformat(),
+                "expires_at": (NOW + timedelta(days=90)).isoformat(),
+                "via": "web",
+            },
+        )
+
+    def test_a_token_that_has_ended_is_extended_too(self) -> None:
+        self.tokens = [a_token(name="late", expires_at=NOW - timedelta(days=2))]
+        response = self.post(self.admin(), "/settings/api-tokens/late/extend", days="365")
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(self.extended, [("late", 365)])
+
+    def test_each_refusal_says_why_and_writes_nothing(self) -> None:
+        self.tokens = [
+            a_token(name="live"),
+            a_token(name="old", revoked_at=NOW, revoked_by="admin"),
+        ]
+        client = self.admin()
+        cases = (
+            ("nobody", "365", 404, "There is no token named nobody."),
+            ("old", "365", 409, "old is revoked and cannot be extended."),
+            ("live", "731", 409, "The validity must be between 1 and 730 days."),
+            ("live", "0", 409, "The validity must be between 1 and 730 days."),
+            ("live", "soon", 400, "The validity must be a number of days."),
+        )
+        for name, days, status, message in cases:
+            with self.subTest(name=name, days=days):
+                response = self.post(client, f"/settings/api-tokens/{name}/extend", days=days)
+                self.assertEqual(response.status_code, status)
+                self.assertIn(message, html.unescape(response.text))
+        self.assertEqual((self.extended, self.audit_details), ([], []))
+
+    def test_the_form_of_an_unknown_token_is_not_found_and_of_a_revoked_one_leads_back(
+        self,
+    ) -> None:
+        self.tokens = [a_token(name="old", revoked_at=NOW, revoked_by="admin")]
+        client = self.admin()
+
+        self.assertEqual(client.get("/settings/api-tokens/nobody/extend").status_code, 404)
+        back = client.get("/settings/api-tokens/old/extend", follow_redirects=False)
+        self.assertEqual(
+            (back.status_code, back.headers["location"]), (303, "/settings/api-tokens")
+        )
+
+    def test_a_post_with_another_session_s_token_does_nothing(self) -> None:
+        self.tokens = [a_token(name="monitoring")]
+        response = self.admin().post(
+            "/settings/api-tokens/monitoring/extend",
+            data={auth.CSRF_FIELD: auth.csrf_token(auth.new_session_token()), "days": "365"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual((self.extended, self.audit_details), ([], []))
 
 
 class RevokingAndRemoving(TokensPage):

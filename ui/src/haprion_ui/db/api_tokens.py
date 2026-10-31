@@ -1,4 +1,4 @@
-"""API tokens (0107, B416): made, listed, used, revoked and removed."""
+"""API tokens (0107, 0108, B416): made, listed, used, extended, revoked and removed."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ class ApiToken:
     prefix: str
     created_at: datetime
     created_by: str
+    valid_from: datetime
     expires_at: datetime
     revoked_at: datetime | None
     revoked_by: str | None
@@ -34,6 +35,10 @@ class ApiToken:
 
 class TokenNameTaken(ValueError):
     """Another token has this name."""
+
+
+class TokenRevoked(ValueError):
+    """The token is revoked, and a revoked token is not extended."""
 
 
 class TokenInUse(ValueError):
@@ -47,7 +52,7 @@ class TokenInUse(ValueError):
 #
 _API_COLUMNS = (
     " id, name, level, clusters, objects, sources::text[] as sources, prefix, created_at, "
-    " created_by, expires_at, revoked_at, revoked_by, last_used_at, "
+    " created_by, valid_from, expires_at, revoked_at, revoked_by, last_used_at, "
     " host(last_used_from) as last_used_from "
 )
 _API_SELECT = "select" + _API_COLUMNS + "from api_token"
@@ -146,6 +151,30 @@ def revoke_api_token(connection: Connection[Any], name: str, *, by: str) -> bool
             {"name": name, "by": by},
         )
         return cursor.rowcount == 1
+
+
+def extend_api_token(connection: Connection[Any], name: str, *, days: int) -> ApiToken | None:
+    """Give a token a new end date, `days` from the database's own clock.
+
+    The secret is the same. The table moves `valid_from` to this moment, so
+    the two-year limit counts from the extension; a revoked token is refused
+    by the table itself (`TokenRevoked`). None when there is no such token.
+    """
+
+    try:
+        with connection.cursor(row_factory=class_row(ApiToken)) as cursor:
+            cursor.execute(
+                "update api_token "  # noqa: S608 - constant
+                "   set expires_at = statement_timestamp() + make_interval(days => %(days)s) "
+                " where name = %(name)s "
+                "returning" + _API_COLUMNS,
+                {"name": name, "days": days},
+            )
+            return cursor.fetchone()
+    except psycopg.errors.CheckViolation as exc:
+        if "revoked" in (exc.diag.message_primary or ""):
+            raise TokenRevoked(name) from exc
+        raise
 
 
 def delete_api_token(connection: Connection[Any], name: str) -> bool:

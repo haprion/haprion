@@ -1,4 +1,4 @@
-"""API tokens made, listed, revoked and removed: the part the page and `haprion-api-token` share (B416).
+"""API tokens made, listed, extended, revoked and removed: the part the page and `haprion-api-token` share (B416).
 
 Settings -> API tokens and the command line are two ways to the same table, so
 the rules live once, here: what a request may ask for, the sentences a refusal
@@ -155,6 +155,38 @@ def _named(connection: Any, name: str) -> db.ApiToken:
         if token.name == name:
             return token
     raise Refused(f"There is no token named {name}.", code="not_found")
+
+
+def extend(connection: Any, name: str, *, days: int, actor: str, via: str) -> db.ApiToken:
+    """Give a token a new end date, from today; the secret stays. The caller commits.
+
+    Returns the token as it is after. The record keeps the date it had and the
+    date it has, so the audit says how long it was given.
+    """
+
+    token = _named(connection, name)
+    if token.revoked_at is not None:
+        raise Refused(f"{name} is revoked and cannot be extended.")
+    if text := api_tokens.days_problem(days):
+        raise Refused(f"The validity {text}.")
+    try:
+        extended = db.extend_api_token(connection, name, days=days)
+    except db.TokenRevoked:
+        raise Refused(f"{name} is revoked and cannot be extended.") from None
+    if extended is None:
+        raise Refused(f"There is no token named {name}.", code="not_found")
+    db.record_audit_event(
+        connection,
+        actor=actor,
+        action="api_token_extended",
+        detail={
+            "name": name,
+            "previous_expires_at": token.expires_at.isoformat(),
+            "expires_at": extended.expires_at.isoformat(),
+            "via": via,
+        },
+    )
+    return extended
 
 
 def revoke(connection: Any, name: str, *, actor: str, via: str) -> db.ApiToken:

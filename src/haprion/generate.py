@@ -724,6 +724,15 @@ def _waf_exception_directives(exceptions: Sequence[WafException]) -> tuple[list[
 WAF_COUNTER_SLOTS = 6
 WAF_COUNTER_MESSAGE = "Allowed by exception"
 #
+# The rule files around the counters, together `*.conf` in its order: the
+# initialisation (and an exclusion file before it, if one is ever installed)
+# first, the rules after. A glob that matches nothing is a warning in the
+# engine, not an error; `test_the_globs_take_every_rule_file_once_in_order`
+# holds them to the installed rule set.
+#
+WAF_RULES_BEFORE_COUNTERS = ("REQUEST-90[01]-*.conf",)
+WAF_RULES_AFTER_COUNTERS = ("REQUEST-90[2-9]-*.conf", "REQUEST-9[1-9]?-*.conf", "RESPONSE-*.conf")
+#
 # The actions a counter keeps from the rule's links: how the value is
 # transformed and matched, and whether the chain goes on. Everything that
 # blocks, scores, tags or names the rule goes; a variable a later link reads
@@ -915,12 +924,15 @@ def _waf_files(
             #
             'SecAction "id:900510,phase:1,pass,t:none,nolog,setvar:tx.crs_xml_attr_inspect=1"',
             #
-            # After the level is set and before the rule set: a counter in
-            # phase 1 can read the level, and one in phase 2 runs before the
-            # score is judged, so it counts a request refused for other rules.
+            # The counters after the rule set's initialisation and before its
+            # rules: a counter reads what 901 sets (911100 compares the method
+            # to `tx.allowed_methods`, empty before it, so every request was
+            # counted - 2026-10-31), and one in phase 2 runs before the score
+            # is judged, so it counts a request refused for other rules.
             #
+            *(f"Include {crs}/rules/{pattern}" for pattern in WAF_RULES_BEFORE_COUNTERS),
             *_waf_counter_directives(proxy.waf.exceptions, definitions),
-            f"Include {crs}/rules/*.conf",
+            *(f"Include {crs}/rules/{pattern}" for pattern in WAF_RULES_AFTER_COUNTERS),
             *after,
         ]
         applications.append(_waf_application(proxy.name, directives))

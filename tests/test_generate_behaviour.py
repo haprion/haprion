@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import fnmatch
 import hashlib
 import json
 import os
@@ -46,6 +47,8 @@ from haprion.cluster_settings import ClusterSettings, Metrics
 from haprion.config import AbuseProtection, Vip
 from haprion.generate import (
     NODE_CERTIFICATE_DIR,
+    WAF_RULES_AFTER_COUNTERS,
+    WAF_RULES_BEFORE_COUNTERS,
     GeneratedLayer,
     GeneratorError,
     generate,
@@ -2873,6 +2876,7 @@ BLOCKS_WITH_EXCEPTIONS = """  mode: block
       paths: [/chained]
     - rule: 942440
       field: ARGS:c
+    - rule: 911100
   large_bodies: [/upload]"""
 
 
@@ -3032,11 +3036,15 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         body: bytes | None = None,
         headers: Mapping[str, str] | None = None,
         content_type: str = "application/x-www-form-urlencoded",
+        method: str | None = None,
     ) -> tuple[int, str, str]:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
             connection.putrequest(
-                "GET" if body is None else "POST", target, skip_host=True, skip_accept_encoding=True
+                method or ("GET" if body is None else "POST"),
+                target,
+                skip_host=True,
+                skip_accept_encoding=True,
             )
             connection.putheader("Host", f"{name}.example.com")
             for header, value in (headers or {}).items():
@@ -3174,6 +3182,29 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
                     self.assertEqual(answer[0], status)
                 for counter in counters:
                     self.assertNotIn(str(counter), answer[2], "a counter is not on the record")
+                if not counters:
+                    time.sleep(0.2)
+                self.assertEqual({rule for rule, _ in self.counted(marker)}, counters)
+
+    def test_a_counter_reads_what_the_rule_set_initialises(self) -> None:
+        """911100 compares the method to `tx.allowed_methods`, which 901 sets.
+
+        Ahead of 901 the list was empty and the counter counted every request
+        (2026-10-31, an Immich object let through by method).
+        """
+
+        for method, counters in (("GET", set()), ("POST", set()), ("PUT", {311100})):
+            with self.subTest(method):
+                marker = uuid.uuid4().hex
+                answer = self.ask(
+                    f"/m?m={marker}",
+                    name="blocks",
+                    method=method,
+                    body=b"" if method != "GET" else None,
+                )
+                # Let through: the test server has no PUT (501), the engine no say.
+                self.assertNotEqual(answer[0], 403)
+                self.assertEqual(answer[1], "")
                 if not counters:
                     time.sleep(0.2)
                 self.assertEqual({rule for rule, _ in self.counted(marker)}, counters)
@@ -3414,6 +3445,9 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
     def test_a_counter_says_where_it_found_what_it_counted(self) -> None:
         self.skipTest("the engine is not running")
 
+    def test_a_counter_reads_what_the_rule_set_initialises(self) -> None:
+        self.skipTest("the engine is not running")
+
     def test_a_chained_rule_counts_through_its_chain(self) -> None:
         self.skipTest("the engine is not running")
 
@@ -3491,8 +3525,12 @@ class EachExceptionHasACounter(unittest.TestCase):
         if "Allowed by exception" in engine:
             self.assertLess(engine.index("id:900000"), engine.index("Allowed by exception"))
             self.assertLess(
+                engine.index("Include /etc/haproxy/waf/crs/rules/REQUEST-90[01]-*.conf"),
                 engine.index("Allowed by exception"),
-                engine.index("Include /etc/haproxy/waf/crs/rules/*.conf"),
+            )
+            self.assertLess(
+                engine.index("Allowed by exception"),
+                engine.index("Include /etc/haproxy/waf/crs/rules/REQUEST-90[2-9]-*.conf"),
             )
         return [
             line.strip()
@@ -3601,6 +3639,22 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
         self.assertNotIn("spoe", layer.configuration["1000-frontends.cfg"])
         self.assertNotIn("coraza", layer.configuration["1000-frontends.cfg"])
 
+    def test_the_globs_take_every_rule_file_once_in_order(self) -> None:
+        """Split around the counters, the includes still read `*.conf`, in its order."""
+
+        names = sorted(path.name for path in (WAF_RULES / "rules").glob("*.conf"))
+        taken = [
+            name
+            for pattern in (*WAF_RULES_BEFORE_COUNTERS, *WAF_RULES_AFTER_COUNTERS)
+            for name in names
+            if fnmatch.fnmatchcase(name, pattern)
+        ]
+        self.assertEqual(taken, names)
+        self.assertEqual(
+            [n for n in names if fnmatch.fnmatchcase(n, WAF_RULES_BEFORE_COUNTERS[0])],
+            ["REQUEST-901-INITIALIZATION.conf"],
+        )
+
     def test_each_object_is_an_application_and_an_unknown_name_inspects_nothing(self) -> None:
         layer = self.layer("  paranoia: 3\n  exceptions: [{rule: 920350}]")
         engine = layer.waf_files["coraza.yaml"]
@@ -3608,7 +3662,7 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
         self.assertIn("  - name: shop\n", engine)
         self.assertIn("setvar:tx.blocking_paranoia_level=3", engine)
         self.assertLess(
-            engine.index("Include /etc/haproxy/waf/crs/rules/*.conf"),
+            engine.index("Include /etc/haproxy/waf/crs/rules/RESPONSE-*.conf"),
             engine.index("SecRuleRemoveById 920350"),
         )
         self.assertIn("  - name: _unknown\n    directives: |\n      SecRuleEngine Off", engine)

@@ -46,6 +46,7 @@ from haprion_ui.reading import (
     read_source,
 )
 from haprion_ui.templates import TEMPLATES
+from haprion_ui.traffic_log_scope import Owned, log_scope
 from haprion_ui.views import log_freshness_warnings, log_time_filter, posted_form, traffic_marks
 from haprion_ui.waf_work import (
     allow_waf_exception,
@@ -608,7 +609,7 @@ def build_router(config: Config) -> APIRouter:
         selected_object = request.query_params.get("object", "")[:40]
         if not selected_cluster or not proxy_model.NAME.fullmatch(selected_object):
             selected_object = ""
-        owned: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+        owned: Owned | None = None
         now = datetime.now(UTC)
         local_now = metrics.shown(now)
         local_earliest = metrics.wall(
@@ -647,47 +648,9 @@ def build_router(config: Config) -> APIRouter:
         server_addresses: dict[tuple[str, str, str], str] = {}
         if config.traffic_logs.enabled:
             _, object_rows = read_source(request, config, OBJECTS_SOURCE)
-            for object_row in object_rows:
-                parsed = []
-                if selected_object and object_row.cluster == selected_cluster:
-                    #
-                    # An object the cluster does not have matches nothing,
-                    # rather than every request.
-                    #
-                    found = next(
-                        (
-                            view
-                            for view in objects.cluster_object_views(object_row)
-                            if view.name == selected_object
-                        ),
-                        None,
-                    )
-                    owned = (
-                        (
-                            tuple(found.runtime_backends or ()),
-                            traffic_logs.owned_hosts(
-                                found.hostnames,
-                                (
-                                    name
-                                    for view in objects.cluster_object_views(object_row)
-                                    if view.name != found.name
-                                    for name in view.hostnames
-                                ),
-                            ),
-                        )
-                        if found is not None
-                        else ((), ())
-                    )
-                for obj in objects.cluster_object_views(object_row):
-                    if not obj.readable:
-                        continue
-                    try:
-                        parsed.append(load_proxy(obj.name, obj.document.encode()))
-                    except (ModelError, UnicodeError):
-                        continue
-                server_addresses.update(
-                    traffic_logs.configured_server_addresses(object_row.cluster, parsed)
-                )
+            server_addresses, owned = log_scope(
+                object_rows, cluster=selected_cluster, selected_object=selected_object
+            )
         #
         # Reading what the collector stored, never asking a node. A node that
         # is slow, unreachable or hostile cannot make this request hang - it
@@ -708,7 +671,7 @@ def build_router(config: Config) -> APIRouter:
                     to_at=to_at,
                     server_addresses=server_addresses,
                     waf=selected_waf,
-                    owned=(owned or ((), ())) if selected_object else None,
+                    owned=owned,
                 )
         else:
             reading = traffic_logs.Reading((), (), 0, False)

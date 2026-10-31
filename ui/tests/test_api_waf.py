@@ -152,8 +152,8 @@ class TheExceptions(WafCase):
                         "field": "ARGS:q",
                         "paths": ["/search"],
                         "reason": "sync",
-                        "added_by": "",
-                        "added_at": "2026-10-02T14:00:00Z",
+                        "added_by": None,
+                        "added_at": "2026-10-02T14:00:00+00:00",
                         "in_draft": False,
                         "not_working": True,
                         "let_through": {
@@ -180,3 +180,36 @@ class TheExceptions(WafCase):
             with self.subTest(path=path):
                 self.assertNotEqual(self.get(path).json()["result"][key], [])
                 self.assertEqual(self.get(path, objects=["intranet"]).json()["result"][key], [])
+
+
+class TheMomentAnExceptionWasAdded(WafCase):
+    """`added_at` is a time or null, whatever the document holds."""
+
+    findings: list[Any] = []
+    base = LOGGING + "  exceptions: [{{rule: 942100{extra}}}]\n"
+
+    def added(self, extra: str) -> dict[str, Any]:
+        document = self.base.format(extra=extra)
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=objects_with(document)):
+            exceptions: list[dict[str, Any]] = self.get("exceptions").json()["result"]["exceptions"]
+        [shown] = exceptions
+        return shown
+
+    def test_a_form_written_time_with_z_is_iso_with_an_offset(self) -> None:
+        self.assertEqual(
+            self.added(", at: '2026-10-02T14:00:00Z'")["added_at"], "2026-10-02T14:00:00+00:00"
+        )
+
+    def test_an_unquoted_time_that_yaml_reads_as_a_date_is_iso_too(self) -> None:
+        self.assertEqual(
+            self.added(", at: 2026-10-02T14:00:00Z")["added_at"], "2026-10-02T14:00:00+00:00"
+        )
+
+    def test_a_missing_or_unreadable_time_is_null_and_so_is_an_empty_text(self) -> None:
+        for extra in ("", ", at: ''", ", at: yesterday"):
+            with self.subTest(extra=extra):
+                shown = self.added(extra)
+                self.assertIsNone(shown["added_at"])
+                self.assertEqual(
+                    (shown["added_by"], shown["reason"], shown["field"]), (None, None, None)
+                )

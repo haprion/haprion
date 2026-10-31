@@ -4433,8 +4433,8 @@ you have found in a file or a log), level, scope, end date and when and from whe
 stops a token at once, and a revoked token never works again. *Remove* takes a revoked or ended token off
 the list. A token that ends within 30 days, or has ended and is still listed, is under *Needs attention*.
 
-**A Read token sees visitors' addresses.** The traffic log carries every client's address. Treat a read
-token as you would access to that log.
+**A Read token sees visitors' addresses.** The traffic log carries every client's address, and the
+addresses blocked on an object are listed too. Treat a read token as you would access to that log.
 
 ### Calling it
 
@@ -4472,17 +4472,19 @@ What a token can read:
 |---|---|
 | `/token` | The calling token: level, scope, end date |
 | `/clusters`, `/clusters/{cluster}` | Status: nodes, which holds the VIP, versions, what needs attention |
+| `/attention` | *Needs attention* as the dashboard lists it: each row's `kind`, `severity`, `cluster`, `subject`, `message`, `since` and `variant`. A token limited to some clusters gets those clusters' rows only, none of the installation's own (certificates, the poller, packages, tokens) |
 | `/clusters/{cluster}/objects` | The objects, as *Proxies* lists them (`limit`, `offset`) |
-| `/clusters/{cluster}/objects/{name}` | One object and its servers' states; its document only for a *Write* token |
-| `/clusters/{cluster}/objects/{name}/history` | The cluster's published versions (`limit`) |
+| `/clusters/{cluster}/objects/{name}` | One object. Its document, its servers' addresses and states, and why an object cannot be read, only for a *Write* token |
+| `/clusters/{cluster}/objects/{name}/history` | The cluster's versions, published or not (`limit`) |
 | `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now |
 | `/certificates` | The certificates, when they end and where they are (`limit`) |
-| `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`) |
+| `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`). Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read |
 | `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through |
 | `/jobs`, `/jobs/{job_id}` | Jobs and how they went (`cluster`, `state`, `limit`) |
 
-Times are ISO 8601 with their offset, and `from` and `to` take the same. The full description, generated
-from the code, is `/api/v1/openapi.json`, for any valid token.
+Times are ISO 8601 with their offset, and `from` and `to` take the same. A server's check is given as a
+code in `check` (`up`, `down`, `no_check`, `standby`, `unknown`) beside the word the interface shows. The
+full description of the calls, generated from the code, is `/api/v1/openapi.json`, for any valid token.
 
 ### The answers
 
@@ -4512,9 +4514,12 @@ When a call is refused, `ok` is false and `error.code` says why:
 | 403 | `forbidden` | The token's level does not reach the call |
 | 404 | `not_found` | No such cluster, object or job - or one outside the token's scope |
 | 400 | `bad_input` | A parameter that is not valid, named in the message |
+| 405 | `method_not_allowed` | The path exists but not for that method; the API reads, so it answers `GET` |
 | 429 | `rate_limited` | Ten guesses within a minute - a token nobody issued, or a header that is not a token; the address waits a minute for anything that is not a valid token. A valid token is served meanwhile |
 | 429 | `busy` | Three API calls are already being answered; `Retry-After: 1`, try again at once |
+| 500 | `internal_error` | The call failed on the manager; the cause is in its log, not in the answer |
 | 503 | `database_unavailable` | The manager's database did not answer |
+| 503 | `query_timeout` | The database stopped a query for taking too long; narrow `from` and `to`, or the search |
 
 Only guesses count towards the minute's wait. A token that is revoked, ended or called from elsewhere,
 or a call without a token, is answered 401 and written to the log, but does not close the address to the

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haprion_ui import demo
+from haprion_ui import attention, demo, server_card
 from haprion_ui.api import objects as api_objects
 from haprion_ui.db import ProxyDraft
 from haprion_ui.server_card import Cell
@@ -127,9 +127,11 @@ class TheClusters(ReadingTestCase):
                     {
                         "kind": "node_package",
                         "severity": "warning",
+                        "cluster": "beta",
                         "subject": "node-d",
                         "message": message,
                         "since": None,
+                        "variant": "",
                     }
                 ],
             },
@@ -185,6 +187,59 @@ class TheClusters(ReadingTestCase):
         unknown = self.get("/clusters/gamma").json()["error"]
         self.assertEqual(refused, unknown)
 
+    def test_a_cluster_removed_between_the_two_readings_is_a_404_not_a_500(self) -> None:
+        with mock.patch("haprion_ui.api.clusters.cluster_entries", return_value=[]):
+            self.assert_not_found("/clusters/alpha")
+
+
+class TheAttentionList(ReadingTestCase):
+    WHEN = datetime(2026, 10, 31, 9, 30, tzinfo=UTC)
+
+    def setUp(self) -> None:
+        super().setUp()
+        items = (
+            attention.Item(
+                "certificate",
+                "critical",
+                None,
+                "web",
+                "expires in 3 days",
+                self.WHEN,
+                "/certificates?view=registry",
+            ),
+            attention.Item("node", "warning", "alpha", "node-a", "behind", None, "/", "Behind"),
+            attention.Item("node", "warning", "beta", "node-c", "behind", None, "/"),
+        )
+        shown = attention.Attention(self.WHEN, items, {}, True)
+        patch = mock.patch("haprion_ui.api.clusters.attention_items", return_value=shown)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_an_unlimited_token_gets_the_dashboards_list_with_the_installations_rows(self) -> None:
+        body = self.get("/attention").json()
+
+        self.assertEqual((body["operation"], body["cluster"]), ("attention_list", None))
+        self.assertEqual(
+            body["result"]["items"][0],
+            {
+                "kind": "certificate",
+                "severity": "critical",
+                "cluster": None,
+                "subject": "web",
+                "message": "expires in 3 days",
+                "since": "2026-10-31T09:30:00+00:00",
+                "variant": "",
+            },
+        )
+        self.assertEqual(
+            [(i["cluster"], i["subject"], i["variant"]) for i in body["result"]["items"]],
+            [(None, "web", ""), ("alpha", "node-a", "Behind"), ("beta", "node-c", "")],
+        )
+
+    def test_a_limited_token_gets_its_clusters_rows_and_none_of_the_installations(self) -> None:
+        items = self.result("/attention", scope=["beta"])["items"]
+        self.assertEqual([(i["cluster"], i["subject"]) for i in items], [("beta", "node-c")])
+
 
 class TheObjectList(ReadingTestCase):
     def test_the_objects_are_the_proxies_pages_rows(self) -> None:
@@ -235,10 +290,16 @@ class TheObjectList(ReadingTestCase):
         )
         self.assertIn("1 drained or in maintenance", web["health"]["detail"])
         staging = result["objects"][3]
-        self.assertEqual(staging["problem"], "staging.routes is required for an http object")
+        # The engine's sentence can quote the document, which a reader is not given.
         self.assertFalse(staging["readable"])
+        self.assertIsNone(staging["problem"])
         unmanaged = result["objects"][0]
         self.assertEqual((unmanaged["ports"], unmanaged["backend_count"]), ([80], 1))
+
+    def test_the_engines_sentence_on_an_unreadable_object_is_for_write_tokens(self) -> None:
+        written = self.result("/clusters/alpha/objects", level="write")["objects"]
+        staging = next(o for o in written if o["name"] == "staging")
+        self.assertEqual(staging["problem"], "staging.routes is required for an http object")
 
     def test_a_list_cut_by_its_limit_says_so_and_continues_at_the_offset(self) -> None:
         first = self.result("/clusters/alpha/objects", limit=3)
@@ -370,6 +431,7 @@ class TheObject(ReadingTestCase):
                     "node": node,
                     "state": "drain",
                     "lost": False,
+                    "check": "unknown",
                     "label": "DRAIN",
                     "tone": "warning",
                     "detail": "Check: DRAIN",
@@ -398,6 +460,35 @@ class TheObject(ReadingTestCase):
         self.assertEqual(
             (result["name"], result["document"], result["definition"]), ("public-web", None, None)
         )
+
+    def test_a_read_token_is_not_given_the_backend_addresses_either(self) -> None:
+        """The servers' states name every address behind a site, as the document does (B68)."""
+
+        web = self.result("/clusters/alpha/objects/public-web")
+        self.assertIsNone(web["server_states"])
+        # The lamp is the reader's level and stays.
+        self.assertEqual(web["health"]["total"], 2)
+        self.assertNotIn("192.0.2.10", json.dumps(web))
+        self.assertIsNotNone(
+            self.result("/clusters/alpha/objects/public-web", level="write")["server_states"]
+        )
+
+    def test_the_engines_sentence_is_given_to_write_tokens_only(self) -> None:
+        read = self.result("/clusters/alpha/objects/staging")
+        self.assertEqual(
+            (read["state"], read["readable"], read["problem"]), ("unreadable", False, None)
+        )
+        write = self.result("/clusters/alpha/objects/staging", level="write")
+        self.assertEqual(write["problem"], "staging.routes is required for an http object")
+
+    def test_a_servers_check_is_a_code_beside_the_pages_word(self) -> None:
+        servers = self.result("/clusters/alpha/objects/public-web", level="write")["server_states"][
+            "servers"
+        ]
+        nodes = [(n["label"], n["check"]) for s in servers for n in s["nodes"]]
+        self.assertIn(("UP", "up"), nodes)
+        self.assertIn(("STANDBY", "standby"), nodes)
+        self.assertIn(("DRAIN", "unknown"), nodes)
 
     def test_a_proxy_the_platform_did_not_write_has_no_document(self) -> None:
         result = self.result("/clusters/alpha/objects/metrics")
@@ -430,6 +521,25 @@ class TheObject(ReadingTestCase):
         self.assertEqual(
             api_objects._plain({"on": datetime(2026, 10, 31, tzinfo=UTC), "n": [1, None, "a"]}),
             {"on": "2026-10-31T00:00:00+00:00", "n": [1, None, "a"]},
+        )
+
+    def test_the_check_code_is_read_from_what_the_node_reported(self) -> None:
+        cases = {
+            "UP": "up",
+            "UP 2/3": "up",
+            "DOWN": "down",
+            "DOWN 1/3": "down",
+            "no check": "no_check",
+            "NOLB": "unknown",
+            "": "unknown",
+        }
+        for status, expected in cases.items():
+            with self.subTest(status=status):
+                member = mock.Mock(status=status, held=False)
+                self.assertEqual(server_card.cell(member).check, expected)
+        self.assertEqual(server_card.cell(None).check, "unknown")
+        self.assertEqual(
+            server_card.cell(mock.Mock(status="UP", held=False), standby=True).check, "standby"
         )
 
     def test_what_a_node_says_of_a_server_is_ready_drain_or_maintenance(self) -> None:

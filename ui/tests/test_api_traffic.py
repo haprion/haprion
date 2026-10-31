@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import tempfile
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
+
+import psycopg
 
 from haprion_ui.api.traffic import moment
 from haprion_ui.config import TrafficLogs
@@ -103,10 +105,13 @@ class TheTrafficRoute(ApiTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual((body["operation"], body["cluster"]), ("traffic_list", "alpha"))
+        asked_from, asked_to = body["result"]["from"], body["result"]["to"]
         self.assertEqual(
             body["result"],
             {
                 "enabled": True,
+                "from": asked_from,
+                "to": asked_to,
                 "requests": [EXPECTED_ROW],
                 "truncated": False,
                 "limit": 100,
@@ -162,9 +167,57 @@ class TheTrafficRoute(ApiTestCase):
         self.assertEqual(asked["owned"], ((), ("shop.example.com",)))
         self.assertEqual(asked["server_addresses"], {("alpha", "web", "s1"): "192.0.2.10:8080"})
 
-    def test_an_object_the_cluster_does_not_have_matches_nothing(self) -> None:
-        self.get("?object=intranet")
-        self.assertEqual(self.read.call_args.kwargs["owned"], ((), ()))
+    def test_an_object_the_cluster_does_not_have_is_not_found(self) -> None:
+        """A mistyped name must not read as "no requests", for ever, in a monitoring script."""
+
+        response = self.get("?object=intranet")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "not_found")
+        self.read.assert_not_called()
+        # The same answer as an object outside the token's scope.
+        scoped = self.get("?object=intranet", objects=["shop"])
+        self.assertEqual(scoped.json()["error"], response.json()["error"])
+
+    def test_without_from_the_last_hour_is_read_and_the_window_is_said(self) -> None:
+        before = datetime.now(UTC)
+        result = self.get().json()["result"]
+        asked = self.read.call_args.kwargs
+        to_at = datetime.fromisoformat(result["to"])
+        self.assertGreaterEqual(to_at, before)
+        self.assertEqual(datetime.fromisoformat(result["from"]), to_at - timedelta(hours=1))
+        self.assertEqual(asked["from_at"], datetime.fromisoformat(result["from"]))
+        # The end is open in the query: a row newer than the answer is not cut off.
+        self.assertIsNone(asked["to_at"])
+
+    def test_a_window_the_caller_names_is_read_and_echoed_as_given(self) -> None:
+        result = self.get("?from=2026-10-01T00:00:00Z&to=2026-10-31T00:00:00%2B02:00").json()[
+            "result"
+        ]
+        self.assertEqual(
+            (result["from"], result["to"]),
+            ("2026-10-01T00:00:00+00:00", "2026-10-31T00:00:00+02:00"),
+        )
+
+    def test_a_missing_from_is_an_hour_before_the_to_given(self) -> None:
+        result = self.get("?to=2026-10-31T10:00:00Z").json()["result"]
+        self.assertEqual(result["from"], "2026-10-31T09:00:00+00:00")
+        self.assertEqual(
+            self.read.call_args.kwargs["from_at"], datetime(2026, 10, 31, 9, tzinfo=UTC)
+        )
+
+    def test_a_window_wider_than_the_retention_is_read_not_refused(self) -> None:
+        self.assertEqual(self.get("?from=2020-01-01T00:00:00Z").status_code, 200)
+
+    def test_a_query_the_database_cancelled_is_a_timeout_not_an_outage(self) -> None:
+        self.read.side_effect = psycopg.errors.QueryCanceled("canceling statement")
+        response = self.get("?status=5xx")
+        self.assertEqual(response.status_code, 503)
+        error = response.json()["error"]
+        self.assertEqual(error["code"], "query_timeout")
+        self.assertIn("narrow", error["message"])
+        # Any other database failure keeps its own code.
+        self.read.side_effect = psycopg.OperationalError("down")
+        self.assertEqual(self.get().json()["error"]["code"], "database_unavailable")
 
     def test_a_time_is_written_with_its_offset(self) -> None:
         self.assertEqual(moment(datetime(2026, 10, 31, 12)), "2026-10-31T12:00:00+00:00")

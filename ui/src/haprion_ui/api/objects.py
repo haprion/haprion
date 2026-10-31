@@ -233,8 +233,9 @@ def _as_admin(caller: Caller) -> bool:
     """Whether the token is given what the pages give an admin and not a reader.
 
     A `read` token sees what a reader sees (B416); a `write` token is the
-    admin's level. The object's document and its drafts are an admin's
-    (B68): the YAML names certificates and backend addresses.
+    admin's level. The object's document, its drafts, the servers' states
+    and the engine's sentence on an unreadable object are an admin's (B68):
+    they name certificates and backend addresses.
     """
 
     return caller.issued.level == "write"
@@ -246,7 +247,12 @@ def _listing(request: Request, cluster: str, caller: Caller) -> list[dict[str, A
         raise NOT_FOUND
     role = "admin" if _as_admin(caller) else "reader"
     listing = proxy_listing(request, config, role, {}, only=cluster)
-    return object_entries(listing, cluster)
+    entries = object_entries(listing, cluster)
+    if not _as_admin(caller):
+        # The sentence can quote a value of the document.
+        for entry in entries:
+            entry["problem"] = None
+    return entries
 
 
 @router.get("/clusters/{cluster}/objects", name="object_list")
@@ -305,6 +311,8 @@ def _server_states(card: server_card.ServerCard | None) -> dict[str, Any] | None
                     "node": node,
                     "state": state,
                     "lost": lost,
+                    # The check as a code; the label is the page's word.
+                    "check": cell.check or "unknown",
                     "label": cell.label,
                     "tone": cell.tone,
                     "detail": cell.title or None,
@@ -352,7 +360,7 @@ def object_show(
     detail = reading.detail
     stored = detail.stored
     states = None
-    if stored is not None:
+    if stored is not None and _as_admin(caller):
         try:
             proxy = load_proxy(name, stored.document.encode())
         except ModelError:

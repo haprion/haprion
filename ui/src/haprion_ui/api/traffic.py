@@ -8,14 +8,15 @@ carefully as a login.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
+import psycopg
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from haprion.proxy_model import NAME_BODY
 
-from haprion_ui import traffic_logs
+from haprion_ui import objects, traffic_logs
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import Caller, in_scope, needs
 from haprion_ui.reading import OBJECTS_SOURCE, listed_clusters, read_source
@@ -25,6 +26,12 @@ router = APIRouter(tags=["traffic"])
 
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
+#
+# The page reads everything the log keeps unless told otherwise, and a person
+# is waiting for it. A script that polls would read the whole retention each
+# time for a rare match, so a read without `from` is the last hour.
+#
+DEFAULT_WINDOW = timedelta(hours=1)
 
 
 def moment(at: datetime) -> str:
@@ -100,7 +107,7 @@ def traffic_list(
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     caller: Caller = Depends(needs("read")),  # noqa: B008
 ) -> JSONResponse:
-    """Newest first. `from` and `to` are ISO 8601 (UTC where no offset is given)."""
+    """Newest first. `from` and `to` are ISO 8601 (UTC where no offset is given); the window read is in the result."""
 
     in_scope(caller, cluster, object_)
     known_cluster(request, cluster)
@@ -108,34 +115,62 @@ def traffic_list(
     from_at, to_at = _utc(from_), _utc(to)
     if from_at is not None and to_at is not None and from_at > to_at:
         raise Refusal(400, "bad_input", "from must be earlier than to.")
+    #
+    # A window wider than the retention is harmless: the table holds no more
+    # than that. A missing end is now, a missing start an hour before the end.
+    #
+    to_shown = to_at or datetime.now(UTC)
+    from_shown = from_at or to_shown - DEFAULT_WINDOW
     reading = traffic_logs.Reading((), (), 0, False)
     if config.traffic_logs.enabled:
         _, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
+        #
+        # The filter reads an object the platform writes. A name that is none
+        # of them would match nothing, and a script told "no 5xx" for a
+        # mistyped name would believe it.
+        #
+        if object_ is not None and not any(
+            view.name == object_
+            for row in object_rows
+            if row.cluster == cluster
+            for view in objects.cluster_object_views(row)
+        ):
+            raise Refusal(404, "not_found", "No such cluster or object.")
         addresses, owned = log_scope(object_rows, cluster=cluster, selected_object=object_ or "")
-        with request.app.state.pool.connection() as connection:
-            #
-            # One more than asked for, so a cut is known and not guessed.
-            #
-            reading = traffic_logs.read_database(
-                connection,
-                config.traffic_logs.directory,
-                listed_clusters(request, config),
-                limit=limit + 1,
-                cluster=cluster,
-                status=status or "",
-                substring=q or "",
-                from_at=from_at,
-                to_at=to_at,
-                server_addresses=addresses,
-                waf=waf or "",
-                owned=owned,
-            )
+        try:
+            with request.app.state.pool.connection() as connection:
+                #
+                # One more than asked for, so a cut is known and not guessed.
+                #
+                reading = traffic_logs.read_database(
+                    connection,
+                    config.traffic_logs.directory,
+                    listed_clusters(request, config),
+                    limit=limit + 1,
+                    cluster=cluster,
+                    status=status or "",
+                    substring=q or "",
+                    from_at=from_shown,
+                    to_at=to_at,
+                    server_addresses=addresses,
+                    waf=waf or "",
+                    owned=owned,
+                )
+        except psycopg.errors.QueryCanceled:
+            # The database's statement_timeout: a narrower window is the way on.
+            raise Refusal(
+                503,
+                "query_timeout",
+                "The query took too long; narrow from and to, or the search.",
+            ) from None
         if reading.filter_error is not None:
             raise Refusal(400, "bad_input", reading.filter_error)
     return answer(
         request,
         {
             "enabled": config.traffic_logs.enabled,
+            "from": moment(from_shown),
+            "to": moment(to_shown),
             "requests": [_request(entry) for entry in reading.entries[:limit]],
             "truncated": len(reading.entries) > limit,
             "limit": limit,

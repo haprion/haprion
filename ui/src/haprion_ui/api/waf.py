@@ -16,7 +16,7 @@ from haprion_ui import api_tokens
 from haprion_ui.api.answers import answer
 from haprion_ui.api.caller import Caller, in_scope, needs
 from haprion_ui.api.traffic import known_cluster, moment
-from haprion_ui.waf import ExceptionRow, Finding, ObjectFindings
+from haprion_ui.waf import ExceptionRow, Finding, ObjectFindings, exception_moment
 from haprion_ui.waf_work import waf_overview
 
 router = APIRouter(tags=["waf"])
@@ -60,11 +60,12 @@ def _exception(row: ExceptionRow) -> dict[str, Any]:
         "explanation": row.explanation,
         "message": row.message,
         "severity": row.severity,
-        "field": row.exception.field,
+        # Text the document may leave out is null here, as everywhere in the API.
+        "field": row.exception.field or None,
         "paths": list(row.exception.paths),
-        "reason": row.exception.reason,
-        "added_by": row.exception.by,
-        "added_at": row.exception.at,
+        "reason": row.exception.reason or None,
+        "added_by": row.exception.by or None,
+        "added_at": moment(added) if (added := exception_moment(row.exception)) else None,
         "in_draft": row.in_draft,
         "not_working": row.ineffective,
         "let_through": {

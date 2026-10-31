@@ -139,6 +139,14 @@ class CertificateView:
 
 
 @dataclass(frozen=True, slots=True)
+class ClusterState:
+    cluster: str
+    label: str
+    detail: str
+    tone: Tone
+
+
+@dataclass(frozen=True, slots=True)
 class RegistryCertificateView:
     identifier: str
     source_label: str
@@ -173,6 +181,12 @@ class RegistryCertificateView:
     # badge then carries a spinner, on every action a button can start.
     #
     state_active: bool = False
+    #
+    # The State judged over each cluster target alone, receivers left out:
+    # what a reader limited to some clusters may be told (the API), since the
+    # combined State counts the receivers and every other cluster's nodes.
+    #
+    cluster_states: tuple[ClusterState, ...] = ()
     #
     # Where the facts were read from, when that was not the certificate's own
     # source. An import registered before the import helper exists has nothing
@@ -1244,6 +1258,22 @@ def _registry_certificate(
         chain=chain,
     )
     cluster_targets = tuple(target.name for target in targets if target.kind == "cluster")
+    cluster_states = tuple(
+        ClusterState(target.name, *alone)
+        for target in targets
+        if target.kind == "cluster"
+        and (
+            alone := _registry_state(
+                entry,
+                (target,),
+                identifier=identifier,
+                fingerprint=fingerprint,
+                carriage=carriage,
+                taken_out=taken_out,
+                chain=chain,
+            )
+        )
+    )
     older_copy_clusters = tuple(
         cluster
         for cluster in cluster_targets
@@ -1271,6 +1301,7 @@ def _registry_certificate(
         state_detail=state_detail,
         state_tone=state_tone,
         older_copy_clusters=older_copy_clusters,
+        cluster_states=cluster_states,
         needs_publish=readable and needs_publishing(entry, targets),
         material_note=(
             "Read from the published cluster copy; nothing is at its import source yet"

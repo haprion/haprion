@@ -44,9 +44,12 @@ def _attention(item: Item) -> dict[str, Any]:
     return {
         "kind": item.kind,
         "severity": item.severity,
+        "cluster": item.cluster,
         "subject": item.subject,
         "message": item.message,
         "since": _iso(item.since),
+        # What tells this row from the same row worse; part of what an acknowledgement names.
+        "variant": item.variant,
     }
 
 
@@ -106,4 +109,33 @@ def cluster_show(
     in_scope(caller, cluster)
     if cluster not in listed_clusters(request, request.app.state.config):
         raise Refusal(404, "not_found", "No such cluster or object.")
-    return answer(request, cluster_entries(request, [cluster])[0], cluster=cluster)
+    entries = cluster_entries(request, [cluster])
+    if not entries:
+        # Removed between the two readings.
+        raise Refusal(404, "not_found", "No such cluster or object.")
+    return answer(request, entries[0], cluster=cluster)
+
+
+@router.get("/attention", name="attention_list")
+def attention_list(request: Request, caller: Caller = Depends(needs("read"))) -> JSONResponse:  # noqa: B008
+    """Needs attention as the dashboard lists it, within the token's clusters.
+
+    The rows that belong to no cluster (certificates, the poller, packages,
+    tokens) are the installation's, and only a token limited to no cluster sees them.
+    """
+
+    items = attention_items(request, request.app.state.config).items
+    return answer(
+        request,
+        {
+            "items": [
+                _attention(item)
+                for item in items
+                if (
+                    not caller.issued.clusters
+                    if item.cluster is None
+                    else api_tokens.covers(caller.issued, item.cluster)
+                )
+            ]
+        },
+    )

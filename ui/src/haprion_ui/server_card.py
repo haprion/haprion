@@ -19,7 +19,7 @@ by GUID, and a node that does not have one yet says so.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -43,6 +43,12 @@ class Cell:
     label: str
     tone: str
     title: str = ""
+    #
+    # What the check found as a code (`up`, `down`, `no_check`, `standby`,
+    # `unknown`), for the API: the label is the page's word and may be
+    # reworded. Not part of the cell's identity.
+    #
+    check: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,8 +78,8 @@ class ServerCard:
     current: bool
 
 
-NOT_CURRENT = Cell("—", "unknown", "The nodes do not run this version of the proxy yet")
-NOT_SAID = Cell("—", "unknown", "The node did not report this server")
+NOT_CURRENT = Cell("—", "unknown", "The nodes do not run this version of the proxy yet", "unknown")
+NOT_SAID = Cell("—", "unknown", "The node did not report this server", "unknown")
 #
 # An object that leaves from a source address is checked only where that
 # address is: on the node holding the VIP. The other node's check binds an
@@ -82,7 +88,9 @@ NOT_SAID = Cell("—", "unknown", "The node did not report this server")
 # Standby is the dashboard's word for that node; keepalived's BACKUP would read as the server's `backup` option
 # (review 2026-10-22, 7-8).
 #
-STANDBY = Cell("STANDBY", "unknown", "The proxy leaves from an address only the VIP holder carries")
+STANDBY = Cell(
+    "STANDBY", "unknown", "The proxy leaves from an address only the VIP holder carries", "standby"
+)
 
 
 def lost(state: str) -> Cell:
@@ -96,7 +104,19 @@ def lost(state: str) -> Cell:
         f"{state.upper()} LOST",
         "critical",
         f"Kept as {state} on this node, but HAProxy does not hold it. Set it again.",
+        "unknown",
     )
+
+
+def _check_code(check: str) -> str:
+    upper = check.upper()
+    if upper.startswith("UP"):
+        return "up"
+    if upper.startswith("DOWN"):
+        return "down"
+    if upper == "NO CHECK":
+        return "no_check"
+    return "unknown"
 
 
 def cell(member: ServerHealth | None, *, standby: bool = False) -> Cell:
@@ -109,18 +129,19 @@ def cell(member: ServerHealth | None, *, standby: bool = False) -> Cell:
         held = member.admin or check.lower()
         title = f"Check: {check}" if check else ""
         if held == "maint":
-            return Cell("MAINT", "unknown", title)
-        return Cell("DRAIN", "warning", title)
+            return Cell("MAINT", "unknown", title, _check_code(check))
+        return Cell("DRAIN", "warning", title, _check_code(check))
     if standby:
         return STANDBY
     upper = check.upper()
+    code = _check_code(check)
     if upper.startswith("UP"):
-        return Cell("UP", "healthy", check if check != "UP" else "")
+        return Cell("UP", "healthy", check if check != "UP" else "", code)
     if upper.startswith("DOWN"):
-        return Cell("DOWN", "critical", check if check != "DOWN" else "")
+        return Cell("DOWN", "critical", check if check != "DOWN" else "", code)
     if check.lower() == "no check":
-        return Cell("UP", "healthy", "No health check")
-    return Cell(upper or "—", "unknown")
+        return Cell("UP", "healthy", "No health check", code)
+    return Cell(upper or "—", "unknown", "", code)
 
 
 def _members(entry: Mapping[str, Any]) -> list[ServerHealth]:

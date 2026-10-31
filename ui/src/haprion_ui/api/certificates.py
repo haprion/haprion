@@ -12,6 +12,7 @@ from haprion_ui import api_tokens
 from haprion_ui.api.answers import answer
 from haprion_ui.api.caller import Caller, needs
 from haprion_ui.certificates import RegistryCertificateView, TargetView
+from haprion_ui.sorting import tone_rank
 from haprion_ui.views import read_certificate_overview
 
 router = APIRouter(tags=["certificates"])
@@ -46,6 +47,21 @@ def _certificate(entry: RegistryCertificateView, caller: Caller, now: datetime) 
         if not limited
         or (target.kind == "cluster" and api_tokens.covers(caller.issued, target.name))
     ]
+    state = (entry.state_label, entry.state_detail, entry.state_tone)
+    if limited:
+        #
+        # The combined State counts the receivers and the other clusters'
+        # nodes. A limited token gets the worst of its own clusters' States.
+        #
+        state = min(
+            (
+                (own.label, own.detail, own.tone)
+                for own in entry.cluster_states
+                if api_tokens.covers(caller.issued, own.cluster)
+            ),
+            key=lambda each: tone_rank(each[2]),
+            default=state,
+        )
     left = entry.expires_at - now if entry.expires_at is not None else None
     return {
         "id": entry.identifier,
@@ -60,11 +76,7 @@ def _certificate(entry: RegistryCertificateView, caller: Caller, now: datetime) 
         "days_left": left.days if left is not None else None,
         "expired": left is not None and left.total_seconds() <= 0,
         "expiry_state": entry.tone,
-        "state": {
-            "label": entry.state_label,
-            "detail": entry.state_detail,
-            "tone": entry.state_tone,
-        },
+        "state": {"label": state[0], "detail": state[1], "tone": state[2]},
         "needs_publish": entry.needs_publish,
         "targets": [_target(target) for target in targets],
     }

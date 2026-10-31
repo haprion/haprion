@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
@@ -160,6 +161,49 @@ class TheCertificateList(ApiTestCase):
         self.assertEqual([t["name"] for t in rows["both"]["targets"]], ["alpha"])
         beta = self.by_id(self.get(self.issue(clusters=["beta"])))
         self.assertEqual(sorted(beta), ["both", "intranet"])
+
+    def test_a_limited_tokens_state_leaves_out_the_receivers_and_the_other_clusters(self) -> None:
+        self.entries = [
+            entry(
+                "both",
+                clusters=("alpha", "beta"),
+                receivers=({"id": "web-host", "published_at": None, "current": None},),
+            )
+        ]
+        whole = self.by_id(self.get(self.issue()))["both"]["state"]
+        alpha = self.by_id(self.get(self.issue(clusters=["alpha"])))["both"]
+        # The combined State counts the receiver that has no copy ...
+        self.assertIn("receiver", whole["detail"])
+        # ... which alpha's token is not told about, nor is it told of beta.
+        self.assertNotIn("receiver", json.dumps(alpha["state"]))
+        self.assertEqual([t["name"] for t in alpha["targets"]], ["alpha"])
+        self.assertNotEqual(alpha["state"], whole)
+
+    def test_a_limited_token_is_given_the_worst_state_of_its_own_clusters(self) -> None:
+        self.entries = [entry("both", clusters=("alpha", "beta"))]
+        states = {
+            "alpha": ("On all 2 nodes", "", "healthy"),
+            "beta": ("On 1 of 2 nodes", "node-d is behind", "warning"),
+        }
+        for cluster, expected in (("alpha", "healthy"), ("beta", "warning")):
+            with self.subTest(cluster=cluster):
+                with mock.patch(
+                    "haprion_ui.certificates._registry_state",
+                    side_effect=lambda _e, targets, **_k: states[targets[0].name],
+                ):
+                    row = self.by_id(self.get(self.issue(clusters=[cluster])))["both"]
+                self.assertEqual(row["state"]["tone"], expected)
+                self.assertEqual(row["state"]["label"], states[cluster][0])
+        with mock.patch(
+            "haprion_ui.certificates._registry_state",
+            side_effect=lambda _e, targets, **_k: (
+                states[targets[0].name] if len(targets) == 1 else ("Combined", "", "unknown")
+            ),
+        ):
+            both = self.by_id(self.get(self.issue(clusters=["alpha", "beta"])))["both"]
+            whole = self.by_id(self.get(self.issue()))["both"]
+        self.assertEqual(both["state"]["tone"], "warning")
+        self.assertEqual(whole["state"]["label"], "Combined")
 
     def test_a_certificate_deployed_nowhere_is_for_an_unlimited_token_only(self) -> None:
         self.entries = [entry("offline", kind="import", clusters=())]

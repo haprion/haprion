@@ -1066,9 +1066,11 @@ class AVerifiedPoolSendsItsName(unittest.TestCase):
     with `Verify return code: 0`. Adding `sni` fixed it and `verifyhost` alone
     did not, isolated across five configurations.
 
-    The check deliberately does not carry it. `check-sni` looks like the
-    matching half and makes every server fail with `L6RSP` instead, measured
-    the same day against the same pool.
+    The check carries it too (B413): `sni` reaches the traffic only, and a pool
+    that picks its certificate by name answered a nameless check with another
+    certificate and was marked down - Authentik, 2026-10-31. Measured on 3.4.7
+    the same day: with `check-sni` the check comes up. An earlier reading had
+    it failing with `L6RSP`, and never reproduced.
     """
 
     def rendered(self, document: bytes) -> str:
@@ -1084,15 +1086,18 @@ class AVerifiedPoolSendsItsName(unittest.TestCase):
 
         self.assertIn("sni str(pool-a.example.net)", text)
 
-    def test_the_check_does_not_send_it(self) -> None:
-        """Measured both ways: `check-sni` marks every server down with `L6RSP`.
+    def test_the_check_sends_it_too(self) -> None:
+        """The same name as the traffic, so the check sees the certificate it does."""
 
-        The argument for adding it is good - a check that speaks a different
-        handshake than the traffic reports on something nobody asked about -
-        and the behaviour on 3.4.4 contradicts it. The measurement wins.
-        """
+        self.assertIn("check-sni pool-a.example.net", self.rendered(VERIFIED))
 
-        self.assertNotIn("check-sni", self.rendered(VERIFIED))
+    def test_a_plaintext_check_of_a_verified_pool_sends_none(self) -> None:
+        """No handshake, so no name - and HAProxy would only warn about one."""
+
+        text = self.rendered(VERIFIED.replace(b"    health:\n", b"    health:\n      tls: false\n"))
+
+        self.assertIn("no-check-ssl", text)
+        self.assertNotIn("check-sni", text)
 
     def test_an_unverified_pool_sends_nothing(self) -> None:
         """Nothing to check the name against, so there is no name to send."""

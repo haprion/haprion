@@ -645,13 +645,13 @@ def self_signed(directory: Path) -> tuple[Path, Path]:
 
 @unittest.skipUnless(shutil.which("openssl"), "openssl is not installed here")
 class TheHandshakeIsHAProxys(unittest.TestCase):
-    """The probe names nobody in its TLS handshake, as HAProxy's check does not.
+    """The probe names in its TLS handshake what HAProxy's check names.
 
-    HAProxy's manual for 3.4.4, under `verifyhost`: health checks "cannot
-    provide an SNI value". A probe that sent the Host header as SNI could reach
-    a backend that needs one and report it usable while the node's own check
-    marks it down. A real TLS server in this process records the name each
-    handshake carried.
+    Nobody for an unverified pool, and the server for a verified one, which the
+    node's check names with `check-sni` (B413). A probe that sent the Host
+    header as SNI could reach a backend that needs one and report it usable
+    while the node's own check marks it down. A real TLS server in this process
+    records the name each handshake carried.
     """
 
     server: ThreadingHTTPServer
@@ -682,6 +682,7 @@ class TheHandshakeIsHAProxys(unittest.TestCase):
         cls.directory.cleanup()
 
     def test_no_name_is_sent_even_with_a_host_header(self) -> None:
+        self.names.clear()
         code, answer = ask(
             {
                 "schema_version": 1,
@@ -694,6 +695,27 @@ class TheHandshakeIsHAProxys(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(answer["results"][0]["ok"], answer)
         self.assertEqual(self.names, [None])
+
+    def test_a_verified_pool_is_sent_its_server_name(self) -> None:
+        """As the node's check is, with `check-sni` (B413) - and never the Host header."""
+
+        self.names.clear()
+        ask(
+            {
+                "schema_version": 1,
+                "targets": [
+                    target(
+                        host="localhost",
+                        port=self.port,
+                        tls=True,
+                        verify=True,
+                        host_header="app.example.com",
+                    )
+                ],
+            }
+        )
+
+        self.assertEqual(self.names, ["localhost"])
 
 
 class HowOldATlsBackendMayBe(unittest.TestCase):
@@ -825,8 +847,15 @@ class AFloorTheObjectChose(unittest.TestCase):
         self.assertIn("min_version", str(answer["error"]))
 
 
+#
+# A name that resolves without DNS: a verified pool is named, and the probe
+# holds its certificate to that name as the node's `check-sni` does (B413).
+#
+POOL_NAME = "localhost"
+
+
 def authority_and_leaf(directory: Path) -> tuple[Path, Path, Path]:
-    """A CA, and a certificate for 127.0.0.1 it issued: the pool's own CA (B276)."""
+    """A CA, and a certificate for `POOL_NAME` it issued: the pool's own CA (B276)."""
 
     openssl = shutil.which("openssl")
     assert openssl is not None
@@ -865,8 +894,10 @@ def authority_and_leaf(directory: Path) -> tuple[Path, Path, Path]:
         "-out",
         str(request),
         "-subj",
-        "/CN=127.0.0.1",
+        f"/CN={POOL_NAME}",
     )
+    names = directory / "leaf.ext"
+    names.write_text(f"subjectAltName=DNS:{POOL_NAME}\n")
     run(
         "x509",
         "-req",
@@ -881,6 +912,8 @@ def authority_and_leaf(directory: Path) -> tuple[Path, Path, Path]:
         str(leaf),
         "-days",
         "1",
+        "-extfile",
+        str(names),
     )
     return ca, leaf, key
 
@@ -923,7 +956,7 @@ class APoolsOwnCaIsTheOneTrusted(unittest.TestCase):
     ) -> tuple[int, dict[str, Any]]:
         request: dict[str, object] = {
             "schema_version": 1,
-            "targets": [target(port=self.port, tls=True, **fields)],
+            "targets": [target(**{"host": POOL_NAME, "port": self.port, "tls": True, **fields})],
         }
         if authorities is not None:
             request["authorities"] = authorities
@@ -934,6 +967,16 @@ class APoolsOwnCaIsTheOneTrusted(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertTrue(answer["results"][0]["ok"], answer)
+
+    def test_the_server_is_held_to_its_name(self) -> None:
+        """B413: what the node's `check-sni` does, measured on 3.4.7 on 2026-10-31."""
+
+        code, answer = self.asked(
+            {"example-ca": self.authority}, host="127.0.0.1", verify=True, ca="example-ca"
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("CERTIFICATE_VERIFY_FAILED", answer["results"][0]["error"])
 
     def test_the_nodes_own_store_does_not_know_it(self) -> None:
         code, answer = self.asked(None, verify=True)

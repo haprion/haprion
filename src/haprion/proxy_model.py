@@ -1724,11 +1724,10 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     # the diff somebody reads before publishing, and the form says in a sentence
     # that this check does not judge the certificate.
     #
-    # It cannot judge it either way. Verification needs a name to check the
-    # certificate against, HAProxy's own check sends no SNI, and `check-sni`
-    # was measured to fail outright against a pool the same configuration
-    # serves. An object that asked for a verified check would be asking for
-    # something that does not work.
+    # It does not judge it. Verification needs a name to check the certificate
+    # against, and a plain pool's servers may be addresses. A verified pool's
+    # check is named with `check-sni` and judged (B413); a plain pool that
+    # wants the same makes its pool verified.
     #
 
     cookie = data.get("cookie")

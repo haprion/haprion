@@ -27,7 +27,7 @@ from haprion.generate import generate
 from haprion.proxy_model import load_proxy
 from tests.spawned import wait_for
 from tests.test_cert_import import Pki
-from tests.test_generate_behaviour import free_port, start_haproxy, write_release
+from tests.test_generate_behaviour import free_port, self_signed, start_haproxy, write_release
 
 #
 # A name that resolves without DNS, so the pool can be named rather than
@@ -54,8 +54,19 @@ backends:
         port: {web}
 """
 
+CHECKED = OBJECT.replace(
+    "    servers:\n",
+    "    health:\n      type: http\n      path: /\n      interval: 1s\n    servers:\n",
+)
 
-def tls_server(port: int, certificate: Path, key: Path, chain: Path) -> ThreadingHTTPServer:
+
+def tls_server(
+    port: int,
+    certificate: Path,
+    key: Path,
+    chain: Path,
+    fallback: tuple[Path, Path] | None = None,
+) -> ThreadingHTTPServer:
     """A pool member serving a certificate the organisation's CA issued."""
 
     class Handler(BaseHTTPRequestHandler):
@@ -75,6 +86,22 @@ def tls_server(port: int, certificate: Path, key: Path, chain: Path) -> Threadin
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(certfile=str(served), keyfile=str(key))
+    if fallback is not None:
+        #
+        # A server that picks its certificate by the name asked for, and has
+        # one of its own for a handshake that names nothing - Authentik does
+        # exactly this, measured 2026-10-31.
+        #
+        named = context
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certfile=str(fallback[0]), keyfile=str(fallback[1]))
+
+        def choose(sock: ssl.SSLObject, name: str | None, _: ssl.SSLContext) -> None:
+            if name == POOL_NAME:
+                sock.context = named
+
+        context.sni_callback = choose
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -114,7 +141,9 @@ class APoolIsTrustedThroughTheClustersOwnCa(unittest.TestCase):
         cls.server.server_close()
         cls.directory.cleanup()
 
-    def serving(self, verify: str, ca_file: Path | None) -> int:
+    def serving(
+        self, verify: str, ca_file: Path | None, *, web: int | None = None, template: str = OBJECT
+    ) -> int:
         port = free_port()
         case = self.root / f"case{len(self.running)}"
         certificates = case / "certs"
@@ -123,7 +152,7 @@ class APoolIsTrustedThroughTheClustersOwnCa(unittest.TestCase):
         if ca_file is not None:
             (certificates / "ca" / "corp-root.pem").write_text(ca_file.read_text())
             authorities = ("corp-root",)
-        document = OBJECT.format(verify=verify, name=POOL_NAME, web=self.web)
+        document = template.format(verify=verify, name=POOL_NAME, web=web or self.web)
         if verify == "ca":
             document = document.replace("verify: ca", "verify: ca\n      ca: corp-root")
         layer = generate(
@@ -164,6 +193,23 @@ class APoolIsTrustedThroughTheClustersOwnCa(unittest.TestCase):
 
     def test_another_ca_is_not_trusted(self) -> None:
         self.assertEqual(self.answered(self.serving("ca", self.other.root)), 503)
+
+    def test_a_pool_that_picks_its_certificate_by_name_passes_its_check(self) -> None:
+        """B413: the check names the server as the traffic does.
+
+        Without `check-sni` the check's handshake carries no name, such a pool
+        answers with its own fallback certificate, verification fails and every
+        server is marked down - 503 to a visitor the pool would have served.
+        """
+
+        fallback = self_signed(self.root, "fallback", expired=False, common_name="fallback")
+        web = free_port()
+        server = tls_server(web, self.pki.leaf, self.pki.leaf_key, self.pki.intermediate, fallback)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        wait_for(web)
+        port = self.serving("ca", self.pki.root, web=web, template=CHECKED)
+        self.assertEqual(self.answered(port), 200)
 
 
 if __name__ == "__main__":

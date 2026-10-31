@@ -3738,18 +3738,25 @@ def _server_check(backend: Backend, server: Server) -> str:
     port = f" port {health.port}" if health.port is not None else ""
     encrypted = _check_encryption(backend, health)
     #
-    # No `check-sni`, and that is measured rather than assumed. Making the
-    # check send the name too looks obviously right - a check that speaks a
-    # different handshake than the traffic reports on something nobody asked
-    # about - but on 3.4.4 it makes the check fail with `L6RSP` against a pool
-    # the same configuration serves perfectly. Measured 2026-09-04, both ways,
-    # against the same pool: `sni` alone answers 200 and `sni` with `check-sni`
-    # answers 503 because every server is marked down.
+    # The name the traffic sends, on the check too (B413). `sni` on the server
+    # line reaches the traffic and not the check, so a check of a verified pool
+    # handshook with no name. A server that picks its certificate by name -
+    # Authentik, measured 2026-10-31 - then answers with a fallback of its
+    # own, verification fails and every server is marked down while the pool
+    # serves every visitor who names it. With `check-sni` the check comes up,
+    # and a name the certificate does not carry takes it down: "Server
+    # presented an SSL certificate different from the expected one", as the
+    # traffic would fail. Measured on 3.4.7, 2026-10-31; B105 measured the
+    # name arriving on 3.4.4. An earlier reading on 2026-09-04 had `check-sni`
+    # failing the check, and never reproduced.
     #
-    # So the argument for adding it stands and the behaviour does not. Left out
-    # until somebody can say why it fails, rather than carried because the
-    # reasoning was appealing.
-    #
+    named = (
+        f" check-sni {server.host}"
+        if backend.tls is not None
+        and backend.tls.verify != "none"
+        and check_speaks_tls(backend, health)
+        else ""
+    )
     #
     # What the object writes, or ours - see `DEFAULT_FAST_INTERVAL`.
     #
@@ -3757,7 +3764,7 @@ def _server_check(backend: Backend, server: Server) -> str:
     down = health.down_interval or DEFAULT_DOWN_INTERVAL
     faster = f" fastinter {fast} downinter {down}"
     return (
-        f" check{port}{encrypted} inter {health.interval}{faster}"
+        f" check{port}{encrypted}{named} inter {health.interval}{faster}"
         f" rise {health.rise} fall {health.fall}"
     )
 
@@ -3792,10 +3799,10 @@ def _server_tls(backend: Backend, server: Server) -> str:
         # none` alone, without `ssl`, answers that without making the pool
         # itself TLS - measured `L7OK 200` on 3.4.4, 2026-09-05.
         #
-        # Not verified, and it cannot be. A certificate is checked against a
-        # name, HAProxy's check sends no SNI, and `check-sni` fails outright
-        # (see `_server_check`). The form says this in a sentence rather than
-        # leaving it to be discovered here.
+        # Not verified. A certificate is checked against a name, and a plain
+        # pool's servers need not have one - an address is allowed here, and
+        # `_server_check` names only a verified pool's servers. The form says
+        # this in a sentence rather than leaving it to be discovered here.
         #
         return " verify none" if _connects_with_ssl(backend.health) else ""
     #

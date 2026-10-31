@@ -415,18 +415,20 @@ def connect(target: dict[str, Any], timeout: float, source: str | None) -> socke
         #
         context.set_ciphers("DEFAULT@SECLEVEL=0")
     #
-    # The handshake HAProxy's own check makes, and no other: no name in it, and
-    # the certificate's chain verified where the backend verifies but not its
-    # host name. HAProxy's manual for 3.4.4, under `verifyhost`: health checks
-    # "cannot provide an SNI value", and without `verifyhost` no host name is
-    # checked. This sent the Host header as SNI until 2026-09-30, and a backend
-    # that needs SNI could then answer here and still be marked down on the
-    # node - the one kind of answer a probe must not give.
+    # The handshake HAProxy's own check makes, and no other. Where the pool is
+    # verified the check names the server (`check-sni`, B413) and HAProxy
+    # holds the certificate to that name - "Server presented an SSL
+    # certificate different from the expected one", measured on 3.4.7 on
+    # 2026-10-31 - so this does both. Elsewhere it sends no name and checks
+    # none, as the node does. The Host header is never the name: this sent it
+    # as SNI until 2026-09-30, and a backend could then answer here and still
+    # be marked down on the node - the one kind of answer a probe must not give.
     #
-    context.check_hostname = False
     if not target["verify"]:
+        context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-    return context.wrap_socket(sock)
+        return context.wrap_socket(sock)
+    return context.wrap_socket(sock, server_hostname=target["host"])
 
 
 def http_status(

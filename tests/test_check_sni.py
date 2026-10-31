@@ -1,6 +1,7 @@
 """Whether a health check can send a server name, measured rather than argued.
 
-The model refuses to let a check carry SNI, and the reason recorded for it is
+The generator now writes `check-sni` for a verified pool (B413). Before that
+the model refused to let a check carry SNI, and the reason recorded for it was
 an incident: a verified pool failed its handshake until `sni` was added to the
 server line, and `check-sni` was found not to help. From that, the rule became
 general - checks send no name, so a check cannot verify one.

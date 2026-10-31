@@ -366,7 +366,8 @@ A type somebody chose stays. The types:
   `204` or `200-299`. When empty, any 2xx or 3xx counts. Point the check at the application's health page
   and narrow the range if it has one: a 302 to a login page is also what a broken application answers.
   `https` speaks TLS to the check even on a plain pool, and `http` speaks plain to a pool reached over
-  HTTPS - for a plaintext management port. A check over TLS does not judge the certificate.
+  HTTPS - for a plaintext management port. A check over TLS judges the certificate only where the pool is
+  verified (see [A pool over HTTPS](#a-pool-over-https)).
 - `tcp` opens a connection, and `tcp, TLS handshake` completes a TLS handshake. *Send* and *Expect* turn
   either into a short exchange: *Send* is written once the connection is up, and the answer must contain
   *Expect*. The two belong together. Each is one short word of at most 64 characters - letters, digits and
@@ -453,7 +454,8 @@ access to the node's certificate directory, so the manager sends its copy of the
 On the command line, `haprion-probe ... --tls --verify --ca <id>` does the same.
 
 Both verifying choices need the servers named by hostname rather than address. The name is sent as SNI,
-and the certificate is checked against it. A pool that names a CA its cluster does not carry is refused at
+by the traffic and by the health check alike, and the certificate is checked against it. A server that picks
+its certificate by the name it is asked for is therefore checked with the certificate visitors get. A pool that names a CA its cluster does not carry is refused at
 publish, with the CA's name. In the stored object:
 
 ```yaml

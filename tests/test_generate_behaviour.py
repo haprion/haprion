@@ -3648,6 +3648,7 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
         self.assertNotIn("spoe", layer.configuration["1000-frontends.cfg"])
         self.assertNotIn("coraza", layer.configuration["1000-frontends.cfg"])
 
+    @unittest.skipUnless(WAF_RULES.is_dir(), "the rule set is not installed here")
     def test_the_globs_take_every_rule_file_once_in_order(self) -> None:
         """Split around the counters, the includes still read `*.conf`, in its order."""
 

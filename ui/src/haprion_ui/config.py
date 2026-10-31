@@ -20,7 +20,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from haprion import accounts, exit_codes
+from haprion import accounts, block_clients, exit_codes
 
 #
 # A cluster ID is the engine's (`haprion.config.CLUSTER_ID`), and the database's
@@ -228,6 +228,12 @@ class Config:
     # OIDC configuration page says the helper is not installed.
     #
     oidc_public_key: Path | None = None
+    #
+    # The block clients' registry, which root writes world-readable (B412).
+    # The loader names the installation's; a configuration built in code reads
+    # none, so a test never reaches for the machine's.
+    #
+    block_clients_file: Path | None = None
 
 
 def cluster_id_of(value: str) -> str:
@@ -455,4 +461,5 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
         ),
         dns_profiles_public_key=public_key,
         oidc_public_key=oidc_public_key,
+        block_clients_file=block_clients.CLIENTS_FILE,
     )

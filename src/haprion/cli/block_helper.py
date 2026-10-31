@@ -27,7 +27,7 @@ from typing import BinaryIO, TextIO
 
 import yaml
 
-from haprion import block_clients, exit_codes
+from haprion import block_clients, exit_codes, safe_yaml
 from haprion.block_clients import BlockClientError
 from haprion.cli.server_state_helper import write_unblocked
 from haprion.config import (
@@ -144,7 +144,7 @@ def main(
         written = files.get(str(NETWORK_FILE))
         networks = (
             load_mapping(
-                yaml.safe_load(written), ownership_vip=cluster.vip, location=str(NETWORK_FILE)
+                safe_yaml.load(written), ownership_vip=cluster.vip, location=str(NETWORK_FILE)
             ).networks
             if written is not None
             else cluster.networks

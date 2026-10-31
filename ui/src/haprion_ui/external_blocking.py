@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from haprion import block_clients
+from haprion import block_clients, safe_yaml
 from haprion.block_clients import BlockClientError
 
 from haprion_ui.db import ClusterObjects
@@ -46,9 +46,11 @@ class Clients:
     problem: str = ""
 
 
-def read(path: Path = block_clients.CLIENTS_FILE) -> Clients:
-    """Every client, by name, or why the registry could not be read."""
+def read(path: Path | None) -> Clients:
+    """Every client, by name, or why the registry could not be read; none without a path."""
 
+    if path is None:
+        return Clients(())
     try:
         clients = block_clients.read(path)
     except BlockClientError as exc:
@@ -83,7 +85,7 @@ def blocking_objects(readings: Iterable[ClusterObjects], cluster: str) -> tuple[
     names: list[str] = []
     for view in cluster_object_views(reading):
         try:
-            document: Any = yaml.safe_load(view.document)
+            document: Any = safe_yaml.load(view.document)
         except yaml.YAMLError:
             continue
         if isinstance(document, dict) and isinstance(document.get("dynamic_block"), dict):

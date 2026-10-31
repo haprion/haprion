@@ -20,23 +20,38 @@
 
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Clients</h3><p><code>ssh _haprion-block@&lt;manager&gt; block &lt;proxy&gt; &lt;address&gt;</code></p></div></div></header>
-  {% if clients.rows %}<div class="table-scroll"><table class="node-table settings-cluster-table">
-    <thead><tr><th>Client</th><th>From</th><th>Proxies</th><th>Key</th><th>Added</th><th class="settings-actions"><span class="visually-hidden">Action</span></th></tr></thead>
+  {% if clients.rows %}<div class="table-scroll"><table class="node-table block-client-table">
+    <thead><tr><th>Client</th><th>From</th><th>Proxies</th><th>Key</th><th class="block-client-action"><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>{% for client in clients.rows %}<tr>
       <td data-label="Client"><strong>{{ client.client_id }}</strong></td>
       <td data-label="From"><code>{{ client.host }}</code></td>
       <td data-label="Proxies">{{ client.cluster }}: {{ client.objects | join(', ') }}</td>
-      <td data-label="Key"><code>{{ client.fingerprint }}</code></td>
-      <td data-label="Added">{{ client.added_by }}{% if client.added_at %} · {{ client.added_at | shown_at }}{% endif %}</td>
-      <td data-label="" class="settings-actions">{% if removal == client.client_id %}<form method="post" action="/settings/external-blocking/remove" class="inline-confirm">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ idempotency_key }}"><input type="hidden" name="client" value="{{ client.client_id }}">
-        <input name="confirm" placeholder="{{ client.client_id }}" aria-label="Type {{ client.client_id }} to remove it" autocomplete="off"><button type="submit" class="secondary-button">Remove</button></form>
-      {% else %}<a class="secondary-button" href="/settings/external-blocking?remove={{ client.client_id }}">Remove</a>{% endif %}</td>
+      <td data-label="Key" title="Added by {{ client.added_by or 'the command line' }}{% if client.added_at %}, {{ client.added_at | shown_at }}{% endif %}"><code>{{ client.fingerprint }}</code></td>
+      <td data-label="" class="block-client-action"><a class="secondary-button" href="/settings/external-blocking?remove={{ client.client_id }}">Remove</a></td>
     </tr>{% endfor %}</tbody>
   </table></div>{% else %}<p class="table-empty">{{ clients.problem or 'No client may block.' }}</p>{% endif %}
 </section>
 
-<form method="post" action="/settings/external-blocking/add" class="preview-form" autocomplete="off">
+{% if removal %}
+<form method="post" action="/settings/external-blocking/remove" class="preview-form block-client-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+  <input type="hidden" name="client" value="{{ removal }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Remove {{ removal }}</h3></div></div></header>
+    <ul class="removal-consequences">
+      <li>Its key is removed, so it can no longer ask for a block. Blocks it already placed run out by themselves.</li>
+    </ul>
+    <div class="form-grid">
+      <label><span class="field-title">Type {{ removal }} to remove it</span><input name="confirm" maxlength="40" spellcheck="false" autocomplete="off" required></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings/external-blocking">Cancel</a><button type="submit" class="secondary-button danger-button">Remove client</button></div>
+    </div>
+  </section>
+</form>
+{% else %}
+<form method="post" action="/settings/external-blocking/add" class="preview-form block-client-form" autocomplete="off">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
   <section class="cluster-card">
@@ -44,15 +59,16 @@
     <div class="form-grid">
       <label><span class="field-title">Name</span><input name="client" value="{{ form.client or '' }}" placeholder="app-fail2ban" required></label>
       <label><span class="field-title">Connects from</span><input name="host" value="{{ form.host or '' }}" placeholder="app.example.com" required></label>
-      <fieldset class="check-group"><legend class="field-title">Proxies</legend>
-        {% for name in clusters %}{% for proxy in choices[name] %}<label class="check"><input type="checkbox" name="objects" value="{{ name }}/{{ proxy }}"{% if (name ~ '/' ~ proxy) in (form.chosen or []) %} checked{% endif %}> <span>{{ name }}: {{ proxy }}</span></label>{% endfor %}{% endfor %}
-        {% if not choices.values() | select | list %}<p class="table-empty">No proxy has dynamic blocking.</p>{% endif %}
-      </fieldset>
-      <label class="wide"><span class="field-title">Public key</span><textarea name="key" rows="2" placeholder="ssh-ed25519 AAAA…" required>{{ form.key or '' }}</textarea></label>
+      <label class="field-wide"><span class="field-title">Public key</span><textarea name="key" rows="2" placeholder="ssh-ed25519 AAAA…" required>{{ form.key or '' }}</textarea></label>
+    </div>
+    <div class="block-client-proxies"><span class="field-title">Proxies</span>
+      {% if choices.values() | select | list %}<div class="form-checks">{% for name in clusters %}{% for proxy in choices[name] %}<label class="check"><input type="checkbox" name="objects" value="{{ name }}/{{ proxy }}"{% if (name ~ '/' ~ proxy) in (form.chosen or []) %} checked{% endif %}> {{ name }}: {{ proxy }}</label>{% endfor %}{% endfor %}</div>
+      {% else %}<p class="table-empty">No proxy has dynamic blocking.</p>{% endif %}
     </div>
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/settings#external-blocking">Cancel</a><button type="submit" class="secondary-button">Add</button></div>
     </div>
   </section>
 </form>
+{% endif %}
 {% endblock %}

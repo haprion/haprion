@@ -88,6 +88,12 @@ ensure_worker_directories() {
     # Step 15's, as it makes it; that step is optional and may come later.
     ensure_dir /etc/haprion/dns-profiles root:root 700
     #
+    # The block clients' registry and key file, which is also their account's
+    # home (B412): root's and world-readable, as sshd's StrictModes wants it.
+    #
+    ensure_dir /etc/haprion/block-clients root:root 755
+    ensure_dir /etc/haprion/block-clients/.ssh root:root 755
+    #
     # Where the helpers behind sockets keep their answers for recovery (B367):
     # root's, read by the worker. Not in the worker's ReadWritePaths - it only
     # reads, and ProtectSystem=strict leaves /var/lib readable.

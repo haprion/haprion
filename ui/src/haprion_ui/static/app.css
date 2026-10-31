@@ -640,8 +640,20 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 /* A new cluster's two nodes (B211): the host key whole - it is what the reader compares with the node's own. */
 .new-cluster-table th:nth-child(3), .new-cluster-table td:nth-child(3) { width: 440px; }
 .new-cluster-table code { overflow-wrap: anywhere; white-space: normal; }
+/* External blocking (B412): the key whole - it is what the reader compares with the client's own - and the proxies take what is left. */
+.block-client-table { table-layout: fixed; }
+.node-table.block-client-table th:nth-child(1), .node-table.block-client-table td:nth-child(1) { width: 210px; }
+.node-table.block-client-table th:nth-child(2), .node-table.block-client-table td:nth-child(2) { width: 240px; }
+.node-table.block-client-table th:nth-child(3), .node-table.block-client-table td:nth-child(3) { width: auto; }
+.node-table.block-client-table th:nth-child(4), .node-table.block-client-table td:nth-child(4) { width: 440px; }
+.node-table.block-client-table th.block-client-action, .node-table.block-client-table td.block-client-action { width: 120px; text-align: right; }
+.block-client-table td { white-space: normal; overflow-wrap: anywhere; }
+.block-client-table .inline-confirm { display: flex; gap: 8px; justify-content: flex-end; }
+.block-client-form { margin-top: 18px; }
+.block-client-proxies { display: flex; flex-direction: column; gap: 6px; padding: 14px 20px 18px; color: var(--text-secondary); font-weight: 620; }
+.block-client-proxies .form-checks { padding: 0; }
 /* The node pages' consequences inside the card's padding, not against its edge. */
-.nodes-form .removal-consequences { margin: 14px 20px 0; }
+.nodes-form .removal-consequences, .block-client-form .removal-consequences { margin: 14px 20px 0; }
 /* The row's way in, as low as the row's text (the same button as on Versions). */
 .settings-edit { display: inline-flex; align-items: center; min-height: 0; padding: 0 12px; text-decoration: none; }
 /*

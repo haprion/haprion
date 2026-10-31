@@ -37,7 +37,7 @@ class Page(QueueRouteTestCase):
         self.rows: tuple[external_blocking.ClientRow, ...] = (ROW,)
         patch = mock.patch(
             "haprion_ui.external_blocking.read",
-            side_effect=lambda *_a: external_blocking.Clients(self.rows),
+            side_effect=lambda _path: external_blocking.Clients(self.rows),
         )
         patch.start()
         self.addCleanup(patch.stop)
@@ -155,7 +155,7 @@ class AddingAndRemoving(Page):
         )
 
         self.assertEqual(asked.status_code, 200)
-        self.assertIn('name="confirm"', asked.text)
+        self.assertIn("Type app-f2b to remove it", asked.text)
         self.assertEqual(wrong.status_code, 400)
         self.assertEqual(done.status_code, 303, done.text)
         (queued,) = self.queued

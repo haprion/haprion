@@ -28,9 +28,7 @@ is rendered from it, so a removal and an addition are the same operation.
 from __future__ import annotations
 
 import ipaddress
-import os
 import re
-import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -39,7 +37,7 @@ from typing import Any
 
 import yaml
 
-from haprion import exit_codes
+from haprion import atomic_file, exit_codes, safe_yaml
 from haprion.node_enrollment import EnrollmentError, fingerprint, host_name, public_key
 from haprion.proxy_model import NAME
 
@@ -163,7 +161,7 @@ def client(
 def parse(text: str) -> dict[str, Client]:
     """The registry, or a refusal naming what is wrong with it."""
 
-    document = yaml.safe_load(text) if text.strip() else {}
+    document = safe_yaml.load(text) if text.strip() else {}
     if document is None:
         document = {}
     if not isinstance(document, Mapping):
@@ -293,17 +291,7 @@ def write(path: Path, text: str, mode: int) -> None:
     """Root's file, replaced whole or not at all."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle, staging = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as staged:
-            staged.write(text)
-            staged.flush()
-            os.fsync(staged.fileno())
-        os.chmod(staging, mode)
-        os.replace(staging, path)
-    except BaseException:
-        Path(staging).unlink(missing_ok=True)
-        raise
+    atomic_file.write(path, text.encode("utf-8"), mode=mode)
 
 
 def store(

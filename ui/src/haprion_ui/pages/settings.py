@@ -199,7 +199,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "section": "settings",
                 "management_writes": config.management_writes,
-                "clients": external_blocking.read(),
+                "clients": external_blocking.read(config.block_clients_file),
                 "clusters": clusters,
                 "choices": {
                     name: external_blocking.blocking_objects(readings, name) for name in clusters
@@ -305,7 +305,12 @@ def build_router(config: Config) -> APIRouter:
         if not auth.csrf_token_is_valid(token, csrf_token):
             return forbidden_page(request, config)
         row = next(
-            (entry for entry in external_blocking.read().rows if entry.client_id == client), None
+            (
+                entry
+                for entry in external_blocking.read(config.block_clients_file).rows
+                if entry.client_id == client
+            ),
+            None,
         )
         if row is None:
             return _external_blocking_page(
@@ -378,7 +383,7 @@ def build_router(config: Config) -> APIRouter:
                 #
                 # Who may block an address from outside (B412).
                 #
-                "block_clients": external_blocking.read(),
+                "block_clients": external_blocking.read(config.block_clients_file),
                 "served": served,
                 "entry": entry,
                 "waiting": registry.interface_request if registry else None,

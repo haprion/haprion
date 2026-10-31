@@ -28,6 +28,7 @@ from haprion_ui import (
     cluster_settings_page,
     dashboard,
     db,
+    external_blocking,
     feature_switch,
     features,
     first_cluster,
@@ -164,6 +165,179 @@ def build_router(config: Config) -> APIRouter:
             connection.commit()
         return RedirectResponse("/settings#external-monitoring", status_code=303)
 
+    # - Settings -> External blocking (B412) --------------------------------
+    #
+    # Block clients: a host whose key may block an address on some of one
+    # cluster's objects. Each change is a `block_client` job; the rows are the
+    # registry the helper writes.
+    #
+
+    def _external_blocking_page(
+        request: Request,
+        gate: AuthenticatedSession,
+        *,
+        problem: str = "",
+        entered: Mapping[str, Any] | None = None,
+        removal: str = "",
+        status_code: int = 200,
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        clusters, readings = read_source(request, config, OBJECTS_SOURCE)
+        readings = list(readings)
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+        running = jobs.in_flight(
+            recent, {external_blocking.OPERATION}, writes=config.management_writes
+        )
+        form = dict(entered or {})
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-external-blocking.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "settings",
+                "management_writes": config.management_writes,
+                "clients": external_blocking.read(),
+                "clusters": clusters,
+                "choices": {
+                    name: external_blocking.blocking_objects(readings, name) for name in clusters
+                },
+                "form": form,
+                "removal": removal,
+                "running": running,
+                "idempotency_key": str(uuid4()),
+                "problem": problem,
+            },
+            status_code=status_code,
+        )
+
+    @router.get("/settings/external-blocking", response_class=HTMLResponse)
+    def external_blocking_edit(request: Request) -> Response:
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        removal = request.query_params.get("remove", "")[:40]
+        return _external_blocking_page(request, gate, removal=removal)
+
+    @router.post("/settings/external-blocking/add", response_class=HTMLResponse)
+    def external_blocking_add(
+        request: Request,
+        client: Annotated[str, Form(max_length=40)] = "",
+        host: Annotated[str, Form(max_length=253)] = "",
+        key: Annotated[str, Form(max_length=2048)] = "",
+        objects: Annotated[list[str] | None, Form()] = None,
+        idempotency_key: Annotated[str, Form(max_length=64)] = "",
+        csrf_token: Annotated[str, Form(alias=auth.CSRF_FIELD, max_length=128)] = "",
+    ) -> Response:
+        """Queue a new block client: its name, host, cluster, objects and public key."""
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        #
+        # Each box is `<cluster>/<proxy>`: a client blocks in one cluster, so
+        # boxes from two are refused here rather than by the helper.
+        #
+        chosen = [entry for entry in objects or [] if entry]
+        entered = {
+            "client": client.strip(),
+            "host": host.strip(),
+            "key": key.strip(),
+            "chosen": chosen,
+        }
+
+        def again(problem: str) -> Response:
+            return _external_blocking_page(
+                request, gate, problem=problem, entered=entered, status_code=400
+            )
+
+        if not chosen:
+            return again("Choose at least one proxy the client may block on.")
+        picked = {entry.partition("/")[0] for entry in chosen}
+        if len(picked) != 1:
+            return again("Choose proxies from one cluster; a client blocks in one cluster.")
+        cluster = picked.pop()
+        if cluster not in listed_clusters(request, config):
+            return again("Choose proxies from a cluster this interface shows.")
+        names = [entry.partition("/")[2] for entry in chosen]
+        try:
+            request_key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        return queue_node_job(
+            config,
+            request,
+            gate,
+            cluster,
+            {
+                "action": "add",
+                "client": entered["client"],
+                "host": entered["host"],
+                "objects": names,
+                "key": entered["key"],
+            },
+            request_key,
+            None,
+            again,
+            operation=external_blocking.OPERATION,
+            back="/settings/external-blocking",
+        )
+
+    @router.post("/settings/external-blocking/remove", response_class=HTMLResponse)
+    def external_blocking_remove(
+        request: Request,
+        client: Annotated[str, Form(max_length=40)] = "",
+        confirm: Annotated[str, Form(max_length=40)] = "",
+        idempotency_key: Annotated[str, Form(max_length=64)] = "",
+        csrf_token: Annotated[str, Form(alias=auth.CSRF_FIELD, max_length=128)] = "",
+    ) -> Response:
+        """Ask first; with the client's name typed, queue its removal."""
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        row = next(
+            (entry for entry in external_blocking.read().rows if entry.client_id == client), None
+        )
+        if row is None:
+            return _external_blocking_page(
+                request, gate, problem=f"{client} is not a block client.", status_code=404
+            )
+        if confirm.strip() != row.client_id:
+            return _external_blocking_page(
+                request,
+                gate,
+                removal=row.client_id,
+                problem=f"Type {row.client_id} to remove it." if confirm else "",
+                status_code=400 if confirm else 200,
+            )
+        try:
+            request_key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        return queue_node_job(
+            config,
+            request,
+            gate,
+            row.cluster,
+            {"action": "remove", "client": row.client_id},
+            request_key,
+            None,
+            lambda problem: _external_blocking_page(
+                request, gate, removal=row.client_id, problem=problem, status_code=409
+            ),
+            operation=external_blocking.OPERATION,
+            back="/settings/external-blocking",
+        )
+
     @router.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request) -> Response:
         gate = admin_write_gate(config, request)
@@ -201,6 +375,10 @@ def build_router(config: Config) -> APIRouter:
                 # Who may ask /status/ what needs doing (B274).
                 #
                 "status_access": status_access,
+                #
+                # Who may block an address from outside (B412).
+                #
+                "block_clients": external_blocking.read(),
                 "served": served,
                 "entry": entry,
                 "waiting": registry.interface_request if registry else None,

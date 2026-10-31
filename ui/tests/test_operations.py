@@ -1299,7 +1299,7 @@ class EveryOutcomeABuilderGivesIsTaken(unittest.TestCase):
             )
             written = io.StringIO()
             with mock.patch.dict(os.environ, {helper_protocol.STRICT_VARIABLE: "1"}):
-                server_state_helper._write_unblocked(written, "alpha", self.REQUEST, "shop", nodes)
+                server_state_helper.write_unblocked(written, "alpha", self.REQUEST, "shop", nodes)
             stated = json.loads(written.getvalue())
             with self.subTest(stated["outcome"]):
                 self.assertIsNotNone(

@@ -212,6 +212,11 @@ _OPERATION_OUTCOMES = {
     # `dynamic_unblock` lifts a block on every node, the same way (B271).
     #
     "dynamic_unblock": frozenset({"done", "partial", "failed"}),
+    #
+    # `block_client` adds or removes one block client (B412): two files
+    # written whole, so there is no half.
+    #
+    "block_client": frozenset({"done", "failed"}),
 }
 
 

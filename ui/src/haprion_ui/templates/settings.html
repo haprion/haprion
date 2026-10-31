@@ -178,6 +178,23 @@
     </tbody>
   </table></div>
 </section>
+<section class="cluster-card settings-card" id="external-blocking">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>External blocking</h3><p><code>block &lt;proxy&gt; &lt;address&gt;</code> over ssh</p></div></div></header>
+  <div class="table-scroll"><table class="node-table settings-cluster-table">
+    <thead><tr><th>Client</th><th>From</th><th>Proxies</th><th class="settings-actions"><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      {% for client in block_clients.rows %}<tr data-href="/settings/external-blocking">
+        <td data-label="Client"><strong>{{ client.client_id }}</strong></td>
+        <td data-label="From"><code>{{ client.host }}</code></td>
+        <td data-label="Proxies">{{ client.cluster }}: {{ client.objects | join(', ') }}</td>
+        <td data-label="" class="settings-actions"><a class="secondary-button settings-edit" href="/settings/external-blocking">Edit</a></td>
+      </tr>{% else %}<tr data-href="/settings/external-blocking">
+        <td data-label="Client" class="table-empty">{{ block_clients.problem or 'No client may block' }}</td><td data-label="From"></td><td data-label="Proxies"></td>
+        <td data-label="" class="settings-actions"><a class="secondary-button settings-edit" href="/settings/external-blocking">Edit</a></td>
+      </tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
 {#
   What this installation offers (B193). Off hides a feature; node backups off
   also stops the clusters' timers, so that one asks first on its own page.

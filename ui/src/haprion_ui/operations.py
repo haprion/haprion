@@ -26,6 +26,7 @@ from uuid import UUID
 
 from haprion import (
     backup_schedule_write,
+    block_clients,
     cert_issue,
     cert_request_state,
     cert_upload,
@@ -37,6 +38,7 @@ from haprion.cert_receiver import SECRET_HASH
 from haprion.cli import (
     backup_job_ask,
     backup_job_helper,
+    block_client_helper,
     cert_delete_helper,
     cert_deploy,
     cert_issue_helper,
@@ -55,6 +57,7 @@ from haprion.cli import (
     revert,
     server_state_helper,
 )
+from haprion.cli import block_client as block_client_command
 from haprion.config import CERTIFICATE_ID, RECEIVER_FORMATS, RECEIVER_ID, RECEIVER_TRANSPORTS
 from haprion.proxy_model import NAME
 from haprion.server_state import MAX_ADDRESSES, MAX_SERVERS, STATES, UNBLOCK_OPERATION
@@ -254,6 +257,7 @@ OPERATIONS = frozenset(
     {
         "backup_run",
         "backup_schedule",
+        "block_client",
         "cert_delete",
         "cert_deploy",
         "cert_import",
@@ -1486,6 +1490,41 @@ def prepare(
             argv=(server_state_helper.SUDO, *SUDO_FLAGS, server_state_helper.HELPER),
             request=server_state_helper.build_unblock_request(
                 cluster, str(request_id), object_name=object_name, addresses=addresses
+            ),
+        )
+
+    if operation == block_client_helper.OPERATION:
+        #
+        # Add or remove a block client (B412). The helper validates every field
+        # again and checks the objects in the cluster's newest version; this is
+        # the shape, and the actor the page names.
+        #
+        action = payload.get("action")
+        if action == "add":
+            _only(payload, "action", "client", "host", "objects", "key", "requested_by")
+        elif action == "remove":
+            _only(payload, "action", "client", "requested_by")
+        else:
+            raise BadPayload("action must be add or remove")
+        try:
+            block_clients.client_id(payload.get("client"))
+            if action == "add":
+                block_clients.client(
+                    payload.get("client"),
+                    host=payload.get("host"),
+                    cluster=cluster,
+                    objects=payload.get("objects"),
+                    key=payload.get("key"),
+                )
+        except block_clients.BlockClientError as exc:
+            raise BadPayload(str(exc)) from None
+        return Prepared(
+            argv=(server_state_helper.SUDO, *SUDO_FLAGS, block_client_helper.HELPER),
+            request=block_client_command.build_request(
+                cluster,
+                str(request_id),
+                **{key: value for key, value in payload.items() if key != "requested_by"},
+                by=str(payload.get("requested_by") or ""),
             ),
         )
 

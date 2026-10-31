@@ -167,6 +167,10 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
         "what the dashboard shows an admin, not something the installation is"
     ),
     "/settings/status-access": Command("haprion-settings apply", "haprion-settings-apply"),
+    "/settings/external-blocking/add": Command("haprion-block-client add", "haprion-block-client"),
+    "/settings/external-blocking/remove": Command(
+        "haprion-block-client remove", "haprion-block-client"
+    ),
     "/backups/restore/new": Command("haprion-node-restore prepare", "haprion-node-restore-prepare"),
     "/backups/restore/{run}/preview": Command(
         "haprion-node-restore preview", "haprion-node-restore-preview"

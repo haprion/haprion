@@ -56,6 +56,7 @@ OPERATION_NAMES: Mapping[str, str] = {
     "cluster_define": "a cluster change",
     "server_state": "a server state change",
     "dynamic_unblock": "an unblock",
+    "block_client": "a block client change",
 }
 
 SERVER_STATES: Mapping[str, str] = {"drain": "drain", "maint": "maintenance", "ready": "ready"}

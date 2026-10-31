@@ -37,4 +37,5 @@ def entry_of(line: bytes, cluster: str, node: str) -> Entry:
         total_time=value["total_time"],
         bytes=value["bytes"],
         rule=value.get("rule", ""),
+        termination=value.get("termination", ""),
     )

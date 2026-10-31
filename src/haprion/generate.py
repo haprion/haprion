@@ -260,7 +260,14 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     '"%{+json}o %(schema)[int(1)] %(at)Ts %(request)rt %(client)ci %(method)HM '
     "%(host)[var(txn.traffic_host)] %(path)HPO %(frontend)f %(backend)b "
     "%(server)s %(status)ST %(request_time)TR %(queue_time)Tw "
-    "%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B %(rule)[var(txn.rule)] "
+    "%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B "
+    #
+    # How the session ended, HAProxy's two letters: who ended it and in which
+    # state (`--` normally, `CD` a client that went away mid-transfer, `SH` a
+    # server that closed before its headers). Two answers without a server's
+    # response on 2026-10-31 had nothing else to say which side stopped.
+    #
+    "%(termination)ts %(rule)[var(txn.rule)] "
     #
     # What the WAF engine found (B233): the CRS rules it matched and the
     # request's anomaly score, exactly as it reported them. Cut at the

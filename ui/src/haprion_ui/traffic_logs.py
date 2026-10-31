@@ -56,6 +56,50 @@ class Entry:
     bytes: int
     rule: str = ""
     """The access rule the request met, as `name:log` or `name:deny`; empty if none."""
+    termination: str = ""
+    """HAProxy's two letters for how the session ended (0106); `--` normally."""
+
+    @property
+    def ended(self) -> str:
+        """How the session ended, in words; empty when it ended normally or is not known."""
+
+        return ended_in_words(self.termination)
+
+
+#
+# HAProxy's termination state (configuration.txt, "Session state at
+# disconnection"): who ended the session, then where it was.
+#
+_ENDED_BY = {
+    "C": "The client ended it",
+    "S": "The server ended it",
+    "P": "The proxy ended it",
+    "L": "The proxy answered it itself",
+    "R": "The proxy ran out of a resource",
+    "I": "An internal error ended it",
+    "D": "The server was marked down",
+    "U": "A backup server took over",
+    "K": "An administrator ended it",
+}
+_ENDED_WHILE = {
+    "R": " while the request came in",
+    "Q": " while it waited in the queue",
+    "C": " while connecting to the server",
+    "H": " while waiting for the server's headers",
+    "D": " while the data was sent",
+    "L": " while the last data went out",
+    "T": " while it was held back",
+}
+
+
+def ended_in_words(termination: str) -> str:
+    if len(termination) != 2 or termination == "--":
+        return ""
+    who, where = termination[0], termination[1]
+    said = _ENDED_BY.get(who)
+    if said is None:
+        return ""
+    return said + _ENDED_WHILE.get(where, "")
 
 
 LASTING_RUNS = 5
@@ -530,7 +574,7 @@ def read_database(
         select cluster, node, occurred_at as at, request_number as request,
                client, method, host, path, frontend, backend, server, status,
                request_time, queue_time, connect_time, response_time, total_time, bytes,
-               rule
+               rule, termination
           from traffic_log_read
          where {}
          order by occurred_at desc, request_number desc

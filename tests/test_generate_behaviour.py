@@ -3362,6 +3362,15 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             connection.close()
         self.assertEqual(self.record("/answered")["waf_error"], "")
 
+    def test_the_record_says_how_the_session_ended(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.request("GET", "/ended", headers={"Host": "looks.example.com"})
+            connection.getresponse().read()
+        finally:
+            connection.close()
+        self.assertEqual(self.record("/ended")["termination"], "--")
+
 
 class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
     """The same layer with no engine: `on_engine_error` decides (B232)."""

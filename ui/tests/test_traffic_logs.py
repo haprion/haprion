@@ -655,6 +655,28 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("app-three.example.net:8080", page)
         self.assertNotIn(">s3<", page)
 
+    def test_how_a_session_ended_is_said_on_its_status(self) -> None:
+        """0106: HAProxy's two letters, in words; a normal ending says nothing."""
+
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(record(path="/gone", status=400, termination="CD"))
+            mirror.write(record(path="/fine", status=200, termination="--"))
+        page = self.page()
+
+        gone = page.split(">/gone<")[1].split("</tr>")[0]
+        fine = page.split(">/fine<")[1].split("</tr>")[0]
+        self.assertIn('title="The client ended it while the data was sent"', gone)
+        self.assertNotIn("ended it", fine)
+
+    def test_the_two_letters_read_as_a_sentence(self) -> None:
+        said = traffic_logs.ended_in_words
+        self.assertEqual(said("SH"), "The server ended it while waiting for the server's headers")
+        self.assertEqual(said("PR"), "The proxy ended it while the request came in")
+        self.assertEqual(said("L-"), "The proxy answered it itself")
+        for nothing in ("--", "", "XX", "C"):
+            with self.subTest(nothing=nothing):
+                self.assertEqual(said(nothing), "")
+
     def test_the_normal_page_has_no_live_badge_or_node_status_strip(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record())
         self.healthy_meta()

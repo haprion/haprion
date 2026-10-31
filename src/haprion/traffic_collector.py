@@ -860,6 +860,7 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
         _waf_rules(value.get("waf_rules")),
         _waf_score(value.get("waf_score")),
         _waf_id(value.get("waf_id")),
+        _termination(value.get("termination")),
     )
 
 
@@ -920,6 +921,20 @@ def _waf_id(item: Any) -> str:
 
 
 #
+# How the session ended, HAProxy's `%ts` (migration 0106): who ended it, then
+# in which state - `--` normally. Read as leniently as the WAF's fields: a
+# record from before the field, or an odd value, is kept with it empty.
+#
+TERMINATION = re.compile(r"[A-Z-]{2}")
+
+
+def _termination(item: Any) -> str:
+    if not isinstance(item, str) or TERMINATION.fullmatch(item) is None:
+        return ""
+    return item
+
+
+#
 # The column's own bound (migration 0050). A longer value is no rule this
 # installation wrote.
 #
@@ -929,7 +944,8 @@ _TRAFFIC_COPY = """
 copy traffic_log
     (event_id, cluster, node, occurred_at, request_number, client, method, host,
      path, frontend, backend, server, status, request_time, queue_time,
-     connect_time, response_time, total_time, bytes, rule, waf_rules, waf_score, waf_id)
+     connect_time, response_time, total_time, bytes, rule, waf_rules, waf_score, waf_id,
+     termination)
 from stdin
 """
 

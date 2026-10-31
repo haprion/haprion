@@ -133,10 +133,13 @@ class ListingRevokingRemoving(AsRoot):
         code, out, _ = run(["list"])
         self.assertEqual(code, 0)
         self.assertIn("no API tokens", out)
-        self.tokens = [a_token(name="monitoring")]
+        self.tokens = [a_token(name="monitoring", prefix="hap_Monitor0")]
         _, out, _ = run(["list"])
         self.assertIn("monitoring", out)
         self.assertIn("All", out)
+        header, row = out.splitlines()[:2]
+        self.assertEqual(header.split()[:3], ["NAME", "PREFIX", "LEVEL"])
+        self.assertEqual(row.split()[:3], ["monitoring", "hap_Monitor0", "read"])
 
     def test_revoke_and_remove_write_what_the_page_writes(self) -> None:
         self.tokens = [a_token(name="monitoring")]
@@ -189,6 +192,7 @@ class PageAndCommandRefuseAlike(AsRoot):
             ["monitoring", "--level", "block", "--object", "ghost"],
             {"level": "block", "objects": ["ghost"]},
         ),
+        (["monitoring", "--level", "block"], {"level": "block", "objects": []}),
     )
 
     def test_each_case(self) -> None:

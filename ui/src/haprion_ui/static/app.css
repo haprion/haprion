@@ -627,16 +627,18 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .users-table th:nth-child(5), .users-table td:nth-child(5) { width: 170px; }
 /* Settings -> API tokens: one line a row at 1280 px. Name, scope and address share what the dated columns leave; a long value ends in an ellipsis with the whole of it on hover. */
 @media (min-width: 1050px) {
-  .node-table.api-token-table th:nth-child(1), .node-table.api-token-table td:nth-child(1) { width: 15%; }
-  .node-table.api-token-table th:nth-child(2), .node-table.api-token-table td:nth-child(2) { width: 76px; }
-  .node-table.api-token-table th:nth-child(3), .node-table.api-token-table td:nth-child(3) { width: 17%; }
-  .node-table.api-token-table th:nth-child(4), .node-table.api-token-table td:nth-child(4) { width: 12%; }
-  .node-table.api-token-table th:nth-child(5), .node-table.api-token-table td:nth-child(5) { width: 100px; }
-  .node-table.api-token-table th:nth-child(6), .node-table.api-token-table td:nth-child(6) { width: 22%; }
-  .node-table.api-token-table th:nth-child(7), .node-table.api-token-table td:nth-child(7) { width: 110px; }
+  .node-table.api-token-table th:nth-child(1), .node-table.api-token-table td:nth-child(1) { width: 12%; }
+  .node-table.api-token-table th:nth-child(2), .node-table.api-token-table td:nth-child(2) { width: 112px; }
+  .node-table.api-token-table th:nth-child(3), .node-table.api-token-table td:nth-child(3) { width: 76px; }
+  .node-table.api-token-table th:nth-child(4), .node-table.api-token-table td:nth-child(4) { width: 14%; }
+  .node-table.api-token-table th:nth-child(5), .node-table.api-token-table td:nth-child(5) { width: 10%; }
+  .node-table.api-token-table th:nth-child(6), .node-table.api-token-table td:nth-child(6) { width: 100px; }
+  .node-table.api-token-table th:nth-child(7), .node-table.api-token-table td:nth-child(7) { width: 21%; }
+  .node-table.api-token-table th:nth-child(8), .node-table.api-token-table td:nth-child(8) { width: 110px; }
   .node-table.api-token-table th.api-token-action, .node-table.api-token-table td.api-token-action { width: 124px; text-align: right; }
 }
 .api-token-table td { overflow: hidden; text-overflow: ellipsis; padding-top: 5px; padding-bottom: 5px; }
+.api-token-table td.api-token-prefix { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
 .api-token-table .status-badge { min-height: 0; padding: 1px 8px; }
 .api-token-table .inline-form { display: inline; }
 .api-token-secret { margin: 0 20px; }

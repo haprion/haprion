@@ -19,11 +19,12 @@
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Tokens</h3></div></div><div class="cluster-state"><a class="secondary-button" href="/settings/api-tokens/new">Add token</a></div></header>
   {% if tokens %}
   <div class="table-scroll"><table class="node-table api-token-table">
-    <thead><tr><th>Name</th><th>Level</th><th>Scope</th><th>From</th><th>Valid until</th><th>Last used</th><th>State</th><th class="api-token-action"><span class="visually-hidden">Action</span></th></tr></thead>
+    <thead><tr><th>Name</th><th>Prefix</th><th>Level</th><th>Scope</th><th>From</th><th>Valid until</th><th>Last used</th><th>State</th><th class="api-token-action"><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>
       {% for token in tokens %}
       <tr>
         <td data-label="Name" title="{{ token.name }}"><strong>{{ token.name }}</strong></td>
+        <td data-label="Prefix" class="api-token-prefix">{{ token.prefix }}</td>
         <td data-label="Level">{{ token.level }}</td>
         <td data-label="Scope" title="{{ token.scope }}">{{ token.scope }}</td>
         <td data-label="From" title="{{ token.sources }}">{{ token.sources }}</td>

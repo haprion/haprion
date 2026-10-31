@@ -14,8 +14,8 @@ remember it:
   the audit record keeps what it did.
 
 `clusters` empty is every cluster; `objects` names the objects a `block`
-token may block on and is empty for the other levels; `sources` empty is
-any address.
+token may block on - at least one, as External blocking does - and is empty
+for the other levels; `sources` empty is any address.
 
 A web from before has no route that reads this table.
 
@@ -60,6 +60,8 @@ def upgrade() -> None:
         constraint api_token_level_allowed check (level in ('read', 'block', 'write')),
         constraint api_token_objects_only_to_block
             check (level = 'block' or cardinality(objects) = 0),
+        constraint api_token_block_names_objects
+            check (level <> 'block' or cardinality(objects) > 0),
         constraint api_token_hash_sha256 check (octet_length(token_hash) = 32),
         constraint api_token_prefix_shape check (prefix ~ '^hap_[A-Za-z0-9_-]{8}$'),
         constraint api_token_created_by_shape

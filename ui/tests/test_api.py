@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -232,16 +233,57 @@ class TheApiAnswers(ApiTestCase):
         self.assertNotIn(secret, response.text)
         self.assertNotIn("hash", response.text)
 
-    def test_ten_tokens_that_are_not_valid_close_the_source_for_a_minute(self) -> None:
+    def test_ten_guesses_close_the_source_to_what_is_not_valid_for_a_minute(self) -> None:
         client = self.api()
-        good = self.issue()
+        guess = {"Authorization": f"Bearer {api_tokens.new_secret()}"}
         with self.assertLogs("haprion_ui.api"):
             for _ in range(caller.FAILURES_PER_MINUTE):
-                self.assertEqual(client.get("/api/v1/token").status_code, 401)
-        refused = client.get("/api/v1/token", headers={"Authorization": f"Bearer {good}"})
-        self.assertEqual(refused.status_code, 429)
+                self.assertEqual(client.get("/api/v1/token", headers=guess).status_code, 401)
+        with self.assertLogs("haprion_ui.api", "WARNING") as logged:
+            for _ in range(3):
+                refused = client.get("/api/v1/token", headers=guess)
+                self.assertEqual(refused.status_code, 429)
+                self.assertEqual(client.get("/api/v1/token").status_code, 429)
         self.assertEqual(refused.headers["retry-after"], "60")
         self.assertEqual(refused.json()["error"]["code"], "rate_limited")
+        self.assertEqual(
+            len([line for line in logged.output if "too many guesses" in line]),
+            1,
+            "a closed source is logged once per window, not once per call",
+        )
+
+    def test_a_valid_token_is_served_from_a_source_that_has_been_guessing(self) -> None:
+        """Review 26-10-31, P2-2: the count is the source's, the token's validity is not."""
+
+        client = self.api()
+        good = self.issue()
+        guess = {"Authorization": f"Bearer {api_tokens.new_secret()}"}
+        with self.assertLogs("haprion_ui.api"):
+            for _ in range(caller.FAILURES_PER_MINUTE + 5):
+                client.get("/api/v1/token", headers=guess)
+            self.assertEqual(client.get("/api/v1/token", headers=guess).status_code, 429)
+        served = client.get("/api/v1/token", headers={"Authorization": f"Bearer {good}"})
+        self.assertEqual(served.status_code, 200)
+
+    def test_only_guesses_are_counted_not_a_known_caller_set_up_wrong(self) -> None:
+        client = self.api()
+        revoked = self.issue(revoked_at=NOW, revoked_by="admin")
+        expired = self.issue(expires_at=NOW - timedelta(days=1))
+        elsewhere = self.issue(sources=["198.51.100.0/24"])
+        good = self.issue()
+        with self.assertLogs("haprion_ui.api"):
+            for _ in range(caller.FAILURES_PER_MINUTE * 2):
+                for headers in (
+                    {},
+                    {"Authorization": f"Bearer {revoked}"},
+                    {"Authorization": f"Bearer {expired}"},
+                    {"Authorization": f"Bearer {elsewhere}"},
+                ):
+                    self.assertEqual(client.get("/api/v1/token", headers=headers).status_code, 401)
+        self.assertEqual(
+            client.get("/api/v1/token", headers={"Authorization": f"Bearer {good}"}).status_code,
+            200,
+        )
 
     def test_the_failure_count_forgets_after_its_window(self) -> None:
         failures = caller.Failures(limit=2, window=60)
@@ -250,6 +292,86 @@ class TheApiAnswers(ApiTestCase):
         self.assertTrue(failures.refused("192.0.2.1", now=150))
         self.assertFalse(failures.refused("192.0.2.1", now=171))
         self.assertFalse(failures.refused("192.0.2.2", now=150))
+
+    def test_an_ipv6_host_is_counted_as_its_64(self) -> None:
+        failures = caller.Failures(limit=2, window=60)
+        failures.note("2001:db8:0:1::1", now=100)
+        failures.note("2001:db8:0:1:ffff::2", now=101)
+        self.assertTrue(failures.refused("2001:db8:0:1::99", now=102))
+        self.assertFalse(failures.refused("2001:db8:0:2::1", now=102))
+        failures.note("192.0.2.1", now=100)
+        self.assertFalse(failures.refused("192.0.2.2", now=102))
+
+    def test_the_failure_count_holds_to_its_bound_and_forgets_the_oldest_first(self) -> None:
+        failures = caller.Failures(limit=1, window=60, remembered=100)
+        for number in range(1000):
+            failures.note(f"2001:db8:{number}::1", now=100 + number / 1000)
+            failures.first_refusal(f"2001:db8:{number}::1", now=100 + number / 1000)
+        self.assertEqual((len(failures._seen), len(failures._told)), (100, 100))
+        self.assertTrue(failures.refused("2001:db8:999::1", now=101))
+        self.assertFalse(failures.refused("2001:db8:0::1", now=101))
+
+    def test_calls_beyond_the_places_are_told_busy_and_a_place_is_given_back(self) -> None:
+        """Review 26-10-31, P3-1: the API may not take the pages' connections."""
+
+        client = self.api()
+        secret = self.issue()
+        headers = {"Authorization": f"Bearer {secret}"}
+        slots = self.slots(client)
+        for _ in range(caller.CONCURRENT_CALLS):
+            self.assertTrue(slots.acquire(blocking=False))
+        with self.assertLogs("haprion_ui.api", "WARNING"):
+            busy = client.get("/api/v1/clusters", headers=headers)
+        self.assertEqual(busy.status_code, 429)
+        self.assertEqual(busy.headers["retry-after"], "1")
+        self.assertEqual(
+            (busy.json()["outcome"], busy.json()["error"]["code"]), ("blocked", "busy")
+        )
+        self.assertEqual(self.touched, [], "a call turned away reads nothing")
+        slots.release()
+        self.assertEqual(client.get("/api/v1/clusters", headers=headers).status_code, 200)
+        with self.assertLogs("haprion_ui.api"):
+            self.assertEqual(client.get("/api/v1/clusters").status_code, 401)
+        self.assertTrue(slots.acquire(blocking=False), "answered calls gave their places back")
+
+    def test_calls_in_flight_hold_their_places(self) -> None:
+        client = self.api()
+        headers = {"Authorization": f"Bearer {self.issue()}"}
+        slots = self.slots(client)
+        inside = threading.Barrier(caller.CONCURRENT_CALLS + 1, timeout=10)
+        leave = threading.Event()
+
+        def held(*_: Any) -> None:
+            inside.wait()
+            leave.wait(10)
+
+        results: list[int] = []
+        with mock.patch("haprion_ui.db.touch_api_token", side_effect=held):
+            threads = [
+                threading.Thread(
+                    target=lambda: results.append(
+                        client.get("/api/v1/token", headers=headers).status_code
+                    )
+                )
+                for _ in range(caller.CONCURRENT_CALLS)
+            ]
+            for thread in threads:
+                thread.start()
+            inside.wait()
+            with self.assertLogs("haprion_ui.api", "WARNING"):
+                self.assertEqual(client.get("/api/v1/token", headers=headers).status_code, 429)
+            leave.set()
+            for thread in threads:
+                thread.join(10)
+        self.assertEqual(results, [200] * caller.CONCURRENT_CALLS)
+        self.assertEqual(slots._value, caller.CONCURRENT_CALLS)
+
+    def slots(self, client: Any) -> threading.BoundedSemaphore:
+        for route in client.app.routes:
+            if getattr(route, "path", "") == "/api/v1":
+                found: threading.BoundedSemaphore = route.app.state.slots
+                return found
+        raise AssertionError("the API is not mounted")
 
     def test_the_schema_is_for_a_valid_token_only(self) -> None:
         client = self.api()

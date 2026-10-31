@@ -92,6 +92,12 @@ def problem(
             return f"{cluster} is not a cluster this installation has."
     if new.objects and new.level != "block":
         return "Proxies can only be chosen for a block token."
+    #
+    # External blocking names its objects, and a token that blocks on all of
+    # them would be the widest one the installation can make, by omission.
+    #
+    if new.level == "block" and not new.objects:
+        return "A block token names the proxies it may block on."
     reachable = new.clusters or tuple(blocking)
     for item in new.objects:
         if not any(item in blocking.get(cluster, ()) for cluster in reachable):

@@ -84,7 +84,7 @@ class TokensPage(LoginTestCase):
 class TheList(TokensPage):
     def test_tokens_are_listed_by_name_with_their_state_and_the_row_s_own_button(self) -> None:
         self.tokens = [
-            a_token(name="zeta", expires_at=NOW + timedelta(days=200)),
+            a_token(name="zeta", prefix="hap_Zeta0000", expires_at=NOW + timedelta(days=200)),
             a_token(
                 name="alpha-block",
                 level="block",
@@ -106,6 +106,9 @@ class TheList(TokensPage):
         ]
         self.assertEqual(names, sorted(names))
         self.assertIn("alpha · shop", page)
+        # Review 26-10-31, P3-4: the prefix tells which token a found one is.
+        self.assertIn('data-label="Prefix" class="api-token-prefix">hap_Zeta0000</td>', page)
+        self.assertEqual(page.count("hap_abcdefgh"), 3)
         self.assertIn("192.0.2.0/24", page)
         self.assertIn("Anywhere", page)
         self.assertIn("Never", page)
@@ -204,6 +207,7 @@ class MakingATokenOnThePage(TokensPage):
             "gamma is not a cluster": {"clusters": ["gamma"]},
             "Proxies can only be chosen for a block token.": {"objects": ["shop"]},
             "ghost is not a proxy with dynamic blocking": {"level": "block", "objects": ["ghost"]},
+            "A block token names the proxies it may block on.": {"level": "block", "objects": []},
             "is not an address or a network": {"sources": "not-an-address"},
             "host bits": {"sources": "192.0.2.5/24"},
             "The validity must be between 1 and 730 days.": {"days": "731"},

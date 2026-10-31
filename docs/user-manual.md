@@ -3206,6 +3206,15 @@ for a database restored some other way, and refuses while the worker runs: stop 
 actions are in the audit record. After a host restore, end the sessions yourself: *Settings → Users*, the account,
 **End sessions**.
 
+**API tokens** are restored with the database, and a token revoked since the dump is live again in it.
+`restore` therefore compares: it reads which tokens were active in the database it replaces, and after
+the restore it revokes every restored token that is active but was not among them. That covers a token
+revoked or removed after the dump; the command names those it revoked, and the audit record holds
+`api_tokens_revoked`. Run on its own, `after-restore` has nothing to compare with: it lists the active
+tokens, and you revoke those that should not be live under *Settings* → *API tokens*. The same goes for a
+whole-host restore, for example from a VM backup: it brings back the tokens revoked since that backup, so
+revoke them again.
+
 Apart from the hold, the worker never runs a job that has waited more than two hours unless an admin
 chose **Run**: it ends *blocked* with `request_expired`. A job the worker had already started is judged
 from what the cluster shows, as after any worker failure
@@ -4404,11 +4413,13 @@ This release reads. Blocking an address and changing objects through the API com
 
 A token is made under *Settings* → *API tokens* → *Add token*. It has:
 
-- **a name**, which is what the audit record shows for every call it makes, as `token:` and the name;
+- **a name**, which is what the audit record shows for every change made with it, as `token:` and the name.
+  Reading is not recorded there: a read shows only as the token's *Last used*, and in nginx's access log;
 - **a level**: *Read* sees what a reader sees. *Block* blocks addresses on its proxies, nothing else.
   *Write* does what an admin does;
-- **a scope**, optional: the clusters it may see, and for a *Block* token the proxies it may block on.
-  Without one it sees every cluster;
+- **a scope**: the clusters it may see, optional, and for a *Block* token the proxies it may block on,
+  at least one. A *Block* token without a proxy is refused, so that none is ever made for all of them by
+  leaving the choice out. Without clusters a token sees every cluster;
 - **where it may be called from**, optional: addresses or networks. From anywhere else the token is
   refused, as if it did not exist;
 - **how long it is valid**: 30 days to two years, one year unless you choose otherwise. It cannot be
@@ -4417,7 +4428,8 @@ A token is made under *Settings* → *API tokens* → *Add token*. It has:
 After *Save* the token is shown once, with a button to copy it. Haprion keeps only a hash of it, so it
 cannot show it again. A lost token is replaced, not recovered.
 
-The list shows each token's level, scope, end date and when and from where it was last used. *Revoke*
+The list shows each token's prefix (`hap_` and eight characters of it, which is how you tell which token
+you have found in a file or a log), level, scope, end date and when and from where it was last used. *Revoke*
 stops a token at once, and a revoked token never works again. *Remove* takes a revoked or ended token off
 the list. A token that ends within 30 days, or has ended and is still listed, is under *Needs attention*.
 
@@ -4500,10 +4512,20 @@ When a call is refused, `ok` is false and `error.code` says why:
 | 403 | `forbidden` | The token's level does not reach the call |
 | 404 | `not_found` | No such cluster, object or job - or one outside the token's scope |
 | 400 | `bad_input` | A parameter that is not valid, named in the message |
-| 429 | `rate_limited` | Ten calls with a token that is not valid within a minute; the address waits a minute |
+| 429 | `rate_limited` | Ten guesses within a minute - a token nobody issued, or a header that is not a token; the address waits a minute for anything that is not a valid token. A valid token is served meanwhile |
+| 429 | `busy` | Three API calls are already being answered; `Retry-After: 1`, try again at once |
 | 503 | `database_unavailable` | The manager's database did not answer |
 
-nginx also limits every address to ten calls a second, with room for fifty at once.
+Only guesses count towards the minute's wait. A token that is revoked, ended or called from elsewhere,
+or a call without a token, is answered 401 and written to the log, but does not close the address to the
+other tokens that call from it.
+
+At most three API calls are answered at once, so the interface keeps its database connections however
+busy an integration is.
+
+nginx also limits every address to ten calls a second, with room for fifty at once. What nginx itself
+refuses - the rate (429 `rate_limited`), a body over 1 MB (413 `too_large`), a manager that does not
+answer (502, 503 and 504 `unavailable`) - is the same envelope, never a page.
 
 **Details:** the API reads no cookie, and the interface reads no token. nginx removes any cookie on the
 way in and refuses to pass one out. That is why the API needs no CSRF token: a browser sends cookies by

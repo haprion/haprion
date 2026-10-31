@@ -10,12 +10,14 @@ them, for three reasons that are each a boundary:
 * **It has a schema.** `/api/v1/openapi.json`, generated from these routes
   and given only to a valid token, where the pages publish none.
 
-The pool is the pages' own: `app.create_app` hands it over when it opens.
+The pool is the pages' own: `app.create_app` hands it over when it opens, and
+the API may use `CONCURRENT_CALLS` of its connections at once.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 
 import psycopg
 from fastapi import Depends, FastAPI, Request
@@ -25,7 +27,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from haprion_ui.api import blocks, certificates, clusters, jobs, objects, token, traffic, waf
 from haprion_ui.api.answers import Refusal, refusal
-from haprion_ui.api.caller import Caller, current_caller
+from haprion_ui.api.caller import CONCURRENT_CALLS, Caller, current_caller
 from haprion_ui.config import Config
 
 PREFIX = "/api/v1"
@@ -42,6 +44,7 @@ def build_api(config: Config) -> FastAPI:
         openapi_url=None,
     )
     api.state.config = config
+    api.state.slots = threading.BoundedSemaphore(CONCURRENT_CALLS)
 
     @api.exception_handler(Refusal)
     async def refused(request: Request, exc: Refusal) -> Response:

@@ -34,7 +34,7 @@
       {% endif %}
       {% if proxies %}
       <div class="field field-wide" data-for-level="block">
-        <span class="field-title">Proxies <span class="optional">(optional, all if none is chosen)</span></span>
+        <span class="field-title">Proxies <span class="optional">(a block token needs at least one)</span></span>
         <div class="form-checks">{% for item, where in proxies.items() %}<label class="check" title="{{ where | join(', ') }}"><input type="checkbox" name="objects" value="{{ item }}"{% if item in form.objects %} checked{% endif %}> {{ item }}</label>{% endfor %}</div>
       </div>
       {% endif %}

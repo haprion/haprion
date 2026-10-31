@@ -499,6 +499,14 @@ do_verify_restore() {
 # backup's, and ran then; an answer given before is cleared (0085) - and every session is ended: the restored ones
 # include sessions signed out since. Both are written to the audit record.
 #
+# API tokens are the same case (review 26-10-31, P2-1): the trigger that makes a
+# revocation final guards an update, not a row written back from a dump, so a
+# token revoked after the dump is live again. `restore` passes the hashes of the
+# tokens that were active in the database it replaced (a possibly empty list,
+# comma-joined); every restored token active but not among them is revoked.
+# Run by hand there is nothing to compare with: the active tokens are listed,
+# for an admin to revoke those that should not be live.
+#
 # Refused while the worker runs (review 26-10-29, C05): a job it is running
 # would be held as well, and an admin's Discard is read when a job is taken,
 # not while it runs - so the job would go on with what follows it. `restore`
@@ -539,6 +547,66 @@ SQL
     sessions="$(sed -n 2p <<<"$answer")"
     log "held for an admin on Jobs: ${jobs}"
     log "sessions ended: ${sessions}"
+    hold_api_tokens "$@"
+}
+
+#
+# Active: neither revoked nor ended. `active_token_hashes` reads those of the
+# database a restore is about to replace; there are none in a database that does
+# not exist yet or is older than the table.
+#
+TOKEN_IS_LIVE="revoked_at is null and expires_at > statement_timestamp()"
+
+active_token_hashes() {
+    [[ "$(psql_scratch -d postgres -c \
+        "select 1 from pg_database where datname = '${DB_NAME}'")" == 1 ]] || return 0
+    [[ "$(psql_as -d "$DB_NAME" -c "select to_regclass('public.api_token') is not null")" == t ]] \
+        || return 0
+    psql_as -d "$DB_NAME" -c \
+        "select encode(token_hash, 'hex') from api_token where ${TOKEN_IS_LIVE} order by 1"
+}
+
+#
+# Kept as text so that the test of this step can run the very statement.
+#
+REVOKE_REVIVED_TOKENS="$(cat <<'SQL'
+with revived as (
+    update api_token set revoked_at = statement_timestamp(), revoked_by = 'restore'
+     where revoked_at is null and expires_at > statement_timestamp()
+       and encode(token_hash, 'hex') <> all (string_to_array(:'kept', ','))
+    returning name
+), logged as (
+    insert into audit_event (actor, action, detail)
+    select 'haprion-backup', 'api_tokens_revoked',
+           jsonb_build_object('tokens', jsonb_agg(name order by name),
+                              'reason', 'restored from a dump')
+      from revived
+    having count(*) > 0
+)
+select name from revived order by name;
+SQL
+)"
+
+hold_api_tokens() {
+    local revived listed line
+    if (( $# )); then
+        revived="$(psql_as -d "$DB_NAME" -v kept="$1" <<<"$REVOKE_REVIVED_TOKENS")"
+        if [[ -n "$revived" ]]; then
+            log "API tokens revoked again, active now but not before the restore: $(tr '\n' ' ' <<<"$revived")"
+        else
+            log "API tokens revoked again: none"
+        fi
+        return
+    fi
+    listed="$(psql_as -d "$DB_NAME" -c \
+        "select name || ' (' || level || ', created ' || to_char(created_at, 'YY-MM-DD HH24:MI:SS') || ')'
+           from api_token where ${TOKEN_IS_LIVE} order by name")"
+    if [[ -z "$listed" ]]; then
+        log "no API token is active"
+        return
+    fi
+    log "API tokens active in the restored database; any that should not be live, revoke under Settings, API tokens:"
+    while IFS= read -r line; do echo "  ${line}"; done <<<"$listed"
 }
 
 #
@@ -666,7 +734,7 @@ restore_stopped() {
 }
 
 do_restore() {
-    local dump="$1" unit connections collector revision plan verdict head release
+    local dump="$1" unit connections collector revision plan verdict head release tokens
     local -a before=() stopped=() now=()
     [[ -f "$dump" && -r "$dump" ]] || die "cannot read the dump ${dump}"
     pg_restore --list "$dump" >/dev/null 2>&1 || die "${dump} is not a dump pg_restore can read"
@@ -691,6 +759,13 @@ do_restore() {
     # before it is stopped, so a run cut short keeps it too.
     #
     mapfile -t before < <(stopped_before)
+    #
+    # Read while the web still runs and nothing is stopped: a failure here
+    # costs nothing. A restore from a dump without that set would bring back
+    # every token revoked since it was taken.
+    #
+    tokens="$(active_token_hashes | paste -sd, -)" \
+        || die "the active API tokens could not be read; nothing was stopped or restored"
     step_log "Stopping what writes the database"
     for unit in "${RESTORE_UNITS[@]}"; do
         if systemctl is-active --quiet "$unit"; then
@@ -759,8 +834,8 @@ do_restore() {
         || restore_stopped "the restored database does not grant what the contract says" \
             03-verify held "${stopped[@]}"
 
-    step_log "Holding waiting jobs and ending sessions"
-    do_after_restore
+    step_log "Holding waiting jobs, ending sessions, revoking revived API tokens"
+    do_after_restore "$tokens"
 
     step_log "Starting what was stopped"
     start_units "${stopped[@]}"

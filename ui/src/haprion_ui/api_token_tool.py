@@ -113,10 +113,14 @@ def command_list(args: argparse.Namespace) -> int:
         print("no API tokens. Make one with:")
         print("  sudo haprion-api-token add <name> --level read")
         return 0
-    print(f"{'NAME':<24} {'LEVEL':<6} {'STATE':<8} {'VALID UNTIL':<12} {'LAST USED':<30} SCOPE")
+    print(
+        f"{'NAME':<24} {'PREFIX':<12} {'LEVEL':<6} {'STATE':<8} {'VALID UNTIL':<12} "
+        f"{'LAST USED':<30} SCOPE"
+    )
     for token in tokens:
         print(
-            f"{token.name:<24} {token.level:<6} {api_token_apply.state(token, now):<8} "
+            f"{token.name:<24} {token.prefix:<12} {token.level:<6} "
+            f"{api_token_apply.state(token, now):<8} "
             f"{moments.day(token.expires_at)}     "
             f"{api_token_apply.last_used(token):<30} {api_token_apply.scope(token)}"
         )

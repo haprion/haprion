@@ -3,6 +3,7 @@ in front is believed about the client only when the answers file names it (Fas 1
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import socket
@@ -10,8 +11,10 @@ import subprocess
 import tempfile
 import time
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = ("haprion.nginx.example",)
@@ -173,6 +176,16 @@ def api_location() -> str:
     return found.group(0)
 
 
+def api_error_locations() -> str:
+    """The named locations that answer for nginx on `/api/`, as written."""
+
+    text = (ROOT / "install/platform/examples" / EXAMPLES[0]).read_text()
+    found = re.findall(r"^    location @api_\d+ \{\n.*?^    \}\n", text, re.MULTILINE | re.DOTALL)
+    if len(found) != 5:
+        raise AssertionError("the site has not the five `location @api_<status>` this reads")
+    return "".join(found)
+
+
 @unittest.skipUnless(Path(NGINX).exists(), "nginx is not installed where the tests run")
 class TheApiLocationCarriesNoCookie(unittest.TestCase):
     """B416: the API reads no cookie; nginx keeps it so whatever the application does.
@@ -181,13 +194,13 @@ class TheApiLocationCarriesNoCookie(unittest.TestCase):
     echoes the cookie it was given and tries to set one.
     """
 
-    def serve(self) -> int:
+    def serve(self, *, backend_up: bool = True) -> int:
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         backend = root / "backend.sock"
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = int(probe.getsockname()[1])
-        location = api_location().replace(
+        location = (api_location() + api_error_locations()).replace(
             "http://unix:/run/haprion-web.sock", f"http://unix:{backend}"
         )
         temporary = " ".join(
@@ -203,16 +216,21 @@ http {{
     access_log off;
     {temporary}
     limit_req_zone $binary_remote_addr zone=haprion_api:1m rate=10r/s;
-    server {{
+    {
+                f'''server {{
         listen unix:{backend};
         location / {{
             add_header Set-Cookie "planted=1; Path=/";
             default_type text/plain;
             return 200 "cookie=[$http_cookie] auth=[$http_authorization]";
         }}
-    }}
+    }}'''
+                if backend_up
+                else ""
+            }
     server {{
         listen 127.0.0.1:{port};
+        client_max_body_size 1m;
 {location}
     }}
 }}
@@ -258,6 +276,53 @@ http {{
         with urllib.request.urlopen(request, timeout=5) as answer:  # noqa: S310 - loopback
             self.assertEqual(answer.read().decode(), "cookie=[] auth=[Bearer hap_x]")
             self.assertIsNone(answer.headers.get("Set-Cookie"))
+
+    def refused(self, port: int, *, body: bytes | None = None) -> tuple[int, str, dict[str, Any]]:
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/api/v1/token", data=body)
+        try:
+            urllib.request.urlopen(request, timeout=5)  # noqa: S310 - loopback
+        except urllib.error.HTTPError as refusal:
+            with refusal:
+                return refusal.code, refusal.headers["Content-Type"], json.load(refusal)
+        raise AssertionError("nginx let the request through")
+
+    def assert_envelope(self, answer: dict[str, Any], outcome: str, code: str) -> None:
+        self.assertEqual(
+            (answer["schema_version"], answer["ok"], answer["outcome"], answer["operation"]),
+            (1, False, outcome, "api"),
+        )
+        self.assertEqual((answer["result"], answer["warnings"]), (None, []))
+        self.assertEqual(answer["error"]["code"], code)
+        self.assertRegex(answer["request_id"], r"^[0-9a-f]{32}$")
+
+    def test_a_manager_that_does_not_answer_is_a_502_in_the_envelope_not_a_page(self) -> None:
+        status, kind, answer = self.refused(self.serve(backend_up=False))
+        self.assertEqual((status, kind), (502, "application/json"))
+        self.assert_envelope(answer, "failed", "unavailable")
+
+    def test_the_rate_is_a_429_in_the_envelope_with_a_wait(self) -> None:
+        port = self.serve()
+        for _ in range(70):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/token", timeout=5).close()
+            except urllib.error.HTTPError as refusal:
+                with refusal:
+                    self.assertEqual(refusal.code, 429)
+                    self.assertEqual(refusal.headers["Content-Type"], "application/json")
+                    self.assertEqual(refusal.headers["Retry-After"], "1")
+                    self.assert_envelope(json.load(refusal), "blocked", "rate_limited")
+                return
+        self.fail("nginx never limited the rate")
+
+    def test_a_body_over_a_megabyte_is_a_413_in_the_envelope(self) -> None:
+        status, kind, answer = self.refused(self.serve(), body=b"x" * (1024 * 1024 + 1))
+        self.assertEqual((status, kind), (413, "application/json"))
+        self.assert_envelope(answer, "blocked", "too_large")
+
+    def test_every_status_nginx_answers_is_wired_to_its_location(self) -> None:
+        block = api_location()
+        for status in (413, 429, 502, 503, 504):
+            self.assertIn(f"error_page {status} @api_{status};", block)
 
 
 if __name__ == "__main__":

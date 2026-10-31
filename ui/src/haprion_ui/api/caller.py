@@ -8,20 +8,29 @@ sides of it (`test_api_boundary`).
 * **Every failure is the same 401.** Unknown, revoked, expired, or called
   from outside the token's addresses: the caller learns that the token is not
   valid here, and the service log says why.
-* **Failures are counted harder than calls.** nginx limits every source on
-  `/api/`; a source that sends ten tokens a minute that are not valid is
-  answered 429 here for the rest of that minute, before the database is
-  asked. Counted in this process, which is the only one serving: a restart
+* **Guesses are counted harder than calls.** nginx limits every source on
+  `/api/`; a source that sends ten guesses a minute - a token nobody issued,
+  or a header that is not a token - is answered 429 here for the rest of that
+  minute. A valid token is served whatever the count: the count is a source's,
+  and another integration on the same host with an expired token (a known
+  caller, not a guess, and in the log already) must not take the others'
+  service. Counted in this process, which is the only one serving: a restart
   forgets the count, which costs a guesser one minute.
+* **At most `CONCURRENT_CALLS` calls at once**, answered 429 `busy` beyond
+  that: the pages share the pool with the API, and the API may not take the
+  pages' connections from them.
 * **A use is written at most once a minute** (`touch_api_token`), so a busy
   integration is not a write per call.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import threading
 import time
+from collections import OrderedDict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -36,6 +45,18 @@ logger = logging.getLogger("haprion_ui.api")
 
 FAILURES_PER_MINUTE = 10
 REMEMBERED_SOURCES = 4096
+
+#
+# The web's pool is six connections. Half of them are the API's at most, and
+# a call that cannot have one is told to come back, not queued.
+#
+CONCURRENT_CALLS = 3
+
+#
+# What counts as guessing. A missing header, a revoked or expired token and a
+# token used from outside its addresses are callers that are configured wrong.
+#
+GUESSES = frozenset({"unknown", "malformed"})
 
 #
 # Declared for the OpenAPI document, which then says how to authenticate;
@@ -56,34 +77,70 @@ class Caller:
         return f"token:{self.issued.name}"
 
 
-class Failures:
-    """Sources that sent tokens which are not valid, for the last minute."""
+def source_key(source: str) -> str:
+    """The address a count is kept under: an IPv6 host is its /64, which one subscriber owns."""
 
-    def __init__(self, limit: int = FAILURES_PER_MINUTE, window: float = 60.0) -> None:
+    try:
+        address = ipaddress.ip_address(source)
+    except ValueError:
+        return source
+    if address.version == 6:
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return source
+
+
+class Failures:
+    """Sources that sent guesses, for the last minute; the oldest forgotten when full."""
+
+    def __init__(
+        self,
+        limit: int = FAILURES_PER_MINUTE,
+        window: float = 60.0,
+        remembered: int = REMEMBERED_SOURCES,
+    ) -> None:
         self.limit = limit
         self.window = window
+        self.remembered = remembered
         self._lock = threading.Lock()
-        self._seen: dict[str, list[float]] = {}
+        self._seen: OrderedDict[str, list[float]] = OrderedDict()
+        self._told: OrderedDict[str, float] = OrderedDict()
 
-    def _recent(self, source: str, now: float) -> list[float]:
-        kept = [moment for moment in self._seen.get(source, []) if now - moment < self.window]
+    def _recent(self, key: str, now: float) -> list[float]:
+        kept = [moment for moment in self._seen.get(key, []) if now - moment < self.window]
         if kept:
-            self._seen[source] = kept
+            self._seen[key] = kept
         else:
-            self._seen.pop(source, None)
+            self._seen.pop(key, None)
         return kept
 
     def refused(self, source: str, now: float | None = None) -> bool:
         with self._lock:
-            return len(self._recent(source, now or time.monotonic())) >= self.limit
+            return len(self._recent(source_key(source), now or time.monotonic())) >= self.limit
 
     def note(self, source: str, now: float | None = None) -> None:
+        key = source_key(source)
         moment = now or time.monotonic()
         with self._lock:
-            if len(self._seen) >= REMEMBERED_SOURCES:
-                for other in list(self._seen):
-                    self._recent(other, moment)
-            self._seen.setdefault(source, []).append(moment)
+            self._recent(key, moment)
+            self._seen.setdefault(key, []).append(moment)
+            self._seen.move_to_end(key)
+            while len(self._seen) > self.remembered:
+                self._seen.popitem(last=False)
+
+    def first_refusal(self, source: str, now: float | None = None) -> bool:
+        """True once per source and window, so a refusal is logged and not every repeat of it."""
+
+        key = source_key(source)
+        moment = now or time.monotonic()
+        with self._lock:
+            told = self._told.get(key)
+            if told is not None and moment - told < self.window:
+                return False
+            self._told[key] = moment
+            self._told.move_to_end(key)
+            while len(self._told) > self.remembered:
+                self._told.popitem(last=False)
+            return True
 
 
 FAILURES = Failures()
@@ -100,18 +157,41 @@ TOO_MANY = Refusal(
     "Too many requests with a token that is not valid; try again in a minute.",
     headers={"Retry-After": "60"},
 )
+BUSY = Refusal(
+    429,
+    "busy",
+    "The manager is answering other API calls; try again in a second.",
+    headers={"Retry-After": "1"},
+)
+
+
+def a_call_at_a_time(request: Request) -> Iterator[None]:
+    """One of the API's `CONCURRENT_CALLS` places, held until the call is answered."""
+
+    slots: threading.BoundedSemaphore = request.app.state.slots
+    if not slots.acquire(blocking=False):
+        logger.warning(
+            "api: %s %s from %s refused: busy",
+            request.method,
+            request.url.path,
+            client_address(request),
+        )
+        raise BUSY
+    try:
+        yield
+    finally:
+        slots.release()
 
 
 def current_caller(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(BEARER),  # noqa: B008 - FastAPI's way
+    _place: None = Depends(a_call_at_a_time),
 ) -> Caller:
     """The token this request carries, judged; a `Refusal` when it may not be used."""
 
     del credentials  # read below from the header itself, the one place it is parsed
     source = client_address(request)
-    if FAILURES.refused(source):
-        raise TOO_MANY
     secret = api_tokens.bearer_secret(request.headers.get("authorization"))
     token = None
     if secret is not None:
@@ -126,7 +206,17 @@ def current_caller(
         verdict = api_tokens.Verdict(
             False, "malformed" if request.headers.get("authorization") else "missing"
         )
-    FAILURES.note(source)
+    if FAILURES.refused(source):
+        if FAILURES.first_refusal(source):
+            logger.warning(
+                "api: %s %s from %s refused: too many guesses, closed for a minute",
+                request.method,
+                request.url.path,
+                source,
+            )
+        raise TOO_MANY
+    if verdict.reason in GUESSES:
+        FAILURES.note(source)
     logger.warning(
         "api: %s %s from %s refused: %s%s",
         request.method,

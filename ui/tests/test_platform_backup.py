@@ -421,6 +421,8 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
     again, and `pg_restore --clean` failed on the partitions.
     """
 
+    kept: str | None = None
+
     def restore(
         self,
         *,
@@ -485,7 +487,8 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                     else f'schema_plan() {{ record "plan $1"; echo "{refused}" >&2; return 1; }}\n'
                 )
                 + 'runuser() { record "runuser $*"; }\n'
-                'do_after_restore() { record "after-restore"; }\n'
+                'do_after_restore() { record "after-restore"; echo "$#:$*" > "$CALLS.kept"; }\n'
+                'active_token_hashes() { record "token-hashes"; echo aa; echo bb; }\n'
                 f'dump_before_restore() {{ record "dump-before-restore"; {"true" if dumped else "false"}; }}\n'
                 "DB_NAME=haprion\nDUMP_DIR=/dumps\n"
                 + re.search(r"^counted\(\) .*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
@@ -515,6 +518,8 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 env={**os.environ, "CALLS": str(calls)},
             )
             said = calls.read_text().splitlines() if calls.exists() else []
+            kept = Path(f"{calls}.kept")
+            self.kept = kept.read_text().strip() if kept.exists() else None
         return done, [line.replace(str(here), "<here>") for line in said]
 
     ACTIVE = "haprion-traffic-collector.timer haprion-web.socket haprion-worker.service"
@@ -526,6 +531,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
             said,
             [
                 "plan 0101",
+                "token-hashes",
                 "systemctl stop haprion-traffic-collector.timer",
                 "systemctl stop haprion-web.socket",
                 "systemctl stop haprion-worker.service",
@@ -541,6 +547,14 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 " <here>/traffic-collector.json",
             ],
         )
+
+    def test_the_tokens_active_before_are_read_first_and_handed_to_the_hold(self) -> None:
+        """Review 26-10-31, P2-1: a restore revived the tokens revoked after the dump."""
+
+        done, said = self.restore(active=self.ACTIVE)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertLess(said.index("token-hashes"), said.index("systemctl stop haprion-web.socket"))
+        self.assertEqual(self.kept, "1:aa,bb")
 
     def test_a_dump_that_cannot_be_made_restores_nothing_and_starts_what_it_stopped(self) -> None:
         done, said = self.restore(active=self.ACTIVE, dumped=False)
@@ -816,6 +830,7 @@ class HoldingAfterARestore(unittest.TestCase):
             f"systemctl() {{ [[ $1 == is-active ]] && {'true' if active else 'false'}; }}\n"
             "psql_as() { cat >/dev/null; printf '[7]\\n2\\n'; }\n"
             "DB_NAME=haprion\n"
+            "hold_api_tokens() { :; }\n"
             + function("do_after_restore", source)
             + function("after_restore_by_hand", source)
             + "after_restore_by_hand\n"
@@ -857,6 +872,74 @@ class HoldingAfterARestore(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("held for an admin on Jobs: [7]", done.stdout)
         self.assertIn("sessions ended: 2", done.stdout)
+
+
+class ApiTokensAfterARestore(unittest.TestCase):
+    """Review 26-10-31, P2-1: a revoked token is live again in a restored dump."""
+
+    def run_hold(self, arguments: str, *, psql_output: str = "") -> tuple[str, str]:
+        """`hold_api_tokens` with psql stubbed; returns what it said and the statement it ran."""
+
+        source = SCRIPT.read_text()
+        program = (
+            "set -Eeuo pipefail\n"
+            'log() { echo "$*"; }\n'
+            'psql_as() { echo "ARGS $*" >> "$CALLS"; [[ " $* " == *" -c "* ]] || cat >> "$CALLS";'
+            f" printf '%b' {psql_output!r}; }}\n"
+            "DB_NAME=haprion\n"
+            + re.search(r"^TOKEN_IS_LIVE=.*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
+            + "REVOKE_REVIVED_TOKENS=\"$(cat <<'SQL'\n"
+            + revoke_statement(source)
+            + 'SQL\n)"\n'
+            + function("hold_api_tokens", source)
+            + f"hold_api_tokens {arguments}\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            calls = Path(raw) / "calls"
+            done = subprocess.run(  # noqa: S603 - fixed program
+                ["/bin/bash", "-c", program],
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env={**os.environ, "CALLS": str(calls)},
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return done.stdout, calls.read_text() if calls.exists() else ""
+
+    def test_given_the_tokens_from_before_it_revokes_the_rest_and_says_which(self) -> None:
+        said, ran = self.run_hold("aa,bb", psql_output="restored-one\nrestored-two\n")
+        self.assertIn("-v kept=aa,bb", ran)
+        self.assertIn("revoked_by = 'restore'", ran)
+        self.assertIn("API tokens revoked again", said)
+        self.assertIn("restored-one restored-two", said)
+
+    def test_an_empty_set_from_before_is_a_set_and_revokes_every_active_one(self) -> None:
+        said, ran = self.run_hold("''", psql_output="restored-one\n")
+        self.assertIn("-v kept=\n", ran)
+        self.assertIn("restored-one", said)
+
+    def test_by_hand_there_is_nothing_to_compare_with_so_the_active_ones_are_listed(self) -> None:
+        said, ran = self.run_hold("", psql_output="monitoring (read, created 26-10-01 10:00:00)\n")
+        self.assertNotIn("revoked_by", ran)
+        self.assertIn("any that should not be live, revoke under Settings", said)
+        self.assertIn("  monitoring (read, created 26-10-01 10:00:00)", said)
+
+    def test_by_hand_with_none_active_it_says_so(self) -> None:
+        said, _ = self.run_hold("")
+        self.assertIn("no API token is active", said)
+
+    def test_the_hold_is_part_of_after_restore(self) -> None:
+        self.assertIn('hold_api_tokens "$@"', function("do_after_restore", SCRIPT.read_text()))
+
+
+def revoke_statement(source: str) -> str:
+    """The statement `restore` runs to revoke what a dump revived, as the script holds it."""
+
+    match = re.search(r"^REVOKE_REVIVED_TOKENS=.*?<<'SQL'\n(.*?)^SQL\n", source, re.M | re.S)
+    if match is None:
+        raise AssertionError("haprion-backup holds no REVOKE_REVIVED_TOKENS")
+    return match.group(1)
 
 
 class AFailedRunLeavesAMarker(unittest.TestCase):

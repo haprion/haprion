@@ -37,6 +37,7 @@ TONES = {"active": "healthy", "revoked": "unknown", "expired": "critical"}
 @dataclass(frozen=True, slots=True)
 class TokenRow:
     name: str
+    prefix: str
     level: str
     scope: str
     sources: str
@@ -58,6 +59,7 @@ def token_rows(rows: list[db.ApiToken], now: datetime) -> list[TokenRow]:
         shown.append(
             TokenRow(
                 name=token.name,
+                prefix=token.prefix,
                 level=token.level.capitalize(),
                 scope=api_token_apply.scope(token),
                 sources=", ".join(token.sources) or "Anywhere",

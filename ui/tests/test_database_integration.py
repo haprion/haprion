@@ -9845,6 +9845,12 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                 self.fail(f"haprion-backup has no {name}")
             return found.group(0)
 
+        def variable(name: str) -> str:
+            found = re.search(rf"^{name}=(?:\"[^\"\n]*\"\n|\".*?^SQL\n\)\"\n)", source, re.M | re.S)
+            if found is None:
+                self.fail(f"haprion-backup has no {name}")
+            return found.group(0)
+
         units = re.search(r"^RESTORE_UNITS=\(\n.*?^\)\n", source, re.M | re.S)
         if units is None:
             self.fail("haprion-backup has no RESTORE_UNITS")
@@ -9893,6 +9899,8 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                 for name in ("counted", "psql_as", "psql_scratch")
             )
             + units.group(0)
+            + variable("TOKEN_IS_LIVE")
+            + variable("REVOKE_REVIVED_TOKENS")
             + f"RESTORE_STOPPED={self.directory / 'restore-stopped'}\n"
             f"PLATFORM_STEPS={self.directory / 'steps'}\n"
             f"COLLECTOR_CONFIG={self.directory / 'none'}\nCOLLECTOR_COMMAND=/bin/false\n"
@@ -9905,6 +9913,8 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                     "dump_before_restore",
                     "dump_revision",
                     "do_after_restore",
+                    "active_token_hashes",
+                    "hold_api_tokens",
                     "stopped_before",
                     "remember_stopped",
                     "restore_stopped",
@@ -9967,6 +9977,48 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             self.assertEqual(_first(cursor), 1)
             cursor.execute("select severity, variant from attention_ack")
             self.assertEqual(cursor.fetchall(), [("", "")])
+
+    def test_a_token_revoked_after_the_dump_is_revoked_again_by_the_restore(self) -> None:
+        """Review 26-10-31, P2-1: the trigger guards an update, not a row written back."""
+
+        self.alembic("upgrade", "head")
+        insert = (
+            "insert into api_token (name, level, token_hash, prefix, created_by, expires_at) "
+            "values (%s, 'read', %s, 'hap_abcdefgh', 'admin', now() + interval '30 days')"
+        )
+        with self.scratch() as connection:
+            connection.execute(insert, ("kept", b"k" * 32))
+            connection.execute(insert, ("leaked", b"l" * 32))
+            connection.commit()
+        dump = self.directory / "at-the-head.dump"
+        subprocess.run(  # noqa: S603 - this cluster's pg_dump, fixed arguments
+            [f"{self.bindir}/pg_dump", "-h", self.socket, "-U", self.role, "-d", self.NAME,
+             "--format=custom", f"--file={dump}"],
+            check=True,
+        )  # fmt: skip
+        with self.scratch() as connection:
+            connection.execute(
+                "update api_token set revoked_at = now(), revoked_by = 'admin' "
+                "where name = 'leaked'"
+            )
+            connection.execute(insert, ("later", b"n" * 32))
+            connection.commit()
+
+        done = self.restore(dump)
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        with self.scratch() as connection:
+            rows = connection.execute(
+                "select name, revoked_by from api_token order by name"
+            ).fetchall()
+            logged = connection.execute(
+                "select detail from audit_event where action = 'api_tokens_revoked'"
+            ).fetchall()
+        self.assertEqual(rows, [("kept", None), ("leaked", "restore")])
+        self.assertEqual([detail["tokens"] for (detail,) in logged], [["leaked"]])
+        self.assertIn(
+            "API tokens revoked again, active now but not before the restore: leaked", done.stdout
+        )
 
     def test_a_dump_at_0101_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0101", grants_differ="0101 already grants what 0102 does")
@@ -10043,6 +10095,7 @@ class ApiTokensInTheDatabase(unittest.TestCase):
             {"name": "Not-A-Name"},
             {"level": "admin"},
             {"level": "read", "objects": ["shop"]},
+            {"level": "block", "objects": []},
             {"days": 731 + 366},
             {"days": 0},
             {"prefix": "abc"},
@@ -10123,6 +10176,62 @@ class ApiTokensInTheDatabase(unittest.TestCase):
             token = db.api_tokens(connection)[0]
         self.assertEqual(token.last_used_from, "192.0.2.7")
         self.assertIsNotNone(token.last_used_at)
+
+    def test_a_restore_revokes_the_active_tokens_the_replaced_database_did_not_have(self) -> None:
+        """Review 26-10-31, P2-1: the statement `haprion-backup restore` runs after a restore."""
+
+        from tests.test_platform_backup import SCRIPT, revoke_statement
+
+        statement = revoke_statement(SCRIPT.read_text()).replace(":'kept'", "%(kept)s")
+        self.make("stays", token_hash=b"s" * 32)
+        self.make("revived", token_hash=b"r" * 32)
+        self.make("late", token_hash=b"l" * 32)
+        self.make("old", token_hash=b"o" * 32)
+        with self.connect() as connection:
+            connection.execute(
+                "update api_token set created_at = now() - interval '2 days', "
+                "expires_at = now() - interval '1 day' where name = 'late'"
+            )
+            connection.execute(
+                "update api_token set revoked_at = now(), revoked_by = 'admin' where name = 'old'"
+            )
+            connection.commit()
+
+        kept = f"{(b's' * 32).hex()},00"
+        with self.connect() as connection:
+            revoked = [row[0] for row in connection.execute(statement, {"kept": kept})]
+            connection.commit()
+            again = list(connection.execute(statement, {"kept": kept}))
+            connection.commit()
+            rows = {
+                row[0]: (row[1], row[2])
+                for row in connection.execute(
+                    "select name, revoked_at is not null, revoked_by from api_token"
+                )
+            }
+            audited = connection.execute(
+                "select actor, detail from audit_event where action = 'api_tokens_revoked'"
+            ).fetchall()
+        self.assertEqual(revoked, ["revived"])
+        self.assertEqual(again, [], "a second run revokes nothing and writes nothing")
+        self.assertEqual(rows["stays"], (False, None))
+        self.assertEqual(rows["revived"], (True, "restore"))
+        self.assertEqual(rows["old"], (True, "admin"), "an earlier revocation is left alone")
+        self.assertEqual(rows["late"], (False, None), "an expired token is not revoked")
+        ((actor, detail),) = audited
+        self.assertEqual(actor, "haprion-backup")
+        self.assertEqual(detail["tokens"], ["revived"])
+
+    def test_with_nothing_active_before_every_active_restored_token_is_revoked(self) -> None:
+        from tests.test_platform_backup import SCRIPT, revoke_statement
+
+        statement = revoke_statement(SCRIPT.read_text()).replace(":'kept'", "%(kept)s")
+        self.make("one", token_hash=b"1" * 32)
+        self.make("two", token_hash=b"2" * 32)
+        with self.connect() as connection:
+            revoked = [row[0] for row in connection.execute(statement, {"kept": ""})]
+            connection.commit()
+        self.assertEqual(revoked, ["one", "two"])
 
     def test_the_worker_and_the_poller_cannot_read_a_token(self) -> None:
         for role in ("HAPRION_UI_TEST_WORKER_ROLE", "HAPRION_UI_TEST_POLLER_ROLE"):

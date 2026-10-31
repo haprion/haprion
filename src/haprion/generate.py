@@ -275,7 +275,13 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     # which, on the node and at every receiver - one of 129 requests went
     # unanswered on 2026-10-31 and nothing said why. The collector passes over it.
     #
-    "%(waf_error)[var(txn.coraza.error)] "
+    # HAProxy 3.4 stores the code in a sample typed boolean (flt_spoe.c), which
+    # text prints as the number and `%{+json}` writes as `true` - what the
+    # nodes logged on 2026-10-31. `lower` turns it into its digits (a boolean
+    # casts to a string as its number) and `add(0)` back into an integer typed
+    # as one; `add(0)` alone keeps the boolean's type (sample.c's cast table).
+    #
+    "%(waf_error)[var(txn.coraza.error),lower,add(0)] "
     #
     # The engine's transaction ID, which it hands back to HAProxy: the same ID
     # its own log puts on every rule it matched, so the WAF page can tell what

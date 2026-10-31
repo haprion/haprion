@@ -2905,6 +2905,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
     engine: subprocess.Popen[bytes] | None
     engine_log: Path
     directory: tempfile.TemporaryDirectory[str]
+    sink: socket.socket
     port: int
 
     @classmethod
@@ -2934,6 +2935,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             default_vip="main",
             ports={"http": cls.port},
             rule_definitions=crs.definitions(installed),
+            traffic_logging=True,
         )
         waf_files = layer.waf_files
 
@@ -2962,6 +2964,20 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         shutil.copy(WAF_RULES / "crs-setup.conf.example", root / "waf" / "crs" / "crs-setup.conf")
         shutil.copytree(WAF_RULES / "rules", root / "waf" / "crs" / "rules")
         arguments = write_release(root, layer)
+        #
+        # The traffic record as the nodes write it, read from a socket: the
+        # JSON is what the collector and every receiver get, and a value can
+        # read one way in a header and another way there (`waf_error`).
+        #
+        cls.sink = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        cls.sink.bind(str(root / "log.sock"))
+        cls.sink.settimeout(0.2)
+        frontends = root / "conf.d" / "1000-frontends.cfg"
+        frontends.write_text(
+            frontends.read_text().replace(
+                "log /var/lib/haproxy/dev/haprion-traffic ", f"log {root / 'log.sock'} "
+            )
+        )
         cls.engine = None
         if cls.engine_running:
             cls.engine_log = root / "engine.log"
@@ -2987,7 +3003,26 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         for server in cls.servers:
             server.shutdown()
             server.server_close()
+        cls.sink.close()
         cls.directory.cleanup()
+
+    def record(self, path: str) -> dict[str, object]:
+        """The traffic record of the last request for `path`, as the nodes log it."""
+
+        found: dict[str, object] = {}
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                datagram = self.sink.recv(65536).decode()
+            except TimeoutError:
+                if found:
+                    break
+                continue
+            entry = json.loads(datagram[datagram.index("{") :])
+            if entry.get("path") == path:
+                found = entry
+        self.assertTrue(found, f"no traffic record for {path}")
+        return found
 
     def ask(
         self,
@@ -3287,6 +3322,15 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             "^looks\\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$",
         )
 
+    def test_an_answered_request_records_no_error(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.request("GET", "/answered", headers={"Host": "looks.example.com"})
+            connection.getresponse().read()
+        finally:
+            connection.close()
+        self.assertEqual(self.record("/answered")["waf_error"], "")
+
 
 class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
     """The same layer with no engine: `on_engine_error` decides (B232)."""
@@ -3305,6 +3349,9 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
     def test_an_ordinary_request_is_served_and_named_by_nothing(self) -> None:
         self.assertEqual(self.ask("/?q=hello", name="looks"), (200, "waf-engine:log", ""))
 
+    def test_an_answered_request_records_no_error(self) -> None:
+        self.skipTest("the engine is not running")
+
     def test_the_record_says_why_the_engine_gave_no_answer(self) -> None:
         """`waf_error` in the traffic record: HAProxy's SPOE code for this request."""
 
@@ -3317,6 +3364,22 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
             connection.close()
         # 257 on 3.4.7 (256 + SPOP's I/O error): nothing listens. A timeout is 1.
         self.assertRegex(response.getheader("X-Waf-Error") or "", "^[0-9]+$")
+
+    def test_the_record_carries_the_code_not_just_that_there_was_one(self) -> None:
+        """The JSON record has the number: HAProxy 3.4 types the variable bool.
+
+        `set-on-error` stores the code in a sample typed boolean (flt_spoe.c),
+        so a header prints 257 while `%{+json}` writes `true` - which is what
+        the nodes logged on 2026-10-31, and said nothing about why.
+        """
+
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.request("GET", "/why", headers={"Host": "looks.example.com"})
+            connection.getresponse().read()
+        finally:
+            connection.close()
+        self.assertEqual(self.record("/why")["waf_error"], 257)
 
     def test_a_looking_object_lets_an_attack_through_and_names_the_rules(self) -> None:
         self.skipTest("the engine is not running")

@@ -22,20 +22,25 @@
         <span class="field-title">Level</span>
         <div class="form-checks form-checks-stacked">
           {% for value, help in levels.items() %}
-          <label class="check"><input type="radio" name="level" value="{{ value }}"{% if form.level == value %} checked{% endif %} data-level> <span><strong>{{ value | capitalize }}</strong> — {{ help }}</span></label>
+          {% set closed = value == 'block' and not proxies %}
+          <label class="check"><input type="radio" name="level" value="{{ value }}"{% if form.level == value and not closed %} checked{% endif %}{% if closed %} disabled{% endif %} data-level> <span><strong>{{ value | capitalize }}</strong> — {{ help }}{% if closed %} No proxy has dynamic blocking.{% endif %}</span></label>
           {% endfor %}
         </div>
       </div>
       {% if clusters %}
       <div class="field field-wide">
-        <span class="field-title">Clusters <span class="optional">(optional, all if none is chosen)</span></span>
-        <div class="form-checks">{% for cluster in clusters %}<label class="check"><input type="checkbox" name="clusters" value="{{ cluster }}"{% if cluster in form.clusters %} checked{% endif %}> {{ cluster }}</label>{% endfor %}</div>
+        <span class="field-title">Clusters</span>
+        <div class="form-checks">
+          <label class="check"><input type="radio" name="cluster_scope" value="all"{% if form.cluster_scope == 'all' %} checked{% endif %} data-cluster-scope> All clusters</label>
+          <label class="check"><input type="radio" name="cluster_scope" value="chosen"{% if form.cluster_scope == 'chosen' %} checked{% endif %} data-cluster-scope> Only these:</label>
+          {% for cluster in clusters %}<label class="check" data-for-scope="chosen"><input type="checkbox" name="clusters" value="{{ cluster }}"{% if cluster in form.clusters %} checked{% endif %} data-cluster> {{ cluster }}</label>{% endfor %}
+        </div>
       </div>
       {% endif %}
       {% if proxies %}
       <div class="field field-wide" data-for-level="block">
-        <span class="field-title">Proxies <span class="optional">(a block token needs at least one)</span></span>
-        <div class="form-checks">{% for item, where in proxies.items() %}<label class="check" title="{{ where | join(', ') }}"><input type="checkbox" name="objects" value="{{ item }}"{% if item in form.objects %} checked{% endif %}> {{ item }}</label>{% endfor %}</div>
+        <span class="field-title">Proxies with dynamic blocking <span class="optional">(at least one)</span></span>
+        <div class="form-checks">{% for item, where in proxies.items() %}<label class="check" title="{{ where | join(', ') }}" data-in-clusters="{{ where | join(' ') }}"><input type="checkbox" name="objects" value="{{ item }}"{% if item in form.objects %} checked{% endif %}> {{ item }}</label>{% endfor %}</div>
       </div>
       {% endif %}
       <label class="field-wide"><span class="field-title">Called from <span class="optional">(optional)</span></span><textarea name="sources" rows="3" spellcheck="false" placeholder="One address or network per line">{{ form.sources }}</textarea></label>

@@ -133,6 +133,7 @@ def build_router(config: Config) -> APIRouter:
             "name": "",
             "level": "read",
             "days": api_tokens.DEFAULT_DAYS,
+            "cluster_scope": "all",
             "clusters": [],
             "objects": [],
             "sources": "",
@@ -140,10 +141,10 @@ def build_router(config: Config) -> APIRouter:
         }
         #
         # A block token names the proxies it may block on (review 26-10-31,
-        # P3-8): with none to choose, the level is not offered.
+        # P3-8): with none to choose, the level is shown closed, with why.
         #
-        levels = {level: help for level, help in LEVEL_HELP.items() if level != "block" or proxies}
-        if entered["level"] not in levels:
+        levels = dict(LEVEL_HELP)
+        if entered["level"] == "block" and not proxies:
             entered["level"] = "read"
         return TEMPLATES.TemplateResponse(
             request,
@@ -180,6 +181,7 @@ def build_router(config: Config) -> APIRouter:
         name: Annotated[str, Form(max_length=64)] = "",
         level: Annotated[str, Form(max_length=16)] = "",
         days: Annotated[str, Form(max_length=8)] = "",
+        cluster_scope: Annotated[str, Form(max_length=16)] = "",
         clusters: Annotated[list[str] | None, Form()] = None,
         objects: Annotated[list[str] | None, Form()] = None,
         sources: Annotated[str, Form(max_length=4096)] = "",
@@ -191,11 +193,22 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
             return forbidden_page(request, config)
+        scope = (
+            cluster_scope
+            if cluster_scope in ("all", "chosen")
+            else ("chosen" if clusters else "all")
+        )
         entered: dict[str, Any] = {
             "name": name.strip(),
             "level": level,
             "days": days.strip(),
-            "clusters": list(dict.fromkeys(clusters or [])),
+            #
+            # "All clusters" is a token without a cluster list, which also
+            # sees a cluster made later; boxes left ticked under it say nothing.
+            # A post without the choice is read from the boxes.
+            #
+            "cluster_scope": scope,
+            "clusters": list(dict.fromkeys(clusters or [])) if scope == "chosen" else [],
             "objects": list(dict.fromkeys(objects or [])),
             "sources": sources,
         }
@@ -203,6 +216,8 @@ def build_router(config: Config) -> APIRouter:
         def again(problem: str, status_code: int = 400) -> Response:
             return form_page(request, gate, problem=problem, form=entered, status_code=status_code)
 
+        if entered["cluster_scope"] == "chosen" and not entered["clusters"]:
+            return again("Choose the clusters the token may see, or All clusters.")
         try:
             length = int(entered["days"])
         except ValueError:

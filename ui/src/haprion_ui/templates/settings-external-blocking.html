@@ -29,7 +29,7 @@
       <td data-label="Key" title="Added by {{ client.added_by or 'the command line' }}{% if client.added_at %}, {{ client.added_at | shown_at }}{% endif %}"><code>{{ client.fingerprint }}</code></td>
       <td data-label="" class="block-client-action"><a class="secondary-button" href="/settings/external-blocking?remove={{ client.client_id }}">Remove</a></td>
     </tr>{% endfor %}</tbody>
-  </table></div>{% else %}<p class="table-empty">{{ clients.problem or 'No client may block.' }}</p>{% endif %}
+  </table></div>{% else %}<div class="empty-state"><div><strong>{{ clients.problem or 'No client may block.' }}</strong></div></div>{% endif %}
 </section>
 
 {% if removal %}

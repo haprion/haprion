@@ -125,6 +125,26 @@ class TheTokensPage(LoginTestCase):
             page.check("input[name=level][value=write]")
             self.assertFalse(page.is_visible("[data-for-level=block]"))
 
+    def test_only_these_clusters_show_their_boxes_and_only_their_proxies(self) -> None:
+        def by_cluster(_readings: object, cluster: str) -> tuple[str, ...]:
+            return ("shop",) if cluster == "edge-demo" else ("store",)
+
+        with (
+            mock.patch("haprion_ui.external_blocking.blocking_objects", side_effect=by_cluster),
+            self.signed_in(1280, "/settings/api-tokens/new") as page,
+        ):
+            page.check("input[name=level][value=block]")
+            self.assertFalse(page.is_visible("input[name=clusters][value=edge-demo]"))
+            self.assertTrue(page.is_visible("input[name=objects][value=store]"))
+            page.check("input[name=cluster_scope][value=chosen]")
+            page.check("input[name=clusters][value=edge-demo]")
+            self.assertTrue(page.is_visible("input[name=objects][value=shop]"))
+            self.assertFalse(page.is_visible("input[name=objects][value=store]"))
+            self.assertTrue(page.is_disabled("input[name=objects][value=store]"))
+            page.check("input[name=cluster_scope][value=all]")
+            self.assertFalse(page.is_visible("input[name=clusters][value=edge-demo]"))
+            self.assertTrue(page.is_visible("input[name=objects][value=store]"))
+
     def test_the_secret_is_copyable_on_the_page_that_made_it(self) -> None:
         with self.signed_in(1280, "/settings/api-tokens/new") as page:
             page.fill("input[name=name]", "monitoring")

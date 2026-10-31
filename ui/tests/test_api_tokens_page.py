@@ -161,7 +161,7 @@ class MakingATokenOnThePage(TokensPage):
             self.assertIn(f'name="level" value="{level}"', page)
         self.assertIn('<option value="365" selected>365 days</option>', page)
 
-    def test_without_a_proxy_to_choose_the_block_level_is_not_offered(self) -> None:
+    def test_without_a_proxy_to_choose_the_block_level_is_closed_and_says_why(self) -> None:
         """Review 26-10-31, P3-8: the level was offered, and could not be filled in."""
 
         with mock.patch("haprion_ui.external_blocking.blocking_objects", return_value=()):
@@ -170,14 +170,37 @@ class MakingATokenOnThePage(TokensPage):
                 self.admin(), "/settings/api-tokens/new", **self.fill(level="block")
             )
 
-        for level in api_tokens.LEVELS:
-            self.assertEqual(f'name="level" value="{level}"' in page, level != "block", level)
+        self.assertIn('name="level" value="block" disabled', page)
+        self.assertIn("No proxy has dynamic blocking.", page)
         self.assertNotIn("data-for-level", page)
-        # Still refused if it is sent, and the form then shows the level it can offer.
+        # Still refused if it is sent, and the form then has the level it can offer chosen.
         self.assertEqual(refused.status_code, 400)
         self.assertIn("A block token names the proxies it may block on.", refused.text)
-        self.assertNotIn('name="level" value="block"', refused.text)
         self.assertIn('name="level" value="read" checked', refused.text)
+
+    def test_all_clusters_is_a_token_without_a_list_whatever_is_ticked(self) -> None:
+        self.post(
+            self.admin(),
+            "/settings/api-tokens/new",
+            **self.fill(cluster_scope="all", clusters=["alpha"]),
+        )
+        self.assertEqual(list(self.made[-1]["clusters"]), [])
+
+    def test_only_these_takes_the_ticked_clusters_and_refuses_none(self) -> None:
+        self.post(
+            self.admin(),
+            "/settings/api-tokens/new",
+            **self.fill(cluster_scope="chosen", clusters=["beta"]),
+        )
+        self.assertEqual(list(self.made[-1]["clusters"]), ["beta"])
+        refused = self.post(
+            self.admin(),
+            "/settings/api-tokens/new",
+            **self.fill(name="other", cluster_scope="chosen"),
+        )
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("Choose the clusters the token may see, or All clusters.", refused.text)
+        self.assertIn('name="cluster_scope" value="chosen" checked', refused.text)
 
     def test_the_secret_is_shown_once_and_kept_nowhere_else(self) -> None:
         response = self.post(

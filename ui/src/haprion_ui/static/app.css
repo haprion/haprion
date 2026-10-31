@@ -644,6 +644,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .api-token-secret { margin: 0 20px; }
 .api-token-form .form-grid .form-checks { padding: 0; }
 .api-token-form .form-grid .check { flex-direction: row; align-items: center; gap: 8px; }
+.api-token-form [hidden] { display: none; }
 @media (max-width: 1049px) {
   .api-token-table td.api-token-action { grid-column: 1 / -1; text-align: left; }
 }

@@ -69,6 +69,11 @@ BEARER = HTTPBearer(auto_error=False, description="An API token, made under Sett
 class Caller:
     issued: db.ApiToken
     source: str
+    #
+    # The hash the token was found by, so a write can judge it again in the
+    # transaction that queues its job (`api.writing`).
+    #
+    digest: bytes = b""
 
     @property
     def actor(self) -> str:
@@ -200,12 +205,13 @@ def current_caller(
     token = None
     if secret is not None:
         with request.app.state.pool.connection() as connection:
-            token = db.api_token_by_hash(connection, api_tokens.secret_hash(secret))
+            digest = api_tokens.secret_hash(secret)
+            token = db.api_token_by_hash(connection, digest)
             verdict = api_tokens.evaluate(token, now=datetime.now(UTC), source=source)
             if verdict.usable and token is not None:
                 db.touch_api_token(connection, token.id, source)
                 connection.commit()
-                return Caller(issued=token, source=source)
+                return Caller(issued=token, source=source, digest=digest)
     else:
         verdict = api_tokens.Verdict(
             False, "malformed" if request.headers.get("authorization") else "missing"

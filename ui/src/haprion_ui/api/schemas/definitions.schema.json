@@ -674,6 +674,50 @@
         }
       },
       "additionalProperties": true
+    },
+    "queued": {
+      "type": "object",
+      "description": "A change asked for: the job queued for it, to follow until it ends.",
+      "required": [
+        "job",
+        "follow"
+      ],
+      "properties": {
+        "job": {
+          "type": "object",
+          "description": "The job queued, or the one already queued under the same Idempotency-Key.",
+          "required": [
+            "id",
+            "request_id",
+            "operation",
+            "state"
+          ],
+          "properties": {
+            "id": {
+              "type": "integer",
+              "description": "Value. The job's number."
+            },
+            "request_id": {
+              "type": "string",
+              "description": "Value. The job's request id, as the history shows it."
+            },
+            "operation": {
+              "$ref": "#/$defs/job_operation",
+              "description": "Code. What the job does."
+            },
+            "state": {
+              "$ref": "#/$defs/job_state",
+              "description": "Code. Where the job is; pending when it was just queued."
+            }
+          },
+          "additionalProperties": true
+        },
+        "follow": {
+          "type": "string",
+          "description": "Value. The path to read the job at until it ends: /api/v1/jobs/{id}."
+        }
+      },
+      "additionalProperties": true
     }
   }
 }

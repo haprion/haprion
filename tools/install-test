@@ -608,11 +608,21 @@ class Run:
         if not re.search(r"^\[traffic_logs\]\nenabled = true$", config, re.M):
             raise Failed(f"setup left the traffic log page off:\n{config}")
         self.answers_on_the_vip()
-        _, lines = self.on(
-            holder, "cat /var/log/haprion/traffic-*.jsonl 2>/dev/null || true", check=False
-        )
-        if "shop.example.com" not in lines:
-            raise Failed(f"{holder} wrote no traffic record for the request:\n{lines[-2000:]}")
+        #
+        # rsyslog writes the record a moment after HAProxy hands it over; read
+        # once and a slow write is a failure (1 of 4 runs on 2026-10-31, the
+        # three runs after it passed). A record that never comes still fails.
+        #
+        deadline = time.monotonic() + 10
+        while True:
+            _, lines = self.on(
+                holder, "cat /var/log/haprion/traffic-*.jsonl 2>/dev/null || true", check=False
+            )
+            if "shop.example.com" in lines:
+                break
+            if time.monotonic() > deadline:
+                raise Failed(f"{holder} wrote no traffic record for the request:\n{lines[-2000:]}")
+            time.sleep(1)
         self.on("mgr", "systemctl start haprion-traffic-collector.service")
         _, count = self.on(
             "mgr",

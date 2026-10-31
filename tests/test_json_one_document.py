@@ -213,8 +213,21 @@ class OneEnvelopeBuilder(unittest.TestCase):
             for path in sorted(source.rglob("*.py")):
                 if path.name == "envelope.py":
                     continue
-                for found in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-                    if isinstance(found, ast.Dict):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                #
+                # A JSON Schema's `properties` names an envelope's fields to
+                # describe them (`haprion_ui.api.contract`, for OpenAPI); it
+                # builds none.
+                #
+                described = {
+                    id(value)
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Dict)
+                    for key, value in zip(node.keys, node.values, strict=True)
+                    if isinstance(key, ast.Constant) and key.value == "properties"
+                }
+                for found in ast.walk(tree):
+                    if isinstance(found, ast.Dict) and id(found) not in described:
                         keys = {key.value for key in found.keys if isinstance(key, ast.Constant)}
                         if {"ok", "outcome", "operation"} <= keys:
                             built.append(f"{path.relative_to(root)}:{found.lineno}")

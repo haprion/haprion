@@ -82,6 +82,7 @@ ESSENTIAL = frozenset(
         "rmdir",
         "runuser",
         "sed",
+        "paste",
         "seq",
         "sh",
         "sha256sum",

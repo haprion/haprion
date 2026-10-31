@@ -1045,6 +1045,42 @@ def run_one(
 
         step("a second deploy changes nothing", converged)
 
+        def an_api_token_is_made_and_used() -> None:
+            """B416: a token made on the manager reads through nginx's /api/, and not once revoked.
+
+            The secret stays in a root-only file on the manager, so the log of
+            this run never holds it.
+            """
+
+            run.on(
+                "mgr",
+                "umask 077 && haprion-api-token add install-test --level read --days 30 "
+                "> /root/api-token 2>/dev/null "
+                "&& printf 'Authorization: Bearer %s\\n' \"$(cat /root/api-token)\" > /root/api-header",
+            )
+            call = (
+                "curl -sSk -o /root/api-answer -w '%{http_code}\\n' -H @/root/api-header "
+                "https://127.0.0.1/api/v1/clusters && cat /root/api-answer"
+            )
+            _, answered = run.on("mgr", call)
+            status, _, body = answered.partition("\n")
+            listed: list[object] = []
+            for record in _records(body):
+                result = record.get("result")
+                if record.get("ok") is True and isinstance(result, dict):
+                    clusters = result.get("clusters")
+                    listed += clusters if isinstance(clusters, list) else []
+            names = [entry.get("name") for entry in listed if isinstance(entry, dict)]
+            if status.strip() != "200" or CLUSTER not in names:
+                raise Failed(f"the API did not list the cluster to a read token:\n{answered}")
+            run.on("mgr", "haprion-api-token revoke install-test")
+            _, refused = run.on("mgr", call)
+            if refused.partition("\n")[0].strip() != "401":
+                raise Failed(f"a revoked token was not refused:\n{refused}")
+            run.on("mgr", "rm -f /root/api-token /root/api-header /root/api-answer")
+
+        step("an API token made, used through nginx and revoked", an_api_token_is_made_and_used)
+
         def removed_steps_down() -> tuple[str, str]:
             """B319, Fas 18 finding 73: a removed node left running took the address."""
 

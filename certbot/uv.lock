@@ -1012,19 +1012,19 @@ wheels = [
 
 [[package]]
 name = "certbot-dns-multi"
-version = "4.35.2"
+version = "5.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "acme" },
     { name = "certbot" },
     { name = "josepy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/6c/c6dd1d129c37a0486a38fea672cb90cca921c0e837429215fcbc0b5d6cf3/certbot_dns_multi-4.35.2.tar.gz", hash = "sha256:84ccb6bdb70c8fa6732cdecc8f4c8fbc2cc5d220fc12db44c4f304f76194aac3", size = 114357, upload-time = "2026-04-24T20:26:39.293Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/6c/ee2cf1f9a38b9c00a75cee8023a10e38bfc810761318bd1e22eca3f7a85b/certbot_dns_multi-5.6.0.tar.gz", hash = "sha256:0167f4bd6e00dbcbac47ae03f8ed1d7017c14b1067d2a06fee29917e67676b72", size = 114669, upload-time = "2026-10-28T21:44:50.229Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/8b/0b678a257dfd3b82c95e4b527f34dc7c0486b621e6bf0180d0aec8139bb0/certbot_dns_multi-4.35.2-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:cec8f6f371af3a758881b47d2262b660d5e8a90a401a4025356b5fcc83eecc6e", size = 35790588, upload-time = "2026-04-24T20:26:24.59Z" },
-    { url = "https://files.pythonhosted.org/packages/b6/eb/cfbea673e6763d8798a444c1ab3ffaa61c497940ade45463ab2e0ec075b3/certbot_dns_multi-4.35.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8a4cfdc6ff11a04e549d637137e87395e32ec1547cd3004970c33b71afd64272", size = 32959868, upload-time = "2026-04-24T20:26:28.328Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/f6/21893b5a11175f9730177a8a94a4b89a4535363dfee13f279c6a71ae58d4/certbot_dns_multi-4.35.2-cp314-cp314-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:56cb5f9b3ca8c0f2cb3d6837b3fe50355583baa5c681bd09f46f4413a6ac68c4", size = 35790597, upload-time = "2026-04-24T20:26:32.548Z" },
-    { url = "https://files.pythonhosted.org/packages/9d/9f/6e47f4f56e2f24726d24663a3e3fc3f6fc05d06938e6133a6a8e7f7ca30b/certbot_dns_multi-4.35.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:96050b75e4ec818365e93c4531faaddfc01efc8504e41b32715f65a3c714ce66", size = 32959862, upload-time = "2026-04-24T20:26:36.287Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/18/d3a7fb340018118843c7907dece9f95f9271dbe7c9c94c26b6e778d8e59b/certbot_dns_multi-5.6.0-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:f5bddbe4ed83f9c4ada7917f2de34cc9940df7a8630b47b09fc944ba4117eddb", size = 37462082, upload-time = "2026-10-28T20:19:56.757Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/3a/89beef436a1cebe43d34611b7c23ad28e23e7d70ff2401db831387996d4f/certbot_dns_multi-5.6.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a59e588fa02c720e5f40cbd3cd1d9a36e9a89f230302292609d01a6faff40477", size = 34504306, upload-time = "2026-10-28T21:44:39.731Z" },
+    { url = "https://files.pythonhosted.org/packages/61/7e/76747bbb6895aa7797840f75a3f7b1df22290472b6a33054363c04bcb830/certbot_dns_multi-5.6.0-cp314-cp314-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:9cb0bcbcf5539a00fc002b18ed8a725c514e01277db60849e1fe6805702541a3", size = 37462240, upload-time = "2026-10-28T21:44:43.796Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/e2/bc0e84c1ee86dbc82ad8112748cdf9facc22f87a7a15fbc9a16cfa1c0aaf/certbot_dns_multi-5.6.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e6e64fc2364cfb8d297dae01273bc8a6e20db2fd0d4aacac76538d68ca0b4e25", size = 34504260, upload-time = "2026-10-28T21:44:47.796Z" },
 ]
 
 [[package]]
@@ -2032,7 +2032,7 @@ requires-dist = [
     { name = "certbot-dns-luadns", specifier = "==5.8.0" },
     { name = "certbot-dns-lws", specifier = "~=1.0.0" },
     { name = "certbot-dns-mijn-host", specifier = "~=0.0.4" },
-    { name = "certbot-dns-multi", specifier = "~=4.9" },
+    { name = "certbot-dns-multi", specifier = "~=5.6" },
     { name = "certbot-dns-namecheap", specifier = "~=1.0.0" },
     { name = "certbot-dns-namecom", specifier = "~=1.0.0" },
     { name = "certbot-dns-netcup", specifier = "~=1.0.0" },

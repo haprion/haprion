@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from haprion import dnsdist_config, proxy_model, resolve_socket
+from haprion import digits, dnsdist_config, proxy_model, resolve_socket
 from haprion.proxy_model import ModelError
 from haprion.version_history import MAX_NAME_LENGTH, comment_problem
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -346,7 +346,7 @@ def _revision(request: Request) -> int | None:
     value = request.headers.get("If-Match", "").strip().removeprefix("W/").strip('"')
     if not request.headers.get("If-Match"):
         return None
-    if not value.isascii() or not value.isdigit():
+    if not digits.is_digits(value):
         raise _bad("If-Match holds the revision of the saved change, a whole number.")
     return int(value)
 

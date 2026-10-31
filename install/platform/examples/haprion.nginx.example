@@ -36,6 +36,15 @@ limit_req_zone $haprion_sign_in zone=haprion_sign_in:1m rate=10r/m;
 #
 limit_req_zone $binary_remote_addr zone=haprion_api:1m rate=10r/s;
 
+#
+# nginx's own answers on /api/ carry a request id in the envelope, as the
+# application's do, and in the same shape: nginx's 32 hex characters written
+# as a UUID, so one schema describes every answer a script can get.
+#
+map $request_id $haprion_request_uuid {
+    "~^(?<a>[0-9a-f]{8})(?<b>[0-9a-f]{4})(?<c>[0-9a-f]{4})(?<d>[0-9a-f]{4})(?<e>[0-9a-f]{12})$" "$a-$b-$c-$d-$e";
+}
+
 server {
     listen 80;
     listen [::]:80;
@@ -160,32 +169,32 @@ server {
     location @api_413 {
         internal;
         default_type application/json;
-        return 413 '{"schema_version":1,"ok":false,"outcome":"blocked","operation":"api","cluster":null,"request_id":"$request_id","result":null,"warnings":[],"error":{"code":"too_large","message":"The request body is larger than 1 MB.","node":null,"details":null}}';
+        return 413 '{"schema_version":1,"ok":false,"outcome":"blocked","operation":"api","cluster":null,"request_id":"$haprion_request_uuid","result":null,"warnings":[],"error":{"code":"too_large","message":"The request body is larger than 1 MB.","node":null,"details":null}}';
     }
 
     location @api_429 {
         internal;
         default_type application/json;
         add_header Retry-After 1 always;
-        return 429 '{"schema_version":1,"ok":false,"outcome":"blocked","operation":"api","cluster":null,"request_id":"$request_id","result":null,"warnings":[],"error":{"code":"rate_limited","message":"Too many calls from this address; try again in a second.","node":null,"details":null}}';
+        return 429 '{"schema_version":1,"ok":false,"outcome":"blocked","operation":"api","cluster":null,"request_id":"$haprion_request_uuid","result":null,"warnings":[],"error":{"code":"rate_limited","message":"Too many calls from this address; try again in a second.","node":null,"details":null}}';
     }
 
     location @api_502 {
         internal;
         default_type application/json;
-        return 502 '{"schema_version":1,"ok":false,"outcome":"failed","operation":"api","cluster":null,"request_id":"$request_id","result":null,"warnings":[],"error":{"code":"unavailable","message":"The manager did not answer; try again shortly.","node":null,"details":null}}';
+        return 502 '{"schema_version":1,"ok":false,"outcome":"failed","operation":"api","cluster":null,"request_id":"$haprion_request_uuid","result":null,"warnings":[],"error":{"code":"unavailable","message":"The manager did not answer; try again shortly.","node":null,"details":null}}';
     }
 
     location @api_503 {
         internal;
         default_type application/json;
-        return 503 '{"schema_version":1,"ok":false,"outcome":"failed","operation":"api","cluster":null,"request_id":"$request_id","result":null,"warnings":[],"error":{"code":"unavailable","message":"The manager did not answer; try again shortly.","node":null,"details":null}}';
+        return 503 '{"schema_version":1,"ok":false,"outcome":"failed","operation":"api","cluster":null,"request_id":"$haprion_request_uuid","result":null,"warnings":[],"error":{"code":"unavailable","message":"The manager did not answer; try again shortly.","node":null,"details":null}}';
     }
 
     location @api_504 {
         internal;
         default_type application/json;
-        return 504 '{"schema_version":1,"ok":false,"outcome":"failed","operation":"api","cluster":null,"request_id":"$request_id","result":null,"warnings":[],"error":{"code":"unavailable","message":"The manager did not answer in time.","node":null,"details":null}}';
+        return 504 '{"schema_version":1,"ok":false,"outcome":"failed","operation":"api","cluster":null,"request_id":"$haprion_request_uuid","result":null,"warnings":[],"error":{"code":"unavailable","message":"The manager did not answer in time.","node":null,"details":null}}';
     }
 
     location / {

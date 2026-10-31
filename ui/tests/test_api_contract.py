@@ -619,10 +619,11 @@ class TheRefusals(ReadingTestCase):
         self.assertGreaterEqual(len(bodies), 5)
         for text in bodies:
             with self.subTest(body=text[:90]):
-                body = json.loads(text.replace("$request_id", "0" * 32))
-                # Not the common envelope: nginx's request id is its own 32 hex
-                # characters, not the uuid that schema names.
+                body = json.loads(
+                    text.replace("$haprion_request_uuid", "6f1c0a52-3d4e-4b7a-9c21-0e5f6a7b8c9d")
+                )
                 self.assertEqual(sorted(refusal.iter_errors(body), key=str), [])
+                self.assertEqual(sorted(envelope_checker().iter_errors(body), key=str), [])
 
 
 class EveryRouteHasItsSchema(ApiTestCase):

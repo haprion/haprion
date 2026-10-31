@@ -166,6 +166,18 @@ http {{
         self.assertEqual(self.seen(port, "203.0.113.66, 198.51.100.7"), "198.51.100.7")
 
 
+def request_uuid_map() -> str:
+    """The site's `map` that writes nginx's request id as a UUID, as written."""
+
+    text = (ROOT / "install/platform/examples" / EXAMPLES[0]).read_text()
+    found = re.search(
+        r"^map \$request_id \$haprion_request_uuid \{\n.*?^\}\n", text, re.MULTILINE | re.DOTALL
+    )
+    if found is None:
+        raise AssertionError("the site has no request id map in the shape this reads")
+    return found.group(0)
+
+
 def api_location() -> str:
     """The site's `location /api/` block, as written."""
 
@@ -216,6 +228,7 @@ http {{
     access_log off;
     {temporary}
     limit_req_zone $binary_remote_addr zone=haprion_api:1m rate=10r/s;
+{request_uuid_map()}
     {
                 f'''server {{
         listen unix:{backend};
@@ -293,7 +306,9 @@ http {{
         )
         self.assertEqual((answer["result"], answer["warnings"]), (None, []))
         self.assertEqual(answer["error"]["code"], code)
-        self.assertRegex(answer["request_id"], r"^[0-9a-f]{32}$")
+        self.assertRegex(
+            answer["request_id"], r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        )
 
     def test_a_manager_that_does_not_answer_is_a_502_in_the_envelope_not_a_page(self) -> None:
         status, kind, answer = self.refused(self.serve(backend_up=False))

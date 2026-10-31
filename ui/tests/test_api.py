@@ -302,15 +302,26 @@ class TheApiAnswers(ApiTestCase):
         failures.note("192.0.2.1", now=100)
         self.assertFalse(failures.refused("192.0.2.2", now=102))
 
-    def test_an_ipv4_mapped_address_is_counted_as_its_ipv4_address(self) -> None:
-        """Review 26-10-31, P3-5: every mapped client was `::/64`, one count for all of them."""
+    def test_an_ipv4_mapped_client_is_one_address_for_the_count_the_check_and_the_note(
+        self,
+    ) -> None:
+        """Review 26-10-31, P3-2: the count saw 192.0.2.1, the source check ::ffff:192.0.2.1."""
 
-        self.assertEqual(caller.source_key("::ffff:192.0.2.1"), "192.0.2.1")
-        failures = caller.Failures(limit=2, window=60)
-        failures.note("::ffff:192.0.2.1", now=100)
-        failures.note("192.0.2.1", now=101)
-        self.assertTrue(failures.refused("::ffff:192.0.2.1", now=102))
-        self.assertFalse(failures.refused("::ffff:192.0.2.2", now=102))
+        client = self.api()
+        inside = self.issue(sources=["192.0.2.0/24"])
+        mapped = {"X-Forwarded-For": "::ffff:192.0.2.7"}
+        served = client.get(
+            "/api/v1/token", headers={**mapped, "Authorization": f"Bearer {inside}"}
+        )
+        self.assertEqual(served.status_code, 200)
+        self.assertEqual(self.touched, [(7, "192.0.2.7")])
+        guess = {**mapped, "Authorization": f"Bearer {api_tokens.new_secret()}"}
+        with self.assertLogs("haprion_ui.api"):
+            for _ in range(caller.FAILURES_PER_MINUTE):
+                client.get("/api/v1/token", headers=guess)
+        self.assertTrue(caller.FAILURES.refused("192.0.2.7"))
+        other = {"X-Forwarded-For": "::ffff:192.0.2.8"}
+        self.assertEqual(client.get("/api/v1/token", headers=other).status_code, 401)
 
     def test_the_failure_count_holds_to_its_bound_and_forgets_the_oldest_first(self) -> None:
         failures = caller.Failures(limit=1, window=60, remembered=100)

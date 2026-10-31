@@ -1021,6 +1021,20 @@ class Throttling(LoginTestCase):
         )
         self.assertEqual(self.attempts[-1][1], "198.51.100.7")
 
+    def test_an_ipv4_mapped_client_address_is_its_ipv4_address(self) -> None:
+        """Review 26-10-31, P3-2: a dual-stack socket names an IPv4 client ::ffff:a.b.c.d."""
+
+        client = self.client()
+        client.get("/login")
+        token = auth.csrf_token(client.cookies[auth.PRE_SESSION_COOKIE])
+        client.post(
+            "/login",
+            data={"username": "operator", "password": "wrong", auth.CSRF_FIELD: token},
+            headers={"X-Forwarded-For": "::ffff:198.51.100.7"},
+            follow_redirects=False,
+        )
+        self.assertEqual(self.attempts[-1][1], "198.51.100.7")
+
     def test_an_unparseable_forwarded_address_does_not_break_the_login_path(self) -> None:
         client = self.client()
         client.get("/login")

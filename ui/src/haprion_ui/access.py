@@ -74,6 +74,11 @@ def client_address(request: Request) -> str:
     Validated as an address rather than trusted as a string. The column is
     `inet`, and a header that is not an address is a bug in whatever wrote it -
     it must not become its own quietly-unthrottled bucket.
+
+    An IPv4 client on a dual-stack socket arrives as ::ffff:a.b.c.d. That is
+    its IPv4 address, once, here: the throttle, the audit record, a token's
+    `sources` and the API's failure count then all see the same address, and
+    a network written as 192.0.2.0/24 holds it.
     """
 
     forwarded = request.headers.get("x-forwarded-for", "")
@@ -81,9 +86,12 @@ def client_address(request: Request) -> str:
     if not candidate and request.client is not None:
         candidate = request.client.host
     try:
-        return str(ipaddress.ip_address(candidate))
+        address = ipaddress.ip_address(candidate)
     except ValueError:
         return "127.0.0.1"
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return str(address.ipv4_mapped)
+    return str(address)
 
 
 def set_session_cookie(

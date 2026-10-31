@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import signal
 import stat
 import subprocess
@@ -454,10 +455,10 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         migrate_step: bool = True,
         remembered: Path | None = None,
         dumped: bool = True,
-        saved: Path | None = None,
+        state: Path | None = None,
         reads: tuple[str, ...] = ("aa bb",),
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-        """One run; `remembered` and `saved` are the files the runs before it left.
+        """One run; `remembered` and `state` are what the runs before it left.
 
         `reads` is what each read of the active tokens answers, the last one
         for every read after it: hashes separated by spaces, or FAIL.
@@ -513,13 +514,16 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 )
                 + 'runuser() { record "runuser $*"; }\n'
                 'do_after_restore() { record "after-restore"; echo "$#:$*" > "$CALLS.kept"; }\n'
+                'revoke_revived_tokens() { record "revoke-early $*"; }\n'
+                'install() { mkdir -p "${@: -1}"; }\n'
                 + token_reads(reads)
                 + f'dump_before_restore() {{ record "dump-before-restore"; {"true" if dumped else "false"}; }}\n'
                 "DB_NAME=haprion\nDUMP_DIR=/dumps\n"
                 + re.search(r"^counted\(\) .*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
                 + units.group(0)
                 + f'RESTORE_STOPPED="{remembered or here / "restore-stopped"}"\n'
-                + f'RESTORE_TOKENS="{saved or here / "restore-tokens"}"\n'
+                + f'RESTORE_STATE="{state or here / "state"}"\n'
+                + "".join(re.findall(r"^RESTORE_(?:TOKENS|MARKER)=.*\n", source, re.MULTILINE))
                 + f'PLATFORM_STEPS="{steps}"\nCOLLECTOR_CONFIG="{config}"\n'
                 f'RETENTION_COMMAND="{retention}"\nRETENTION_TIMER="{timer}"\n'
                 f'COLLECTOR_COMMAND="{collector}"\n'
@@ -530,6 +534,9 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                         "stopped_before",
                         "remember_stopped",
                         "save_restore_tokens",
+                        "forget_restore_tokens",
+                        "restore_set_is_kept",
+                        "mark_restoring",
                         "restore_stopped",
                         "do_restore",
                         "start_units",
@@ -566,6 +573,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 "dump-before-restore",
                 "-u postgres pg_restore -d postgres --clean --create --if-exists --exit-on-error"
                 " <dump",
+                "revoke-early aa,bb",
                 "03-verify",
                 "after-restore",
                 "systemctl start haprion-worker.service",
@@ -614,30 +622,107 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         """Review 26-10-31, P2-1: the run again read the dump's tokens as the ones from before."""
 
         with tempfile.TemporaryDirectory() as raw:
-            saved = Path(raw) / "restore-tokens"
-            first, _ = self.restore(active=self.ACTIVE, restored=False, saved=saved)
+            state = Path(raw) / "state"
+            first, _ = self.restore(active=self.ACTIVE, restored=False, state=state)
             self.assertEqual(first.returncode, 1)
-            self.assertEqual(saved.read_text(), "aa,bb\n")
-            self.assertEqual(stat.S_IMODE(saved.stat().st_mode), 0o600)
+            self.assertEqual((state / "tokens").read_text(), "aa,bb\n")
+            self.assertEqual(stat.S_IMODE((state / "tokens").stat().st_mode), 0o600)
+            self.assertTrue((state / "restoring").exists())
             #
             # The database the run again would read is the dump's: its tokens
             # are not the ones from before.
             #
-            done, said = self.restore(active="", saved=saved, reads=("aa bb cc",))
+            done, said = self.restore(active="", state=state, reads=("aa bb cc",))
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertNotIn("token-hashes", said)
             self.assertEqual(self.kept, "1:aa,bb")
             self.assertIn(
                 "using the API tokens recorded by the restore that did not finish", done.stdout
             )
-            self.assertFalse(saved.exists())
+            self.assertEqual(list(state.iterdir()), [])
+
+    def test_the_set_and_its_marker_are_where_a_reboot_keeps_them(self) -> None:
+        """Review 26-10-31, P2-1: /run is emptied at a boot, and the web starts on the dump's database."""
+
+        source = SCRIPT.read_text()
+        self.assertIn("\nRESTORE_STATE=/var/lib/haprion/database-restore\n", source)
+        self.assertIn('\nRESTORE_TOKENS="${RESTORE_STATE}/tokens"\n', source)
+        self.assertIn('\nRESTORE_MARKER="${RESTORE_STATE}/restoring"\n', source)
+        self.assertIn("-m 700", function("save_restore_tokens", source))
+
+    def test_the_marker_is_written_just_before_pg_restore_and_not_before(self) -> None:
+        """Review 26-10-31, P3-1: the set is used only by a run that follows one that began the swap."""
+
+        source = function("do_restore", SCRIPT.read_text())
+        self.assertLess(source.index("save_restore_tokens"), source.index("dump_before_restore"))
+        self.assertLess(source.index("dump_before_restore"), source.index("mark_restoring"))
+        self.assertLess(source.index("mark_restoring"), source.index("pg_restore -d postgres"))
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw) / "state"
+            self.restore(active=self.ACTIVE, dumped=False, state=state)
+            self.assertFalse((state / "restoring").exists())
+
+    def test_a_set_without_the_marker_is_not_used_and_is_written_again(self) -> None:
+        """Review 26-10-31, P3-1: a run killed before pg_restore left a set the database has left."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw) / "state"
+            state.mkdir()
+            (state / "tokens").write_text("aa,bb\n")
+            done, said = self.restore(
+                active=self.ACTIVE, state=state, restored=False, reads=("aa",)
+            )
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(said.count("token-hashes"), 2)
+            self.assertNotIn("using the API tokens recorded", done.stdout)
+            self.assertEqual((state / "tokens").read_text(), "aa\n")
+            self.assertTrue((state / "restoring").exists())
+
+    def test_a_marker_without_a_set_is_not_used_either(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw) / "state"
+            state.mkdir()
+            (state / "restoring").write_text("")
+            done, said = self.restore(active=self.ACTIVE, state=state, dumped=False, reads=("aa",))
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(said.count("token-hashes"), 2)
+            self.assertFalse((state / "restoring").exists())
+
+    def test_the_revived_tokens_are_revoked_right_after_pg_restore_and_again_after_the_migration(
+        self,
+    ) -> None:
+        """Review 26-10-31, P2-1: a failure after pg_restore left them live until a run again."""
+
+        done, said = self.restore(active=self.ACTIVE, plan="migrate 0102 new")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        early = said.index("revoke-early aa,bb")
+        self.assertGreater(
+            early,
+            said.index(
+                "-u postgres pg_restore -d postgres --clean --create --if-exists --exit-on-error <dump"
+            ),
+        )
+        self.assertLess(early, said.index("migrate --release new"))
+        self.assertLess(early, said.index("after-restore"))
+        failed, said = self.restore(active=self.ACTIVE, proved=False)
+        self.assertEqual(failed.returncode, 1)
+        self.assertIn("revoke-early aa,bb", said)
+        self.assertNotIn("after-restore", said)
+
+    def test_a_pg_restore_that_fails_revokes_nothing_yet(self) -> None:
+        _, said = self.restore(active=self.ACTIVE, restored=False)
+        self.assertFalse(any(line.startswith("revoke-early") for line in said))
+
+    def test_a_revocation_that_cannot_be_made_early_is_said_and_the_restore_goes_on(self) -> None:
+        source = function("do_restore", SCRIPT.read_text())
+        self.assertIn('revoke_revived_tokens "$tokens" \\\n        || warn', source)
 
     def test_an_empty_set_is_kept_too(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            saved = Path(raw) / "restore-tokens"
-            self.restore(active=self.ACTIVE, restored=False, saved=saved, reads=("",))
-            self.assertEqual(saved.read_text(), "\n")
-            done, said = self.restore(active="", saved=saved, reads=("aa",))
+            state = Path(raw) / "state"
+            self.restore(active=self.ACTIVE, restored=False, state=state, reads=("",))
+            self.assertEqual((state / "tokens").read_text(), "\n")
+            done, said = self.restore(active="", state=state, reads=("aa",))
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertNotIn("token-hashes", said)
             self.assertEqual(self.kept, "1:")
@@ -645,18 +730,19 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
     def test_a_run_that_fails_before_the_restore_leaves_no_set_behind(self) -> None:
         for failure in ({"dumped": False}, {"connections": "1"}):
             with self.subTest(**failure), tempfile.TemporaryDirectory() as raw:
-                saved = Path(raw) / "restore-tokens"
-                done, _ = self.restore(active=self.ACTIVE, saved=saved, **failure)
+                state = Path(raw) / "state"
+                done, _ = self.restore(active=self.ACTIVE, state=state, **failure)
                 self.assertEqual(done.returncode, 1)
-                self.assertFalse(saved.exists())
+                self.assertFalse((state / "tokens").exists())
 
     def test_a_run_again_that_fails_before_the_restore_keeps_the_set(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            saved = Path(raw) / "restore-tokens"
-            self.restore(active=self.ACTIVE, restored=False, saved=saved)
-            done, _ = self.restore(active="", saved=saved, dumped=False)
+            state = Path(raw) / "state"
+            self.restore(active=self.ACTIVE, restored=False, state=state)
+            done, _ = self.restore(active="", state=state, dumped=False)
             self.assertEqual(done.returncode, 1)
-            self.assertEqual(saved.read_text(), "aa,bb\n")
+            self.assertEqual((state / "tokens").read_text(), "aa,bb\n")
+            self.assertTrue((state / "restoring").exists())
 
     def test_a_dump_that_cannot_be_made_restores_nothing_and_starts_what_it_stopped(self) -> None:
         done, said = self.restore(active=self.ACTIVE, dumped=False)
@@ -678,8 +764,14 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
             "-u postgres pg_restore -d postgres --clean --create --if-exists --exit-on-error <dump"
         )
         self.assertEqual(
-            said[restored + 1 : restored + 5],
-            ["migrate --release new", "retention horizon", "03-verify", "after-restore"],
+            said[restored + 1 : restored + 6],
+            [
+                "revoke-early aa,bb",
+                "migrate --release new",
+                "retention horizon",
+                "03-verify",
+                "after-restore",
+            ],
         )
         self.assertIn("the dump is at 0101; migrated to 0102", done.stdout)
 
@@ -862,7 +954,6 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
     ) -> None:
         source = SCRIPT.read_text()
         self.assertIn("\nRESTORE_STOPPED=/run/haprion/restore-stopped\n", source)
-        self.assertIn("\nRESTORE_TOKENS=/run/haprion/restore-tokens\n", source)
         tmpfiles = (ROOT / "install/tmpfiles/haprion.conf").read_text()
         self.assertIn("\nd /run/haprion 0755 root root -\n", tmpfiles)
 
@@ -922,14 +1013,15 @@ class HoldingAfterARestore(unittest.TestCase):
     """Review 26-10-29, C05: `after-restore` held a job a running worker went on with."""
 
     def after_restore(
-        self, *, active: bool, remembered: Path | None = None, saved: Path | None = None
+        self, *, active: bool, remembered: Path | None = None, state: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
         source = SCRIPT.read_text()
         program = (
             "set -Eeuo pipefail\n"
             f'RESTORE_STOPPED="{remembered or "/nonexistent/restore-stopped"}"\n'
-            f'RESTORE_TOKENS="{saved or "/nonexistent/restore-tokens"}"\n'
-            'log() { echo "$*"; }\n'
+            f'RESTORE_STATE="{state or "/nonexistent"}"\n'
+            + "".join(re.findall(r"^RESTORE_(?:TOKENS|MARKER)=.*\n", source, re.MULTILINE))
+            + 'log() { echo "$*"; }\n'
             'die() { echo "ERROR: $*" >&2; exit 1; }\n'
             f"systemctl() {{ [[ $1 == is-active ]] && {'true' if active else 'false'}; }}\n"
             "psql_as() { cat >/dev/null; printf '[7]\\n2\\n'; }\n"
@@ -937,6 +1029,8 @@ class HoldingAfterARestore(unittest.TestCase):
             'hold_api_tokens() { echo "hold $#:$*"; }\n'
             + function("do_after_restore", source)
             + function("after_restore_by_hand", source)
+            + function("restore_set_is_kept", source)
+            + function("forget_restore_tokens", source)
             + "after_restore_by_hand\n"
         )
         return subprocess.run(  # noqa: S603 - fixed program
@@ -947,13 +1041,26 @@ class HoldingAfterARestore(unittest.TestCase):
         """Review 26-10-31, P2-1: the database is the dump's, so its active tokens prove nothing."""
 
         with tempfile.TemporaryDirectory() as raw:
-            saved = Path(raw) / "restore-tokens"
-            saved.write_text("aa,bb\n")
-            done = self.after_restore(active=False, saved=saved)
+            state = Path(raw)
+            (state / "tokens").write_text("aa,bb\n")
+            (state / "restoring").write_text("")
+            done = self.after_restore(active=False, state=state)
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertIn("comparing with the API tokens recorded before the restore", done.stdout)
             self.assertIn("hold 1:aa,bb", done.stdout)
-            self.assertFalse(saved.exists())
+            self.assertEqual(list(state.iterdir()), [])
+
+    def test_by_hand_a_set_without_the_marker_is_not_compared_with(self) -> None:
+        """Review 26-10-31, P3-1: a run that never reached pg_restore left it."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            (state / "tokens").write_text("aa,bb\n")
+            done = self.after_restore(active=False, state=state)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn("hold 0:", done.stdout)
+            self.assertNotIn("comparing", done.stdout)
+            self.assertEqual(list(state.iterdir()), [])
 
     def test_by_hand_without_a_set_from_before_it_lists(self) -> None:
         done = self.after_restore(active=False)
@@ -962,11 +1069,12 @@ class HoldingAfterARestore(unittest.TestCase):
 
     def test_refused_it_keeps_the_set_from_before(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            saved = Path(raw) / "restore-tokens"
-            saved.write_text("aa\n")
-            done = self.after_restore(active=True, saved=saved)
+            state = Path(raw)
+            (state / "tokens").write_text("aa\n")
+            (state / "restoring").write_text("")
+            done = self.after_restore(active=True, state=state)
             self.assertEqual(done.returncode, 1)
-            self.assertTrue(saved.exists())
+            self.assertEqual(sorted(path.name for path in state.iterdir()), ["restoring", "tokens"])
 
     def test_by_hand_it_lets_go_of_the_refusal_a_failed_restore_left(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -984,8 +1092,37 @@ class HoldingAfterARestore(unittest.TestCase):
             self.assertEqual(done.returncode, 1)
             self.assertTrue(remembered.exists())
 
-    def test_the_command_runs_the_hand_version(self) -> None:
-        self.assertIn("\n    after-restore)  after_restore_by_hand ;;\n", SCRIPT.read_text())
+    def test_the_command_takes_the_restore_lock_and_runs_the_hand_version(self) -> None:
+        """Review 26-10-31, P3-3: by hand beside a running restore it took its files."""
+
+        self.assertIn(
+            "\n    after-restore)  hold_release_lock_for_restore; after_restore_by_hand ;;\n",
+            SCRIPT.read_text(),
+        )
+
+    def test_it_is_refused_while_a_restore_holds_the_lock(self) -> None:
+        source = SCRIPT.read_text()
+        with tempfile.TemporaryDirectory() as raw:
+            lock = Path(raw) / "run/lock"
+            prelude = (
+                f"RELEASE_LOCK={lock}; "
+                'die() { echo "ERROR: $*" >&2; exit 1; }; '
+                + function("hold_release_lock_for_restore", source)
+            )
+            inner = prelude + "hold_release_lock_for_restore; echo went on"
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the script's own function
+                [
+                    "/bin/bash",
+                    "-c",
+                    prelude
+                    + f"hold_release_lock_for_restore; /bin/bash -c {shlex.quote(inner)}; true",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotIn("went on", done.stdout)
+            self.assertIn("or a restore is running; run this again when it is done", done.stderr)
 
     def test_it_refuses_while_the_worker_runs_and_holds_nothing(self) -> None:
         done = self.after_restore(active=True)

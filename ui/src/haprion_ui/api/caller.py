@@ -80,16 +80,14 @@ class Caller:
 def source_key(source: str) -> str:
     """The address a count is kept under: an IPv6 host is its /64, which one subscriber owns.
 
-    An IPv4 client on a dual-stack socket arrives as ::ffff:a.b.c.d, which is
-    its IPv4 address, not a /64 shared by every such client.
+    `client_address` has already made an IPv4 client on a dual-stack socket
+    (::ffff:a.b.c.d) its IPv4 address.
     """
 
     try:
         address = ipaddress.ip_address(source)
     except ValueError:
         return source
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        return str(address.ipv4_mapped)
     if address.version == 6:
         return str(ipaddress.ip_network(f"{address}/64", strict=False))
     return source

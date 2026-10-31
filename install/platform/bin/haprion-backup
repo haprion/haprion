@@ -595,6 +595,20 @@ select name from revived order by name;
 SQL
 )"
 
+# `hold_api_tokens`' revocation alone, for a restore that has just run
+# pg_restore: nothing when the database has no api_token yet. Called in a list,
+# where errexit is off, so each failure is returned, not passed over.
+revoke_revived_tokens() {
+    local present revived
+    present="$(psql_as -d "$DB_NAME" -c "select to_regclass('public.api_token') is not null")" \
+        || return 1
+    [[ "$present" == f ]] && return 0
+    [[ "$present" == t ]] || return 1
+    revived="$(psql_as -d "$DB_NAME" -v kept="$1" <<<"$REVOKE_REVIVED_TOKENS")" || return 1
+    [[ -z "$revived" ]] \
+        || log "API tokens revoked again, active now but not before the restore: $(tr '\n' ' ' <<<"$revived")"
+}
+
 hold_api_tokens() {
     local revived listed line
     if (( $# )); then
@@ -625,19 +639,21 @@ hold_api_tokens() {
 # services as they choose, so the file goes. `restore` itself calls
 # do_after_restore, and removes the file when it has started the units.
 #
-# After a failed restore the database is the dump's, and the tokens that were
-# active before it are in RESTORE_TOKENS (review 26-10-31, P2-1): those are
-# compared with, as the restore would have. Without the file the active tokens
-# are listed.
+# After a restore that reached pg_restore and did not finish the database is the
+# dump's, and the tokens that were active before it are in RESTORE_TOKENS
+# (review 26-10-31, P2-1, P3-1): those are compared with, as the restore would
+# have. Without the marker beside it the file is an earlier run's that never got
+# that far, and the active tokens are listed, as when there is no file.
 #
 after_restore_by_hand() {
-    if [[ -e "$RESTORE_TOKENS" ]]; then
+    if restore_set_is_kept; then
         log "comparing with the API tokens recorded before the restore that did not finish"
         do_after_restore "$(<"$RESTORE_TOKENS")"
     else
         do_after_restore
     fi
-    rm -f -- "$RESTORE_STOPPED" "$RESTORE_TOKENS"
+    rm -f -- "$RESTORE_STOPPED"
+    forget_restore_tokens
 }
 
 step_log() { echo; echo "== $*"; }
@@ -685,20 +701,44 @@ RESTORE_STOPPED=/run/haprion/restore-stopped
 
 #
 # The API tokens active in the database a restore replaces, comma-joined and
-# possibly empty (review 26-10-31, P2-1). Written once everything is stopped
-# and before pg_restore, kept until the restore finishes: a restore that fails
-# after pg_restore says to run it again, and by then the database holds the
-# dump's tokens, so reading it again would count every token revoked since the
-# dump as active before. A run that finds the file is that run again; a run
-# that fails before pg_restore removes the file it wrote. Same place, mode and
-# lock as RESTORE_STOPPED.
+# possibly empty (review 26-10-31, P2-1, P3-1). Written once everything is
+# stopped and before pg_restore: a restore that fails after pg_restore says to
+# run it again, and by then the database holds the dump's tokens, so reading it
+# again would count every token revoked since the dump as active before.
 #
-RESTORE_TOKENS=/run/haprion/restore-tokens
+# That survives a reboot, which RESTORE_STOPPED need not: after one the web is
+# up on the dump's database, and a set read from it would be wrong. So it is in
+# a directory of root's under /var/lib, not /run. And it is used only when
+# RESTORE_MARKER is beside it, written just before pg_restore: a run that died
+# earlier left the database as it was, and a set from then may be out of date.
+# Both go when the restore finishes. Same lock as RESTORE_STOPPED.
+#
+RESTORE_STATE=/var/lib/haprion/database-restore
+RESTORE_TOKENS="${RESTORE_STATE}/tokens"
+RESTORE_MARKER="${RESTORE_STATE}/restoring"
 
+# Replaces an earlier run's set, and its marker first: a set without one is
+# not used.
 save_restore_tokens() {
-    mkdir -p -- "${RESTORE_TOKENS%/*}"
+    install -d -o root -g root -m 700 -- "$RESTORE_STATE"
+    rm -f -- "$RESTORE_MARKER"
     ( umask 077 && printf '%s\n' "$1" >"${RESTORE_TOKENS}.partial" )
     mv -f -- "${RESTORE_TOKENS}.partial" "$RESTORE_TOKENS"
+}
+
+# The marker goes first, so a run stopped between the two leaves a set that is
+# not used rather than a marker without one.
+forget_restore_tokens() {
+    rm -f -- "$RESTORE_MARKER" "$RESTORE_TOKENS"
+}
+
+restore_set_is_kept() {
+    [[ -e "$RESTORE_MARKER" && -e "$RESTORE_TOKENS" ]]
+}
+
+mark_restoring() {
+    ( umask 077 && : >"${RESTORE_MARKER}.partial" )
+    mv -f -- "${RESTORE_MARKER}.partial" "$RESTORE_MARKER"
 }
 
 #
@@ -762,7 +802,8 @@ restore_stopped() {
     elif [[ -n "$held" ]]; then
         hold="
   Before starting any of them by hand, hold the restored jobs: sudo haprion-backup after-restore
-  (it also revokes again the API tokens that were revoked before the restore)"
+  (it also revokes again any API token the dump brought back that was not active before the
+  restore, by the set recorded under ${RESTORE_STATE}, which a reboot does not lose)"
     fi
     local stopped="the services stay stopped: $*"
     [[ $# -gt 0 ]] || stopped="no service was running"
@@ -800,13 +841,14 @@ do_restore() {
     #
     # The tokens active before the restore (review 26-10-31, P2-1, P3-1): a
     # restore from a dump without that set would bring back every token revoked
-    # since it was taken. A run again after a restore that failed finds the set
-    # a run before it recorded and uses that: the database it would read now is
-    # the dump's. Otherwise it is read here, while the web still runs, only to
-    # refuse before anything is stopped - a failure costs nothing - and again
-    # once everything is stopped, which is the set at the moment of the swap.
+    # since it was taken. A run again after a restore that reached pg_restore
+    # finds the set a run before it recorded, with its marker, and uses that:
+    # the database it would read now is the dump's. Otherwise it is read here,
+    # while the web still runs, only to refuse before anything is stopped - a
+    # failure costs nothing - and again once everything is stopped, which is
+    # the set at the moment of the swap.
     #
-    if [[ -e "$RESTORE_TOKENS" ]]; then
+    if restore_set_is_kept; then
         reused=1
         tokens="$(<"$RESTORE_TOKENS")"
         log "using the API tokens recorded by the restore that did not finish"
@@ -851,7 +893,7 @@ do_restore() {
 
     step_log "Dumping what is about to be replaced"
     if ! ( dump_before_restore "$dump" ); then
-        (( reused )) || rm -f -- "$RESTORE_TOKENS"
+        (( reused )) || forget_restore_tokens
         start_units "${now[@]}"
         remember_stopped "${before[@]}"
         die "the database could not be dumped before it is replaced; nothing was restored${before[*]:+, and ${before[*]} stay stopped}"
@@ -861,14 +903,25 @@ do_restore() {
     #
     # Root opens the dump, which no other account may read, and postgres reads
     # it on stdin. From here a failure leaves the services stopped: the
-    # database may be half made, and nothing should write to it.
+    # database may be half made, and nothing should write to it. The marker
+    # says the set is the one to use from here on.
     #
+    mark_restoring
     # shellcheck disable=SC2024 # root opening the file is the point: postgres may not read it
     if ! sudo -u postgres pg_restore -d postgres --clean --create --if-exists \
             --exit-on-error < "$dump"; then
         restore_stopped "the restore stopped" pg_restore "" "${stopped[@]}"
     fi
     log "  restored ${DB_NAME} from $(basename "$dump")"
+    #
+    # The tokens revoked since the dump are live in it, and a failure from here
+    # on can be followed by a reboot that starts the web: revoked at once, as
+    # far as there is a table to revoke in. A dump from before 0107 has none;
+    # the revocation after the migrations is the one that then counts. Failing
+    # here is not final, that one runs again.
+    #
+    revoke_revived_tokens "$tokens" \
+        || warn "the API tokens revived by the dump were not revoked yet; the step after the migrations does it"
 
     #
     # By the release's own migrations; the release that runs was asked by the
@@ -898,7 +951,7 @@ do_restore() {
     step_log "Starting what was stopped"
     start_units "${stopped[@]}"
     remember_stopped
-    rm -f -- "$RESTORE_TOKENS"
+    forget_restore_tokens
 
     collector="$(systemctl show -p User --value haprion-traffic-collector.service 2>/dev/null || true)"
     if [[ -n "$collector" && -r "$COLLECTOR_CONFIG" && -x "$COLLECTOR_COMMAND" ]]; then
@@ -951,7 +1004,7 @@ hold_release_lock_for_restore() {
     umask "$mask"
     chmod 600 -- "$RELEASE_LOCK"
     flock -n 8 \
-        || die "an update, a rollback or a setup of the UI release is running; run this again when it is done"
+        || die "an update, a rollback, a setup of the UI release or a restore is running; run this again when it is done"
     printf '%s\n' "$$" >"$RELEASE_LOCK"
 }
 
@@ -991,7 +1044,7 @@ run_recorded() {
 case "$command" in
     dump)           take_lock; run_recorded dump do_dump ;;
     dump-before-migration) take_lock; do_dump_before_migration "$@" ;;
-    after-restore)  after_restore_by_hand ;;
+    after-restore)  hold_release_lock_for_restore; after_restore_by_hand ;;
     restore)        hold_release_lock_for_restore; take_lock; do_restore "$1" ;;
     verify-restore) take_lock; run_recorded restore-check do_verify_restore ;;
     list)

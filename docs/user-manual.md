@@ -3196,7 +3196,7 @@ If the restore fails after the stop, for example on a damaged dump, a failed mig
 the services stay stopped and the command says what failed. Correct it and run the same command again,
 with this dump or another: once a restore finishes, it starts what the failed run stopped. After a
 failed privilege check, a service can be started by hand instead once the restored jobs are held with
-`sudo haprion-backup after-restore`, which also lets the update, a rollback and a setup go on. After a failed migration, do not: the schema is still the dump's,
+`sudo haprion-backup after-restore`, which also lets the update, a rollback and a setup go on (it refuses while a restore runs). After a failed migration, do not: the schema is still the dump's,
 behind the code, so correct the cause and run the restore again. A reboot in between starts the services
 as any boot does, and the next restore stops them again.
 
@@ -3213,9 +3213,16 @@ among them. That covers a token revoked or removed after the dump; the command n
 and the audit record holds `api_tokens_revoked`. If the database or its token table does not exist,
 because the restore goes to a new host or from a dump older than the tokens, no token was active before
 and every active restored token is revoked; if they cannot be read for any other reason the command stops
-before it stops anything. A restore that fails and is run again compares with the tokens it recorded the
-first time, not with the database it has by then, which is the dump's. Run on its own after such a
-failure, `after-restore` uses the recorded set too and says so. Without one it has nothing to compare
+before it stops anything. The set is written down before `pg_restore` runs, in `/var/lib/haprion/database-restore/`
+(root's alone), and the restore revokes the revived tokens again as soon as `pg_restore` has finished,
+before the migration and the privilege check, so a later failure leaves none of them live. A dump from
+before the tokens has no table to revoke in; the revocation after the migration is the one that counts.
+A restore that fails after `pg_restore` and is run again compares with the set it recorded the first time,
+not with the database it has by then, which is the dump's; the set is kept through a reboot, which
+starts the web on the dump's database as any boot does. It is used only when `pg_restore` had begun: a run
+that stopped earlier left the database as it was, and the next restore reads it again. The set and
+the mark of that go when a restore finishes. Run on its own after a restore that reached `pg_restore`, `after-restore` uses the
+recorded set too and says so. Without one it has nothing to compare
 with: it lists the active tokens, and you revoke those that should not be live under *Settings* → *API
 tokens*. The same goes for a whole-host restore, for example from a VM backup: it brings back the tokens
 revoked since that backup, so revoke them again.

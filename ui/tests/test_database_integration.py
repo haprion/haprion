@@ -9836,8 +9836,15 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         path.write_text(f"#!/bin/bash\nset -e\n{body}")
         path.chmod(0o755)
 
-    def restore(self, dump: Path, *, proved: bool = True) -> subprocess.CompletedProcess[str]:
-        """A restore; `proved` False makes its privilege proof fail, as a run that is run again."""
+    def restore(
+        self, dump: Path, *, proved: bool = True, pg_restore_fails: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        """A restore; `proved` False makes its privilege proof fail, as a run that is run again.
+
+        `pg_restore_fails` makes the command report failure after it has restored,
+        as a run that stops late. The paths the script names under /run and
+        /var/lib are this test's own: `reboot` empties the first.
+        """
 
         source = (self.REPOSITORY / "install/platform/bin/haprion-backup").read_text()
 
@@ -9887,7 +9894,8 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             'die() { echo "ERROR: $*" >&2; exit 1; }\n'
             # Nothing runs, and the dump is opened by this account, not by postgres.
             'systemctl() { [[ "$1" != is-active ]] || return 1; }\n'
-            'sudo() { shift 2; "$@"; }\n'
+            'sudo() { shift 2; local c="$1"; "$@" || return; [[ "$c" != pg_restore ||'
+            ' -z "${PG_RESTORE_FAILS:-}" ]]; }\n'
             # The dump before the restore (B399) is written as this account.
             "chown() { :; }\n"
             'install() { local -a made=(); while [[ $# -gt 0 ]]; do case "$1" in'
@@ -9905,9 +9913,15 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             + units.group(0)
             + variable("TOKEN_IS_LIVE")
             + variable("REVOKE_REVIVED_TOKENS")
-            + f"RESTORE_STOPPED={self.directory / 'restore-stopped'}\n"
-            f"RESTORE_TOKENS={self.directory / 'restore-tokens'}\n"
-            f"PLATFORM_STEPS={self.directory / 'steps'}\n"
+            + "".join(
+                line.replace("/run/haprion", str(self.directory / "run")).replace(
+                    "/var/lib/haprion", str(self.directory / "lib")
+                )
+                for line in re.findall(
+                    r"^RESTORE_(?:STOPPED|STATE|TOKENS|MARKER)=.*\n", source, re.M
+                )
+            )
+            + f"PLATFORM_STEPS={self.directory / 'steps'}\n"
             f"COLLECTOR_CONFIG={self.directory / 'none'}\nCOLLECTOR_COMMAND=/bin/false\n"
             f"RETENTION_COMMAND=/bin/false\nRETENTION_TIMER={self.directory / 'none'}\n"
             + "".join(
@@ -9919,10 +9933,14 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                     "dump_revision",
                     "do_after_restore",
                     "active_token_hashes",
+                    "revoke_revived_tokens",
                     "hold_api_tokens",
                     "stopped_before",
                     "remember_stopped",
                     "save_restore_tokens",
+                    "forget_restore_tokens",
+                    "restore_set_is_kept",
+                    "mark_restoring",
                     "restore_stopped",
                     "do_restore",
                     "start_units",
@@ -9939,8 +9957,14 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                 **os.environ,
                 "PATH": f"{self.bindir}:{os.environ['PATH']}",
                 "PGHOST": self.socket,
+                **({"PG_RESTORE_FAILS": "1"} if pg_restore_fails else {}),
             },
         )
+
+    def reboot(self) -> None:
+        """What a boot does to the machine's state: /run is empty, /var/lib is as it was."""
+
+        shutil.rmtree(self.directory / "run", ignore_errors=True)
 
     def restored_from(self, revision: str, *, grants_differ: str) -> None:
         self.alembic("upgrade", revision)
@@ -10026,6 +10050,105 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             "API tokens revoked again, active now but not before the restore: leaked", done.stdout
         )
 
+    INSERT_TOKEN = (
+        "insert into api_token (name, level, token_hash, prefix, created_by, expires_at) "
+        "values (%s, 'read', %s, 'hap_abcdefgh', 'admin', now() + interval '30 days')"
+    )
+
+    def dump_with_a_token_revoked_after(self) -> Path:
+        """A dump holding `kept` and `leaked`, both active; `leaked` is revoked after it."""
+
+        self.alembic("upgrade", "head")
+        with self.scratch() as connection:
+            connection.execute(self.INSERT_TOKEN, ("kept", b"k" * 32))
+            connection.execute(self.INSERT_TOKEN, ("leaked", b"l" * 32))
+            connection.commit()
+        dump = self.directory / "at-the-head.dump"
+        subprocess.run(  # noqa: S603 - this cluster's pg_dump, fixed arguments
+            [f"{self.bindir}/pg_dump", "-h", self.socket, "-U", self.role, "-d", self.NAME,
+             "--format=custom", f"--file={dump}"],
+            check=True,
+        )  # fmt: skip
+        with self.scratch() as connection:
+            connection.execute(
+                "update api_token set revoked_at = now(), revoked_by = 'admin' "
+                "where name = 'leaked'"
+            )
+            connection.commit()
+        return dump
+
+    def tokens(self) -> list[tuple[str, str | None]]:
+        with self.scratch() as connection:
+            return connection.execute(
+                "select name, revoked_by from api_token order by name"
+            ).fetchall()
+
+    def test_a_restore_that_fails_after_pg_restore_and_a_reboot_still_revokes_the_token(
+        self,
+    ) -> None:
+        """Review 26-10-31, P2-1: /run was emptied, and the run again read the dump's tokens."""
+
+        dump = self.dump_with_a_token_revoked_after()
+
+        failed = self.restore(dump, pg_restore_fails=True)
+
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assertIn("the restore stopped", failed.stderr)
+        # The dump's tokens, `leaked` live in them, as the web would find them after a boot.
+        self.assertEqual(self.tokens(), [("kept", None), ("leaked", None)])
+        self.reboot()
+        done = self.restore(dump)
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(
+            "using the API tokens recorded by the restore that did not finish", done.stdout
+        )
+        self.assertEqual(self.tokens(), [("kept", None), ("leaked", "restore")])
+        self.assertEqual(list((self.directory / "lib/database-restore").iterdir()), [])
+
+    def test_the_token_is_revoked_as_soon_as_pg_restore_is_done_not_at_the_end(self) -> None:
+        """Review 26-10-31, P2-1: a failure on 03-verify and a reboot left it live."""
+
+        dump = self.dump_with_a_token_revoked_after()
+
+        failed = self.restore(dump, proved=False)
+
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assertEqual(self.tokens(), [("kept", None), ("leaked", "restore")])
+
+    def test_a_set_left_by_a_run_that_never_reached_pg_restore_is_read_again(self) -> None:
+        """Review 26-10-31, P3-1: the database it described has changed since."""
+
+        dump = self.dump_with_a_token_revoked_after()
+        stale = self.directory / "lib/database-restore"
+        stale.mkdir(parents=True)
+        # Both hashes: as if `leaked` were still active when that run wrote it.
+        (stale / "tokens").write_text(f"{(b'k' * 32).hex()},{(b'l' * 32).hex()}\n")
+
+        done = self.restore(dump)
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertNotIn("using the API tokens recorded", done.stdout)
+        self.assertEqual(self.tokens(), [("kept", None), ("leaked", "restore")])
+        self.assertEqual(list(stale.iterdir()), [])
+
+    def test_a_dump_from_before_the_tokens_is_restored_without_an_early_revocation(self) -> None:
+        """Review 26-10-31, P2-1: no api_token yet, so nothing to revoke until it is migrated."""
+
+        self.alembic("upgrade", "0106")
+        dump = self.directory / "before-the-tokens.dump"
+        subprocess.run(  # noqa: S603 - this cluster's pg_dump, fixed arguments
+            [f"{self.bindir}/pg_dump", "-h", self.socket, "-U", self.role, "-d", self.NAME,
+             "--format=custom", f"--file={dump}"],
+            check=True,
+        )  # fmt: skip
+        self.alembic("upgrade", "head")
+
+        done = self.restore(dump)
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.tokens(), [])
+
     def test_a_restore_run_again_after_a_failed_one_still_revokes_the_token_revoked_after_the_dump(
         self,
     ) -> None:
@@ -10065,7 +10188,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                 "select name, revoked_by from api_token order by name"
             ).fetchall()
         self.assertEqual(rows, [("kept", None), ("leaked", "restore")])
-        self.assertFalse((self.directory / "restore-tokens").exists())
+        self.assertEqual(list((self.directory / "lib/database-restore").iterdir()), [])
 
     def test_a_dump_at_0101_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0101", grants_differ="0101 already grants what 0102 does")

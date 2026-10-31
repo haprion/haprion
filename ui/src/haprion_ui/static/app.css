@@ -1738,7 +1738,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * same widths so the two pages agree.
  */
 .select-box { display: inline-flex; align-items: center; justify-content: center; min-height: 20px; }
-.select-box input { margin: 0; width: 16px; height: 16px; accent-color: var(--critical); }
+.select-box input { margin: 0; width: 16px; height: 16px; accent-color: var(--text-strong); }
 .deletion-bar { display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
 .deletion-count { color: var(--muted); font-size: 13px; }
 .deletion-table th:nth-child(1) { width: 26%; }

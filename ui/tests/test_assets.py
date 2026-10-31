@@ -105,6 +105,20 @@ class ShapesTheIconRuleReaches(unittest.TestCase):
         self.assertIn("padding: 6px 0", rule)
 
 
+class ASelectionIsNotAWarning(unittest.TestCase):
+    """A row's checkbox chooses; the button says what happens (2026-10-31).
+
+    `.select-box` was coloured as a danger for deleting certificates, and the
+    same box then chose servers to drain and addresses to unblock - red ticks
+    for nothing dangerous. The warning belongs on the button.
+    """
+
+    def test_the_row_checkbox_is_neutral(self) -> None:
+        stylesheet = (STATIC_DIRECTORY / "app.css").read_text(encoding="utf-8")
+        rule = stylesheet.split(".select-box input {", 1)[1].split("}", 1)[0]
+        self.assertIn("accent-color: var(--text-strong)", rule)
+
+
 class ReleaseLabelTests(unittest.TestCase):
     """The version beside the name in the header, and the release as its tooltip."""
 

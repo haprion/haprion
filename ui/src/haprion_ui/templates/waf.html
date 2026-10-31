@@ -9,13 +9,8 @@
 #}
 <section class="page-heading waf-heading">
   <div class="heading-title"><h1>WAF logs</h1><p class="page-lede">What the WAF engine found, last {{ days }} days.</p></div>
-  {% if clusters | length > 1 %}
-  <form class="heading-badges waf-cluster" method="get" action="/waf">
-    <input type="hidden" name="view" value="{{ view }}">
-    <label>Cluster<select name="cluster" data-submit-on-change><option value="">All clusters</option>{% for cluster in clusters %}<option value="{{ cluster }}"{% if cluster == selected_cluster %} selected{% endif %}>{{ cluster }}</option>{% endfor %}</select></label>
-  </form>
-  {% endif %}
 </section>
+{% set waf_cluster_filter = clusters | length > 1 %}
 {% include "_waf-views.html" %}
 {% if problem %}<p class="preview-notice form-problem" role="alert"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>{% endif %}
 {% if saved and saved_in %}<p class="preview-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span>Saved for <a href="/proxies/{{ saved_in | urlencode }}/{{ saved | urlencode }}/edit?open=waf">{{ saved }}</a>, not published yet. Publish it on <a href="/history">Versions</a>, or with Publish &amp; deploy on the dashboard.</p>{% endif %}

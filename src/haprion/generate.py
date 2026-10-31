@@ -269,6 +269,14 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     "%(waf_rules)[var(txn.coraza.rule_ids),bytes(0,1024)] "
     "%(waf_score)[var(txn.coraza.anomaly_score)] "
     #
+    # Why the engine gave no answer, when it gave none: HAProxy's SPOE error
+    # code (1 its processing timeout, 256 and up a broken connection; SPOE.txt,
+    # `option set-on-error`). `waf-engine` says that it happened; this says
+    # which, on the node and at every receiver - one of 129 requests went
+    # unanswered on 2026-10-31 and nothing said why. The collector passes over it.
+    #
+    "%(waf_error)[var(txn.coraza.error)] "
+    #
     # The engine's transaction ID, which it hands back to HAProxy: the same ID
     # its own log puts on every rule it matched, so the WAF page can tell what
     # was found in this request (migration 0052, B234).
@@ -932,8 +940,6 @@ def _waf_files(
             f"    groups {WAF_SPOE_GROUP}",
             f"    option var-prefix {WAF_SPOE_ENGINE}",
             "    option set-on-error error",
-            "    timeout hello 2s",
-            "    timeout idle 2m",
             "    timeout processing 500ms",
             f"    use-backend {WAF_BACKEND}",
             "",

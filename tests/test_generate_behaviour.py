@@ -2947,6 +2947,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             "    http-after-response set-header X-Rule %[var(txn.rule)]\n"
             "    http-after-response set-header X-Waf %[var(txn.coraza.rule_ids)]\n"
             "    http-after-response set-header X-Waf-Id %[var(txn.coraza.id)]\n"
+            "    http-after-response set-header X-Waf-Error %[var(txn.coraza.error)]\n"
         )
         layer = GeneratedLayer(
             configuration={
@@ -3303,6 +3304,19 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
 
     def test_an_ordinary_request_is_served_and_named_by_nothing(self) -> None:
         self.assertEqual(self.ask("/?q=hello", name="looks"), (200, "waf-engine:log", ""))
+
+    def test_the_record_says_why_the_engine_gave_no_answer(self) -> None:
+        """`waf_error` in the traffic record: HAProxy's SPOE code for this request."""
+
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.request("GET", "/", headers={"Host": "looks.example.com"})
+            response = connection.getresponse()
+            response.read()
+        finally:
+            connection.close()
+        # 257 on 3.4.7 (256 + SPOP's I/O error): nothing listens. A timeout is 1.
+        self.assertRegex(response.getheader("X-Waf-Error") or "", "^[0-9]+$")
 
     def test_a_looking_object_lets_an_attack_through_and_names_the_rules(self) -> None:
         self.skipTest("the engine is not running")

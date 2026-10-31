@@ -9836,7 +9836,9 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         path.write_text(f"#!/bin/bash\nset -e\n{body}")
         path.chmod(0o755)
 
-    def restore(self, dump: Path) -> subprocess.CompletedProcess[str]:
+    def restore(self, dump: Path, *, proved: bool = True) -> subprocess.CompletedProcess[str]:
+        """A restore; `proved` False makes its privilege proof fail, as a run that is run again."""
+
         source = (self.REPOSITORY / "install/platform/bin/haprion-backup").read_text()
 
         def function(name: str) -> str:
@@ -9856,13 +9858,14 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             self.fail("haprion-backup has no RESTORE_UNITS")
         root = self.directory / "platform"
         site = root / "releases/new/venv/lib/python3/site-packages"
-        (site / "haprion_ui").mkdir(parents=True)
+        (site / "haprion_ui").mkdir(parents=True, exist_ok=True)
         shutil.copy(self.REPOSITORY / "ui/src/haprion_ui/compatibility.json", site / "haprion_ui")
-        (site / "haprion_ui-0.1.0.dist-info").mkdir()
+        (site / "haprion_ui-0.1.0.dist-info").mkdir(exist_ok=True)
         (site / "haprion_ui-0.1.0.dist-info/entry_points.txt").write_text(
             "[console_scripts]\nhaprion-worker = haprion_ui.worker:_entry\n"
         )
-        (root / "current").symlink_to(root / "releases/new")
+        if not (root / "current").exists():
+            (root / "current").symlink_to(root / "releases/new")
         expected = self.directory / "expected-grants"
         expected.write_text(self.expected)
         self.step(
@@ -9875,7 +9878,8 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             "03-verify",
             f'actual="$(psql -U {self.role} -d {self.NAME} -qtAX -F "$(printf "\\t")" '
             f'-c "{self.GRANTS}")"\n'
-            f'[[ "$actual" == "$(cat {expected})" ]] || {{ echo "grants differ" >&2; exit 1; }}\n',
+            f'[[ "$actual" == "$(cat {expected})" ]] || {{ echo "grants differ" >&2; exit 1; }}\n'
+            + ("" if proved else "exit 1\n"),
         )
         program = (
             "set -Eeuo pipefail\n"
@@ -9902,6 +9906,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             + variable("TOKEN_IS_LIVE")
             + variable("REVOKE_REVIVED_TOKENS")
             + f"RESTORE_STOPPED={self.directory / 'restore-stopped'}\n"
+            f"RESTORE_TOKENS={self.directory / 'restore-tokens'}\n"
             f"PLATFORM_STEPS={self.directory / 'steps'}\n"
             f"COLLECTOR_CONFIG={self.directory / 'none'}\nCOLLECTOR_COMMAND=/bin/false\n"
             f"RETENTION_COMMAND=/bin/false\nRETENTION_TIMER={self.directory / 'none'}\n"
@@ -9917,6 +9922,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                     "hold_api_tokens",
                     "stopped_before",
                     "remember_stopped",
+                    "save_restore_tokens",
                     "restore_stopped",
                     "do_restore",
                     "start_units",
@@ -10019,6 +10025,47 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         self.assertIn(
             "API tokens revoked again, active now but not before the restore: leaked", done.stdout
         )
+
+    def test_a_restore_run_again_after_a_failed_one_still_revokes_the_token_revoked_after_the_dump(
+        self,
+    ) -> None:
+        """Review 26-10-31, P2-1: the run again read the dump's tokens as the ones from before."""
+
+        self.alembic("upgrade", "head")
+        insert = (
+            "insert into api_token (name, level, token_hash, prefix, created_by, expires_at) "
+            "values (%s, 'read', %s, 'hap_abcdefgh', 'admin', now() + interval '30 days')"
+        )
+        with self.scratch() as connection:
+            connection.execute(insert, ("kept", b"k" * 32))
+            connection.execute(insert, ("leaked", b"l" * 32))
+            connection.commit()
+        dump = self.directory / "at-the-head.dump"
+        subprocess.run(  # noqa: S603 - this cluster's pg_dump, fixed arguments
+            [f"{self.bindir}/pg_dump", "-h", self.socket, "-U", self.role, "-d", self.NAME,
+             "--format=custom", f"--file={dump}"],
+            check=True,
+        )  # fmt: skip
+        with self.scratch() as connection:
+            connection.execute(
+                "update api_token set revoked_at = now(), revoked_by = 'admin' "
+                "where name = 'leaked'"
+            )
+            connection.commit()
+
+        failed = self.restore(dump, proved=False)
+
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assertIn("restored", failed.stdout)
+        done = self.restore(dump)
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        with self.scratch() as connection:
+            rows = connection.execute(
+                "select name, revoked_by from api_token order by name"
+            ).fetchall()
+        self.assertEqual(rows, [("kept", None), ("leaked", "restore")])
+        self.assertFalse((self.directory / "restore-tokens").exists())
 
     def test_a_dump_at_0101_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0101", grants_differ="0101 already grants what 0102 does")

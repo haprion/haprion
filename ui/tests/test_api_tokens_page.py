@@ -161,6 +161,24 @@ class MakingATokenOnThePage(TokensPage):
             self.assertIn(f'name="level" value="{level}"', page)
         self.assertIn('<option value="365" selected>365 days</option>', page)
 
+    def test_without_a_proxy_to_choose_the_block_level_is_not_offered(self) -> None:
+        """Review 26-10-31, P3-8: the level was offered, and could not be filled in."""
+
+        with mock.patch("haprion_ui.external_blocking.blocking_objects", return_value=()):
+            page = self.admin().get("/settings/api-tokens/new").text
+            refused = self.post(
+                self.admin(), "/settings/api-tokens/new", **self.fill(level="block")
+            )
+
+        for level in api_tokens.LEVELS:
+            self.assertEqual(f'name="level" value="{level}"' in page, level != "block", level)
+        self.assertNotIn("data-for-level", page)
+        # Still refused if it is sent, and the form then shows the level it can offer.
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("A block token names the proxies it may block on.", refused.text)
+        self.assertNotIn('name="level" value="block"', refused.text)
+        self.assertIn('name="level" value="read" checked', refused.text)
+
     def test_the_secret_is_shown_once_and_kept_nowhere_else(self) -> None:
         response = self.post(
             self.admin(),

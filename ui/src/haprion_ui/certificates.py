@@ -177,6 +177,11 @@ class RegistryCertificateView:
     #
     needs_publish: bool = False
     #
+    # The clusters' share of it, receivers left out: what a reader limited to
+    # some clusters may be told (the API).
+    #
+    cluster_needs_publish: bool = False
+    #
     # True while the State cell shows a job that is still running - the row's
     # badge then carries a spinner, on every action a button can start.
     #
@@ -1189,16 +1194,24 @@ def needs_publishing(entry: Mapping[str, Any], targets: Sequence[TargetView]) ->
     could not say them at all.
     """
 
-    clusters = [target for target in targets if target.kind == "cluster"]
-    if clusters:
-        distribution = _mapping(entry.get("distribution"))
-        if distribution.get("published_at") is None or distribution.get("current") is False:
-            return True
-    return any(
+    return distribution_needs_publishing(entry, targets) or any(
         target.published_at is None or target.current is False
         for target in targets
         if target.kind == "receiver"
     )
+
+
+def distribution_needs_publishing(entry: Mapping[str, Any], targets: Sequence[TargetView]) -> bool:
+    """The clusters' part of `needs_publishing`: their distribution copy is missing or older.
+
+    Receivers are left out, so that a reader limited to some clusters is not
+    told about a receiver's missing copy (the API).
+    """
+
+    if not any(target.kind == "cluster" for target in targets):
+        return False
+    distribution = _mapping(entry.get("distribution"))
+    return distribution.get("published_at") is None or distribution.get("current") is False
 
 
 def _registry_certificate(
@@ -1303,6 +1316,7 @@ def _registry_certificate(
         older_copy_clusters=older_copy_clusters,
         cluster_states=cluster_states,
         needs_publish=readable and needs_publishing(entry, targets),
+        cluster_needs_publish=readable and distribution_needs_publishing(entry, targets),
         material_note=(
             "Read from the published cluster copy; nothing is at its import source yet"
             if readable and entry.get("measured_at") == "distribution"

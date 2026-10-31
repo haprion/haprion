@@ -179,6 +179,29 @@ class TheCertificateList(ApiTestCase):
         self.assertEqual([t["name"] for t in alpha["targets"]], ["alpha"])
         self.assertNotEqual(alpha["state"], whole)
 
+    def test_a_limited_tokens_needs_publish_counts_its_own_clusters_only(self) -> None:
+        """Review 26-10-31, P3-3: a receiver without a copy showed through `needs_publish`."""
+
+        self.entries = [
+            entry(
+                "receiver-only",
+                clusters=("alpha", "beta"),
+                receivers=({"id": "web-host", "published_at": None, "current": None},),
+            ),
+            entry(
+                "distribution",
+                clusters=("alpha", "beta"),
+                distribution={"published_at": None, "current": None},
+            ),
+        ]
+        whole = self.by_id(self.get(self.issue()))
+        alpha = self.by_id(self.get(self.issue(clusters=["alpha"])))
+        self.assertTrue(whole["receiver-only"]["needs_publish"])
+        self.assertFalse(alpha["receiver-only"]["needs_publish"])
+        # The clusters read one distribution copy, so a missing one is theirs too.
+        self.assertTrue(whole["distribution"]["needs_publish"])
+        self.assertTrue(alpha["distribution"]["needs_publish"])
+
     def test_a_limited_token_is_given_the_worst_state_of_its_own_clusters(self) -> None:
         self.entries = [entry("both", clusters=("alpha", "beta"))]
         states = {

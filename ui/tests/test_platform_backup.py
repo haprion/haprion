@@ -65,6 +65,25 @@ def function(name: str, source: str) -> str:
     return match.group(0)
 
 
+def token_reads(answers: tuple[str, ...]) -> str:
+    """A stand-in for `active_token_hashes` that answers each read in turn, the last one after."""
+
+    def body(answer: str) -> str:
+        return "return 1" if answer == "FAIL" else f"printf '%s\\n' {answer}"
+
+    cases = "".join(
+        f"        {number}) {body(answer)} ;;\n" for number, answer in enumerate(answers[:-1])
+    )
+    return (
+        "active_token_hashes() {\n"
+        '    record "token-hashes"; local n; n="$(cat "$CALLS.reads" 2>/dev/null || echo 0)"\n'
+        '    echo $(( n + 1 )) >"$CALLS.reads"\n'
+        '    case "$n" in\n'
+        f"{cases}        *) {body(answers[-1])} ;;\n"
+        "    esac\n}\n"
+    )
+
+
 class TheRestoreCheck(unittest.TestCase):
     source: str
 
@@ -435,8 +454,14 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         migrate_step: bool = True,
         remembered: Path | None = None,
         dumped: bool = True,
+        saved: Path | None = None,
+        reads: tuple[str, ...] = ("aa bb",),
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-        """One run; `remembered` is the file the runs before it left, kept across runs."""
+        """One run; `remembered` and `saved` are the files the runs before it left.
+
+        `reads` is what each read of the active tokens answers, the last one
+        for every read after it: hashes separated by spaces, or FAIL.
+        """
 
         source = SCRIPT.read_text()
         units = re.search(r"^RESTORE_UNITS=\(\n.*?^\)\n", source, re.MULTILINE | re.DOTALL)
@@ -488,12 +513,13 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 )
                 + 'runuser() { record "runuser $*"; }\n'
                 'do_after_restore() { record "after-restore"; echo "$#:$*" > "$CALLS.kept"; }\n'
-                'active_token_hashes() { record "token-hashes"; echo aa; echo bb; }\n'
-                f'dump_before_restore() {{ record "dump-before-restore"; {"true" if dumped else "false"}; }}\n'
+                + token_reads(reads)
+                + f'dump_before_restore() {{ record "dump-before-restore"; {"true" if dumped else "false"}; }}\n'
                 "DB_NAME=haprion\nDUMP_DIR=/dumps\n"
                 + re.search(r"^counted\(\) .*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
                 + units.group(0)
                 + f'RESTORE_STOPPED="{remembered or here / "restore-stopped"}"\n'
+                + f'RESTORE_TOKENS="{saved or here / "restore-tokens"}"\n'
                 + f'PLATFORM_STEPS="{steps}"\nCOLLECTOR_CONFIG="{config}"\n'
                 f'RETENTION_COMMAND="{retention}"\nRETENTION_TIMER="{timer}"\n'
                 f'COLLECTOR_COMMAND="{collector}"\n'
@@ -503,6 +529,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                         "dump_revision",
                         "stopped_before",
                         "remember_stopped",
+                        "save_restore_tokens",
                         "restore_stopped",
                         "do_restore",
                         "start_units",
@@ -535,6 +562,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 "systemctl stop haprion-traffic-collector.timer",
                 "systemctl stop haprion-web.socket",
                 "systemctl stop haprion-worker.service",
+                "token-hashes",
                 "dump-before-restore",
                 "-u postgres pg_restore -d postgres --clean --create --if-exists --exit-on-error"
                 " <dump",
@@ -555,6 +583,80 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertLess(said.index("token-hashes"), said.index("systemctl stop haprion-web.socket"))
         self.assertEqual(self.kept, "1:aa,bb")
+
+    def test_the_set_is_read_again_once_stopped_and_that_one_is_used(self) -> None:
+        """Review 26-10-31, P3-1: a token revoked while the services stopped was still counted."""
+
+        done, said = self.restore(active=self.ACTIVE, reads=("aa bb", "aa"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(said.count("token-hashes"), 2)
+        self.assertGreater(
+            len(said) - said[::-1].index("token-hashes"),
+            said.index("systemctl stop haprion-worker.service"),
+        )
+        self.assertEqual(self.kept, "1:aa")
+
+    def test_the_set_cannot_be_read_before_the_stop_so_nothing_is_stopped(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, reads=("FAIL",))
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("the active API tokens could not be read; nothing was stopped", done.stderr)
+        self.assertEqual(said, ["plan 0101", "token-hashes"])
+
+    def test_the_set_cannot_be_read_after_the_stop_so_nothing_is_restored(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, reads=("aa bb", "FAIL"))
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("could not be read; nothing was restored", done.stderr)
+        self.assertFalse(any("pg_restore" in line for line in said))
+        self.assertIn("systemctl start haprion-worker.service", said)
+        self.assertNotIn("dump-before-restore", said)
+
+    def test_the_set_is_kept_for_the_run_again_and_gone_when_the_restore_finishes(self) -> None:
+        """Review 26-10-31, P2-1: the run again read the dump's tokens as the ones from before."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            saved = Path(raw) / "restore-tokens"
+            first, _ = self.restore(active=self.ACTIVE, restored=False, saved=saved)
+            self.assertEqual(first.returncode, 1)
+            self.assertEqual(saved.read_text(), "aa,bb\n")
+            self.assertEqual(stat.S_IMODE(saved.stat().st_mode), 0o600)
+            #
+            # The database the run again would read is the dump's: its tokens
+            # are not the ones from before.
+            #
+            done, said = self.restore(active="", saved=saved, reads=("aa bb cc",))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertNotIn("token-hashes", said)
+            self.assertEqual(self.kept, "1:aa,bb")
+            self.assertIn(
+                "using the API tokens recorded by the restore that did not finish", done.stdout
+            )
+            self.assertFalse(saved.exists())
+
+    def test_an_empty_set_is_kept_too(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            saved = Path(raw) / "restore-tokens"
+            self.restore(active=self.ACTIVE, restored=False, saved=saved, reads=("",))
+            self.assertEqual(saved.read_text(), "\n")
+            done, said = self.restore(active="", saved=saved, reads=("aa",))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertNotIn("token-hashes", said)
+            self.assertEqual(self.kept, "1:")
+
+    def test_a_run_that_fails_before_the_restore_leaves_no_set_behind(self) -> None:
+        for failure in ({"dumped": False}, {"connections": "1"}):
+            with self.subTest(**failure), tempfile.TemporaryDirectory() as raw:
+                saved = Path(raw) / "restore-tokens"
+                done, _ = self.restore(active=self.ACTIVE, saved=saved, **failure)
+                self.assertEqual(done.returncode, 1)
+                self.assertFalse(saved.exists())
+
+    def test_a_run_again_that_fails_before_the_restore_keeps_the_set(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            saved = Path(raw) / "restore-tokens"
+            self.restore(active=self.ACTIVE, restored=False, saved=saved)
+            done, _ = self.restore(active="", saved=saved, dumped=False)
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(saved.read_text(), "aa,bb\n")
 
     def test_a_dump_that_cannot_be_made_restores_nothing_and_starts_what_it_stopped(self) -> None:
         done, said = self.restore(active=self.ACTIVE, dumped=False)
@@ -760,6 +862,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
     ) -> None:
         source = SCRIPT.read_text()
         self.assertIn("\nRESTORE_STOPPED=/run/haprion/restore-stopped\n", source)
+        self.assertIn("\nRESTORE_TOKENS=/run/haprion/restore-tokens\n", source)
         tmpfiles = (ROOT / "install/tmpfiles/haprion.conf").read_text()
         self.assertIn("\nd /run/haprion 0755 root root -\n", tmpfiles)
 
@@ -819,18 +922,19 @@ class HoldingAfterARestore(unittest.TestCase):
     """Review 26-10-29, C05: `after-restore` held a job a running worker went on with."""
 
     def after_restore(
-        self, *, active: bool, remembered: Path | None = None
+        self, *, active: bool, remembered: Path | None = None, saved: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
         source = SCRIPT.read_text()
         program = (
             "set -Eeuo pipefail\n"
             f'RESTORE_STOPPED="{remembered or "/nonexistent/restore-stopped"}"\n'
+            f'RESTORE_TOKENS="{saved or "/nonexistent/restore-tokens"}"\n'
             'log() { echo "$*"; }\n'
             'die() { echo "ERROR: $*" >&2; exit 1; }\n'
             f"systemctl() {{ [[ $1 == is-active ]] && {'true' if active else 'false'}; }}\n"
             "psql_as() { cat >/dev/null; printf '[7]\\n2\\n'; }\n"
             "DB_NAME=haprion\n"
-            "hold_api_tokens() { :; }\n"
+            'hold_api_tokens() { echo "hold $#:$*"; }\n'
             + function("do_after_restore", source)
             + function("after_restore_by_hand", source)
             + "after_restore_by_hand\n"
@@ -838,6 +942,31 @@ class HoldingAfterARestore(unittest.TestCase):
         return subprocess.run(  # noqa: S603 - fixed program
             ["/bin/bash", "-c", program], capture_output=True, text=True, check=False
         )
+
+    def test_by_hand_after_a_failed_restore_it_compares_with_the_set_from_before(self) -> None:
+        """Review 26-10-31, P2-1: the database is the dump's, so its active tokens prove nothing."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            saved = Path(raw) / "restore-tokens"
+            saved.write_text("aa,bb\n")
+            done = self.after_restore(active=False, saved=saved)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn("comparing with the API tokens recorded before the restore", done.stdout)
+            self.assertIn("hold 1:aa,bb", done.stdout)
+            self.assertFalse(saved.exists())
+
+    def test_by_hand_without_a_set_from_before_it_lists(self) -> None:
+        done = self.after_restore(active=False)
+        self.assertIn("hold 0:", done.stdout)
+        self.assertNotIn("comparing", done.stdout)
+
+    def test_refused_it_keeps_the_set_from_before(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            saved = Path(raw) / "restore-tokens"
+            saved.write_text("aa\n")
+            done = self.after_restore(active=True, saved=saved)
+            self.assertEqual(done.returncode, 1)
+            self.assertTrue(saved.exists())
 
     def test_by_hand_it_lets_go_of_the_refusal_a_failed_restore_left(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -872,6 +1001,54 @@ class HoldingAfterARestore(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("held for an admin on Jobs: [7]", done.stdout)
         self.assertIn("sessions ended: 2", done.stdout)
+
+
+class ReadingTheActiveTokens(unittest.TestCase):
+    """Review 26-10-31, P3-2: a query that failed was read as "no token is active"."""
+
+    def read(
+        self, *, database: str = "1", table: str = "t", rows: str = "aa\\nbb\\n"
+    ) -> subprocess.CompletedProcess[str]:
+        """`active_token_hashes` with each query answering as given; FAIL fails it."""
+
+        def answer(text: str) -> str:
+            return "return 1" if text == "FAIL" else f"printf '%b' '{text}'"
+
+        source = SCRIPT.read_text()
+        program = (
+            "set -Eeuo pipefail\n"
+            "DB_NAME=haprion\n"
+            f"psql_scratch() {{ {answer(database)}; }}\n"
+            'psql_as() { case "$*" in *to_regclass*)'
+            f" {answer(table)} ;; *) {answer(rows)} ;; esac; }}\n"
+            + re.search(r"^TOKEN_IS_LIVE=.*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
+            + function("active_token_hashes", source)
+            + "active_token_hashes | paste -sd, -\n"
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program], capture_output=True, text=True, check=False
+        )
+
+    def test_the_active_tokens_are_listed(self) -> None:
+        done = self.read()
+        self.assertEqual((done.returncode, done.stdout), (0, "aa,bb\n"))
+
+    def test_no_database_and_no_table_are_nothing_active(self) -> None:
+        for absent in ({"database": "0\\n"}, {"table": "f\\n"}):
+            with self.subTest(**absent):
+                done = self.read(**absent)
+                self.assertEqual((done.returncode, done.stdout), (0, "\n"))
+
+    def test_a_query_that_fails_or_answers_oddly_is_an_error(self) -> None:
+        for broken in (
+            {"database": "FAIL"},
+            {"database": ""},
+            {"table": "FAIL"},
+            {"table": ""},
+            {"rows": "FAIL"},
+        ):
+            with self.subTest(**broken):
+                self.assertEqual(self.read(**broken).returncode, 1)
 
 
 class ApiTokensAfterARestore(unittest.TestCase):

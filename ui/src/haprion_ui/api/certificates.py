@@ -49,10 +49,12 @@ def _certificate(entry: RegistryCertificateView, caller: Caller, now: datetime) 
         or (target.kind == "cluster" and api_tokens.covers(caller.issued, target.name))
     ]
     state = (entry.state_label, entry.state_detail, entry.state_tone)
+    needs_publish = entry.needs_publish
     if limited:
         #
         # The combined State counts the receivers and the other clusters'
-        # nodes. A limited token gets the worst of its own clusters' States.
+        # nodes. A limited token gets the worst of its own clusters' States,
+        # and whether a publish is due as the clusters see it, not the receivers.
         #
         state = min(
             (
@@ -63,6 +65,7 @@ def _certificate(entry: RegistryCertificateView, caller: Caller, now: datetime) 
             key=lambda each: tone_rank(each[2]),
             default=state,
         )
+        needs_publish = entry.cluster_needs_publish
     left = entry.expires_at - now if entry.expires_at is not None else None
     return {
         "id": entry.identifier,
@@ -78,7 +81,7 @@ def _certificate(entry: RegistryCertificateView, caller: Caller, now: datetime) 
         "expired": left is not None and left.total_seconds() <= 0,
         "expiry_state": entry.tone,
         "state": {"label": state[0], "detail": state[1], "tone": state[2]},
-        "needs_publish": entry.needs_publish,
+        "needs_publish": needs_publish,
         "targets": [_target(target) for target in targets],
     }
 

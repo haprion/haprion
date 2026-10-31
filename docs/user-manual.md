@@ -3207,13 +3207,18 @@ actions are in the audit record. After a host restore, end the sessions yourself
 **End sessions**.
 
 **API tokens** are restored with the database, and a token revoked since the dump is live again in it.
-`restore` therefore compares: it reads which tokens were active in the database it replaces, and after
-the restore it revokes every restored token that is active but was not among them. That covers a token
-revoked or removed after the dump; the command names those it revoked, and the audit record holds
-`api_tokens_revoked`. Run on its own, `after-restore` has nothing to compare with: it lists the active
-tokens, and you revoke those that should not be live under *Settings* → *API tokens*. The same goes for a
-whole-host restore, for example from a VM backup: it brings back the tokens revoked since that backup, so
-revoke them again.
+`restore` therefore compares: it reads which tokens were active in the database it replaces, once the
+services are stopped, and after the restore it revokes every restored token that is active but was not
+among them. That covers a token revoked or removed after the dump; the command names those it revoked,
+and the audit record holds `api_tokens_revoked`. If the database or its token table does not exist,
+because the restore goes to a new host or from a dump older than the tokens, no token was active before
+and every active restored token is revoked; if they cannot be read for any other reason the command stops
+before it stops anything. A restore that fails and is run again compares with the tokens it recorded the
+first time, not with the database it has by then, which is the dump's. Run on its own after such a
+failure, `after-restore` uses the recorded set too and says so. Without one it has nothing to compare
+with: it lists the active tokens, and you revoke those that should not be live under *Settings* → *API
+tokens*. The same goes for a whole-host restore, for example from a VM backup: it brings back the tokens
+revoked since that backup, so revoke them again.
 
 Apart from the hold, the worker never runs a job that has waited more than two hours unless an admin
 chose **Run**: it ends *blocked* with `request_expired`. A job the worker had already started is judged
@@ -4523,6 +4528,8 @@ When a call is refused, `ok` is false and `error.code` says why:
 | 500 | `internal_error` | The call failed on the manager; the cause is in its log, not in the answer |
 | 503 | `database_unavailable` | The manager's database did not answer |
 | 503 | `query_timeout` | The database stopped a query for taking too long; narrow `from` and `to`, or the search |
+| 413 | `too_large` | Given by nginx: the request body is over 1 MB |
+| 502, 503, 504 | `unavailable` | Given by nginx: the manager did not answer, or not in time; try again shortly |
 
 Only guesses count towards the minute's wait. A token that is revoked, ended or called from elsewhere,
 or a call without a token, is answered 401 and written to the log, but does not close the address to the

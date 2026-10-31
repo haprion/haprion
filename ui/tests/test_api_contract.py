@@ -11,6 +11,7 @@ described in it. A route with no schema fails, so a new route comes with one.
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import tomllib
 import unittest
@@ -31,7 +32,7 @@ from referencing import Registry, Resource
 from referencing._core import Resolver
 
 import haprion_ui
-from haprion_ui import api, api_tokens, attention, dashboard, waf
+from haprion_ui import api, api_tokens, attention, dashboard, db, demo, waf
 from haprion_ui.api import contract
 from haprion_ui.api import jobs as api_jobs
 from haprion_ui.config import TrafficLogs
@@ -43,7 +44,7 @@ from tests.test_api_blocks import BLOCKING, SHOP, held, status, stored
 from tests.test_api_boundary import api_routes
 from tests.test_api_certificates import entry as certificate_entry
 from tests.test_api_certificates import registry as certificate_registry
-from tests.test_api_clusters_objects import ReadingTestCase
+from tests.test_api_clusters_objects import ReadingTestCase, renamed
 from tests.test_api_jobs import REQUEST, JobsApiTestCase, a_job, failed_job
 from tests.test_api_traffic import NODE
 from tests.test_api_traffic import entry as traffic_entry
@@ -54,10 +55,24 @@ from tests.test_login import configuration
 from tests.test_waf_page import CATALOG, AnExceptionThatDoesNotWork, finding
 from tests.test_waf_page import SEEN as WAF_SEEN
 
+WHEN = "2026-10-31T09:30:00+00:00"
+INGEST = """schema: 1
+name: ingest
+listen:
+  protocol: tcp
+  port: 5432
+backend: db
+backends:
+  db:
+    servers:
+      - host: 192.0.2.30
+        port: 5432
+"""
 PACKAGE = Path(haprion_ui.__file__).resolve().parent
 SCHEMAS = PACKAGE / "api" / "schemas"
 ROOT = Path(__file__).resolve().parents[2]
 BASE = "https://example.com/haprion/schemas/v1/api/"
+NGINX = (ROOT / "install/platform/examples/haprion.nginx.example").read_text("utf-8")
 PROSE = ("Code.", "Text.", "Value.")
 
 
@@ -188,6 +203,7 @@ class TheClusterAndObjectRoutes(Checked, ReadingTestCase):
             "/clusters/alpha/objects/shop",
             "/clusters/alpha/objects/staging",
             "/clusters/alpha/objects/metrics",
+            "/clusters/alpha/objects/ingest",
         ),
         "object_history": ("/clusters/alpha/objects/public-web/history",),
     }
@@ -197,7 +213,7 @@ class TheClusterAndObjectRoutes(Checked, ReadingTestCase):
         when = datetime(2026, 10, 31, 9, 30, tzinfo=UTC)
         items = (
             attention.Item("certificate", "critical", None, "web", "expires in 3 days", when, "/"),
-            attention.Item("node", "warning", "alpha", "node-a", "behind", None, "/", "Behind"),
+            attention.Item("node", "warning", "alpha", "node-a", "behind", when, "/", "Behind"),
             attention.Item("node", "warning", "beta", "node-c", "behind", None, "/"),
         )
         drafts = [
@@ -219,7 +235,22 @@ class TheClusterAndObjectRoutes(Checked, ReadingTestCase):
                 ("shop", "saved", True, None),
             )
         ]
+        #
+        # The nullable fields the demo leaves empty, filled once each, so that
+        # their types are held to the schema when there is a value (review
+        # 26-10-31, P3-7): a site that redirects HTTP, an object with servers,
+        # and a version somebody saved.
+        #
+        objects = renamed(demo.object_rows())
+        listed = objects[0].result["objects"]
+        listed[0]["redirect_http"] = True
+        listed.append({**listed[0], "name": "ingest", "document": INGEST, "protocol": "tcp"})
+        listed[-1].update({"hostnames": [], "redirect_http": None, "runtime_backends": []})
+        histories = renamed(demo.history_rows())
+        histories[0].result["versions"][0]["requested_by"] = "operator"
         for target, value in (
+            ("haprion_ui.db.cluster_objects", objects),
+            ("haprion_ui.db.cluster_histories", histories),
             ("haprion_ui.api.clusters.attention_items", attention.Attention(when, items, {}, True)),
             ("haprion_ui.db.cluster_drafts", drafts),
             # One publish still running and one refused, for the fields they fill.
@@ -252,6 +283,41 @@ class TheClusterAndObjectRoutes(Checked, ReadingTestCase):
         by_name = {o["name"]: o for o in listed}
         self.assertEqual(by_name["public-web"]["publishing"]["label"], "Publishing")
         self.assertEqual(by_name["shop"]["publish_refused"], "candidate_invalid")
+
+    def test_the_fields_the_demo_leaves_empty_are_filled(self) -> None:
+        listed = {o["name"]: o for o in self.result("/clusters/alpha/objects")["objects"]}
+        self.assertTrue(listed["public-web"]["redirect_http"])
+        self.assertEqual(listed["ingest"]["servers"], ["192.0.2.30"])
+        history = self.result("/clusters/alpha/objects/public-web/history")["versions"]
+        self.assertEqual(history[0]["saved_by"], "operator")
+        self.assertEqual(self.result("/clusters/alpha")["attention"][0]["since"], WHEN)
+
+    def test_a_drafts_replaced_object_is_held_to_the_schema(self) -> None:
+        # Only a write token sees a draft, so the group's both-levels walk cannot.
+        response = self.get("/clusters/alpha/objects/blog", level="write")
+        self.assertEqual(response.status_code, 200, response.text)
+        held_to(self, "object_show", response.json())
+        self.assertEqual(response.json()["result"]["draft"]["replaces"], "journal")
+
+
+class TheTokenRoute(ApiTestCase):
+    def test_a_token_with_a_scope_is_held_to_the_schema(self) -> None:
+        """Review 26-10-31, P3-7: the arrays of a scoped token were never filled."""
+
+        secret = self.issue(
+            level="block",
+            clusters=["alpha", "beta"],
+            objects=["shop"],
+            sources=["192.0.2.0/24", "127.0.0.0/8"],
+        )
+        response = self.api().get("/api/v1/token", headers={"Authorization": f"Bearer {secret}"})
+        self.assertEqual(response.status_code, 200, response.text)
+        held_to(self, "token_show", response.json())
+        token = response.json()["result"]["token"]
+        self.assertEqual(
+            (token["clusters"], token["objects"], token["sources"]),
+            (["alpha", "beta"], ["shop"], ["192.0.2.0/24", "127.0.0.0/8"]),
+        )
 
 
 class TheCertificateRoute(Checked):
@@ -349,7 +415,10 @@ class TheWafRoutes(Checked, WafCase):
         "waf_findings": ("/clusters/alpha/waf/findings",),
         "waf_exceptions": ("/clusters/alpha/waf/exceptions",),
     }
-    document = AnExceptionThatDoesNotWork.STORED
+    # `by` names who added the exception: filled once, as the schema says it may be.
+    document = AnExceptionThatDoesNotWork.STORED.replace(
+        "reason: sync}", "reason: sync, by: operator}"
+    )
     findings = [finding(), finding(920350, "", ("/health", "/status"), matched="192.0.2.10")]
     reached = {AnExceptionThatDoesNotWork.MADE: AnExceptionThatDoesNotWork.DEPLOYED}
 
@@ -361,7 +430,15 @@ class TheWafRoutes(Checked, WafCase):
 class TheJobRoutes(Checked, JobsApiTestCase):
     CALLS = {
         "job_list": ("/jobs",),
-        "job_show": ("/jobs/41", "/jobs/42", "/jobs/43"),
+        "job_show": (
+            "/jobs/41",
+            "/jobs/42",
+            "/jobs/43",
+            "/jobs/44",
+            "/jobs/45",
+            "/jobs/46",
+            "/jobs/47",
+        ),
     }
 
     def setUp(self) -> None:
@@ -382,8 +459,118 @@ class TheJobRoutes(Checked, JobsApiTestCase):
             ),
             failed_job(),
             a_job(),
+            *self.filled(),
+        ]
+        self.statuses = [
+            db.ClusterStatus(
+                cluster="alpha",
+                observed_at=datetime.now(UTC),
+                outcome="done",
+                result={"summary": {"release_state": "behind"}},
+                warnings=[],
+                error=None,
+                poll_error=None,
+            )
         ]
         self.actors = {REQUEST: "operator"}
+
+    @staticmethod
+    def filled() -> list[Any]:
+        """Jobs that fill the nullable fields the others leave empty (review 26-10-31, P3-7)."""
+
+        def answer(code: str, message: str, **more: Any) -> dict[str, Any]:
+            return {
+                "ok": False,
+                "outcome": "failed",
+                "warnings": [],
+                "error": {"code": code, "message": message},
+                "result": None,
+                **more,
+            }
+
+        return [
+            # Published and not deployed: the follow-up line and its command.
+            a_job(
+                id=44,
+                operation="changes_publish",
+                payload={"drafts": [{"id": "shop"}]},
+                result={
+                    "ok": True,
+                    "outcome": "done",
+                    "warnings": [],
+                    "error": None,
+                    "result": {
+                        "version": 7,
+                        "deployment_required": True,
+                        "next_command": "haprion-deploy -c alpha",
+                    },
+                },
+            ),
+            # A publish whose deploy failed: the step note, and so the note.
+            a_job(
+                id=45,
+                state="failed",
+                outcome="failed",
+                exit_code=65,
+                operation="changes_publish",
+                payload={"deploy": True},
+                result=answer(
+                    "node_unreachable",
+                    "node-a did not answer.",
+                    step="deploy",
+                    publish={"ok": True, "outcome": "done", "result": {"version": 7}},
+                ),
+            ),
+            # A run that waits on the CA: what it waits for, and its warning.
+            a_job(
+                id=46,
+                operation="cert_publish",
+                cluster=None,
+                state="partial",
+                outcome="partial",
+                result={
+                    "ok": True,
+                    "outcome": "partial",
+                    "warnings": [{"code": "request_pending", "message": "Waiting for the CA."}],
+                    "error": None,
+                    "result": {},
+                },
+            ),
+            # A certificate issued and registered, and not distributed.
+            a_job(
+                id=47,
+                state="failed",
+                outcome="failed",
+                exit_code=65,
+                operation="cert_issue",
+                cluster=None,
+                result=answer(
+                    "publish_failed",
+                    "The certificate is registered but not published.",
+                    result={
+                        "id": "web",
+                        "publish": {
+                            "certificates": [{"status": "failed"}],
+                            "deployments": [{"cluster": "alpha", "exit_code": 1}],
+                        },
+                    },
+                ),
+            ),
+        ]
+
+    def test_the_jobs_fill_the_fields_they_are_meant_to(self) -> None:
+        shown = {
+            number: self.call(f"/jobs/{number}", self.issue(level="write")).json()["result"]
+            for number in (44, 45, 46, 47)
+        }
+        self.assertEqual(shown[44]["next_command"], "haprion-deploy -c alpha")
+        self.assertIsNotNone(shown[44]["follow_up"])
+        self.assertIsNotNone(shown[45]["step_note"])
+        self.assertEqual(shown[46]["warning_codes"], ["request_pending"])
+        self.assertIsNotNone(shown[46]["waiting_for"])
+        self.assertIsNotNone(shown[46]["warning_message"])
+        self.assertIsNotNone(shown[47]["distribution_note"])
+        self.assertIsNotNone(shown[47]["note"])
 
 
 class TheRefusals(ReadingTestCase):
@@ -423,7 +610,19 @@ class TheRefusals(ReadingTestCase):
         sources = "".join(path.read_text("utf-8") for path in (PACKAGE / "api").glob("*.py"))
         for code in listed:
             with self.subTest(code=code):
-                self.assertIn(f'"{code}"', sources)
+                # Review 26-10-31, P3-6: nginx gives two of them, in the example it ships.
+                self.assertTrue(f'"{code}"' in sources or f'"code":"{code}"' in NGINX, code)
+
+    def test_what_nginx_answers_is_a_refusal_the_schema_describes(self) -> None:
+        refusal = checker(json.loads((SCHEMAS / "refusal.schema.json").read_text("utf-8")))
+        bodies = re.findall(r"return \d{3} '(\{.*\})';", NGINX)
+        self.assertGreaterEqual(len(bodies), 5)
+        for text in bodies:
+            with self.subTest(body=text[:90]):
+                body = json.loads(text.replace("$request_id", "0" * 32))
+                # Not the common envelope: nginx's request id is its own 32 hex
+                # characters, not the uuid that schema names.
+                self.assertEqual(sorted(refusal.iter_errors(body), key=str), [])
 
 
 class EveryRouteHasItsSchema(ApiTestCase):

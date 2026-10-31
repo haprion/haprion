@@ -19,6 +19,7 @@ from tests.test_route_roles import routes
 
 ROOT = Path(__file__).resolve().parents[2]
 API_SOURCE = ROOT / "ui/src/haprion_ui/api"
+NGINX_EXAMPLE = ROOT / "install/platform/examples/haprion.nginx.example"
 
 
 def section() -> str:
@@ -60,12 +61,14 @@ class TheManualNamesRealCalls(unittest.TestCase):
                 self.assertIn(path.strip(), listed)
 
     def test_every_error_code_in_the_table_is_one_the_api_answers(self) -> None:
-        codes = re.findall(r"^\| \d{3} \| `([a-z_]+)` \|", self.text, re.MULTILINE)
+        codes = re.findall(r"^\| \d{3}(?:, \d{3})* \| `([a-z_]+)` \|", self.text, re.MULTILINE)
         self.assertGreaterEqual(len(codes), 6)
+        # The application's own codes are in its source, nginx's in the example it ships.
         source = "\n".join(path.read_text() for path in API_SOURCE.glob("*.py"))
+        nginx = NGINX_EXAMPLE.read_text()
         for code in codes:
             with self.subTest(code=code):
-                self.assertIn(f'"{code}"', source)
+                self.assertTrue(f'"{code}"' in source or f'"code":"{code}"' in nginx, code)
 
 
 if __name__ == "__main__":

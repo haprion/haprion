@@ -302,6 +302,16 @@ class TheApiAnswers(ApiTestCase):
         failures.note("192.0.2.1", now=100)
         self.assertFalse(failures.refused("192.0.2.2", now=102))
 
+    def test_an_ipv4_mapped_address_is_counted_as_its_ipv4_address(self) -> None:
+        """Review 26-10-31, P3-5: every mapped client was `::/64`, one count for all of them."""
+
+        self.assertEqual(caller.source_key("::ffff:192.0.2.1"), "192.0.2.1")
+        failures = caller.Failures(limit=2, window=60)
+        failures.note("::ffff:192.0.2.1", now=100)
+        failures.note("192.0.2.1", now=101)
+        self.assertTrue(failures.refused("::ffff:192.0.2.1", now=102))
+        self.assertFalse(failures.refused("::ffff:192.0.2.2", now=102))
+
     def test_the_failure_count_holds_to_its_bound_and_forgets_the_oldest_first(self) -> None:
         failures = caller.Failures(limit=1, window=60, remembered=100)
         for number in range(1000):

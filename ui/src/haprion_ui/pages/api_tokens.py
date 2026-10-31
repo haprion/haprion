@@ -138,13 +138,20 @@ def build_router(config: Config) -> APIRouter:
             "sources": "",
             **(form or {}),
         }
+        #
+        # A block token names the proxies it may block on (review 26-10-31,
+        # P3-8): with none to choose, the level is not offered.
+        #
+        levels = {level: help for level, help in LEVEL_HELP.items() if level != "block" or proxies}
+        if entered["level"] not in levels:
+            entered["level"] = "read"
         return TEMPLATES.TemplateResponse(
             request,
             "settings-api-token-new.html",
             {
                 **context(request, gate),
                 "form": entered,
-                "levels": LEVEL_HELP,
+                "levels": levels,
                 "day_choices": DAY_CHOICES,
                 "clusters": clusters,
                 "proxies": dict(sorted(proxies.items())),

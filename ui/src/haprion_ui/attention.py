@@ -885,11 +885,11 @@ def from_api_tokens(rows: Sequence[ApiToken], *, now: datetime) -> list[Item]:
         if not api_tokens.ends_soon(token, now):
             continue
         if token.expires_at <= now:
-            message, variant = f"expired {moments.day(token.expires_at)}", "ended"
+            message, variant = f"API token expired {moments.day(token.expires_at)}", "ended"
         else:
             days = (token.expires_at - now).days
             when = f"in {labels.counted(days, 'day')}" if days else "within a day"
-            message, variant = f"expires {when}", "ending"
+            message, variant = f"API token expires {when}", "ending"
         items.append(
             Item(
                 kind="api_token",

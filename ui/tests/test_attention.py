@@ -1250,7 +1250,7 @@ class TheDashboardBox(LoginTestCase):
             empty = client.get("/").text
 
         self.assertIn("Needs attention", drawn)
-        self.assertIn('<a class="attention-row" href="/jobs#job-7">', drawn)
+        self.assertIn('<a class="secondary-button" href="/jobs#job-7">Events</a>', drawn)
         self.assertIn("Deploy failed", drawn)
         self.assertNotIn("Needs attention", empty)
 

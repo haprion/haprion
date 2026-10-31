@@ -372,9 +372,9 @@ class NeedsAttention(TokensPage):
         self.assertEqual(
             [(item.subject, item.message, item.variant) for item in items],
             [
-                ("ended", f"expired {items[0].message.split()[-1]}", "ended"),
-                ("soon", "expires in 12 days", "ending"),
-                ("today", "expires within a day", "ending"),
+                ("ended", f"API token expired {items[0].message.split()[-1]}", "ended"),
+                ("soon", "API token expires in 12 days", "ending"),
+                ("today", "API token expires within a day", "ending"),
             ],
         )
         self.assertTrue(all(item.link == "/settings/api-tokens" for item in items))
@@ -393,5 +393,5 @@ class NeedsAttention(TokensPage):
         self.tokens = [a_token(name="soon", expires_at=NOW + timedelta(days=5, hours=1))]
         page = self.admin().get("/").text
 
-        self.assertIn("soon · expires in 5 days", page)
+        self.assertIn("soon · API token expires in 5 days", page)
         self.assertIn('href="/settings/api-tokens"', page)

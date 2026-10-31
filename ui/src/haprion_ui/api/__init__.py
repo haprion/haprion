@@ -32,6 +32,7 @@ from haprion_ui.api import (
     clusters,
     jobs,
     objects,
+    servers,
     token,
     traffic,
     waf,
@@ -98,7 +99,18 @@ def build_api(config: Config) -> FastAPI:
             request, Refusal(500, "internal_error", "The request failed on the manager.")
         )
 
-    for module in (token, clusters, objects, changes, certificates, blocks, traffic, waf, jobs):
+    for module in (
+        token,
+        clusters,
+        objects,
+        changes,
+        certificates,
+        blocks,
+        servers,
+        traffic,
+        waf,
+        jobs,
+    ):
         api.include_router(module.router)
 
     @api.get("/openapi.json", include_in_schema=False)

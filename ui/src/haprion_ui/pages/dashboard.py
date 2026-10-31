@@ -31,6 +31,7 @@ from haprion_ui import (
     getting_started,
     health,
     history,
+    job_payloads,
     jobs,
     metrics,
     moments,
@@ -1149,14 +1150,9 @@ def build_router(config: Config) -> APIRouter:
 
         payload: dict[str, Any] = {}
         if operation in {"deploy", "cert_deploy"}:
-            payload["allow_vip_unknown"] = allow_vip_unknown == "on"
-        if operation == "deploy" and expected_version:
-            #
-            # Text that is not a number goes on as it came, so `prepare`
-            # refuses it the way it refuses any other bad value.
-            #
-            payload["expected_version"] = (
-                int(expected_version) if is_digits(expected_version) else expected_version
+            payload = job_payloads.deploy(
+                allow_vip_unknown=allow_vip_unknown == "on",
+                expected_version=expected_version if operation == "deploy" else None,
             )
         elif operation == "backup_run":
             payload = {}

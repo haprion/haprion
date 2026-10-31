@@ -31,6 +31,7 @@ from haprion_ui import (
     db,
     features,
     health,
+    job_payloads,
     jobs,
     metrics,
     network,
@@ -686,16 +687,10 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
         back = "/proxies/" + listed + "/" + name
         posted = posted_form(request)
-        #
-        # One past the bound, so the helper's own limit refuses a request
-        # over it rather than this quietly sending part of one.
-        #
-        chosen = list(dict.fromkeys(str(entry)[:300] for entry in posted.getlist("server")))[
-            : server_state.MAX_SERVERS + 1
-        ]
+        chosen = job_payloads.chosen_servers(posted.getlist("server"))
         if not chosen:
             return RedirectResponse(back + "?servers=none", status_code=303)
-        payload = {"object": name, "servers": chosen, "state": state}
+        payload = job_payloads.server_state(name, chosen, state)
         try:
             operations.prepare(
                 operation=server_state.OPERATION,

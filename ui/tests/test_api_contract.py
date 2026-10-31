@@ -32,7 +32,7 @@ from referencing import Registry, Resource
 from referencing._core import Resolver
 
 import haprion_ui
-from haprion_ui import api, api_tokens, attention, dashboard, db, demo, waf
+from haprion_ui import api, api_tokens, attention, dashboard, db, demo, probe, waf
 from haprion_ui.api import contract
 from haprion_ui.api import jobs as api_jobs
 from haprion_ui.config import TrafficLogs
@@ -48,6 +48,8 @@ from tests.test_api_certificates import registry as certificate_registry
 from tests.test_api_changes import SECOND, SHOP_CHANGED, ChangesTestCase, saved_row
 from tests.test_api_clusters_objects import ReadingTestCase, renamed
 from tests.test_api_jobs import REQUEST, JobsApiTestCase, a_job, failed_job
+from tests.test_api_servers import KEY as WRITE_KEY
+from tests.test_api_servers import HealthCheckCase, Queueing
 from tests.test_api_traffic import NODE
 from tests.test_api_traffic import entry as traffic_entry
 from tests.test_api_waf import WafCase
@@ -439,7 +441,7 @@ class TheObjectWriteRoutes(Checked, ChangesTestCase):
         "cluster_publish": {"comment": "Move the shop"},
         "cluster_revert": {"version": 1},
     }
-    STATUS: ClassVar[dict[str, int]] = {
+    STATUSES: ClassVar[dict[str, int]] = {
         "object_create": 201,
         "cluster_publish": 202,
         "cluster_revert": 202,
@@ -453,7 +455,7 @@ class TheObjectWriteRoutes(Checked, ChangesTestCase):
                 with self.subTest(operation=operation, call=call):
                     response = self.send(method, path, body=self.BODIES.get(operation))
                     self.assertEqual(
-                        response.status_code, self.STATUS.get(operation, 200), response.text
+                        response.status_code, self.STATUSES.get(operation, 200), response.text
                     )
                     held_to(self, operation, response.json())
 
@@ -583,6 +585,53 @@ class TheWafRoutes(Checked, WafCase):
     def counted(self) -> dict[Any, WafCounted]:
         [scope] = waf.counter_scopes({("alpha", "shop"): self.document}, CATALOG)
         return {scope: WafCounted(5, 2, WAF_SEEN)}
+
+
+class TheQueuedServerRoutes(Checked, Queueing):
+    LEVELS = ("write",)
+    STATUS = 202
+    CALLS = {
+        "object_servers": ("/clusters/edge-demo/objects/public-web/servers",),
+        "cluster_deploy": ("/clusters/edge-demo/deploy",),
+    }
+
+    def call(self, path: str, secret: str) -> Any:
+        body = {"servers": ["web/192.0.2.10:8080"], "state": "drain"} if "servers" in path else None
+        return self.writing().post(
+            "/api/v1" + path,
+            json=body,
+            headers={"Authorization": f"Bearer {secret}", "Idempotency-Key": WRITE_KEY},
+        )
+
+
+class TheHealthCheckRoute(Checked, HealthCheckCase):
+    LEVELS = ("write",)
+    CALLS = {"object_health_check": ("/clusters/alpha/objects/shop/health-check",)}
+
+    def call(self, path: str, secret: str) -> Any:
+        report = probe.ProbeReport(
+            ran=True,
+            source="192.0.2.25",
+            nodes=(
+                probe.NodeReport(
+                    node="node-a",
+                    reachable=True,
+                    error=None,
+                    source_held=True,
+                    results=(
+                        probe.Reached(
+                            host="192.0.2.10", port=8080, ok=True, status=200, error=None, ms=3
+                        ),
+                    ),
+                ),
+            ),
+            caveats=("A caveat.",),
+            tested_at=datetime.now(UTC),
+        )
+        with mock.patch("haprion_ui.probe.run", return_value=report):
+            return self.writing().post(
+                "/api/v1" + path, headers={"Authorization": f"Bearer {secret}"}
+            )
 
 
 class TheJobRoutes(Checked, JobsApiTestCase):

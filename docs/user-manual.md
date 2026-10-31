@@ -69,6 +69,9 @@ names used below, that is a bug in the software, not in this guide.
   - [Tokens](#tokens)
   - [Calling it](#calling-it)
   - [Blocking an address](#blocking-an-address)
+  - [Changing certificates](#changing-certificates)
+  - [Changing objects](#changing-objects)
+  - [Servers, deploying and the health check](#servers-deploying-and-the-health-check)
   - [The answers](#the-answers)
   - [From the terminal](#from-the-terminal)
 - [Automation from the terminal](#automation-from-the-terminal)
@@ -4557,7 +4560,7 @@ It describes each field as a code (a fixed set of values, listed there), as text
 which may change) or as a plain value such as a name, a number or a time; a script matches on codes and
 values and shows text, never matches on it.
 
-### Certificates
+### Changing certificates
 
 A *Write* token issues, renews, republishes and deletes certificates. Each call queues the job the
 *Certificates* page queues, with the same checks, and is answered `202` with the job to follow at
@@ -4624,6 +4627,36 @@ curl -sS -X POST https://mgr.example.com/api/v1/clusters/alpha/publish \
      -H "Authorization: Bearer $HAPRION_TOKEN" -H "Idempotency-Key: $(uuidgen)" \
      -H 'Content-Type: application/json' -d '{"comment": "Move the shop"}'
 ```
+
+### Servers, deploying and the health check
+
+A *Write* token can do what the object page's *Servers* card and the dashboard's *Deploy configuration* do. Each
+change is the job the interface would queue, run by the same worker, and the audit record names the token. The
+call needs an `Idempotency-Key` header holding a new UUID for each change: the same key asking for the same thing
+is the same job, so a call repeated after a lost answer does not do the work twice. The answer is `202` with the job
+and `follow`, the path to read until the job ends.
+
+| Path under `/api/v1` | Method | What it does |
+|---|---|---|
+| `/clusters/{cluster}/objects/{name}/servers` | POST | *Drain*, *Maintenance* or *Ready* for servers of the object. Body: `servers`, one to 64 servers written as the object writes them (`192.0.2.10:8080`, or `pool/192.0.2.10:8080` where two pools hold the same one), and `state`: `drain`, `maintenance` or `ready` |
+| `/clusters/{cluster}/deploy` | POST | *Deploy configuration*: put the published version on the nodes. Body, optional: `expected_version`, the version you saw; the deploy goes ahead only if that is still the published one |
+| `/clusters/{cluster}/objects/{name}/health-check` | POST | *Test health check*: the nodes try the object's check now. The answer is in the call, nothing is queued |
+
+```bash
+# Drain a server before its host is updated
+curl -sS -X POST https://mgr.example.com/api/v1/clusters/alpha/objects/shop/servers \
+     -H "Authorization: Bearer $HAPRION_TOKEN" \
+     -H "Idempotency-Key: $(uuidgen)" \
+     -H 'Content-Type: application/json' \
+     -d '{"servers": ["192.0.2.10:8080"], "state": "drain"}'
+```
+
+The helper finds each server in the object's newest version before a node is asked, so a server that is not there
+is told in the job's result, not in the `202`. The health check tries the object as the editor would open it: its
+draft or saved change if it has one, else the stored object. `document` says which, `ran` whether anything was
+tried (an object with no check, or one the editor cannot open, is not tried and `problem` says why), and `failing`
+how many servers did not pass. A script treats `ran` true with `failing` 0 as a pass, and reads `caveats` for what
+the trial does not reproduce. Because the nodes make real connections, it needs the *Write* level.
 
 ### The answers
 

@@ -30,11 +30,14 @@ def section() -> str:
     return found.group(1)
 
 
-def answered(path: str, api_routes: list[Any]) -> bool:
+def answered(path: str, api_routes: list[Any], method: str | None = None) -> bool:
+    """Whether a route answers `path`, for `method` when one is named, else for any."""
+
+    methods = (method,) if method else ("GET", "POST", "PUT", "DELETE")
     return any(
-        route.matches({"type": "http", "path": path, "method": method})[0] is Match.FULL
+        route.matches({"type": "http", "path": path, "method": verb})[0] is Match.FULL
         for route in api_routes
-        for method in ("GET", "POST", "PUT", "DELETE")
+        for verb in methods
     )
 
 
@@ -44,11 +47,15 @@ class TheManualNamesRealCalls(unittest.TestCase):
         self.text = section()
 
     def test_every_example_calls_a_route_that_exists(self) -> None:
-        urls = re.findall(r"https://mgr\.example\.com(/api/v1/[^\s'\"\\]*)", self.text)
-        self.assertGreaterEqual(len(urls), 4)
-        for url in urls:
+        calls = re.findall(
+            r"(?:-X (\w+) )?https://mgr\.example\.com(/api/v1/[^\s'\"\\]*)", self.text
+        )
+        self.assertGreaterEqual(len(calls), 4)
+        for method, url in calls:
             with self.subTest(url=url):
-                self.assertTrue(answered(url.removeprefix(PREFIX), self.routes), url)
+                self.assertTrue(
+                    answered(url.removeprefix(PREFIX), self.routes, method or "GET"), url
+                )
 
     def test_every_path_in_the_table_is_a_route(self) -> None:
         rows = re.findall(r"^\| `(/[^|]*?)` .*\|$", self.text, re.MULTILINE)

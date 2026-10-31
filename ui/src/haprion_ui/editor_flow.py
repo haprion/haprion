@@ -232,6 +232,75 @@ def editor_state(request: Request, config: Config, cluster: str) -> EditorState:
     )
 
 
+def form_fields(source: str, networks: Collection[str]) -> dict[str, Any]:
+    """The editor's fields for a stored or drafted document, as the form holds them.
+
+    Raises `Unexpressible` for a document the form has no field for, and
+    `ValidationError` for one whose values the form cannot hold: the editor
+    says both when it opens such an object, and the API says them too.
+    """
+
+    return editor_module.ObjectForm(
+        **_form_defaults(preview_module.form_from_document(source, networks=networks))
+    ).fields()
+
+
+def object_backend(
+    status_rows: Iterable[Any],
+    state: EditorState,
+    stored: objects.ObjectView | None,
+    fields: dict[str, Any],
+    name: str,
+) -> health.BackendHealth:
+    """What the nodes say about this object's backend right now.
+
+    Read for the page rather than for the check: it is an observation, not a
+    verdict on the document, and an object that has never been deployed
+    simply has none.
+    """
+
+    return health.backend_health(
+        status_rows,
+        cluster=state.cluster,
+        obj=str(fields.get("name", "")).strip() or name,
+        backend=str(fields.get("backend", "")).strip()
+        or str(fields.get("name", "")).strip()
+        or name,
+        #
+        # The same address the probe binds, and read the same way. With one set,
+        # only the node that carries it can answer for this backend - the other
+        # runs the same check against an address it does not have.
+        #
+        source=probe_module.source_address(fields, editor_module.choices(state.choices)),
+        #
+        # As written in the form, so the card can say `198.51.100.10:8080`
+        # instead of `s1`. The runtime name stays beside it: it is what appears
+        # in the logs somebody will read next.
+        #
+        addresses=str(fields.get("servers", "")).splitlines(),
+        deployed=_published_servers(stored, state.choices.networks),
+        held_only=fields.get("protocol") in SENDERS_ADDRESS,
+    )
+
+
+def probe_report(
+    state: EditorState, fields: dict[str, Any], backend: health.BackendHealth
+) -> probe_module.ProbeReport:
+    """The nodes asked to try the check the form describes, right now.
+
+    Against the object as it is written, published or not. A syslog check is
+    tried from every node's own address, as keepalived runs it, and shown for
+    the node holding the VIP, as the rows above it are (Fas 19b B5).
+    """
+
+    report = probe_module.run(state.cluster, fields, editor_module.choices(state.choices))
+    if fields.get("protocol") in SENDERS_ADDRESS and backend.held_by:
+        report = replace(
+            report, nodes=tuple(node for node in report.nodes if node.node in backend.held_by)
+        )
+    return report
+
+
 def state_reading(state: EditorState) -> ObjectsReading:
     """The editor state's objects cache, as `_reflects` reads it."""
 
@@ -355,53 +424,14 @@ def editor_page(
         draft_revision = str(work.draft.revision) if work.draft is not None else ""
 
     fields = form.fields()
-    #
-    # What the nodes say about this object's backend right now. Read for the page
-    # rather than for the check: it is an observation, not a verdict on the
-    # document, and an object that has never been deployed simply has none.
-    #
     _, status_rows = read_source(request, config, STATUS_SOURCE)
-    backend = health.backend_health(
-        status_rows,
-        cluster=cluster,
-        obj=str(fields.get("name", "")).strip() or name,
-        backend=str(fields.get("backend", "")).strip()
-        or str(fields.get("name", "")).strip()
-        or name,
-        #
-        # The same address the probe binds, and read the same way. With one set,
-        # only the node that carries it can answer for this backend - the other
-        # runs the same check against an address it does not have.
-        #
-        source=probe_module.source_address(fields, editor_module.choices(state.choices)),
-        #
-        # As written in the form, so the card can say `198.51.100.10:8080`
-        # instead of `s1`. The runtime name stays beside it: it is what appears
-        # in the logs somebody will read next.
-        #
-        addresses=str(fields.get("servers", "")).splitlines(),
-        deployed=_published_servers(stored, state.choices.networks),
-        held_only=fields.get("protocol") in SENDERS_ADDRESS,
-    )
+    backend = object_backend(status_rows, state, stored, fields, name)
     #
     # Only when somebody pressed the button. A page that probed on every open
     # would have every visit reach out to two nodes and to whatever they can
     # connect to, which is a lot of traffic for a page somebody is reading.
     #
-    report = (
-        probe_module.run(cluster, fields, editor_module.choices(state.choices))
-        if probe_asked
-        else None
-    )
-    #
-    # A syslog check is tried from every node's own address, as keepalived
-    # runs it, and shown for the node holding the VIP, as the rows above it
-    # are (Fas 19b B5).
-    #
-    if report is not None and fields.get("protocol") in SENDERS_ADDRESS and backend.held_by:
-        report = replace(
-            report, nodes=tuple(node for node in report.nodes if node.node in backend.held_by)
-        )
+    report = probe_report(state, fields, backend) if probe_asked else None
     result = editor_module.check(
         fields,
         state.choices,

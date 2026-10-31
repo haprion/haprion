@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_health_check.schema.json",
+  "title": "POST /api/v1/clusters/{cluster}/objects/{name}/health-check: result",
+  "description": "The nodes' trial of an object's health check, made in this call: what the object form's Test health check shows.",
+  "type": "object",
+  "required": ["object", "document", "ran", "problem", "source", "complete", "caveats", "failing", "tested_at", "held_by", "nodes"],
+  "properties": {
+    "object": { "type": "string", "description": "Value. The object's name." },
+    "document": { "enum": ["draft", "saved", "published"], "description": "Code. Which version of the object was tried: its draft, its saved change, or the one stored in the cluster." },
+    "ran": { "type": "boolean", "description": "Value. False where nothing was tried; problem says why, and is the installation's or the object's, not a server's." },
+    "problem": { "type": ["string", "null"], "description": "Text. Why nothing was tried, in the interface's words; null where it ran." },
+    "source": { "type": ["string", "null"], "description": "Value. The address the check was made from; null where the object names none or nothing ran." },
+    "complete": { "type": "boolean", "description": "Value. True where the trial was the whole check; false where caveats name what it did not reproduce, and where nothing ran." },
+    "caveats": { "type": "array", "items": { "type": "string" }, "description": "Text. What this trial does not reproduce about the check, one sentence each." },
+    "failing": { "type": "integer", "minimum": 0, "description": "Value. How many servers, counted over the nodes, did not pass." },
+    "tested_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the nodes were asked; null where nothing ran." },
+    "held_by": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. The nodes that carry the object's source address, and so could answer." },
+    "nodes": {
+      "type": "array",
+      "description": "What each node found.",
+      "items": {
+        "type": "object",
+        "required": ["node", "reachable", "error", "source_held", "results"],
+        "properties": {
+          "node": { "type": "string", "description": "Value. The node's name." },
+          "reachable": { "type": "boolean", "description": "Value. Whether the node answered the manager." },
+          "error": { "type": ["string", "null"], "description": "Text. Why the node did not answer; null where it did." },
+          "source_held": { "type": ["boolean", "null"], "description": "Value. False where the node does not carry the source address and so tried nothing; null where the node did not say." },
+          "results": {
+            "type": "array",
+            "description": "One row per server tried.",
+            "items": {
+              "type": "object",
+              "required": ["host", "port", "ok", "status", "error", "ms", "summary"],
+              "properties": {
+                "host": { "type": "string", "description": "Value. The server's host." },
+                "port": { "type": "integer", "description": "Value. The port tried." },
+                "ok": { "type": "boolean", "description": "Value. Whether the server passed by the object's own account of a good answer." },
+                "status": { "type": ["integer", "null"], "description": "Value. The status the server answered with (a response code for a dns check); null where there was none." },
+                "error": { "type": ["string", "null"], "description": "Text. Why the server did not pass; null where it did." },
+                "ms": { "type": ["integer", "null"], "description": "Value. Milliseconds the try took; null where it did not finish." },
+                "summary": { "type": "string", "description": "Text. What happened, in the interface's words, such as answered 200." }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

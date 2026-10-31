@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_servers.schema.json",
+  "title": "POST /api/v1/clusters/{cluster}/objects/{name}/servers: result",
+  "description": "Drain, maintenance or ready asked for an object's servers: the job queued, as the object page's buttons queue it.",
+  "$ref": "definitions.schema.json#/$defs/queued"
+}

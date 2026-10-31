@@ -495,7 +495,7 @@ wheels = [
 
 [[package]]
 name = "haprion"
-version = "0.99.7"
+version = "0.99.8"
 source = { editable = "." }
 dependencies = [
     { name = "psycopg" },

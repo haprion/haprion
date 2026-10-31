@@ -9827,3 +9827,159 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
     def test_a_dump_at_0103_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0103", grants_differ="0103 already grants what 0104 does")
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class ApiTokensInTheDatabase(unittest.TestCase):
+    """0107 (B416): a token's life is fixed when it is made, and its end is final."""
+
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def setUp(self) -> None:
+        # Not `delete`: a token in use is not deleted, and truncate is the
+        # owner's reset, which fires no row trigger.
+        with self.connect() as connection:
+            connection.execute("truncate api_token")
+            connection.commit()
+
+    tearDown = setUp
+
+    def make(self, name: str = "monitoring", **changes: Any) -> db.ApiToken:
+        values: dict[str, Any] = {
+            "name": name,
+            "level": "read",
+            "clusters": [],
+            "objects": [],
+            "sources": [],
+            "token_hash": os.urandom(32),
+            "prefix": "hap_abcdefgh",
+            "created_by": "admin",
+            "days": 365,
+        }
+        values.update(changes)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            token = db.create_api_token(connection, **values)
+            connection.commit()
+        return token
+
+    def web(self, statement: str, parameters: tuple[Any, ...] = ()) -> None:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            connection.execute(statement, parameters)
+            connection.commit()
+
+    def test_the_web_makes_a_token_and_finds_it_by_its_hash(self) -> None:
+        digest = os.urandom(32)
+        made = self.make(
+            level="block",
+            clusters=["alpha"],
+            objects=["shop"],
+            sources=["192.0.2.0/24", "2001:db8::1"],
+            token_hash=digest,
+        )
+        self.assertEqual(made.expires_at - made.created_at, timedelta(days=365))
+        self.assertEqual(made.sources, ["192.0.2.0/24", "2001:db8::1/128"])
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertEqual(db.api_token_by_hash(connection, digest), made)
+            self.assertIsNone(db.api_token_by_hash(connection, os.urandom(32)))
+            self.assertEqual([token.name for token in db.api_tokens(connection)], ["monitoring"])
+
+    def test_a_name_is_one_token(self) -> None:
+        self.make()
+        with self.assertRaises(db.TokenNameTaken):
+            self.make()
+
+    def test_the_table_refuses_what_the_rules_refuse(self) -> None:
+        for changes in (
+            {"name": "Not-A-Name"},
+            {"level": "admin"},
+            {"level": "read", "objects": ["shop"]},
+            {"days": 731 + 366},
+            {"days": 0},
+            {"prefix": "abc"},
+            {"token_hash": b"short"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(psycopg.errors.CheckViolation):
+                values: dict[str, Any] = {"name": "probe", **changes}
+                self.make(**values)
+
+    def test_the_longest_life_is_two_years(self) -> None:
+        self.assertEqual(self.make(days=730).name, "monitoring")
+
+    def test_the_web_cannot_backdate_extend_or_rekey_a_token(self) -> None:
+        self.make()
+        for statement in (
+            "insert into api_token (name, level, token_hash, prefix, created_by, expires_at, "
+            "created_at) values ('probe', 'read', repeat('x', 32)::bytea, 'hap_aaaaaaaa', "
+            "'admin', now(), now() - interval '1 year')",
+            "update api_token set expires_at = expires_at + interval '1 day'",
+            "update api_token set token_hash = token_hash",
+            "update api_token set level = 'write'",
+            "update api_token set clusters = '{}'",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                self.web(statement)
+
+    def test_a_revocation_is_final(self) -> None:
+        self.make()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertTrue(db.revoke_api_token(connection, "monitoring", by="admin"))
+            self.assertFalse(db.revoke_api_token(connection, "monitoring", by="admin"))
+            self.assertFalse(db.revoke_api_token(connection, "nobody", by="admin"))
+            connection.commit()
+        for statement in (
+            "update api_token set revoked_at = null, revoked_by = null",
+            "update api_token set revoked_at = now() + interval '1 year'",
+            "update api_token set revoked_by = 'someone-else'",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                self.web(statement)
+
+    def test_a_token_in_use_is_revoked_before_it_is_removed(self) -> None:
+        self.make()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            with self.assertRaises(db.TokenInUse):
+                db.delete_api_token(connection, "monitoring")
+            connection.rollback()
+            db.revoke_api_token(connection, "monitoring", by="admin")
+            self.assertTrue(db.delete_api_token(connection, "monitoring"))
+            self.assertFalse(db.delete_api_token(connection, "monitoring"))
+            connection.commit()
+
+    def test_an_expired_token_may_be_removed(self) -> None:
+        self.make()
+        with self.connect() as connection:
+            connection.execute(
+                "update api_token set created_at = now() - interval '2 days', "
+                "expires_at = now() - interval '1 day'"
+            )
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertTrue(db.delete_api_token(connection, "monitoring"))
+            connection.commit()
+
+    def test_a_use_is_written_at_most_once_a_minute(self) -> None:
+        made = self.make()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            db.touch_api_token(connection, made.id, "192.0.2.7")
+            connection.commit()
+            db.touch_api_token(connection, made.id, "198.51.100.9")
+            connection.commit()
+            token = db.api_tokens(connection)[0]
+        self.assertEqual(token.last_used_from, "192.0.2.7")
+        self.assertIsNotNone(token.last_used_at)
+
+    def test_the_worker_and_the_poller_cannot_read_a_token(self) -> None:
+        for role in ("HAPRION_UI_TEST_WORKER_ROLE", "HAPRION_UI_TEST_POLLER_ROLE"):
+            with (
+                self.subTest(role=role),
+                self.connect(role) as connection,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                connection.execute("select name from api_token")

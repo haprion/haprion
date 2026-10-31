@@ -28,6 +28,14 @@ map $request_method$uri $haprion_sign_in {
 }
 limit_req_zone $haprion_sign_in zone=haprion_sign_in:1m rate=10r/m;
 
+#
+# The API (B416), per client: ten calls a second with room for a burst of
+# fifty, enough for a fail2ban that bans a list at once. A token that is not
+# valid is counted harder by the application itself, which closes the source
+# for a minute after ten of them.
+#
+limit_req_zone $binary_remote_addr zone=haprion_api:1m rate=10r/s;
+
 server {
     listen 80;
     listen [::]:80;
@@ -111,6 +119,31 @@ server {
     location = /certdist/manager-ui.pem {
         alias /srv/certdist/manager-ui.pem;
         default_type application/x-pem-file;
+    }
+
+    #
+    # The API reads a bearer token and never a cookie, and this location keeps
+    # it that way whatever the application does: a browser's cookie is not
+    # passed on, and nothing the API answers may set one. The same socket and
+    # the same forwarded headers as the pages.
+    #
+    location /api/ {
+        limit_req zone=haprion_api burst=50 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/haprion-web.sock;
+        proxy_http_version 1.1;
+
+        proxy_set_header Cookie            "";
+        proxy_hide_header Set-Cookie;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-Port  $server_port;
+
+        proxy_connect_timeout 5s;
+        proxy_read_timeout    60s;
     }
 
     location / {

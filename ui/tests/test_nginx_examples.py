@@ -163,5 +163,102 @@ http {{
         self.assertEqual(self.seen(port, "203.0.113.66, 198.51.100.7"), "198.51.100.7")
 
 
+def api_location() -> str:
+    """The site's `location /api/` block, as written."""
+
+    text = (ROOT / "install/platform/examples" / EXAMPLES[0]).read_text()
+    found = re.search(r"^    location /api/ \{\n.*?^    \}\n", text, re.MULTILINE | re.DOTALL)
+    if found is None:
+        raise AssertionError("the site has no `location /api/` in the shape this reads")
+    return found.group(0)
+
+
+@unittest.skipUnless(Path(NGINX).exists(), "nginx is not installed where the tests run")
+class TheApiLocationCarriesNoCookie(unittest.TestCase):
+    """B416: the API reads no cookie; nginx keeps it so whatever the application does.
+
+    The site's own block, behind a real nginx, in front of a server that
+    echoes the cookie it was given and tries to set one.
+    """
+
+    def serve(self) -> int:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        backend = root / "backend.sock"
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = int(probe.getsockname()[1])
+        location = api_location().replace(
+            "http://unix:/run/haprion-web.sock", f"http://unix:{backend}"
+        )
+        temporary = " ".join(
+            f"{kind}_temp_path {root / kind};"
+            for kind in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi")
+        )
+        (root / "nginx.conf").write_text(
+            f"""
+pid {root / "nginx.pid"};
+error_log {root / "error.log"};
+events {{ worker_connections 16; }}
+http {{
+    access_log off;
+    {temporary}
+    limit_req_zone $binary_remote_addr zone=haprion_api:1m rate=10r/s;
+    server {{
+        listen unix:{backend};
+        location / {{
+            add_header Set-Cookie "planted=1; Path=/";
+            default_type text/plain;
+            return 200 "cookie=[$http_cookie] auth=[$http_authorization]";
+        }}
+    }}
+    server {{
+        listen 127.0.0.1:{port};
+{location}
+    }}
+}}
+"""
+        )
+        process = subprocess.Popen(  # noqa: S603 - the installed nginx, on a configuration written here
+            [
+                NGINX,
+                "-p",
+                str(root),
+                "-e",
+                str(root / "error.log"),
+                "-c",
+                str(root / "nginx.conf"),
+                "-g",
+                "daemon off;",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        if process.stderr is not None:
+            self.addCleanup(process.stderr.close)
+        self.addCleanup(process.wait, 10)
+        self.addCleanup(process.terminate)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                self.fail(
+                    f"nginx did not start: {process.stderr.read().decode() if process.stderr else ''}"
+                )
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                return port
+            except OSError:
+                time.sleep(0.05)
+        self.fail("nginx did not listen")
+
+    def test_a_cookie_is_not_passed_on_and_none_is_set(self) -> None:
+        port = self.serve()
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/api/v1/token")
+        request.add_header("Cookie", "__Host-haprion_ui_session=stolen")
+        request.add_header("Authorization", "Bearer hap_x")
+        with urllib.request.urlopen(request, timeout=5) as answer:  # noqa: S310 - loopback
+            self.assertEqual(answer.read().decode(), "cookie=[] auth=[Bearer hap_x]")
+            self.assertIsNone(answer.headers.get("Set-Cookie"))
+
+
 if __name__ == "__main__":
     unittest.main()

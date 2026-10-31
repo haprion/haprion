@@ -34,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from haprion_ui import compatibility, db, page_headers, pages, refusals, timing
+from haprion_ui import api, compatibility, db, page_headers, pages, refusals, timing
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 from haprion_ui.plain_cookies import PlainCookieNames
@@ -96,6 +96,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     config_path = _config_path()
     settings = config if config is not None else load_config(config_path)
+    api_app = api.build_api(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -107,6 +108,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         connections = db.pool(settings.database, max_size=6)
         connections.open(wait=True, timeout=10)
         app.state.pool = connections
+        api_app.state.pool = connections
         try:
             yield
         finally:
@@ -134,6 +136,10 @@ def create_app(config: Config | None = None) -> FastAPI:
         )
         app.add_middleware(PlainCookieNames)
 
+    #
+    # The API beside the pages, never among them (B416, `haprion_ui.api`).
+    #
+    app.mount(api.PREFIX, api_app)
     app.include_router(pages.build_router(settings))
 
     #

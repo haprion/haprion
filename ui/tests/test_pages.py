@@ -10,9 +10,11 @@ from haprion_ui.app import create_app
 from tests.test_login import configuration
 
 #
-# Outside the pages: what a probe, the browser's assets and the framework ask.
+# Outside the pages: what a probe, the browser's assets and the framework ask,
+# and the API (B416), which is no page and has its own boundary
+# (`test_api_boundary`).
 #
-UNGUARDED = {"/healthz", "/static"}
+UNGUARDED = {"/healthz", "/static", "/api/v1"}
 
 
 def routes(found: list[Any], guarded: bool, out: list[tuple[str, bool]]) -> None:

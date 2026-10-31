@@ -87,6 +87,14 @@
       "count": 1,
       "decided": "2026-10-26",
       "reason": "B367: a socket helper's answer, kept for the worker's recovery under /var/lib/haprion/answers, which the platform steps make 0750 root with the worker's group. PRIVILEGE.md states the contract: root's and readable by the worker's group, never writable by it. Group read is how the worker reads the answer and the lock after a restart; the file is root-owned and made with O_EXCL and O_NOFOLLOW, so the group can read it and never replace it. Re-check if anything but the worker is ever given that group."
+    },
+    {
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "ui/src/haprion_ui/api_token_tool.py",
+      "message": "This expression logs [sensitive data (secret)](1) as clear text.\nThis expression logs [sensitive data (secret)](2) as clear text.",
+      "count": 1,
+      "decided": "2026-10-31",
+      "reason": "B416: an API token's secret is made by `haprion-api-token add` and printed once to the operator who ran it, because the integration must be given it and the manager keeps only its SHA-256. It goes to stdout of the operator's own terminal (or the envelope's result with --json), alone on its line so a script can capture it; never to a log, the audit trail or the database. The interface is the ordinary way and shows it once on the page instead. The same shape as cert_receiver's password (B306)."
     }
   ]
 }

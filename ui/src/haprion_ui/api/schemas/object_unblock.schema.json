@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_unblock.schema.json",
+  "title": "DELETE /api/v1/clusters/{cluster}/objects/{name}/blocks: result",
+  "description": "Lifting a block on an object's addresses, queued as the Unblock button queues it.",
+  "$ref": "definitions.schema.json#/$defs/queued"
+}

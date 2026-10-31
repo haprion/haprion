@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from haprion.server_state import MAX_ADDRESSES
+
 
 @dataclass(frozen=True, slots=True)
 class BlockedAddress:
@@ -49,6 +51,17 @@ class BlockedCard:
         """How many the nodes hold beyond the ones they listed."""
 
         return max(self.count - len(self.addresses), 0)
+
+
+def unblock_payload(name: str, entries: Iterable[object]) -> dict[str, Any]:
+    """The job *Unblock* queues: the object and the ticked addresses, as the page and the API both send it.
+
+    One past the bound, so the helper's own limit refuses a request over it
+    rather than this quietly sending part of one.
+    """
+
+    chosen = list(dict.fromkeys(str(entry)[:64] for entry in entries))[: MAX_ADDRESSES + 1]
+    return {"object": name, "addresses": chosen}
 
 
 def _reading(rows: Iterable[Any], cluster: str) -> Mapping[str, Any]:

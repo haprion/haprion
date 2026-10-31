@@ -52,6 +52,22 @@ def declared_level(route: Any) -> str | None:
     return None
 
 
+def admits(route: Any, held: str) -> bool:
+    """Whether the route's own declaration admits a token of level `held`.
+
+    A level and what reaches it, unless the dependency says otherwise with
+    `admits`: the route a `block` token may also read is the one place that does.
+    """
+
+    for dependency in route.dependant.dependencies:
+        if isinstance(dependency.call, Needs):
+            own = getattr(dependency.call, "admits", None)
+            if own is not None:
+                return bool(own(held))
+            return api_tokens.reaches(held, dependency.call.level)
+    return False
+
+
 class TheCookieAndTheTokenStayOnTheirSides(ApiTestCase):
     def test_a_signed_in_browser_is_no_caller_of_the_api(self) -> None:
         # Every refusal is a failure counted against the source; the walk
@@ -140,7 +156,7 @@ class EachRouteAnswersOnlyItsLevel(ApiTestCase):
                             headers={"Authorization": f"Bearer {secret}"},
                             json=None if method == "GET" else {},
                         )
-                        if api_tokens.reaches(held, needed):
+                        if admits(route, held):
                             self.assertNotIn(response.status_code, (401, 403))
                         else:
                             self.assertEqual(response.status_code, 403)

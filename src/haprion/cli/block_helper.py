@@ -16,12 +16,18 @@ Then the same key and forced command as *Unblock*, with the verb `block`
 block, set a server's state or read anything back but the nodes' answers -
 which is why it is a helper of its own rather than an operation of
 `haprion-server-state-helper`, whose request could name any of those.
+
+What is checked about the object, and how it is placed, is `prepare`, which
+`haprion-block-api-helper` shares: that helper is asked by the web for a token
+that has already been judged, so it checks no client.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
@@ -33,7 +39,9 @@ from haprion.cli.server_state_helper import write_unblocked
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     NETWORK_FILE,
+    Cluster,
     ConfigError,
+    DeployIdentity,
     load_policy,
     load_runtime_config,
 )
@@ -47,12 +55,13 @@ from haprion.helper_protocol import (
 )
 from haprion.managed_network import load_mapping
 from haprion.managed_publish import PROXY_PREFIX, managed_proxies
-from haprion.proxy_model import ModelError
+from haprion.proxy_model import ModelError, Proxy
 from haprion.repo_snapshot import PublishError, read_tree_files, resolve_head
 from haprion.server_state import (
     BLOCK_OPERATION,
     ServerStateError,
     UnblockCall,
+    Unblocked,
     addresses,
     ask_unblock,
     block,
@@ -64,6 +73,79 @@ from haprion.server_state import (
 
 HELPER = "/opt/haprion/current/bin/haprion-block-helper"
 PARAMETERS = frozenset({"client", "object", "addresses"})
+
+
+class Refused(Exception):
+    """The block cannot be placed as asked. Nothing was sent to a node."""
+
+    def __init__(self, code: str, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.exit_code = exit_code
+
+
+@dataclass(frozen=True, slots=True)
+class Placement:
+    """What a block is placed with: the object as its newest version has it, and the nodes."""
+
+    proxy: Proxy
+    cluster: Cluster
+    identity: DeployIdentity
+    networks: Mapping[str, Sequence[str]]
+
+
+def prepare(cluster_id: str, name: str, *, policy_path: Path, require_secure: bool) -> Placement:
+    """The cluster, its nodes and the object in its newest version, if it blocks at all.
+
+    Raises `Refused` with the code and exit status the caller reports. The
+    checks that name the caller (a block client, a token) are the caller's own.
+    """
+
+    try:
+        policy = load_policy(policy_path, require_secure=require_secure)
+        cluster = load_runtime_config(policy, require_secure=require_secure).cluster(cluster_id)
+    except ConfigError as exc:
+        raise Refused(config_error_code(exc.exit_code), str(exc), exc.exit_code) from exc
+    identity = policy.server_state_identity
+    if identity is None:
+        raise Refused(
+            "server_state_unavailable",
+            "no server state identity is configured. Add server_state_identity with "
+            "'user' and 'key' to the runtime policy.",
+            exit_codes.CONFIG,
+        )
+
+    try:
+        _branch, head = resolve_head(cluster.config_path)
+        files = read_tree_files(
+            cluster.config_path, head, (f"{PROXY_PREFIX}{name}.yaml", str(NETWORK_FILE))
+        )
+        proxy = blocking(find_object(managed_proxies(files), name))
+        written = files.get(str(NETWORK_FILE))
+        networks = (
+            load_mapping(
+                safe_yaml.load(written), ownership_vip=cluster.vip, location=str(NETWORK_FILE)
+            ).networks
+            if written is not None
+            else cluster.networks
+        )
+    except ServerStateError as exc:
+        raise Refused(exc.code, str(exc), exc.exit_code) from exc
+    except (ConfigError, GitError, PublishError, ModelError, OSError, yaml.YAMLError) as exc:
+        raise Refused(
+            "dependency_unavailable",
+            f"cannot read the cluster's newest version: {exc}",
+            exit_codes.NOT_FOUND,
+        ) from exc
+    return Placement(proxy, cluster, identity, networks)
+
+
+def place(
+    placement: Placement, wanted: Sequence[str], *, ask: UnblockCall = ask_unblock
+) -> tuple[Unblocked, ...]:
+    """Every node of the cluster asked once to block `wanted`, which the caller has checked."""
+
+    return block(placement.cluster.nodes, placement.identity, placement.proxy, wanted, ask=ask)
 
 
 def main(
@@ -116,49 +198,13 @@ def main(
         block_clients.may_block(
             clients, block_clients.client_id(parameters.get("client")), request.cluster, name
         )
-    except (ServerStateError, BlockClientError) as exc:
+        placement = prepare(
+            request.cluster, name, policy_path=policy_path, require_secure=require_secure
+        )
+    except (ServerStateError, BlockClientError, Refused) as exc:
         return refuse(exc.code, str(exc), exc.exit_code)
 
-    try:
-        policy = load_policy(policy_path, require_secure=require_secure)
-        cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
-            request.cluster
-        )
-    except ConfigError as exc:
-        return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
-    identity = policy.server_state_identity
-    if identity is None:
-        return refuse(
-            "server_state_unavailable",
-            "no server state identity is configured. Add server_state_identity with "
-            "'user' and 'key' to the runtime policy.",
-            exit_codes.CONFIG,
-        )
-
-    try:
-        _branch, head = resolve_head(cluster.config_path)
-        files = read_tree_files(
-            cluster.config_path, head, (f"{PROXY_PREFIX}{name}.yaml", str(NETWORK_FILE))
-        )
-        proxy = blocking(find_object(managed_proxies(files), name))
-        written = files.get(str(NETWORK_FILE))
-        networks = (
-            load_mapping(
-                safe_yaml.load(written), ownership_vip=cluster.vip, location=str(NETWORK_FILE)
-            ).networks
-            if written is not None
-            else cluster.networks
-        )
-    except ServerStateError as exc:
-        return refuse(exc.code, str(exc), exc.exit_code)
-    except (ConfigError, GitError, PublishError, ModelError, OSError, yaml.YAMLError) as exc:
-        return refuse(
-            "dependency_unavailable",
-            f"cannot read the cluster's newest version: {exc}",
-            exit_codes.NOT_FOUND,
-        )
-
-    spared = exempted(proxy, wanted, networks)
+    spared = exempted(placement.proxy, wanted, placement.networks)
     if spared:
         return refuse(
             "bad_input",
@@ -169,8 +215,8 @@ def main(
         writer,
         request.cluster,
         request.request_id,
-        proxy.name,
-        block(cluster.nodes, identity, proxy, wanted, ask=ask),
+        placement.proxy.name,
+        place(placement, wanted, ask=ask),
         operation=BLOCK_OPERATION,
     )
 

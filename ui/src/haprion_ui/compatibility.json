@@ -40,6 +40,7 @@
       "haprion-node-helper": "/run/haprion/cluster-node.sock",
       "haprion-resolve-helper": "/run/haprion/resolve.sock",
       "haprion-cert-export-helper": "/run/haprion/cert-export.sock",
+      "haprion-block-api-helper": "/run/haprion/block.sock",
       "haprion-ndes-server-helper": "/run/haprion/ndes-server.sock"
     }
   }

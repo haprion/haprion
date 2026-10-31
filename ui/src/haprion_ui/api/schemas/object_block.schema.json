@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_block.schema.json",
+  "title": "POST /api/v1/clusters/{cluster}/objects/{name}/blocks: result",
+  "description": "A block placed on an object's addresses, answered in the same call (outcome done, or partial where an address was left out or a node did not take it).",
+  "type": "object",
+  "required": ["object", "block_for", "blocked", "refused", "nodes"],
+  "properties": {
+    "object": { "type": "string", "description": "Value. The object's name." },
+    "block_for": { "type": "string", "description": "Value. How long a new block lasts, as the object writes it (such as 2h) or the engine's default." },
+    "blocked": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. The addresses at least one node took, each written as the nodes write it." },
+    "refused": {
+      "type": "array",
+      "description": "The addresses left out of the request, with why.",
+      "items": {
+        "type": "object",
+        "required": ["address", "code", "reason"],
+        "properties": {
+          "address": { "type": "string", "description": "Value. The address as it was sent." },
+          "code": { "enum": ["address_exempt", "address_invalid"], "description": "Code. address_exempt: the object exempts it and never blocks it. address_invalid: it is not an IP address." },
+          "reason": { "type": "string", "description": "Text. The sentence that goes with the code." }
+        },
+        "additionalProperties": true
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "description": "What each node of the cluster said.",
+      "items": {
+        "type": "object",
+        "required": ["node", "outcome", "message", "addresses"],
+        "properties": {
+          "node": { "type": "string", "description": "Value. The node's name." },
+          "outcome": { "enum": ["done", "refused", "failed"], "description": "Code. done: the node holds every address blocked. refused: the node runs no blocking for the object yet. failed: the node did not take every address, or could not be reached." },
+          "message": { "type": ["string", "null"], "description": "Text. Why the node did not take them; null where it did, and for a token below the write level." },
+          "addresses": {
+            "type": "array",
+            "description": "Each address the node was asked to block.",
+            "items": {
+              "type": "object",
+              "required": ["address", "outcome"],
+              "properties": {
+                "address": { "type": "string", "description": "Value. The address." },
+                "outcome": { "enum": ["done", "failed"], "description": "Code. done: the node reads it back as blocked. failed: it does not." }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

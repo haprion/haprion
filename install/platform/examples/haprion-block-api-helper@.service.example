@@ -1,0 +1,71 @@
+# Places one block on a cluster's nodes for the Haprion interface, then exits (B416).
+#
+# Started by haprion-block-api-helper.socket, one instance per connection. The
+# connection is this process's stdin and stdout, the protocol the helper
+# speaks when a person pipes a request into it.
+#
+# What it may do with root
+# ------------------------
+# Read the runtime policy, the cluster's repository and the key the server
+# state commands use, and ask each node over SSH, as that identity with strict
+# host key checking, to block the addresses. It writes nothing: the answer is
+# on the socket, and what was blocked, on which object and for whom goes to
+# the journal. So the sandbox is read-only everywhere, with the network and
+# nothing else added: root's known_hosts is read, never written.
+#
+# The unit sandboxes as the worker does for the same work, which the worker
+# runs through sudo: the network families, the system call filter, and the one
+# capability that lets root read the repository and the key whoever owns them.
+#
+# Installed as /etc/systemd/system/haprion-block-api-helper@.service.
+
+[Unit]
+Description=Place a block for the Haprion interface
+Documentation=file:///opt/haprion/current
+# One instance per connection. Its answer went to the caller and its log to the
+# journal; one that answered with a refusal or a failure is collected rather
+# than left behind as a failed unit for monitoring to alarm on (26-10-27).
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/opt/haprion/current/bin/haprion-block-api-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+# Each node is given thirty seconds, all asked at once
+# (server_state.CALL_TIMEOUT_SECONDS); the web stops waiting after 45 s
+# (block_api_socket.TIMEOUT_SECONDS), and this makes the helper stop too.
+TimeoutStartSec=50
+RuntimeMaxSec=50
+TimeoutStopSec=5
+# Memory (B357): a helper starts in 19-35 MB, and the largest step measured, a
+# node restore, peaked at 84 MB in eight runs (26-10-23); a publish's
+# generator takes 45 MB for 500 objects, and the parsers run in units of their
+# own. Stopped, not swapped, past three times the largest.
+MemoryMax=256M
+MemorySwapMax=0
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+# Root's known_hosts, read.
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH

@@ -94,6 +94,17 @@ def _queued(detail: Mapping[str, Any]) -> str:
     return f"Queued {name}{about}{numbered}"
 
 
+def _api_block(detail: Mapping[str, Any]) -> str:
+    addresses = ", ".join(_list(detail, "addresses")) or "addresses"
+    on = f"{addresses} on {_text(detail, 'object', '?')}"
+    outcome = _text(detail, "outcome")
+    if outcome == "unknown":
+        return f"Asked to block {on} through the API; the service did not answer"
+    if outcome == "failed":
+        return f"Tried to block {on} through the API; no node took it"
+    return f"Blocked {on} through the API"
+
+
 def _saved(detail: Mapping[str, Any], verb: str) -> str:
     kind = _text(detail, "kind")
     if kind == "network":
@@ -139,6 +150,7 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "login_failed": _sign_in_failed,
     "logout": lambda _detail: "Signed out",
     "queue_job": _queued,
+    "api_block": _api_block,
     "save_change": lambda detail: _saved(detail, "Saved"),
     "discard_change": lambda detail: _saved(detail, "Discarded the saved"),
     "save_draft": lambda detail: f"Saved a draft of {_text(detail, 'object', 'a proxy')}",

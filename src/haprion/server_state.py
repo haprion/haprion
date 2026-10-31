@@ -338,6 +338,20 @@ def apply(
         return tuple(answer for answers in pool.map(one, nodes) for answer in answers)
 
 
+def normalized_address(value: object) -> str | None:
+    """An IP address as the nodes write it (an IPv4-mapped one as IPv4), or None if it is not one."""
+
+    try:
+        address = ipaddress.ip_address(value) if isinstance(value, str) else None
+    except ValueError:
+        address = None
+    if address is None:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return str(address)
+
+
 def addresses(value: object) -> tuple[str, ...]:
     """The source addresses an unblock names, each written as the node writes it."""
 
@@ -347,16 +361,11 @@ def addresses(value: object) -> tuple[str, ...]:
         raise ServerStateError("bad_input", f"at most {MAX_ADDRESSES} addresses in one request")
     found: list[str] = []
     for entry in value:
-        try:
-            address = ipaddress.ip_address(entry) if isinstance(entry, str) else None
-        except ValueError:
-            address = None
+        address = normalized_address(entry)
         if address is None:
             raise ServerStateError("bad_input", f"{entry!r} is not an IP address")
-        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-            address = address.ipv4_mapped
-        if str(address) not in found:
-            found.append(str(address))
+        if address not in found:
+            found.append(address)
     return tuple(found)
 
 

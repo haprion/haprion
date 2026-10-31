@@ -57,6 +57,7 @@ declare -A SOCKET_GROUP=(
     [/run/haprion/node-restore.sock]=_haprion-worker
     [/run/haprion/ui-tls.sock]=_haprion-worker
     [/run/haprion/cert-export.sock]=_haprion-web
+    [/run/haprion/block.sock]=_haprion-web
     [/run/haprion/oidc.sock]=_haprion-web
     [/run/haprion/probe.sock]=_haprion-web
     [/run/haprion/resolve.sock]=_haprion-web

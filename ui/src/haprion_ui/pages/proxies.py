@@ -765,16 +765,9 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
         back = "/proxies/" + listed + "/" + name
         posted = posted_form(request)
-        #
-        # One past the bound, so the helper's own limit refuses a request over
-        # it rather than this quietly sending part of one.
-        #
-        chosen = list(dict.fromkeys(str(entry)[:64] for entry in posted.getlist("address")))[
-            : server_state.MAX_ADDRESSES + 1
-        ]
-        if not chosen:
+        payload = blocked.unblock_payload(name, posted.getlist("address"))
+        if not payload["addresses"]:
             return RedirectResponse(back + "?blocked=none", status_code=303)
-        payload = {"object": name, "addresses": chosen}
         try:
             operations.prepare(
                 operation=server_state.UNBLOCK_OPERATION,
@@ -808,7 +801,7 @@ def build_router(config: Config) -> APIRouter:
                     "operation": server_state.UNBLOCK_OPERATION,
                     "job": job.id,
                     "object": name,
-                    "addresses": chosen,
+                    "addresses": payload["addresses"],
                 },
             )
             connection.commit()

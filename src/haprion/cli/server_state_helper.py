@@ -24,6 +24,7 @@ import io
 import json
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
@@ -318,11 +319,14 @@ def write_unblocked(
     answers: tuple[Unblocked, ...],
     *,
     operation: str = UNBLOCK_OPERATION,
+    spared: Sequence[str] = (),
 ) -> int:
     """`done` when every node took every address, `partial` when some did, else `failed`.
 
     For an unblock and for a block (`haprion-block-helper`) alike: the nodes
-    answer both the same way.
+    answer both the same way. `spared` are addresses the object exempts that
+    were left out of the request (`haprion-block-api-helper`): each is a
+    warning, so an answer that blocked the rest is `partial` and says which.
     """
 
     placing = operation != UNBLOCK_OPERATION
@@ -330,7 +334,7 @@ def write_unblocked(
 
     result = _unblock_result(name, answers)
     missed = [answer for answer in answers if answer.outcome != "done"]
-    if not missed:
+    if not missed and not spared:
         return write_document(
             writer,
             envelope(
@@ -342,14 +346,24 @@ def write_unblocked(
             ),
             0,
         )
-    warnings = tuple(
-        Message(
-            code="blocking_not_on_node" if answer.outcome == "refused" else failed,
-            message=answer.message
-            or ("the block was not placed" if placing else "the block was not lifted"),
-            node=answer.node,
-        )
-        for answer in missed
+    warnings = (
+        *(
+            Message(
+                code="address_exempt",
+                message=f"{address}: {name} never blocks it, the object exempts it",
+                details={"address": address},
+            )
+            for address in spared
+        ),
+        *(
+            Message(
+                code="blocking_not_on_node" if answer.outcome == "refused" else failed,
+                message=answer.message
+                or ("the block was not placed" if placing else "the block was not lifted"),
+                node=answer.node,
+            )
+            for answer in missed
+        ),
     )
     taken = len(answers) - len(missed)
     return write_document(

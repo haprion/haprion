@@ -466,6 +466,13 @@ read-only sandbox and no network. It gives out the key of a registry entry marke
 `exportable` and of no other, and writes nothing. The CLI release must carry
 `haprion-cert-export-helper`.
 
+And the web's way to a block for an API token:
+`haprion-block-api-helper.socket` (`/run/haprion/block.sock`, group
+`_haprion-web`) and the per-request `haprion-block-api-helper@.service`, root with a
+read-only sandbox and the network to the nodes. It places a block on every node of a
+cluster, as `haprion-block-helper` does for a block client, and writes nothing. The
+CLI release must carry `haprion-block-api-helper`.
+
 ## Step 6 — backups that have been read back
 
 `./06-platform-backup` installs a daily dump timer and a weekly restore check for

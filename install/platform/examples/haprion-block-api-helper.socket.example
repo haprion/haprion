@@ -1,0 +1,34 @@
+# Where the interface places a block for an API token, in the same call (B416).
+#
+# A block is answered at once and does not wait in the job queue behind a
+# publish: the web asks through this socket, and haprion-block-api-helper
+# places the block on every node of the cluster with the key the server state
+# commands use, and does nothing else.
+#
+# Who may connect
+# ---------------
+# Root-owned, group WEB_USER, mode 0660: the web account and nobody else. The
+# helper is root, because the key to the nodes is root's - so this socket is
+# the boundary. The web has judged the token and its scope before it asks.
+#
+# Installed by install/platform/07-platform-services as
+# /etc/systemd/system/haprion-block-api-helper.socket.
+
+[Unit]
+Description=Socket the Haprion interface places a block through
+Documentation=file:///opt/haprion/current
+
+[Socket]
+ListenStream=/run/haprion/block.sock
+SocketUser=root
+SocketGroup=WEB_USER
+SocketMode=0660
+# One connection is one request, in its own short-lived instance.
+Accept=yes
+# The API answers three calls at once at most (api.caller.CONCURRENT_CALLS);
+# a connection past this is dropped at once and told to come back.
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

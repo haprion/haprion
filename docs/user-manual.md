@@ -68,6 +68,7 @@ names used below, that is a bug in the software, not in this guide.
 - [The API](#the-api)
   - [Tokens](#tokens)
   - [Calling it](#calling-it)
+  - [Blocking an address](#blocking-an-address)
   - [The answers](#the-answers)
   - [From the terminal](#from-the-terminal)
 - [Automation from the terminal](#automation-from-the-terminal)
@@ -4419,7 +4420,8 @@ can take that token back at any time.
 The API answers on the manager's own address, under `/api/v1/`, through the same nginx and certificate as
 the interface. There is no extra port to open.
 
-This release reads. Blocking an address and changing objects through the API come in later releases.
+A token of the level *Block* places a block and is answered in the same call, and a token of the level *Write* lifts
+one ([Blocking an address](#blocking-an-address)). Changing objects through the API comes in a later release.
 
 ### Tokens
 
@@ -4479,6 +4481,60 @@ curl -sS https://mgr.example.com/api/v1/jobs/1042 \
      -H "Authorization: Bearer $HAPRION_TOKEN"
 ```
 
+### Blocking an address
+
+A token of the level *Block* blocks addresses on its own proxies, and a firewall or a ban tool can call it at
+the moment it bans. The block is placed on every node of the cluster in the call itself, and the answer says
+whether it holds. It does not wait in the queue
+behind a publish.
+
+```bash
+# Block an address on a proxy (a token with the level Block, and this proxy among its proxies)
+curl -sS -X POST https://mgr.example.com/api/v1/clusters/alpha/objects/shop/blocks \
+     -H "Authorization: Bearer $HAPRION_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"addresses": ["203.0.113.7"]}'
+```
+
+```ini
+# fail2ban: /etc/fail2ban/action.d/haprion.local
+[Definition]
+actionban = curl -fsS -X POST https://mgr.example.com/api/v1/clusters/<cluster>/objects/<proxy>/blocks \
+            -H "Authorization: Bearer <token>" -H 'Content-Type: application/json' \
+            -d '{"addresses": ["<ip>"]}'
+actionunban =
+```
+
+The body names one to 64 addresses. The answer's `result` gives the proxy's *Block for* in `block_for` (how long a
+block lasts), the addresses a node took in `blocked`, the addresses left out in `refused`, and what each node
+said in `nodes`. Asking again for an address only renews its time, so a call can be repeated and needs no
+`Idempotency-Key`.
+
+- `done` (200): every node holds every address.
+- `partial` (200, `ok` false): some node did not take an address, or an address was left out. The address of a
+  proxy's own exempt list, or one that is not an IP address, is never blocked: it is under `refused` with the code
+  `address_exempt` or `address_invalid`, and the other addresses are blocked. A node that did not take it is in
+  `nodes` with `failed`, and in `warnings`. A *Block* token is not told why; a *Write* token is.
+- `failed` (502, `blocking_failed`): no node took the block. Nothing holds it.
+- 504 `outcome_unknown`: the block service was asked and did not answer. The block may or may not be placed, so
+  read the proxy's blocks before asking again.
+- 400 `bad_input`: a body that is not one to 64 addresses, none of the addresses being an IP address, or a proxy
+  that does not block (it has no dynamic blocking in its newest version, or all addresses are exempt).
+
+The audit record shows each block as *Blocked … through the API*, with the token's name as `token:` and the name.
+
+A token of the level *Write* lifts a block the way *Unblock* on the proxy's page does, as a job:
+
+```bash
+# Lift a block (a token with the level Write): a job, followed with /api/v1/jobs/{id}
+curl -sS -X DELETE https://mgr.example.com/api/v1/clusters/alpha/objects/shop/blocks \
+     -H "Authorization: Bearer $HAPRION_TOKEN" -H 'Content-Type: application/json' \
+     -H "Idempotency-Key: $(uuidgen)" -d '{"addresses": ["203.0.113.7"]}'
+```
+
+The answer is 202 with the job's number and `follow`, the path to read it at. The same `Idempotency-Key` asking
+for the same thing is the same job. A *Write* token blocks on any proxy, like an admin. Blocking and lifting
+are refused (403 `writes_off`) on an installation where changes are switched off.
+
 What a token can read:
 
 | Path under `/api/v1` | What it answers |
@@ -4489,7 +4545,7 @@ What a token can read:
 | `/clusters/{cluster}/objects` | The objects, as *Proxies* lists them (`limit`, `offset`) |
 | `/clusters/{cluster}/objects/{name}` | One object. Its document, its servers' addresses and states, and why an object cannot be read, only for a *Write* token |
 | `/clusters/{cluster}/objects/{name}/history` | The cluster's versions, published or not (`limit`) |
-| `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now |
+| `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now, with the time left. A *Block* token reads this too, for the proxies it may block on |
 | `/certificates` | The certificates, when they end and where they are (`limit`) |
 | `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`). Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read |
 | `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through |
@@ -4530,9 +4586,12 @@ When a call is refused, `ok` is false and `error.code` says why:
 | 403 | `forbidden` | The token's level does not reach the call |
 | 404 | `not_found` | No such cluster, object or job - or one outside the token's scope |
 | 400 | `bad_input` | A parameter that is not valid, named in the message |
-| 405 | `method_not_allowed` | The path exists but not for that method; the API reads, so it answers `GET` |
+| 405 | `method_not_allowed` | The path exists but not for that method |
 | 429 | `rate_limited` | Ten guesses within a minute - a token nobody issued, or a header that is not a token; the address waits a minute for anything that is not a valid token. A valid token is served meanwhile |
-| 429 | `busy` | Three API calls are already being answered; `Retry-After: 1`, try again at once |
+| 429 | `busy` | Three API calls are already being answered, or the block service is; `Retry-After: 1`, try again at once |
+| 403 | `writes_off` | Changes are switched off on this installation |
+| 502 | `blocking_failed` | A block was asked for and no node took it |
+| 504 | `outcome_unknown` | The block service did not answer, so the block may or may not be placed |
 | 500 | `internal_error` | The call failed on the manager; the cause is in its log, not in the answer |
 | 503 | `database_unavailable` | The manager's database did not answer |
 | 503 | `query_timeout` | The database stopped a query for taking too long; narrow `from` and `to`, or the search |
@@ -8378,6 +8437,7 @@ reaches a helper over a local socket instead:
 |---|---|---|
 | `/run/haprion/probe.sock` | root | a health check against the real nodes (below) |
 | `/run/haprion/cert-export.sock` | root | the key of a certificate marked exportable, as a PKCS#12 file |
+| `/run/haprion/block.sock` | root | placing a block for an API token of the level *Block*, in the call that asks |
 | `/run/haprion/oidc.sock` | its own account, `_haprion-oidc` | sign-in through an OIDC provider |
 | `/run/haprion/resolve.sock` | a temporary account | looking up the names of DNS servers |
 

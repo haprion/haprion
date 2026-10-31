@@ -15,7 +15,7 @@ intrusion equal to worker access, which is deploy rights.
 
 | Account | What it is | Root helpers it may reach | Private keys it holds | Database role |
 |---|---|---|---|---|
-| `_haprion-web` | the web interface | five sockets: probe, name lookup, certificate export, sign-in, NDES servers | none stored | `app_web` |
+| `_haprion-web` | the web interface | six sockets: probe, name lookup, certificate export, sign-in, NDES servers, block | none stored | `app_web` |
 | `_haprion-worker` | runs the jobs the interface queues | fifteen sudo helpers and five sockets (below) | none | `app_worker` |
 | `_haprion-poller` | reads status, metrics and listings in the background | four read-only sudo helpers | none | `app_poller` |
 | `_haprion-collector` | fetches the traffic log from the nodes | none | one read-only key to the nodes' logs | `app_collector` |
@@ -28,6 +28,13 @@ The operators' sudo rules (`/etc/sudoers.d/haprion`) are granted to `%sudo` and 
 which also holds the worker. On Ubuntu, membership of `sudo` is already full root; the rules only let
 the read helpers run without a password. Membership of `haprion` gives read access to the
 configuration repositories, the cluster file and the certificate registry.
+
+A block for an API token of the `block` level is placed by `haprion-block-api-helper`, a per-request
+root helper on `/run/haprion/block.sock` that only the web account may connect to. The web has judged
+the token and its scope; the helper checks that the object exists in the cluster's newest version,
+blocks at all and does not exempt the address, and then does what `haprion-block-helper` does for a
+block client: asks each node, with the server state key, to block the addresses. It cannot lift a
+block, set a server's state or return the key, and it writes nothing.
 
 The name lookup is done by a per-request helper running as a dynamic user with network access and
 nothing else; the web process itself reaches only localhost.
@@ -196,7 +203,7 @@ the caller dies. Once a helper has read its request, it moves that stream aside 
 | the poller, through sudo | status, inventory, readings, cluster list - read only |
 | the worker, through sudo | deploy, certificate deploy, revert, changes publish, certificate issue, publish, target, import, request, delete, NDES enrollment, DNS profile apply, NDES profile apply, server state |
 | the worker, through a socket | certificate receivers, backup jobs, node restore, the interface certificate, nodes and clusters |
-| the web, through a socket | health probe, name lookup, certificate export, sign-in, confirming an NDES server from its CA |
+| the web, through a socket | health probe, name lookup, certificate export, sign-in, confirming an NDES server from its CA, placing a block for an API token |
 
 A helper that writes `/etc` - accounts, sshd, nginx - answers on a socket from a unit of its own
 rather than through sudo: the worker's sandbox keeps `/etc` read-only, and a helper started through

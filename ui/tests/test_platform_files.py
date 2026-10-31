@@ -414,6 +414,7 @@ class TheListsAreTheSteps(unittest.TestCase):
             "probe",
             "resolve",
             "cert-export",
+            "block-api",
             "cert-receiver",
             "node",
             "tls",

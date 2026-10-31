@@ -30,6 +30,7 @@ LIMITED = {
         f"haprion-{name}-helper@.service.example": ("256M", 84)
         for name in (
             "backup-job",
+            "block-api",
             "cert-export",
             "cert-receiver",
             "ndes-server",

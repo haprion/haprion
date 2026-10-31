@@ -49,6 +49,7 @@ from tests.test_api_jobs import REQUEST, JobsApiTestCase, a_job, failed_job
 from tests.test_api_traffic import NODE
 from tests.test_api_traffic import entry as traffic_entry
 from tests.test_api_waf import WafCase
+from tests.test_api_writing import a_job as queued_job
 from tests.test_certificates import NOW as CERTIFICATES_NOW
 from tests.test_editor_page import OBJECTS
 from tests.test_login import configuration
@@ -189,6 +190,41 @@ class Checked(ApiTestCase):
                         response = self.call(path, secret)
                         self.assertEqual(response.status_code, 200, response.text)
                         held_to(self, operation, response.json())
+
+
+Change = tuple[str, str, dict[str, Any], tuple[str, ...]]
+
+
+class Written(ApiTestCase):
+    """Calls its changing routes with each level that reaches them and holds each answer to its schema.
+
+    `CALLS` maps the operation to the method, the path, the body and the
+    levels of token it is called with.
+    """
+
+    CALLS: ClassVar[dict[str, Change]] = {}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if cls is Written:
+            raise unittest.SkipTest("the base of the route groups")
+        super().setUpClass()
+
+    def test_every_answer_is_the_one_its_schema_describes(self) -> None:
+        for operation, (method, path, body, levels) in self.CALLS.items():
+            for level in levels:
+                with self.subTest(level=level, operation=operation):
+                    response = self.api().request(
+                        method,
+                        "/api/v1" + path,
+                        json=body,
+                        headers={
+                            "Authorization": f"Bearer {self.issue(level=level)}",
+                            "Idempotency-Key": "00000000-0000-4000-8000-000000000041",
+                        },
+                    )
+                    self.assertIn(response.status_code, (200, 202), response.text)
+                    held_to(self, operation, response.json())
 
 
 class TheClusterAndObjectRoutes(Checked, ReadingTestCase):
@@ -374,6 +410,62 @@ class TheBlocksRoute(Checked):
             )
             patch.start()
             self.addCleanup(patch.stop)
+
+
+class TheBlockRoutes(Written):
+    CALLS = {
+        "object_block": (
+            "POST",
+            "/clusters/alpha/objects/shop/blocks",
+            {"addresses": ["203.0.113.7", "not-an-address"]},
+            ("block", "write"),
+        ),
+        "object_unblock": (
+            "DELETE",
+            "/clusters/alpha/objects/shop/blocks",
+            {"addresses": ["203.0.113.7"]},
+            ("write",),
+        ),
+    }
+
+    def setUp(self) -> None:
+        super().setUp()
+        reached = [
+            {
+                "node": name,
+                "outcome": "done",
+                "message": None,
+                "addresses": [{"address": "203.0.113.7", "outcome": "done"}],
+            }
+            for name in ("node-a", "node-b")
+        ]
+        answer = {
+            "outcome": "partial",
+            "result": {"object": "shop", "nodes": reached},
+            "warnings": [
+                {
+                    "code": "address_exempt",
+                    "message": "x",
+                    "node": None,
+                    "details": {"address": "192.0.2.7"},
+                }
+            ],
+            "error": None,
+        }
+        for patch in (
+            mock.patch("haprion_ui.db.cluster_objects", return_value=stored(("shop", BLOCKING))),
+            mock.patch("haprion.block_api_socket.ask", return_value=answer),
+            mock.patch("haprion_ui.db.record_audit_event"),
+            mock.patch("haprion_ui.db.queue_job", return_value=queued_job()),
+            mock.patch("haprion_ui.operations.prepare"),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def api(self) -> Any:
+        return self.client(
+            replace(configuration(), clusters=("alpha", "beta"), management_writes=True)
+        )
 
 
 class TheTrafficRoute(Checked):
@@ -637,7 +729,9 @@ class EveryRouteHasItsSchema(ApiTestCase):
         self.assertEqual((sorted(names - schemas), sorted(schemas - names)), ([], []))
 
     def test_every_route_is_called_with_both_tokens_by_a_group_above(self) -> None:
-        called = {name for group in Checked.__subclasses__() for name in group.CALLS}
+        called = {name for group in Checked.__subclasses__() for name in group.CALLS} | {
+            name for group in Written.__subclasses__() for name in group.CALLS
+        }
         self.assertEqual(sorted(set(self.named()) - called), [])
 
     def test_the_openapi_document_describes_every_answer(self) -> None:
@@ -648,14 +742,17 @@ class EveryRouteHasItsSchema(ApiTestCase):
         paths = response.json()["paths"]
         for name, route in self.named().items():
             with self.subTest(operation=name):
-                shown = paths[route.path]["get"]["responses"]["200"]["content"]["application/json"]
+                [method] = route.methods - {"HEAD"}
+                answered = paths[route.path][method.lower()]["responses"]
+                [success] = [code for code in answered if code.startswith("2")]
+                shown = answered[success]["content"]["application/json"]
                 schema = shown["schema"]
                 self.assertEqual(schema["properties"]["operation"], {"const": name})
                 self.assertTrue(schema["properties"]["result"], "an empty schema")
                 # One document: no reference left that points at a file.
                 self.assertNotIn('"$ref"', json.dumps(schema))
                 Draft202012Validator.check_schema(schema)
-                refusal = paths[route.path]["get"]["responses"]["default"]
+                refusal = answered["default"]
                 self.assertIn("unauthorized", json.dumps(refusal))
 
 

@@ -28,11 +28,9 @@ from haprion_ui import (
     audit,
     auth,
     blocked,
-    dashboard,
     db,
     features,
     health,
-    history,
     jobs,
     metrics,
     network,
@@ -58,10 +56,9 @@ from haprion_ui.editor_flow import (
     moved_dns_servers,
     removal_submit,
 )
+from haprion_ui.object_reading import read_object
 from haprion_ui.reading import (
-    HISTORY_SOURCE,
     INVENTORY_SOURCE,
-    NETWORK_SOURCE,
     OBJECTS_SOURCE,
     STATUS_SOURCE,
     listed_clusters,
@@ -96,306 +93,325 @@ def _held(recent: Sequence[db.Job], name: str, operation: str, key: str) -> froz
     return frozenset()
 
 
+def _nodes_reported(rows: Iterable[Any], cluster: str) -> bool:
+    """Whether any node in this cluster answered with a server list at all.
+
+    A cluster nobody has read is not a cluster serving nothing, and the two
+    must not come out the same. Without this a poll that had never run made
+    every object look undeployed.
+    """
+
+    reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
+    result = getattr(reading, "result", None)
+    nodes = result.get("nodes") if isinstance(result, Mapping) else None
+    return any(
+        isinstance(entry, Mapping)
+        and isinstance(entry.get("status"), Mapping)
+        and isinstance(entry["status"].get("servers"), list)
+        for entry in (nodes if isinstance(nodes, Sequence) else ())
+    )
+
+
+def proxy_listing(
+    request: Request,
+    config: Config,
+    role: str,
+    query: Mapping[str, str],
+    *,
+    only: str | None = None,
+) -> dict[str, Any]:
+    """Everything the proxy table draws, for the page, its refresh and the API.
+
+    Read once here rather than twice in two handlers. The refresh replaces
+    the rows in place while something is on its way, and a second gathering
+    of the same facts would be free to disagree with the first about what a
+    row says - which is the disagreement nobody would see until a row
+    changed shape halfway through a deploy.
+    """
+
+    clusters, inventory_rows = read_source(request, config, INVENTORY_SOURCE)
+    overview = proxies.build_proxy_overview(
+        clusters,
+        inventory_rows,
+        stale_after=config.poller.stale_after,
+    )
+    #
+    # One cluster's objects using one VIP, source or group, from the
+    # network page's *Used by* (26-10-11). Only that cluster is read at all.
+    #
+    used = proxies.used_asked(query, clusters)
+    if used is not None:
+        overview = proxies.ProxyOverview(
+            clusters=tuple(view for view in overview.clusters if view.cluster == used.cluster)
+        )
+    #
+    # One cluster, for a reader that wants no other (the API).
+    #
+    if only is not None:
+        overview = proxies.ProxyOverview(
+            clusters=tuple(view for view in overview.clusters if view.cluster == only)
+        )
+    #
+    # The listing is built from published frontends, so an object that has
+    # been committed but not deployed appears in none of them - which is
+    # the object somebody is working on. Carried separately rather than
+    # merged into the same table: they are a different state, and half a
+    # table of empty ports and backend counts would say so badly.
+    #
+    _, object_rows = read_source(request, config, OBJECTS_SOURCE)
+    rows = {reading.cluster: reading for reading in object_rows}
+    #
+    # Objects, not frontends. The generator names a frontend after the
+    # address and protocol it binds, and every object on that address goes
+    # through it - so a listing of frontends showed the implementation
+    # rather than the work, and an https object that redirects plain HTTP
+    # appeared twice under two names its author never chose.
+    #
+    #
+    # Read before the listing, because the listing asks it what the nodes
+    # are serving. The same reading the health lamp uses, and for the same
+    # reason: it is measured on the node rather than derived from a release
+    # the nodes may not have pulled yet.
+    #
+    _, health_rows = read_source(request, config, STATUS_SOURCE)
+    #
+    # Read from the same rows as the lamps. Publishing does not deploy, and
+    # the listing was the one page that never said so for an object that
+    # was changed rather than added or removed.
+    #
+    behind = health.clusters_behind(health_rows)
+    listed = {}
+    served: dict[str, frozenset[str]] = {}
+    with request.app.state.pool.connection() as connection:
+        #
+        # Names a finished removal took away, asked about beside the ones
+        # still in the repository. The nodes can only answer about a name
+        # somebody names, and these are precisely the names the repository
+        # no longer has.
+        #
+        recent = {
+            view.cluster: db.recent_jobs(connection, cluster=view.cluster)
+            for view in overview.clusters
+        }
+    gone = {cluster: objects.removed_names(jobs) for cluster, jobs in recent.items()}
+    #
+    # Each cluster's objects read out of the cache once per request, not
+    # once per use: at ten thousand objects every pass over them cost a
+    # sixth of a second (2026-10-01).
+    #
+    stored = {
+        view.cluster: objects.cluster_object_views(rows.get(view.cluster))
+        for view in overview.clusters
+    }
+    #
+    # Whose each backend the nodes report is, by the objects' own account
+    # and a removal's (B250): a pool's name no longer says.
+    #
+    owners = {
+        view.cluster: health.backend_owners(
+            stored[view.cluster], objects.removed_backends(recent[view.cluster])
+        )
+        for view in overview.clusters
+    }
+    for view in overview.clusters:
+        names = [obj.name for obj in stored[view.cluster]]
+        served[view.cluster] = health.served_objects(
+            health_rows,
+            cluster=view.cluster,
+            names=[*names, *gone[view.cluster]],
+            owners=owners[view.cluster],
+        )
+        listed[view.cluster] = objects.listed_objects(
+            rows.get(view.cluster),
+            view.proxies,
+            #
+            # `None` where no node said anything, so the hostname match
+            # answers instead. Silence is not "nothing is served".
+            #
+            served=served[view.cluster] if _nodes_reported(health_rows, view.cluster) else None,
+            views=stored[view.cluster],
+        )
+    #
+    # What is left of the published inventory once the managed frontends are
+    # accounted for above: configuration this platform does not own, where
+    # the frontend really is the only thing there is to show.
+    #
+    unmanaged = {
+        view.cluster: () if used else objects.unmanaged_only(view.proxies)
+        for view in overview.clusters
+    }
+    #
+    # The passive health answer, per object, for the lamp in the listing.
+    # Not a probe: probing is an SSH operation against a node, and a page
+    # that ran one per row on every load would turn opening a list into a
+    # burst of connections nobody asked for. This is what HAProxy on the
+    # nodes has already decided, read out of the same status reading the
+    # dashboard draws.
+    #
+    #
+    # Whether the object is checked and whether it leaves from a source
+    # address come from the objects helper (B222), not from reading the
+    # document here. The second decides which node may answer: only the
+    # node holding the address can bind it, and the other reports the
+    # backend down.
+    #
+    backend_lamps = {
+        view.cluster: health.object_healths(
+            health_rows,
+            cluster=view.cluster,
+            owners=owners[view.cluster],
+            objects={
+                #
+                # Every listed name is a candidate owner, so a server is
+                # never lent to an object whose name is a prefix of another.
+                #
+                **{other.name: (True, False) for other in listed[view.cluster]},
+                **{obj.name: (obj.health_checked, obj.sourced) for obj in stored[view.cluster]},
+            },
+        )
+        for view in overview.clusters
+    }
+    #
+    # And a step earlier than that: a draft has not reached the cluster
+    # repository at all, so it is in neither the inventory nor the objects
+    # cache. It is listed for the same reason the waiting objects are - the
+    # period when somebody needs to find their work is exactly the period
+    # before it is anywhere else - and separately, because "saved here" and
+    # "committed but not deployed" are different answers to "where is it".
+    #
+    with request.app.state.pool.connection() as connection:
+        drafts = {
+            #
+            # One row per object, the one its editor opens: a draft over a
+            # saved change (B257), each carrying its stage for the badge.
+            #
+            view.cluster: tuple(
+                top_layers(
+                    settled_drafts(
+                        connection,
+                        view.cluster,
+                        objects_reading_of(
+                            rows.get(view.cluster),
+                            {listing.name for listing in listed[view.cluster]},
+                        ),
+                    )
+                )
+            )
+            for view in overview.clusters
+        }
+        #
+        # Which of those drafts are already on their way. Publishing is a
+        # job, so between the click and the row there is a stretch where
+        # the work is neither a draft anybody is still editing nor a
+        # published object - and a row that says "Draft" through all of it
+        # reads as though the button did nothing.
+        #
+        #
+        # One read per cluster, two questions. `publishing` is what is
+        # still trying; `failed` is what stopped and changed nothing - and
+        # until the second existed a refused publish said nothing anywhere
+        # a person looks, which read as the object turning back into a
+        # draft by itself.
+        #
+        recent = {
+            view.cluster: db.recent_jobs(connection, cluster=view.cluster)
+            for view in overview.clusters
+        }
+        publishing = {
+            cluster: objects.names_being_published(rows, writes=config.management_writes)
+            for cluster, rows in recent.items()
+        }
+        failed = {cluster: objects.publish_failures(rows) for cluster, rows in recent.items()}
+        #
+        # Per object, not per cluster. What the nodes are behind on is a
+        # release, but which objects that release changed is not: a row that
+        # wore the cluster's fact claimed every site had been reconfigured when
+        # one had.
+        #
+        # Read from the status rather than from the jobs. The jobs knew only
+        # what this application published recently enough to still be in the
+        # listing, so an object changed from the command line, or changed
+        # longer ago than the window reaches, wore no badge at all.
+        #
+        # The jobs are still asked where the releases cannot answer - the
+        # nodes run a release built before manifests existed - and only for
+        # what they say in the positive. A badge for "could not be
+        # compared" was tried and reverted the same afternoon: it landed on
+        # every object at once, which is the cluster-wide claim this badge
+        # was made per object to avoid.
+        #
+        reconfigured = {
+            view.cluster: objects.awaiting_deploy(
+                health.object_states(health_rows, cluster=view.cluster),
+                recent[view.cluster],
+            )
+            for view in overview.clusters
+        }
+        #
+        # And what a finished removal took away that the nodes have not
+        # stopped serving. A removal is a publish, so between it and the
+        # deploy the object is gone from the repository while the site is
+        # still answering - and until this the listing showed neither,
+        # which is the one direction it must not fail in.
+        #
+        removed = {
+            view.cluster: objects.removed_awaiting_deploy(
+                db.recent_jobs(connection, cluster=view.cluster),
+                listed[view.cluster],
+                served[view.cluster],
+            )
+            for view in overview.clusters
+        }
+    #
+    # The three numbers above the table, counted from the table's own rows
+    # rather than from published frontends. A frontend is not a proxy
+    # anybody wrote - an https object that redirects plain HTTP is two of
+    # them, and every object on one address shares one - so the old count
+    # disagreed with the list underneath it in both directions.
+    #
+    #
+    # Narrowed last, so the lamps and badges above were worked out against
+    # every object, as they are on the whole listing.
+    #
+    if used is not None:
+        chosen = used.names(network.usage(stored[used.cluster]))
+        listed[used.cluster] = tuple(
+            listing for listing in listed[used.cluster] if listing.name in chosen
+        )
+    counts = objects.counted(listed, unmanaged)
+    return {
+        "proxies": overview,
+        "listed": listed,
+        "counts": counts,
+        "health": backend_lamps,
+        "unmanaged": unmanaged,
+        #
+        # A reader has no drafts to see: a draft is somebody's unfinished
+        # edit, and the row exists so its author can find it again.
+        #
+        #
+        # Filtered, the table is what the objects say they use: a draft,
+        # a publish on its way and a removal have no such answer yet.
+        #
+        "drafts": drafts if role == "admin" and used is None else {},
+        "publishing": publishing if used is None else {},
+        "behind": behind,
+        "reconfigured": reconfigured,
+        "unforwarded": {
+            view.cluster: health.syslog_unforwarded(health_rows, cluster=view.cluster)
+            for view in overview.clusters
+        },
+        "failed": failed,
+        "removed": removed if used is None else {},
+        "used": used,
+    }
+
+
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
 
-    def _nodes_reported(rows: Iterable[Any], cluster: str) -> bool:
-        """Whether any node in this cluster answered with a server list at all.
-
-        A cluster nobody has read is not a cluster serving nothing, and the two
-        must not come out the same. Without this a poll that had never run made
-        every object look undeployed.
-        """
-
-        reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
-        result = getattr(reading, "result", None)
-        nodes = result.get("nodes") if isinstance(result, Mapping) else None
-        return any(
-            isinstance(entry, Mapping)
-            and isinstance(entry.get("status"), Mapping)
-            and isinstance(entry["status"].get("servers"), list)
-            for entry in (nodes if isinstance(nodes, Sequence) else ())
-        )
-
     def _proxy_listing(request: Request, role: str) -> dict[str, Any]:
-        """Everything the proxy table draws, for the page and for its refresh.
-
-        Read once here rather than twice in two handlers. The refresh replaces
-        the rows in place while something is on its way, and a second gathering
-        of the same facts would be free to disagree with the first about what a
-        row says - which is the disagreement nobody would see until a row
-        changed shape halfway through a deploy.
-        """
-
-        clusters, inventory_rows = read_source(request, config, INVENTORY_SOURCE)
-        overview = proxies.build_proxy_overview(
-            clusters,
-            inventory_rows,
-            stale_after=config.poller.stale_after,
-        )
-        #
-        # One cluster's objects using one VIP, source or group, from the
-        # network page's *Used by* (26-10-11). Only that cluster is read at all.
-        #
-        used = proxies.used_asked(request.query_params, clusters)
-        if used is not None:
-            overview = proxies.ProxyOverview(
-                clusters=tuple(view for view in overview.clusters if view.cluster == used.cluster)
-            )
-        #
-        # The listing is built from published frontends, so an object that has
-        # been committed but not deployed appears in none of them - which is
-        # the object somebody is working on. Carried separately rather than
-        # merged into the same table: they are a different state, and half a
-        # table of empty ports and backend counts would say so badly.
-        #
-        _, object_rows = read_source(request, config, OBJECTS_SOURCE)
-        rows = {reading.cluster: reading for reading in object_rows}
-        #
-        # Objects, not frontends. The generator names a frontend after the
-        # address and protocol it binds, and every object on that address goes
-        # through it - so a listing of frontends showed the implementation
-        # rather than the work, and an https object that redirects plain HTTP
-        # appeared twice under two names its author never chose.
-        #
-        #
-        # Read before the listing, because the listing asks it what the nodes
-        # are serving. The same reading the health lamp uses, and for the same
-        # reason: it is measured on the node rather than derived from a release
-        # the nodes may not have pulled yet.
-        #
-        _, health_rows = read_source(request, config, STATUS_SOURCE)
-        #
-        # Read from the same rows as the lamps. Publishing does not deploy, and
-        # the listing was the one page that never said so for an object that
-        # was changed rather than added or removed.
-        #
-        behind = health.clusters_behind(health_rows)
-        listed = {}
-        served: dict[str, frozenset[str]] = {}
-        with request.app.state.pool.connection() as connection:
-            #
-            # Names a finished removal took away, asked about beside the ones
-            # still in the repository. The nodes can only answer about a name
-            # somebody names, and these are precisely the names the repository
-            # no longer has.
-            #
-            recent = {
-                view.cluster: db.recent_jobs(connection, cluster=view.cluster)
-                for view in overview.clusters
-            }
-        gone = {cluster: objects.removed_names(jobs) for cluster, jobs in recent.items()}
-        #
-        # Each cluster's objects read out of the cache once per request, not
-        # once per use: at ten thousand objects every pass over them cost a
-        # sixth of a second (2026-10-01).
-        #
-        stored = {
-            view.cluster: objects.cluster_object_views(rows.get(view.cluster))
-            for view in overview.clusters
-        }
-        #
-        # Whose each backend the nodes report is, by the objects' own account
-        # and a removal's (B250): a pool's name no longer says.
-        #
-        owners = {
-            view.cluster: health.backend_owners(
-                stored[view.cluster], objects.removed_backends(recent[view.cluster])
-            )
-            for view in overview.clusters
-        }
-        for view in overview.clusters:
-            names = [obj.name for obj in stored[view.cluster]]
-            served[view.cluster] = health.served_objects(
-                health_rows,
-                cluster=view.cluster,
-                names=[*names, *gone[view.cluster]],
-                owners=owners[view.cluster],
-            )
-            listed[view.cluster] = objects.listed_objects(
-                rows.get(view.cluster),
-                view.proxies,
-                #
-                # `None` where no node said anything, so the hostname match
-                # answers instead. Silence is not "nothing is served".
-                #
-                served=served[view.cluster] if _nodes_reported(health_rows, view.cluster) else None,
-                views=stored[view.cluster],
-            )
-        #
-        # What is left of the published inventory once the managed frontends are
-        # accounted for above: configuration this platform does not own, where
-        # the frontend really is the only thing there is to show.
-        #
-        unmanaged = {
-            view.cluster: () if used else objects.unmanaged_only(view.proxies)
-            for view in overview.clusters
-        }
-        #
-        # The passive health answer, per object, for the lamp in the listing.
-        # Not a probe: probing is an SSH operation against a node, and a page
-        # that ran one per row on every load would turn opening a list into a
-        # burst of connections nobody asked for. This is what HAProxy on the
-        # nodes has already decided, read out of the same status reading the
-        # dashboard draws.
-        #
-        #
-        # Whether the object is checked and whether it leaves from a source
-        # address come from the objects helper (B222), not from reading the
-        # document here. The second decides which node may answer: only the
-        # node holding the address can bind it, and the other reports the
-        # backend down.
-        #
-        backend_lamps = {
-            view.cluster: health.object_healths(
-                health_rows,
-                cluster=view.cluster,
-                owners=owners[view.cluster],
-                objects={
-                    #
-                    # Every listed name is a candidate owner, so a server is
-                    # never lent to an object whose name is a prefix of another.
-                    #
-                    **{other.name: (True, False) for other in listed[view.cluster]},
-                    **{obj.name: (obj.health_checked, obj.sourced) for obj in stored[view.cluster]},
-                },
-            )
-            for view in overview.clusters
-        }
-        #
-        # And a step earlier than that: a draft has not reached the cluster
-        # repository at all, so it is in neither the inventory nor the objects
-        # cache. It is listed for the same reason the waiting objects are - the
-        # period when somebody needs to find their work is exactly the period
-        # before it is anywhere else - and separately, because "saved here" and
-        # "committed but not deployed" are different answers to "where is it".
-        #
-        with request.app.state.pool.connection() as connection:
-            drafts = {
-                #
-                # One row per object, the one its editor opens: a draft over a
-                # saved change (B257), each carrying its stage for the badge.
-                #
-                view.cluster: tuple(
-                    top_layers(
-                        settled_drafts(
-                            connection,
-                            view.cluster,
-                            objects_reading_of(
-                                rows.get(view.cluster),
-                                {listing.name for listing in listed[view.cluster]},
-                            ),
-                        )
-                    )
-                )
-                for view in overview.clusters
-            }
-            #
-            # Which of those drafts are already on their way. Publishing is a
-            # job, so between the click and the row there is a stretch where
-            # the work is neither a draft anybody is still editing nor a
-            # published object - and a row that says "Draft" through all of it
-            # reads as though the button did nothing.
-            #
-            #
-            # One read per cluster, two questions. `publishing` is what is
-            # still trying; `failed` is what stopped and changed nothing - and
-            # until the second existed a refused publish said nothing anywhere
-            # a person looks, which read as the object turning back into a
-            # draft by itself.
-            #
-            recent = {
-                view.cluster: db.recent_jobs(connection, cluster=view.cluster)
-                for view in overview.clusters
-            }
-            publishing = {
-                cluster: objects.names_being_published(rows, writes=config.management_writes)
-                for cluster, rows in recent.items()
-            }
-            failed = {cluster: objects.publish_failures(rows) for cluster, rows in recent.items()}
-            #
-            # Per object, not per cluster. What the nodes are behind on is a
-            # release, but which objects that release changed is not: a row that
-            # wore the cluster's fact claimed every site had been reconfigured when
-            # one had.
-            #
-            # Read from the status rather than from the jobs. The jobs knew only
-            # what this application published recently enough to still be in the
-            # listing, so an object changed from the command line, or changed
-            # longer ago than the window reaches, wore no badge at all.
-            #
-            # The jobs are still asked where the releases cannot answer - the
-            # nodes run a release built before manifests existed - and only for
-            # what they say in the positive. A badge for "could not be
-            # compared" was tried and reverted the same afternoon: it landed on
-            # every object at once, which is the cluster-wide claim this badge
-            # was made per object to avoid.
-            #
-            reconfigured = {
-                view.cluster: objects.awaiting_deploy(
-                    health.object_states(health_rows, cluster=view.cluster),
-                    recent[view.cluster],
-                )
-                for view in overview.clusters
-            }
-            #
-            # And what a finished removal took away that the nodes have not
-            # stopped serving. A removal is a publish, so between it and the
-            # deploy the object is gone from the repository while the site is
-            # still answering - and until this the listing showed neither,
-            # which is the one direction it must not fail in.
-            #
-            removed = {
-                view.cluster: objects.removed_awaiting_deploy(
-                    db.recent_jobs(connection, cluster=view.cluster),
-                    listed[view.cluster],
-                    served[view.cluster],
-                )
-                for view in overview.clusters
-            }
-        #
-        # The three numbers above the table, counted from the table's own rows
-        # rather than from published frontends. A frontend is not a proxy
-        # anybody wrote - an https object that redirects plain HTTP is two of
-        # them, and every object on one address shares one - so the old count
-        # disagreed with the list underneath it in both directions.
-        #
-        #
-        # Narrowed last, so the lamps and badges above were worked out against
-        # every object, as they are on the whole listing.
-        #
-        if used is not None:
-            chosen = used.names(network.usage(stored[used.cluster]))
-            listed[used.cluster] = tuple(
-                listing for listing in listed[used.cluster] if listing.name in chosen
-            )
-        counts = objects.counted(listed, unmanaged)
-        return {
-            "proxies": overview,
-            "listed": listed,
-            "counts": counts,
-            "health": backend_lamps,
-            "unmanaged": unmanaged,
-            #
-            # A reader has no drafts to see: a draft is somebody's unfinished
-            # edit, and the row exists so its author can find it again.
-            #
-            #
-            # Filtered, the table is what the objects say they use: a draft,
-            # a publish on its way and a removal have no such answer yet.
-            #
-            "drafts": drafts if role == "admin" and used is None else {},
-            "publishing": publishing if used is None else {},
-            "behind": behind,
-            "reconfigured": reconfigured,
-            "unforwarded": {
-                view.cluster: health.syslog_unforwarded(health_rows, cluster=view.cluster)
-                for view in overview.clusters
-            },
-            "failed": failed,
-            "removed": removed if used is None else {},
-            "used": used,
-        }
+        return proxy_listing(request, config, role, request.query_params)
 
     @router.get("/proxies", response_class=HTMLResponse)
     def proxy_overview(request: Request) -> Response:
@@ -816,121 +832,9 @@ def build_router(config: Config) -> APIRouter:
         clusters, object_rows = read_source(request, config, OBJECTS_SOURCE)
         if cluster not in clusters:
             raise HTTPException(status_code=404)
-        _, inventory_rows = read_source(request, config, INVENTORY_SOURCE)
-        overview = proxies.build_proxy_overview(
-            clusters,
-            inventory_rows,
-            stale_after=config.poller.stale_after,
-        )
-        published = tuple(
-            proxy for view in overview.clusters if view.cluster == cluster for proxy in view.proxies
-        )
-        _, history_rows = read_source(request, config, HISTORY_SOURCE)
-        listing = history.build_history_overview(
-            clusters,
-            history_rows,
-            stale_after=config.poller.stale_after,
-        )
-        versions = tuple(
-            version
-            for view in listing.clusters
-            if view.cluster == cluster
-            for version in view.versions
-        )
-        #
-        # Released is not serving, so the deploy state is read too. Reporting a
-        # release as live while every node still pulls the previous one is the
-        # one thing this card must not do.
-        #
-        _, status_rows = read_source(request, config, STATUS_SOURCE)
-        board = dashboard.build_dashboard(
-            clusters,
-            status_rows,
-            stale_after=config.poller.stale_after,
-        )
-        serving = next((view for view in board.clusters if view.cluster == cluster), None)
-        #
-        # What the nodes report, not the target they were given. The cluster
-        # view's `version` is the version they are meant to reach, so using it
-        # here would have the page say "the nodes are on v29" at the exact
-        # moment they are not.
-        #
-        running = sorted({node.version for node in serving.nodes}) if serving else []
-        node_version = running[0] if len(running) == 1 else ", ".join(running)
-        #
-        # An object that names no VIP is served on the cluster's default, which
-        # is why the address is read from the network description rather than
-        # from the object.
-        #
-        # The object's own VIP where it names one (B221, 2026-10-01): until
-        # then this said "default" for every object, including one served on
-        # another address. The default below is for an object with no stored
-        # document, served from configuration not written here.
-        #
-        _, network_rows = read_source(request, config, NETWORK_SOURCE)
-        network_rows = tuple(network_rows)
-        object_rows = tuple(object_rows)
-        written = next(
-            (
-                view
-                for row in object_rows
-                if row.cluster == cluster
-                for view in objects.cluster_object_views(row)
-                if view.name == name
-            ),
-            None,
-        )
-        # As the objects helper reported it (B222).
-        resolved = written.addresses if written is not None else None
-        described = next(
-            (
-                view
-                for view in network.build_network_overview(
-                    clusters,
-                    network_rows,
-                    stale_after=config.poller.stale_after,
-                )
-                if view.cluster == cluster
-            ),
-            None,
-        )
-        vip = (
-            next((item for item in described.vips if item.is_default), None) if described else None
-        )
-        #
-        # Whether *this* object is one the pending deploy carries. The release
-        # state is the cluster's, and wearing it here told somebody opening an
-        # untouched site that it was waiting for a deploy - the same mistake
-        # the listing rows made before they were given this per-object answer.
-        #
-        object_state = health.object_states(status_rows, cluster=cluster).get(name, objects.UNKNOWN)
-        #
-        # The same fallback the listing uses, so the two pages cannot say
-        # different things about one object. Where the releases cannot be
-        # compared, a publish job naming this object is still a fact about
-        # something that happened - and it is asked only for that.
-        #
-        if object_state == objects.UNKNOWN:
-            with request.app.state.pool.connection() as connection:
-                carried = objects.carried_since_deploy(db.recent_jobs(connection, cluster=cluster))
-            if name in carried:
-                object_state = objects.CHANGED
-        detail = objects.build_object_detail(
-            cluster,
-            name,
-            object_rows,
-            published,
-            versions,
-            release_state=serving.release_state if serving else "",
-            node_version=node_version,
-            object_state=object_state,
-            vip=resolved.vip_name if resolved else (vip.name if vip else None),
-            vip_address=(resolved.vip.address or None)
-            if resolved
-            else (vip.address if vip else None),
-            vip_is_default=resolved.vip_is_default if resolved else vip is not None,
-            stale_after=config.poller.stale_after,
-        )
+        reading = read_object(request, config, clusters, cluster, name)
+        detail, written, described = reading.detail, reading.written, reading.described
+        status_rows, object_rows = reading.status_rows, reading.object_rows
         #
         # A draft makes a name a page too. An object that has only ever been
         # written here is stored nowhere and served nowhere, and without this it

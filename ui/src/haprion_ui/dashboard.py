@@ -74,6 +74,15 @@ class NodeView:
     # administrator's hover): "SSH gave no answer within 60 seconds".
     #
     reason: str | None = None
+    #
+    # What the node reports it runs, as the reading says it, for the API: the
+    # published version as a number, HAProxy's version, and the installed
+    # haprion-node. None where the node did not say (an unread node, a
+    # release that was never deployed).
+    #
+    release_number: int | None = None
+    haproxy_version: str | None = None
+    package_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +274,10 @@ def _text(value: Any, fallback: str = "Unknown") -> str:
 
 def _version(value: Any) -> str:
     return f"v{value}" if isinstance(value, int | str) and str(value) else "—"
+
+
+def _known_text(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _positive(value: Any) -> int | None:
@@ -524,6 +537,7 @@ def _node_view(
             prepare_pending=prepare_pending,
             package_note=package_note,
             package_message=package_message,
+            package_version=_known_text(_mapping(status.get("installation")).get("version")),
         )
 
     return NodeView(
@@ -543,6 +557,9 @@ def _node_view(
         prepare_pending=prepare_pending,
         package_note=package_note,
         package_message=package_message,
+        release_number=_positive(release.get("version")),
+        haproxy_version=_known_text(runtime.get("version")),
+        package_version=_known_text(_mapping(status.get("installation")).get("version")),
     )
 
 

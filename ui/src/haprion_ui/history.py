@@ -50,6 +50,12 @@ class VersionView:
     #
     requested_by: str = "—"
     page: int = 0
+    #
+    # The time as the engine wrote it, with its offset, and the comment without
+    # the placeholder: what the API says, where the page says them in words.
+    #
+    saved_at: str | None = None
+    written_comment: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +126,16 @@ def _saved_at(value: Any) -> str:
     return moments.moment(parsed)
 
 
+def _saved_iso(value: Any) -> str | None:
+    """The contract's timestamp as ISO 8601 with an offset, or nothing where it is not one."""
+
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.isoformat() if parsed.tzinfo is not None else None
+
+
 def _version_view(value: Any, published_hash: str | None, rank: int) -> VersionView | None:
     entry = _mapping(value)
     number = _integer(entry.get("version"))
@@ -147,6 +163,8 @@ def _version_view(value: Any, published_hash: str | None, rank: int) -> VersionV
         current=entry.get("current") is True,
         requested_by=_text(entry.get("requested_by")),
         page=rank // VERSIONS_PER_PAGE,
+        saved_at=_saved_iso(entry.get("created_at")),
+        written_comment=shown_comment(_text(entry.get("comment"), "")),
     )
 
 

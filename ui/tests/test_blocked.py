@@ -374,7 +374,10 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
         config = replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
         client = self.client(config)
         self.sign_in(client)
-        with mock.patch("haprion_ui.pages.proxies.read_source", side_effect=demo_rows):
+        with (
+            mock.patch("haprion_ui.pages.proxies.read_source", side_effect=demo_rows),
+            mock.patch("haprion_ui.object_reading.read_source", side_effect=demo_rows),
+        ):
             page = client.get("/proxies/edge-demo/public-web").text
             with mock.patch.object(demo, "BLOCKED", {}):
                 quiet = client.get("/proxies/edge-demo/public-web").text

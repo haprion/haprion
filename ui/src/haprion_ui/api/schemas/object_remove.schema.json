@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_remove.schema.json",
+  "title": "DELETE /api/v1/clusters/{cluster}/objects/{name}: result",
+  "description": "The change saved for the next publish, the same answer as creating an object.",
+  "$ref": "object_create.schema.json"
+}

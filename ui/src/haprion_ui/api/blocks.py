@@ -419,15 +419,11 @@ def object_block(
     )
 
 
-_unblocked = contract.responses("object_unblock")
-_unblocked[202] = _unblocked.pop(200)
-
-
 @router.delete(
     "/clusters/{cluster}/objects/{name}/blocks",
     name="object_unblock",
     status_code=202,
-    responses=_unblocked,
+    responses=contract.responses("object_unblock", status=202),
 )
 def object_unblock(
     request: Request,

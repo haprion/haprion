@@ -45,6 +45,7 @@ from tests.test_api_boundary import api_routes
 from tests.test_api_certificate_writes import CertificateWriteCase
 from tests.test_api_certificates import entry as certificate_entry
 from tests.test_api_certificates import registry as certificate_registry
+from tests.test_api_changes import SECOND, SHOP_CHANGED, ChangesTestCase, saved_row
 from tests.test_api_clusters_objects import ReadingTestCase, renamed
 from tests.test_api_jobs import REQUEST, JobsApiTestCase, a_job, failed_job
 from tests.test_api_traffic import NODE
@@ -422,6 +423,41 @@ class TheCertificateWriteRoutes(Checked, CertificateWriteCase):
         return self.send(method, path, secret, body)
 
 
+class TheObjectWriteRoutes(Checked, ChangesTestCase):
+    """A write is called with a write token only: below it, every route's 403 is the boundary test's."""
+
+    CALLS = {
+        "object_create": ("POST /clusters/alpha/objects",),
+        "object_replace": ("PUT /clusters/alpha/objects/shop",),
+        "object_remove": ("DELETE /clusters/alpha/objects/shop",),
+        "cluster_publish": ("POST /clusters/alpha/publish",),
+        "cluster_revert": ("POST /clusters/alpha/revert",),
+    }
+    BODIES: ClassVar[dict[str, Any]] = {
+        "object_create": SECOND,
+        "object_replace": SHOP_CHANGED,
+        "cluster_publish": {"comment": "Move the shop"},
+        "cluster_revert": {"version": 1},
+    }
+    STATUS: ClassVar[dict[str, int]] = {
+        "object_create": 201,
+        "cluster_publish": 202,
+        "cluster_revert": 202,
+    }
+
+    def test_every_answer_is_the_one_its_schema_describes(self) -> None:
+        self.rows = [saved_row()]
+        for operation, calls in self.CALLS.items():
+            for call in calls:
+                method, path = call.split(" ")
+                with self.subTest(operation=operation, call=call):
+                    response = self.send(method, path, body=self.BODIES.get(operation))
+                    self.assertEqual(
+                        response.status_code, self.STATUS.get(operation, 200), response.text
+                    )
+                    held_to(self, operation, response.json())
+
+
 class TheBlocksRoute(Checked):
     CALLS = {"object_blocks": ("/clusters/alpha/objects/shop/blocks",)}
 
@@ -776,6 +812,7 @@ class EveryRouteHasItsSchema(ApiTestCase):
                 answered = paths[route.path][method.lower()]["responses"]
                 [success] = [code for code in answered if code.startswith("2")]
                 shown = answered[success]["content"]["application/json"]
+                self.assertEqual(int(success), route.status_code or 200)
                 schema = shown["schema"]
                 self.assertEqual(schema["properties"]["operation"], {"const": name})
                 self.assertTrue(schema["properties"]["result"], "an empty schema")

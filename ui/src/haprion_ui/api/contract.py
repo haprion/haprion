@@ -114,11 +114,15 @@ def _answer(operation: str) -> dict[str, Any]:
     }
 
 
-def responses(operation: str) -> dict[int | str, dict[str, Any]]:
-    """The route's responses for OpenAPI: its answer, and the refusal every route may give."""
+def responses(operation: str, *, status: int = 200) -> dict[int | str, dict[str, Any]]:
+    """The route's responses for OpenAPI: its answer, and the refusal every route may give.
+
+    `status` is the route's own success status - 201 for a thing made, 202 for
+    a change queued - and the same as its decorator's `status_code`.
+    """
 
     return {
-        200: {
+        status: {
             "description": "The operation's result, in the contract's envelope.",
             "content": {"application/json": {"schema": _answer(operation)}},
         },

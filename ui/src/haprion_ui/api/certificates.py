@@ -197,14 +197,6 @@ class TargetsBody(BaseModel):
     formats: dict[Name, Name] = Field(default_factory=dict, max_length=100)
 
 
-def _queued(operation: str) -> dict[int | str, dict[str, Any]]:
-    """The route's responses for OpenAPI: a change is answered 202, not 200."""
-
-    documented = contract.responses(operation)
-    documented[202] = documented.pop(200)
-    return documented
-
-
 def touchable(entry: RegistryCertificateView, caller: Caller) -> bool:
     """Whether the token may change a certificate: every place it goes is a cluster the token covers.
 
@@ -287,7 +279,7 @@ def _live_drafts(request: Request) -> list[db.ProxyDraft]:
     "/certificates",
     name="certificate_issue",
     status_code=202,
-    responses=_queued("certificate_issue"),
+    responses=contract.responses("certificate_issue", status=202),
 )
 def certificate_issue(
     request: Request,
@@ -348,7 +340,7 @@ def certificate_issue(
     "/certificates/{certificate_id}/renew",
     name="certificate_renew",
     status_code=202,
-    responses=_queued("certificate_renew"),
+    responses=contract.responses("certificate_renew", status=202),
 )
 def certificate_renewal(
     request: Request,
@@ -382,7 +374,7 @@ def certificate_renewal(
     "/certificates/{certificate_id}/targets",
     name="certificate_targets",
     status_code=202,
-    responses=_queued("certificate_targets"),
+    responses=contract.responses("certificate_targets", status=202),
 )
 def certificate_targets(
     request: Request,
@@ -468,7 +460,7 @@ def _refuse_drafts(payload: Mapping[str, Any], drafts: Sequence[db.ProxyDraft]) 
     "/certificates/{certificate_id}",
     name="certificate_delete",
     status_code=202,
-    responses=_queued("certificate_delete"),
+    responses=contract.responses("certificate_delete", status=202),
 )
 def certificate_removal(
     request: Request,

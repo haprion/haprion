@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/cluster_revert.schema.json",
+  "title": "POST /api/v1/clusters/{cluster}/revert: result",
+  "description": "Publish an earlier version again: the job that does it. Answered 202; follow the job to see it end.",
+  "$ref": "definitions.schema.json#/$defs/queued"
+}

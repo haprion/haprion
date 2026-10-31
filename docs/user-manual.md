@@ -4420,8 +4420,7 @@ can take that token back at any time.
 The API answers on the manager's own address, under `/api/v1/`, through the same nginx and certificate as
 the interface. There is no extra port to open.
 
-A token of the level *Block* places a block and is answered in the same call, and a token of the level *Write* lifts
-one ([Blocking an address](#blocking-an-address)). Changing objects through the API comes in a later release.
+A token reads, or blocks addresses, or changes things, as its level says.
 
 ### Tokens
 
@@ -4588,6 +4587,44 @@ through the API, so importing a certificate or a key, uploading a renewed file, 
 interface's own certificate stay in the interface. Another certificate job running is `409 certificate_busy`
 with `Retry-After`, and a name already in the registry is `409 already_exists`.
 
+### Changing objects
+
+A token with the level *Write* does what an admin does on the *Proxies* and *Versions* pages, and only when
+*management writes* are on for the installation (otherwise every call below is refused with 403
+`writes_off`). Saving an object is the page's *Save*: the change is saved for the next publish and shows on
+the *Proxies* page as saved by `token:` and the token's name. Nothing reaches the nodes until it is published.
+
+| Path under `/api/v1` | What it does |
+|---|---|
+| `/clusters/{cluster}/objects` | **POST** saves a new object from its document. Answered 201 with the saved change |
+| `/clusters/{cluster}/objects/{name}` | **PUT** replaces the object's saved change, or saves a change over the object as published. **DELETE** saves its removal |
+| `/clusters/{cluster}/publish` | **POST** publishes everything saved for the cluster as one version (`comment`, optional, and `deploy`, true unless you say false). Answered 202 with the job |
+| `/clusters/{cluster}/revert` | **POST** publishes an earlier version again (`version`). Answered 202 with the job |
+
+The body of a save is the object itself, as JSON or as YAML - the same document the *Proxies* page stores. It
+is checked as the page checks it. A document that is not an object is refused with 400 `bad_input`, and an
+object that does not fit the cluster (an address it does not have, a certificate it cannot use) is saved all
+the same, as a draft is: the answer's `check` says whether it fits and why not. The answer's `revision` is the
+saved change's, and `If-Match` with it makes a replace refuse (409 `conflict`) if somebody saved in between.
+Saying what is already there saves nothing (`changed` is false). A name that exists, an object with a draft
+somebody has not finished in the interface, and a rename are not done through the API: create a new object and
+remove the old one.
+
+Publishing and going back are jobs, as on the pages: they need an `Idempotency-Key` header holding a new UUID for
+each change, so that a call repeated after a lost answer is the same job and not two. The answer is 202 with
+the job and where to follow it (`/api/v1/jobs/{id}`). A publish carries every change saved on the cluster,
+whoever saved it, as the page's does; it is refused with 409 `nothing_to_publish` when nothing is saved and with
+409 `conflict` when the saved changes cannot be published as they are (the message says which).
+
+```bash
+# Save an object from a file, then publish it
+curl -sS -X PUT https://mgr.example.com/api/v1/clusters/alpha/objects/shop \
+     -H "Authorization: Bearer $HAPRION_TOKEN" --data-binary @shop.yaml
+curl -sS -X POST https://mgr.example.com/api/v1/clusters/alpha/publish \
+     -H "Authorization: Bearer $HAPRION_TOKEN" -H "Idempotency-Key: $(uuidgen)" \
+     -H 'Content-Type: application/json' -d '{"comment": "Move the shop"}'
+```
+
 ### The answers
 
 Every answer is the same envelope the command-line tools write with `--json`:
@@ -4615,7 +4652,10 @@ When a call is refused, `ok` is false and `error.code` says why:
 | 401 | `unauthorized` | No token, or one that is unknown, revoked, ended or called from elsewhere - one answer for all, the reason is in the manager's log |
 | 403 | `forbidden` | The token's level does not reach the call |
 | 404 | `not_found` | No such cluster, object or job - or one outside the token's scope |
-| 400 | `bad_input` | A parameter that is not valid, named in the message |
+| 400 | `bad_input` | A parameter, header or body that is not valid, named in the message |
+| 409 | `conflict` | A change meets work in its way: the object exists, has a draft, was saved by somebody else meanwhile, the saved changes cannot be published as they are, or the version is the one published |
+| 409 | `nothing_to_publish` | Nothing is saved on the cluster to publish |
+| 403 | `writes_off` | Changes are switched off on this installation |
 | 405 | `method_not_allowed` | The path exists but not for that method |
 | 429 | `rate_limited` | Ten guesses within a minute - a token nobody issued, or a header that is not a token; the address waits a minute for anything that is not a valid token. A valid token is served meanwhile |
 | 429 | `busy` | Three API calls are already being answered, or the block service is; `Retry-After: 1`, try again at once |

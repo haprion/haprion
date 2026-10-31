@@ -187,6 +187,23 @@ PUBLISH_PREFIXES = tuple(
 )
 
 
+def revert_payload(
+    *, version: int, expected_commit: str, requested_by: str, expected_head: str = ""
+) -> dict[str, Any]:
+    """The `revert` job's payload, as the Versions page's *Publish this version* queues it.
+
+    `expected_head` is the newest version the page listed (CR-09): a revert is
+    a decision about that history, not about one recorded since.
+    """
+
+    return {
+        "version": version,
+        "expected_commit": expected_commit,
+        "requested_by": requested_by,
+        **({"expected_head": expected_head} if expected_head else {}),
+    }
+
+
 def shown_comment(comment: str) -> str:
     for prefix in PUBLISH_PREFIXES:
         if comment.startswith(prefix) and len(comment) > len(prefix):

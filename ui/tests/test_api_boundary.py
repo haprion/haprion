@@ -10,6 +10,7 @@ every route on both sides.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 from unittest import mock
 
@@ -20,6 +21,7 @@ from haprion_ui import api, api_tokens
 from haprion_ui.api import caller
 from haprion_ui.api.caller import Needs
 from tests.test_api import ApiTestCase
+from tests.test_login import configuration
 from tests.test_route_roles import PUBLIC, concrete, routes
 
 
@@ -134,7 +136,8 @@ class EachRouteAnswersOnlyItsLevel(ApiTestCase):
         # database: whatever that answers is the route's business, only not
         # a 401 or a 403. Answered rather than raised, as the service would.
         #
-        client = self.client()
+        # Writes on: a write route answers a 403 `writes_off` before it runs.
+        client = self.client(replace(configuration(), management_writes=True))
         client = TestClient(
             client.app, base_url=str(client.base_url), raise_server_exceptions=False
         )

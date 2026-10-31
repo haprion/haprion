@@ -46,7 +46,13 @@ from haprion_ui.access import admin_write_gate, client_address, current_session,
 from haprion_ui.accounts import listed_accounts
 from haprion_ui.config import Config, cluster_id_of
 from haprion_ui.db import AuthenticatedSession
-from haprion_ui.pending import held_server_counts, pending_count, pending_package, publish_key
+from haprion_ui.pending import (
+    held_server_counts,
+    pending_count,
+    pending_package,
+    publish_key,
+    publish_payload,
+)
 from haprion_ui.reading import (
     HISTORY_SOURCE,
     NETWORK_SOURCE,
@@ -665,12 +671,9 @@ def build_router(config: Config) -> APIRouter:
         problem = comment_problem(comment.strip())
         if problem:
             return refusal_page(request, config, f"The comment {problem}.", back=back)
-        payload = {
-            **package.payload,
-            "comment": comment.strip(),
-            "requested_by": gate.username,
-            **({"deploy": True} if deploy else {}),
-        }
+        payload = publish_payload(
+            package, comment=comment, requested_by=gate.username, deploy=deploy
+        )
         try:
             drawn = UUID(idempotency_key)
         except ValueError:
@@ -1179,16 +1182,12 @@ def build_router(config: Config) -> APIRouter:
         elif operation == "revert":
             if not is_digits(version):
                 return PlainTextResponse("A version is required", status_code=400)
-            payload = {
-                "version": int(version),
-                "expected_commit": expected_commit,
-                "requested_by": session.username,
-                #
-                # The newest version the page listed (CR-09): a revert is a
-                # decision about that history, not about one recorded since.
-                #
-                **({"expected_head": expected_head} if expected_head else {}),
-            }
+            payload = history.revert_payload(
+                version=int(version),
+                expected_commit=expected_commit,
+                requested_by=session.username,
+                expected_head=expected_head,
+            )
         elif operation == "network_save":
             revision = int(saved_revision) if is_digits(saved_revision) else None
             if network_action == "discard":

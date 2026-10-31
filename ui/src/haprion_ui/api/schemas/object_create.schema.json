@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/object_create.schema.json",
+  "title": "POST /api/v1/clusters/{cluster}/objects: result",
+  "description": "A change saved for the next publish, as the Proxies page's Save saves it. Also the result of replacing and of removing an object.",
+  "type": "object",
+  "required": ["object", "stage", "removal", "changed", "revision", "updated_by", "updated_at", "check"],
+  "properties": {
+    "object": { "type": "string", "description": "Value. The object's name." },
+    "stage": { "enum": ["saved"], "description": "Code. saved: waiting for a publish." },
+    "removal": { "type": "boolean", "description": "Value. True where the saved change removes the object." },
+    "changed": { "type": "boolean", "description": "Value. False where the document already was what is saved or published and nothing was written." },
+    "revision": { "type": ["integer", "null"], "minimum": 1, "description": "Value. The saved change's revision; send it as If-Match to replace exactly this. null where nothing is saved." },
+    "updated_by": { "type": ["string", "null"], "description": "Value. Who saved the change last, such as token:name for a token; null where nothing is saved." },
+    "updated_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the change was saved; null where nothing is saved." },
+    "check": {
+      "type": ["object", "null"],
+      "description": "How the object fits its cluster, as the editor's check says it; null for a removal.",
+      "required": ["fits", "problem", "warnings"],
+      "properties": {
+        "fits": { "type": ["boolean", "null"], "description": "Value. True where the object was generated beside the cluster's description without a refusal, false where it was refused, null where the cluster is not described well enough to judge." },
+        "problem": { "type": ["string", "null"], "description": "Text. The engine's sentence on why it does not fit; null where it does or cannot be judged. The change is saved all the same, as a draft is." },
+        "warnings": { "type": "array", "items": { "type": "string" }, "description": "Text. Server names the manager cannot resolve; the nodes may." }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

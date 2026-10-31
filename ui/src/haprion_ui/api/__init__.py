@@ -25,7 +25,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from haprion_ui.api import blocks, certificates, clusters, jobs, objects, token, traffic, waf
+from haprion_ui.api import (
+    blocks,
+    certificates,
+    changes,
+    clusters,
+    jobs,
+    objects,
+    token,
+    traffic,
+    waf,
+)
 from haprion_ui.api.answers import Refusal, refusal
 from haprion_ui.api.caller import CONCURRENT_CALLS, Caller, current_caller
 from haprion_ui.config import Config
@@ -88,7 +98,7 @@ def build_api(config: Config) -> FastAPI:
             request, Refusal(500, "internal_error", "The request failed on the manager.")
         )
 
-    for module in (token, clusters, objects, certificates, blocks, traffic, waf, jobs):
+    for module in (token, clusters, objects, changes, certificates, blocks, traffic, waf, jobs):
         api.include_router(module.router)
 
     @api.get("/openapi.json", include_in_schema=False)

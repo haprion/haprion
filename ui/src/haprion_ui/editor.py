@@ -214,7 +214,18 @@ def check(
     except ValueError as exc:
         return Preview(problem=str(exc), about_the_object=True)
 
-    name = str(form.get("name", "") or "").strip()
+    return check_document(str(form.get("name", "") or "").strip(), document, cluster, others=others)
+
+
+def check_document(
+    name: str,
+    document: str,
+    cluster: EditorCluster,
+    *,
+    others: Iterable[tuple[str, str]] = (),
+) -> Preview:
+    """`check` for a document already written: the form's, or one handed over whole (the API's)."""
+
     try:
         #
         # What the form saves is held to what may be written; the neighbours

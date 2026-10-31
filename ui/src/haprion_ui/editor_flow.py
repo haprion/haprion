@@ -238,7 +238,7 @@ def state_reading(state: EditorState) -> ObjectsReading:
     return ObjectsReading({view.name for view in state.stored}, state.commit)
 
 
-def _unresolved_servers(name: str, document: str) -> list[str]:
+def unresolved_servers(name: str, document: str) -> list[str]:
     """The pool members' names the manager cannot resolve, as warnings (finding 72).
 
     Never a refusal: the nodes may resolve what the manager does not, and their
@@ -423,7 +423,7 @@ def editor_page(
     )
     held = blocked.object_card(status_rows, cluster=cluster, name=name) if name else None
     unresolved = (
-        _unresolved_servers(str(fields.get("name", "") or name), result.document)
+        unresolved_servers(str(fields.get("name", "") or name), result.document)
         if result.document and not dns_form
         else []
     )
@@ -1011,20 +1011,14 @@ def editor_submit(
             # finished from goes, in one transaction (B257). A rename
             # moves the saved row's key.
             #
-            saved = db.save_change(
+            saved = save_object_change(
                 connection,
+                state,
                 cluster=cluster,
                 object_id=key,
                 new_object_id=object_id if object_id != key else None,
-                yaml=result.document,
-                base_version=state.base_version,
-                base_hash=state.commit,
+                document=result.document,
                 updated_by=session.username,
-                #
-                # From the whole form, with what moved shown above it:
-                # the one write that takes the object as it is now.
-                #
-                base_document=published_document(state, replaces or key),
                 replaces=replaces,
                 saved_revision=saved_revision,
                 draft_revision=draft_revision,
@@ -1097,12 +1091,85 @@ def editor_submit(
     if form.action == "draft" or (
         result.document
         and form.fields().get("protocol") != "dns"
-        and _unresolved_servers(object_id, result.document)
+        and unresolved_servers(object_id, result.document)
     ):
         return RedirectResponse(
             proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303
         )
     return RedirectResponse("/proxies", status_code=303)
+
+
+def save_object_change(
+    connection: Any,
+    state: EditorState,
+    *,
+    cluster: str,
+    object_id: str,
+    new_object_id: str | None = None,
+    document: str,
+    updated_by: str,
+    replaces: str | None = None,
+    saved_revision: int | None,
+    draft_revision: int | None,
+) -> db.ProxyDraft:
+    """Write one object's saved change from a whole document, over the object as published now.
+
+    The form's *Save* and the API's create and replace: the one write that
+    takes the object as it is now for the base it was changed from.
+    """
+
+    if state.commit is None:
+        raise ValueError("the stored proxies have not been read yet")
+    # Whoever calls, what is saved is held to what a write may be (15-06).
+    load_written(new_object_id or object_id, document.encode())
+    return db.save_change(
+        connection,
+        cluster=cluster,
+        object_id=object_id,
+        new_object_id=new_object_id,
+        yaml=document,
+        base_version=state.base_version,
+        base_hash=state.commit,
+        updated_by=updated_by,
+        base_document=published_document(state, replaces or object_id),
+        replaces=replaces,
+        saved_revision=saved_revision,
+        draft_revision=draft_revision,
+    )
+
+
+def save_removal(
+    connection: Any,
+    state: EditorState,
+    stored: objects.ObjectView,
+    *,
+    cluster: str,
+    existing: ObjectWork,
+    updated_by: str,
+) -> db.ProxyDraft:
+    """Save the removal of a stored object for the next publish; a draft over it goes with it."""
+
+    if state.commit is None:
+        raise ValueError("the stored proxies have not been read yet")
+    return db.save_change(
+        connection,
+        cluster=cluster,
+        object_id=stored.name,
+        #
+        # The stored document, kept as the draft's text. The publish
+        # sends `null` and never this - it is here so the row says what
+        # is being removed rather than being empty, and so a removal
+        # that is refused leaves the object's own text to look at.
+        #
+        yaml=stored.document,
+        base_version=state.base_version,
+        base_hash=state.commit,
+        updated_by=updated_by,
+        base_document=stored.document,
+        deleted=True,
+        saved_revision=existing.saved.revision if existing.saved else None,
+        draft_revision=existing.draft.revision if existing.draft else None,
+    )
 
 
 def removal_bookkeeping(
@@ -1175,24 +1242,13 @@ def removal_submit(
         # draft over the object goes with it, as the removal replaced the
         # draft before there were two: there is nothing left to finish.
         #
-        saved = db.save_change(
+        saved = save_removal(
             connection,
+            state,
+            stored,
             cluster=cluster,
-            object_id=name,
-            #
-            # The stored document, kept as the draft's text. The publish
-            # sends `null` and never this - it is here so the row says what
-            # is being removed rather than being empty, and so a removal
-            # that is refused leaves the object's own text to look at.
-            #
-            yaml=stored.document,
-            base_version=state.base_version,
-            base_hash=state.commit,
+            existing=existing,
             updated_by=session.username,
-            base_document=stored.document,
-            deleted=True,
-            saved_revision=existing.saved.revision if existing.saved else None,
-            draft_revision=existing.draft.revision if existing.draft else None,
         )
         db.record_audit_event(
             connection,

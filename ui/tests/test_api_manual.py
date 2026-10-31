@@ -31,8 +31,11 @@ def section() -> str:
 
 
 def answered(path: str, api_routes: list[Any]) -> bool:
-    scope = {"type": "http", "path": path, "method": "GET"}
-    return any(route.matches(scope)[0] is Match.FULL for route in api_routes)
+    return any(
+        route.matches({"type": "http", "path": path, "method": method})[0] is Match.FULL
+        for route in api_routes
+        for method in ("GET", "POST", "PUT", "DELETE")
+    )
 
 
 class TheManualNamesRealCalls(unittest.TestCase):

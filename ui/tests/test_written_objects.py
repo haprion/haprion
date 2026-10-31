@@ -18,7 +18,11 @@ SOURCE = Path(__file__).resolve().parents[1] / "src" / "haprion_ui"
 # The checks that hold a document to the write rules themselves, and are held
 # to calling `load_written` below.
 #
-CHECKS = {("editor_module", "check"), ("advanced_dialog", "check")}
+CHECKS = {("editor_module", "check_document"), ("advanced_dialog", "check")}
+#
+# The form's check builds the document and hands it to `check_document`.
+#
+FORM_CHECK = ("editor_module", "check")
 
 
 def _called(node: ast.AST) -> set[tuple[str, str]]:
@@ -61,7 +65,7 @@ class EveryWayToSaveAnObject(unittest.TestCase):
                     continue
                 savers.append(function.name)
                 called = _called(function)
-                if ("", "load_written") not in called and not called & CHECKS:
+                if ("", "load_written") not in called and not called & (CHECKS | {FORM_CHECK}):
                     unchecked.append(f"{path.name}: {function.name}")
         self.assertGreaterEqual(len(savers), 4, savers)
         self.assertEqual(unchecked, [], "call load_written on the document before it is saved")
@@ -77,6 +81,15 @@ class EveryWayToSaveAnObject(unittest.TestCase):
             )
             with self.subTest(module=module):
                 self.assertIn(("", "load_written"), _called(function))
+
+    def test_the_form_s_check_hands_its_document_to_the_one_that_does(self) -> None:
+        tree = ast.parse((SOURCE / "editor.py").read_text(encoding="utf-8"))
+        (function,) = (
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == FORM_CHECK[1]
+        )
+        self.assertIn(("", "check_document"), _called(function))
 
 
 if __name__ == "__main__":

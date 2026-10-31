@@ -25,7 +25,6 @@ from haprion.config import CERTIFICATE_ID
 
 from haprion_ui import (
     auth,
-    certificate_activity,
     certificate_delete,
     certificate_form,
     certificate_import_form,
@@ -46,9 +45,7 @@ from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import (
     CERTIFICATE_SOURCE,
-    STATUS_SOURCE,
     listed_clusters,
-    read_certificate_takeouts,
     read_manager_certificates,
     read_source,
 )
@@ -58,6 +55,7 @@ from haprion_ui.views import (
     UPLOADED_FILE,
     certificate_page_context,
     public_certificate_files,
+    read_certificate_overview,
     read_dns_public_key,
     registry_overview,
     zip_response,
@@ -73,43 +71,7 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
-        #
-        # The node status too, for the one question the certificate listing
-        # cannot answer: whether the nodes are carrying what was published. The
-        # listing reads the manager's own directory, the nodes report their own
-        # fingerprints, and the registry view needs both to say anything
-        # truthful about a cluster target.
-        #
-        _, status_rows = read_source(request, config, STATUS_SOURCE)
-        overview = certificates.build_certificate_overview(
-            clusters,
-            certificate_rows,
-            manager=read_manager_certificates(request, config),
-            status_readings=status_rows,
-            stale_after=config.poller.stale_after,
-            taken_out=read_certificate_takeouts(request, config),
-        )
-        with request.app.state.pool.connection() as connection:
-            recent = db.recent_jobs(connection, limit=100)
-        running = jobs.in_flight(recent, writes=config.management_writes)
-        #
-        # A row the queue is deleting says so in its State cell instead of
-        # the page sending the person to the jobs list to watch; the page
-        # refreshes itself while that is going on.
-        #
-        deleting = certificate_activity.deletion_states(recent, writes=config.management_writes)
-        #
-        # A cluster deploy asked for from a row is said on that row too, with
-        # the page refreshing until it ends: the person who pressed Deploy to
-        # nodes was looking at the row, not at the jobs page (2026-09-20).
-        #
-        if overview.registry is not None:
-            for identifier, state in certificate_activity.deploy_states(
-                overview.registry.certificates, recent, writes=config.management_writes
-            ).items():
-                deleting.setdefault(identifier, state)
-        overview = certificates.with_deletion_states(overview, deleting)
+        overview, deleting, running = read_certificate_overview(config, request)
         refresh = any(
             deleting[entry.identifier].active
             and entry.state_label == deleting[entry.identifier].label

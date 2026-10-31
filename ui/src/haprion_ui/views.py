@@ -35,6 +35,7 @@ from haprion_ui import (
     attention,
     auth,
     backups,
+    certificate_activity,
     certificates,
     dashboard,
     db,
@@ -228,6 +229,59 @@ def registry_overview(config: Config, request: Request) -> certificates.Registry
         stale_after=config.poller.stale_after,
     )
     return overview.registry
+
+
+def read_certificate_overview(
+    config: Config, request: Request
+) -> tuple[
+    certificates.CertificateOverview,
+    dict[str, certificate_activity.DeletionState],
+    dict[str, jobs.InFlight],
+]:
+    """The Certificates page's overview, and what the queue is doing to it.
+
+    Shared with the API, so a script reads the registry exactly as the page
+    draws it. Returned beside the overview: the rows' queue states, which the
+    page refreshes itself on, and the clusters' running jobs.
+    """
+
+    clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
+    #
+    # The node status too, for the one question the certificate listing
+    # cannot answer: whether the nodes are carrying what was published. The
+    # listing reads the manager's own directory, the nodes report their own
+    # fingerprints, and the registry view needs both to say anything
+    # truthful about a cluster target.
+    #
+    _, status_rows = read_source(request, config, STATUS_SOURCE)
+    overview = certificates.build_certificate_overview(
+        clusters,
+        certificate_rows,
+        manager=read_manager_certificates(request, config),
+        status_readings=status_rows,
+        stale_after=config.poller.stale_after,
+        taken_out=read_certificate_takeouts(request, config),
+    )
+    with request.app.state.pool.connection() as connection:
+        recent = db.recent_jobs(connection, limit=100)
+    running = jobs.in_flight(recent, writes=config.management_writes)
+    #
+    # A row the queue is deleting says so in its State cell instead of
+    # the page sending the person to the jobs list to watch; the page
+    # refreshes itself while that is going on.
+    #
+    deleting = certificate_activity.deletion_states(recent, writes=config.management_writes)
+    #
+    # A cluster deploy asked for from a row is said on that row too, with
+    # the page refreshing until it ends: the person who pressed Deploy to
+    # nodes was looking at the row, not at the jobs page (2026-09-20).
+    #
+    if overview.registry is not None:
+        for identifier, state in certificate_activity.deploy_states(
+            overview.registry.certificates, recent, writes=config.management_writes
+        ).items():
+            deleting.setdefault(identifier, state)
+    return certificates.with_deletion_states(overview, deleting), deleting, running
 
 
 def certificate_page_context(

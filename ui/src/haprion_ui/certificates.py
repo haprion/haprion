@@ -236,6 +236,11 @@ class RegistryCertificateView:
     # `CertificateView.chain`.
     #
     chain: str = ""
+    #
+    # The expiry as a moment, for what reads it rather than draws it (the
+    # API); None where the entry is unreadable or the time was not measured.
+    #
+    expires_at: datetime | None = None
 
     @property
     def csr_pending(self) -> bool:
@@ -1219,10 +1224,9 @@ def _registry_certificate(
         fingerprint = _text(entry.get("bundle_sha256"), "")
     targets = _target_views(entry)
 
+    expires_at = _expiry(entry.get("not_after")) if readable else None
     if readable:
-        expires, expiry_label, tone = _expiry_state(
-            _expiry(entry.get("not_after")), lifecycle=lifecycle, now=now
-        )
+        expires, expiry_label, tone = _expiry_state(expires_at, lifecycle=lifecycle, now=now)
     else:
         #
         # Schema v1 fills the measured fields of an unreadable entry with inert
@@ -1284,6 +1288,7 @@ def _registry_certificate(
         if entry.get("exportable") is True
         else None,
         chain=chain,
+        expires_at=expires_at,
     )
 
 

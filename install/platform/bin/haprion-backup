@@ -616,7 +616,7 @@ hold_api_tokens() {
         if [[ -n "$revived" ]]; then
             log "API tokens revoked again, active now but not before the restore: $(tr '\n' ' ' <<<"$revived")"
         else
-            log "API tokens revoked again: none"
+            log "API tokens revoked again: none more"
         fi
         return
     fi

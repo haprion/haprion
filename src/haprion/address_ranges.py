@@ -55,6 +55,31 @@ def has_host_bits(entry: str) -> bool:
     return True
 
 
+#
+# IPv4 written as IPv6 (`::ffff:192.0.2.0/120`). The web knows a client by its
+# IPv4 form since 2026-10-31, so a list entry in this form would never match;
+# the lists say how to write it instead.
+#
+_MAPPED = ipaddress.IPv6Network("::ffff:0:0/96")
+
+
+def mapped_ipv4(entry: str) -> str | None:
+    """The IPv4 form of an IPv4-mapped address or network, or None for anything else."""
+
+    try:
+        network = ipaddress.ip_network(entry, strict=False)
+    except ValueError:
+        return None
+    if not isinstance(network, ipaddress.IPv6Network) or not network.subnet_of(_MAPPED):
+        return None
+    first = network.network_address.ipv4_mapped
+    if first is None:
+        return None
+    if network.prefixlen == 128:
+        return str(first)
+    return str(ipaddress.IPv4Network(f"{first}/{network.prefixlen - 96}", strict=False))
+
+
 def refused(entry: str) -> bool:
     """Whether `entry` is refused where it is read: a range with host bits, being written."""
 

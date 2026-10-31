@@ -25,6 +25,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from haprion import address_ranges
+
 from haprion_ui import auth
 from haprion_ui.db import ApiToken
 
@@ -97,6 +99,8 @@ def sources_problem(sources: Iterable[str]) -> str:
             ipaddress.ip_network(source, strict=False)
         except ValueError:
             return f"{source!r} is not an address or a network"
+        if (written := address_ranges.mapped_ipv4(source)) is not None:
+            return f"{source!r} is an IPv4 address written as IPv6; write it as {written}"
     return ""
 
 

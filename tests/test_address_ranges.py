@@ -85,5 +85,16 @@ class HostBits(unittest.TestCase):
         self.assertFalse(address_ranges.refused("office"))
 
 
+class IPv4WrittenAsIPv6(unittest.TestCase):
+    def test_a_mapped_address_or_network_is_given_in_its_ipv4_form(self) -> None:
+        self.assertEqual(address_ranges.mapped_ipv4("::ffff:192.0.2.10"), "192.0.2.10")
+        self.assertEqual(address_ranges.mapped_ipv4("::ffff:192.0.2.0/120"), "192.0.2.0/24")
+
+    def test_anything_else_is_none(self) -> None:
+        for entry in ("192.0.2.10", "2001:db8::/32", "::/0", "office", "::ffff:0:0/95"):
+            with self.subTest(entry=entry):
+                self.assertIsNone(address_ranges.mapped_ipv4(entry))
+
+
 if __name__ == "__main__":
     unittest.main()

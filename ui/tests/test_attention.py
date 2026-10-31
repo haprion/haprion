@@ -962,6 +962,13 @@ class TheAccessList(unittest.TestCase):
         with self.assertRaises(ValueError):
             attention.access_list("monitor.example.com")
 
+    def test_an_ipv4_address_written_as_ipv6_is_refused_with_its_ipv4_form(self) -> None:
+        # Review 26-10-31: the web knows a client by its IPv4 form, so this would never match.
+        with self.assertRaisesRegex(ValueError, re.escape("write it as 192.0.2.0/24")):
+            attention.access_list("::ffff:192.0.2.0/120")
+        with self.assertRaisesRegex(ValueError, re.escape("write it as 192.0.2.10")):
+            attention.access_list("::ffff:192.0.2.10")
+
 
 class TheEndpoint(LoginTestCase):
     def ask(self, path: str, *, allowed: list[StatusAccess], address: str) -> Any:

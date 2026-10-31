@@ -113,6 +113,9 @@ class TheToken(unittest.TestCase):
         self.assertNotEqual(api_tokens.days_problem(0), "")
         self.assertEqual(api_tokens.sources_problem(["192.0.2.0/24", "2001:db8::1"]), "")
         self.assertNotEqual(api_tokens.sources_problem(["192.0.2.0/33"]), "")
+        self.assertIn(
+            "write it as 192.0.2.0/24", api_tokens.sources_problem(["::ffff:192.0.2.0/120"])
+        )
 
     def test_a_token_ending_within_thirty_days_or_ended_needs_attention(self) -> None:
         self.assertFalse(api_tokens.ends_soon(a_token(), NOW))

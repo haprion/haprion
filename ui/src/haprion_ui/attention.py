@@ -236,6 +236,10 @@ def access_list(text: str) -> tuple[str, ...]:
     for index, entry in enumerate(entries, start=1):
         if address_ranges.has_host_bits(entry):
             raise ValueError(f"Line {index}: {address_ranges.HOST_BITS}.")
+        if (written := address_ranges.mapped_ipv4(entry)) is not None:
+            raise ValueError(
+                f"Line {index} is an IPv4 address written as IPv6; write it as {written}."
+            )
         try:
             network = ipaddress.ip_network(entry, strict=True)
         except ValueError:

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/certificate_targets.schema.json",
+  "title": "PUT /api/v1/certificates/{certificate_id}/targets: result",
+  "description": "Publish a certificate to more clusters and receivers (add), or take it from some (remove), as Publish to... and Remove from... do. Answered 202 with the job to follow.",
+  "$ref": "definitions.schema.json#/$defs/queued"
+}

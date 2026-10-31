@@ -1,18 +1,41 @@
-"""Certificates and where they are deployed."""
+"""Certificates: where they are deployed, and issuing, renewing, retargeting and deleting them.
+
+A change is the job the Certificates page queues, with the payload the page
+builds (`certificate_form`, `certificate_renew`, `certificate_retarget`), run
+by the same worker; no private key passes through the API, so an import, an
+upload and a signing request stay in the interface.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any, Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
+from haprion.cert_issue import IssueError, parse_domain
+from haprion.config import CERTIFICATE_ID
+from pydantic import BaseModel, ConfigDict, Field
 
-from haprion_ui import api_tokens
-from haprion_ui.api import contract
-from haprion_ui.api.answers import answer
-from haprion_ui.api.caller import Caller, needs
+from haprion_ui import (
+    api_tokens,
+    certificate_delete,
+    certificate_form,
+    certificate_renew,
+    certificate_retarget,
+    db,
+    features,
+    operations,
+    refusals,
+)
+from haprion_ui.api import contract, writing
+from haprion_ui.api.answers import Refusal, answer
+from haprion_ui.api.caller import Caller, in_scope, needs
+from haprion_ui.certificate_reading import certificate_choices, registry_views
 from haprion_ui.certificates import RegistryCertificateView, TargetView
+from haprion_ui.reading import listed_clusters
 from haprion_ui.sorting import tone_rank
 from haprion_ui.views import read_certificate_overview
 
@@ -124,4 +147,357 @@ def certificate_list(
             "observed_at": _iso(registry.observed_at) if registry is not None else None,
             "stale": registry.stale if registry is not None else False,
         },
+    )
+
+
+# - Changes ----------------------------------------------------------------
+
+NOT_FOUND = Refusal(404, "not_found", "No such certificate.")
+
+#
+# Receivers belong to no cluster, so a token limited to clusters has none to
+# name. One answer whether or not the receiver exists, so it learns nothing.
+#
+CLUSTERS_ONLY = Refusal(
+    403,
+    "forbidden",
+    "A token limited to some clusters publishes to those clusters only, and to no receiver.",
+)
+BY_FILE = (
+    "This certificate is renewed with a file, and a private key does not go through the API; "
+    "upload it under Certificates in the interface."
+)
+
+Name = Annotated[str, Field(max_length=255)]
+
+
+class IssueBody(BaseModel):
+    """The *New certificate* form's fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    domain: Name
+    method: Annotated[str, Field(max_length=16)]
+    clusters: list[Name] = Field(default_factory=list, max_length=100)
+    receivers: list[Name] = Field(default_factory=list, max_length=100)
+    formats: dict[Name, Name] = Field(default_factory=dict, max_length=100)
+    dns_profile: Annotated[str, Field(max_length=32)] = ""
+    ndes_profile: Annotated[str, Field(max_length=32)] = ""
+    exportable: bool = False
+
+
+class TargetsBody(BaseModel):
+    """*Publish to…* (`add`) or *Remove from…* (`remove`) for one certificate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["add", "remove"]
+    clusters: list[Name] = Field(default_factory=list, max_length=100)
+    receivers: list[Name] = Field(default_factory=list, max_length=100)
+    formats: dict[Name, Name] = Field(default_factory=dict, max_length=100)
+
+
+def _queued(operation: str) -> dict[int | str, dict[str, Any]]:
+    """The route's responses for OpenAPI: a change is answered 202, not 200."""
+
+    documented = contract.responses(operation)
+    documented[202] = documented.pop(200)
+    return documented
+
+
+def touchable(entry: RegistryCertificateView, caller: Caller) -> bool:
+    """Whether the token may change a certificate: every place it goes is a cluster the token covers.
+
+    Stricter than `visible`: renewing or deleting a certificate also renews
+    or removes it where it is deployed to another cluster, or to a receiver.
+    """
+
+    if not caller.issued.clusters:
+        return True
+    return bool(entry.targets) and all(
+        target.kind == "cluster" and api_tokens.covers(caller.issued, target.name)
+        for target in entry.targets
+    )
+
+
+def _own(
+    registry: Mapping[str, RegistryCertificateView], certificate_id: str, caller: Caller
+) -> RegistryCertificateView:
+    """The registry's row, or the same 404 whether it is missing or the token's to leave alone."""
+
+    entry = registry.get(certificate_id) if CERTIFICATE_ID.fullmatch(certificate_id) else None
+    if entry is None or not touchable(entry, caller):
+        raise NOT_FOUND
+    return entry
+
+
+def _ready(request: Request, caller: Caller, clusters: Sequence[str] = ()) -> None:
+    """What is refused before anything is read: no key, a cluster out of scope.
+
+    Writes switched off is `writing.queue`'s, last, as for every change.
+    """
+
+    writing.idempotency_key(request)
+    for cluster in clusters:
+        in_scope(caller, cluster)
+
+
+def _only_clusters(caller: Caller, receivers: Sequence[str]) -> None:
+    if receivers and caller.issued.clusters:
+        raise CLUSTERS_ONLY
+
+
+def _read_switches(request: Request) -> None:
+    """The feature switches for this request: the pages read them in their middleware."""
+
+    with request.app.state.pool.connection() as connection:
+        features.read_in(db.feature_switches(connection))
+
+
+def _formats(formats: Mapping[str, str]) -> tuple[str, ...]:
+    """The page's `<receiver>=<format>` fields."""
+
+    return tuple(f"{receiver}={form}" for receiver, form in formats.items())
+
+
+def _queue(
+    request: Request,
+    caller: Caller,
+    *,
+    operation: str,
+    payload: Mapping[str, Any],
+    detail: Mapping[str, Any],
+) -> JSONResponse:
+    try:
+        return writing.queue(
+            request, caller, operation=operation, cluster=None, payload=payload, detail=detail
+        )
+    except db.CertificateBusy as busy:
+        raise Refusal(
+            409, "certificate_busy", refusals.conflict_sentence(busy), headers={"Retry-After": "30"}
+        ) from None
+
+
+def _live_drafts(request: Request) -> list[db.ProxyDraft]:
+    with request.app.state.pool.connection() as connection:
+        return db.live_drafts(connection, listed_clusters(request, request.app.state.config))
+
+
+@router.post(
+    "/certificates",
+    name="certificate_issue",
+    status_code=202,
+    responses=_queued("certificate_issue"),
+)
+def certificate_issue(
+    request: Request,
+    body: IssueBody,
+    caller: Caller = Depends(needs("write")),  # noqa: B008
+) -> JSONResponse:
+    """Issue a certificate from a CA the manager talks to (ACME or NDES), as *New certificate* does."""
+
+    _ready(request, caller, body.clusters)
+    _only_clusters(caller, body.receivers)
+    if body.exportable and caller.issued.clusters:
+        raise CLUSTERS_ONLY
+    if body.method == certificate_form.CSR_METHOD:
+        raise Refusal(
+            400,
+            "bad_input",
+            "A signing request is made in the interface; its certificate comes back as a file.",
+        )
+    _read_switches(request)
+    if body.exportable and not features.is_on(features.CERT_RECEIVERS):
+        raise Refusal(400, "bad_input", "Certificates for other hosts are switched off.")
+    choices = certificate_choices(request, request.app.state.config)
+    form = certificate_form.IssueForm(
+        domain=body.domain,
+        method=body.method,
+        dns_profile=body.dns_profile,
+        ndes_profile=body.ndes_profile,
+        clusters=tuple(body.clusters),
+        receivers=tuple(body.receivers),
+        formats=_formats(body.formats),
+        exportable=body.exportable,
+    )
+    try:
+        name, _, _ = parse_domain(certificate_form.normalise(form).domain)
+    except IssueError:
+        name = ""
+    if name and name in (*choices.registered, *choices.waiting):
+        raise Refusal(
+            409,
+            "already_exists",
+            "A certificate with this name is already in the registry; to send it elsewhere, "
+            "set its targets.",
+        )
+    try:
+        payload = certificate_form.payload_from_form(form, choices)
+    except certificate_form.FormProblem as problem:
+        raise Refusal(400, "bad_input", str(problem)) from None
+    return _queue(
+        request,
+        caller,
+        operation=certificate_form.operation_of(form),
+        payload=payload,
+        detail={"certificate": name},
+    )
+
+
+@router.post(
+    "/certificates/{certificate_id}/renew",
+    name="certificate_renew",
+    status_code=202,
+    responses=_queued("certificate_renew"),
+)
+def certificate_renewal(
+    request: Request,
+    certificate_id: str,
+    caller: Caller = Depends(needs("write")),  # noqa: B008
+) -> JSONResponse:
+    """Renew a certificate the way its source is made: certbot again, or the NDES enrollment again."""
+
+    _ready(request, caller)
+    registry = registry_views(request, request.app.state.config)
+    entry = _own(registry, certificate_id, caller)
+    if entry.placeholder:
+        raise NOT_FOUND
+    try:
+        renewal = certificate_renew.selection((certificate_id,), registry)
+        if renewal.way in ("upload", "signed"):
+            raise certificate_renew.SelectionProblem(BY_FILE)
+        operation, payload = certificate_renew.payload(renewal)
+    except certificate_renew.SelectionProblem as refused:
+        raise Refusal(409, "cannot_renew", str(refused)) from None
+    return _queue(
+        request,
+        caller,
+        operation=operation,
+        payload=payload,
+        detail={"certificate": certificate_id, "renew": True},
+    )
+
+
+@router.put(
+    "/certificates/{certificate_id}/targets",
+    name="certificate_targets",
+    status_code=202,
+    responses=_queued("certificate_targets"),
+)
+def certificate_targets(
+    request: Request,
+    certificate_id: str,
+    body: TargetsBody,
+    caller: Caller = Depends(needs("write")),  # noqa: B008
+) -> JSONResponse:
+    """Publish a certificate to more places, or take it from some, as *Publish to…* and *Remove from…*."""
+
+    _ready(request, caller, body.clusters)
+    _only_clusters(caller, body.receivers)
+    config = request.app.state.config
+    entry = _own(registry_views(request, config), certificate_id, caller)
+    if body.action == "remove" and body.formats:
+        raise Refusal(400, "bad_input", "A removal does not take formats.")
+    if not body.clusters and not body.receivers:
+        raise Refusal(400, "bad_input", "Name at least one cluster or receiver.")
+    _read_switches(request)
+    choices = certificate_choices(request, config)
+    if not set(body.clusters) <= set(choices.clusters) or not set(body.receivers) <= set(
+        choices.receivers
+    ):
+        raise Refusal(400, "bad_input", "Each target must be a cluster or receiver that exists.")
+    drafts = _live_drafts(request)
+    try:
+        picked = certificate_retarget.selection(
+            body.action,
+            (certificate_id,),
+            {certificate_id: entry},
+            choices.clusters,
+            choices.receivers,
+            drafts,
+        )
+        offered = {(choice.kind, choice.name) for choice in picked.offered}
+        wanted = {("cluster", name) for name in body.clusters} | {
+            ("receiver", name) for name in body.receivers
+        }
+        if offered.isdisjoint(wanted):
+            raise Refusal(
+                409,
+                "no_change",
+                "The certificate is already published to these places."
+                if body.action == "add"
+                else "The certificate is not published to these places.",
+            )
+        payload = certificate_retarget.payload(
+            picked, tuple(body.clusters), tuple(body.receivers), _formats(body.formats)
+        )
+    except certificate_retarget.SelectionProblem as refused:
+        raise Refusal(400, "bad_input", str(refused)) from None
+    _refuse_drafts(payload, drafts)
+    return _queue(
+        request,
+        caller,
+        operation="cert_target",
+        payload=payload,
+        detail={"certificate": certificate_id, "action": body.action},
+    )
+
+
+def _refuse_drafts(payload: Mapping[str, Any], drafts: Sequence[db.ProxyDraft]) -> None:
+    """A removal from a cluster is refused while a draft there names the certificate, as the page refuses it.
+
+    `writing.queue` checks the payload's shape; the drafts live in this
+    database and are the page's own question to ask before it queues. The
+    message names only the clusters of the payload, which the token covers.
+    """
+
+    try:
+        operations.prepare(
+            operation="cert_target",
+            cluster=None,
+            request_id=uuid4(),
+            payload=payload,
+            draft_references=lambda ids: certificate_delete.draft_references(drafts, ids),
+        )
+    except operations.BadPayload as refused:
+        message = str(refused)
+        raise Refusal(409, "in_use", message[:1].upper() + message[1:] + ".") from None
+
+
+@router.delete(
+    "/certificates/{certificate_id}",
+    name="certificate_delete",
+    status_code=202,
+    responses=_queued("certificate_delete"),
+)
+def certificate_removal(
+    request: Request,
+    certificate_id: str,
+    caller: Caller = Depends(needs("write")),  # noqa: B008
+) -> JSONResponse:
+    """Delete a certificate, refused while a draft names it as the page refuses; the nodes' own refusals come on the job."""
+
+    _ready(request, caller)
+    _own(registry_views(request, request.app.state.config), certificate_id, caller)
+    named = certificate_delete.draft_references(_live_drafts(request), (certificate_id,))
+    if named:
+        #
+        # The drafts of clusters the token does not cover are not named to it.
+        #
+        shown = [
+            row
+            for row in named[certificate_id]
+            if api_tokens.covers(caller.issued, row.split("/")[0])
+        ]
+        raise Refusal(
+            409,
+            "in_use",
+            "A draft still names it" + (": " + ", ".join(shown) if shown else "") + ".",
+        )
+    return _queue(
+        request,
+        caller,
+        operation="cert_delete",
+        payload={"certificates": [certificate_id]},
+        detail={"certificate": certificate_id},
     )

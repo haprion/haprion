@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/certificate_renew.schema.json",
+  "title": "POST /api/v1/certificates/{certificate_id}/renew: result",
+  "description": "Renew a certificate the way its source is made: certbot run again, or the NDES enrollment repeated with the same names and targets. Answered 202 with the job to follow.",
+  "$ref": "definitions.schema.json#/$defs/queued"
+}

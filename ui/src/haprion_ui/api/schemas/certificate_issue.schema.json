@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/certificate_issue.schema.json",
+  "title": "POST /api/v1/certificates: result",
+  "description": "Issue a certificate from a CA the manager talks to (ACME DNS-01 or HTTP-01, or NDES), as New certificate does. Answered 202 with the job to follow; the certificate is in the registry when the job has ended.",
+  "$ref": "definitions.schema.json#/$defs/queued"
+}

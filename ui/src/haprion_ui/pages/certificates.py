@@ -33,21 +33,17 @@ from haprion_ui import (
     certificate_retarget,
     certificates,
     db,
-    dns_profile_form,
     features,
     jobs,
-    ndes_profile_form,
     operations,
     refusals,
 )
 from haprion_ui.access import admin_write_gate, current_session, forbidden_page
+from haprion_ui.certificate_reading import certificate_choices, registry_views
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import (
-    CERTIFICATE_SOURCE,
     listed_clusters,
-    read_manager_certificates,
-    read_source,
 )
 from haprion_ui.refusals import refusal_page
 from haprion_ui.templates import TEMPLATES
@@ -140,7 +136,7 @@ def build_router(config: Config) -> APIRouter:
             # The same form for the interface's own certificate (B188): the
             # name it is served on filled in, no targets.
             #
-            manager = _certificate_choices(request, config).manager or ""
+            manager = certificate_choices(request, config).manager or ""
             return _certificate_form_page(
                 request,
                 config,
@@ -229,7 +225,7 @@ def build_router(config: Config) -> APIRouter:
 
         if form.exportable and not features.is_on(features.CERT_RECEIVERS):
             return PlainTextResponse("Not found", status_code=404)
-        choices = _certificate_choices(request, config)
+        choices = certificate_choices(request, config)
         try:
             payload = certificate_form.payload_from_form(form, choices)
         except certificate_form.FormProblem as problem:
@@ -293,7 +289,7 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         if not CERTIFICATE_ID.fullmatch(certificate_id):
             return PlainTextResponse("Not found", status_code=404)
-        row = _registry_views(request, config).get(certificate_id)
+        row = registry_views(request, config).get(certificate_id)
         if row is None or row.csr_pem is None:
             return PlainTextResponse("No signing request is waiting for this name", status_code=404)
         return PlainTextResponse(
@@ -363,7 +359,7 @@ def build_router(config: Config) -> APIRouter:
         if not auth.csrf_token_is_valid(token, csrf_token):
             return forbidden_page(request, config)
         chosen = tuple(certificate)
-        row = _registry_views(request, config).get(chosen[0]) if len(chosen) == 1 else None
+        row = registry_views(request, config).get(chosen[0]) if len(chosen) == 1 else None
         problem = ""
         if len(chosen) != 1:
             problem = "Choose one certificate to export."
@@ -479,7 +475,7 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
             return forbidden_page(request, config)
-        row = _registry_views(request, config).get(certificate_id)
+        row = registry_views(request, config).get(certificate_id)
         if row is None or not row.exportable or not row.fullchain_pem or not row.fingerprint:
             return refusal_page(
                 request,
@@ -498,7 +494,7 @@ def build_router(config: Config) -> APIRouter:
     @router.get("/certificates/import", response_class=HTMLResponse)
     def import_certificate_form(request: Request) -> Response:
         if request.query_params.get("for") == "interface":
-            choices = _certificate_choices(request, config)
+            choices = certificate_choices(request, config)
             name = (
                 certificate_form.interface_id_for(choices.manager, choices.taken)
                 if choices.manager
@@ -574,7 +570,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
 
         public_key = read_dns_public_key(config)
-        choices = _certificate_choices(request, config)
+        choices = certificate_choices(request, config)
         try:
             payload = certificate_import_form.payload_from_form(
                 certificate_import_form.normalise(form),
@@ -617,7 +613,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
 
-        row = _registry_views(request, config).get(certificate_id)
+        row = registry_views(request, config).get(certificate_id)
         if row is None or row.placeholder:
             return PlainTextResponse("Certificate is not in the registry", status_code=404)
         if row.source_kind != "import":
@@ -751,7 +747,7 @@ def build_router(config: Config) -> APIRouter:
         if session.role != "admin":
             return forbidden_page(request, config)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        choices = _certificate_choices(request, config)
+        choices = certificate_choices(request, config)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
         #
@@ -858,7 +854,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
 
-        row = _registry_views(request, config).get(certificate_id)
+        row = registry_views(request, config).get(certificate_id)
         if row is None:
             return PlainTextResponse("Certificate is not in the registry", status_code=404)
         if not row.needs_publish:
@@ -896,106 +892,6 @@ def build_router(config: Config) -> APIRouter:
             "/certificates?view=registry&open=" + certificate_id, status_code=303
         )
 
-    def _certificate_choices(request: Request, config: Config) -> certificate_form.IssueChoices:
-        """The targets the form may offer, read the way the listing reads them."""
-
-        clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
-        overview = certificates.build_certificate_overview(
-            clusters,
-            certificate_rows,
-            manager=read_manager_certificates(request, config),
-            stale_after=config.poller.stale_after,
-        )
-        usable_profiles: tuple[str, ...] = ()
-        profiles_required = config.dns_profiles_public_key is not None
-        if profiles_required:
-            with request.app.state.pool.connection() as connection:
-                profile_rows = db.dns_profiles(connection)
-                recent = db.profile_jobs(connection, "dns_profile_apply")
-            usable_profiles = tuple(
-                profile.id
-                for profile in profile_rows
-                if dns_profile_form.profile_status(
-                    profile.id, profile.revision, recent, writes=config.management_writes
-                ).usable
-            )
-        usable_ndes: tuple[str, ...] = ()
-        if profiles_required:
-            with request.app.state.pool.connection() as connection:
-                ndes_rows = db.ndes_profiles(connection)
-                recent = db.profile_jobs(connection, "ndes_profile_apply")
-            usable_ndes = tuple(
-                profile.id
-                for profile in ndes_rows
-                if ndes_profile_form.profile_status(
-                    profile.id, profile.revision, recent, writes=config.management_writes
-                ).usable
-            )
-        #
-        # With receivers switched off (B193) no form offers one and every
-        # form refuses one as not registered: the issue, import and upload
-        # forms and Publish to... / Remove from... all read this.
-        #
-        offered = (
-            overview.registry.receivers
-            if overview.registry is not None and features.is_on(features.CERT_RECEIVERS)
-            else ()
-        )
-        return certificate_form.IssueChoices(
-            clusters=tuple(clusters),
-            receivers=offered,
-            dns_profiles=usable_profiles,
-            profiles_required=profiles_required,
-            ndes_profiles=usable_ndes,
-            http01=certificate_form.http01_offered(),
-            receiver_transports={
-                row.identifier: row.transport_label for row in overview.registry.receiver_rows
-            }
-            if overview.registry
-            else {},
-            registered=tuple(
-                entry.identifier
-                for entry in (*overview.registry.certificates, overview.registry.interface)
-                if entry is not None
-            )
-            if overview.registry
-            else (),
-            imported=tuple(
-                entry.identifier
-                for entry in overview.registry.certificates
-                if entry.source_kind == "import" and not entry.placeholder
-            )
-            if overview.registry
-            else (),
-            authorities=tuple(
-                entry.identifier
-                for entry in overview.registry.certificates
-                if entry.source_kind == "authority"
-            )
-            if overview.registry
-            else (),
-            waiting=tuple(
-                entry.identifier for entry in overview.registry.certificates if entry.csr_pending
-            )
-            if overview.registry
-            else (),
-            manager=overview.registry.manager if overview.registry else None,
-            interface_id=overview.registry.interface.identifier
-            if overview.registry and overview.registry.interface
-            else None,
-            taken=tuple(
-                view.identifier
-                for view in (
-                    *overview.registry.certificates,
-                    overview.registry.interface,
-                    overview.registry.interface_request,
-                )
-                if view is not None
-            )
-            if overview.registry
-            else (),
-        )
-
     def _certificate_form_page(
         request: Request,
         config: Config,
@@ -1017,7 +913,7 @@ def build_router(config: Config) -> APIRouter:
         if session.role != "admin":
             return forbidden_page(request, config)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        choices = _certificate_choices(request, config)
+        choices = certificate_choices(request, config)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
         return TEMPLATES.TemplateResponse(
@@ -1042,31 +938,6 @@ def build_router(config: Config) -> APIRouter:
 
     # - Certificate cleanup (C5b, B139) ------------------------------------
 
-    def _registry_views(
-        request: Request, config: Config
-    ) -> Mapping[str, certificates.RegistryCertificateView]:
-        """The registry as the listing draws it, by ID, for the cleanup page."""
-
-        clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
-        overview = certificates.build_certificate_overview(
-            clusters,
-            certificate_rows,
-            manager=read_manager_certificates(request, config),
-            stale_after=config.poller.stale_after,
-        )
-        if overview.registry is None:
-            return {}
-        registry = overview.registry
-        #
-        # The interface's own entry and its waiting request are rows too, for
-        # the routes that act on a row by ID - its CSR, its upload, its
-        # renewal - though the listing draws them on the settings page.
-        #
-        extra = tuple(
-            view for view in (registry.interface, registry.interface_request) if view is not None
-        )
-        return {view.identifier: view for view in (*registry.certificates, *extra)}
-
     def _certificate_delete_page(
         request: Request,
         session: AuthenticatedSession,
@@ -1075,7 +946,7 @@ def build_router(config: Config) -> APIRouter:
         problem: str = "",
     ) -> Response:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        registry = _registry_views(request, config)
+        registry = registry_views(request, config)
         with request.app.state.pool.connection() as connection:
             drafts = db.live_drafts(connection, listed_clusters(request, config))
             recent = db.recent_jobs(connection)
@@ -1112,7 +983,7 @@ def build_router(config: Config) -> APIRouter:
         problem: str = "",
     ) -> Response:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        registry = _registry_views(request, config)
+        registry = registry_views(request, config)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
         renewal: certificate_renew.Renewal | None = None
@@ -1180,7 +1051,7 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        registry = _registry_views(request, config)
+        registry = registry_views(request, config)
         try:
             renewal = certificate_renew.selection(tuple(certificate), registry)
             operation, payload = certificate_renew.payload(renewal)
@@ -1248,7 +1119,7 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         row: certificates.RegistryCertificateView | None = None
         try:
-            row = certificate_renew.waiting_selection(chosen, _registry_views(request, config))
+            row = certificate_renew.waiting_selection(chosen, registry_views(request, config))
         except certificate_renew.SelectionProblem as refused:
             problem = problem or str(refused)
         with request.app.state.pool.connection() as connection:
@@ -1311,7 +1182,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
         try:
             row = certificate_renew.waiting_selection(
-                tuple(certificate), _registry_views(request, config)
+                tuple(certificate), registry_views(request, config)
             )
         except certificate_renew.SelectionProblem as refused:
             return _certificate_abandon_page(
@@ -1370,8 +1241,8 @@ def build_router(config: Config) -> APIRouter:
         problem: str = "",
     ) -> Response:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        registry = _registry_views(request, config)
-        choices = _certificate_choices(request, config)
+        registry = registry_views(request, config)
+        choices = certificate_choices(request, config)
         with request.app.state.pool.connection() as connection:
             drafts = db.live_drafts(connection, listed_clusters(request, config))
             recent = db.recent_jobs(connection)
@@ -1452,8 +1323,8 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
 
-        registry = _registry_views(request, config)
-        choices = _certificate_choices(request, config)
+        registry = registry_views(request, config)
+        choices = certificate_choices(request, config)
         with request.app.state.pool.connection() as connection:
             drafts = db.live_drafts(connection, listed_clusters(request, config))
         try:
@@ -1909,7 +1780,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
 
-        registry = _registry_views(request, config)
+        registry = registry_views(request, config)
         with request.app.state.pool.connection() as connection:
             drafts = db.live_drafts(connection, listed_clusters(request, config))
         try:

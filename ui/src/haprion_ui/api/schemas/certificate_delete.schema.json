@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/api/certificate_delete.schema.json",
+  "title": "DELETE /api/v1/certificates/{certificate_id}: result",
+  "description": "Delete a certificate. Answered 202 with the job to follow; what the nodes refuse, such as a certificate a published object uses, is on the job.",
+  "$ref": "definitions.schema.json#/$defs/queued"
+}

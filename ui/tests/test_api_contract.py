@@ -42,6 +42,7 @@ from haprion_ui.traffic_logs import Reading
 from tests.test_api import ApiTestCase
 from tests.test_api_blocks import BLOCKING, SHOP, held, status, stored
 from tests.test_api_boundary import api_routes
+from tests.test_api_certificate_writes import CertificateWriteCase
 from tests.test_api_certificates import entry as certificate_entry
 from tests.test_api_certificates import registry as certificate_registry
 from tests.test_api_clusters_objects import ReadingTestCase, renamed
@@ -171,6 +172,9 @@ class Checked(ApiTestCase):
     """Calls its routes with both tokens and holds each answer to its schema."""
 
     CALLS: ClassVar[dict[str, tuple[str, ...]]] = {}
+    # A change is asked with a token that reaches it, and answered 202.
+    LEVELS: ClassVar[tuple[str, ...]] = ("read", "write")
+    STATUS: ClassVar[int] = 200
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -182,13 +186,13 @@ class Checked(ApiTestCase):
         return self.api().get("/api/v1" + path, headers={"Authorization": f"Bearer {secret}"})
 
     def test_every_answer_is_the_one_its_schema_describes(self) -> None:
-        for level in ("read", "write"):
+        for level in self.LEVELS:
             secret = self.issue(level=level)
             for operation, paths in self.CALLS.items():
                 for path in paths:
                     with self.subTest(level=level, operation=operation, path=path):
                         response = self.call(path, secret)
-                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertEqual(response.status_code, self.STATUS, response.text)
                         held_to(self, operation, response.json())
 
 
@@ -390,6 +394,32 @@ class TheCertificateRoute(Checked):
         )
         patch.start()
         self.addCleanup(patch.stop)
+
+
+class TheCertificateWriteRoutes(Checked, CertificateWriteCase):
+    CALLS = {
+        "certificate_issue": ("/certificates",),
+        "certificate_renew": ("/certificates/example.com/renew",),
+        "certificate_targets": ("/certificates/example.com/targets",),
+        "certificate_delete": ("/certificates/example.com",),
+    }
+    LEVELS = ("write",)
+    STATUS = 202
+    ASKED: ClassVar[dict[str, tuple[str, dict[str, Any] | None]]] = {
+        "/certificates": (
+            "POST",
+            {"domain": "new.example.net", "method": "dns-01", "clusters": ["alpha"]},
+        ),
+        "/certificates/example.com/renew": ("POST", None),
+        "/certificates/example.com/targets": ("PUT", {"action": "add", "clusters": ["beta"]}),
+        "/certificates/example.com": ("DELETE", None),
+    }
+
+    def call(self, path: str, secret: str) -> Any:
+        method, body = self.ASKED[path]
+        self.queued.clear()
+        self.events.clear()
+        return self.send(method, path, secret, body)
 
 
 class TheBlocksRoute(Checked):

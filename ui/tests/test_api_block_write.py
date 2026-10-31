@@ -434,7 +434,15 @@ class ReadingOwnBlocks(BlockingTestCase):
         theirs = self.read(self.issue(level="read"))
         self.assertEqual(mine.status_code, 200, mine.text)
         self.assertEqual(mine.json()["result"]["addresses"][0]["address"], "192.0.2.7")
-        self.assertEqual(mine.json()["result"]["addresses"], theirs.json()["result"]["addresses"])
+
+        # `seconds_left` counts down between the two calls; the rest is the same answer.
+        def steady(response: Any) -> list[dict[str, Any]]:
+            return [
+                {key: value for key, value in entry.items() if key != "seconds_left"}
+                for entry in response.json()["result"]["addresses"]
+            ]
+
+        self.assertEqual(steady(mine), steady(theirs))
 
     def test_a_block_token_does_not_read_an_object_that_is_not_its_own(self) -> None:
         response = self.read(self.blocker(), "intranet")

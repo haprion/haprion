@@ -4558,6 +4558,36 @@ It describes each field as a code (a fixed set of values, listed there), as text
 which may change) or as a plain value such as a name, a number or a time; a script matches on codes and
 values and shows text, never matches on it.
 
+### Certificates
+
+A *Write* token issues, renews, republishes and deletes certificates. Each call queues the job the
+*Certificates* page queues, with the same checks, and is answered `202` with the job to follow at
+`/api/v1/jobs/{id}`. Every change carries an `Idempotency-Key` header holding a new UUID: a retry with the same
+key is the same job, and the same key asking for something else is refused (`409 idempotency_conflict`).
+Changes are off where the installation has switched management writes off (`403 writes_off`).
+
+```bash
+# Issue a certificate for a name and publish it to a cluster (a token with the level Write)
+curl -sS -X POST https://mgr.example.com/api/v1/certificates \
+     -H "Authorization: Bearer $HAPRION_TOKEN" -H "Idempotency-Key: $(uuidgen)" \
+     -H 'Content-Type: application/json' \
+     -d '{"domain": "app.example.com", "method": "dns-01", "clusters": ["alpha"]}'
+```
+
+| Path under `/api/v1` | What it does |
+|---|---|
+| `/certificates` | POST issues a certificate. The body is the *New certificate* form: `domain`, `method` (`dns-01`, `http-01` or `ndes`), `clusters`, `receivers`, `formats` (a receiver's name and `pem` or `pkcs12`), `dns_profile`, `ndes_profile` and `exportable` |
+| `/certificates/{certificate_id}/renew` | POST renews it the way its source is made: certbot again, or the NDES enrollment again. A certificate renewed with a file is refused (`409 cannot_renew`) |
+| `/certificates/{certificate_id}/targets` | PUT publishes it to more places or takes it from some: `action` is `add` or `remove`, with `clusters`, `receivers` and, for `add`, `formats`. Places that are already as asked are left out; if none is left, `409 no_change` |
+| `/certificates/{certificate_id}` | DELETE deletes it. A draft that still names it refuses it (`409 in_use`); what the nodes refuse, such as a certificate a published proxy uses, is on the job |
+
+A token limited to some clusters changes only certificates that are deployed to its clusters and nowhere
+else, and publishes to its clusters only. Any other certificate is answered `404 not_found`, as if it did not
+exist, and a receiver is answered `403 forbidden` whether or not it exists. A private key never passes
+through the API, so importing a certificate or a key, uploading a renewed file, a signing request and the
+interface's own certificate stay in the interface. Another certificate job running is `409 certificate_busy`
+with `Retry-After`, and a name already in the registry is `409 already_exists`.
+
 ### The answers
 
 Every answer is the same envelope the command-line tools write with `--json`:

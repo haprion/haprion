@@ -232,6 +232,23 @@ DISTRIBUTIONS = {
 NODES = ("node-a", "node-b")
 
 
+def _records(lines: str) -> list[dict[str, object]]:
+    """The traffic records in a node's day files; a line that is not one is passed over."""
+
+    found = []
+    for line in lines.splitlines():
+        start = line.find("{")
+        if start < 0:
+            continue
+        try:
+            record = json.loads(line[start:])
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            found.append(record)
+    return found
+
+
 class Failed(Exception):
     """A step that did not do what it says; the message is what it printed."""
 
@@ -618,7 +635,7 @@ class Run:
             _, lines = self.on(
                 holder, "cat /var/log/haprion/traffic-*.jsonl 2>/dev/null || true", check=False
             )
-            if "shop.example.com" in lines:
+            if any(record.get("host") == "shop.example.com" for record in _records(lines)):
                 break
             if time.monotonic() > deadline:
                 raise Failed(f"{holder} wrote no traffic record for the request:\n{lines[-2000:]}")

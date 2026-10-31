@@ -1218,6 +1218,26 @@ def check_node_restore_status_semantics(document: dict[str, object], path: Path)
     check_node_restore_semantics({"outcome": result["outcome"], "result": result["result"]}, path)
 
 
+def check_block_client_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] != "failed":
+            raise AssertionError(f"{path}: only a failed block_client may carry no result")
+        return
+    assert isinstance(result, dict)
+    if document["outcome"] != "done":
+        raise AssertionError(f"{path}: a block client change is done or failed, never partial")
+    client = result["client"]
+    #
+    # The listing never carries the key itself, only its fingerprint: the
+    # answer is logged by the worker and shown in the job.
+    #
+    if "key" in client:
+        raise AssertionError(f"{path}: a block client's answer carries its key")
+    if client["cluster"] != document["cluster"]:
+        raise AssertionError(f"{path}: the client is in another cluster than the request")
+
+
 def check_dynamic_unblock_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1323,6 +1343,8 @@ SEMANTIC_CHECKS = {
     "cluster_define": check_cluster_define_semantics,
     "server_state": check_server_state_semantics,
     "dynamic_unblock": check_dynamic_unblock_semantics,
+    "dynamic_block": check_dynamic_unblock_semantics,
+    "block_client": check_block_client_semantics,
     "cluster_list": check_cluster_list_semantics,
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
@@ -1436,6 +1458,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["archive"] = "beta-20260930-101500" if result["action"] == "added" else None
     elif operation == "cert_receiver":
         result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
+    elif operation == "block_client":
+        result["client"]["key"] = "ssh-ed25519 AAAA"
     elif operation == "ui_tls_install":
         invalid["outcome"] = "failed"
     elif operation == "resolve":
@@ -1467,7 +1491,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
     elif operation == "server_state":
         first = result["nodes"][0]["servers"][0]
         first["outcome"] = "failed" if first["outcome"] == "done" else "done"
-    elif operation == "dynamic_unblock":
+    elif operation in ("dynamic_unblock", "dynamic_block"):
         first = result["nodes"][0]
         first["outcome"] = "failed" if first["outcome"] == "done" else "done"
     elif operation == "node_restore_prepare":

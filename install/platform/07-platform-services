@@ -60,6 +60,21 @@ install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${WORKER_SUDOE
 rm -f "$sudoers_staging"
 log "  installed /etc/sudoers.d/${WORKER_SUDOERS}  (visudo accepted it)"
 
+#
+# The block clients' one rule (B412): their account starts the block helper
+# and nothing else. Installed whether or not a client is registered - the
+# account has no key until one is, so the rule grants nothing before that.
+#
+sudoers_staging="$(mktemp)"
+cat examples/haprion-block.sudoers.example > "$sudoers_staging"
+if ! visudo -cqf "$sudoers_staging"; then
+    rm -f "$sudoers_staging"
+    die "the block clients' sudoers rule does not parse; nothing was installed"
+fi
+install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${BLOCK_SUDOERS}"
+rm -f "$sudoers_staging"
+log "  installed /etc/sudoers.d/${BLOCK_SUDOERS}  (visudo accepted it)"
+
 step "The web service's way to the probe"
 #
 # Not a sudoers rule. The web unit carries NoNewPrivileges=yes, an empty

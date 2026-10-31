@@ -6,7 +6,7 @@
     { "$ref": "common.schema.json#/$defs/envelope" },
     {
       "properties": {
-        "operation": { "enum": ["server_state", "dynamic_unblock"] },
+        "operation": { "enum": ["server_state", "dynamic_unblock", "dynamic_block"] },
         "cluster": { "type": ["string", "null"] },
         "outcome": { "enum": ["done", "partial", "failed"] },
         "result": {
@@ -30,7 +30,7 @@
         {
           "if": {
             "properties": {
-              "operation": { "const": "dynamic_unblock" },
+              "operation": { "enum": ["dynamic_unblock", "dynamic_block"] },
               "outcome": { "enum": ["done", "partial"] }
             }
           },
@@ -42,7 +42,7 @@
   "additionalProperties": true,
   "$defs": {
     "unblock_result": {
-      "description": "Dynamic blocking lifted (B271): per node, whether every address left both of the object's tables after the second round, each address's own answer, and why not.",
+      "description": "Dynamic blocking lifted (B271) or placed (B412, haprion-block-helper): per node, whether every address left both of the object's tables after the second round - or is in its blocked table - each address's own answer, and why not.",
       "type": "object",
       "required": ["object", "nodes"],
       "properties": {

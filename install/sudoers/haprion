@@ -41,3 +41,4 @@
 %sudo ALL=(root) /opt/haprion/current/bin/haprion-cert-deploy-helper ""
 %sudo ALL=(root) /opt/haprion/current/bin/haprion-history-reset-helper ""
 %sudo ALL=(root) /opt/haprion/current/bin/haprion-changes-publish-helper ""
+%sudo ALL=(root) /opt/haprion/current/bin/haprion-block-client-helper ""

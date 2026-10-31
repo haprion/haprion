@@ -34,6 +34,15 @@ that still holds it can send it back to one that just cleared it (measured on
 3.4.6), so every node is asked twice: the second round clears whatever came
 back during the first, and its answers are the result.
 
+Placing a block (B412)
+----------------------
+The verb `block`, for an address another system found - an intrusion detector
+on the application's host. Each node places the address in the object's
+blocked table, which then refuses it for the object's `block_for` as if it had
+gone over the limit itself. One round: an entry that a peer sends on is the
+same entry. An address the object exempts is refused before any node is
+asked, since the rules would never refuse it and the list would say otherwise.
+
 Nothing here takes the cluster lock. A deploy may run at the same time: the
 node serialises its own reload and this call with a lock of its own, and puts
 every kept state back after the reload, so the two cannot undo each other.
@@ -56,6 +65,8 @@ from haprion.proxy_model import NAME, NAME_BODY, Proxy
 OPERATION = "server_state"
 UNBLOCK_OPERATION = "dynamic_unblock"
 UNBLOCK_VERB = "unblock"
+BLOCK_OPERATION = "dynamic_block"
+BLOCK_VERB = "block"
 #
 # The node helper's own limit on one request (`MAX_UNBLOCK`), which is also a
 # page of ticked boxes.
@@ -80,7 +91,11 @@ NODE_UNKNOWN_SERVER = 65
 # before `unblock` words it (`haprion-server-state-trigger`).
 #
 NODE_USAGE = 64
-OLDER_TRIGGER_WORDS = ("unknown request: unblock", "expected: server-state")
+OLDER_TRIGGER_WORDS = (
+    "unknown request: unblock",
+    "unknown request: block",
+    "expected: server-state",
+)
 
 #
 # A bound, not a working figure: a pool of this many servers is one nobody
@@ -385,9 +400,17 @@ def ask_unblock(
 
 
 def read_unblocked(
-    node: str, wanted: Sequence[str], completed: subprocess.CompletedProcess[str]
+    node: str,
+    wanted: Sequence[str],
+    completed: subprocess.CompletedProcess[str],
+    *,
+    verb: str = UNBLOCK_VERB,
 ) -> Unblocked:
-    """What the node said, or why nothing usable came back (as `read_answer`)."""
+    """What the node said, or why nothing usable came back (as `read_answer`).
+
+    The same answer for `block`: each address `done` when the node reads it
+    back as the verb wanted it, there or gone.
+    """
 
     document: object = None
     if completed.stdout and len(completed.stdout) <= MAX_ANSWER_BYTES:
@@ -408,7 +431,7 @@ def read_unblocked(
             return Unblocked(
                 node,
                 "refused",
-                message="the node's scripts have no unblock yet; install the newest node "
+                message=f"the node's scripts have no {verb} yet; install the newest node "
                 "release on it",
             )
         return Unblocked(
@@ -442,7 +465,11 @@ def read_unblocked(
         "failed",
         each,
         message
-        or (f"still blocked: {', '.join(left)}" if left else None)
+        or (
+            f"{'not blocked' if verb == BLOCK_VERB else 'still blocked'}: {', '.join(left)}"
+            if left
+            else None
+        )
         or f"the node answered with exit {completed.returncode}",
     )
 
@@ -481,3 +508,53 @@ def unblock(
             for answer in pool.map(one, asked):
                 answers[answer.node] = answer
     return tuple(answers[node.name] for node in nodes)
+
+
+def exempted(
+    proxy: Proxy, wanted: Sequence[str], networks: Mapping[str, Sequence[str]]
+) -> tuple[str, ...]:
+    """The addresses the object's blocking exempts: its groups and its own ranges.
+
+    A group the network file no longer has exempts nothing here; publishing
+    the object would refuse it anyway.
+    """
+
+    block = proxy.dynamic_block
+    ranges: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for entry in block.exempt if block is not None else ():
+        for written in networks.get(entry, (entry,)):
+            try:
+                ranges.append(ipaddress.ip_network(written, strict=False))
+            except ValueError:
+                continue
+    return tuple(
+        address
+        for address in wanted
+        if any(ipaddress.ip_address(address) in network for network in ranges)
+    )
+
+
+def block(
+    nodes: Sequence[Node],
+    identity: DeployIdentity,
+    proxy: Proxy,
+    wanted: Sequence[str],
+    *,
+    ask: UnblockCall = ask_unblock,
+) -> tuple[Unblocked, ...]:
+    """Every node asked once to place the addresses in the object's blocked table."""
+
+    request = " ".join((BLOCK_VERB, proxy.name, *wanted))
+
+    def one(node: Node) -> Unblocked:
+        try:
+            return read_unblocked(node.name, wanted, ask(node, identity, request), verb=BLOCK_VERB)
+        except subprocess.TimeoutExpired:
+            return Unblocked(
+                node.name, "failed", message="the node did not answer in time", reached=False
+            )
+
+    if not nodes:
+        return ()
+    with ThreadPoolExecutor(max_workers=len(nodes)) as pool:
+        return tuple(pool.map(one, nodes))

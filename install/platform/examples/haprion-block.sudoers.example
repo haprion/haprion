@@ -1,0 +1,6 @@
+# Installed by platform step 07 and refresh-platform-files. Do not edit by hand.
+#
+# The block clients' account (B412). Its every key is forced to
+# haprion-block-ask, which starts this helper and nothing else; the helper
+# reads the client from the request and holds it to the registry.
+_haprion-block ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-block-helper ""

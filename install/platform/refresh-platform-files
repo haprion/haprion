@@ -176,6 +176,7 @@ changed=()
 step "Sudo rules"
 put sudoers "${SUDOERS_DIR}/${WORKER_SUDOERS}" 440 "$(cat examples/haprion-worker.sudoers.example)"
 put sudoers "${SUDOERS_DIR}/${POLLER_SUDOERS}" 440 "$(cat examples/haprion-poller.sudoers.example)"
+put sudoers "${SUDOERS_DIR}/${BLOCK_SUDOERS}" 440 "$(cat examples/haprion-block.sudoers.example)"
 
 step "Service units"
 #

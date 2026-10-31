@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "block_client",
+  "cluster": "alpha",
+  "request_id": "6b2d3c75-7a4a-4b4b-8d7f-2e3c4d5e6f71",
+  "result": {
+    "action": "remove",
+    "client": {
+      "id": "app-f2b",
+      "host": "app.example.com",
+      "cluster": "alpha",
+      "objects": [
+        "shop"
+      ],
+      "fingerprint": "SHA256:7bZ1v3c3nNmG0xY8YQ2vYQ6kq3l7e9QHk3Yb8Q1aXyM",
+      "added_by": "admin",
+      "added_at": "2026-10-31T12:00:00Z"
+    }
+  },
+  "warnings": [],
+  "error": null
+}

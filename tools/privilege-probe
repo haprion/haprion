@@ -40,12 +40,15 @@ declare -A GROUPS_EXPECTED=(
     [_haprion-oidc]="_haprion-oidc"
     [_haprion-pull]="_haprion-pull"
     [_haprion-cert-pull]="_haprion-cert-pull"
+    [_haprion-block]="_haprion-block"
     [www-data]="www-data"
 )
 
 WORKER_HELPERS="deploy cert-deploy revert changes-publish cert-issue cert-publish cert-target
-    dns-profile-apply cert-delete ndes-profile-apply cert-scep cert-import cert-request server-state"
+    dns-profile-apply cert-delete ndes-profile-apply cert-scep cert-import cert-request server-state
+    block-client"
 POLLER_HELPERS="status inventory readings cluster-list"
+BLOCK_HELPERS="block"
 
 declare -A SOCKET_GROUP=(
     [/run/haprion/backup-job.sock]=_haprion-worker
@@ -75,6 +78,7 @@ allowed_helper() {
     case "$account" in
         _haprion-worker) [[ " ${WORKER_HELPERS//$'\n'/ } " == *" ${name} "* ]] ;;
         _haprion-poller) [[ " ${POLLER_HELPERS} " == *" ${name} "* ]] ;;
+        _haprion-block) [[ " ${BLOCK_HELPERS} " == *" ${name} "* ]] ;;
         *) return 1 ;;
     esac
 }

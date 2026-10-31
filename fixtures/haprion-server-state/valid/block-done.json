@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "dynamic_block",
+  "cluster": "alpha",
+  "request_id": "5a1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e70",
+  "result": {
+    "object": "shop",
+    "nodes": [
+      {
+        "node": "node-a",
+        "outcome": "done",
+        "message": null,
+        "addresses": [
+          {
+            "address": "203.0.113.7",
+            "outcome": "done"
+          },
+          {
+            "address": "2001:db8::7",
+            "outcome": "done"
+          }
+        ]
+      },
+      {
+        "node": "node-b",
+        "outcome": "done",
+        "message": null,
+        "addresses": [
+          {
+            "address": "203.0.113.7",
+            "outcome": "done"
+          },
+          {
+            "address": "2001:db8::7",
+            "outcome": "done"
+          }
+        ]
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

@@ -86,3 +86,4 @@ _haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-reque
 
 # Drain, maintenance and ready (B263): one object's servers on every node, found in the newest version first.
 _haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-server-state-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-block-client-helper ""

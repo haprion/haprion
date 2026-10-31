@@ -100,13 +100,14 @@ ProtectHome=read-only
 #                               platform step 07
 #   /etc/haprion/dns-profiles  root-only provider credentials
 #   /etc/haprion/certificates  the import store a deletion removes from
+#   /etc/haprion/block-clients the block clients' registry and key file (B412)
 #
 # All of these are root-owned and writable by root alone, so opening the mount
 # namespace does not let the worker account itself write to them - the helper
 # writes as root, and file permissions stay the real boundary. This list is the
 # second layer, not the only one.
 ProtectSystem=strict
-ReadWritePaths=/run/haprion @POLICY_PATHS@ /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /etc/haprion/dns-profiles /etc/haprion/certificates /etc/haprion/ndes-profiles /etc/haprion/ndes-requests
+ReadWritePaths=/run/haprion @POLICY_PATHS@ /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /etc/haprion/dns-profiles /etc/haprion/certificates /etc/haprion/ndes-profiles /etc/haprion/ndes-requests /etc/haprion/block-clients
 
 # Unchanged, and none of them stand in the helper's way. Kept so that opening
 # the four above is a decision about four things and not about the whole file.

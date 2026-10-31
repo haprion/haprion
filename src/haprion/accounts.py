@@ -24,6 +24,12 @@ WORKER = "_haprion-worker"
 POLLER = "_haprion-poller"
 COLLECTOR = "_haprion-collector"
 OIDC = "_haprion-oidc"
+#
+# Reached by block clients (B412): one key per client, each forced to
+# `haprion-block-ask <client>`.
+#
+BLOCK = "_haprion-block"
+BLOCK_SUDOERS = "haprion-block"
 
 # The platform's services and their sudoers files, named for what they run
 # rather than after their accounts.

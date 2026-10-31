@@ -115,6 +115,7 @@ FIXED_PATHS = (
     "/srv/certdist/manager-ui.pem",
     "/etc/sudoers.d/haprion-worker",
     "/etc/sudoers.d/haprion-poller",
+    "/etc/sudoers.d/haprion-block",
     "/etc/sudoers.d/haprion-config-edit",
     "/etc/tmpfiles.d/haprion.conf",
     SYSUSERS,

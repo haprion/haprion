@@ -255,7 +255,7 @@ def main(
         )
 
     if unblocking:
-        return _write_unblocked(
+        return write_unblocked(
             writer,
             request.cluster,
             request.request_id,
@@ -310,14 +310,23 @@ def main(
     )
 
 
-def _write_unblocked(
+def write_unblocked(
     writer: TextIO,
     cluster: str,
     request_id: str,
     name: str,
     answers: tuple[Unblocked, ...],
+    *,
+    operation: str = UNBLOCK_OPERATION,
 ) -> int:
-    """`done` when every node lifted every address, `partial` when some did, else `failed`."""
+    """`done` when every node took every address, `partial` when some did, else `failed`.
+
+    For an unblock and for a block (`haprion-block-helper`) alike: the nodes
+    answer both the same way.
+    """
+
+    placing = operation != UNBLOCK_OPERATION
+    failed = "node_block_failed" if placing else "node_unblock_failed"
 
     result = _unblock_result(name, answers)
     missed = [answer for answer in answers if answer.outcome != "done"]
@@ -325,7 +334,7 @@ def _write_unblocked(
         return write_document(
             writer,
             envelope(
-                operation=UNBLOCK_OPERATION,
+                operation=operation,
                 outcome="done",
                 cluster=cluster,
                 request_id=request_id,
@@ -335,8 +344,9 @@ def _write_unblocked(
         )
     warnings = tuple(
         Message(
-            code="blocking_not_on_node" if answer.outcome == "refused" else "node_unblock_failed",
-            message=answer.message or "the block was not lifted",
+            code="blocking_not_on_node" if answer.outcome == "refused" else failed,
+            message=answer.message
+            or ("the block was not placed" if placing else "the block was not lifted"),
             node=answer.node,
         )
         for answer in missed
@@ -345,7 +355,7 @@ def _write_unblocked(
     return write_document(
         writer,
         envelope(
-            operation=UNBLOCK_OPERATION,
+            operation=operation,
             outcome="partial" if taken else "failed",
             cluster=cluster,
             request_id=request_id,
@@ -353,7 +363,10 @@ def _write_unblocked(
             warnings=warnings,
             error=None
             if taken
-            else Message(code="node_unblock_failed", message="no node lifted the block"),
+            else Message(
+                code=failed,
+                message="no node placed the block" if placing else "no node lifted the block",
+            ),
         ),
         exit_codes.PARTIAL if taken else exit_codes.FAILED,
     )

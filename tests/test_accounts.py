@@ -34,6 +34,8 @@ SHELL_NAMES = {
     "POLLER": "POLLER_USER",
     "COLLECTOR": "COLLECTOR_USER",
     "OIDC": "OIDC_USER",
+    "BLOCK": "BLOCK_USER",
+    "BLOCK_SUDOERS": "BLOCK_SUDOERS",
     "DATABASE": "DB_NAME",
     "MIGRATION_ROLE": "DB_MIGRATION_ROLE",
     "TRIGGER": "TRIGGER_USER",
@@ -115,6 +117,7 @@ class TheNamesAgree(unittest.TestCase):
                 accounts.POLLER,
                 accounts.COLLECTOR,
                 accounts.OIDC,
+                accounts.BLOCK,
             },
         )
         self.assertEqual(groups, {accounts.CONFIG_GROUP, accounts.PLATFORM_GROUP})

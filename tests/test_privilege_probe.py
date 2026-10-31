@@ -48,6 +48,9 @@ class TheProbeExpectsTheContract(unittest.TestCase):
         self.assertEqual(
             probe_words("POLLER_HELPERS"), sudoers_helpers("haprion-poller.sudoers.example")
         )
+        self.assertEqual(
+            probe_words("BLOCK_HELPERS"), sudoers_helpers("haprion-block.sudoers.example")
+        )
 
     def test_the_sockets_are_the_socket_units(self) -> None:
         units: dict[str, str] = {}

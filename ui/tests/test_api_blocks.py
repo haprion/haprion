@@ -153,13 +153,13 @@ class TheBlocksOfAnObject(ApiTestCase):
             [("192.0.2.7", "manual"), ("192.0.2.10", None)],
         )
 
-    def test_an_object_that_blocks_nothing_has_an_empty_list_and_the_default_time(self) -> None:
+    def test_an_object_that_blocks_nothing_has_an_empty_list_and_no_time(self) -> None:
         body = self.get(self.issue(), name="intranet").json()
         self.assertEqual(
             body["result"],
             {
                 "object": "intranet",
-                "block_for": "30m",
+                "block_for": None,
                 "count": 0,
                 "addresses": [],
                 "truncated": False,

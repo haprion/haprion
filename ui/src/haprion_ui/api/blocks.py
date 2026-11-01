@@ -95,17 +95,17 @@ def _iso(moment: datetime | None) -> str | None:
     return moment.astimezone(UTC).isoformat() if moment is not None else None
 
 
-def block_for_default(document: str | None, name: str) -> str:
-    """The object's *Block for*, as the form shows it: its own, or the engine's default."""
+def block_for_default(document: str | None, name: str) -> str | None:
+    """The object's *Block for*, or None where it has no dynamic blocking to apply it."""
 
     if document is not None:
         try:
             block = load_proxy(name, document.encode()).dynamic_block
         except ModelError:
             block = None
-        if block is not None and block.block_for:
+        if block is not None:
             return block.block_for
-    return str(DEFAULTS["block_for"])
+    return None
 
 
 def _address(row: blocked.BlockedAddress, now: datetime) -> dict[str, Any]:
@@ -335,7 +335,9 @@ def object_block(
     #
     _, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
     stored = stored_object(object_rows, name)
-    block_for = block_for_default(stored.document if stored is not None else None, name)
+    block_for = block_for_default(stored.document if stored is not None else None, name) or str(
+        DEFAULTS["block_for"]
+    )
 
     request_id = uuid4()
     detail: dict[str, Any] = {"object": name, "addresses": wanted}

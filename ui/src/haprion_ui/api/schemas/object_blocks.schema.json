@@ -7,7 +7,7 @@
   "required": ["object", "block_for", "count", "addresses", "truncated", "observed_at"],
   "properties": {
     "object": { "type": "string", "description": "Value. The object's name." },
-    "block_for": { "type": "string", "description": "Value. How long a new block lasts, as the object writes it (such as 2h) or the engine's default." },
+    "block_for": { "type": ["string", "null"], "description": "Value. How long a block on this object lasts, as the object writes it (such as 2h); null where the object has no dynamic blocking." },
     "count": { "type": "integer", "minimum": 0, "description": "Value. How many addresses the nodes hold blocked, listed or not." },
     "addresses": {
       "type": "array",

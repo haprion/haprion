@@ -230,7 +230,7 @@ def object_entries(listing: dict[str, Any], cluster: str) -> list[dict[str, Any]
     return sorted(entries, key=lambda entry: entry["name"])
 
 
-def _listing(request: Request, cluster: str, caller: Caller) -> list[dict[str, Any]]:
+def _listing(request: Request, cluster: str) -> list[dict[str, Any]]:
     config = request.app.state.config
     if cluster not in listed_clusters(request, config):
         raise NOT_FOUND
@@ -250,7 +250,7 @@ def object_list(
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
     in_scope(caller, cluster)
-    entries = _listing(request, cluster, caller)
+    entries = _listing(request, cluster)
     shown = entries[offset : offset + limit]
     return answer(
         request,
@@ -341,7 +341,7 @@ def object_show(
     caller: Caller = Depends(needs("read")),  # noqa: B008
 ) -> JSONResponse:
     in_scope(caller, cluster, name)
-    entries = {entry["name"]: entry for entry in _listing(request, cluster, caller)}
+    entries = {entry["name"]: entry for entry in _listing(request, cluster)}
     entry = entries.get(name)
     if entry is None:
         raise NOT_FOUND
@@ -412,7 +412,7 @@ def object_history(
     """The cluster's versions, newest first: a version holds every object, so this is the one history."""
 
     in_scope(caller, cluster, name)
-    if name not in {entry["name"] for entry in _listing(request, cluster, caller)}:
+    if name not in {entry["name"] for entry in _listing(request, cluster)}:
         raise NOT_FOUND
     config = request.app.state.config
     clusters, history_rows = read_source(request, config, HISTORY_SOURCE)

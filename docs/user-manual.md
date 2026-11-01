@@ -931,7 +931,10 @@ log with each request's destination, the jobs with their error sentences and dia
 the advanced configuration of an object and the dashboard's reasons for a reading that failed are the same
 for both roles. The lists of API tokens, DNS profiles, NDES profiles and certificate receivers are read
 by both. A reader gets the list alone: no button, no form.
-Key material, token secrets, password hashes and the values of a profile are shown to nobody.
+Account password hashes, keys, sealed material (the values of a profile) and token secrets are shown to
+nobody. Configuration text is shown to every role that reads the object. That includes whatever an admin
+pasted into an object's advanced config, and the hand-written files of the cluster repository, such as a
+`userlist` or a `stats auth` line. Keep passwords out of that text.
 
 An **admin** can queue the operations the interface offers, and has the pages where settings are made and
 access material is handled: *Settings*, the forms that add, replace, extend, revoke or remove a token, a

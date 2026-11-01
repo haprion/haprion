@@ -47,7 +47,7 @@ NOT_FOUND = Refusal(404, "not_found", "No such cluster or object.")
 
 #
 # What a block token is told where the text is the helper's or a node's: the
-# paths and reasons behind it are a write token's to read (B417).
+# paths and reasons behind it are not a block token's to read.
 #
 GENERIC_NODE = "The node did not take the block."
 GENERIC_SERVICE = "The block service could not place the block."

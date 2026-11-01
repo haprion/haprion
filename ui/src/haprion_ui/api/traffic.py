@@ -2,7 +2,7 @@
 
 Every request row names the client that made it, its address in `client` and
 what it asked for in `host` and `path`. A token that reads this route reads
-what the Traffic logs page shows an administrator, so it is issued as
+what the Traffic logs page shows, so it is issued as
 carefully as a login.
 """
 

@@ -8,6 +8,7 @@ installation takes them from.
 from __future__ import annotations
 
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -70,6 +71,26 @@ class TheProbeExpectsTheContract(unittest.TestCase):
         table = probe_table("GROUPS_EXPECTED")
         self.assertEqual({k: v for k, v in table.items() if k != "www-data"}, expected)
         self.assertEqual(sorted(table), sorted([*expected, "www-data"]))
+
+
+class TheProbeFailsOnWhatTheRemovalLeft(unittest.TestCase):
+    """A failed removal of the ssh blocking path shows here, not only in apt's output (B419)."""
+
+    def test_the_account_the_rule_and_the_home_are_failures_the_removal_names(self) -> None:
+        sys.path.insert(0, str(BASE / "install"))
+        try:
+            import removal
+        finally:
+            sys.path.pop(0)
+        section = PROBE[PROBE.index("left by an earlier release") :]
+        for name in (removal.RETIRED_ACCOUNT, removal.RETIRED_SUDOERS, removal.RETIRED_HOME):
+            with self.subTest(name=name):
+                self.assertIn(name, section)
+        self.assertEqual(section.count("bad "), 2)
+        self.assertNotIn("look ", section[: section.index("RESULT")])
+        # The command it names exists where the UI package puts it.
+        self.assertTrue((BASE / "install" / "retire-block-clients").is_file())
+        self.assertIn("/usr/share/haprion-ui/install/retire-block-clients", section)
 
 
 if __name__ == "__main__":

@@ -697,18 +697,25 @@ class Run:
             time.sleep(1)
 
     def table_holds(self, role: str, address: str) -> bool:
-        """Whether the node's HAProxy holds the address in the shop's blocked table."""
+        """Whether the node's HAProxy holds the address in the shop's blocked table.
+
+        The table must be there at all: a key asked of a table that is not
+        there is answered with nothing, as one that holds no such key is.
+        """
 
         ask = (
-            "import socket; s = socket.socket(socket.AF_UNIX); "
-            "s.connect('/run/haproxy/manager.sock'); "
-            f"s.sendall(b'show table mgd-shop-dynblock key {address}\\n'); "
-            "s.shutdown(socket.SHUT_WR); print(s.makefile().read())"
+            "import socket\n"
+            "def ask(command):\n"
+            "    s = socket.socket(socket.AF_UNIX); s.connect('/run/haproxy/manager.sock')\n"
+            "    s.sendall(command.encode() + b'\\n'); s.shutdown(socket.SHUT_WR)\n"
+            "    return s.makefile().read()\n"
+            "print(ask('show table'))\n"
+            f"print('KEY' if 'key=' in ask('show table mgd-shop-dynblock key {address}') else 'NONE')\n"
         )
         _, answer = self.on(role, f"/usr/bin/python3 -I -c {shlex.quote(ask)}")
         if "# table: mgd-shop-dynblock," not in answer:
             raise Failed(f"{role} runs no blocking table for the shop:\n{answer}")
-        return f"key={address} " in answer
+        return answer.rstrip().endswith("KEY")
 
     # --- what an operator checks --------------------------------------------
 

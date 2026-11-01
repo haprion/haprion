@@ -28,6 +28,8 @@ See B27.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 import re
 import subprocess
 from collections.abc import Mapping
@@ -813,6 +815,27 @@ def coverage_for(policy: PathPolicy, cluster: Cluster) -> dict[str, tuple[str, .
 
     directory = policy.certificate_directory(cluster.cluster_id)
     return None if directory is None else coverage(directory, cluster)
+
+
+def certificate_state(policy: PathPolicy, cluster: Cluster) -> str | None:
+    """A digest of the cluster's certificate files' size and time; None where the policy names none.
+
+    What `coverage_for` would read, without reading it: a caller that caches an
+    answer which depends on coverage keys it on this and asks `coverage_for`
+    only when the key is new, since each certificate costs an `openssl` run.
+    """
+
+    directory = policy.certificate_directory(cluster.cluster_id)
+    if directory is None:
+        return None
+    facts: list[list[object]] = []
+    for identifier in cluster.certificate_ids:
+        try:
+            metadata = certificate_path(directory, identifier).stat()
+            facts.append([identifier, metadata.st_size, metadata.st_mtime_ns])
+        except (OSError, CertificateError):
+            facts.append([identifier, None, None])
+    return hashlib.sha256(json.dumps(facts).encode()).hexdigest()
 
 
 def coverage(root: Path, cluster: Cluster) -> dict[str, tuple[str, ...]]:

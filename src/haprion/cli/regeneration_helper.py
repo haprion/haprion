@@ -15,12 +15,20 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import crs, exit_codes, regeneration
-from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
+from haprion import cluster_settings, crs, exit_codes, regeneration
+from haprion.cert_inventory import certificate_state, coverage_for
+from haprion.config import (
+    DEFAULT_POLICY_PATH,
+    Cluster,
+    ConfigError,
+    PathPolicy,
+    load_policy,
+    load_runtime_config,
+)
 from haprion.deploy_plan import ReleaseTarget
 from haprion.envelope import Message, envelope
 from haprion.git_command import GitError
@@ -40,7 +48,7 @@ OPERATION = "regeneration"
 PARAMETERS: frozenset[str] = frozenset({"unchanged_since"})
 FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 
-type ReadTree = Callable[[Path, str], Mapping[str, bytes]]
+type ReadTree = Callable[[Path, str, Sequence[str]], Mapping[str, bytes]]
 type ReadTarget = Callable[[Path, str], ReleaseTarget | None]
 
 
@@ -54,8 +62,9 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     tree_reader: ReadTree = read_tree_files,
+    coverage: Callable[[PathPolicy, Cluster], Mapping[str, Sequence[str]] | None] = coverage_for,
+    certificates: Callable[[PathPolicy, Cluster], str | None] = certificate_state,
     target_reader: ReadTarget = read_target,
-    waf_versions: Callable[[], Mapping[str, str | None]] = crs.manager_versions,
     addresses: regeneration.Lookup | None = None,
     rule_set: Callable[[], crs.RuleSet | None] = crs.installed,
 ) -> int:
@@ -119,27 +128,63 @@ def main(
     try:
         target = target_reader(Path(cluster.publish_path), cluster.node_path)
         commit = target.hash if target is not None else None
-        found = (
-            regeneration.lookup_addresses(cluster)
-            if addresses is None
-            else regeneration.lookup_addresses(cluster, addresses)
+        #
+        # The rule set is read once, so the key and the comparison are one
+        # reading. One that cannot be read is part of the key as such and fails
+        # the comparison only if the objects use it: a package in the middle of
+        # an upgrade is a reading to make again, never an answer to keep.
+        #
+        unreadable: crs.RuleSetError | None = None
+        try:
+            rules = rule_set()
+        except crs.RuleSetError as exc:
+            rules, unreadable = None, exc
+        installed_crs = rules.version if rules is not None else None
+        #
+        # The nodes' addresses only where the generated layer asks for them,
+        # decided from the tree's settings, so a resolver that is slow or
+        # flapping costs the clusters that never use them nothing.
+        #
+        wanted = None
+        if target is not None and cluster.vrrp_router_id is None:
+            wanted = tree_reader(
+                Path(cluster.config_path), target.hash, (cluster_settings.LOCATION,)
+            ).get(cluster_settings.LOCATION)
+        if target is None or not regeneration.addresses_needed(cluster, wanted):
+            found: regeneration.Addresses | ConfigError = ()
+        elif addresses is None:
+            found = regeneration.lookup_addresses(cluster)
+        else:
+            found = regeneration.lookup_addresses(cluster, addresses)
+        key = regeneration.fingerprint(
+            commit,
+            cluster,
+            found,
+            installed_crs,
+            rules="unreadable" if unreadable is not None else regeneration.rules_digest(rules),
+            certificates=certificates(policy, cluster),
         )
-        installed_crs = waf_versions().get("crs")
-        key = regeneration.fingerprint(commit, cluster, found, installed_crs)
         if known is not None and known == key:
             result = regeneration.unchanged_result(commit, key)
         elif target is None:
             result = regeneration.unpublished_result(key)
         else:
+
+            def installed_rules() -> crs.RuleSet | None:
+                if unreadable is not None:
+                    raise unreadable
+                return rules
+
             result = regeneration.regenerate(
-                tree_reader(Path(cluster.config_path), target.hash),
+                tree_reader(Path(cluster.config_path), target.hash, ()),
                 cluster,
                 commit=target.hash,
                 version=target.version,
                 key=key,
                 addresses=found,
                 installed_crs=installed_crs,
-                rule_set=rule_set,
+                rule_set=installed_rules,
+                certificate_sans=coverage(policy, cluster),
             )
     except (PublishError, GitError) as exc:
         return fail("regeneration_unavailable", str(exc), exc.exit_code)

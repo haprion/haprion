@@ -22,8 +22,12 @@ would read, less what only refuses:
 - the rule set is the installed one, as a publish takes it: a package upgrade of
   the rule set reaches the nodes with the next publish, and this is what says so;
 - the cluster registry's fields and the nodes' addresses are today's;
-- certificate coverage and held ports are not asked. They only refuse, and
-  never change the output.
+- certificate coverage is the installed certificates' (the caller reads it),
+  and the checks a publish makes on the bytes it would write - stick counters,
+  the traffic stream, the core's TLS defaults - are made on the candidate, so a
+  difference a publish would refuse is `refused` and says why;
+- held ports are not asked: they need the nodes, and only refuse. Neither is
+  the sandbox's `haproxy -c`, which a publish runs and this does not.
 
 The published tree does not record which version of the product made it, so no
 result says "made by X, now Y" for the engine; it says only what can be read:
@@ -36,10 +40,19 @@ import dataclasses
 import difflib
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from haprion import __version__, crs, geo, objects, peers
+from haprion import (
+    __version__,
+    cluster_settings,
+    crs,
+    geo,
+    objects,
+    peers,
+    tls_policy,
+    traffic_stream,
+)
 from haprion.config import Cluster, ConfigError
 from haprion.managed_network import location as network_location
 from haprion.managed_publish import MANAGED_PREFIX, managed_files
@@ -84,16 +97,52 @@ def lookup_addresses(cluster: Cluster, lookup: Lookup = peers.addresses) -> Addr
         return exc
 
 
+def addresses_needed(cluster: Cluster, settings_document: bytes | None) -> bool:
+    """Whether the generated layer asks for the nodes' addresses at all.
+
+    The condition `managed_files` applies: shared counters, exported metrics, or
+    a keepalived the product writes. Decided before the lookup, so a cluster
+    that never needs them neither waits for DNS nor has its key change with it.
+    A settings document that cannot be read counts as needing them: the
+    regeneration refuses it anyway.
+    """
+
+    if cluster.vrrp_router_id is not None:
+        return True
+    try:
+        settings = cluster_settings.load_document(settings_document)
+    except ConfigError:
+        return True
+    return settings.peers is not None or settings.metrics is not None
+
+
+def rules_digest(rules: crs.RuleSet | None) -> str | None:
+    """The installed rule set's files as one digest; its VERSION alone does not say."""
+
+    if rules is None:
+        return None
+    digest = hashlib.sha256()
+    for name, content in sorted(rules.files.items()):
+        digest.update(f"{name}\0{len(content)}\0".encode())
+        digest.update(content)
+    return digest.hexdigest()
+
+
 def fingerprint(
     commit: str | None,
     cluster: Cluster,
     addresses: Addresses | ConfigError,
     crs_version: str | None,
+    *,
+    rules: str | None = None,
+    certificates: str | None = None,
 ) -> str:
     """What the result depends on, as one digest: the cache key.
 
     The published commit, this engine's own source, the cluster's definition,
-    the nodes' addresses and the installed rule set. The location database is
+    the nodes' addresses, the installed rule set (its version and a digest of
+    its files: a package revision can change files and keep the version) and
+    the certificates' state, which coverage follows. The location database is
     not in it: the countries are the tree's own.
     """
 
@@ -103,6 +152,8 @@ def fingerprint(
         "cluster": dataclasses.asdict(cluster),
         "addresses": None if isinstance(addresses, ConfigError) else [list(a) for a in addresses],
         "crs": crs_version,
+        "rules": rules,
+        "certificates": certificates,
     }
     return hashlib.sha256(json.dumps(document, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -251,12 +302,14 @@ def regenerate(
     installed_crs: str | None,
     rule_set: Callable[[], crs.RuleSet | None] = crs.installed,
     location_database: geo.CountryReader | None = None,
+    certificate_sans: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """The result for one published tree: would a publish of it change the nodes' files?
 
     `files` is the tree at the published commit. Raises `RegenerationError` for
     what stops the comparison being made (the nodes' addresses are needed and
-    cannot be had, the published tree is not a release); a generator that
+    cannot be had, the published tree is not a release, the installed rule set
+    cannot be read - a read to be made again, not an answer); a generator that
     refuses the tree is a result, `refused`, as a publish would refuse it.
     """
 
@@ -290,14 +343,21 @@ def regenerate(
             raise RegenerationError(str(addresses))
         return addresses
 
+    def rules() -> crs.RuleSet | None:
+        try:
+            return rule_set()
+        except crs.RuleSetError as exc:
+            raise RegenerationError(str(exc)) from exc
+
     try:
         managed = managed_files(
             files,
             network_document=document,
             cluster=cluster,
             country_reader=geo.tree_reader(files, location_database or geo.location_database()),
-            rule_set=rule_set,
+            rule_set=rules,
             node_addresses=node_addresses,
+            certificate_sans=certificate_sans,
         )
         tree = {
             path: content for path, content in files.items() if not path.startswith(MANAGED_PREFIX)
@@ -311,6 +371,21 @@ def regenerate(
         return result
 
     if candidate == published:
+        return result
+    #
+    # The checks a publish makes on the bytes it would write, in its order.
+    #
+    core = tree.get("core/haproxy.cfg")
+    where = {"cluster": cluster.cluster_id, "config_path": str(cluster.config_path)}
+    problem = (
+        tls_policy.stick_counters_problem(tree, **where)
+        or traffic_stream.problem(tree, **where)
+        or (tls_policy.core_defaults_problem(core, **where) if core is not None else None)
+    )
+    if problem is not None:
+        result["outcome"] = REFUSED
+        result["message"] = problem[:MAX_MESSAGE]
+        result["causes"] = _causes(files, installed_crs)
         return result
     diff = artifact_diff(published, candidate, commit)
     result.update(
@@ -333,8 +408,10 @@ __all__ = [
     "artifact_diff",
     "diff_from_dict",
     "fingerprint",
+    "addresses_needed",
     "lookup_addresses",
     "regenerate",
+    "rules_digest",
     "unchanged_result",
     "unpublished_result",
 ]

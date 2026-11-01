@@ -301,6 +301,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     load_written(name, document)
                 except ModelError as exc:
                     raise Refusal("changes_invalid", str(exc), exit_codes.REFUSED) from exc
+
             #
             # Asked when objects or the network change, as coverage is: what
             # binds on a VIP is decided there. A node that did not answer is
@@ -335,7 +336,17 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     held_ports=held.held,
                 )
             except ConfigError as exc:
-                raise Refusal("changes_invalid", str(exc), exit_codes.REFUSED) from exc
+                said = str(exc)
+                if regenerate and "certificate mismatch override" in said:
+                    #
+                    # The interface cannot send the override; say who can.
+                    #
+                    said += (
+                        f" The interface does not send it: run haprion-publish -c {cluster.cluster_id}"
+                        " --regenerate --allow-certificate-mismatch in a terminal, or install a"
+                        " certificate that covers the name."
+                    )
+                raise Refusal("changes_invalid", said, exit_codes.REFUSED) from exc
             #
             # The changed objects' server names the manager cannot resolve
             # (finding 72): said, never refused - the node's check decides.

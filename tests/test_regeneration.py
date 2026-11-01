@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import tempfile
 import unittest
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import yaml
 
-from haprion import crs, exit_codes, generate, geo, objects, regeneration
+from haprion import crs, exit_codes, generate, geo, objects, regeneration, tls_policy
 from haprion.cli import readings_helper, regeneration_helper
 from haprion.config import Cluster, ConfigError, load_policy, load_runtime_config
 from haprion.deploy_plan import ReleaseTarget
@@ -101,7 +102,18 @@ def regenerated(files: Mapping[str, bytes], **options: Any) -> dict[str, Any]:
     )
 
 
+def core_is_current() -> Any:
+    """The fixtures' core is bare; the check of its TLS defaults has its own tests below."""
+
+    return mock.patch.object(tls_policy, "core_defaults_problem", return_value=None)
+
+
 class TheComparison(unittest.TestCase):
+    def setUp(self) -> None:
+        patch = core_is_current()
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_an_unchanged_engine_compares_equal_over_several_waf_objects(self) -> None:
         files = published_tree()
         self.assertIn("managed/waf/coraza.yaml", files)
@@ -149,6 +161,52 @@ class TheComparison(unittest.TestCase):
         result = regenerated(files, database=sweden("2026-11-01", "203.0.113.0/24"))
 
         self.assertEqual(result["outcome"], "unchanged")
+
+    def test_a_rule_set_that_cannot_be_read_is_a_failed_reading_not_an_answer(self) -> None:
+        files = published_tree()
+
+        def unreadable() -> crs.RuleSet:
+            raise crs.RuleSetError("rules/x.conf.dpkg-new is not a rule file")
+
+        with self.assertRaisesRegex(regeneration.RegenerationError, "not a rule file"):
+            regeneration.regenerate(
+                files,
+                cluster(),
+                commit=COMMIT,
+                version=3,
+                key=KEY,
+                addresses=(),
+                installed_crs=None,
+                rule_set=unreadable,
+            )
+
+    def test_the_checks_a_publish_makes_on_what_it_writes_are_made_on_the_candidate(self) -> None:
+        files = published_tree()
+        newer = rule_set("9.9.10", b"# rules, newer\n")
+
+        with mock.patch.object(tls_policy, "core_defaults_problem", return_value="core is stale"):
+            result = regenerated(files, rules=newer)
+            quiet = regenerated(files)
+
+        self.assertEqual((result["outcome"], result["message"]), ("refused", "core is stale"))
+        self.assertEqual(quiet["outcome"], "unchanged")
+
+    def test_a_hostname_the_certificate_does_not_cover_is_refused_as_a_publish_would(self) -> None:
+        on = dataclasses.replace(cluster(), certificate_ids=("example.com",))
+        files = published_tree(on=on)
+        files["managed/proxies/site00.yaml"] = files["managed/proxies/site00.yaml"].replace(
+            b"protocol: http\n", b"protocol: https\n  certificate: example.com\n"
+        )
+
+        result = regenerated(
+            files,
+            on=on,
+            rules=rule_set("9.9.10", b"# n\n"),
+            certificate_sans={"example.com": ("other.example.org",)},
+        )
+
+        self.assertEqual(result["outcome"], "refused")
+        self.assertIn("does not answer for", result["message"])
 
     def test_a_newer_rule_set_does_change_it_and_says_which(self) -> None:
         files = published_tree()
@@ -213,6 +271,9 @@ class TheComparison(unittest.TestCase):
 
 class TheHelper(unittest.TestCase):
     def setUp(self) -> None:
+        patch = core_is_current()
+        patch.start()
+        self.addCleanup(patch.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -253,6 +314,8 @@ class TheHelper(unittest.TestCase):
         target: ReleaseTarget | None = PUBLISHED,
         rules: crs.RuleSet | None = None,
         crs_version: str = "9.9.9",
+        addresses: regeneration.Lookup = lambda _cluster: (),
+        installed: Callable[[], crs.RuleSet | None] | None = None,
     ) -> tuple[int, str, str]:
         request = {
             "schema_version": 1,
@@ -263,7 +326,9 @@ class TheHelper(unittest.TestCase):
         }
         out, err = io.StringIO(), io.StringIO()
 
-        def tree(_repo: Path, commit: str) -> Mapping[str, bytes]:
+        def tree(_repo: Path, commit: str, paths: Sequence[str] = ()) -> Mapping[str, bytes]:
+            if paths:
+                return {path: self.files[path] for path in paths if path in self.files}
             self.reads.append(commit)
             return self.files
 
@@ -277,9 +342,8 @@ class TheHelper(unittest.TestCase):
             require_root=False,
             tree_reader=tree,
             target_reader=lambda _publish, _node: target,
-            waf_versions=lambda: {"engine": "0.9.0-2", "crs": crs_version},
-            addresses=lambda _cluster: (),
-            rule_set=lambda: rules or rule_set(crs_version),
+            addresses=addresses,
+            rule_set=installed or (lambda: rules or rule_set(crs_version)),
         )
         return code, out.getvalue(), err.getvalue()
 
@@ -330,9 +394,16 @@ class TheHelper(unittest.TestCase):
                 "cluster": self.cluster,
                 "addresses": (("node-a", "192.0.2.31"),),
                 "crs_version": "9.9.9",
+                "rules": regeneration.rules_digest(rule_set()),
+                "certificates": "state",
             } | changes
             return regeneration.fingerprint(
-                found["commit"], found["cluster"], found["addresses"], found["crs_version"]
+                found["commit"],
+                found["cluster"],
+                found["addresses"],
+                found["crs_version"],
+                rules=found["rules"],
+                certificates=found["certificates"],
             )
 
         base = fingerprint()
@@ -340,6 +411,11 @@ class TheHelper(unittest.TestCase):
         for changes in (
             {"commit": "d" * 40},
             {"crs_version": "9.9.10"},
+            #
+            # A package revision that changes a rule file and keeps the version.
+            #
+            {"rules": regeneration.rules_digest(rule_set(rules=b"# revised\n"))},
+            {"certificates": "other"},
             {"addresses": (("node-a", "192.0.2.32"),)},
             {"addresses": ConfigError("no")},
             {"cluster": cluster()},
@@ -348,6 +424,49 @@ class TheHelper(unittest.TestCase):
                 self.assertNotEqual(base, fingerprint(**changes))
         with mock.patch.object(objects, "_engine_digest", return_value="other"):
             self.assertNotEqual(base, fingerprint())
+
+    def test_a_rule_set_that_cannot_be_read_fails_only_where_the_objects_use_it(self) -> None:
+        def unreadable() -> crs.RuleSet:
+            raise crs.RuleSetError("rules/x.conf.dpkg-new is not a rule file")
+
+        with mock.patch.object(
+            geo, "location_database", lambda: sweden("2026-10-01", "192.0.2.0/25")
+        ):
+            code, out, _ = self.ask(installed=unreadable)
+            self.files = {
+                k: (
+                    v.replace(b"waf: {mode: block}\n", b"")
+                    if k.startswith("managed/proxies")
+                    else v
+                )
+                for k, v in self.files.items()
+            }
+            without, _, _ = self.ask(installed=unreadable)
+
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
+        self.assertEqual(
+            assert_contract("haprion-regeneration", out)["error"]["code"],
+            "regeneration_unavailable",
+        )
+        self.assertEqual(without, 0)
+
+    def test_the_nodes_are_looked_up_only_where_the_generated_layer_asks_for_them(self) -> None:
+        asked: list[str] = []
+
+        def lookup(_cluster: Cluster) -> tuple[tuple[str, str], ...]:
+            asked.append("asked")
+            raise ConfigError("resolver is slow")
+
+        with mock.patch.object(
+            geo, "location_database", lambda: sweden("2026-10-01", "192.0.2.0/25")
+        ):
+            _, plain, _ = self.ask(addresses=lookup)
+            self.files["managed/cluster.yaml"] = b"metrics: {port: 8405, sources: [192.0.2.0/24]}\n"
+            code, _, _ = self.ask(addresses=lookup)
+
+        self.assertEqual(json.loads(plain)["result"]["outcome"], "unchanged")
+        self.assertEqual(asked, ["asked"])
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
 
     def test_nothing_published_is_an_answer_and_reads_nothing(self) -> None:
         code, out, _ = self.ask(target=None)

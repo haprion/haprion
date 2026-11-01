@@ -348,6 +348,25 @@ class ChangesPublishTests(ObjectsPublishFixture):
             self.assertIs(document_["result"]["changed"], False)
             self.assertEqual(count_versions(self.repo), versions)
 
+    def test_a_regeneration_refused_for_coverage_says_what_to_do_about_it(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            secure = proxy("shop", "shop.example.com").replace(
+                "protocol: http\n", "protocol: https\n  certificate: example.com\n"
+            )
+            self.seed(shop=secure)
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            with mock.patch.object(
+                changes_publish, "coverage_for", lambda *_: {"example.com": ("other.example.org",)}
+            ):
+                code, document, _err = self.publish(policy, self.changes(regenerate=True))
+
+            self.assertEqual(document["error"]["code"], "changes_invalid")
+            self.assertEqual(code, exit_codes.REFUSED)
+            self.assertIn("--regenerate --allow-certificate-mismatch", document["error"]["message"])
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
     def test_the_flag_is_a_real_boolean(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))

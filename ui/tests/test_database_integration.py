@@ -10666,6 +10666,41 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             row = connection.execute("select valid_from = created_at from api_token").fetchone()
         self.assertEqual(row, (True,))
 
+    def test_a_name_typed_at_a_failed_sign_in_is_blanked_unless_an_account_has_it(self) -> None:
+        """0113: what a reader could search, filter and sort on is no longer stored."""
+
+        self.alembic("upgrade", "0112")
+        with self.scratch() as connection:
+            connection.execute(
+                "insert into app_user (username, password_hash, role) "
+                "values ('Operator', 'x', 'admin')"
+            )
+            insert = "insert into audit_event (actor, action, detail) values (%s, %s, %s::jsonb)"
+            connection.execute(insert, ("hunter2-pass", "login_failed", '{"reason": "rejected"}'))
+            connection.execute(insert, ("OPERATOR", "login_failed", '{"reason": "rejected"}'))
+            connection.execute(insert, ("hunter2-pass", "login", "{}"))
+            connection.commit()
+
+        self.alembic("upgrade", "head")
+
+        with self.scratch() as connection:
+            rows = connection.execute(
+                "select action, actor, detail from audit_event order by id"
+            ).fetchall()
+            searched = connection.execute(
+                "select count(*) from audit_event where actor ilike '%hunter2%' "
+                "and action = 'login_failed'"
+            ).fetchone()
+        self.assertEqual(
+            rows,
+            [
+                ("login_failed", None, {"reason": "rejected", "unknown_user": True}),
+                ("login_failed", "OPERATOR", {"reason": "rejected"}),
+                ("login", "hunter2-pass", {}),
+            ],
+        )
+        self.assertEqual(searched, (0,))
+
     def test_a_restore_run_again_after_a_failed_one_still_revokes_the_token_revoked_after_the_dump(
         self,
     ) -> None:

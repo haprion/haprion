@@ -11,7 +11,8 @@ writes.
 
 A failed sign-in under a name no account has is shown as *unknown user*,
 without the name: what somebody typed into the user field may be their
-password.
+password. It is not stored either (0113): the row has no actor and says so
+in its detail, so there is nothing to search, filter or sort on.
 """
 
 from __future__ import annotations
@@ -257,7 +258,7 @@ def facts(detail: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
     return tuple(
         (FACT_LABELS.get(key, key.replace("_", " ").capitalize()), _fact_value(value))
         for key, value in detail.items()
-        if value not in (None, "", [], {})
+        if value not in (None, "", [], {}) and key != "unknown_user"
     )
 
 
@@ -277,6 +278,9 @@ class AuditRow:
 def who(event: AuditEvent, accounts: frozenset[str]) -> str:
     """The actor, except a failed sign-in under a name no account has."""
 
+    if event.action == "login_failed" and event.actor is None:
+        flagged = isinstance(event.detail, dict) and event.detail.get("unknown_user") is True
+        return UNKNOWN_USER if flagged else "—"
     if event.actor is None:
         return "—"
     if event.action == "login_failed" and event.actor.lower() not in accounts:

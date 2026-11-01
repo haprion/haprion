@@ -97,6 +97,14 @@ class TheSentences(unittest.TestCase):
         self.assertEqual(audit.who(known, frozenset({"operator"})), "Operator")
         self.assertEqual(audit.what(typed), "Sign-in failed")
 
+    def test_a_failed_sign_in_stored_without_a_name_says_unknown_user(self) -> None:
+        stored = event("login_failed", actor=None, reason="rejected", unknown_user=True)
+        provider = event("login_failed", actor=None, reason="oidc_refused")
+
+        self.assertEqual(audit.who(stored, frozenset()), audit.UNKNOWN_USER)
+        self.assertEqual(audit.who(provider, frozenset()), "—")
+        self.assertNotIn("Unknown user", [label for label, _ in audit.facts(stored.detail)])
+
     def test_set_by_takes_the_newest_queue_for_each_server_and_state(self) -> None:
         newest = event("queue_job", actor="operator", state="drain", servers=["a:1", "b:2"])
         older = event("queue_job", actor="admin", state="drain", servers=["a:1"])

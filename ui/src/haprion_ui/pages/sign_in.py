@@ -216,13 +216,20 @@ def build_router(config: Config) -> APIRouter:
                     connection, username=username or "?", client_ip=address, succeeded=True
                 )
             if not accepted:
+                #
+                # The name is kept only when an account has it: a name nobody
+                # has may be a password typed into the wrong field, and what
+                # is stored can be searched, filtered and sorted on.
+                #
+                known = db.known_account_name(connection, username) if username else None
                 db.record_audit_event(
                     connection,
-                    actor=username or None,
+                    actor=known,
                     action="login_failed",
                     detail={
                         "client_ip": address,
                         "reason": "throttled" if throttled else "rejected",
+                        **({} if known else {"unknown_user": True}),
                     },
                 )
                 connection.commit()
@@ -505,15 +512,17 @@ def build_router(config: Config) -> APIRouter:
 
         def refuse(message: str, reason: str) -> Response:
             with request.app.state.pool.connection() as connection:
+                known = db.known_account_name(connection, username) if username else None
                 db.record_audit_event(
                     connection,
-                    actor=username or None,
+                    actor=known,
                     action="login_failed",
                     detail={
                         "client_ip": address,
                         "reason": reason,
                         "via": "oidc",
                         "issuer": issuer,
+                        **({} if known else {"unknown_user": True}),
                     },
                 )
                 connection.commit()

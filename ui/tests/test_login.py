@@ -178,6 +178,7 @@ class LoginTestCase(unittest.TestCase):
         self.sessions: dict[bytes, AuthenticatedSession] = {}
         self.attempts: list[tuple[str, str, bool]] = []
         self.audit: list[str] = []
+        self.audit_rows: list[tuple[str, str | None, dict[str, Any]]] = []
         self.failures = 0
         self.account_failures = 0
         #
@@ -200,6 +201,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.pool", return_value=self.pool),
             mock.patch("haprion_ui.db.account_by_username", side_effect=self._account),
             mock.patch("haprion_ui.db.record_login_attempt", side_effect=self._attempt),
+            mock.patch("haprion_ui.db.known_account_name", side_effect=self._known_name),
             mock.patch("haprion_ui.db.lock_sign_in"),
             mock.patch("haprion_ui.db.login_locked", side_effect=self._locked),
             mock.patch("haprion_ui.db.create_session", side_effect=self._create_session),
@@ -412,8 +414,14 @@ class LoginTestCase(unittest.TestCase):
     def _revoke(self, _c: object, token_hash: bytes) -> None:
         self.sessions.pop(token_hash, None)
 
-    def _audit_event(self, _c: object, *, action: str, **_: object) -> None:
+    def _audit_event(
+        self, _c: object, *, action: str, actor: str | None = None, detail: Any = None, **_: object
+    ) -> None:
         self.audit.append(action)
+        self.audit_rows.append((action, actor, dict(detail or {})))
+
+    def _known_name(self, _c: object, username: str) -> str | None:
+        return self.account.username if username.lower() == "operator" else None
 
     # - helpers -----------------------------------------------------------
 
@@ -806,6 +814,34 @@ class RefusingToSignIn(LoginTestCase):
         self.assertNotIn(auth.SESSION_COOKIE, client.cookies)
         self.assertEqual(self.attempts[-1][2], False)
         self.assertIn("login_failed", self.audit)
+
+    def test_a_name_no_account_has_is_not_stored(self) -> None:
+        """A password typed into the user field must not be kept to be searched for."""
+
+        client = self.client()
+        response = self.sign_in(client, username="hunter2-pass", password="wrong")
+        self.assertEqual(response.status_code, 401)
+        action, actor, detail = self.audit_rows[-1]
+        self.assertEqual(action, "login_failed")
+        self.assertIsNone(actor)
+        self.assertNotIn("hunter2", repr(detail))
+        self.assertIs(detail["unknown_user"], True)
+
+    def test_a_name_an_account_has_is_kept_with_its_own_spelling(self) -> None:
+        client = self.client()
+        self.sign_in(client, username="OPERATOR", password="wrong")
+        _action, actor, detail = self.audit_rows[-1]
+        self.assertEqual(actor, "operator")
+        self.assertNotIn("unknown_user", detail)
+
+    def test_a_throttled_attempt_under_an_unknown_name_is_not_stored_either(self) -> None:
+        self.failures = 99
+        client = self.client()
+        self.sign_in(client, username="hunter2-pass")
+        _action, actor, detail = self.audit_rows[-1]
+        self.assertIsNone(actor)
+        self.assertEqual(detail["reason"], "throttled")
+        self.assertNotIn("hunter2", repr(detail))
 
     def test_a_name_with_a_nul_is_a_wrong_password_and_never_reaches_the_database(self) -> None:
         """Review 26-10-30, E4: PostgreSQL text holds no NUL, and it was a 500."""

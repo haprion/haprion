@@ -89,6 +89,22 @@ def account_by_username(connection: Connection[Any], username: str) -> Account |
         return cursor.fetchone()
 
 
+def known_account_name(connection: Connection[Any], username: str) -> str | None:
+    """The account's own name for what was typed, or None when no account has it.
+
+    What the audit record keeps of a failed sign-in: a name nobody has is not
+    stored, since it may be a password typed into the wrong field.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select username from app_user where username_normalised = lower(%(username)s)",
+            {"username": username},
+        )
+        row = cursor.fetchone()
+    return None if row is None else str(row[0])
+
+
 def record_login_attempt(
     connection: Connection[Any], *, username: str, client_ip: str, succeeded: bool
 ) -> None:

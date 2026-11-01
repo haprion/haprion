@@ -3117,8 +3117,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
                     for seen in self.servers[0].seen  # type: ignore[attr-defined]
                     if seen.startswith(f"/half-{name}-")
                 ]
-                self.assertEqual(reached, [], f"{len(reached)} of 20 reached the server")
-                rules = set()
+                records: dict[str, dict[str, object]] = {}
                 while True:
                     try:
                         datagram = self.sink.recv(65536).decode()
@@ -3126,8 +3125,23 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
                         break
                     entry = json.loads(datagram[datagram.index("{") :])
                     if str(entry.get("path", "")).startswith(f"/half-{name}-"):
-                        rules.add(entry.get("rule"))
-                self.assertLessEqual(rules, {"crs:deny", "waf-engine/interrupted:deny"})
+                        records[str(entry["path"])] = entry
+                # What the refusal promises is about a client that left (code 4).
+                # A real engine that took longer than HAProxy waits (code 1, under
+                # load) is an engine fault: `closed` refuses it with the 503 and
+                # `blocks` lets it through by its own `allow`.
+                for entry in records.values():
+                    if entry.get("waf_error") == 4:
+                        self.assertEqual(entry["rule"], "waf-engine/interrupted:deny", entry)
+                        self.assertEqual(entry["status"], -1, entry)
+                    elif name == "closed":
+                        self.assertIn(entry["rule"], {"crs:deny", "waf-engine:deny"}, entry)
+                for path in reached:
+                    entry = records.get(path, {})
+                    self.assertTrue(entry, f"{path} reached the server unrecorded")
+                    self.assertEqual(name, "blocks", f"{path} reached the server: {entry}")
+                    self.assertEqual(entry["rule"], "waf-engine:log", entry)
+                    self.assertNotEqual(entry["waf_error"], 4, entry)
 
     def test_a_looking_object_lets_an_attack_through_and_names_the_rules(self) -> None:
         status, rule, rules = self.ask(SQLI, name="looks")

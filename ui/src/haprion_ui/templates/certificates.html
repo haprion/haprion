@@ -103,6 +103,10 @@
   <div class="heading-badges">{% if management_writes and role == 'admin' and not certificates.registry %}{{ page_actions() }}{% endif %}{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
+{% if certificates.registry_state == 'unreadable' and certificates.registry_observed_at %}
+<p class="preview-notice notice-warning"><span class="status-orb status-warning" aria-hidden="true"></span><strong>The certificate registry could not be read.</strong> The certificates below are what the clusters serve.</p>
+{% endif %}
+
 {#
   Two renderings of the same cached readings, switched with the segmented
   control Traffic already uses - at a larger size here, because at Traffic's

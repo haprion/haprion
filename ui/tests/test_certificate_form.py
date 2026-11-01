@@ -354,6 +354,26 @@ class TheFormPage(CertificateFormRouteTestCase):
         self.assertIn('<small data-profile-hint="http-01">Not used with HTTP-01.</small>', page)
         self.assertIn('<small data-profile-hint="dns-01" hidden>', page)
 
+    def test_a_registry_that_could_not_be_read_is_said_on_the_page_and_in_attention(self) -> None:
+        failed = db.ManagerCertificates(
+            observed_at=datetime.now(UTC),
+            outcome="failed",
+            result={},
+            warnings=[],
+            error={"code": "registry_invalid", "message": "unreadable"},
+            poll_error=None,
+        )
+        client = self.writing_client()
+        with mock.patch("haprion_ui.db.manager_certificates", return_value=failed):
+            page = client.get("/certificates").text
+            home = client.get("/").text
+        self.assertIn("The certificate registry could not be read.", page)
+        self.assertIn("certificate registry", home)
+        self.assertIn("could not be read", home)
+        # Not read yet is the poller's to say, not a certificate fault.
+        with mock.patch("haprion_ui.db.manager_certificates", return_value=None):
+            self.assertNotIn("could not be read", client.get("/certificates").text)
+
     def test_the_listing_links_to_it_for_an_admin_only(self) -> None:
         self.assertIn('href="/certificates/new"', self.writing_client().get("/certificates").text)
         self.assertNotIn(

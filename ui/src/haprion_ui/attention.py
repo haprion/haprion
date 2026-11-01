@@ -501,10 +501,28 @@ def from_services(lamps: Mapping[str, Mapping[str, Any]], *, held_label: str) ->
     return items
 
 
-def from_certificates(registry: Any, clusters: Iterable[Any]) -> list[Item]:
-    """Certificates that run out, cannot be read, or whose copies are not where they belong."""
+def from_certificates(
+    registry: Any, clusters: Iterable[Any], *, registry_unreadable: bool = False
+) -> list[Item]:
+    """Certificates that run out, cannot be read, or whose copies are not where they belong.
+
+    `registry_unreadable`: the manager answered and said it could not read the
+    registry, so the list is the clusters' and an expiry may be missing from it.
+    """
 
     items: list[Item] = []
+    if registry_unreadable:
+        items.append(
+            Item(
+                kind="certificate",
+                severity="warning",
+                cluster=None,
+                subject="certificate registry",
+                message="could not be read · the list is what the clusters serve",
+                since=None,
+                link="/certificates",
+            )
+        )
     if registry is not None:
         for row in (*registry.certificates, registry.interface):
             if row is None or getattr(row, "placeholder", False):

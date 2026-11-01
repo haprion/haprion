@@ -805,7 +805,12 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         _service_lamps(request, config, board.clusters, status_rows),
         held_label=health.HELD_LABEL,
     )
-    items += attention.from_certificates(certificate_view.registry, certificate_view.clusters)
+    items += attention.from_certificates(
+        certificate_view.registry,
+        certificate_view.clusters,
+        registry_unreadable=certificate_view.registry_state == "unreadable"
+        and certificate_view.registry_observed_at is not None,
+    )
     backup_clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
     backup_rows = list(backup_rows)
     items += attention.from_database_jobs(_database_jobs(backup_rows))

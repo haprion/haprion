@@ -381,6 +381,14 @@ class EachKindComesAndGoes(unittest.TestCase):
 
         self.assertEqual(items, [])
 
+    def test_a_registry_that_could_not_be_read_is_an_item(self) -> None:
+        [item] = attention.from_certificates(None, (), registry_unreadable=True)
+        self.assertEqual(
+            (item.kind, item.severity, item.subject),
+            ("certificate", "warning", "certificate registry"),
+        )
+        self.assertEqual(attention.from_certificates(None, ()), [])
+
     def test_a_certificate_running_out_is_listed_once(self) -> None:
         row = SimpleNamespace(
             identifier="shop.example.com",

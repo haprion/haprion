@@ -393,7 +393,7 @@ class AMissingIncludeIsSaidInTheListing(unittest.TestCase):
             serving=False,
         )
         macro = TEMPLATES.env.get_template("_proxy-rows.html").module.proxy_rows  # type: ignore[attr-defined]
-        return str(macro("alpha", "admin", (), (), (listed,), (), {}, unforwarded=unforwarded))
+        return str(macro("alpha", (), (), (listed,), (), {}, unforwarded=unforwarded))
 
     def test_the_node_is_named(self) -> None:
         text = self.row(("node-b",))

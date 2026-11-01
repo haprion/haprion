@@ -1542,6 +1542,9 @@ and the nodes holding each. An admin ticks them and presses *Unblock*. The clust
 says how many addresses are blocked. An admin's *Operations* row names the objects - three of them, then
 how many more - with a link to each.
 
+To refuse an address for good, put it in the object's *Denied — addresses* ([Access rules](#access-rules)). That is
+a published change, unlike a block.
+
 The same in the object's YAML:
 
 ```yaml
@@ -1575,10 +1578,10 @@ records from before the reason was kept and `dynamic-block/<reason>` since; matc
 
 **Why an address is blocked.** Each block keeps the reason it was placed for, in the same table entry, so it
 reaches the other nodes with the block. It is the limit that last renewed the block: every request over a
-limit writes it again, so an address blocked by hand that then goes over a limit shows that limit instead
-of *Blocked by hand or the API*. It is *Too many requests* or *Too many errors* when the address went
-over that limit, *Too many new connections* for a tcp object's limit, and *Blocked by hand or the API* for an
-address placed by an admin or through the API. An address over both limits shows the requests. A block
+limit writes it again, so an address blocked through the API that then goes over a limit shows that limit instead
+of *Blocked through the API*. It is *Too many requests* or *Too many errors* when the address went
+over that limit, *Too many new connections* for a tcp object's limit, and *Blocked through the API* for an
+address placed through the API. An address over both limits shows the requests. A block
 placed before the object had a reason, and one that a node cannot tell, shows none.
 
 **Which address is blocked.** The one the rate limit counts: behind a trusted proxy, the last element of
@@ -4509,7 +4512,7 @@ What a token can read:
 | `/clusters/{cluster}/objects` | The objects, as *Proxies* lists them (`limit`, `offset`) |
 | `/clusters/{cluster}/objects/{name}` | One object. Its document, its servers' addresses and states, and why an object cannot be read, only for a *Write* token |
 | `/clusters/{cluster}/objects/{name}/history` | The cluster's versions, published or not (`limit`) |
-| `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now, with the time left and `reason` (`requests`, `errors`, `connections`, `manual` for an address placed by hand or through the API, or null where the block does not say). A *Block* token reads this too, for the proxies it may block on |
+| `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now, with the time left and `reason` (`requests`, `errors`, `connections`, `manual` for an address placed through the API, or null where the block does not say). A *Block* token reads this too, for the proxies it may block on |
 | `/certificates` | The certificates, when they end and where they are (`limit`). `registry` says what the list is: `read` (the registry), `unreadable` (the registry could not be read, or not yet: the list is what the clusters say they serve, `stale` is true and an empty list says nothing) or `none` (the installation declares no registry: the clusters' own lists). |
 | `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`, `before`). `q` is the page's search: text in the host, the path and the backend, a client address or network, or part of a destination. Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read. Both ends are included. When `truncated` is true, `next` is where the next page begins: pass it as `before`, with the same other parameters, and each request is listed once even where several share a time. The place also holds the window the first page was read from, so a later page stays in it when the call named no `from` |
 | `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through, over the last `days` days (in the answer). The newest findings are given, and `truncated` says when older ones were left out. A *Read* token is given what is published; a *Write* token also what an admin has drafted |
@@ -4618,8 +4621,8 @@ sudo fail2ban-client reload
 sudo fail2ban-client set authentik banip 203.0.113.7
 ```
 
-The proxy's page lists `203.0.113.7` under *Blocked addresses*, on every node, with the reason *Blocked by hand
-or the API*. The audit record shows *Blocked … through the API*, with `token:` and the name `fail2ban-auth`. Lift it with
+The proxy's page lists `203.0.113.7` under *Blocked addresses*, on every node, with the reason *Blocked through
+the API*. The audit record shows *Blocked … through the API*, with `token:` and the name `fail2ban-auth`. Lift it with
 *Unblock*, or let it end.
 
 An address in the proxy's *Never blocked* is never blocked: the call is refused (400), and fail2ban logs the

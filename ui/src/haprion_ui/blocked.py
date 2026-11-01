@@ -28,13 +28,13 @@ from haprion.server_state import MAX_ADDRESSES
 # says it. A block the old configuration placed has no reason: shown as none.
 # The reason is the limit that last renewed the block, not necessarily the one
 # that placed it: each request over a limit writes it again, so a limit a
-# hand-placed block later goes over replaces `manual` (accepted, 26-11-01).
+# block placed through the API later goes over replaces `manual` (accepted, 26-11-01).
 #
 REASON_TEXT = {
     "requests": "Too many requests",
     "errors": "Too many errors",
     "connections": "Too many new connections",
-    "manual": "Blocked by hand or the API",
+    "manual": "Blocked through the API",
 }
 
 

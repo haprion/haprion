@@ -118,7 +118,7 @@ class TheCard(unittest.TestCase):
             [(row.address, row.reason, row.reason_text) for row in card.addresses],
             [
                 ("192.0.2.1", "errors", "Too many errors"),
-                ("192.0.2.2", "manual", "Blocked by hand or the API"),
+                ("192.0.2.2", "manual", "Blocked through the API"),
                 ("192.0.2.3", None, ""),
                 ("192.0.2.4", None, ""),
             ],
@@ -273,16 +273,16 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
 
         card = page.text.split('id="blocked"')[1].split("</article>")[0]
         self.assertIn("<h3>Blocked addresses</h3>", card)
-        self.assertIn("2 blocked by dynamic blocking", card)
+        self.assertIn("2 blocked<", card)
         self.assertIn('value="2001:db8:44::17"', card)
         self.assertIn("edge-a, edge-b", card)
         self.assertIn(">Unblock</button>", card)
         #
         # B424: each row says which limit placed the block, in plain words.
         #
-        self.assertIn("<th>Reason</th>", card)
-        self.assertIn('data-label="Reason">Too many requests</td>', card)
-        self.assertIn('data-label="Reason">Too many errors</td>', card)
+        self.assertIn(">Reason</th>", card)
+        self.assertIn('class="reason-column" data-label="Reason">Too many requests</td>', card)
+        self.assertIn('class="reason-column" data-label="Reason">Too many errors</td>', card)
 
     def test_read_only_lists_them_without_boxes(self) -> None:
         page = self.writing_client(writes=False).get("/proxies/edge-demo/public-web")

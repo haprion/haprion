@@ -1161,9 +1161,14 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 /* The object page's Blocked addresses card (B271): the same box and density,
    the address wide enough for IPv6, the time narrow and the nodes the rest. */
 .blocked-table th.select-column, .blocked-table td.select-column { width: 44px; padding-left: 18px; padding-right: 0; }
-.blocked-table th.address-column, .blocked-table td.address-column { width: 320px; }
+.blocked-table th.address-column, .blocked-table td.address-column { width: 290px; }
 .blocked-table.selectable-rows th.address-column, .blocked-table.selectable-rows td.address-column { padding-left: 8px; }
 .blocked-table .count-column { width: 130px; }
+/* Set by name, not by position as the node table does: with the select box
+   first every position is one along, and the reason and the nodes ran out of
+   cells meant for a state and a count. The nodes take what is left. */
+.blocked-table th.reason-column, .blocked-table td.reason-column { width: 190px; }
+.blocked-table th.nodes-column, .blocked-table td.nodes-column { width: auto; overflow: hidden; text-overflow: ellipsis; }
 .blocked-table.selectable-rows tbody tr { cursor: pointer; }
 .blocked-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .blocked-table tr.blocked-ending td { color: var(--muted); }

@@ -126,15 +126,15 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Blocked addresses</h3><p>{{ blocked.count }} blocked by dynamic blocking{% if blocked.more %}, {{ blocked.more }} not listed{% endif %}</p></div></div>
+    <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Blocked addresses</h3><p>{{ blocked.count }} blocked{% if blocked.more %}, {{ blocked.more }} not listed{% endif %}</p></div></div>
     {% if management_writes %}{% if cluster_busy %}{% if blocked_busy %}<div class="cluster-state">{{ busy_badge(blocked_busy, object.cluster) }}</div>{% endif %}{% else %}<div class="action-buttons"><button class="secondary-button" type="submit">Unblock</button></div>{% endif %}{% endif %}
   </header>
   {% if blocked_notice %}{{ queue_notice(blocked_notice, blocked_notice_tone) }}{% elif blocked_missed %}<p class="preview-notice form-problem">{{ blocked_missed }} <a href="/jobs">See Jobs</a></p>{% endif %}
   <div class="table-scroll"><table class="node-table blocked-table{% if management_writes %} selectable-rows" data-select-rows{% else %}"{% endif %}>
-    <thead><tr>{% if management_writes %}<th class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}<th class="address-column">Address</th><th class="count-column">Time left</th><th>Reason</th><th>Nodes</th></tr></thead>
+    <thead><tr>{% if management_writes %}<th class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}<th class="address-column">Address</th><th class="count-column">Time left</th><th class="reason-column">Reason</th><th class="nodes-column">Nodes</th></tr></thead>
     <tbody>
       {% for row in blocked.addresses %}
-      <tr{% if row.ending %} class="blocked-ending" title="The time ran out; the next reading says whether the block is gone"{% endif %}>{% if management_writes %}<td class="select-column" data-label="Select"><label class="select-box"><input type="checkbox" name="address" value="{{ row.address }}" aria-label="Select {{ row.address }}"{% if row.address in blocked_held %} checked disabled{% endif %}></label></td>{% endif %}<td class="address-column" data-label="Address"><strong>{{ row.address }}</strong></td><td data-label="Time left">{{ 'Ending…' if row.ending else time_left(row.until) }}</td><td data-label="Reason">{{ row.reason_text or '—' }}</td><td data-label="Nodes">{{ row.nodes | join(', ') }}</td></tr>
+      <tr{% if row.ending %} class="blocked-ending" title="The time ran out; the next reading says whether the block is gone"{% endif %}>{% if management_writes %}<td class="select-column" data-label="Select"><label class="select-box"><input type="checkbox" name="address" value="{{ row.address }}" aria-label="Select {{ row.address }}"{% if row.address in blocked_held %} checked disabled{% endif %}></label></td>{% endif %}<td class="address-column" data-label="Address"><strong>{{ row.address }}</strong></td><td data-label="Time left">{{ 'Ending…' if row.ending else time_left(row.until) }}</td><td class="reason-column" data-label="Reason">{{ row.reason_text or '—' }}</td><td class="nodes-column" data-label="Nodes">{{ row.nodes | join(', ') }}</td></tr>
       {% endfor %}
     </tbody>
   </table></div>

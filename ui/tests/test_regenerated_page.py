@@ -104,14 +104,14 @@ class ThePage(LoginTestCase):
         self.assertNotIn("Publish &amp; deploy", text)
         self.assertNotIn('method="post"', text.split("<main", 1)[1])
 
-    def test_a_reader_sees_what_would_change_but_not_the_files_nor_the_form(self) -> None:
-        """The generated files carry what an object page keeps from a reader (review 26-10-22, 5-3)."""
+    def test_a_reader_sees_what_would_change_and_the_files_but_not_the_form(self) -> None:
+        """A reader reads what an admin reads, a version's diff included, and changes nothing."""
 
         text = self.page(changed(), role="reader").text
 
         self.assertIn("Publishing again would change what alpha runs", text)
         self.assertIn("<strong>shop</strong>", text)
-        self.assertNotIn("option new", text)
+        self.assertIn("option new", text)
         self.assertNotIn("Publish &amp; deploy", text)
 
     def test_versions_saved_after_the_published_one_are_said_to_come_along(self) -> None:

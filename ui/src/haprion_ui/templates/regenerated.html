@@ -35,7 +35,7 @@
   </tbody></table></div>
   {% endif %}
   {% if ahead %}<p class="table-note">Publishing also carries the {{ ahead }} version{{ '' if ahead == 1 else 's' }} saved after the published one.</p>{% endif %}
-  {% if role == 'admin' and view.changes and view.changes.files %}
+  {% if view.changes and view.changes.files %}
   <section class="version-changes" aria-label="Changes in {{ view.cluster }} when published again">
     <header class="version-changes-head"><h2>Changes</h2><p><span>{{ view.changes.files | length }} file{{ '' if view.changes.files | length == 1 else 's' }} · <span class="diff-added">+{{ view.changes.added }}</span> <span class="diff-removed">−{{ view.changes.removed }}</span></span></p></header>
     {% set changes = view.changes %}

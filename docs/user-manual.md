@@ -145,7 +145,11 @@ rule set 4.25.1 → 4.25.2*. Open the row's **Versions** button: the page lists 
 that differ and the files, line by line. **Publish & deploy** there publishes only the regenerated
 configuration, with the country networks the published version carries, and deploys it. Nothing happens until you choose it, so the traffic is reloaded when you
 want it. If versions were saved after the published one, publishing carries them too, and the page says
-so. A reader sees the same page without the button. Nothing is shown when a publish would change
+so. While changes are saved and waiting, the page offers no button: publishing those changes makes the
+configuration again in the same version. The publish makes its own checks (the ports the nodes hold, and
+HAProxy's own check), so it can still refuse; a refusal for a certificate that does not cover a name says
+to publish from a terminal with `--allow-certificate-mismatch`. When the reading itself failed, the page says
+why. A reader sees the same page without the button. Nothing is shown when a publish would change
 nothing, or when nothing is published yet. When the installed release cannot generate the published
 configuration, a row of its own says so with the reason, and a publish would be refused the same way.
 For troubleshooting, `haprion-config-status -c <cluster> --diff` prints the same difference.

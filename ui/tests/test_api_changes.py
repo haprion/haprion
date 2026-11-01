@@ -868,7 +868,8 @@ class HonouringTheSwitches(ChangesTestCase):
         message = self.refused(
             self.send("PUT", "/clusters/alpha/objects/shop", body=self.WAF), 400, "bad_input"
         )
-        self.assertIn("The WAF engine is not installed on", message)
+        self.assertIn("has not been read yet", message)
+        self.assertNotIn("manager", message)
         self.refused(
             self.send("POST", "/clusters/alpha/objects", body=self.WAF.replace("shop", "console")),
             400,
@@ -895,6 +896,22 @@ class HonouringTheSwitches(ChangesTestCase):
             mock.patch("haprion_ui.db.cluster_objects", return_value=[installed]),
             mock.patch("haprion_ui.db.cluster_statuses", return_value=[status]),
         ):
+            response = self.send("PUT", "/clusters/alpha/objects/shop", body=self.WAF)
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def test_a_saved_change_that_turned_the_engine_off_may_be_set_back_to_the_published(
+        self,
+    ) -> None:
+        self.off("waf_engine")
+        self.rows = [saved_row(yaml=SHOP)]
+        stored_with = replace(
+            OBJECTS,
+            result=dict(
+                OBJECTS.result,
+                objects=[dict(OBJECTS.result["objects"][0], document=self.WAF)],
+            ),
+        )
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=[stored_with]):
             response = self.send("PUT", "/clusters/alpha/objects/shop", body=self.WAF)
         self.assertEqual(response.status_code, 200, response.text)
 

@@ -1038,10 +1038,10 @@ def editor_submit(
     # switch is on (B231). The form says so; a hand-made post is refused here,
     # with the form as sent.
     #
-    stands = next(
-        (row.yaml for row in (work.draft, work.saved) if row is not None and not row.deleted),
+    stands = [
+        *(row.yaml for row in (work.draft, work.saved) if row is not None and not row.deleted),
         shown.document if shown else None,
-    )
+    ]
     locked = waf.start_refusal(
         object_id,
         result.document,

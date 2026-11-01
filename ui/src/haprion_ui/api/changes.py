@@ -205,15 +205,23 @@ def _read(name: str, text: str | None) -> dict[str, Any]:
 
 
 def held_to_switches(
-    request: Request, cluster: str, name: str, document: str, base: str | None
+    request: Request,
+    cluster: str,
+    name: str,
+    document: str,
+    saved: str | None,
+    stored: str | None,
 ) -> None:
     """A document the switches would not have the page write is a `400`, as it is on the page.
 
     The page offers neither the advanced text nor the WAF engine while its
     switch is off: what the object already has stays, and cannot be changed or
-    started. `base` is the object as it stands - the saved change, else the
-    published one, else None for a new object.
+    started. The object as it stands is the saved change, else the published
+    one; both are None for a new object, and either one inspecting means the
+    object is not starting the engine.
     """
+
+    base = saved if saved is not None else stored
 
     with request.app.state.pool.connection() as connection:
         features.read_in(db.feature_switches(connection))
@@ -228,7 +236,7 @@ def held_to_switches(
     refusal = waf.start_refusal(
         name,
         document,
-        base,
+        (saved, stored),
         cluster=cluster,
         offered=features.is_on(features.WAF_ENGINE),
         where=waf.engine(
@@ -364,7 +372,7 @@ def object_create(
     in_scope(caller, cluster, name)
     state = _state(request, cluster)
     document, preview = checked_document(state, name, text)
-    held_to_switches(request, cluster, name, document, None)
+    held_to_switches(request, cluster, name, document, None, None)
     with request.app.state.pool.connection() as connection:
         work = settled_work(connection, cluster, name, state_reading(state))
     if any(view.name == name for view in state.stored):
@@ -481,11 +489,8 @@ def object_replace(
         cluster,
         name,
         document,
-        saved.yaml
-        if saved is not None and not saved.deleted
-        else stored.document
-        if stored
-        else None,
+        saved.yaml if saved is not None and not saved.deleted else None,
+        stored.document if stored else None,
     )
     check = _check(request, preview, name, text)
     if work.draft is not None:

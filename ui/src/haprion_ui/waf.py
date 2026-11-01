@@ -117,37 +117,50 @@ class Engine:
     rules: str | None
     missing: Mapping[str, tuple[str, ...]]
     """Per cluster, the nodes whose status says no engine."""
+    read: bool = True
+    """Whether the manager's reading of the engine is there at all (B231)."""
 
     def unavailable(self, cluster: str) -> str:
         """Why an object on this cluster cannot be given the engine; empty when it can."""
 
         places = list(self.missing.get(cluster, ()))
-        if self.engine is None or self.rules is None:
+        if self.read and (self.engine is None or self.rules is None):
             places.append("the manager")
+        unread = (
+            ""
+            if self.read
+            else "The installed WAF engine has not been read yet; try again in a minute."
+        )
         if not places:
-            return ""
+            return unread
         joined = places[0] if len(places) == 1 else f"{', '.join(places[:-1])} and {places[-1]}"
-        return f"The WAF engine is not installed on {joined}."
+        return " ".join(
+            part for part in (f"The WAF engine is not installed on {joined}.", unread) if part
+        )
 
     def summary(self) -> str:
         """The Features row: the versions, or where the engine is missing."""
 
         places = sorted({node for nodes in self.missing.values() for node in nodes})
-        if self.engine is None or self.rules is None:
+        if self.read and (self.engine is None or self.rules is None):
             places.append("the manager")
         if places:
             joined = places[0] if len(places) == 1 else f"{', '.join(places[:-1])} and {places[-1]}"
             return f"Not installed on {joined}"
+        if not self.read:
+            return "Not read yet"
         return f"Engine {self.engine} · CRS {self.rules}"
 
 
 def engine(object_rows: Iterable[Any], status_rows: Iterable[Any]) -> Engine:
     versions: Mapping[str, Any] = {}
+    read = False
     for row in object_rows:
         result = row.result if isinstance(row.result, Mapping) else {}
         found = result.get("waf")
         if isinstance(found, Mapping):
             versions = found
+            read = True
             break
     missing: dict[str, tuple[str, ...]] = {}
     for row in status_rows:
@@ -171,6 +184,7 @@ def engine(object_rows: Iterable[Any], status_rows: Iterable[Any]) -> Engine:
         engine=engine_version if isinstance(engine_version, str) else None,
         rules=rules_version if isinstance(rules_version, str) else None,
         missing=missing,
+        read=read,
     )
 
 
@@ -185,10 +199,22 @@ def inspects(name: str, text: str | None) -> bool:
         return False
 
 
+def inspects_as_written(text: str | None) -> bool:
+    """Whether this document inspects, read under the name it carries itself."""
+
+    if text is None:
+        return False
+    try:
+        written = read_document("object", text.encode()).get("name")
+    except (ModelError, UnicodeError):
+        return False
+    return isinstance(written, str) and inspects(written, text)
+
+
 def start_refusal(
     name: str,
     document: str,
-    base: str | None,
+    stands: Iterable[str | None],
     *,
     cluster: str,
     offered: bool,
@@ -199,10 +225,13 @@ def start_refusal(
     One rule for the page's save and the API: an object that does not inspect
     cannot be given the engine while its switch is off or the engine is missing
     from the manager or a node of the cluster. One that already inspects keeps,
-    changes or turns off its settings. `base` is the object as it stands.
+    changes or turns off its settings. `stands` are the documents the object
+    has - its draft, its saved change, its published one: if any of them
+    inspects, the object is not starting. Each is read under its own name, as
+    a rename makes the old one differ from `name`.
     """
 
-    if not inspects(name, document) or inspects(name, base):
+    if not inspects(name, document) or any(inspects_as_written(text) for text in stands):
         return ""
     if not offered:
         return (

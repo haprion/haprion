@@ -12,10 +12,10 @@ from unittest import mock
 import yaml
 
 from haprion_ui import waf
-from haprion_ui.db import ClusterObjects, FeatureSwitch
+from haprion_ui.db import ClusterObjects, FeatureSwitch, ProxyDraft
 from haprion_ui.form_groups import form_groups
 from haprion_ui.preview import DEFAULTS, build_document, form_from_document
-from tests.test_editor_page import OBJECTS, OBSERVED, SHOP, EditorTestCase
+from tests.test_editor_page import COMMIT, OBJECTS, OBSERVED, SHOP, EditorTestCase
 
 EXCEPTION = {
     "rule": 942100,
@@ -174,8 +174,14 @@ class WhereTheEngineIs(unittest.TestCase):
         )
         self.assertEqual(
             waf.engine([], statuses).unavailable("beta"),
-            "The WAF engine is not installed on lb-01, lb-02 and the manager.",
+            "The WAF engine is not installed on lb-01 and lb-02. "
+            "The installed WAF engine has not been read yet; try again in a minute.",
         )
+        self.assertEqual(
+            waf.engine([], []).unavailable("beta"),
+            "The installed WAF engine has not been read yet; try again in a minute.",
+        )
+        self.assertEqual(waf.engine([], []).summary(), "Not read yet")
 
 
 def objects_with(document: str, versions: dict[str, Any] | None) -> ClusterObjects:
@@ -287,12 +293,17 @@ class TheGroupOnTheEditor(EditorTestCase):
         self.assertIn("Findings and exceptions in WAF logs", text)
 
     def post(
-        self, document: str = SHOP, *, statuses: list[Any] | None = None, **fields: Any
+        self,
+        document: str = SHOP,
+        *,
+        statuses: list[Any] | None = None,
+        versions: dict[str, Any] | None = VERSIONS,
+        **fields: Any,
     ) -> Any:
         client = self.editor()
         with (
             mock.patch(
-                "haprion_ui.db.cluster_objects", return_value=[objects_with(document, VERSIONS)]
+                "haprion_ui.db.cluster_objects", return_value=[objects_with(document, versions)]
             ),
             mock.patch(
                 "haprion_ui.db.cluster_statuses",
@@ -302,10 +313,7 @@ class TheGroupOnTheEditor(EditorTestCase):
             return self.submit(
                 client,
                 "/proxies/alpha/shop/edit",
-                action="save",
-                waf_engine_error="allow",
-                waf_paranoia="1",
-                **fields,
+                **{"action": "save", "waf_engine_error": "allow", "waf_paranoia": "1", **fields},
             )
 
     def test_a_hand_made_post_cannot_start_the_engine_where_a_node_lacks_it(self) -> None:
@@ -332,6 +340,42 @@ class TheGroupOnTheEditor(EditorTestCase):
                 response = self.post(using, statuses=[lacking], waf_mode=mode)
                 self.assertEqual(response.status_code, 303, response.text)
         self.assertEqual(len(self.saved), 2)
+
+    def test_renaming_an_object_that_uses_the_engine_is_saved_with_the_switch_off(self) -> None:
+        # The old document was read under the new name, failed, and counted as not inspecting.
+        self.switch_off()
+        lacking = status_of(node("node-a", None))
+        response = self.post(
+            stored("waf:\n  mode: log\n"), statuses=[lacking], name="shop2", waf_mode="log"
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(len(self.saved), 1)
+
+    def test_a_draft_that_turned_the_engine_off_may_be_set_back_to_the_published_state(
+        self,
+    ) -> None:
+        self.switch_off()
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="shop",
+            yaml=SHOP,
+            base_version=12,
+            base_hash=COMMIT,
+            revision=3,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+        response = self.post(
+            stored("waf:\n  mode: log\n"), waf_mode="log", expected_revision="3", action="draft"
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+
+    def test_an_unread_engine_is_not_said_to_be_missing_from_the_manager(self) -> None:
+        response = self.post(statuses=[STATUS], versions=None, waf_mode="block")
+        self.assertIn("has not been read yet", response.text)
+        self.assertNotIn("not installed on the manager", response.text)
+        self.assertEqual(self.saved, [])
 
     def test_the_exceptions_are_listed_and_the_unpublished_ones_marked(self) -> None:
         # 26-10-03: see which exceptions Save and publish sends, not a count.

@@ -2115,13 +2115,18 @@ def _abuse_rules(
     if protection is None:
         return []
     window = protection.window
-    stored = ["http_req_rate", "http_err_rate"]
+    #
+    # Errors are counted by hand from the servers' answers (`gpc0`, below), not
+    # with `http_err_rate`: that counts HAProxy's own 429 too, so a client over
+    # the error limit that kept sending stayed refused by its own refusals, even
+    # when the servers gave it no errors any more (B425, measured on 3.4.7).
     #
     # A rule carries one condition, so the exception is written as a negated
     # ACL alongside the counter rather than as a second `unless` - which parses
     # as an ACL named "unless" and is refused by HAProxy, measured here.
     #
-    lines = [_stick_table(window, ",".join(f"{name}({window})" for name in stored), peers)]
+    stored = f"http_req_rate({window}),gpc_rate(1,{window})"
+    lines = [_stick_table(window, stored, peers)]
     if trusted:
         #
         # Two rules with opposite conditions rather than one: HAProxy takes the
@@ -2138,10 +2143,19 @@ def _abuse_rules(
 
     for fetch, limit in (
         ("sc_http_req_rate(0)", protection.max_requests),
-        ("sc_http_err_rate(0)", protection.max_errors),
+        ("sc_gpc_rate(0,0)", protection.max_errors),
     ):
         if limit is not None:
             lines.append(f"    http-request deny deny_status 429 if {{ {fetch} gt {limit} }}")
+    if protection.max_errors is not None:
+        #
+        # An error is a 4xx the server gave. `http-response` does not run for an
+        # answer HAProxy gives itself - this 429, the dynamic block's refusal,
+        # the WAF's deny, a 503 with no server - so a refusal cannot sustain
+        # itself. Measured on 3.4.7 in a frontend rule. Nothing is counted for
+        # a request that is not tracked (a trusted proxy with no header).
+        #
+        lines.append("    http-response sc-inc-gpc(0,0) if { status 400:499 }")
     return lines
 
 

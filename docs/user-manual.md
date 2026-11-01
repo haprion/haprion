@@ -5982,8 +5982,12 @@ Two VIP names may not share one address.
   keeps its chain, and the visitor's address is read from the last `X-Forwarded-For` element. A range
   covering a whole address family (`/0`) is refused.
 - **`abuse_protection`** limits how much one source address may do within `window` (a number with `s` or
-  `m`, `10s` by default). `max_requests` and `max_errors` count HTTP requests and errors and answer 429
-  above the limit. `max_new_connections` counts new connections on TCP objects and rejects them above the
+  `m`, `10s` by default). `max_requests` counts HTTP requests and `max_errors` counts errors; both answer 429
+  above the limit. An error is a 4xx answer the servers give, as in
+  [dynamic blocking](#dynamic-blocking); answers HAProxy gives itself, such as this 429, a
+  block's refusal or a 503 without a server, are not counted, so a client is let through again once the
+  servers stop giving it errors, even if it keeps sending. Requests are counted whether they were
+  served or refused. `max_new_connections` counts new connections on TCP objects and rejects them above the
   limit. At least one of the three must be set. Behind a trusted proxy, the forwarded address is counted
   instead of the proxy's.
 - **`vrrp_router_id`** (1-255) is given to a cluster when it is created in the interface: the lowest ID no

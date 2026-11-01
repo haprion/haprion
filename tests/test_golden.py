@@ -971,6 +971,33 @@ class WhoTheBrakeHoldsResponsible(unittest.TestCase):
         self.assertIn("X-Forwarded-For,-1", self.frontends(("198.51.100.0/24",)))
 
 
+class WhatTheBrakeCountsAsAnError(unittest.TestCase):
+    """Errors are the servers' 4xx answers, never HAProxy's own refusals (B425)."""
+
+    def frontends(self, protection: AbuseProtection) -> str:
+        return generate(
+            [load_proxy("shop", MINIMAL)],
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+            abuse_protection=protection,
+        ).configuration["1000-frontends.cfg"]
+
+    def test_errors_are_counted_from_the_servers_answers(self) -> None:
+        text = self.frontends(AbuseProtection(window="10s", max_errors=20))
+        lines = [line.strip() for line in text.splitlines()]
+
+        self.assertIn("store http_req_rate(10s),gpc_rate(1,10s)", text)
+        self.assertIn("http-response sc-inc-gpc(0,0) if { status 400:499 }", lines)
+        self.assertIn("http-request deny deny_status 429 if { sc_gpc_rate(0,0) gt 20 }", lines)
+        self.assertNotIn("http_err_rate", text)
+
+    def test_without_an_error_limit_nothing_counts_errors(self) -> None:
+        text = self.frontends(AbuseProtection(window="10s", max_requests=100))
+
+        self.assertNotIn("sc-inc-gpc", text)
+        self.assertNotIn("http_err_rate", text)
+
+
 class WhatTheBackendIsToldAboutTheVisitor(unittest.TestCase):
     """The forwarded headers, and who is allowed to have written them already."""
 

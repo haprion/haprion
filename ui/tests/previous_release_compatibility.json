@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "requires": {
+    "database_baseline": "0100",
+    "database_head": "0107",
+    "rollback_safe_from": "0100",
+    "database_revisions": [
+      "0107"
+    ],
+    "engine_api": 38,
+    "node_api": 1,
+    "poller_helpers": [
+      "haprion-status-helper",
+      "haprion-inventory-helper",
+      "haprion-readings-helper",
+      "haprion-cluster-list-helper"
+    ],
+    "worker_helpers": [
+      "haprion-deploy-helper",
+      "haprion-cert-deploy-helper",
+      "haprion-revert-helper",
+      "haprion-changes-publish-helper",
+      "haprion-cert-issue-helper",
+      "haprion-cert-publish-helper",
+      "haprion-cert-target-helper",
+      "haprion-dns-profile-apply-helper",
+      "haprion-cert-delete-helper",
+      "haprion-ndes-profile-apply-helper",
+      "haprion-cert-scep-helper",
+      "haprion-cert-import-helper",
+      "haprion-cert-request-helper",
+      "haprion-server-state-helper",
+      "haprion-block-client-helper"
+    ],
+    "socket_helpers": {
+      "haprion-cert-receiver-helper": "/run/haprion/cert-receiver.sock",
+      "haprion-backup-job-helper": "/run/haprion/backup-job.sock",
+      "haprion-node-restore-helper": "/run/haprion/node-restore.sock",
+      "haprion-tls-helper": "/run/haprion/ui-tls.sock",
+      "haprion-node-helper": "/run/haprion/cluster-node.sock",
+      "haprion-resolve-helper": "/run/haprion/resolve.sock",
+      "haprion-cert-export-helper": "/run/haprion/cert-export.sock",
+      "haprion-ndes-server-helper": "/run/haprion/ndes-server.sock"
+    }
+  }
+}

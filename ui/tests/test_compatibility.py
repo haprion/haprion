@@ -7,6 +7,7 @@ import io
 import json
 import re
 import tempfile
+import tomllib
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -29,6 +30,9 @@ from haprion_ui import compatibility
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "ui/src/haprion_ui/compatibility.json"
+# The release before this one, as it shipped (v0.99.9): the gate's input. Replace it with
+# each release's own file when the next one is made.
+PREVIOUS = ROOT / "ui/tests/previous_release_compatibility.json"
 
 
 class TheSudoRulesAfterARollback(unittest.TestCase):
@@ -93,6 +97,93 @@ class TheSudoRulesAfterARollback(unittest.TestCase):
                         (*rules, extra), rules, "svc-app", Path("/opt/haprion")
                     )
                 )
+
+
+class TheHelpersOfAReleaseThatWasTakenOut(unittest.TestCase):
+    """B419, 26-11-01: after a rollback the newest release weighs the older release's
+    requirements against the CLI the rollback leaves alone. A helper the CLI took out
+    is said, and is no failure; one that is missing for another reason still is."""
+
+    def requirements(self) -> compatibility.Requirements:
+        return compatibility.load_requirements(PREVIOUS)
+
+    def test_a_retired_helper_in_the_helper_check_is_a_warning(self) -> None:
+        requirements = replace(
+            compatibility.load_requirements(MANIFEST),
+            worker_helpers=("haprion-deploy-helper", "haprion-block-client-helper"),
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            cli = Path(raw)
+            (cli / "bin").mkdir()
+            (cli / "bin/haprion-deploy-helper").write_text("#!/bin/sh\n")
+            (cli / "bin/haprion-deploy-helper").chmod(0o755)
+            report = compatibility.Report()
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                compatibility.check_cli_helpers(
+                    report,
+                    replace(requirements, poller_helpers=(), socket_helpers={}),
+                    {"haprion-deploy-helper"},
+                    cli,
+                    "old",
+                )
+        self.assertEqual(report.failures, 0)
+        self.assertIn("WARN", output.getvalue())
+        self.assertIn("haprion-block-client-helper", output.getvalue())
+
+    def test_another_missing_helper_still_fails(self) -> None:
+        requirements = replace(
+            compatibility.load_requirements(MANIFEST),
+            worker_helpers=("haprion-gone-helper", "haprion-block-client-helper"),
+            poller_helpers=(),
+            socket_helpers={},
+        )
+        report = compatibility.Report()
+        with contextlib.redirect_stdout(io.StringIO()):
+            compatibility.check_cli_helpers(report, requirements, set(), Path("/nonexistent"), "old")
+        self.assertEqual(report.failures, 1)
+
+    def test_the_sudoers_of_the_newer_package_pass_with_a_warning(self) -> None:
+        helpers = ("haprion-deploy-helper", "haprion-block-client-helper")
+        rules = compatibility.expected_sudo_rules(
+            "svc-app", helpers[:1], Path("/opt/haprion")
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "rules").write_text("\n".join(rules) + "\n")
+            status = SimpleNamespace(st_uid=0, st_mode=0o100440)
+            report = compatibility.Report()
+            output = io.StringIO()
+            with (
+                mock.patch.object(Path, "stat", return_value=status),
+                contextlib.redirect_stdout(output),
+            ):
+                compatibility.check_sudoers(
+                    report,
+                    root=Path(raw),
+                    name="rules",
+                    user="svc-app",
+                    helpers=helpers,
+                    cli_root=Path("/opt/haprion"),
+                    label="worker sudoers",
+                )
+        self.assertEqual((report.failures, output.getvalue().split()[0]), (0, "WARN"))
+
+    def test_the_previous_release_s_requirements_are_met_by_this_cli_or_retired(self) -> None:
+        """The gate: a helper removed here that the release before still requires must be
+        on the list. The previous release's file is a fixture, as CI has no tags."""
+
+        scripts = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["scripts"]
+        requirements = self.requirements()
+        needed = set(
+            requirements.worker_helpers
+            + requirements.poller_helpers
+            + tuple(requirements.socket_helpers)
+        )
+        self.assertEqual(sorted(needed - set(scripts) - set(compatibility.RETIRED_HELPERS)), [])
+
+    def test_a_retired_helper_is_really_gone_from_the_cli(self) -> None:
+        scripts = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["scripts"]
+        self.assertEqual(sorted(set(compatibility.RETIRED_HELPERS) & set(scripts)), [])
 
 
 class CompatibilityMetadataTests(unittest.TestCase):

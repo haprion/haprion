@@ -41,6 +41,25 @@ PSQL = "/usr/bin/psql"
 SYSTEMCTL = "/usr/bin/systemctl"
 
 
+#
+# Helpers a release no longer carries that the release before it still names as
+# required (B419, 26-11-01). The check always runs as the newest release, and
+# after a rollback it weighs the older release's requirements against the
+# installed CLI, which a rollback leaves alone: a helper taken out is therefore
+# a missing one for the release that still wants it. It is a warning here - what
+# needs the helper does not work on that release - not a failure of a platform
+# that is as good as the newest CLI can make it. The test that holds the
+# previous release's requirements against this CLI reads this list too.
+#
+RETIRED_HELPERS = {"haprion-block-client-helper": "blocking over ssh, removed in 0.99.10"}
+
+
+def retired_in(helpers: Iterable[str]) -> dict[str, str]:
+    """The retired helpers among `helpers`, with why each is gone."""
+
+    return {name: RETIRED_HELPERS[name] for name in helpers if name in RETIRED_HELPERS}
+
+
 class CompatibilityError(ValueError):
     """Installed metadata cannot be used to make a compatibility decision."""
 
@@ -421,11 +440,19 @@ def check_sudoers(
     except OSError as exc:
         report.fail(label, f"cannot read {path}: {exc}")
         return
-    expected = expected_sudo_rules(user, helpers, cli_root)
+    retired = retired_in(helpers)
+    expected = expected_sudo_rules(user, tuple(h for h in helpers if h not in retired), cli_root)
     secure = status.st_uid == 0 and stat.S_IMODE(status.st_mode) == 0o440
     extra = extra_helper_rules(actual, expected, user, cli_root)
     if sorted(actual) == sorted(expected) and len(actual) == len(expected) and secure:
-        report.pass_(label, labels.counted(len(expected), "exact helper rule"))
+        if retired:
+            report.warn(
+                label,
+                f"{labels.counted(len(expected), 'exact helper rule')}; none for what this "
+                f"release still names and the package retired ({', '.join(sorted(retired))})",
+            )
+        else:
+            report.pass_(label, labels.counted(len(expected), "exact helper rule"))
     elif extra is not None and secure:
         report.warn(
             label,
@@ -1054,6 +1081,43 @@ def check_schema_past_head(
         report.fail("schema revision", f"{revision}; {problem}")
 
 
+def check_cli_helpers(
+    report: Report,
+    requirements: Requirements,
+    installed_helpers: set[str],
+    cli_release: Path,
+    ui_name: str,
+) -> None:
+    """Every helper the UI release needs is in the CLI release, and runs; a retired one is said."""
+
+    required_helpers = set(
+        requirements.worker_helpers
+        + requirements.poller_helpers
+        + tuple(requirements.socket_helpers)
+    )
+    retired = retired_in(required_helpers)
+    for name, why in sorted(retired.items()):
+        report.warn(
+            "CLI helpers",
+            f"retired: {name} ({why}); what needs it does not work on UI release {ui_name}",
+        )
+    required_helpers -= set(retired)
+    missing = sorted(required_helpers - installed_helpers)
+    if missing:
+        report.fail("CLI helpers", f"missing: {', '.join(missing)}")
+        return
+    missing_files = sorted(
+        helper
+        for helper in required_helpers
+        if not (cli_release / "bin" / helper).is_file()
+        or not os.access(cli_release / "bin" / helper, os.X_OK)
+    )
+    if missing_files:
+        report.fail("CLI helpers", f"not executable: {', '.join(missing_files)}")
+    else:
+        report.pass_("CLI helpers", f"{len(required_helpers)} required helpers installed")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if os.geteuid() != 0:
@@ -1090,26 +1154,13 @@ def main(argv: list[str] | None = None) -> int:
             f"{cli_release.name}, engine API {installed_engine_api}; "
             f"requires {requirements.engine_api}",
         )
-    installed_helpers = installed_entry_points(installed_cli)
-    required_helpers = set(
-        requirements.worker_helpers
-        + requirements.poller_helpers
-        + tuple(requirements.socket_helpers)
+    check_cli_helpers(
+        report,
+        requirements,
+        installed_entry_points(installed_cli),
+        cli_release,
+        ui_release.name,
     )
-    missing = sorted(required_helpers - installed_helpers)
-    if missing:
-        report.fail("CLI helpers", f"missing: {', '.join(missing)}")
-    else:
-        missing_files = sorted(
-            helper
-            for helper in required_helpers
-            if not (cli_release / "bin" / helper).is_file()
-            or not os.access(cli_release / "bin" / helper, os.X_OK)
-        )
-        if missing_files:
-            report.fail("CLI helpers", f"not executable: {', '.join(missing_files)}")
-        else:
-            report.pass_("CLI helpers", f"{len(required_helpers)} required helpers installed")
 
     if args.upgrade_from_current and not args.ui_release:
         print("ERROR: --upgrade-from-current requires --ui-release", file=sys.stderr)

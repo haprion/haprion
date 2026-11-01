@@ -208,6 +208,37 @@ class TheComparison(unittest.TestCase):
         self.assertEqual(result["outcome"], "refused")
         self.assertIn("does not answer for", result["message"])
 
+    def test_a_version_published_past_the_coverage_check_is_unchanged_not_refused(self) -> None:
+        """26-11-01: `--allow-certificate-mismatch` published it; nothing would change now."""
+
+        on = dataclasses.replace(cluster(), certificate_ids=("example.com",))
+        base = {"managed/network.yaml": NETWORK}
+        for number in range(2):
+            base[f"managed/proxies/site{number:02d}.yaml"] = site(number, "")
+        base["managed/proxies/site00.yaml"] = base["managed/proxies/site00.yaml"].replace(
+            b"protocol: http\n", b"protocol: https\n  certificate: example.com\n"
+        )
+        rules = rule_set()
+        generated = managed_files(
+            base,
+            network_document=NETWORK,
+            cluster=on,
+            rule_set=lambda: rules,
+            country_reader=sweden("2026-10-01", "192.0.2.0/25"),
+        )
+        files = {
+            **base,
+            **generated,
+            "core/haproxy.cfg": b"global\n",
+            "manual/reservations.yaml": b"{}\n",
+        }
+
+        result = regenerated(
+            files, on=on, rules=rules, certificate_sans={"example.com": ("other.example.org",)}
+        )
+
+        self.assertEqual((result["outcome"], result["message"]), ("unchanged", None))
+
     def test_a_newer_rule_set_does_change_it_and_says_which(self) -> None:
         files = published_tree()
         newer = rule_set("9.9.10", b"# rules, newer\n")

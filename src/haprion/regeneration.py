@@ -349,7 +349,7 @@ def regenerate(
         except crs.RuleSetError as exc:
             raise RegenerationError(str(exc)) from exc
 
-    try:
+    def candidate_tree(sans: Mapping[str, Sequence[str]] | None) -> dict[str, bytes]:
         managed = managed_files(
             files,
             network_document=document,
@@ -357,13 +357,28 @@ def regenerate(
             country_reader=geo.tree_reader(files, location_database or geo.location_database()),
             rule_set=rules,
             node_addresses=node_addresses,
-            certificate_sans=certificate_sans,
+            certificate_sans=sans,
         )
         tree = {
             path: content for path, content in files.items() if not path.startswith(MANAGED_PREFIX)
         }
         tree.update(managed)
+        return tree
+
+    #
+    # Compared without the certificate coverage (26-11-01): the coverage only
+    # refuses, it never changes a byte, and a cluster published with
+    # `--allow-certificate-mismatch` has a hostname its certificate does not
+    # cover on purpose. Asked first, it read such a cluster as `refused` for
+    # ever, though a publish would change nothing. It is asked below, once
+    # the candidate differs - which is when a publish would ask it.
+    #
+    try:
+        tree = candidate_tree(None)
         candidate = build_node_artifact(tree)
+        if candidate != published and certificate_sans is not None:
+            tree = candidate_tree(certificate_sans)
+            candidate = build_node_artifact(tree)
     except (ConfigError, LayoutError) as exc:
         result["outcome"] = REFUSED
         result["message"] = str(exc)[:MAX_MESSAGE]

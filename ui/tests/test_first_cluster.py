@@ -20,7 +20,7 @@ from unittest import mock
 
 from haprion import node_enrollment
 
-from haprion_ui import demo, first_cluster
+from haprion_ui import db, demo, first_cluster
 from haprion_ui.cluster_nodes import Creating
 from haprion_ui.jobs import InFlight
 from tests.test_busy_clusters import BadgeReading, held_job, workerless_job
@@ -240,6 +240,24 @@ class TheSteps(NodesPage, BadgeReading):
         )
         self.assertIn('value="Gamma"', page.text)
         self.assertIn(">Continue</button>", page.text)
+
+    def test_a_busy_cluster_draws_the_step_after_the_connection_is_given_back(self) -> None:
+        """Review 26-11-01: the busy step read on connections of its own while one was held."""
+
+        with (
+            mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy("edge-demo")),
+            mock.patch("haprion_ui.db.job_for_key", return_value=None),
+        ):
+            busy = self.post_to(
+                self.client_for(),
+                "/first-cluster/second-node",
+                cluster="edge-demo",
+                block=block("edge-demo", "edge-c"),
+                confirm="edge-c",
+            )
+
+        self.assertEqual(busy.status_code, 409, busy.text)
+        self.assertEqual(self.pool.nested, [])
 
     def test_the_second_node_is_add_node(self) -> None:
         client = self.client_for()

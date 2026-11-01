@@ -282,6 +282,24 @@ class AddingANode(NodesPage):
             asked.call_args.kwargs, {"operation": "cluster_node", "cluster": "edge-demo"}
         )
 
+    def test_a_busy_cluster_draws_the_page_after_the_connection_is_given_back(self) -> None:
+        """Review 26-11-01: the busy page read on connections of its own while one was held."""
+
+        with (
+            mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy("edge-demo")),
+            mock.patch("haprion_ui.db.job_for_key", return_value=None),
+        ):
+            busy = self.post_to(
+                self.client_for(),
+                "/settings/nodes/edge-demo/add",
+                block=block(),
+                host="lb-edge-c.example.com",
+                confirm="edge-c",
+            )
+
+        self.assertEqual(busy.status_code, 409, busy.text)
+        self.assertEqual(self.pool.nested, [])
+
     def test_the_name_typed_back_queues_the_block_and_the_host(self) -> None:
         response = self.post_to(
             self.client_for(),

@@ -347,6 +347,7 @@ def queue_node_job(
         )
     except operations.BadPayload as refused:
         return again(str(refused))
+    busy: str | None = None
     with request.app.state.pool.connection() as connection:
         try:
             job = db.queue_job(
@@ -365,7 +366,7 @@ def queue_node_job(
             if db.job_for_key(connection, key, operation=operation, cluster=cluster) is None:
                 if isinstance(refused, db.RequestConflict):
                     raise refused
-                return again(refusals.conflict_sentence(refused))
+                busy = refusals.conflict_sentence(refused)
         else:
             #
             # The audit row names the node and the action, never the block: the
@@ -388,6 +389,12 @@ def queue_node_job(
                 detail=detail,
             )
             connection.commit()
+    #
+    # The page is drawn here, after the connection is given back: it reads on
+    # connections of its own (review 26-11-01).
+    #
+    if busy is not None:
+        return again(busy)
     if back is not None:
         return RedirectResponse(back, status_code=303)
     #

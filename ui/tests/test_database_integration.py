@@ -5491,6 +5491,67 @@ class AccountsFromTheWeb(unittest.TestCase):
         self.assertNotIn("hunter", digest.lower())
         self.assertFalse(any("hunter" in name.lower() for name in stored))
 
+    def test_a_row_written_the_way_the_release_before_wrote_it_is_stored_without_the_name(
+        self,
+    ) -> None:
+        """0115: a rollback leaves the database at the head, and the old code writes the typed name."""
+
+        typed = "Hunter2-Pass"
+        with self.web_connection() as connection:
+            for name in ("carol", typed.lower()):
+                connection.execute(
+                    "insert into login_attempt (username_normalised, client_ip, succeeded) "
+                    "values (%s, '192.0.2.1', false)",
+                    (name,),
+                )
+            insert = "insert into audit_event (actor, action, detail) values (%s, %s, %s)"
+            connection.execute(insert, (typed.lower(), "login_failed", '{"probe": "0115"}'))
+            connection.execute(insert, ("CAROL", "login_failed", '{"probe": "0115"}'))
+            connection.execute(insert, ("hunter2-other", "settings_changed", '{"probe": "0115"}'))
+            connection.execute(insert, (None, "login_failed", '{"probe": "0115"}'))
+            connection.commit()
+        with self.connect() as connection:
+            attempts = [
+                name
+                for (name,) in connection.execute(
+                    "select username_normalised from login_attempt order by id"
+                )
+            ]
+            events = connection.execute(
+                "select actor, action, detail from audit_event"
+                " where detail->>'probe' = '0115' order by id"
+            ).fetchall()
+        self.assertEqual(attempts[0], "carol")
+        self.assertTrue(attempts[1].startswith(chr(31)))
+        self.assertNotIn("hunter2", attempts[1])
+        self.assertEqual(
+            events,
+            [
+                (None, "login_failed", {"probe": "0115", "unknown_user": True}),
+                ("CAROL", "login_failed", {"probe": "0115"}),
+                ("hunter2-other", "settings_changed", {"probe": "0115"}),
+                (None, "login_failed", {"probe": "0115"}),
+            ],
+        )
+
+    def test_a_row_the_current_code_writes_passes_the_insert_unchanged(self) -> None:
+        with self.web_connection() as connection:
+            db.record_login_attempt(
+                connection, username="Hunter2-Pass", client_ip="192.0.2.1", succeeded=False
+            )
+            digest = connection.execute("select throttle_name('Hunter2-Pass')").fetchone()
+            connection.execute(
+                "insert into login_attempt (username_normalised, client_ip, succeeded) "
+                "values (%s, '192.0.2.1', false)",
+                (digest[0] if digest else "",),
+            )
+            connection.commit()
+        with self.connect() as connection:
+            stored = connection.execute(
+                "select distinct username_normalised from login_attempt"
+            ).fetchall()
+        self.assertEqual(stored, [(digest[0] if digest else "",)])
+
     def test_the_web_cannot_read_the_key_the_digest_is_made_with(self) -> None:
         with self.web_connection() as connection:
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):

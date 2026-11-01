@@ -4486,17 +4486,17 @@ What a token can read:
 |---|---|
 | `/token` | The calling token: level, scope, end date |
 | `/clusters`, `/clusters/{cluster}` | Status: nodes, which holds the VIP, versions, what needs attention |
-| `/attention` | *Needs attention* as the dashboard lists it: each row's `kind`, `severity`, `cluster`, `subject`, `message`, `since` and `variant`. A token limited to some clusters gets those clusters' rows only, none of the installation's own (certificates, the poller, packages, tokens) |
+| `/attention` | *Needs attention* as the dashboard lists it: each row's `kind`, `severity`, `cluster`, `subject`, `message`, `since` and `variant`, with `generated_at` and `fresh`: `fresh` is false when a cluster's status has not been read within two polls (a limited token's own clusters), the sign that the manager has stopped reading and the list may be missing rows. A token limited to some clusters gets those clusters' rows only, none of the installation's own (certificates, the poller, packages, tokens) |
 | `/clusters/{cluster}/objects` | The objects, as *Proxies* lists them (`limit`, `offset`) |
 | `/clusters/{cluster}/objects/{name}` | One object. Its document, its servers' addresses and states, and why an object cannot be read, only for a *Write* token |
 | `/clusters/{cluster}/objects/{name}/history` | The cluster's versions, published or not (`limit`) |
 | `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now, with the time left. A *Block* token reads this too, for the proxies it may block on |
-| `/certificates` | The certificates, when they end and where they are (`limit`) |
-| `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`). Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read |
-| `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through |
-| `/jobs`, `/jobs/{job_id}` | Jobs and how they went (`cluster`, `state`, `limit`) |
+| `/certificates` | The certificates, when they end and where they are (`limit`). `registry` says what the list is: `read` (the registry), `unreadable` (the registry could not be read, or not yet: the list is what the clusters say they serve, `stale` is true and an empty list says nothing) or `none` (the installation declares no registry: the clusters' own lists). |
+| `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`, `before`). Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read. Both ends are included. When `truncated` is true, `next` is where the next page begins: pass it as `before`, with the same other parameters, and each request is listed once even where several share a time |
+| `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through, over the last `days` days (in the answer). The newest findings are given, and `truncated` says when older ones were left out. A *Read* token is given what is published; a *Write* token also what an admin has drafted |
+| `/jobs`, `/jobs/{job_id}` | Jobs and how they went (`cluster`, `state`, `limit`); a `cluster` that does not exist and has no jobs is a 404 |
 
-Times are ISO 8601 with their offset, and `from` and `to` take the same. A server's check is given as a
+Times are ISO 8601 with their offset, and `from` and `to` take the same. A time without an offset is read as UTC, not as the manager's own zone. A `+` in an offset must be URL-encoded as `%2B`, or it reaches the manager as a space and the call is refused; `curl --data-urlencode` does it. A time before 1970 or after year 9998 is refused. A query parameter a call does not take, such as `since` for `from`, is refused with `bad_input` naming it, never ignored. A server's check is given as a
 code in `check` (`up`, `down`, `no_check`, `standby`, `unknown`) beside the word the interface shows. The
 full description of the calls, generated from the code, is `/api/v1/openapi.json`, for any valid token.
 It describes each field as a code (a fixed set of values, listed there), as text (the interface's own words,
@@ -4637,19 +4637,25 @@ When a call is refused, `ok` is false and `error.code` says why:
 | 401 | `unauthorized` | No token, or one that is unknown, revoked, ended or called from elsewhere - one answer for all, the reason is in the manager's log |
 | 403 | `forbidden` | The token's level does not reach the call |
 | 404 | `not_found` | No such cluster, object or job - or one outside the token's scope |
-| 400 | `bad_input` | A parameter, header or body that is not valid, named in the message |
+| 400 | `bad_input` | A parameter, header or body that is not valid, named in the message. A query parameter the call does not take is refused the same way |
 | 409 | `conflict` | A change meets work in its way: the object exists, has a draft, was saved by somebody else meanwhile, the saved changes cannot be published as they are, or the version is the one published |
 | 409 | `nothing_to_publish` | Nothing is saved on the cluster to publish |
+| 409 | `cluster_busy` | Another job runs on the cluster; `Retry-After` says when to try again |
+| 409 | `idempotency_conflict` | The `Idempotency-Key` was used for another change |
+| 409 | `certificate_busy` | Another certificate job is pending or running; `Retry-After` says when to try again |
+| 409 | `already_exists` | A certificate with that name is in the registry |
+| 409 | `in_use` | A draft still names the certificate |
+| 409 | `cannot_renew` | The certificate cannot be renewed by a job now: one is running, the CA still holds a request, or it is renewed with a file |
+| 409 | `no_change` | The certificate is already as asked |
 | 403 | `writes_off` | Changes are switched off on this installation |
 | 405 | `method_not_allowed` | The path exists but not for that method |
 | 429 | `rate_limited` | Ten guesses within a minute - a token nobody issued, or a header that is not a token; the address waits a minute for anything that is not a valid token. A valid token is served meanwhile |
 | 429 | `busy` | Three API calls are already being answered, or the block service is; `Retry-After: 1`, try again at once |
-| 403 | `writes_off` | Changes are switched off on this installation |
 | 502 | `blocking_failed` | A block was asked for and no node took it |
 | 504 | `outcome_unknown` | The block service did not answer, so the block may or may not be placed |
 | 500 | `internal_error` | The call failed on the manager; the cause is in its log, not in the answer |
 | 503 | `database_unavailable` | The manager's database did not answer |
-| 503 | `query_timeout` | The database stopped a query for taking too long; narrow `from` and `to`, or the search |
+| 503 | `query_timeout` | The database stopped a query for taking too long; on the traffic log, narrow `from` and `to`, or the search |
 | 413 | `too_large` | Given by nginx: the request body is over 1 MB |
 | 502, 503, 504 | `unavailable` | Given by nginx: the manager did not answer, or not in time; try again shortly |
 

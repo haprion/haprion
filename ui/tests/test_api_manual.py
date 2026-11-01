@@ -6,6 +6,7 @@ nothing else would notice when a route is renamed.
 
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -79,6 +80,20 @@ class TheManualNamesRealCalls(unittest.TestCase):
         for code in codes:
             with self.subTest(code=code):
                 self.assertTrue(f'"{code}"' in source or f'"code":"{code}"' in nginx, code)
+
+    def test_the_table_lists_every_code_the_schema_names_exactly_once(self) -> None:
+        # Review 26-11-01, a-P3-2: seven codes were missing and one was there twice.
+        schema = json.loads((API_SOURCE / "schemas/refusal.schema.json").read_text())
+        named = schema["properties"]["error"]["properties"]["code"]["enum"]
+        listed = re.findall(r"^\| \d{3}(?:, \d{3})* \| `([a-z_]+)` \|", self.text, re.MULTILINE)
+        self.assertEqual(
+            (
+                sorted(set(named) - set(listed)),
+                sorted(code for code in set(listed) if listed.count(code) > 1),
+                sorted(set(listed) - set(named)),
+            ),
+            ([], [], []),
+        )
 
 
 if __name__ == "__main__":

@@ -634,23 +634,26 @@ def _node_lost(
 
 
 #
-# How long a node that has just reloaded is given to reach the nodes it shares
-# its tables with before the next one is touched (B270). It takes its counts
-# back from them on connecting, and HAProxy retries a peer every five seconds
-# (measured on 3.4.6: back after 5.3 s). Reloading the next node before then
-# would leave neither with the counts.
+# How long a node that has just reloaded is given to get its tables back from
+# the nodes it shares them with before the next one is touched (B270, B424).
+# The connection is up 0.1 s after the reload, but the peer teaches its tables
+# only after HAProxy's resync, five seconds later (measured on 3.4.7, 26-11-01:
+# `ESTA` at 0.1 s, the entries and the peer's `flags` going 0x100020 to
+# 0x100028 at 5.0 s, with empty tables as with 8000 entries). A second node
+# reloaded in between loses every block and counter on both, so the wait is
+# for the node to say the tables have come (`synced`), not for the connection.
 #
 PEERS_WAIT_SECONDS = 15
 
 
-def _unconnected_peers(status: ClusterStatus, node_name: str) -> list[str]:
-    """The peers of one node it is not connected to that report sharing themselves."""
+def _unsynced_peers(status: ClusterStatus, node_name: str) -> list[str]:
+    """The peers of one node that report sharing themselves and have not handed it their tables."""
 
     sharing = {node.name for node in status.nodes if node.peers}
     return [
         name
-        for name, connected in status.node(node_name).peers or ()
-        if not connected and name in sharing
+        for name, synced in status.node(node_name).peers_synced or ()
+        if not synced and name in sharing
     ]
 
 
@@ -663,7 +666,7 @@ def _await_peers(
     pause: Callable[[float], None],
     may_read: Callable[[], bool] = lambda: True,
 ) -> ClusterStatus:
-    """The status once the deployed node is connected to its peers, or after the wait.
+    """The status once the deployed node has its peers' tables, or after the wait.
 
     Only a peer that shares itself is waited for: one still on a release
     without `peers` - the other node, the first time sharing is turned on - or
@@ -678,15 +681,15 @@ def _await_peers(
     """
 
     for _ in range(PEERS_WAIT_SECONDS):
-        waiting = _unconnected_peers(status, node_name)
+        waiting = _unsynced_peers(status, node_name)
         if not waiting or not may_read():
             break
         pause(1.0)
         status = read_status()
-    waiting = _unconnected_peers(status, node_name)
+    waiting = _unsynced_peers(status, node_name)
     if waiting:
         warning = (
-            f"{node_name} has not reached {', '.join(waiting)} to share counters; "
+            f"{node_name} has not received the counters of {', '.join(waiting)}; "
             f"they were not shared within {PEERS_WAIT_SECONDS} s"
         )
         writer.write(f"WARNING: {warning}\n")

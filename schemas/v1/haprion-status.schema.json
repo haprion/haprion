@@ -385,7 +385,7 @@
           "additionalProperties": false
         },
         "peers": {
-          "description": "The other nodes this one shares its stick tables with, from HAProxy's show peers: each one's name, the address and port it is reached at, and whether the connection is established. Empty when the configuration shares nothing or this node is in no peers line, null when HAProxy could not be asked, absent from a node reporting before it.",
+          "description": "The other nodes this one shares its stick tables with, from HAProxy's show peers: each one's name, the address and port it is reached at, whether the connection is established and whether the node has received that peer's tables since it started (a reload hands them over about five seconds after the connection is up). Empty when the configuration shares nothing or this node is in no peers line, null when HAProxy could not be asked, absent from a node reporting before it.",
           "type": ["array", "null"],
           "maxItems": 8,
           "items": {
@@ -394,7 +394,8 @@
             "properties": {
               "name": { "type": "string", "minLength": 1, "maxLength": 253 },
               "address": { "type": "string", "minLength": 1, "maxLength": 64 },
-              "connected": { "type": "boolean" }
+              "connected": { "type": "boolean" },
+              "synced": { "type": "boolean" }
             },
             "additionalProperties": false
           }

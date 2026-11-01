@@ -369,6 +369,31 @@ class SharedCountersTests(unittest.TestCase):
         self.assertEqual(paused, [1.0, 1.0])
         self.assertNotIn("share counters", shown)
 
+    def test_the_next_node_waits_for_the_tables_not_the_connection(self) -> None:
+        # B424 review: `ESTA` is up 0.1 s after a reload and the peer teaches
+        # its tables 5 s later; a node reloaded in between left both without
+        # a block. The deployed node is connected at once but not synced.
+        cluster = self.sharing()
+        paused: list[float] = []
+
+        def reload(_: FakeCluster, node: FakeNode) -> None:
+            assert node.peers is not None  # set above
+            node.peers[0]["synced"] = False
+
+        def pause(seconds: float) -> None:
+            paused.append(seconds)
+            if len(paused) % 5 == 0:
+                for node in cluster.nodes:
+                    assert node.peers is not None  # set above
+                    node.peers[0]["synced"] = True
+
+        cluster.on_deploy = reload
+        code, shown = deploy(cluster, pause=pause)
+
+        self.assertEqual(code, 0, shown)
+        self.assertEqual(paused, [1.0] * 10)
+        self.assertNotIn("counters of", shown)
+
     def test_a_node_that_never_connects_is_named_and_the_deploy_goes_on(self) -> None:
         cluster = self.sharing()
 
@@ -381,7 +406,7 @@ class SharedCountersTests(unittest.TestCase):
 
         self.assertEqual(code, 0, shown)
         self.assertEqual(cluster.triggered, ["node-b", "node-a"])
-        self.assertIn("node-b has not reached node-a to share counters", shown)
+        self.assertIn("node-b has not received the counters of node-a", shown)
         codes = [warning.code for warning in LAST_REPORT[0].warnings]
         self.assertIn("counters_not_shared", codes)
 

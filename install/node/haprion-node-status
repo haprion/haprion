@@ -1800,27 +1800,44 @@ def read_blocked() -> dict[str, dict[str, Any]] | None:
 # The local peer's own line is skipped; it is what a reload hands the tables
 # over through, not a connection to anybody.
 #
+# The connection is established 0.1 s after a reload, but the tables arrive
+# five seconds later (3.4.7, 26-11-01, two nodes, empty and 8000-entry tables
+# alike). What tells them apart is the `flags=` of the remote peer's own
+# block, on the line with `appctx:`: 0x100020 until the peer has taught this
+# one its tables, 0x100028 from the moment it has, and in steady state. The
+# bit is 0x8; the section's flags are not used, they differ between a node
+# alone, a node whose peer is down and one resyncing.
+#
 PEER_LINE = re.compile(
     r"^\s*0x[0-9a-f]+: id=([^\s(]+)\(remote,(active|inactive)\) addr=(\S+) .*last_status=(\S+)"
 )
+PEER_BLOCK_FLAGS = re.compile(r"^\s+flags=0x([0-9a-f]+) appctx:")
+PEER_TAUGHT = 0x8
 
 
 def parse_peers(text: str) -> list[dict[str, Any]]:
-    """The other nodes this one shares tables with, and whether each is connected."""
+    """The other nodes this one shares tables with: connected, and whether they have taught it."""
 
     peers: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
     for line in text.splitlines():
         match = PEER_LINE.match(line)
-        if match is None:
-            continue
-        name, state, address, status = match.groups()
-        peers.append(
-            {
+        if match is not None:
+            name, state, address, status = match.groups()
+            current = {
                 "name": name[:253],
                 "address": address[:64],
                 "connected": state == "active" and status == "ESTA",
+                "synced": False,
             }
-        )
+            peers.append(current)
+            continue
+        if re.match(r"^\s*0x[0-9a-f]+: id=", line):
+            current = None  # the local peer's block
+            continue
+        flags = PEER_BLOCK_FLAGS.match(line)
+        if flags is not None and current is not None:
+            current["synced"] = current["connected"] and bool(int(flags.group(1), 16) & PEER_TAUGHT)
     return peers[:8]
 
 

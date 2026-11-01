@@ -176,6 +176,11 @@ class NodeStatus:
     #
     peers: tuple[tuple[str, bool], ...] | None = None
     #
+    # The same peers, and whether each has handed this node its tables since it
+    # started (B424). A node that does not say reads as connected.
+    #
+    peers_synced: tuple[tuple[str, bool], ...] | None = None
+    #
     # The CA files the node carries for its pools (B276), as (id, bundle
     # fingerprint). None on a node whose status script predates them.
     #
@@ -666,6 +671,22 @@ def _peers(status: Mapping[str, Any]) -> tuple[tuple[str, bool], ...] | None:
     )
 
 
+def _peers_synced(status: Mapping[str, Any]) -> tuple[tuple[str, bool], ...] | None:
+    reported = status.get("peers")
+    if not isinstance(reported, list):
+        return None
+    return tuple(
+        (
+            str(peer.get("name", "")),
+            peer.get("synced") is True
+            if "synced" in peer
+            else peer.get("connected") is True,
+        )
+        for peer in reported
+        if isinstance(peer, Mapping)
+    )
+
+
 def _wildcard_listeners(
     status: Mapping[str, Any],
 ) -> tuple[tuple[str, int, str | None], ...] | None:
@@ -713,6 +734,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         servers=_servers(status),
         frontends=_frontends(status),
         peers=_peers(status),
+        peers_synced=_peers_synced(status),
         wildcard_listeners=_wildcard_listeners(status),
         traffic_stream_reported=("traffic_stream" in status) if usable else None,
         error_code=_text(_mapping(entry.get("error")).get("code"))

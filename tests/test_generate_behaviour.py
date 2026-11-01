@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import contextlib
 import fnmatch
 import hashlib
 import json
@@ -3087,6 +3088,47 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self.ask("/?q=hello", name=name), (200, "", ""))
 
+    def test_an_attack_from_a_client_that_half_closes_never_reaches_the_server(self) -> None:
+        """26-11-01: `block` + `allow`, healthy engine: 11-15 of 20 got through uninspected.
+
+        The client shuts down writing right after the request; HAProxy sees the
+        FIN while the answer is pending (SPOE code 4). That is the client's
+        choice, not an engine fault, so `allow` must not apply to it.
+        """
+
+        attack = "/half-{n}?q=1'%20UNION%20SELECT%20password%20FROM%20users--%20&x=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+        for name in ("blocks", "closed"):
+            with self.subTest(name):
+                for number in range(20):
+                    path = attack.format(n=f"{name}-{number}")
+                    client = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+                    try:
+                        client.sendall(
+                            f"GET {path} HTTP/1.1\r\nHost: {name}.example.com\r\n\r\n".encode()
+                        )
+                        client.shutdown(socket.SHUT_WR)
+                        with contextlib.suppress(OSError):
+                            client.recv(200)
+                    finally:
+                        client.close()
+                time.sleep(0.3)
+                reached = [
+                    seen
+                    for seen in self.servers[0].seen  # type: ignore[attr-defined]
+                    if seen.startswith(f"/half-{name}-")
+                ]
+                self.assertEqual(reached, [], f"{len(reached)} of 20 reached the server")
+                rules = set()
+                while True:
+                    try:
+                        datagram = self.sink.recv(65536).decode()
+                    except (TimeoutError, BlockingIOError):
+                        break
+                    entry = json.loads(datagram[datagram.index("{") :])
+                    if str(entry.get("path", "")).startswith(f"/half-{name}-"):
+                        rules.add(entry.get("rule"))
+                self.assertLessEqual(rules, {"crs:deny", "waf-engine/interrupted:deny"})
+
     def test_a_looking_object_lets_an_attack_through_and_names_the_rules(self) -> None:
         status, rule, rules = self.ask(SQLI, name="looks")
         self.assertEqual((status, rule), (200, "crs:log"))
@@ -3439,6 +3481,9 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
         self.assertEqual(self.record("/why")["waf_error"], 257)
 
     def test_a_looking_object_lets_an_attack_through_and_names_the_rules(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_an_attack_from_a_client_that_half_closes_never_reaches_the_server(self) -> None:
         self.skipTest("the engine is not running")
 
     def test_a_blocking_object_refuses_an_attack_in_the_query_and_in_the_body(self) -> None:
@@ -3799,8 +3844,31 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
         self.assertIn("{ var(txn.coraza.error) -m found }", lines[0])
         self.assertIn("{ var(txn.coraza.error) -m found }", lines[3])
 
-    def test_a_logged_engine_failure_names_the_client_leaving_first(self) -> None:
+    def test_a_blocking_object_that_allows_still_refuses_the_client_that_left(self) -> None:
+        """26-11-01: `allow` is for the engine failing; a half-closing client bypassed the WAF."""
+
         lines = self.engine_error_lines("allow")
+        self.assertEqual(
+            [line.split(" if ")[0] for line in lines],
+            [
+                "http-request set-var(txn.rule) str(waf-engine/interrupted:deny)",
+                "http-request reject",
+                "http-request set-var(txn.rule) str(waf-engine:log)",
+            ],
+        )
+        self.assertIn("-m int 4", lines[0])
+        self.assertIn("-m int 4", lines[1])
+        self.assertNotIn("-m int 4", lines[2])
+
+    def test_a_logged_engine_failure_names_the_client_leaving_first(self) -> None:
+        """A log-only object refuses nothing, so the client that left is only named."""
+
+        frontend = self.layer("  mode: log\n  on_engine_error: allow")
+        lines = [
+            line.strip()
+            for line in frontend.configuration["1000-frontends.cfg"].splitlines()
+            if "txn.coraza.error" in line and "set-var(txn.rule)" in line
+        ]
         self.assertEqual(
             [line.split(" if ")[0] for line in lines],
             [
@@ -3809,6 +3877,7 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
             ],
         )
         self.assertIn("-m int 4", lines[0])
+        self.assertNotIn("reject", frontend.configuration["1000-frontends.cfg"])
 
     def test_each_object_is_an_application_and_an_unknown_name_inspects_nothing(self) -> None:
         layer = self.layer("  paranoia: 3\n  exceptions: [{rule: 920350}]")

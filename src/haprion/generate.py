@@ -2747,25 +2747,34 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
     # INTERRUPT, set when the client's side of the stream is gone while the
     # answer is pending - a browser cancelling a thumbnail it no longer
     # needs. Nobody receives that 503, yet it read as an engine outage in the
-    # traffic log, the 5xx filter and every receiver. The decision is the same
-    # (the engine gave no answer, so `on_engine_error` applies); only the name
-    # says which, as `dynamic-block/<reason>` does, and keeps the prefix
-    # `waf-engine`. The sample is typed boolean (see the traffic log format), so
-    # it is turned into its number before it is compared.
+    # traffic log, the 5xx filter and every receiver. The name says which, as
+    # `dynamic-block/<reason>` does, and keeps the prefix `waf-engine`. The
+    # sample is typed boolean (see the traffic log format), so it is turned
+    # into its number before it is compared.
     #
     left = f"{{ var(txn.coraza.error),lower,add(0) -m int {SPOE_INTERRUPT} }}"
+    #
+    # A client that left is refused by closing the connection, `reject`, and
+    # not by the 503: nobody receives that, and it reads as an outage. Not
+    # refusing at all is no option (measured 26-11-01, HAProxy 3.4.7): a client
+    # that only half-closes its side - it sent the request and shut down writing
+    # - still has the request forwarded to the server uninspected, which is a
+    # WAF bypass. `reject` stops both a reset and a half-close before a byte
+    # reaches the server, and is logged without a status.
+    #
+    # And in every object that blocks, whatever `on_engine_error` says: that
+    # setting is the choice for an engine that fails, and code 4 is not the
+    # engine failing but the client choosing, with a healthy engine (measured
+    # 26-11-01 with the real engine and CRS, `mode: block` + `allow`: 11 and 15
+    # of 20 SQLi/XSS requests reached the server when the client half-closed
+    # right after sending; 0 of 20 once refused). Only a log-only object lets
+    # it through, since it refuses nothing anyway.
+    #
+    refuse_left = waf.mode == "block" or waf.on_engine_error == "deny"
     if waf.on_engine_error == "deny":
         #
         # The more specific name is set last, so it wins over the general one.
-        #
-        # A client that left is refused by closing the connection, `reject`,
-        # and not by the 503: nobody receives that, and it reads as an outage.
-        # Not refusing at all is no option either (measured 26-11-01, HAProxy
-        # 3.4.7): a client that only half-closes its side - it sent the request
-        # and shut down writing - still has the request forwarded to the server
-        # uninspected, which is a WAF bypass. `reject` stops both a reset and a
-        # half-close before a byte reaches the server, and is logged without a
-        # status. Every other failure keeps the 503.
+        # Every other failure keeps the 503.
         #
         lines += [
             f"    http-request set-var(txn.rule) str(waf-engine:deny) if {host} {failed}",
@@ -2776,8 +2785,16 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
     else:
         #
         # A logged name keeps the first one set, so the specific one comes first.
+        # A blocking object refuses the client that left before the engine
+        # fault is logged; `allow` then covers the engine's own faults only.
         #
-        lines += _verdict(f"{host} {left}", WAF_INTERRUPTED, "log")
+        if refuse_left:
+            lines += [
+                f"    http-request set-var(txn.rule) str({WAF_INTERRUPTED}:deny) if {host} {left}",
+                f"    http-request reject if {host} {left}",
+            ]
+        else:
+            lines += _verdict(f"{host} {left}", WAF_INTERRUPTED, "log")
         lines += _verdict(f"{host} {failed}", "waf-engine", "log")
     #
     # After the engine's answer: a record whose engine did not answer says so

@@ -4561,7 +4561,7 @@ Removing an object is held to what replacing one is held to. A removal is refuse
 object has a draft somebody is editing in the interface, and while it has changes somebody else saved, unless
 `If-Match` names the revision of those changes: the removal then takes them with it, as the page's *Remove*
 does. Where *Advanced config* or the *WAF engine* is switched off under *Settings*, a document may not change
-an object's advanced config or start the engine on it (400 `bad_input`); what an object already has stays.
+an object's advanced config or start the engine on it (400 `bad_input`), and the engine cannot be started on an object of a cluster while it is missing from the manager or a node of that cluster; what an object already has stays.
 
 Publishing and going back are jobs, as on the pages: they need an `Idempotency-Key` header holding a new UUID for
 each change, so that a call repeated after a lost answer is the same job and not two: the same key with the same

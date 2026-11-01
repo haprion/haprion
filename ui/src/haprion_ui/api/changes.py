@@ -31,7 +31,7 @@ from haprion.proxy_model import ModelError
 from haprion.version_history import comment_problem
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from haprion_ui import db, features, history
+from haprion_ui import db, features, history, waf
 from haprion_ui import editor as editor_module
 from haprion_ui.api import contract, writing
 from haprion_ui.api.answers import Refusal, answer
@@ -46,7 +46,13 @@ from haprion_ui.editor_flow import (
 )
 from haprion_ui.pending import pending_package, publish_payload
 from haprion_ui.preview import Preview
-from haprion_ui.reading import HISTORY_SOURCE, listed_clusters, read_source
+from haprion_ui.reading import (
+    HISTORY_SOURCE,
+    OBJECTS_SOURCE,
+    STATUS_SOURCE,
+    listed_clusters,
+    read_source,
+)
 from haprion_ui.saved_work import ObjectWork, settled_work
 
 router = APIRouter(tags=["changes"])
@@ -198,16 +204,9 @@ def _read(name: str, text: str | None) -> dict[str, Any]:
         return {}
 
 
-def _inspects(name: str, text: str | None) -> bool:
-    if text is None:
-        return False
-    try:
-        return proxy_model.load_proxy(name, text.encode()).inspected is not None
-    except (ModelError, UnicodeError):
-        return False
-
-
-def held_to_switches(request: Request, name: str, document: str, base: str | None) -> None:
+def held_to_switches(
+    request: Request, cluster: str, name: str, document: str, base: str | None
+) -> None:
     """A document the switches would not have the page write is a `400`, as it is on the page.
 
     The page offers neither the advanced text nor the WAF engine while its
@@ -225,15 +224,20 @@ def held_to_switches(request: Request, name: str, document: str, base: str | Non
             "Advanced config is switched off on this installation, so an object's advanced "
             "config cannot be changed."
         )
-    if (
-        not features.is_on(features.WAF_ENGINE)
-        and _inspects(name, document)
-        and not _inspects(name, base)
-    ):
-        raise _bad(
-            "The WAF engine is switched off on this installation, so an object cannot start "
-            "using it."
-        )
+    config = request.app.state.config
+    refusal = waf.start_refusal(
+        name,
+        document,
+        base,
+        cluster=cluster,
+        offered=features.is_on(features.WAF_ENGINE),
+        where=waf.engine(
+            read_source(request, config, OBJECTS_SOURCE)[1],
+            read_source(request, config, STATUS_SOURCE)[1],
+        ),
+    )
+    if refusal:
+        raise _bad(refusal)
 
 
 def checked_document(state: EditorState, name: str, text: str) -> tuple[str, Preview]:
@@ -360,7 +364,7 @@ def object_create(
     in_scope(caller, cluster, name)
     state = _state(request, cluster)
     document, preview = checked_document(state, name, text)
-    held_to_switches(request, name, document, None)
+    held_to_switches(request, cluster, name, document, None)
     with request.app.state.pool.connection() as connection:
         work = settled_work(connection, cluster, name, state_reading(state))
     if any(view.name == name for view in state.stored):
@@ -474,6 +478,7 @@ def object_replace(
     saved = work.saved
     held_to_switches(
         request,
+        cluster,
         name,
         document,
         saved.yaml

@@ -174,6 +174,44 @@ def engine(object_rows: Iterable[Any], status_rows: Iterable[Any]) -> Engine:
     )
 
 
+def inspects(name: str, text: str | None) -> bool:
+    """Whether this document has the engine inspect its traffic."""
+
+    if text is None:
+        return False
+    try:
+        return load_proxy(name, text.encode()).inspected is not None
+    except (ModelError, UnicodeError):
+        return False
+
+
+def start_refusal(
+    name: str,
+    document: str,
+    base: str | None,
+    *,
+    cluster: str,
+    offered: bool,
+    where: Engine,
+) -> str:
+    """Why this document may not start using the engine; empty when it may (B231).
+
+    One rule for the page's save and the API: an object that does not inspect
+    cannot be given the engine while its switch is off or the engine is missing
+    from the manager or a node of the cluster. One that already inspects keeps,
+    changes or turns off its settings. `base` is the object as it stands.
+    """
+
+    if not inspects(name, document) or inspects(name, base):
+        return ""
+    if not offered:
+        return (
+            "The WAF engine is switched off on this installation, so an object cannot start "
+            "using it."
+        )
+    return where.unavailable(cluster)
+
+
 def objects_using(object_rows: Iterable[Any]) -> list[str]:
     """`cluster/object` for every stored object the engine inspects (B231).
 

@@ -6,6 +6,7 @@ import json
 import re
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
@@ -20,6 +21,7 @@ from tests.test_api_writing import IDEMPOTENT, a_job
 from tests.test_editor_page import (
     COMMIT,
     NETWORK,
+    OBJECTS,
     OBSERVED,
     SHOP,
     EditorTestCase,
@@ -860,6 +862,41 @@ class HonouringTheSwitches(ChangesTestCase):
             self.send("PUT", "/clusters/alpha/objects/shop", body=self.WAF), 400, "bad_input"
         )
         self.assertEqual(self.changes, [])
+
+    def test_the_engine_cannot_be_started_where_it_is_not_installed(self) -> None:
+        # The switch is on; the fixture's manager lists no engine.
+        message = self.refused(
+            self.send("PUT", "/clusters/alpha/objects/shop", body=self.WAF), 400, "bad_input"
+        )
+        self.assertIn("The WAF engine is not installed on", message)
+        self.refused(
+            self.send("POST", "/clusters/alpha/objects", body=self.WAF.replace("shop", "console")),
+            400,
+            "bad_input",
+        )
+        self.assertEqual(self.changes, [])
+
+    def test_the_engine_is_started_where_it_is_installed(self) -> None:
+        installed = replace(
+            OBJECTS, result=dict(OBJECTS.result, waf={"engine": "0.9.0-2", "crs": "4.25.1"})
+        )
+        status = SimpleNamespace(
+            cluster="alpha",
+            observed_at=OBJECTS.observed_at,
+            outcome="done",
+            result={
+                "nodes": [{"name": "node-a", "status": {"waf_engine": {"version": "0.9.0-2"}}}]
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        with (
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[installed]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[status]),
+        ):
+            response = self.send("PUT", "/clusters/alpha/objects/shop", body=self.WAF)
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_an_object_already_using_the_engine_may_be_changed_or_turned_off(self) -> None:
         self.off("waf_engine")

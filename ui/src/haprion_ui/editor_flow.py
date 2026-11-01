@@ -1033,6 +1033,38 @@ def editor_submit(
             request, config, cluster, name, form, draft_revision=form.expected_revision
         )
 
+    #
+    # The engine is offered to an object only where it is installed and its
+    # switch is on (B231). The form says so; a hand-made post is refused here,
+    # with the form as sent.
+    #
+    stands = next(
+        (row.yaml for row in (work.draft, work.saved) if row is not None and not row.deleted),
+        shown.document if shown else None,
+    )
+    locked = waf.start_refusal(
+        object_id,
+        result.document,
+        stands,
+        cluster=cluster,
+        offered=features.is_on(features.WAF_ENGINE),
+        where=waf.engine(
+            read_source(request, config, OBJECTS_SOURCE)[1],
+            read_source(request, config, STATUS_SOURCE)[1],
+        ),
+    )
+    if locked:
+        return editor_page(
+            request,
+            config,
+            cluster,
+            name,
+            form,
+            draft_revision=form.expected_revision,
+            notice=f"{locked} Nothing was saved.",
+            answered=False,
+        )
+
     key = name or object_id
     with request.app.state.pool.connection() as connection:
         if form.action != "draft":

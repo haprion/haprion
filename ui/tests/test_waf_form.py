@@ -194,6 +194,12 @@ STATUS = SimpleNamespace(
     error=None,
     poll_error=None,
 )
+
+
+def status_of(*nodes: dict[str, Any]) -> Any:
+    return SimpleNamespace(**{**vars(STATUS), "result": {"nodes": list(nodes)}})
+
+
 VERSIONS = {"engine": "0.9.0-2", "crs": "4.25.1"}
 
 
@@ -280,6 +286,53 @@ class TheGroupOnTheEditor(EditorTestCase):
         self.assertIn('class="node-table form-exception-table"', text)
         self.assertIn("Findings and exceptions in WAF logs", text)
 
+    def post(
+        self, document: str = SHOP, *, statuses: list[Any] | None = None, **fields: Any
+    ) -> Any:
+        client = self.editor()
+        with (
+            mock.patch(
+                "haprion_ui.db.cluster_objects", return_value=[objects_with(document, VERSIONS)]
+            ),
+            mock.patch(
+                "haprion_ui.db.cluster_statuses",
+                return_value=[STATUS] if statuses is None else statuses,
+            ),
+        ):
+            return self.submit(
+                client,
+                "/proxies/alpha/shop/edit",
+                action="save",
+                waf_engine_error="allow",
+                waf_paranoia="1",
+                **fields,
+            )
+
+    def test_a_hand_made_post_cannot_start_the_engine_where_a_node_lacks_it(self) -> None:
+        lacking = status_of(node("node-a", "0.9.0-2"), node("node-b", None))
+        response = self.post(statuses=[lacking], waf_mode="block")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("The WAF engine is not installed on node-b.", response.text)
+        self.assertIn("Nothing was saved.", response.text)
+        self.assertEqual(self.saved, [])
+
+    def test_a_hand_made_post_cannot_start_the_engine_while_its_switch_is_off(self) -> None:
+        self.switch_off()
+        response = self.post(waf_mode="block")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("switched off", response.text)
+        self.assertEqual(self.saved, [])
+
+    def test_an_object_using_the_engine_can_still_be_saved_and_turned_off(self) -> None:
+        self.switch_off()
+        lacking = status_of(node("node-a", None))
+        using = stored("waf:\n  mode: log\n")
+        for mode in ("log", "off"):
+            with self.subTest(mode=mode):
+                response = self.post(using, statuses=[lacking], waf_mode=mode)
+                self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(len(self.saved), 2)
+
     def test_the_exceptions_are_listed_and_the_unpublished_ones_marked(self) -> None:
         # 26-10-03: see which exceptions Save and publish sends, not a count.
         published = stored(yaml.safe_dump({"waf": {"mode": "log", "exceptions": [EXCEPTION]}}))
@@ -349,7 +402,12 @@ class TheGroupOnTheEditor(EditorTestCase):
     def test_a_save_keeps_the_exceptions_the_page_carried(self) -> None:
         client = self.editor()
         carried = json.dumps([EXCEPTION])
-        with mock.patch("haprion_ui.db.cluster_statuses", return_value=[STATUS]):
+        with (
+            mock.patch(
+                "haprion_ui.db.cluster_objects", return_value=[objects_with(SHOP, VERSIONS)]
+            ),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[STATUS]),
+        ):
             self.submit(
                 client,
                 "/proxies/alpha/shop/edit",

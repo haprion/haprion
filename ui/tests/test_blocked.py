@@ -327,6 +327,24 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
                 self.assertNotIn(">Unblock</button>", page)
                 self.assertNotIn('name="state" value="drain"', page)
 
+    def test_a_reader_is_shown_the_running_job_and_no_button(self) -> None:
+        """The page is drawn again when the job ends only if it says one runs."""
+
+        for operation, spinning in (
+            ("dynamic_unblock", 'id="blocked"'),
+            ("server_state", "<h3>Servers</h3>"),
+        ):
+            with self.subTest(operation):
+                running = replace(queued(operation=operation, cluster="edge-demo"), state="running")
+                with mock.patch("haprion_ui.db.recent_jobs", return_value=[running]):
+                    page = (
+                        self.writing_client(role="reader").get("/proxies/edge-demo/public-web").text
+                    )
+                self.assertIn(
+                    'data-busy="edge-demo"', page.split(spinning)[1].split("</header>")[0]
+                )
+                self.assertNotIn('class="action-buttons"', page)
+
     def test_the_rows_a_running_change_is_about_stay_ticked(self) -> None:
         """The page draws itself again once the job is queued; the choice stays (26-10-31)."""
 

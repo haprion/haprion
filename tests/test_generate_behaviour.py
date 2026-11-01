@@ -2904,6 +2904,12 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
     """
 
     engine_running = True
+    #
+    # A listener that accepts the engine's connection and never answers: what
+    # a request waits on while its client leaves (26-11-01).
+    #
+    engine_silent = False
+    silent: socket.socket | None = None
     servers: list[ThreadingHTTPServer]
     haproxy: subprocess.Popen[bytes]
     engine: subprocess.Popen[bytes] | None
@@ -2993,6 +2999,10 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
                     preexec_fn=spawned.die_with_the_test_run,
                 )
             wait_for(engine_port)
+        elif cls.engine_silent:
+            cls.silent = socket.socket()
+            cls.silent.bind(("127.0.0.1", engine_port))
+            cls.silent.listen(16)
         binary = shutil.which("haproxy")
         assert binary is not None
         cls.haproxy = start_haproxy(binary, arguments, cls.port)
@@ -3008,6 +3018,8 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             server.shutdown()
             server.server_close()
         cls.sink.close()
+        if cls.silent is not None:
+            cls.silent.close()
         cls.directory.cleanup()
 
     def record(self, path: str) -> dict[str, object]:
@@ -3481,6 +3493,73 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
                 self.assertLess(time.monotonic() - started, 0.25)
 
 
+class WafEngineThatNeverAnswers(WafEngineThatDoesNotAnswer):
+    """The client leaves while the engine is being asked (26-11-01).
+
+    Measured in production: 477 requests of one hour were logged `waf-engine:deny`
+    with `waf_error` 4, the engine silent. The engine here accepts and says
+    nothing, and the client closes after a tenth of a second - inside HAProxy's
+    wait for the answer - so the record must name it as the client leaving.
+    """
+
+    engine_silent = True
+
+    def leave(self, host: str, name: str) -> list[dict[str, object]]:
+        """Eight clients that close after a tenth of a second, and their records.
+
+        HAProxy does not always notice the close before its own 500 ms timeout
+        (2 of 14 on 3.4.7: code 1), so one request cannot prove a code 4.
+        """
+
+        entries = []
+        for number in range(8):
+            path = f"/{name}-{number}"
+            with socket.create_connection(("127.0.0.1", self.port), timeout=5) as client:
+                client.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
+                time.sleep(0.1)
+            entries.append(self.record(path))
+        return entries
+
+    def check(self, entries: list[dict[str, object]], left: str, timed_out: str) -> None:
+        codes = {entry["waf_error"] for entry in entries}
+        self.assertIn(4, codes, f"no client was seen leaving: {codes}")
+        for entry in entries:
+            expected = left if entry["waf_error"] == 4 else timed_out
+            self.assertEqual(entry["rule"], expected, entry)
+
+    def test_a_client_that_left_is_named_so_and_still_refused(self) -> None:
+        entries = self.leave("closed.example.com", "left-closed")
+        self.check(entries, "waf-engine/interrupted:deny", "waf-engine:deny")
+
+    def test_a_client_that_left_is_named_so_where_the_object_lets_it_through(self) -> None:
+        entries = self.leave("looks.example.com", "left-looks")
+        self.check(entries, "waf-engine/interrupted:log", "waf-engine:log")
+
+    def test_a_client_that_stays_is_named_as_before(self) -> None:
+        """The engine's timeout is code 1, not 4: the old name stays."""
+
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            connection.request("GET", "/stays", headers={"Host": "closed.example.com"})
+            response = connection.getresponse()
+            response.read()
+        finally:
+            connection.close()
+        self.assertEqual(response.status, 503)
+        entry = self.record("/stays")
+        self.assertNotEqual(entry["waf_error"], 4)
+        self.assertEqual(entry["rule"], "waf-engine:deny")
+
+
+for _name in [n for n in dir(WafEngineThatDoesNotAnswer) if n.startswith("test_")]:
+    setattr(
+        WafEngineThatNeverAnswers,
+        _name,
+        unittest.skip("the engine never answers")(lambda self: None),
+    )
+del _name
+
+
 class EachExceptionHasACounter(unittest.TestCase):
     """B273: the rule as written, narrowed to the exception, logging and scoring nothing."""
 
@@ -3664,6 +3743,44 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
             [n for n in names if fnmatch.fnmatchcase(n, WAF_RULES_BEFORE_COUNTERS[0])],
             ["REQUEST-901-INITIALIZATION.conf"],
         )
+
+    def engine_error_lines(self, on_engine_error: str) -> list[str]:
+        frontend = self.layer(f"  mode: block\n  on_engine_error: {on_engine_error}")
+        return [
+            line.strip()
+            for line in frontend.configuration["1000-frontends.cfg"].splitlines()
+            if "txn.coraza.error" in line
+            and "set-var(txn.rule)" in line
+            or ("deny_status 503" in line and "txn.coraza.error" in line)
+        ]
+
+    def test_a_client_that_left_is_named_after_the_general_engine_failure(self) -> None:
+        """26-11-01: SPOE error 4 is the client leaving, not the engine failing."""
+
+        lines = self.engine_error_lines("deny")
+        left = "{ var(txn.coraza.error),lower,add(0) -m int 4 }"
+        self.assertEqual(
+            [line.split(" if ")[0] for line in lines],
+            [
+                "http-request set-var(txn.rule) str(waf-engine:deny)",
+                "http-request set-var(txn.rule) str(waf-engine/interrupted:deny)",
+                "http-request deny deny_status 503",
+            ],
+        )
+        self.assertIn(left, lines[1])
+        self.assertIn("{ var(txn.coraza.error) -m found }", lines[0])
+        self.assertIn("{ var(txn.coraza.error) -m found }", lines[2])
+
+    def test_a_logged_engine_failure_names_the_client_leaving_first(self) -> None:
+        lines = self.engine_error_lines("allow")
+        self.assertEqual(
+            [line.split(" if ")[0] for line in lines],
+            [
+                "http-request set-var(txn.rule) str(waf-engine/interrupted:log)",
+                "http-request set-var(txn.rule) str(waf-engine:log)",
+            ],
+        )
+        self.assertIn("-m int 4", lines[0])
 
     def test_each_object_is_an_application_and_an_unknown_name_inspects_nothing(self) -> None:
         layer = self.layer("  paranoia: 3\n  exceptions: [{rule: 920350}]")

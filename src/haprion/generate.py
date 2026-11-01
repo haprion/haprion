@@ -166,6 +166,13 @@ WAF_FILE = "1000-waf.cfg"
 WAF_DIRECTORY = "/etc/haproxy/waf"
 WAF_ENGINE_PORT = 9520
 WAF_BACKEND = f"{PREFIX}-waf-engine"
+#
+# HAProxy 3.4's SPOE error code for a request whose client left while the
+# engine's answer was pending (`INTERRUPT` in flt_spoe.c; SPOE.txt still lists
+# the old table), and the rule name the traffic record gets for it (26-11-01).
+#
+SPOE_INTERRUPT = 4
+WAF_INTERRUPTED = "waf-engine/interrupted"
 WAF_IDENTITY = "cluster-waf"
 WAF_SPOE_ENGINE = "coraza"
 WAF_SPOE_GROUP = "coraza-req"
@@ -2732,12 +2739,35 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
     if large is not None:
         lines.append(f"    http-request del-header {WAF_BODY_CUT} if {host}")
     lines += _verdict(f"{host} {verdict}", "crs", "deny" if waf.mode == "block" else "log")
+    #
+    # The client left before the engine answered (measured 26-11-01): one hour of
+    # a photo app behind the WAF logged 477 requests as 503 `waf-engine:deny`
+    # with `waf_error` 4, the engine silent in its own log. 4 is not an engine
+    # fault: in HAProxy 3.4's SPOE (`spoe_context_error`, flt_spoe.c) it is
+    # INTERRUPT, set when the client's side of the stream is gone while the
+    # answer is pending - a browser cancelling a thumbnail it no longer
+    # needs. Nobody receives that 503, yet it read as an engine outage in the
+    # traffic log, the 5xx filter and every receiver. The decision is the same
+    # (the engine gave no answer, so `on_engine_error` applies); only the name
+    # says which, as `dynamic-block/<reason>` does, and keeps the prefix
+    # `waf-engine`. The sample is typed boolean (see the traffic log format), so
+    # it is turned into its number before it is compared.
+    #
+    left = f"{{ var(txn.coraza.error),lower,add(0) -m int {SPOE_INTERRUPT} }}"
     if waf.on_engine_error == "deny":
+        #
+        # The more specific name is set last, so it wins over the general one.
+        #
         lines += [
             f"    http-request set-var(txn.rule) str(waf-engine:deny) if {host} {failed}",
+            f"    http-request set-var(txn.rule) str({WAF_INTERRUPTED}:deny) if {host} {left}",
             f"    http-request deny deny_status 503 if {host} {failed}",
         ]
     else:
+        #
+        # A logged name keeps the first one set, so the specific one comes first.
+        #
+        lines += _verdict(f"{host} {left}", WAF_INTERRUPTED, "log")
         lines += _verdict(f"{host} {failed}", "waf-engine", "log")
     #
     # After the engine's answer: a record whose engine did not answer says so

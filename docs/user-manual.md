@@ -1799,6 +1799,12 @@ either way the answer comes at once:
 Either way the node's traffic record carries `waf_error`, HAProxy's reason: `1` is an engine that took longer
 than half a second, `256` and up a connection to it that failed.
 
+**When the client leaves first**, `waf_error` is `4` and the record names the rule `waf-engine/interrupted`
+(`waf-engine/interrupted:deny` or `waf-engine/interrupted:log`, by `on_engine_error`). The client closed the
+request while the engine was still checking it, for instance a browser that cancelled an image it no longer
+needed. Nobody received the 503, and it is not an engine fault. A query or alert outside the product that
+should find every request the engine gave no answer for matches the prefix `waf-engine`.
+
 A node whose engine is not running, while the published release has rules, is marked *WAF engine stopped*
 on the dashboard. `haprion-status` shows the engine on each node, with a warning for that node.
 

@@ -687,6 +687,32 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn('data-export-rule="admin-post" data-export-mode="denied"', waf)
         self.assertIn('data-export-rule="scanner" data-export-mode="logged"', waf)
 
+    def test_a_client_that_left_is_labelled_where_the_name_is_shown(self) -> None:
+        """26-11-01: the node's name stays in the title and the export; the page says what it means."""
+
+        self.healthy_meta()
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(
+                record(request=2, path="/thumb", status=503, rule="waf-engine/interrupted:deny")
+            )
+
+        label = "Client left before the WAF answered"
+        everything = self.page()
+        self.assertIn(f'status-badge-critical">{label}</span>', everything)
+        self.assertIn('title="waf-engine/interrupted:deny', everything)
+        self.assertIn('data-export-rule="waf-engine/interrupted"', everything)
+        with (
+            patch("haprion_ui.db.cluster_objects", return_value=[]),
+            patch("haprion_ui.db.waf_findings", return_value=[]),
+            patch("haprion_ui.db.waf_verdicts", return_value={}),
+            patch("haprion_ui.db.waf_request_count", return_value=1),
+            patch("haprion_ui.db.waf_counted", return_value={}),
+            patch("haprion.crs.installed_catalog", return_value={}),
+        ):
+            waf = self.page(path="/waf", query="?view=requests")
+        self.assertIn(f'status-badge-critical">{label}</span>', waf)
+        self.assertIn('title="waf-engine/interrupted — denied"', waf)
+
     def test_the_traffic_page_filters_on_rule_hits_and_keeps_the_filter(self) -> None:
         self.healthy_meta()
         with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:

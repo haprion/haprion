@@ -198,7 +198,22 @@ def moments_whole(text: str) -> Markup:
     return Markup("").join(pieces)
 
 
+#
+# What a traffic record's rule name is called where a person reads it. The name
+# stays the one the node wrote, in the title and the export; a rule that has no
+# entry here is shown as it is (26-11-01).
+#
+RULE_LABELS = {"waf-engine/interrupted": "Client left before the WAF answered"}
+
+
+def rule_label(name: str) -> str:
+    """The label for a rule name, or the name itself where it has none."""
+
+    return RULE_LABELS.get(name, name)
+
+
 TEMPLATES.env.filters["shown_at"] = shown_at
+TEMPLATES.env.filters["rule_label"] = rule_label
 TEMPLATES.env.filters["moments_whole"] = moments_whole
 TEMPLATES.env.filters["shown_day"] = moments.day
 TEMPLATES.env.filters["shown_time"] = moments.time_of_day

@@ -172,6 +172,20 @@ class TheTrafficRoute(ApiTestCase):
             [("dynamic-block/errors", "denied"), ("dynamic-block", "denied")],
         )
 
+    def test_a_client_that_left_keeps_the_engine_prefix(self) -> None:
+        # 26-11-01: SPOE error 4 is named `waf-engine/interrupted`, not an engine fault.
+        self.read.return_value = Reading(
+            (entry(rule="waf-engine/interrupted:deny"), entry(rule="waf-engine:deny")),
+            (),
+            0,
+            False,
+        )
+        rows = self.get().json()["result"]["requests"]
+        self.assertEqual(
+            [(row["rule_name"], row["rule_action"]) for row in rows],
+            [("waf-engine/interrupted", "denied"), ("waf-engine", "denied")],
+        )
+
     def test_the_filters_are_the_pages(self) -> None:
         self.get(
             "?status=5xx&q=api%20AND%20shop&from=2026-10-31T10:00:00Z&to=2026-10-31T11:00:00Z"

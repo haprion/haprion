@@ -4,6 +4,7 @@
 {% block title %}DNS profiles — Haprion{% endblock %}
 {% block head_extra %}{% if refresh %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}{% endblock %}
 {% block content %}
+{% set can_change = management_writes and role == 'admin' %}
 {#
   One provider's credentials, entered once and kept sealed (B146). The page
   never shows a value: a row is an ID, a provider and whether the file certbot
@@ -14,14 +15,14 @@
 #}
 <section class="page-heading">
   <div class="heading-title">{{ back_button('/certificates', 'Certificates') }}<h1>DNS profiles</h1><p class="page-lede">Credentials for DNS-01 challenges, sealed for the certificate helper.</p></div>
-  <div class="heading-badges">{% if public_key %}<a class="secondary-button" href="/dns-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+  <div class="heading-badges">{% if can_change and public_key %}<a class="secondary-button" href="/dns-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
-{% if not public_key %}
+{% if can_change and not public_key %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>This installation has no DNS profile key.</strong> Profiles can be listed but not created until <code>[dns_profiles] public_key</code> names one; see <em>The DNS profile key pair</em> in the user manual.</p>
 {% endif %}
 
-{% if certificate_job %}
+{% if can_change and certificate_job %}
 {% call certificate_job_notice(certificate_job) %}The queue runs one certificate job at a time; a profile can be saved once it has finished.{% if refresh %} This page refreshes until then.{% endif %}{% endcall %}
 {% endif %}
 
@@ -32,21 +33,21 @@
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Profiles</h3><p>{{ rows | length }} profile{{ '' if rows | length == 1 else 's' }}.</p></div></div></header>
   <div class="table-scroll"><table class="node-table dns-profile-table">
-    <thead><tr><th scope="col">Profile</th><th scope="col">Provider</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
+    <thead><tr><th scope="col">Profile</th><th scope="col">Provider</th><th scope="col">Status</th>{% if can_change %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for row in rows %}
     <tr>
       <td data-label="Profile"><code>{{ row.profile.id }}</code></td>
       <td data-label="Provider">{% if row.provider %}{{ row.provider.name }} <span class="optional">({{ row.provider.tier }})</span>{% else %}<span class="warning-text">{{ row.profile.provider_id }} — no longer offered</span>{% endif %}</td>
       <td data-label="Status"><span class="backend-health"><span class="status-dot status-{{ 'unknown' if row.status.tone == 'muted' else row.status.tone }}"></span>{{ row.status.label }}</span> <span class="optional">rev {{ row.profile.revision }}</span>{% if row.status.attention_job %} <a class="warning-text" href="/jobs#job-{{ row.status.attention_job }}">· {{ row.status.attention_label }}</a>{% endif %}{% if not row.current_key %} <span class="warning-text">· old sealing key</span>{% endif %}</td>
-      <td data-label="Actions">{% if public_key %}<a href="/dns-profiles/{{ row.profile.id }}/replace">Replace</a> · {% endif %}<a href="/dns-profiles/{{ row.profile.id }}/remove">Remove</a></td>
+      {% if can_change %}<td data-label="Actions">{% if public_key %}<a href="/dns-profiles/{{ row.profile.id }}/replace">Replace</a> · {% endif %}<a href="/dns-profiles/{{ row.profile.id }}/remove">Remove</a></td>{% endif %}
     </tr>
     {% else %}
-    <tr><td colspan="4"><span class="optional">No profile yet. A profile is one provider's API credentials; the certificate form offers the ones in effect.</span></td></tr>
+    <tr><td colspan="{{ 4 if can_change else 3 }}"><span class="optional">No profile yet. A profile is one provider's API credentials; the certificate form offers the ones in effect.</span></td></tr>
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="table-note">Values are never shown again after saving. To change one, replace the profile - the new values are sealed as the next revision and applied by a job.<br>Removal is refused while the certificate registry or a Certbot renewal configuration still uses the profile.</p>
+  {% if can_change %}<p class="table-note">Values are never shown again after saving. To change one, replace the profile - the new values are sealed as the next revision and applied by a job.<br>Removal is refused while the certificate registry or a Certbot renewal configuration still uses the profile.</p>{% endif %}
   <div class="editor-actions editor-submit list-actions"><div class="form-buttons"><a class="secondary-button" href="/certificates">Back to certificates</a></div></div>
 </section>
 {% endblock %}

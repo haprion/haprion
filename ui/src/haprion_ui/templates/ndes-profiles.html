@@ -3,6 +3,7 @@
 {% block title %}NDES profiles — Haprion{% endblock %}
 {% block head_extra %}{% if refresh %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}{% endblock %}
 {% block content %}
+{% set can_change = management_writes and role == 'admin' %}
 {#
   The DNS providers page, for the other credential (B152): one master
   challenge per profile, sealed on save and opened only by the root helper.
@@ -13,13 +14,13 @@
 #}
 <section class="page-heading">
   <div class="heading-title">{{ back_button('/certificates', 'Certificates') }}<h1>NDES profiles</h1><p class="page-lede">Master challenges for Microsoft AD CS enrollment over SCEP, sealed for the enrollment helper.</p></div>
-  <div class="heading-badges">{% if public_key and servers %}<a class="secondary-button" href="/ndes-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+  <div class="heading-badges">{% if can_change and public_key and servers %}<a class="secondary-button" href="/ndes-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 {% if servers_problem or server_problem %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ server_problem or servers_problem }}</strong></p>
 {% endif %}
-{% if not public_key %}
+{% if can_change and not public_key %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>This installation has no profile key.</strong> Profiles can be listed but not created until <code>[dns_profiles] public_key</code> names one; see <em>The DNS profile key pair</em> in the user manual.</p>
 {% endif %}
 
@@ -27,48 +28,48 @@
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>Removal of <code>{{ profile.id }}</code> was refused.</strong> {{ statuses[profile.id].attention_message }}. The profile stays in effect; delete or re-enroll those certificates first.</p>
 {% endfor %}
 
-<form method="post" action="/ndes-profiles/servers/remove" class="preview-form">
-<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+{% if can_change %}<form method="post" action="/ndes-profiles/servers/remove" class="preview-form">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>NDES servers</h3><p>Each confirmed from its CA.</p></div></div></header>
   <div class="table-scroll"><table class="node-table ndes-server-table">
-    <thead><tr><th scope="col" class="select-column"><span class="visually-hidden">Select</span></th><th scope="col" class="server-column">Server</th><th scope="col" class="expires-column">CA expires</th><th scope="col" class="profiles-column">Profiles</th></tr></thead>
+    <thead><tr>{% if can_change %}<th scope="col" class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}<th scope="col" class="server-column">Server</th><th scope="col" class="expires-column">CA expires</th><th scope="col" class="profiles-column">Profiles</th></tr></thead>
     <tbody>
     {% for server in servers or [] %}
     <tr>
-      <td class="select-column" data-label="Select"><input type="radio" name="endpoint" value="{{ server }}" aria-label="Select {{ server }}"{% if server in servers_in_use %} disabled{% endif %}></td>
+      {% if can_change %}<td class="select-column" data-label="Select"><input type="radio" name="endpoint" value="{{ server }}" aria-label="Select {{ server }}"{% if server in servers_in_use %} disabled{% endif %}></td>{% endif %}
       <td class="server-column" data-label="Server"><span class="certificate-sans" title="{{ server }}">{{ server }}</span></td>
       {% set date, phrase, tone = server_expiry.get(server, ('—', '', 'unknown')) %}
       <td class="expires-column" data-label="CA expires">{% if phrase %}<span class="certificate-date">{{ date }}</span><span class="status-badge status-badge-{{ tone }}">{{ phrase }}</span>{% else %}—{% endif %}</td>
       <td class="profiles-column" data-label="Profiles">{% if server in servers_in_use %}In use{% else %}<span class="optional">None</span>{% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="4"><span class="optional">No NDES server yet.</span></td></tr>
+    <tr><td colspan="{{ 4 if can_change else 3 }}"><span class="optional">No NDES server yet.</span></td></tr>
     {% endfor %}
     </tbody>
   </table></div>
-  <div class="editor-actions editor-submit list-actions"><div class="form-buttons"><a class="secondary-button" href="/ndes-profiles/servers/new">Add NDES server</a>{% if servers %}<button type="submit" class="secondary-button">Remove</button>{% endif %}</div></div>
+  {% if can_change %}<div class="editor-actions editor-submit list-actions"><div class="form-buttons"><a class="secondary-button" href="/ndes-profiles/servers/new">Add NDES server</a>{% if servers %}<button type="submit" class="secondary-button">Remove</button>{% endif %}</div></div>{% endif %}
 </section>
-</form>
+{% if can_change %}</form>{% endif %}
 
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Profiles</h3><p>{{ profiles | length }} profile{{ '' if profiles | length == 1 else 's' }}.</p></div></div></header>
   <div class="table-scroll"><table class="node-table dns-profile-table ndes-profile-table">
-    <thead><tr><th scope="col">Profile</th><th scope="col">Endpoint</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
+    <thead><tr><th scope="col">Profile</th><th scope="col">Endpoint</th><th scope="col">Status</th>{% if can_change %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for profile in profiles %}
     <tr>
       <td data-label="Profile"><code>{{ profile.id }}</code></td>
       <td data-label="Endpoint">{% if profile.endpoint %}<span class="certificate-sans" title="{{ profile.endpoint }}">{{ profile.endpoint }}</span>{% else %}<span class="optional">Sealed; shown after the next replace</span>{% endif %}</td>
       <td data-label="Status"><span class="backend-health"><span class="status-dot status-{{ 'unknown' if statuses[profile.id].tone == 'muted' else statuses[profile.id].tone }}"></span>{{ statuses[profile.id].label }}</span> <span class="optional">rev {{ profile.revision }}</span>{% if statuses[profile.id].attention_job %} <a class="warning-text" href="/jobs#job-{{ statuses[profile.id].attention_job }}">· {{ statuses[profile.id].attention_label }}</a>{% endif %}</td>
-      <td data-label="Actions">{% if public_key %}<a href="/ndes-profiles/{{ profile.id }}/replace">Replace</a> · {% endif %}<a href="/ndes-profiles/{{ profile.id }}/remove">Remove</a></td>
+      {% if can_change %}<td data-label="Actions">{% if public_key %}<a href="/ndes-profiles/{{ profile.id }}/replace">Replace</a> · {% endif %}<a href="/ndes-profiles/{{ profile.id }}/remove">Remove</a></td>{% endif %}
     </tr>
     {% else %}
-    <tr><td colspan="4"><span class="optional">No profile yet. A profile is one NDES endpoint's reusable challenge; enrollment uses the one in effect.</span></td></tr>
+    <tr><td colspan="{{ 4 if can_change else 3 }}"><span class="optional">No profile yet. A profile is one NDES endpoint's reusable challenge; enrollment uses the one in effect.</span></td></tr>
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="table-note">The challenge is never shown again after saving. To change it, replace the profile - the new challenge is sealed as the next revision and applied by a job.<br>Removal is refused while a certificate enrolled through the profile is still registered or an enrollment is still waiting on the CA.</p>
+  {% if can_change %}<p class="table-note">The challenge is never shown again after saving. To change it, replace the profile - the new challenge is sealed as the next revision and applied by a job.<br>Removal is refused while a certificate enrolled through the profile is still registered or an enrollment is still waiting on the CA.</p>{% endif %}
   <div class="editor-actions editor-submit list-actions"><div class="form-buttons"><a class="secondary-button" href="/certificates">Back to certificates</a></div></div>
 </section>
 {% endblock %}

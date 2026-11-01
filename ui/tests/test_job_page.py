@@ -191,13 +191,12 @@ class JobPageTests(LoginTestCase):
         )
         self.assertNotIn("Refreshing every 5 s", page.text)
 
-    def test_a_reader_is_never_shown_the_operation_diagnostics(self) -> None:
-        """The line the frozen contract actually draws.
+    def test_a_reader_is_shown_the_operation_diagnostics_as_an_admin_is(self) -> None:
+        """A reader reads everything an admin reads; the text is redacted before it is kept.
 
-        `CONTRACT.md` withholds raw stderr from a reader role - and only from a
-        reader role. Hiding it from an admin as well was a habit rather than a
-        decision, and the person paying for that habit was the one who had to
-        open an SSH session at every failure. See B44.
+        Hiding it was a habit rather than a decision, and the person paying for
+        that habit was the one who had to open an SSH session at every
+        failure. See B44.
 
         Asserted on the rendered page rather than on the projection, because a
         template is where such a rule is most easily lost.
@@ -211,8 +210,9 @@ class JobPageTests(LoginTestCase):
 
         self.assertEqual(page.status_code, 200)
         self.assertIn("Blocked", page.text)
-        self.assertNotIn("must not be rendered", page.text)
-        self.assertNotIn("Diagnostics", page.text)
+        self.assertIn("must not be rendered", page.text)
+        self.assertIn("Diagnostics", page.text)
+        self.assertNotIn('method="post"', page.text[page.text.index("<main") :])
 
     def test_an_admin_is_shown_the_code_and_the_diagnostics(self) -> None:
         """What a failure has to answer: which failure, and what did it say."""
@@ -572,8 +572,7 @@ class TheErrorCodeReachesThePage(LoginTestCase):
         self.assertIn("cluster_not_converged", body)
         #
         # The code and the helper's prose beside it, for every role: a
-        # reader is given the sentence as an admin is. Only the raw output
-        # (the diagnostics) stays an admin's.
+        # reader is given the sentence as an admin is, and the diagnostics.
         #
         self.assertIn("— not converged", body)
         self.account = replace(self.account, role="reader")
@@ -1062,7 +1061,7 @@ class AFailedCertificateIssue(LoginTestCase):
         self.assertIn("<code>publish_failed</code>", page)
         self.assertIn("— not published: the certificate expires 2026-09-24", page)
 
-    def test_a_reader_gets_the_code_and_not_the_output(self) -> None:
+    def test_a_reader_gets_the_code_and_the_output(self) -> None:
         self.account = replace(self.account, role="reader")
         with mock.patch("haprion_ui.db.recent_jobs", return_value=[self.failed_issue()]):
             client = self.client()
@@ -1070,7 +1069,7 @@ class AFailedCertificateIssue(LoginTestCase):
             page = client.get("/jobs").text
 
         self.assertIn("certbot_failed", page)
-        self.assertNotIn("Cloudflare", page)
+        self.assertIn("Cloudflare", page)
 
 
 class AJobNoWorkerHolds(LoginTestCase):

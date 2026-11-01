@@ -3,6 +3,7 @@
 {% block title %}Receivers — Haprion{% endblock %}
 {% block head_extra %}{% if certificate_job and certificate_job.working %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
+{% set can_change = management_writes and role == 'admin' %}
 {#
   Who fetches certificates from this manager (B142). A row is a host, how it
   fetches and what it holds; under each row the exact commands that host
@@ -13,7 +14,7 @@
 #}
 <section class="page-heading">
   <div class="heading-title">{{ back_button('/certificates', 'Certificates') }}<h1>Receivers</h1><p class="page-lede">Hosts outside the clusters that fetch certificates from this manager, each with its own account, directory and key.</p></div>
-  <div class="heading-badges">{% if registry_present %}<a class="secondary-button" href="/certificates/receivers/new">Register a receiver</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+  <div class="heading-badges">{% if can_change and registry_present %}<a class="secondary-button" href="/certificates/receivers/new">Register a receiver</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 {% if problem %}
@@ -36,7 +37,7 @@
     <tr class="receiver-row receiver-ghost" data-receiver-ghost="{{ item.job_id }}">
       <td data-label="Receiver"><strong>{{ item.receiver }}</strong></td>
       <td data-label="Transport" colspan="3">{{ job_badge(item) }}</td>
-      <td data-label="Actions">{% if not item.busy %}<button type="button" class="link-button" data-receiver-dismiss="{{ item.job_id }}" title="Hide this row here; the job stays on the jobs page">Dismiss</button>{% endif %}</td>
+      <td data-label="Actions">{% if can_change and not item.busy %}<button type="button" class="link-button" data-receiver-dismiss="{{ item.job_id }}" title="Hide this row here; the job stays on the jobs page">Dismiss</button>{% endif %}</td>
     </tr>
     {% endfor %}
     {% for row, steps in rows %}{% set item = on_rows.get(row.identifier) %}
@@ -45,7 +46,7 @@
       <td data-label="Transport">{{ row.transport_label }}{% if row.allow %} <span class="optional">· {{ row.allow | join(', ') }}</span>{% endif %}</td>
       <td data-label="Account"><code>{{ row.owner }}</code></td>
       <td data-label="Holds">{% if item %}{{ job_badge(item) }}{% elif row.holds %}{% for held in row.holds %}{% if not loop.first %}, {% endif %}{{ held.certificate_id }}{% if held.format == 'pkcs12' %} <span class="target-kind">pkcs12</span>{% endif %}{% endfor %}{% else %}<span class="optional">nothing yet</span>{% endif %}</td>
-      <td data-label="Actions">
+      {% if can_change %}<td data-label="Actions">
         <button type="button" class="link-button" data-receiver-commands="{{ row.identifier }}" aria-expanded="false">Fetch commands</button>
         {% if row.transport == 'https' %} · <form method="post" action="/certificates/receivers/secret" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -59,7 +60,7 @@
           <input type="hidden" name="receiver" value="{{ row.identifier }}">
           <button type="submit" class="link-button warning-text"{% if certificate_job %} disabled{% endif %}>Remove</button>
         </form>{% elif row.holds %} <span class="optional" title="Use Remove from… on the certificate first">· in use</span>{% endif %}
-      </td>
+      </td>{% else %}<td data-label="Actions"><button type="button" class="link-button" data-receiver-commands="{{ row.identifier }}" aria-expanded="false">Fetch commands</button></td>{% endif %}
     </tr>
     <tr class="receiver-commands" id="receiver-commands-{{ row.identifier }}" hidden>
       <td colspan="5">
@@ -75,11 +76,11 @@
       </td>
     </tr>
     {% else %}
-    {% if not ghosts %}<tr><td colspan="5"><span class="optional">No receiver is registered. <a href="/certificates/receivers/new">Register one</a>; then publish a certificate to it from the registry.</span></td></tr>{% endif %}
+    {% if not ghosts %}<tr><td colspan="5"><span class="optional">No receiver is registered.{% if can_change %} <a href="/certificates/receivers/new">Register one</a>; then publish a certificate to it from the registry.{% endif %}</span></td></tr>{% endif %}
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="table-note">A receiver in use is removed from the certificate first (<em>Remove from…</em> in the registry); that is the step that says what stops being fetched.</p>
+  {% if can_change %}<p class="table-note">A receiver in use is removed from the certificate first (<em>Remove from…</em> in the registry); that is the step that says what stops being fetched.</p>{% endif %}
   {% endif %}
   <div class="editor-actions editor-submit list-actions"><div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Back to certificates</a></div></div>
 </section>

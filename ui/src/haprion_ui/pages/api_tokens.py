@@ -18,7 +18,7 @@ from fastapi import APIRouter, Form, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from haprion_ui import api_token_apply, api_tokens, auth, db, demo, moments
-from haprion_ui.access import admin_write_gate, forbidden_page
+from haprion_ui.access import admin_write_gate, forbidden_page, reading_gate
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import OBJECTS_SOURCE, read_source
@@ -163,7 +163,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get(LIST, response_class=HTMLResponse)
     def tokens_page(request: Request) -> Response:
-        gate = admin_write_gate(config, request)
+        gate = reading_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return list_page(request, gate)

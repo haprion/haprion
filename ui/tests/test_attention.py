@@ -1728,13 +1728,13 @@ class WhyAReadingFailed(LoginTestCase):
     def test_an_administrator_is_told_why_the_poller_could_not_read(self) -> None:
         self.assertIn(self.ASKED, self.page("admin"))
 
-    def test_a_reader_is_not(self) -> None:
+    def test_a_reader_is_told_as_well(self) -> None:
         page = self.page("reader")
         self.assertIn("Collection unavailable", page)
-        self.assertNotIn(self.ASKED, page)
+        self.assertIn(self.ASKED, page)
 
-    def test_a_failed_status_command_keeps_the_nodes_words_for_an_administrator(self) -> None:
-        """Review 26-10-30, R4: its stderr is not for readers, the box or the monitors."""
+    def test_a_failed_status_command_keeps_the_nodes_words_for_a_signed_in_role(self) -> None:
+        """Review 26-10-30, R4: its stderr is for the signed-in roles, not the box or the monitors."""
 
         failed = db.ClusterStatus(
             cluster="alpha",
@@ -1778,9 +1778,10 @@ class WhyAReadingFailed(LoginTestCase):
                         "/status/metrics", headers={"X-Forwarded-For": "192.0.2.10"}
                     ).text
         self.assertIn(self.ASKED, pages["admin"])
+        self.assertIn(self.ASKED, pages["reader"])
         self.assertIn("The status command failed on the node", pages["reader"])
         self.assertIn("Invalid status", pages["json"])
-        for shown in ("reader", "json", "metrics"):
+        for shown in ("json", "metrics"):
             self.assertNotIn(self.ASKED, pages[shown])
 
     def test_the_node_row_carries_the_nodes_own_message_for_an_administrator(self) -> None:

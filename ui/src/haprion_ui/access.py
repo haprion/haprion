@@ -216,6 +216,19 @@ def admin_write_gate(config: Config, request: Request) -> AuthenticatedSession |
     return session
 
 
+def reading_gate(request: Request) -> AuthenticatedSession | Response:
+    """Signed in, any role: the gate of a list a reader reads as an admin does.
+
+    Writes on or off does not matter to a page that only shows; the controls on
+    it carry that question themselves.
+    """
+
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    return session
+
+
 def forbidden_page(request: Request, config: Config) -> Response:
     """What this account's role may not open or do, as a page with the menu (review 26-10-22, 2-8).
 

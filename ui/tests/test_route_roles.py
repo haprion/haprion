@@ -53,23 +53,21 @@ REFUSED_ITS_OWN_WAY = {"/logout": 200, "/proxies/{cluster}/{name}/remove": 400}
 
 #
 # The pages a reader is told *Administrators only*: the forms where something is
-# made, changed or removed, and the settings, the profiles, the certificate
-# receivers and the API tokens, where access is handled. Every other page a
+# made, changed or removed, and the settings and the profiles' and receivers'
+# own forms, where access is handled. The lists of API tokens, DNS and NDES
+# profiles and certificate receivers are read. Every other page a
 # reader reads as an admin does; a page added here says why it is not read.
 #
 READER_REFUSED_PAGES = {
     "/backups/restore/new",
     "/certificates/import",
     "/certificates/new",
-    "/certificates/receivers",
     "/certificates/receivers/key",
     "/certificates/receivers/new",
-    "/dns-profiles",
     "/dns-profiles/new",
     "/dns-profiles/{profile_id}/remove",
     "/dns-profiles/{profile_id}/replace",
     "/first-cluster/{name}",
-    "/ndes-profiles",
     "/ndes-profiles/new",
     "/ndes-profiles/servers/new",
     "/ndes-profiles/{profile_id}/remove",
@@ -78,7 +76,6 @@ READER_REFUSED_PAGES = {
     "/proxies/{cluster}/{name}/edit",
     "/proxies/{cluster}/{name}/remove",
     "/settings",
-    "/settings/api-tokens",
     "/settings/api-tokens/new",
     "/settings/api-tokens/{name}/extend",
     "/settings/api-tokens/{name}/revoke",

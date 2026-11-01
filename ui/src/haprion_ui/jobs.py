@@ -14,11 +14,10 @@ page, so `failed / exit 65` was the whole of what a reader was told, and a
 locked cluster, a moved target and a refused validation looked identical.
 
 The **diagnostics** are the operation's redacted stderr, and they are shown to
-an admin only. The frozen contract says raw stderr is never returned to a
-*reader role*; hiding it from everyone was a habit rather than a decision, and
-the cost of that habit fell on the one person who had to open an SSH session at
-every failure. See B44. The helper's own **sentences** - an error's and a
-warning's - are not stderr: a reader is given them as an admin is.
+every signed-in role, as the helper's own **sentences** - an error's and a
+warning's - are. Hiding them was a habit rather than a decision, and the cost
+of that habit fell on the one person who had to open an SSH session at every
+failure. See B44.
 """
 
 from __future__ import annotations
@@ -1279,7 +1278,7 @@ def build_job_overview(
     this has to be the newest job that left it that way. Anything older is
     history, and history does not need a caption telling the reader to act.
 
-    `diagnostics` says whether the caller is entitled to the operations' stderr
+    `diagnostics` says whether the caller is given the operations' redacted stderr
     and `sentences` whether it is given the helpers' error and warning
     sentences. Both default to false, so a page that forgets to ask the
     question gets the narrow projection rather than the wide one.

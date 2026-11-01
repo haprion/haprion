@@ -217,11 +217,14 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         )
         self.assertTrue(strip.rstrip().endswith("New certificate</a></span>"))
 
-    def test_a_reader_gets_the_strip_without_buttons(self) -> None:
+    def test_a_reader_gets_the_strip_with_the_lists_and_no_way_in(self) -> None:
         page = self.page("?view=registry")
 
         self.assertIn('<div class="page-ranges-sticky certificate-strip">', page)
-        self.assertNotIn("certificate-actions", page)
+        for link in ("/dns-profiles", "/ndes-profiles", "/certificates/receivers"):
+            self.assertIn(f'href="{link}"', page)
+        for link in ("/certificates/import", "/certificates/new"):
+            self.assertNotIn(f'href="{link}"', page)
         self.assertNotIn("secondary-button", page.split("</section>", 1)[0])
 
 

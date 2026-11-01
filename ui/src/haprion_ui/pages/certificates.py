@@ -38,7 +38,7 @@ from haprion_ui import (
     operations,
     refusals,
 )
-from haprion_ui.access import admin_write_gate, current_session, forbidden_page
+from haprion_ui.access import admin_write_gate, current_session, forbidden_page, reading_gate
 from haprion_ui.certificate_reading import certificate_choices, registry_views
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
@@ -1493,7 +1493,7 @@ def build_router(config: Config) -> APIRouter:
     def certificate_receivers_page(request: Request) -> Response:
         """Who fetches from this manager, and what each host runs to do it."""
 
-        gate = admin_write_gate(config, request)
+        gate = reading_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _receivers_page(request, gate)

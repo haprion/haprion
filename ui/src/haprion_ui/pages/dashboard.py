@@ -789,9 +789,9 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         #
-        # *Events* (B275): the jobs, and for an admin the rest of the record.
+        # *Events* (B275): the jobs, the nodes' own events and the audit record.
         #
-        if request.query_params.get("view") == "audit" and session.role == "admin":
+        if request.query_params.get("view") == "audit":
             return _audit_page(request, session, token)
         if request.query_params.get("view") == "nodes":
             return _node_events_page(request, session, token)
@@ -809,11 +809,10 @@ def build_router(config: Config) -> APIRouter:
                 listed,
                 awaiting=jobs.awaiting_deployment(db.cluster_statuses(connection)),
                 #
-                # The helpers' sentences are every role's. The stderr is not:
-                # the contract withholds raw stderr from a reader role, and
-                # only from a reader role. See B44.
+                # The helpers' sentences and the redacted diagnostics are every
+                # signed-in role's. See B44.
                 #
-                diagnostics=session.role == "admin",
+                diagnostics=True,
                 sentences=True,
                 judged=judged,
                 writes=config.management_writes,

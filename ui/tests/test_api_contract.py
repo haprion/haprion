@@ -207,7 +207,24 @@ def secrets_in(value: Any, path: str = "") -> list[str]:
     return found
 
 
+def secrets_in_page(page: str) -> list[str]:
+    """Where a page shows what is never shown: a token, a private key, a field for a password."""
+
+    found = SECRET_VALUES.findall(page)
+    found += re.findall(
+        r"<(?:input|textarea)[^>]*(?:type=\"password\"|name=\"[^\"]*(?:secret|password|challenge|api_token)[^\"]*\")",
+        page,
+    )
+    return found
+
+
 class TheSecretScan(unittest.TestCase):
+    def test_it_finds_a_secret_on_a_page(self) -> None:
+        issued = "hap_" + "A" * 43
+        self.assertEqual(secrets_in_page(f"<td>{issued}</td>"), [issued])
+        self.assertEqual(len(secrets_in_page('<input type="password" name="x">')), 1)
+        self.assertEqual(secrets_in_page("<td>hap_Zeta0000</td>"), [])
+
     def test_it_finds_a_field_a_token_and_a_key(self) -> None:
         issued = "hap_" + "A" * 43
         answer = {

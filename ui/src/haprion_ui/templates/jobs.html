@@ -19,13 +19,13 @@
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}</div>
 </section>
 {#
-  The jobs, what the nodes did on their own (26-10-12), and for an admin the
+  The jobs, what the nodes did on their own (26-10-12), and the
   rest of the record (B275).
 #}
 <div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges certificate-views" aria-label="Event views">
   <a href="/jobs"{% if view == 'jobs' %} class="is-current" aria-current="true"{% endif %}><span>Jobs</span><span class="segment-reserve" aria-hidden="true">Jobs</span></a>
   <a href="/jobs?view=nodes"{% if view == 'nodes' %} class="is-current" aria-current="true"{% endif %}><span>Nodes</span><span class="segment-reserve" aria-hidden="true">Nodes</span></a>
-  {% if role == 'admin' %}<a href="/jobs?view=audit"{% if view == 'audit' %} class="is-current" aria-current="true"{% endif %}><span>Audit</span><span class="segment-reserve" aria-hidden="true">Audit</span></a>{% endif %}
+  <a href="/jobs?view=audit"{% if view == 'audit' %} class="is-current" aria-current="true"{% endif %}><span>Audit</span><span class="segment-reserve" aria-hidden="true">Audit</span></a>
 </nav></div>
 
 {% if view == 'audit' %}

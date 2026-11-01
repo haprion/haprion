@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from haprion_ui import api_tokens, attention, auth, db
 from tests.test_api import a_token
+from tests.test_api_contract import secrets_in_page
 from tests.test_login import LoginTestCase, configuration
 
 NOW = datetime.now(UTC)
@@ -153,13 +154,51 @@ class TheList(TokensPage):
         self.assertIn(">2</td>", card)
         self.assertIn('<span class="warning-text">1</span>', card)
 
-    def test_a_reader_is_refused_every_page(self) -> None:
+    def reader(self) -> TestClient:
         self.account = replace(self.account, role="reader")
-        client = self.client(replace(configuration(), management_writes=True))
+        client = self.client(
+            replace(configuration(), management_writes=True, clusters=("alpha", "beta"))
+        )
         self.sign_in(client)
-        for path in ("", "/new", "/monitoring/revoke"):
+        return client
+
+    def test_a_reader_is_refused_every_page_but_the_list(self) -> None:
+        client = self.reader()
+        for path in ("/new", "/monitoring/revoke", "/monitoring/extend"):
             with self.subTest(path):
                 self.assertEqual(client.get("/settings/api-tokens" + path).status_code, 403)
+
+    def test_a_reader_reads_the_list_and_is_given_no_control_and_no_secret(self) -> None:
+        self.tokens = [
+            a_token(name="monitoring", prefix="hap_Moni0000"),
+            a_token(name="gone", revoked_at=NOW - timedelta(days=1), revoked_by="admin"),
+        ]
+        page = self.reader().get("/settings/api-tokens").text
+        main = page[page.index("<main") : page.index("</main>")]
+
+        self.assertIn("monitoring", main)
+        self.assertIn("hap_Moni0000", main)
+        self.assertIn("gone", main)
+        for control in ('method="post"', "<form", "Add token", ">Extend<", ">Revoke<", ">Remove<"):
+            self.assertNotIn(control, main)
+        self.assertNotIn("/settings/api-tokens/", main)
+        self.assertEqual(secrets_in_page(page), [])
+
+    def test_an_admin_is_given_the_controls_and_no_secret_either(self) -> None:
+        self.tokens = [a_token(name="monitoring"), a_token(name="gone", revoked_at=NOW)]
+        page = self.admin().get("/settings/api-tokens").text
+
+        for control in ("Add token", "Extend", 'action="/settings/api-tokens/gone/remove"'):
+            self.assertIn(control, page)
+        self.assertEqual(secrets_in_page(page), [])
+
+    def test_a_reader_s_posts_are_refused(self) -> None:
+        self.tokens = [a_token(name="monitoring"), a_token(name="gone", revoked_at=NOW)]
+        client = self.reader()
+        for path in ("/new", "/monitoring/extend", "/monitoring/revoke", "/gone/remove"):
+            with self.subTest(path):
+                self.assertEqual(self.post(client, "/settings/api-tokens" + path).status_code, 403)
+        self.assertEqual((self.made, self.revoked, self.deleted, self.extended), ([], [], [], []))
 
 
 class MakingATokenOnThePage(TokensPage):

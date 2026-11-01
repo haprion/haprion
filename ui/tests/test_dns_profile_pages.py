@@ -22,6 +22,7 @@ from haprion.dns_profile_keys import generate, render_public_key
 from haprion.dns_profiles import open_profile
 
 from haprion_ui import auth, db, dns_profile_form, jobs
+from tests.test_api_contract import secrets_in_page
 from tests.test_busy_clusters import held_job, workerless_job
 from tests.test_login import LoginTestCase, configuration
 from tests.test_queue_route import queued
@@ -277,9 +278,35 @@ class ThePages(ProfileRouteTestCase):
     def test_the_gates_are_the_certificate_form_s(self) -> None:
         client = self.client(configuration())
         self.sign_in(client)
-        self.assertEqual(client.get("/dns-profiles").status_code, 404)
-        self.assertEqual(self.writing_client(role="reader").get("/dns-profiles").status_code, 403)
+        self.assertEqual(client.get("/dns-profiles/new").status_code, 404)
+        reader = self.writing_client(role="reader")
+        self.assertEqual(reader.get("/dns-profiles").status_code, 200)
+        for path in ("/new", "/cf-main/replace", "/cf-main/remove"):
+            self.assertEqual(reader.get("/dns-profiles" + path).status_code, 403)
         self.assertEqual(self.writing_client().get("/dns-profiles").status_code, 200)
+
+    def test_a_reader_reads_the_list_without_a_control_or_a_secret(self) -> None:
+        self.rows = [profile_row(key_id=self.public_key.key_id), profile_row(id="old")]
+        reader = self.writing_client(role="reader")
+        page = reader.get("/dns-profiles").text
+        main = page[page.index("<main") : page.index("</main>")]
+
+        self.assertIn("<code>cf-main</code>", main)
+        self.assertIn("<code>old</code>", main)
+        for control in ("<form", "New profile", "Replace", "Remove", "/replace", "/remove"):
+            self.assertNotIn(control, main)
+        self.assertEqual(secrets_in_page(page), [])
+        self.assertNotIn(GUARD, page)
+
+        token = auth.csrf_token(reader.cookies[auth.SESSION_COOKIE])
+        for path in ("/new", "/cf-main/replace", "/cf-main/remove"):
+            response = reader.post(
+                "/dns-profiles" + path,
+                data={"profile_id": "cf-main", "idempotency_key": KEY, auth.CSRF_FIELD: token},
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 403, path)
+        self.assertEqual(self.created, [])
 
     def test_the_listing_shows_status_and_only_calls_out_an_old_key(self) -> None:
         self.rows = [

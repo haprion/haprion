@@ -15,6 +15,7 @@ from haprion.ndes_profiles import open_profile
 from haprion.ndes_servers import NdesServerError
 
 from haprion_ui import audit, auth, db, operations
+from tests.test_api_contract import secrets_in_page
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
 from tests.test_dns_profile_pages import GUARD, KEY, ProfileRouteTestCase, profile_row
@@ -121,11 +122,46 @@ class NdesRoutes(ProfileRouteTestCase):
 
 class NdesPages(NdesRoutes):
     def test_routes_require_admin_and_csrf(self) -> None:
-        self.assertEqual(self.writing_client(role="reader").get("/ndes-profiles").status_code, 403)
+        reader = self.writing_client(role="reader")
+        for path in ("/new", "/servers/new", "/p/replace", "/p/remove"):
+            self.assertEqual(reader.get("/ndes-profiles" + path).status_code, 403)
         client = self.writing_client()
         self.assertEqual(client.get("/ndes-profiles").status_code, 200)
         self.assertEqual(self.post_ndes(client, csrf_token=str(uuid4())).status_code, 403)
         self.assertEqual(self.created, [])
+
+    def test_a_reader_reads_both_lists_without_a_control_or_a_secret(self) -> None:
+        reader = self.writing_client(role="reader")
+        page = reader.get("/ndes-profiles").text
+        main = page[page.index("<main") : page.index("</main>")]
+
+        self.assertIn(ENDPOINT, main)
+        self.assertIn("NDES servers", main)
+        for control in (
+            "<form",
+            "Add NDES server",
+            "New profile",
+            "Replace",
+            "Remove",
+            'type="radio"',
+        ):
+            self.assertNotIn(control, main)
+        self.assertNotIn("/ndes-profiles/", main.replace("/ndes-profiles/servers", ""))
+        self.assertEqual(secrets_in_page(page), [])
+        self.assertNotIn(GUARD, page)
+
+        for path in ("/new", "/servers/new", "/servers/confirm", "/servers/remove"):
+            response = self.post_ndes(
+                reader, "/ndes-profiles" + path, endpoint=ENDPOINT, sha256="a" * 64
+            )
+            self.assertEqual(response.status_code, 403, path)
+        self.assertEqual((self.created, self.queued), ([], []))
+
+    def test_an_admin_is_given_the_controls_and_no_secret_either(self) -> None:
+        page = self.writing_client().get("/ndes-profiles").text
+        for control in ("Add NDES server", 'action="/ndes-profiles/servers/remove"'):
+            self.assertIn(control, page)
+        self.assertEqual(secrets_in_page(page), [])
 
     def test_submission_seals_secret_and_queues_only_identity_revision(self) -> None:
         response = self.post_ndes(self.writing_client())

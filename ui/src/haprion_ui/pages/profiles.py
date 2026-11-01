@@ -28,7 +28,7 @@ from haprion_ui import (
     ndes_profile_form,
     refusals,
 )
-from haprion_ui.access import current_session, forbidden_page
+from haprion_ui.access import current_session, forbidden_page, reading_gate
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import read_manager_certificates
@@ -73,7 +73,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/dns-profiles", response_class=HTMLResponse)
     def dns_profile_list(request: Request) -> Response:
-        gate = _dns_profiles_gate(request)
+        gate = reading_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -474,7 +474,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/ndes-profiles", response_class=HTMLResponse)
     def ndes_profile_list(request: Request) -> Response:
-        gate = _dns_profiles_gate(request)
+        gate = reading_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         with request.app.state.pool.connection() as connection:

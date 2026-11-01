@@ -70,8 +70,8 @@ class NodeView:
     package_note: str | None = None
     package_message: str | None = None
     #
-    # Why the node could not be read, in the words of the reading (an
-    # administrator's hover): "SSH gave no answer within 60 seconds".
+    # Why the node could not be read, in the words of the reading (a
+    # hover): "SSH gave no answer within 60 seconds".
     #
     reason: str | None = None
     #
@@ -165,7 +165,7 @@ class ClusterView:
     memory: ResourceFigure | None = None
     #
     # Why the poller could not read the cluster at all (`poll_error`), as
-    # Network shows it, for an administrator.
+    # Network shows it.
     #
     reason: str | None = None
 
@@ -377,7 +377,7 @@ def _failed_command(node: Mapping[str, Any]) -> str | None:
     """That the node's own status command ran and failed (review 2026-10-30, E3).
 
     A fixed sentence, as it goes to every reader and to the monitors. What the
-    node said is `reason`, which only an administrator is shown (R4).
+    node said is `reason`, which the pages show to a signed-in user and the monitors never get (R4).
     """
 
     if _mapping(node.get("error")).get("code") == "node_status_invalid":

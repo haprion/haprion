@@ -304,6 +304,15 @@ class WhoMayRead(DraftReading):
         self.assertIn("app.demo.example", reader.text)
         self.assertIn("192.0.2.", reader.text)
 
+    def test_a_reader_is_given_the_advanced_config_as_an_admin_is(self) -> None:
+        text = "option http-server-close"
+        with mock.patch.object(demo, "PUBLIC_WEB", demo.PUBLIC_WEB + f"advanced: {text}\n"):
+            reader, admin = self.opened("reader"), self.opened("admin")
+
+        self.assertIn(text, admin.text)
+        self.assertIn(text, reader.text)
+        self.assertIn("With advanced config", reader.text)
+
     def test_a_reader_is_given_no_button_and_no_form_that_changes_anything(self) -> None:
         reader, admin = self.opened("reader"), self.opened("admin")
 

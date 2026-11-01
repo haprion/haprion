@@ -265,7 +265,7 @@ def row(**fields: Any) -> NodeEvent:
 
 
 class ThePage(LoginTestCase):
-    def test_both_roles_read_it_and_only_an_admin_has_audit(self) -> None:
+    def test_both_roles_read_it_and_the_audit_view(self) -> None:
         for role in ("admin", "reader"):
             with self.subTest(role):
                 self.account = replace(self.account, role=role)
@@ -276,7 +276,7 @@ class ThePage(LoginTestCase):
 
                 self.assertIn("Server s1 in shop went down", page)
                 self.assertIn('href="/jobs?view=nodes" class="is-current"', page)
-                self.assertEqual('href="/jobs?view=audit"' in page, role == "admin")
+                self.assertIn('href="/jobs?view=audit"', page)
 
     def test_a_page_that_is_not_a_number_is_the_first_page(self) -> None:
         # Review 26-10-13, K2.

@@ -21,6 +21,7 @@ from uuid import uuid4
 from haprion.cert_receiver import crypt
 
 from haprion_ui import auth, certificate_receivers, db, jobs
+from tests.test_api_contract import secrets_in_page
 from tests.test_busy_clusters import held_job, workerless_job
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import reading as certificate_reading
@@ -699,16 +700,61 @@ class ThePage(ReceiverRouteTestCase):
         self.assertIn("Can hold any certificate, wildcards included", page)
         self.assertNotIn("Fetch commands", page)
 
+    def test_a_reader_reads_the_list_and_the_commands_without_a_control_or_a_secret(self) -> None:
+        self.activity = []
+        reader = self.writing_client(role="reader")
+        page = reader.get("/certificates/receivers").text
+        main = page[page.index("<main") : page.index("</main>")]
+
+        self.assertIn("<strong>lb-01</strong>", main)
+        self.assertIn("<strong>lb-02.example.net</strong>", main)
+        self.assertIn("Fetch commands", main)
+        self.assertIn("get /app.example.com/app.example.com.pfx", main)
+        for control in (
+            "<form",
+            "Register a receiver",
+            "New secret",
+            "Replace SSH key",
+            ">Remove<",
+            "Dismiss",
+            "/receivers/new",
+            "/receivers/key",
+        ):
+            self.assertNotIn(control, main)
+        self.assertEqual(secrets_in_page(page), [])
+
+        for path in ("new", "secret", "key", "remove"):
+            response = self.remove(reader, "lb-01")
+            self.assertEqual(response.status_code, 403)
+            response = reader.post(
+                f"/certificates/receivers/{path}",
+                data={
+                    "receiver": "lb-01",
+                    "transport": "rsync",
+                    "public_key": KEY,
+                    "idempotency_key": str(uuid4()),
+                    auth.CSRF_FIELD: auth.csrf_token(reader.cookies[auth.SESSION_COOKIE]),
+                },
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 403, path)
+
+    def test_an_admin_is_given_the_controls_and_no_secret_either(self) -> None:
+        page = self.writing_client().get("/certificates/receivers").text
+        for control in ("Register a receiver", "Replace SSH key", ">Remove<"):
+            self.assertIn(control, page)
+        self.assertEqual(secrets_in_page(page), [])
+
     def test_the_form_hides_windows_for_rsync_before_any_script_runs(self) -> None:
         response = self.add(self.writing_client(), public_key="not a key")
         self.assertIn('data-os="windows" hidden', response.text)
 
     def test_the_gates_are_the_registry_s(self) -> None:
+        reader = self.writing_client(role="reader")
+        self.assertEqual(reader.get("/certificates/receivers").status_code, 200)
+        self.assertEqual(reader.get("/certificates/receivers/key").status_code, 403)
         self.assertEqual(
-            self.writing_client(role="reader").get("/certificates/receivers").status_code, 403
-        )
-        self.assertEqual(
-            self.writing_client(writes=False).get("/certificates/receivers").status_code, 404
+            self.writing_client(writes=False).get("/certificates/receivers/new").status_code, 404
         )
         client = self.writing_client()
         self.assertEqual(self.remove(client, "lb-02.example.net", token="bad").status_code, 403)

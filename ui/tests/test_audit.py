@@ -258,15 +258,29 @@ class ThePage(LoginTestCase):
             client.get(f"/jobs?view=nodes&cluster={long}")
         self.assertEqual(paged.call_args.kwargs["cluster"], long)
 
-    def test_a_reader_has_no_audit_view(self) -> None:
+    def test_a_reader_reads_the_audit_view_and_is_given_nothing_to_change(self) -> None:
         self.account = replace(self.account, role="reader")
         client = self.client()
         self.sign_in(client)
+        rows = [
+            AuditEvent(
+                id=11,
+                at=AT,
+                actor="operator",
+                action="queue_job",
+                cluster="alpha",
+                request_id=uuid4(),
+                detail={"operation": "deploy", "job": 9},
+            )
+        ]
+        with mock.patch("haprion_ui.db.audit_events", return_value=rows):
+            page = client.get("/jobs?view=audit").text
+        main = page[page.index("<main") : page.index("</main>")]
 
-        page = client.get("/jobs?view=audit").text
-
-        self.assertNotIn('href="/jobs?view=audit"', page)
-        self.assertIn("<th>Operation</th>", page)
+        self.assertIn('href="/jobs?view=audit"', page)
+        self.assertIn("Queued a deploy (job 9)", main)
+        self.assertIn('<td data-label="Where">alpha</td>', main)
+        self.assertNotIn('method="post"', main)
 
 
 if __name__ == "__main__":

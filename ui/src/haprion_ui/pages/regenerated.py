@@ -12,7 +12,7 @@ from haprion_ui import auth, db, history, jobs, operations, regenerated
 from haprion_ui.access import admin_write_gate, current_session, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
-from haprion_ui.pending import publish_key, regenerate_payload
+from haprion_ui.pending import pending_package, publish_key, regenerate_payload
 from haprion_ui.reading import HISTORY_SOURCE, REGENERATION_SOURCE, listed_clusters, read_source
 from haprion_ui.refusals import refusal_page
 from haprion_ui.templates import TEMPLATES
@@ -62,6 +62,11 @@ def build_router(config: Config) -> APIRouter:
                 #
                 "ahead": versions.unpublished if versions is not None else 0,
                 "running": running.get(cluster),
+                #
+                # Saved changes publish together, and that publish makes the
+                # generated layer again too; this one would leave them stale.
+                #
+                "saved": len(pending_package(request, config, cluster).rows),
                 "demo_fixture": config.demo_fixture,
             },
         )
@@ -96,6 +101,14 @@ def build_router(config: Config) -> APIRouter:
         if view.state != "changed":
             return refusal_page(
                 request, config, "Publishing again would not change what runs.", back=back
+            )
+        if pending_package(request, config, cluster).rows:
+            return refusal_page(
+                request,
+                config,
+                "Changes are saved for this cluster. Publishing them also makes the "
+                "configuration again with the installed version.",
+                back=back,
             )
         versions = history_view(request, cluster)
         head = versions.head_commit if versions is not None else ""

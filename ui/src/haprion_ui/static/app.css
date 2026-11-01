@@ -2013,6 +2013,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 /* The node package above a form that asks for a node's block, inside the card's gutter as the fields are. */
 .package-link { margin: 0; padding: 18px 20px 0; }
 .removal-consequences { margin: 12px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
+.removal-consequences.regenerated-causes { margin: 12px 20px 0; padding-left: 38px; }
+.cluster-card > .version-changes { margin: 14px 20px 20px; }
 .refusal-card .editor-actions { justify-content: flex-start; padding: 16px 0 0; }
 .refusal-card .form-buttons > * { white-space: nowrap; }
 /*

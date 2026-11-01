@@ -24,7 +24,7 @@ PARTS = {
     "listener": "listener",
     "certificate": "certificate",
 }
-CHANGES = {"changed": "Changed", "absent": "Not in the published version"}
+CHANGES = {"changed": "Changed", "absent": "No longer generated"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +40,8 @@ class Regenerated:
 
     cluster: str
     #
-    # changed, refused, unchanged, unpublished, or unread - no reading was made.
+    # changed, refused, unchanged, unpublished; failed - the reading was tried and
+    # could not be made (`message` says why); or unread - none was tried yet.
     #
     state: str
     fingerprint: str
@@ -54,16 +55,26 @@ class Regenerated:
     observed_at: Any
 
 
+def _failure(row: ClusterRegeneration) -> str:
+    """Why the reading could not be made, in the words the poller kept."""
+
+    said = row.error.get("message") if isinstance(row.error, Mapping) else None
+    return _text(said) or _text(row.poll_error) or "The helper did not answer."
+
+
 def _text(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
 def build(cluster: str, row: ClusterRegeneration | None) -> Regenerated:
-    """The page's view of the stored reading; `unread` when there is none to show."""
+    """The page's view of the stored reading; `unread` when none was made, `failed` when it could not be."""
 
     result = row.result if row is not None and row.outcome == "done" else {}
     outcome = _text(result.get("outcome"))
     state = outcome if outcome in {"changed", "refused", "unchanged", "unpublished"} else "unread"
+    message = _text(result.get("message"))
+    if row is not None and row.outcome != "done":
+        state, message = "failed", _failure(row)
     causes = tuple(
         said
         for cause in result.get("causes") or ()
@@ -86,7 +97,7 @@ def build(cluster: str, row: ClusterRegeneration | None) -> Regenerated:
         fingerprint=_text(result.get("fingerprint")),
         published_commit=_text(result.get("published_commit")),
         installed_version=_text(result.get("installed_version")),
-        message=_text(result.get("message")),
+        message=message,
         causes=causes,
         objects=objects,
         files_changed=files if isinstance(files, int) and not isinstance(files, bool) else 0,

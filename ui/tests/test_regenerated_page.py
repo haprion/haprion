@@ -39,8 +39,27 @@ def changed(**more: Any) -> db.ClusterRegeneration:
 
 class TheView(LoginTestCase):
     def test_a_reading_that_was_not_made_has_nothing_to_show(self) -> None:
-        for row in (None, regeneration(reading="failed"), regeneration(reading="unavailable")):
-            self.assertEqual(regenerated.build("alpha", row).state, "unread")
+        self.assertEqual(regenerated.build("alpha", None).state, "unread")
+
+    def test_a_reading_that_failed_says_why(self) -> None:
+        failed = replace(
+            regeneration(reading="failed"),
+            error={"code": "regeneration_unavailable", "message": "cannot look up node-a"},
+        )
+        unavailable = replace(regeneration(reading="unavailable"), poll_error="no sudo rule")
+
+        self.assertEqual(
+            [
+                (view.state, view.message)
+                for view in map(lambda r: regenerated.build("alpha", r), (failed, unavailable))
+            ],
+            [("failed", "cannot look up node-a"), ("failed", "no sudo rule")],
+        )
+
+    def test_an_object_the_regeneration_no_longer_makes_is_said_so(self) -> None:
+        row = regeneration(objects=[{"name": "shop", "change": "absent", "parts": []}])
+
+        self.assertEqual(regenerated.build("alpha", row).objects[0].change, "No longer generated")
 
     def test_the_states_are_the_engines_outcomes(self) -> None:
         for outcome in ("changed", "refused", "unchanged", "unpublished"):
@@ -133,12 +152,40 @@ class ThePage(LoginTestCase):
             (regeneration(outcome="unchanged"), "would not change what alpha runs"),
             (regeneration(outcome="unpublished"), "Nothing is published for alpha yet"),
             (None, "has not been read for alpha yet"),
-            (regeneration(reading="failed"), "has not been read for alpha yet"),
+            (
+                replace(
+                    regeneration(reading="failed"),
+                    error={"code": "regeneration_unavailable", "message": "cannot look up node-a"},
+                ),
+                "cannot look up node-a",
+            ),
         ):
             with self.subTest(words=words):
                 text = self.page(row).text
                 self.assertIn(words, text)
                 self.assertNotIn("Publish &amp; deploy", text)
+
+    def test_a_failed_reading_is_not_called_unread(self) -> None:
+        text = self.page(
+            replace(regeneration(reading="failed"), poll_error="the helper refused")
+        ).text
+
+        self.assertIn("could not be read", text)
+        self.assertIn("the helper refused", text)
+        self.assertNotIn("has not been read", text)
+
+    def test_saved_changes_are_published_by_their_own_button_which_makes_this_again_too(
+        self,
+    ) -> None:
+        with mock.patch(
+            "haprion_ui.pages.regenerated.pending_package",
+            return_value=SimpleNamespace(rows=(object(),)),
+        ):
+            text = self.page(changed()).text
+
+        self.assertIn("1 saved change waits to be published", text)
+        self.assertNotIn("Publish &amp; deploy", text)
+        self.assertIn("1 file differs", self.page(changed(files_changed=1)).text)
 
     def test_a_busy_cluster_has_the_badge_in_place_of_the_form(self) -> None:
         from tests.test_job_page import job
@@ -216,6 +263,17 @@ class ThePublish(LoginTestCase):
                 self.assertEqual(answer.status_code, 400)
                 self.assertIn("Read it again before publishing", answer.text)
                 queued.assert_not_called()
+
+    def test_saved_changes_stop_it_and_are_published_instead(self) -> None:
+        with mock.patch(
+            "haprion_ui.pages.regenerated.pending_package",
+            return_value=SimpleNamespace(rows=(object(),)),
+        ):
+            answer, queued = self.post(changed())
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertIn("Publishing them also makes the configuration again", answer.text)
+        queued.assert_not_called()
 
     def test_there_is_nothing_to_publish_where_nothing_would_change(self) -> None:
         for row in (

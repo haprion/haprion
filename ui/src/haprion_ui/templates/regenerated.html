@@ -19,14 +19,16 @@
 <p class="preview-notice">Nothing is published for {{ view.cluster }} yet.</p>
 {% elif view.state == 'unread' %}
 <p class="preview-notice">This has not been read for {{ view.cluster }} yet. The poller reads it within a minute or two.</p>
+{% elif view.state == 'failed' %}
+<p class="preview-notice notice-warning"><span class="status-orb status-warning" aria-hidden="true"></span><strong>Whether publishing again would change what {{ view.cluster }} runs could not be read.</strong> {{ view.message }}{% if view.observed_at %} Last tried {{ view.observed_at | shown_at }}.{% endif %}</p>
 {% elif view.state == 'refused' %}
 <article class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>The installed version cannot publish {{ view.cluster }} again</h3>{% if view.message %}<p>{{ view.message }}</p>{% endif %}</div></div></header>
 </article>
 {% else %}
 <article class="cluster-card">
-  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Publishing again would change what {{ view.cluster }} runs</h3><p>Made again with {{ view.installed_version }}, {{ view.files_changed }} file{{ '' if view.files_changed == 1 else 's' }} differ from the published version.</p></div></div></header>
-  {% if view.causes %}<ul class="removal-consequences">{% for cause in view.causes %}<li>{{ cause[:1] | upper }}{{ cause[1:] }}</li>{% endfor %}</ul>{% endif %}
+  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Publishing again would change what {{ view.cluster }} runs</h3><p>Made again with {{ view.installed_version }}, {{ view.files_changed }} file{{ ' differs' if view.files_changed == 1 else 's differ' }} from the published version. The publish makes its own checks, such as the ports the nodes hold, and can still refuse.</p></div></div></header>
+  {% if view.causes %}<ul class="removal-consequences regenerated-causes">{% for cause in view.causes %}<li>{{ cause[:1] | upper }}{{ cause[1:] }}</li>{% endfor %}</ul>{% endif %}
   {% if view.objects %}
   <div class="table-scroll"><table class="node-table regenerated-table"><thead><tr><th>Proxy</th><th>Change</th><th>Parts</th></tr></thead><tbody>
     {% for entry in view.objects %}
@@ -44,7 +46,9 @@
   {% endif %}
   {% if management_writes and role == 'admin' %}
   <footer class="cluster-actions" aria-label="{{ view.cluster }} operations">
-    {% if running %}
+    {% if saved %}
+    <p class="table-note">{{ saved }} saved change{{ '' if saved == 1 else 's' }} wait{{ 's' if saved == 1 }} to be published. <a href="/history">Publishing {{ 'it' if saved == 1 else 'them' }}</a> makes this configuration again too, in one version.</p>
+    {% elif running %}
     <div class="action-buttons" data-busy="{{ view.cluster }}">{{ busy_badge(running) }}</div>
     {% else %}
     <form method="post" action="/history/{{ view.cluster }}/regenerated" class="action-buttons">

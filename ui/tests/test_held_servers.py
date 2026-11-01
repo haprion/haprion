@@ -151,11 +151,13 @@ class TheDashboard(DraftReading):
             self.page(),
         )
 
-    def test_a_reader_is_told_how_many_without_a_link(self) -> None:
+    def test_a_reader_is_given_the_same_link_as_an_admin(self) -> None:
+        """A reader reads what an admin reads: the count and the object it is on."""
+
         page = self.page(role="reader")
 
-        self.assertIn("1 server in drain/maintenance</span>", page)
-        self.assertNotIn("public-web#servers", page)
+        self.assertIn("1 server in drain/maintenance: <a", page)
+        self.assertIn("public-web#servers", page)
 
     def test_the_objects_are_not_read_where_nothing_is_held(self) -> None:
         with mock.patch("haprion_ui.pending.read_source") as read:

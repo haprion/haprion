@@ -9,6 +9,7 @@ list is an admin's, and Hide removes it for the whole installation, audited.
 
 from __future__ import annotations
 
+import re
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -259,10 +260,15 @@ class OnTheDashboard(LoginTestCase):
         # Review 2026-10-18, U2: every row led to a page that answers 404 with
         # writes off, and the list could not be hidden then.
         #
+        # The read-only list of API tokens in the account menu answers with
+        # writes off too; nothing else under /settings does.
+        #
         for clusters in ((), ("alpha",)):
             page = self.signed_in(clusters=clusters, writes=False).get("/").text
             self.assertNotIn("Getting started", page)
-            self.assertNotIn('href="/settings', page)
+            self.assertEqual(
+                {"/settings/api-tokens"}, set(re.findall(r'href="(/settings[^"]*)"', page))
+            )
 
     def test_hide_is_stored_audited_and_an_admin_s(self) -> None:
         client = self.signed_in()

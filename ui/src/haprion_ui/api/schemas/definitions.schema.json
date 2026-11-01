@@ -551,7 +551,8 @@
         "node_restore_preview",
         "node_restore",
         "node_restore_discard",
-        "node_restore_status"
+        "node_restore_status",
+        "block_client"
       ]
     },
     "job_state": {

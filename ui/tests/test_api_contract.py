@@ -37,7 +37,7 @@ from haprion_ui.api import contract
 from haprion_ui.api import jobs as api_jobs
 from haprion_ui.config import TrafficLogs
 from haprion_ui.db import ProxyDraft, WafCounted
-from haprion_ui.jobs import OPERATION_LABELS
+from haprion_ui.jobs import OPERATION_LABELS, RETIRED_OPERATIONS
 from haprion_ui.traffic_logs import Reading
 from tests.test_api import ApiTestCase
 from tests.test_api_blocks import BLOCKING, SHOP, held, status, stored
@@ -660,6 +660,7 @@ class TheJobRoutes(Checked, JobsApiTestCase):
             "/jobs/45",
             "/jobs/46",
             "/jobs/47",
+            "/jobs/48",
         ),
     }
 
@@ -682,6 +683,15 @@ class TheJobRoutes(Checked, JobsApiTestCase):
             failed_job(),
             a_job(),
             *self.filled(),
+            #
+            # History from before 0109 (B419): an operation no longer queued
+            # is still in the jobs list, and its answer still fits the schema.
+            #
+            a_job(
+                id=48,
+                request_id=UUID("00000000-0000-4000-8000-000000000048"),
+                operation="block_client",
+            ),
         ]
         self.statuses = [
             db.ClusterStatus(
@@ -968,7 +978,7 @@ class TheCodesAreTheOnesTheCodeUses(unittest.TestCase):
             "tone": (self.enum(definitions, "$defs", "tone"), get_args(dashboard.Tone.__value__)),
             "job operation": (
                 self.enum(definitions, "$defs", "job_operation"),
-                tuple(OPERATION_LABELS),
+                (*OPERATION_LABELS, *RETIRED_OPERATIONS),
             ),
             "job state": (self.enum(definitions, "$defs", "job_state"), get_args(api_jobs.State)),
             "protocol": (

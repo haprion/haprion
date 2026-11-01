@@ -45,6 +45,7 @@ class ReadingShowPeers(unittest.TestCase):
         namespace: dict[str, Any] = {"re": re}
         exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
         self.parse = namespace["parse_peers"]
+        self.namespace = namespace
 
     def test_a_connected_peer(self) -> None:
         self.assertEqual(
@@ -63,6 +64,25 @@ class ReadingShowPeers(unittest.TestCase):
             with self.subTest(text=text.split("last_hdshk=")[1].split()[0]):
                 peer = self.parse(text)[0]
                 self.assertEqual((peer["connected"], peer["synced"]), (True, True))
+
+    def test_the_handshake_s_age_is_read_in_haproxy_s_own_form(self) -> None:
+        """Measured on 3.4.7 (26-11-01): `0s`..`59s`, `1m`, `1m5s`, `2m`, `2m10s`; `<NEVER>`."""
+
+        age = self.namespace["handshake_age"]
+        for text, seconds in (
+            ("last_hdshk=0s", 0),
+            ("last_hdshk=59s", 59),
+            ("last_hdshk=2m", 120),
+            ("last_hdshk=2m10s", 130),
+            ("last_hdshk=1h5m", 3900),
+            ("last_hdshk=1d2h", 93600),
+            ("last_hdshk=<NEVER>", 0),
+            ("no handshake at all", 0),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(age(text), seconds)
+        never = RESYNCING.replace("last_hdshk=2s", "last_hdshk=<NEVER>")
+        self.assertFalse(self.parse(never)[0]["synced"])
 
     def test_a_peer_that_does_not_answer(self) -> None:
         peer = self.parse(DOWN)[0]

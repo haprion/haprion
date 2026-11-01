@@ -277,8 +277,15 @@ def _recorded(
             )
             connection.commit()
     except Exception:
+        #
+        # The names come from the path; the route has matched them already, and
+        # a line break is taken out here as well so this line cannot be split
+        # into two whatever calls it (CodeQL py/log-injection, 26-11-01).
+        #
         logger.exception(
-            "api: the audit row for a block on %s/%s was not written", cluster, detail["object"]
+            "api: the audit row for a block on %s/%s was not written",
+            cluster.replace("\r", "").replace("\n", ""),
+            str(detail["object"]).replace("\r", "").replace("\n", ""),
         )
 
 

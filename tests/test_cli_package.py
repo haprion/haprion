@@ -203,7 +203,7 @@ class TheOperatorsRules(unittest.TestCase):
     def test_every_rule_is_the_humans_and_names_one_helper(self) -> None:
         # rules() refuses any line that is not `%sudo ... <helper> ""`, so no
         # rule can reach %haprion, which holds the worker, or an account.
-        self.assertEqual(len(rules()), 15)
+        self.assertEqual(len(rules()), 16)
 
 
 class TheWheel(unittest.TestCase):

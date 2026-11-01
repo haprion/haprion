@@ -108,7 +108,7 @@ class OneCallForTheLocalReadings(unittest.TestCase):
         self.assertEqual(reads["objects"]["exit_code"], 70)
         self.assertIn("the repository went away", reads["objects"]["stderr"])
 
-    def test_only_the_six_readings_can_be_asked_for(self) -> None:
+    def test_only_the_seven_readings_can_be_asked_for(self) -> None:
         code, answer, errors = self.run_helper(
             request(inventory={}), dict(readings_helper.READINGS)
         )
@@ -145,10 +145,18 @@ class OneCallForTheLocalReadings(unittest.TestCase):
         self.assertEqual(answer["error"]["code"], "bad_input")
         self.assertIn("need a cluster: network", errors)
 
-    def test_the_six_are_the_poller_s_manager_local_helpers(self) -> None:
+    def test_the_seven_are_the_poller_s_manager_local_helpers(self) -> None:
         self.assertEqual(
             sorted(readings_helper.READINGS),
-            ["cert_list", "cluster_settings", "list", "list_backups", "network", "objects"],
+            [
+                "cert_list",
+                "cluster_settings",
+                "list",
+                "list_backups",
+                "network",
+                "objects",
+                "regeneration",
+            ],
         )
 
 

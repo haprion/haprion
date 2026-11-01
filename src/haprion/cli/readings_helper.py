@@ -1,8 +1,9 @@
 """`haprion-readings-helper` - the poller's manager-local readings in one call (review 26-10-08, N2).
 
-Six of the poller's readings touch nothing but the manager: the version
+Seven of the poller's readings touch nothing but the manager: the version
 listing, the backup archives, the certificate list, the network description,
-the cluster settings and the stored objects. Each was its own helper behind
+the cluster settings, the stored objects and the regeneration of the
+published version (whether a publish would change what runs). Each was its own helper behind
 its own sudo rule, run once per cluster every pass - sixteen sudo calls a pass
 for two clusters, and with every call sudo-rs's warning and two PAM lines, some
 70 % of the manager's journal (measured 26-10-08). The readings stay as fresh
@@ -40,6 +41,7 @@ from haprion.cli import (
     list_helper,
     network_helper,
     objects_helper,
+    regeneration_helper,
 )
 from haprion.config import DEFAULT_POLICY_PATH
 from haprion.envelope import envelope
@@ -72,6 +74,7 @@ READINGS: Mapping[str, Helper] = {
     network_helper.OPERATION: network_helper.main,
     cluster_settings_helper.OPERATION: cluster_settings_helper.main,
     objects_helper.OPERATION: objects_helper.main,
+    regeneration_helper.OPERATION: regeneration_helper.main,
 }
 #
 # The readings that answer for the manager when the cluster is null. Each of

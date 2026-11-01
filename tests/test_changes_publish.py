@@ -288,6 +288,54 @@ class ChangesPublishTests(ObjectsPublishFixture):
             self.assertIn("at least one", err)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
+    def test_a_regeneration_publishes_the_generated_layer_with_nothing_else_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            #
+            # The objects are stored and their generated layer is not: what an
+            # older generator left behind, as far as the publish can tell.
+            #
+            self.seed(shop=proxy("shop", "shop.example.com"))
+            versions = count_versions(self.repo)
+            self.assertFalse((self.repo / "managed/generated/1001-shop.cfg").exists())
+
+            code, document, err = self.publish(policy, self.changes(regenerate=True))
+
+            self.assertEqual((code, err), (0, ""))
+            assert_contract("haprion-changes-publish", json.dumps(document))
+            result = document["result"]
+            self.assertEqual(
+                (result["changed"], result["regenerate"], result["objects"], result["network"]),
+                (True, True, [], False),
+            )
+            self.assertEqual(count_versions(self.repo), versions + 1)
+            self.assertTrue((self.repo / "managed/generated/1001-shop.cfg").exists())
+
+    def test_a_regeneration_of_a_version_that_is_current_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed(shop=proxy("shop", "shop.example.com"))
+            self.publish(policy, self.changes(regenerate=True))
+            versions = count_versions(self.repo)
+
+            code, document, _err = self.publish(policy, self.changes(regenerate=True))
+
+            self.assertEqual(code, 0)
+            self.assertIs(document["result"]["changed"], False)
+            self.assertEqual(count_versions(self.repo), versions)
+
+    def test_the_flag_is_a_real_boolean(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            request = json.loads(self.changes(regenerate=True).getvalue())
+            request["parameters"]["regenerate"] = "false"
+
+            code, document, _err = self.publish(policy, io.BytesIO(json.dumps(request).encode()))
+
+            self.assertEqual(code, 65)
+            self.assertEqual(document["error"]["code"], "bad_input")
+
     def test_a_network_that_cannot_stand_is_named_as_the_network(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))

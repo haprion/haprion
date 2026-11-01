@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-regeneration.schema.json",
+  "title": "haprion-regeneration JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "regeneration" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/regeneration_result" },
+            { "$ref": "#/$defs/regeneration_unchanged" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": {
+            "properties": {
+              "result": {
+                "oneOf": [
+                  { "$ref": "#/$defs/regeneration_result" },
+                  { "$ref": "#/$defs/regeneration_unchanged" }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "fingerprint": {
+      "description": "What the result depends on - the published commit, this engine, the cluster's definition, the nodes' addresses and the installed rule set - as one digest. A caller sends it back as unchanged_since.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "regeneration_unchanged": {
+      "description": "The answer to a caller whose unchanged_since still matches: it keeps the result it holds.",
+      "type": "object",
+      "required": ["published_commit", "fingerprint", "unchanged"],
+      "properties": {
+        "published_commit": { "oneOf": [{ "$ref": "common.schema.json#/$defs/hash" }, { "type": "null" }] },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "unchanged": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "regeneration_result": {
+      "type": "object",
+      "required": [
+        "outcome",
+        "fingerprint",
+        "published_commit",
+        "published_version",
+        "installed_version",
+        "managed",
+        "message",
+        "causes",
+        "objects",
+        "files_changed",
+        "diff"
+      ],
+      "properties": {
+        "outcome": {
+          "description": "unchanged: a publish would write the node files the nodes run. changed: it would write others (diff, objects, causes say which). refused: the installed generator refuses the published configuration, so a publish would be refused (message says why). unpublished: nothing is published, nothing to compare.",
+          "enum": ["unchanged", "changed", "refused", "unpublished"]
+        },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "published_commit": { "oneOf": [{ "$ref": "common.schema.json#/$defs/hash" }, { "type": "null" }] },
+        "published_version": { "oneOf": [{ "$ref": "common.schema.json#/$defs/version" }, { "type": "null" }] },
+        "installed_version": { "description": "The product version that made the comparison.", "type": "string", "minLength": 1, "maxLength": 64 },
+        "managed": { "description": "False for a published version with no generated layer to make again (a cluster written by hand, or nothing published).", "type": "boolean" },
+        "message": { "type": ["string", "null"], "maxLength": 1024 },
+        "causes": {
+          "description": "What can be said about why, from what the published tree records. The tree does not record which product version made it, so there is no engine cause.",
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["kind", "published", "installed"],
+            "properties": {
+              "kind": { "enum": ["rule_set"] },
+              "published": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "installed": { "type": "string", "minLength": 1, "maxLength": 64 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "objects": {
+          "description": "Each object whose generated configuration differs, by the manifests; empty for a published version without one.",
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "type": "object",
+            "required": ["name", "change", "parts"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "change": { "enum": ["changed", "absent"] },
+              "parts": {
+                "type": "array",
+                "items": { "enum": ["backends", "routing", "listener", "certificate"] },
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "files_changed": { "description": "Node files added, removed or changed; the diff lists at most 200 of them.", "type": "integer", "minimum": 0 },
+        "diff": {
+          "description": "The node files' difference, published against regenerated, in the shape of a version's diff and within its bounds (200 files, 256 KiB). Null unless the outcome is changed.",
+          "oneOf": [{ "$ref": "haprion-list.schema.json#/$defs/version_diff" }, { "type": "null" }]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

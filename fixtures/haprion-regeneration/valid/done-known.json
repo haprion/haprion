@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "regeneration",
+  "cluster": "alpha",
+  "request_id": "99999999-9999-4999-8999-999999999999",
+  "result": {
+    "published_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "unchanged": true
+  },
+  "warnings": [],
+  "error": null
+}

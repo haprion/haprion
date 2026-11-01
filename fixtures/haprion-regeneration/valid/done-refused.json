@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "regeneration",
+  "cluster": "alpha",
+  "request_id": "99999999-9999-4999-8999-999999999999",
+  "result": {
+    "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "published_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "published_version": 7,
+    "installed_version": "0.99.11",
+    "managed": true,
+    "message": "shop: the generator no longer accepts this document",
+    "causes": [],
+    "objects": [],
+    "files_changed": 0,
+    "diff": null,
+    "outcome": "refused"
+  },
+  "warnings": [],
+  "error": null
+}

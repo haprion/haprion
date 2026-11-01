@@ -75,6 +75,7 @@ PARAMETERS = frozenset(
         "comment",
         "allow_certificate_mismatch",
         "requested_by",
+        "regenerate",
     }
 )
 #
@@ -113,6 +114,7 @@ def build_request(
     settings: str | None = None,
     allow_certificate_mismatch: bool = False,
     requested_by: str | None = None,
+    regenerate: bool = False,
 ) -> str:
     """Build the exact bounded request the UI worker sends to this helper.
 
@@ -120,6 +122,9 @@ def build_request(
     left out of the request rather than sent empty, and the helper then reads
     it from the base. The override defaults to off here as well as in the
     helper, for the reason B66 gives.
+
+    `regenerate` publishes the generated layer made again with the installed
+    product, with nothing else changed: the one request that carries no part.
     """
 
     parameters: dict[str, object] = {
@@ -135,6 +140,8 @@ def build_request(
         parameters["settings"] = settings
     if requested_by is not None:
         parameters["requested_by"] = requested_by
+    if regenerate:
+        parameters["regenerate"] = True
     return json.dumps(
         {
             "schema_version": 1,
@@ -203,9 +210,11 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
     objects = _objects(parameters)
     network = _document(parameters, "network", limit=MAX_NETWORK_BYTES)
     settings = _document(parameters, "settings", limit=cluster_settings.MAX_BYTES)
-    if not objects and network is None and settings is None:
+    regenerate = flag(parameters, "regenerate")
+    if not objects and network is None and settings is None and not regenerate:
         raise HelperProtocolError(
-            "a publish carries at least one of parameters.objects, network or settings",
+            "a publish carries at least one of parameters.objects, network or settings, "
+            "or parameters.regenerate",
             exit_code=exit_codes.REFUSED,
         )
     expected_head, comment = fence(parameters)
@@ -219,8 +228,12 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
         # override would otherwise block every change of log target. The same
         # rule the three single-document helpers this replaced applied.
         #
+        # A regeneration remakes every object's configuration, so it is held to the same.
+        #
         certificate_sans = (
-            coverage_for(policy, cluster) if (objects or network is not None) else None
+            coverage_for(policy, cluster)
+            if (objects or network is not None or regenerate)
+            else None
         )
 
         named: dict[str, Any] = {
@@ -228,6 +241,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             "removed": sorted(name for name, document in objects.items() if document is None),
             "network": network is not None,
             "settings": settings is not None,
+            "regenerate": regenerate,
         }
 
         def unresolved_servers() -> list[str]:
@@ -293,7 +307,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             # not a refusal (26-10-15).
             #
             held = HeldPorts()
-            if objects or network is not None:
+            if objects or network is not None or regenerate:
                 held = held_ports.read(policy, cluster)
             try:
                 files = managed_files(

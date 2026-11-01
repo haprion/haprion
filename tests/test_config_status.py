@@ -10,6 +10,7 @@ different owners - and those are built here rather than waited for.
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 import tempfile
@@ -17,8 +18,10 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
+from haprion import regeneration
 from haprion.cli import config_status
 
 COMMIT_TIME = "2026-01-02T03:04:05+00:00"
@@ -73,7 +76,12 @@ class StatusFixture(unittest.TestCase):
         git(self.repo, "commit", "-qm", "Initial")
         self.commit = git(self.repo, "rev-parse", "HEAD")
 
-    def run_status(self, *argv: str, published: str | None = None) -> tuple[int, str, str]:
+    def run_status(
+        self,
+        *argv: str,
+        published: str | None = None,
+        regeneration: dict[str, Any] | None = None,
+    ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         code = config_status.main(
             list(argv) or ["-c", "alpha"],
@@ -81,6 +89,7 @@ class StatusFixture(unittest.TestCase):
             stream_err=err,
             config_path=lambda _cluster: self.repo,
             read_published=lambda _cluster: published,
+            read_regeneration=lambda _cluster: regeneration,
         )
         return code, out.getvalue(), err.getvalue()
 
@@ -144,6 +153,111 @@ class PublishedStateTests(StatusFixture):
 
         self.assertIn("  Published version:  unknown\n", shown)
         self.assertNotIn("WARNING", shown)
+
+
+def changed_regeneration() -> dict[str, Any]:
+    diff = regeneration.artifact_diff(
+        {"conf.d/1001-shop.cfg": b"backend shop\n  balance roundrobin\n"},
+        {"conf.d/1001-shop.cfg": b"backend shop\n  balance leastconn\n"},
+        "c" * 40,
+    )
+    return {
+        "outcome": "changed",
+        "files_changed": 1,
+        "objects": [{"name": "shop", "change": "changed", "parts": ["backends", "routing"]}],
+        "diff": diff.as_dict(),
+    }
+
+
+class RegenerationTests(StatusFixture):
+    def test_a_publish_that_would_change_what_runs_is_said_in_one_line(self) -> None:
+        _, shown, _ = self.run_status(
+            published=stamp("alpha", 1, self.commit), regeneration=changed_regeneration()
+        )
+
+        self.assertIn(
+            "\n  A publish would change what runs: 1 file; objects: shop (backends, routing)\n\n",
+            shown,
+        )
+        self.assertNotIn("balance leastconn", shown)
+
+    def test_diff_prints_the_difference(self) -> None:
+        _, shown, _ = self.run_status(
+            "-c",
+            "alpha",
+            "--diff",
+            published=stamp("alpha", 1, self.commit),
+            regeneration=changed_regeneration(),
+        )
+
+        self.assertIn("=== conf.d/1001-shop.cfg (modified, +1 -1)\n", shown)
+        self.assertIn("-  balance roundrobin\n+  balance leastconn\n", shown)
+
+    def test_a_refusal_is_said_with_its_reason(self) -> None:
+        _, shown, _ = self.run_status(
+            published=stamp("alpha", 1, self.commit),
+            regeneration={"outcome": "refused", "message": "shop: no longer accepted"},
+        )
+
+        self.assertIn(
+            "  The installed version cannot publish this configuration again: "
+            "shop: no longer accepted\n",
+            shown,
+        )
+
+    def test_nothing_is_said_when_nothing_would_change_or_cannot_be_read(self) -> None:
+        for answer in ({"outcome": "unchanged", "diff": None}, {"outcome": "unpublished"}, None):
+            with self.subTest(answer=answer):
+                _, shown, _ = self.run_status(
+                    "-c",
+                    "alpha",
+                    "--diff",
+                    published=stamp("alpha", 1, self.commit),
+                    regeneration=answer,
+                )
+                self.assertNotIn("publish", shown.split("Nothing unsent")[0])
+
+    def test_nothing_is_asked_when_nothing_is_published(self) -> None:
+        asked: list[str] = []
+
+        def read(cluster: str) -> None:
+            asked.append(cluster)
+
+        config_status.main(
+            ["-c", "alpha"],
+            stream_out=io.StringIO(),
+            config_path=lambda _cluster: self.repo,
+            read_published=lambda _cluster: "state=unpublished\n",
+            read_regeneration=read,
+        )
+        self.assertEqual(asked, [])
+
+    def test_the_helper_is_asked_with_sudo_n_and_a_failure_is_nothing(self) -> None:
+        answer = json.dumps({"result": {"outcome": "changed", "files_changed": 2}})
+        with mock.patch.object(
+            subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess([], 0, stdout=answer, stderr=""),
+        ) as run:
+            found = config_status._read_regeneration("alpha")
+
+        self.assertEqual(
+            run.call_args.args[0], ["/usr/bin/sudo", "-n", config_status.REGENERATION_HELPER]
+        )
+        self.assertEqual(json.loads(run.call_args.kwargs["input"])["cluster"], "alpha")
+        self.assertEqual(found, {"outcome": "changed", "files_changed": 2})
+        for completed in (
+            subprocess.CompletedProcess([], 1, stdout="", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="not json", stderr=""),
+        ):
+            with mock.patch.object(subprocess, "run", return_value=completed):
+                self.assertIsNone(config_status._read_regeneration("alpha"))
+
+    def test_the_helper_is_the_one_in_the_release(self) -> None:
+        self.assertEqual(
+            config_status.REGENERATION_HELPER,
+            "/opt/haprion/current/bin/haprion-regeneration-helper",
+        )
 
 
 class WaitingChangeTests(StatusFixture):
@@ -213,6 +327,7 @@ class FailureTests(StatusFixture):
             stream_err=err,
             config_path=lambda _cluster: Path(self.directory.name) / "absent",
             read_published=lambda _cluster: None,
+            read_regeneration=lambda _cluster: None,
         )
 
         self.assertEqual(code, 68)

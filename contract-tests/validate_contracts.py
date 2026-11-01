@@ -327,6 +327,32 @@ def check_objects_semantics(document: dict[str, object], path: Path) -> None:
         raise AssertionError(f"{path}: objects cannot be listed without a commit to read them at")
 
 
+def check_regeneration_semantics(document: dict[str, object], path: Path) -> None:
+    """A regeneration is one consistent answer: the outcome and what it carries agree."""
+
+    result = document["result"]
+    if result is None:
+        return
+    assert isinstance(result, dict)
+    if result.get("unchanged"):
+        if "outcome" in result:
+            raise AssertionError(f"{path}: an answer that keeps the held result carries no outcome")
+        return
+    outcome = result["outcome"]
+    if (outcome == "changed") != (result["diff"] is not None):
+        raise AssertionError(f"{path}: a diff is carried by a changed result and by no other")
+    if outcome == "changed" and not result["files_changed"]:
+        raise AssertionError(f"{path}: a changed result names the files that changed")
+    if outcome == "changed" and len(result["diff"]["files"]) > result["files_changed"]:
+        raise AssertionError(f"{path}: the diff lists more files than changed")
+    if (outcome == "refused") != (result["message"] is not None):
+        raise AssertionError(f"{path}: a refusal says why, and only a refusal does")
+    if outcome == "unpublished" and result["published_commit"] is not None:
+        raise AssertionError(f"{path}: nothing published has no commit")
+    if outcome != "changed" and (result["objects"] or result["files_changed"]):
+        raise AssertionError(f"{path}: only a changed result lists what changed")
+
+
 def check_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -610,7 +636,11 @@ def check_changes_publish_semantics(document: dict[str, object], path: Path) -> 
     if overlap:
         raise AssertionError(f"{path}: {', '.join(overlap)} is both published and removed")
     if result["changed"] and not (
-        result["objects"] or result["removed"] or result["network"] or result["settings"]
+        result["objects"]
+        or result["removed"]
+        or result["network"]
+        or result["settings"]
+        or result.get("regenerate")
     ):
         raise AssertionError(f"{path}: a changed publish names what it changed")
 
@@ -1314,6 +1344,7 @@ SEMANTIC_CHECKS = {
     "backup_schedule": check_backup_schedule_semantics,
     "inventory": check_inventory_semantics,
     "objects": check_objects_semantics,
+    "regeneration": check_regeneration_semantics,
     "publish": check_publish_semantics,
     "revert": check_revert_semantics,
     "cluster_settings": check_cluster_settings_semantics,
@@ -1391,6 +1422,13 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["proxies"].append(deepcopy(result["proxies"][0]))
     elif operation == "objects":
         result["objects"][1]["readable"] = True
+    elif operation == "regeneration":
+        if result.get("unchanged"):
+            result["outcome"] = "changed"
+        elif result["outcome"] == "changed":
+            result["diff"] = None
+        else:
+            result["outcome"] = "changed"
     elif operation == "readings":
         first = next(iter(result["reads"].values()))
         first["envelope"] = None

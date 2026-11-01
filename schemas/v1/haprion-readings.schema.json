@@ -67,7 +67,8 @@
               "cert_list",
               "network",
               "cluster_settings",
-              "objects"
+              "objects",
+              "regeneration"
             ]
           },
           "additionalProperties": {

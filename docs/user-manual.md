@@ -171,6 +171,22 @@ haprion-objects -c alpha --show <name>
 haprion-deploy -c alpha
 ```
 
+`haprion-config-status` also says whether publishing again would change what the nodes run. A new
+release of Haprion can generate other configuration from the same objects, and no saved version records
+that. The published version is generated again with the installed release, without publishing, and the
+files a node would run are compared with the ones it runs. When they differ, the report says so:
+
+```
+  A publish would change what runs: 3 files; objects: shop (backends, routing), api (listener)
+```
+
+`haprion-config-status -c alpha --diff` prints the difference, file by file, as `haprion-list --diff`
+does for a version. When the installed release refuses the published configuration, the line gives the
+reason instead, and a publish would be refused the same way. Nothing is printed when a publish would
+change nothing, or when the answer cannot be had (the report says nothing then, as it does for a
+published version it cannot read). The countries' networks are those of the published version, so a newer
+location database does not show up here; the installed WAF rule set does.
+
 As in the interface, a deploy skips nodes that are already current. A node that answered its deploy and
 then cannot be read is waited for, up to 30 seconds by the clock; one that stays silent stops the rollout before the
 next node is touched (`partial`, `node_lost_after_deploy`). Cluster and network configuration is
@@ -4866,6 +4882,11 @@ What they have in common:
   file that carries a password, a client secret or credentials is refused unless its mode is `0600`. A
   secret that is stored encrypted cannot be compared, so it is replaced only when it must be, or when the
   command is asked to (`--replace-oidc-secret`, `--replace <id>`).
+
+**Publishing again without a change.** `changes_publish` (the request behind *Publish & deploy*) takes
+`regenerate: true` in place of an object, a network or settings: the generated layer is made again with
+the installed release and published as a version, which is what `haprion-config-status` reports as owed.
+It is held to the checks any publish is held to, and publishes nothing new when nothing differs.
 
 What is not a setting cannot be described in a file: drafts, previews, downloads of key material, and the
 password a person changes for themselves. `haprion-user` still has one-off commands for an account:

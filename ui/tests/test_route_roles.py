@@ -13,13 +13,15 @@ from __future__ import annotations
 import re
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime
 from html import unescape
 from typing import Any
 from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from haprion_ui import auth
+from haprion_ui import auth, db
+from tests.test_cluster_traffic import ReadingACluster
 from tests.test_login import LoginTestCase, configuration
 
 #
@@ -133,6 +135,23 @@ def form(route: Any, token: str) -> tuple[dict[str, str], dict[str, Any]]:
             data[field.alias] = "1"
     data[auth.CSRF_FIELD] = token
     return data, files
+
+
+def profile_row(**overrides: Any) -> db.DnsProfile:
+    now = datetime.now(UTC)
+    fields: dict[str, Any] = {
+        "id": "cf-main",
+        "name": "Cloudflare main",
+        "provider_id": "cloudflare",
+        "schema_version": 1,
+        "key_id": "0123456789abcdef",
+        "revision": 1,
+        "created_at": now,
+        "created_by": "operator",
+        "updated_at": now,
+        "updated_by": "operator",
+    }
+    return db.DnsProfile(**{**fields, **overrides})
 
 
 class EveryRouteAnswersAsTheRoleAllows(LoginTestCase):
@@ -273,6 +292,12 @@ if __name__ == "__main__":
 #
 # The pages a reader reads as an admin does, walked on the demonstration data.
 #
+#
+# Every page a reader may open that answers without a parameter the walk cannot
+# make up. Left out: /first-cluster and /login/oidc, which redirect, and the
+# pages whose path names a record (an object's editor, a version, a restore run,
+# a CSR), which need a row the fixture does not hold.
+#
 PARITY_PAGES = (
     "/",
     "/proxies",
@@ -288,10 +313,17 @@ PARITY_PAGES = (
     "/search?q=192",
     "/proxies/edge-demo/public-web",
     "/clusters/edge-demo/metrics",
+    "/account/password",
+    "/certificates/receivers",
+    "/dns-profiles",
+    "/logs/warning",
+    "/ndes-profiles",
+    "/search",
+    "/settings/api-tokens",
 )
 
 
-class AReaderIsGivenWhatAnAdminIsGivenToRead(LoginTestCase):
+class AReaderIsGivenWhatAnAdminIsGivenToRead(ReadingACluster):
     """A reader reads everything and changes nothing, on the page and not only at the route.
 
     The route walk above proves what a reader is refused; it cannot see a
@@ -304,26 +336,54 @@ class AReaderIsGivenWhatAnAdminIsGivenToRead(LoginTestCase):
         client: Any = TestClient(app.app, base_url=str(app.base_url), raise_server_exceptions=False)
         self.assertEqual(self.sign_in(client).status_code, 303)
         self.client_of[role] = client
-        return {
-            page: (answer.status_code, answer.text)
-            for page, answer in ((page, client.get(page)) for page in PARITY_PAGES)
-        }
+        answers = {page: client.get(page) for page in PARITY_PAGES}
+        #
+        # A page that does not answer is not skipped: it is a page nobody compares.
+        #
+        self.assertEqual(
+            {page: a.status_code for page, a in answers.items() if a.status_code != 200},
+            {},
+            f"as {role}",
+        )
+        return {page: (answer.status_code, answer.text) for page, answer in answers.items()}
 
     def setUp(self) -> None:
         super().setUp()
         self.client_of: dict[str, Any] = {}
+        #
+        # What the pages read from the database that the recording pool cannot
+        # answer: no draft, no findings and one profile of each kind (the traffic
+        # comes from `ReadingACluster`). The pages still draw their forms and
+        # links, which is what these compare.
+        #
+        for target, value in (
+            ("read_draft", None),
+            ("waf_findings", []),
+            ("waf_verdicts", {}),
+            ("waf_request_count", 0),
+            ("waf_counted", {}),
+            ("dns_profiles", [profile_row()]),
+            (
+                "ndes_profiles",
+                [profile_row(id="internal-ca", name="Internal CA", provider_id="ndes")],
+            ),
+        ):
+            patch = mock.patch(f"haprion_ui.db.{target}", return_value=value)
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def test_a_reader_s_page_has_no_form_but_the_sign_out(self) -> None:
         reader = self.pages("reader")
 
         posted = {
             page: sorted(set(re.findall(r'<form[^>]*method="post"[^>]*action="([^"]+)"', text)))
-            for page, (code, text) in reader.items()
-            if code == 200
+            for page, (_code, text) in reader.items()
         }
-        self.assertGreater(len(posted), 7)
         self.assertEqual(
-            {page: [a for a in forms if a != "/logout"] for page, forms in posted.items()},
+            {
+                page: [a for a in forms if a not in READER_MAY_POST]
+                for page, forms in posted.items()
+            },
             {page: [] for page in posted},
         )
 
@@ -333,11 +393,7 @@ class AReaderIsGivenWhatAnAdminIsGivenToRead(LoginTestCase):
         client = self.client_of["reader"]
 
         missing: dict[str, list[str]] = {}
-        compared = 0
-        for page, (code, text) in reader.items():
-            if code != 200 or admin[page][0] != 200:
-                continue
-            compared += 1
+        for page, (_code, text) in reader.items():
             shown = set(map(unescape, re.findall(r'href="(/[^"]*)"', text)))
             wanted = set(map(unescape, re.findall(r'href="(/[^"]*)"', admin[page][1])))
             lacking = []
@@ -348,7 +404,6 @@ class AReaderIsGivenWhatAnAdminIsGivenToRead(LoginTestCase):
                     lacking.append(link)
             if lacking:
                 missing[page] = lacking
-        self.assertGreater(compared, 7)
         self.assertEqual(missing, {})
 
     def test_a_reader_has_a_link_to_the_list_of_api_tokens(self) -> None:

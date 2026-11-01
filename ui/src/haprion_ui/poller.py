@@ -84,12 +84,21 @@ MAX_PARALLEL_CLUSTERS = 8
 #
 # How long a stop waits for readings in flight before the process leaves
 # anyway. The unit sets no `TimeoutStopSec`, so systemd's default of 90 seconds
-# applies; this stays well inside it, and a reading that has not finished by
-# then is a hung node's, which the status read's own 60-second limit has not
-# yet ended. Leaving costs that reading and nothing else: each write is its
-# own transaction.
+# applies; this stays well inside it. The unit's `KillMode=control-group` sends
+# SIGTERM to the helpers with the poller, so a reading in flight ends with the
+# stop at once (exit -15, no JSON) and is not written: a stopping poller writes
+# nothing more (2026-11-01). What the wait is for is a write already begun, which
+# finishes whole, and a helper that outlives the signal. Leaving costs the
+# readings in flight and nothing else: each write is its own transaction, and
+# the last reading of each cluster stands.
 #
 STOP_GRACE_SECONDS = 45
+
+#
+# What `_poll_cluster_sources` answers when the poller is leaving and the cluster's
+# reading was dropped, as against the status outcome of a reading that was made.
+#
+DROPPED = "dropped"
 
 type RunHelper = Callable[[str, str], Any]
 type Recorder = Callable[..., None]
@@ -738,7 +747,8 @@ class ClusterReaders:
         """Read exactly these clusters: start the new, retire the gone.
 
         A retired cluster's reading in flight finishes; nothing is started for
-        it afterwards. One put back before its thread has left is kept as it is.
+        it afterwards. One put back before its thread has left is kept as it is,
+        and a thread that died is replaced.
         """
 
         with self._lock:
@@ -750,9 +760,11 @@ class ClusterReaders:
                     reader.wake.set()
             for name in clusters:
                 kept = self._readers.get(name)
-                if kept is not None:
+                if kept is not None and kept.thread is not None and kept.thread.is_alive():
                     kept.retired = False
                     continue
+                if kept is not None:
+                    logger.error("cluster %s: its reader had stopped; started again", name)
                 fresh = _Reader()
                 fresh.thread = threading.Thread(
                     target=self._run, args=(name, fresh), name=f"read-{name}", daemon=True
@@ -768,7 +780,14 @@ class ClusterReaders:
                 reader.wake.set()
 
     def stop(self, grace: float = STOP_GRACE_SECONDS) -> list[str]:
-        """Start nothing more, wait for readings in flight; the clusters still reading."""
+        """Start nothing more and write nothing more; the clusters still being read.
+
+        A reading that ends after this is dropped, finished or not: when the
+        poller is stopped its helpers are signalled with it and end without an
+        answer, and when it has lost its lock another poller may be writing
+        already. It waits for the threads, up to the grace, so a write begun
+        is not cut off.
+        """
 
         import time
 
@@ -807,12 +826,22 @@ class ClusterReaders:
             if not self._slots.acquire(timeout=1):
                 continue
             try:
-                read = _poll_cluster_sources(self._pool, name, self._sources) > 0
+                outcome = _poll_cluster_sources(
+                    self._pool, name, self._sources, discard=lambda: self._stopped
+                )
+                #
+                # Read is read, whatever it found: a node down is the node's
+                # news (partial, failed), told by the reading's own line.
+                #
+                read = outcome not in (None, "unavailable")
             except Exception:  # one cluster's failure is not the others'
                 logger.exception("cluster %s: the reading failed", name)
+                outcome = None
                 read = False
             finally:
                 self._slots.release()
+            if outcome == DROPPED:
+                continue
             self._noted(name, reader, read)
             reader.wake.wait(self._interval)
 
@@ -998,10 +1027,33 @@ def poll_manager(pool: Any, readings: ReadingsHelper = run_readings_helper) -> b
     return bool(reading["outcome"] == "done")
 
 
-def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) -> int:
-    """One cluster's sources in order; 1 when its status reading was done."""
+def _poll_cluster_sources(
+    pool: Any,
+    cluster: str,
+    sources: tuple[Source, ...],
+    *,
+    discard: Callable[[], bool] = lambda: False,
+) -> str | None:
+    """One cluster's sources in order; the status reading's outcome, None without one.
 
-    healthy = 0
+    `DROPPED` when `discard()` turned true: the poller is leaving, and a reading
+    that ended after that is not written - it may have been cut short by the
+    stop that is under way, and after a lost lock another poller may be the one
+    writing. What is already written stays.
+    """
+
+    status: str | None = None
+
+    def dropped() -> bool:
+        if discard():
+            logger.info(
+                "cluster %s: the poller is leaving; the reading in hand is dropped", cluster
+            )
+            return True
+        return False
+
+    if dropped():
+        return DROPPED
     #
     # Before anything is read (0068): a page that watched a job finish redraws
     # once a pass begun after the job's end is recorded whole, not on the first
@@ -1011,6 +1063,8 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
     local = [source for source in sources if source.run is None]
     asked, answered = _local_readings(pool, cluster, local) if local else ("", {})
     for source in sources:
+        if dropped():
+            return DROPPED
         if source.run is None:
             run = answered[source.operation]
             request_id: str | None = asked
@@ -1024,6 +1078,8 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
             partial_ok=source.partial_ok,
             request_id=request_id,
         )
+        if dropped():
+            return DROPPED
         #
         # The events first: they say which nodes are still joining, and the
         # reading is stored with that (B329).
@@ -1053,9 +1109,9 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
         except Exception:  # any failure to store is this reading's alone
             logger.exception("cluster %s %s: the reading was not stored", cluster, source.operation)
             continue
+        if source.operation == "status":
+            status = reading["outcome"]
         if reading["outcome"] == "done":
-            if source.operation == "status":
-                healthy += 1
             continue
         logger.warning(
             "cluster %s %s: %s%s",
@@ -1065,7 +1121,7 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
             f" ({reading['poll_error']})" if reading.get("poll_error") else "",
         )
     _mark_pass(pool, db.settle_cluster_pass, cluster)
-    return healthy
+    return status
 
 
 def _mark_pass(pool: Any, mark: Callable[[Any, str], None], cluster: str) -> None:
@@ -1139,6 +1195,7 @@ def main(argv: list[str] | None = None) -> int:
             asker = update_check.Asker()
             packages = PackageWatch()
             readers = ClusterReaders(pool, interval_seconds=config.poller.interval_seconds)
+            woken = False
             try:
                 while not stopping.requested():
                     #
@@ -1170,6 +1227,12 @@ def main(argv: list[str] | None = None) -> int:
                     # the list is picked up here, a removed one let go.
                     #
                     readers.follow(known)
+                    #
+                    # After the list, not before: a removal's notification
+                    # would else wake the reader of the cluster it removed.
+                    #
+                    if woken:
+                        readers.wake()
                     if not known:
                         logger.info("no cluster yet; Settings - Create cluster makes the first")
                     poll_manager(pool)
@@ -1185,12 +1248,12 @@ def main(argv: list[str] | None = None) -> int:
                     # that changed a cluster used to sit invisible until the next
                     # tick, so a page said "observed just now" about a reading
                     # taken before the change it was being consulted about. The
-                    # clusters are told too, so they read again at once.
+                    # clusters are told too, so they read again at once - on
+                    # the next turn, once the list has been read again.
                     #
-                    if service.sleep_until_notified(
+                    woken = service.sleep_until_notified(
                         stopping, listener, config.poller.interval_seconds
-                    ):
-                        readers.wake()
+                    )
             finally:
                 readers.stop()
     finally:

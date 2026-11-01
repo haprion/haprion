@@ -565,11 +565,24 @@ def _node_view(
 
 #
 # How long after a reading is due the page asks for itself again, and how soon
-# it asks again when the reading has not come yet: a pass reads every cluster
-# over SSH, so a reading lands a little after its interval.
+# it asks again when the reading has not come yet: a cluster's reading goes over
+# SSH, so it lands a little after its interval.
 #
 READING_MARGIN = 2.0
 READING_RETRY = 3.0
+#
+# The least time between two redraws caused by readings. Every cluster is read
+# at its own pace (2026-11-01), so a page of eight would redraw about 1300 times
+# an hour, once per reading; the floor lets readings that land close together
+# share a redraw. Measured 2026-11-01: the dashboard page with the demo rows,
+# in the test client with its database reads doubled, takes 7 ms to render with
+# 2 clusters and 7 ms with 8 (median of 15; 17 kB and 27 kB of HTML). A redraw
+# should cost a tenth of the floor at most, and the floor is never below 3 s:
+# 3 s allows 300 ms a redraw, some forty times the measurement, which leaves
+# room for the real database reads. At most 1200 redraws an hour, when eight
+# clusters each land a reading at a different second.
+#
+READING_FLOOR = 3.0
 
 
 def next_reading(
@@ -580,20 +593,26 @@ def next_reading(
     A page that redrew on its own clock fell out of step with the poller's:
     every redraw came some 17 s after the reading it showed, and a change on a
     node took up to two intervals to appear (Fas 18, 26-10-16). Timed from the
-    newest reading instead, the page shows one a couple of seconds after it is
-    taken. None when there is no reading, or when the newest is older than two
-    intervals - a poller that has stopped is not asked after every few seconds.
+    readings instead, the page shows one a couple of seconds after it is
+    taken. Every cluster is read at its own pace, so the soonest of the
+    clusters' own next readings decides, never sooner than `READING_FLOOR`.
+    A reading that is a little late is asked after again soon; one later than
+    that is left to the other clusters' readings. None when there is no
+    reading, or when none is younger than two intervals - a poller that has
+    stopped is not asked after every few seconds.
     """
 
     moment = now or datetime.now(UTC)
-    newest = max((row.observed_at for row in rows), default=None)
-    if newest is None:
+    ages = [
+        age for row in rows if (age := (moment - row.observed_at).total_seconds()) <= 2 * interval
+    ]
+    if not ages:
         return None
-    age = (moment - newest).total_seconds()
-    if age > 2 * interval:
-        return None
-    due = interval - age + READING_MARGIN
-    return due if due > 0 else READING_RETRY
+    left = [interval - age + READING_MARGIN for age in ages]
+    candidates = [seconds for seconds in left if seconds > 0]
+    if any(-READING_RETRY < seconds <= 0 for seconds in left) or not candidates:
+        candidates.append(READING_RETRY)
+    return max(READING_FLOOR, min(candidates))
 
 
 def behind(reading: Any | None) -> bool:

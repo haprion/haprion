@@ -160,8 +160,7 @@ class Poller:
         from its own finish. A healthy cluster's reading is therefore at most
         one interval plus its own read old, however long another cluster
         hangs. This allows that, one more interval for a cycle that starts
-        late (it waited for one of the poller's parallel slots, or a
-        notification came while it was reading), and the status timeout for a
+        late (it waited for one of the poller's parallel slots), and the status timeout for a
         node that answers slowly. What it protects against is a cluster that
         really has stopped being read: it turns stale after about two
         intervals and a minute, and a briefly slow one does not flicker.

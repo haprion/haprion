@@ -1094,6 +1094,9 @@ class TheManagersOwnServices(unittest.TestCase):
                     (item.kind, item.subject, item.severity), ("manager", "poller", "critical")
                 )
                 self.assertIn("(haprion-poller)", item.message)
+                # The manager's cycle, not the clusters: those are read, and judged, one by one.
+                self.assertIn("run its cycle", item.message)
+                self.assertNotIn("clusters", item.message)
 
     def test_a_job_waiting_ten_minutes_with_nothing_running_is_the_worker(self) -> None:
         waiting = replace(job(state="pending"), created_at=NOW - timedelta(minutes=11))

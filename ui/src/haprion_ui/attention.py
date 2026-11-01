@@ -920,7 +920,8 @@ def from_manager(
 
     The interface cannot ask systemd (it runs without that right), so each
     service is judged by its trace (review 2026-10-18 S1/A8, B333): the poller
-    writes the cluster list on every pass; the worker takes a queued job within
+    writes the cluster list on every manager cycle, which says it runs (each
+    cluster's own reading is judged by its own age); the worker takes a queued job within
     seconds while writes are on, and keeps the lease of the one it runs;
     `haprion-retention` creates daily partitions ahead of time every night.
     """
@@ -933,9 +934,9 @@ def from_manager(
                 severity="critical",
                 cluster=None,
                 subject="poller",
-                message="the poller (haprion-poller) has not read the clusters since"
+                message="the poller (haprion-poller) has not run its cycle since"
                 if cluster_list_at
-                else "the poller (haprion-poller) has never read the clusters",
+                else "the poller (haprion-poller) has never run its cycle",
                 since=cluster_list_at,
                 link="/",
             )

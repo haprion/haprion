@@ -952,7 +952,11 @@ def cluster_list(connection: Connection[Any]) -> tuple[str, ...] | None:
 
 
 def cluster_list_observed(connection: Connection[Any]) -> datetime | None:
-    """When the poller last wrote the cluster list - it does on every pass; None before the first."""
+    """When the poller last wrote the cluster list - it does on every manager cycle; None before the first.
+
+    This says the poller runs, not that every cluster is read: each cluster's
+    own reading shows its age on its own row.
+    """
 
     with connection.cursor() as cursor:
         cursor.execute("select observed_at from cluster_list where id = 1")

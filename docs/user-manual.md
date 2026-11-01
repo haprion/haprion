@@ -4002,8 +4002,9 @@ box is not shown.
   holds 10 000 lines or more - with the reason the node's rsyslog gave, when it gave one. One that dropped
   lines in the last hour is critical.
 - **The manager's own services**, judged by what they leave in the database:
-  - the poller has not read the clusters for two poll intervals (at least five minutes), or never has -
-    critical;
+  - the poller has not run its cycle for two poll intervals (at least five minutes), or never has -
+    critical. This says the poller itself is stopped or stuck; each cluster is read on its own, so one
+    that is not being read shows as old data on its own card and in its own *status last read* line;
   - a job has been queued for ten minutes with none running while writes are on, so the worker is taking
     none - critical. A job no worker holds does not count as running, and nor is the row raised while an
     update of the manager pauses the queue;

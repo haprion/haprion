@@ -895,8 +895,56 @@ class ThePageLooksForTheNextReading(unittest.TestCase):
     def test_the_redraw_comes_just_after_the_next_reading_is_due(self) -> None:
         self.assertEqual(dashboard.next_reading(self.rows(17), 20, NOW), 5.0)
         self.assertEqual(dashboard.next_reading(self.rows(0), 20, NOW), 22.0)
-        # The newest reading decides: one pass writes every cluster.
+        # The soonest due decides; a cluster long overdue is left to the others.
         self.assertEqual(dashboard.next_reading(self.rows(30, 5), 20, NOW), 17.0)
+
+    def test_each_cluster_has_its_own_next_reading(self) -> None:
+        # alpha was read 2 s ago (due in 20), beta 15 s ago (due in 7).
+        self.assertEqual(dashboard.next_reading(self.rows(2, 15), 20, NOW), 7.0)
+        self.assertEqual(dashboard.next_reading(self.rows(15, 2), 20, NOW), 7.0)
+
+    def test_two_readings_close_together_share_a_redraw(self) -> None:
+        # Due in 1 s: the floor, not a redraw for each reading.
+        self.assertEqual(dashboard.next_reading(self.rows(21, 5), 20, NOW), dashboard.READING_FLOOR)
+        self.assertGreaterEqual(dashboard.READING_FLOOR, 3.0)
+
+    def test_a_page_of_clusters_in_other_phases_is_not_late_for_any_of_them(self) -> None:
+        """The reviewer's probe, 26-11-01: the redraw followed only the newest reading."""
+
+        from haprion_ui import blocked
+
+        interval, cycle = 20, 21.1
+        start = NOW - timedelta(hours=1)
+        phases = {"a": 0.0, "b": 7.0, "c": 14.0}
+        taken = {
+            name: [phase + n * cycle for n in range(int((3600 - phase) / cycle) + 1)]
+            for name, phase in phases.items()
+        }
+        status = reading("done-single-owner.json")
+        redraws: list[float] = []
+        moment = 5.0
+        while moment < 3600:
+            rows = [
+                replace(status, cluster=name, observed_at=start + timedelta(seconds=max(past)))
+                for name, times in taken.items()
+                if (past := [t for t in times if t <= moment])
+            ]
+            wait = blocked.live_seconds(
+                interval, dashboard.next_reading(rows, interval, start + timedelta(seconds=moment))
+            )
+            redraws.append(moment)
+            moment += wait
+        delays = [
+            next(r for r in redraws if r >= t) - t
+            for times in taken.values()
+            for t in times
+            if 60 < t < 3500
+        ]
+
+        # Before: mean 8.7 s, worst 16.7 s for this spread.
+        self.assertLess(sum(delays) / len(delays), 4.0)
+        self.assertLess(max(delays), 6.0)
+        self.assertLess(len(redraws), 1300)
 
     def test_a_late_reading_is_asked_after_soon_and_a_stopped_poller_is_not(self) -> None:
         self.assertEqual(dashboard.next_reading(self.rows(25), 20, NOW), dashboard.READING_RETRY)

@@ -1053,6 +1053,13 @@ class ThePackagesWaitingAreKeptWhenTheyChange(unittest.TestCase):
         self.assertEqual(replaced.call_count, 2)
 
 
+def _answering(outcome: str) -> Any:
+    def helper(cluster: str, _request: str) -> Any:
+        return completed(envelope(outcome, cluster=cluster))
+
+    return helper
+
+
 class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
     """2026-11-01: a cluster that stops answering delays itself and nobody else."""
 
@@ -1197,6 +1204,16 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
         finally:
             readers.stop(5)
 
+    def test_a_removed_cluster_is_let_go_at_once_not_after_its_interval(self) -> None:
+        readers, recorded = self.readers(lambda c, r: completed(envelope(cluster=c)), interval=60)
+        try:
+            readers.follow(("alpha",))
+            self.assertTrue(self.until(lambda: len(recorded) == 1))
+            readers.follow(())
+            self.assertTrue(self.until(lambda: not readers._readers, 5))
+        finally:
+            readers.stop(5)
+
     def test_a_removed_cluster_finishes_the_reading_in_flight(self) -> None:
         import threading
 
@@ -1285,7 +1302,7 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
             with self.subTest(outcome):
                 source = poller.Source(
                     "status",
-                    lambda c, r: completed(envelope(outcome, cluster=c)),
+                    _answering(outcome),
                     lambda *a, **k: None,
                     partial_ok=True,
                 )
@@ -1327,7 +1344,7 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
 
         readers, recorded = self.readers(lambda c, r: completed(envelope(cluster=c)), interval=30)
         real = poller.ClusterReaders._noted
-        broke = []
+        broke: list[str] = []
 
         def noted(name: str, reader: Any, read: bool) -> None:
             if not broke:
@@ -1343,7 +1360,7 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
                 readers.follow(("alpha",))
                 self.assertTrue(self.until(lambda: len(recorded) == 1))
                 thread = readers._readers["alpha"].thread
-                self.assertTrue(self.until(lambda: not thread.is_alive()))
+                self.assertTrue(self.until(lambda: thread is not None and not thread.is_alive()))
                 with self.assertLogs("haprion_ui.poller", "ERROR"):
                     readers.follow(("alpha",))
                 self.assertTrue(self.until(lambda: len(recorded) == 2))
@@ -1371,7 +1388,7 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
             release.set()
             self.assertTrue(self.until(lambda: len(recorded) >= 2, 10))
             self.assertIs(readers._readers["alpha"].thread, thread)
-            self.assertTrue(thread.is_alive())
+            self.assertTrue(thread is not None and thread.is_alive())
         finally:
             release.set()
             readers.stop(5)
@@ -1509,9 +1526,10 @@ class MainWithTheRealReaders(unittest.TestCase):
         """`main` over `lists` (one per turn); the cluster and outcome of each recorded reading."""
 
         import functools
+        import threading
 
         recorded: list[tuple[str, str]] = []
-        guard = __import__("threading").Lock()
+        guard = threading.Lock()
 
         def record(_c: object, **kwargs: Any) -> None:
             with guard:
@@ -1534,7 +1552,7 @@ class MainWithTheRealReaders(unittest.TestCase):
         def session(_database: Any) -> Any:
             yield object()
 
-        patches = [
+        patches: list[Any] = [
             unittest.mock.patch.object(poller, "read_cluster_list", lambda: next(turns, lists[-1])),
             unittest.mock.patch.object(
                 poller,
@@ -1548,7 +1566,7 @@ class MainWithTheRealReaders(unittest.TestCase):
             unittest.mock.patch.object(poller, "index_cluster_list", unittest.mock.Mock()),
             unittest.mock.patch.object(poller, "poll_manager", unittest.mock.Mock()),
             unittest.mock.patch.object(poller, "PackageWatch", unittest.mock.MagicMock()),
-            unittest.mock.patch.object(poller.update_check, "Asker", unittest.mock.MagicMock()),
+            unittest.mock.patch("haprion_ui.update_check.Asker", unittest.mock.MagicMock()),
             unittest.mock.patch.object(
                 poller,
                 "ClusterReaders",

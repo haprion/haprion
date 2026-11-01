@@ -704,6 +704,8 @@ class TheTrafficLogPage(LoginTestCase):
         # No response was sent: the status is stored as 0 and shown as a dash.
         self.assertIn('status-badge-warning">–</span>', everything)
         self.assertIn('data-export-rule="waf-engine/interrupted"', everything)
+        # The export says the same as the page: an empty cell, not a 0 (26-11-01).
+        self.assertIn('data-export-status=""', everything)
         with (
             patch("haprion_ui.db.cluster_objects", return_value=[]),
             patch("haprion_ui.db.waf_findings", return_value=[]),

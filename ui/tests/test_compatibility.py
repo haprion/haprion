@@ -37,6 +37,13 @@ MANIFEST = ROOT / "ui/src/haprion_ui/compatibility.json"
 PREVIOUS = ROOT / "ui/tests/previous_release_compatibility.json"
 
 
+def _version(text: str) -> tuple[int, ...]:
+    """`0.99.10` as (0, 99, 10); () for what is not a plain release number."""
+
+    parts = text.split(".")
+    return tuple(int(part) for part in parts) if all(part.isdigit() for part in parts) else ()
+
+
 class TheSudoRulesAfterARollback(unittest.TestCase):
     """Review 26-10-24, 11-06: the sudo rules follow the package, not the release.
     After a rollback on its own, the newer package's rules for a helper the older
@@ -183,30 +190,39 @@ class TheHelpersOfAReleaseThatWasTakenOut(unittest.TestCase):
         )
         self.assertEqual(sorted(needed - set(scripts) - set(compatibility.RETIRED_HELPERS)), [])
 
-    def test_the_fixture_is_the_newest_release_s_own_file(self) -> None:
+    def test_the_fixture_is_the_release_before_this_version(self) -> None:
         """The fixture is kept current by this, not by a comment (review 26-11-01, P2-1):
-        where the tags are - the release gate runs here - it must be the file the
-        newest tagged release shipped, so the next tag fails the gate until it is
-        replaced. CI checks out without tags and leaves it to the gate here."""
+        where the tags are - the release gate runs here - it must be the file of the
+        newest release older than the version being built (`pyproject.toml`), so the
+        version commit of the next release fails until it is replaced. Not the newest
+        tag: while a release is tagged, that is the release itself (26-11-01, the tag
+        push of v0.99.10 refused by the first form). CI checks out without tags."""
 
         git = shutil.which("git")
         if git is None:
             self.skipTest("no git here")
+        building = _version(
+            tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+        )
         try:
-            tag = subprocess.run(  # noqa: S603 - fixed program, fixed arguments
-                [git, "-C", str(ROOT), "describe", "--tags", "--abbrev=0", "--match", "v*"],
+            tags = subprocess.run(  # noqa: S603 - fixed program, fixed arguments
+                [git, "-C", str(ROOT), "tag", "--list", "v*"],
                 capture_output=True,
                 text=True,
                 check=True,
-            ).stdout.strip()
-            shipped = subprocess.run(  # noqa: S603 - fixed program, the tag git named
-                [git, "-C", str(ROOT), "show", f"{tag}:ui/src/haprion_ui/compatibility.json"],
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout
+            ).stdout.split()
         except (OSError, subprocess.CalledProcessError):
-            self.skipTest("no release tag in this checkout")
+            self.skipTest("no git checkout here")
+        older = [tag for tag in tags if (version := _version(tag[1:])) and version < building]
+        if not older:
+            self.skipTest("no release tag older than this version in this checkout")
+        tag = max(older, key=lambda name: _version(name[1:]))
+        shipped = subprocess.run(  # noqa: S603 - fixed program, a tag git listed
+            [git, "-C", str(ROOT), "show", f"{tag}:ui/src/haprion_ui/compatibility.json"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
         self.assertEqual(
             json.loads(PREVIOUS.read_text()),
             json.loads(shipped),

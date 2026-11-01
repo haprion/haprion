@@ -22,7 +22,7 @@
         else; the badge is the way there (review 26-10-24, 12-13).
       #}<a class="status-badge status-badge-info waiting-badge" href="/history">{% if draft.deleted %}Removal · not published{% elif draft.replaces %}Renamed · not published{% elif stored %}Changed · not published{% else %}New · not published{% endif %}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endif %}{% endmacro %}
 
-{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}, unforwarded=(), used=none) %}
+{% macro proxy_rows(cluster, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}, unforwarded=(), used=none) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
 {#
   A draft of an object that is already stored keeps that object's row - its
@@ -112,8 +112,8 @@
   https object that redirects plain HTTP takes two of them.
 #}
 {% elif kind == 'written' %}{% set object = item %}
-      <tr{% if object.name in drafts %} class="proxy-draft"{% elif not object.serving %} class="proxy-waiting"{% endif %}{% if role == 'admin' %} data-href="/proxies/{{ cluster }}/{{ object.name }}"{% endif %}>
-        <td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a>{% else %}<strong>{{ object.name }}</strong>{% endif %}</td>
+      <tr{% if object.name in drafts %} class="proxy-draft"{% elif not object.serving %} class="proxy-waiting"{% endif %} data-href="/proxies/{{ cluster }}/{{ object.name }}">
+        <td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a></td>
         {#
           What the nodes are serving this as, and not what the document intends.
           An object waiting to be added has a protocol in its document, but the
@@ -163,7 +163,7 @@
   is to show, so it is shown as itself.
 #}
 {% else %}{% set proxy = item %}
-      <tr{% if role == 'admin' %} data-href="/proxies/{{ cluster }}/{{ proxy.name }}"{% endif %}><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol / state"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Created by"><span class="ownership-badge ownership-unmanaged">Manual</span></td></tr>
+      <tr data-href="/proxies/{{ cluster }}/{{ proxy.name }}"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol / state"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Created by"><span class="ownership-badge ownership-unmanaged">Manual</span></td></tr>
 {% endif %}
 {% endfor %}
 {% if total > proxy_page_size %}

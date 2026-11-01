@@ -251,19 +251,27 @@ class TheDraftsOfAnAdmin(WafCase):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def test_a_read_token_is_given_none_of_it(self) -> None:
+    def test_a_read_token_is_given_it_as_a_write_token_is(self) -> None:
+        for level in ("read", "write"):
+            with self.subTest(level=level):
+                response = self.get("exceptions", level=level)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(CANARY, response.text)
+                [row] = [
+                    r for r in response.json()["result"]["exceptions"] if r["object"] == "newsite"
+                ]
+                self.assertTrue(row["in_draft"])
+
+    def test_the_findings_are_the_same_for_both_levels(self) -> None:
+        read, write = (self.get("findings", level=level) for level in ("read", "write"))
+
+        self.assertEqual((read.status_code, write.status_code), (200, 200))
+        self.assertEqual(read.json()["result"], write.json()["result"])
+
+    def test_a_block_token_reads_none_of_it(self) -> None:
         for path in ("exceptions", "findings"):
             with self.subTest(path=path):
-                response = self.get(path, level="read")
-                self.assertEqual(response.status_code, 200)
-                for each in (CANARY, "newsite", "/secret-admin"):
-                    self.assertNotIn(each, response.text)
-
-    def test_a_write_token_is_given_it(self) -> None:
-        response = self.get("exceptions", level="write")
-        self.assertIn(CANARY, response.text)
-        [row] = [r for r in response.json()["result"]["exceptions"] if r["object"] == "newsite"]
-        self.assertTrue(row["in_draft"])
+                self.assertEqual(self.get(path, level="block").status_code, 403)
 
 
 class TheFindingsThatWereCut(WafCase):

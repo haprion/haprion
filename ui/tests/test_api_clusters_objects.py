@@ -303,9 +303,9 @@ class TheObjectList(ReadingTestCase):
         )
         self.assertIn("1 drained or in maintenance", web["health"]["detail"])
         staging = result["objects"][3]
-        # The engine's sentence can quote the document, which a reader is not given.
+        # The engine's sentence on the document is a reader's to read, as an admin's.
         self.assertFalse(staging["readable"])
-        self.assertIsNone(staging["problem"])
+        self.assertEqual(staging["problem"], "staging.routes is required for an http object")
         unmanaged = result["objects"][0]
         self.assertEqual((unmanaged["ports"], unmanaged["backend_count"]), ([80], 1))
 
@@ -368,9 +368,10 @@ class TheObjectList(ReadingTestCase):
             read = self.result("/clusters/alpha/objects")["objects"]
         objects = {o["name"]: o for o in listed}
 
-        # A reader is shown no drafts; a `read` token neither (B416).
-        self.assertNotIn("blog", {o["name"] for o in read})
-        self.assertEqual({o["draft"] for o in read if o["name"] == "shop"}, {None})
+        # A reader reads the drafts too: a `read` token is given what a `write` token is.
+        self.assertEqual(read, listed)
+        self.assertIn("blog", {o["name"] for o in read})
+        self.assertEqual({o["draft"]["stage"] for o in read if o["name"] == "shop"}, {"saved"})
 
         self.assertEqual(objects["blog"]["state"], "draft")
         self.assertEqual(
@@ -465,34 +466,40 @@ class TheObject(ReadingTestCase):
         self.assertIn("protocol: https", result["document"])
         self.assertIsNone(result["server_states"])
 
-    def test_a_read_token_is_shown_the_object_but_not_its_document(self) -> None:
-        """B416: `read` sees what a reader sees, and the document is an admin's (B68)."""
+    def test_a_read_token_is_given_the_object_as_a_write_token_is(self) -> None:
+        """A reader reads what an admin reads: the document, the definition, the servers' states."""
 
-        result = self.result("/clusters/alpha/objects/public-web")
+        read = self.result("/clusters/alpha/objects/public-web")
+        write = self.result("/clusters/alpha/objects/public-web", level="write")
 
-        self.assertEqual(
-            (result["name"], result["document"], result["definition"]), ("public-web", None, None)
-        )
+        # The readings carry the moment they were taken, which differs between two calls.
+        for answer in (read, write):
+            answer.pop("observed_at")
+            answer["server_states"].pop("observed_at")
+        self.assertEqual(read, write)
+        self.assertIn("public-web", read["document"])
+        self.assertIsNotNone(read["definition"])
+        self.assertIsNotNone(read["server_states"])
+        self.assertIn("192.0.2.10", json.dumps(read["server_states"]))
 
-    def test_a_read_token_is_not_given_the_backend_addresses_either(self) -> None:
-        """The servers' states name every address behind a site, as the document does (B68)."""
+    def test_the_engines_sentence_is_given_to_a_read_token_too(self) -> None:
+        for level in ("read", "write"):
+            with self.subTest(level=level):
+                result = self.result("/clusters/alpha/objects/staging", level=level)
+                self.assertEqual(
+                    (result["state"], result["readable"], result["problem"]),
+                    ("unreadable", False, "staging.routes is required for an http object"),
+                )
+                self.assertIn("protocol: https", result["document"])
 
-        web = self.result("/clusters/alpha/objects/public-web")
-        self.assertIsNone(web["server_states"])
-        # The lamp is the reader's level and stays.
-        self.assertEqual(web["health"]["total"], 2)
-        self.assertNotIn("192.0.2.10", json.dumps(web))
-        self.assertIsNotNone(
-            self.result("/clusters/alpha/objects/public-web", level="write")["server_states"]
-        )
-
-    def test_the_engines_sentence_is_given_to_write_tokens_only(self) -> None:
-        read = self.result("/clusters/alpha/objects/staging")
-        self.assertEqual(
-            (read["state"], read["readable"], read["problem"]), ("unreadable", False, None)
-        )
-        write = self.result("/clusters/alpha/objects/staging", level="write")
-        self.assertEqual(write["problem"], "staging.routes is required for an http object")
+    def test_a_block_token_reads_none_of_it(self) -> None:
+        for path in (
+            "/clusters/alpha/objects",
+            "/clusters/alpha/objects/public-web",
+            "/clusters/alpha/objects/public-web/history",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.get(path, level="block").status_code, 403)
 
     def test_a_servers_check_is_a_code_beside_the_pages_word(self) -> None:
         servers = self.result("/clusters/alpha/objects/public-web", level="write")["server_states"][

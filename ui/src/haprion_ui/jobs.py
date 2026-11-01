@@ -17,7 +17,8 @@ The **diagnostics** are the operation's redacted stderr, and they are shown to
 an admin only. The frozen contract says raw stderr is never returned to a
 *reader role*; hiding it from everyone was a habit rather than a decision, and
 the cost of that habit fell on the one person who had to open an SSH session at
-every failure. See B44.
+every failure. See B44. The helper's own **sentences** - an error's and a
+warning's - are not stderr: a reader is given them as an admin is.
 """
 
 from __future__ import annotations
@@ -86,11 +87,9 @@ class JobView:
     #
     error_code: str | None = None
     #
-    # The helper's own sentence beside the code, for an admin, as the
-    # diagnostics are: the sentence can name paths and hosts, which is why
-    # the page showed the code alone from 2026-08-31. Until 2026-09-21 that
-    # left a `publish_failed` whose sentence said "the certificate expires in
-    # 3 days" as a word nobody could act on, and the diagnostics panel was
+    # The helper's own sentence beside the code, for every role. Without it a
+    # `publish_failed` whose sentence said "the certificate expires in
+    # 3 days" is a word nobody could act on, and the diagnostics panel is
     # no help - a refusal written as an envelope prints nothing on stderr.
     # Bounded by the contract (2048).
     #
@@ -1134,6 +1133,7 @@ def _view(
     follow_up: str | None,
     next_command: str | None,
     diagnostics: bool,
+    sentences: bool,
     writes: bool,
     command_for_all: bool = False,
 ) -> JobView:
@@ -1187,11 +1187,11 @@ def _view(
         # Not again under the code when the follow-up line says it.
         #
         error_message=(
-            error_message(job) if diagnostics and ended_badly and not command_for_all else None
+            error_message(job) if sentences and ended_badly and not command_for_all else None
         ),
         warning_codes=", ".join(dict.fromkeys(code for code, _ in warned)),
         warning_message=(
-            "; ".join(message for _, message in warned if message) or None if diagnostics else None
+            "; ".join(message for _, message in warned if message) or None if sentences else None
         ),
         #
         # Only for a job that ended badly. A successful operation's stderr is
@@ -1262,6 +1262,7 @@ def build_job_overview(
     now: datetime | None = None,
     awaiting: frozenset[str] = frozenset(),
     diagnostics: bool = False,
+    sentences: bool = False,
     judged: list[Job] | None = None,
     writes: bool,
 ) -> JobOverview:
@@ -1278,9 +1279,10 @@ def build_job_overview(
     this has to be the newest job that left it that way. Anything older is
     history, and history does not need a caption telling the reader to act.
 
-    `diagnostics` says whether the caller is entitled to the operations' stderr.
-    It defaults to false, so a page that forgets to ask the question gets the
-    reader-safe projection rather than the privileged one.
+    `diagnostics` says whether the caller is entitled to the operations' stderr
+    and `sentences` whether it is given the helpers' error and warning
+    sentences. Both default to false, so a page that forgets to ask the
+    question gets the narrow projection rather than the wide one.
 
     `judged` is what *Need review* counts: the jobs Needs attention judges
     (`views.attention_jobs`), not only the ones listed (review 26-10-29, C02).
@@ -1338,6 +1340,7 @@ def build_job_overview(
                     else None
                 ),
                 diagnostics=diagnostics,
+                sentences=sentences,
                 writes=writes,
             )
         )

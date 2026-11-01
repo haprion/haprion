@@ -299,15 +299,11 @@ def build_router(config: Config) -> APIRouter:
                         entries += (
                             search_index.entries_for(operation, row.cluster, row.result) or []
                         )
-            results = search_index.matching(
-                entries, query, role=session.role, clusters=clusters, page=page
-            )
+            results = search_index.matching(entries, query, clusters=clusters, page=page)
         elif query:
             clusters = listed_clusters(request, config)
             with request.app.state.pool.connection() as connection:
-                results = db.search(
-                    connection, query, role=session.role, clusters=clusters, page=page
-                )
+                results = db.search(connection, query, clusters=clusters, page=page)
         return TEMPLATES.TemplateResponse(
             request,
             "search.html",
@@ -505,14 +501,6 @@ def build_router(config: Config) -> APIRouter:
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
-        #
-        # The difference is the objects' documents and the generated
-        # configuration: every backend address, and whatever an advanced text
-        # wrote, passwords included. The object page is an administrator's for
-        # that reason (B68, B221), and so is this (review 2026-10-22, 5-3).
-        #
-        if session.role != "admin":
-            return forbidden_page(request, config)
         clusters, history_rows = read_source(request, config, HISTORY_SOURCE)
         if cluster not in clusters:
             return HTMLResponse("Not found", status_code=404)
@@ -821,12 +809,12 @@ def build_router(config: Config) -> APIRouter:
                 listed,
                 awaiting=jobs.awaiting_deployment(db.cluster_statuses(connection)),
                 #
-                # The contract withholds raw stderr from a reader role, and only
-                # from a reader role. Deciding it here rather than in the
-                # template means the projection an unentitled session receives
-                # never contains the diagnostics at all. See B44.
+                # The helpers' sentences are every role's. The stderr is not:
+                # the contract withholds raw stderr from a reader role, and
+                # only from a reader role. See B44.
                 #
                 diagnostics=session.role == "admin",
+                sentences=True,
                 judged=judged,
                 writes=config.management_writes,
             )

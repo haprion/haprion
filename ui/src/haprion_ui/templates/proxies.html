@@ -33,19 +33,18 @@
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
       <div class="cluster-state">{% if management_writes and role == 'admin' %}<a class="secondary-button" href="/proxies/{{ cluster.cluster }}/new">New proxy</a>{% endif %}{% if cluster.label %}<span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% endif %}{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at | shown_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
-    {% set unpublished = (drafts.get(cluster.cluster, ()) if drafts else ()) if role == 'admin' else () %}
+    {% set unpublished = drafts.get(cluster.cluster, ()) if drafts else () %}
     {% set queued = (publishing.get(cluster.cluster, ()) if publishing else ()) %}
     {#
-      Shown to a reader as well. These rows carry a name, hostnames, ports and
-      a count - the same facts the frontend rows carried before them, and never
-      the document, which names every backend address behind a site. Only the
-      link into the object is an admin's.
+      Shown to every role alike: a reader reads what an admin reads, the link
+      into the object and the drafts included. The buttons that change
+      something are the ones gated on the admin role.
     #}
     {% set written = listed.get(cluster.cluster, ()) if listed else () %}
     {% set foreign = (unmanaged.get(cluster.cluster, ()) if unmanaged else ()) %}
     {% if written or foreign or unpublished %}
     <div class="table-scroll"><table class="node-table proxy-table"><thead><tr>{{ sort.heading(proxy_sorts.name, "Proxy") }}{{ sort.heading(proxy_sorts.protocol, "Protocol / state") }}{{ sort.heading(proxy_sorts.hosts, "Hosts / ports") }}{{ sort.heading(proxy_sorts.address, "VIP / source") }}{{ sort.heading(proxy_sorts.health, "Health") }}{{ sort.heading(proxy_sorts.ownership, "Created by") }}</tr></thead><tbody data-cluster="{{ cluster.cluster }}">
-{{ rows.proxy_rows(cluster.cluster, role, unpublished, queued, written, foreign, health.get(cluster.cluster, {}) if health else {}, removed.get(cluster.cluster, ()) if removed else (), failed.get(cluster.cluster, {}) if failed else {}, (reconfigured.get(cluster.cluster, ()) if reconfigured else ()) if behind and cluster.cluster in behind else (), proxy_sort, proxy_paging or {}, unforwarded.get(cluster.cluster, ()) if unforwarded else (), used) }}
+{{ rows.proxy_rows(cluster.cluster, unpublished, queued, written, foreign, health.get(cluster.cluster, {}) if health else {}, removed.get(cluster.cluster, ()) if removed else (), failed.get(cluster.cluster, {}) if failed else {}, (reconfigured.get(cluster.cluster, ()) if reconfigured else ()) if behind and cluster.cluster in behind else (), proxy_sort, proxy_paging or {}, unforwarded.get(cluster.cluster, ()) if unforwarded else (), used) }}
     </tbody></table></div>
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>

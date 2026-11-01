@@ -230,30 +230,13 @@ def object_entries(listing: dict[str, Any], cluster: str) -> list[dict[str, Any]
     return sorted(entries, key=lambda entry: entry["name"])
 
 
-def _as_admin(caller: Caller) -> bool:
-    """Whether the token is given what the pages give an admin and not a reader.
-
-    A `read` token sees what a reader sees (B416); a `write` token is the
-    admin's level. The object's document, its drafts, the servers' states
-    and the engine's sentence on an unreadable object are an admin's (B68):
-    they name certificates and backend addresses.
-    """
-
-    return caller.issued.level == "write"
-
-
 def _listing(request: Request, cluster: str, caller: Caller) -> list[dict[str, Any]]:
     config = request.app.state.config
     if cluster not in listed_clusters(request, config):
         raise NOT_FOUND
-    role = "admin" if _as_admin(caller) else "reader"
-    listing = proxy_listing(request, config, role, {}, only=cluster)
-    entries = object_entries(listing, cluster)
-    if not _as_admin(caller):
-        # The sentence can quote a value of the document.
-        for entry in entries:
-            entry["problem"] = None
-    return entries
+    # A `read` token is a reader and a `write` token an admin; both are shown what an admin is.
+    listing = proxy_listing(request, config, {}, only=cluster)
+    return object_entries(listing, cluster)
 
 
 @router.get(
@@ -367,7 +350,7 @@ def object_show(
     detail = reading.detail
     stored = detail.stored
     states = None
-    if stored is not None and _as_admin(caller):
+    if stored is not None:
         try:
             proxy = load_proxy(name, stored.document.encode())
         except ModelError:
@@ -388,7 +371,7 @@ def object_show(
             "is_default": detail.vip_is_default,
         }
     publication = detail.publication
-    document = stored.document if stored is not None and _as_admin(caller) else None
+    document = stored.document if stored is not None else None
     return answer(
         request,
         {

@@ -551,8 +551,8 @@ class ThePage(EditorTestCase):
         self.assertIn('Publish it on <a href="/history">Versions</a>', text)
         self.assertNotIn("Publish it there", text)
 
-    def test_a_reader_is_given_none_of_an_admins_drafts(self) -> None:
-        # Drafts are for write (B417); the page used to show a reader the draft's exceptions.
+    def test_a_reader_is_given_an_admins_drafts_too(self) -> None:
+        # A reader reads everything an admin reads: the draft's exceptions included.
         canary = "canary-pentest-for-customer-x"
         document = LOGGING.replace("name: shop", "name: newsite") + (
             "  exceptions: [{rule: 942100, field: 'ARGS:q', paths: [/secret-admin], "
@@ -575,9 +575,12 @@ class ThePage(EditorTestCase):
             admin = self.editor().get("/waf?view=exceptions").text
             self.account = replace(self.account, role="reader")
             client = self.editor()
-            for view in ("exceptions", "findings"):
-                self.assertNotIn(canary, client.get(f"/waf?view={view}").text)
+            reader = client.get("/waf?view=exceptions").text
         self.assertIn(canary, admin)
+        self.assertIn(canary, reader)
+        # Read, not changed: the removal form is the admin's.
+        self.assertIn("/waf/exceptions/remove", admin)
+        self.assertNotIn("/waf/exceptions/remove", reader)
 
     def test_a_cut_list_of_findings_says_so(self) -> None:
         cut = WafFindings([finding()])

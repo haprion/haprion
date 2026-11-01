@@ -407,7 +407,7 @@ class AServingObjectSaysWhenTheNodesAreBehind(unittest.TestCase):
     def rendered(self, reconfigured: tuple[str, ...] = ()) -> str:
         module: Any = TEMPLATES.env.get_template("_proxy-rows.html").module
         macro = module.proxy_rows
-        return str(macro("alpha", "admin", (), (), (self.SERVING,), (), {}, (), {}, reconfigured))
+        return str(macro("alpha", (), (), (self.SERVING,), (), {}, (), {}, reconfigured))
 
     def test_the_badge_takes_the_protocol_cell_and_leaves_the_hostnames(self) -> None:
         """What the row serves is why somebody opened the listing.

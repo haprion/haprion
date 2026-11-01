@@ -33,7 +33,7 @@ from haprion_ui import (
     traffic_log_table,
     traffic_logs,
 )
-from haprion_ui.access import current_session, forbidden_page
+from haprion_ui.access import current_session
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.config import Config, cluster_id_of
 from haprion_ui.editor_flow import earlier_names
@@ -143,16 +143,12 @@ def build_router(config: Config) -> APIRouter:
         carries this" cannot be asked from inside the backend somebody already
         picked.
 
-        Admin only, for the same reason as the object page: naming every
-        frontend and backend a cluster carries describes the shape of what is
-        published, which the overview deliberately does not.
+        Every role reads it, as the object page.
         """
 
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
-        if session.role != "admin":
-            return forbidden_page(request, config)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         clusters, _rows = read_source(request, config, STATUS_SOURCE)
         if only is not None and only not in clusters:
@@ -715,11 +711,7 @@ def build_router(config: Config) -> APIRouter:
         if waf_page:
             listed = listed_clusters(request, config)
             chosen = (selected_cluster,) if selected_cluster in listed else tuple(listed)
-            waf_tabs = {
-                "tab_counts": waf_overview(
-                    request, config, chosen, drafts=session.role == "admin"
-                ).tab_counts()
-            }
+            waf_tabs = {"tab_counts": waf_overview(request, config, chosen).tab_counts()}
         response = TEMPLATES.TemplateResponse(
             request,
             "logs.html",

@@ -65,12 +65,6 @@ class Entry:
     label: str
     value: str
     href: str
-    #
-    # A backend address. The object page is admin-only because its document
-    # names every one of them (B68); a search must not answer the same question
-    # for a reader one guess at a time.
-    #
-    admin_only: bool = False
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -92,30 +86,25 @@ def _entries(
     title: str,
     href: str,
     values: Iterable[tuple[str, str]],
-    *,
-    admin_only: Iterable[tuple[str, str]] = (),
 ) -> list[Entry]:
     """One row per non-empty value, each bounded, none repeated."""
 
-    found: dict[tuple[str, str, bool], Entry] = {}
-    for hidden, pairs in ((False, values), (True, admin_only)):
-        for label, value in pairs:
-            if not value:
-                continue
-            key = (label, value, hidden)
-            found.setdefault(
-                key,
-                Entry(
-                    cluster=cluster,
-                    source=source,
-                    kind=kind,
-                    title=title[:MAX_TITLE],
-                    label=label[:MAX_LABEL],
-                    value=value[:MAX_VALUE],
-                    href=href,
-                    admin_only=hidden,
-                ),
-            )
+    found: dict[tuple[str, str], Entry] = {}
+    for label, value in values:
+        if not value:
+            continue
+        found.setdefault(
+            (label, value),
+            Entry(
+                cluster=cluster,
+                source=source,
+                kind=kind,
+                title=title[:MAX_TITLE],
+                label=label[:MAX_LABEL],
+                value=value[:MAX_VALUE],
+                href=href,
+            ),
+        )
     return list(found.values())
 
 
@@ -149,10 +138,10 @@ def object_entries(cluster: str, result: Mapping[str, Any]) -> list[Entry]:
             "proxy",
             name,
             f"/proxies/{quote(cluster, safe='')}/{quote(name, safe='')}",
-            values,
-            admin_only=(
-                (BACKEND_LABEL, _text(server)) for server in _sequence(entry.get("servers"))
-            ),
+            [
+                *values,
+                *((BACKEND_LABEL, _text(server)) for server in _sequence(entry.get("servers"))),
+            ],
         )
     return rows
 
@@ -384,12 +373,6 @@ def matched_text(label: str, value: str) -> str:
     return f"{label} {value}" if label else value
 
 
-def reader_href(kind: str, href: str, role: str) -> str:
-    """A reader cannot open an object, so its row goes to the listing it is in."""
-
-    return "/proxies" if kind == "proxy" and role != "admin" else href
-
-
 def grouped(hits: Sequence[Hit]) -> tuple[Group, ...]:
     """The page's hits under their headings, in the order the kinds are shown."""
 
@@ -401,7 +384,7 @@ def grouped(hits: Sequence[Hit]) -> tuple[Group, ...]:
 
 
 def matching(
-    entries: Iterable[Entry], query: str, *, role: str, clusters: Iterable[str], page: int = 1
+    entries: Iterable[Entry], query: str, *, clusters: Iterable[str], page: int = 1
 ) -> Results:
     """The search done in memory, for the demo fixture.
 
@@ -416,7 +399,7 @@ def matching(
     listed = set(clusters)
     found: dict[tuple[str, str, str, str], list[str]] = {}
     for entry in entries:
-        if entry.cluster not in listed or (entry.admin_only and role != "admin"):
+        if entry.cluster not in listed:
             continue
         if needle not in entry.value.casefold():
             continue
@@ -435,7 +418,7 @@ def matching(
             cluster=cluster or None,
             title=title,
             matched=", ".join(sorted(found[(kind, cluster, title, href)])),
-            href=reader_href(kind, href, role),
+            href=href,
         )
         for kind, cluster, title, href in shown
     ]

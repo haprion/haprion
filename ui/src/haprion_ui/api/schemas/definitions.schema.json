@@ -340,7 +340,7 @@
             "string",
             "null"
           ],
-          "description": "Text. The engine's sentence on an unreadable object; given to a write token only, null otherwise."
+          "description": "Text. The engine's sentence on an unreadable object; null where the object is readable."
         },
         "hostnames": {
           "$ref": "#/$defs/names",
@@ -452,7 +452,7 @@
             "object",
             "null"
           ],
-          "description": "Work on the object that is not released; null for a read token, which is shown no drafts.",
+          "description": "Work on the object that is not released; null where there is none.",
           "required": [
             "stage",
             "removal",
@@ -671,7 +671,7 @@
             "string",
             "null"
           ],
-          "description": "Text. The engine's sentence with the code; given to a write token only, null otherwise."
+          "description": "Text. The engine's sentence with the code; null where there is none."
         }
       },
       "additionalProperties": true

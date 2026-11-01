@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haprion_ui import demo, metrics, search_index
+from haprion_ui import auth, demo, metrics, search_index
 from haprion_ui.db import Job, ProxyDraft
 from tests.test_busy_clusters import held_job, workerless_job
 from tests.test_cluster_traffic import measurement
@@ -113,7 +113,6 @@ class OpeningAnObject(DraftReading):
                         label=search_index.BACKEND_LABEL,
                         value="192.0.2.10:8080",
                         href="/proxies/edge-demo/shop",
-                        admin_only=True,
                     )
                 )
             return found
@@ -285,32 +284,78 @@ class TheOverviewOrdering(LoginTestCase):
         self.assertTrue(any("example" in cell for cell in serving))
 
 
-class WhoMayRead(LoginTestCase):
-    def test_a_non_admin_is_refused(self) -> None:
-        """The document names certificates and every backend address behind a
-        site, which the overview deliberately does not show. B68 settled the
-        same question for the preview, and this is the same data."""
+class WhoMayRead(DraftReading):
+    """A reader reads everything an admin reads and changes nothing."""
 
-        self.account = replace(self.account, role="operator")
-        client = self.client(replace(configuration(), demo_fixture=True))
+    OBJECT = "/proxies/edge-demo/public-web"
+
+    def opened(self, role: str, *, writes: bool = True) -> Any:
+        self.account = replace(self.account, role=role)
+        client = self.client(replace(configuration(), demo_fixture=True, management_writes=writes))
         self.sign_in(client)
+        self.client_in = client
+        return client.get(self.OBJECT)
 
-        page = client.get("/proxies/edge-demo/public-web")
+    def test_a_reader_is_given_the_document_as_an_admin_is(self) -> None:
+        reader, admin = self.opened("reader"), self.opened("admin")
 
-        self.assertEqual(page.status_code, 403)
+        self.assertEqual((reader.status_code, admin.status_code), (200, 200))
+        # The document names certificates and every backend address behind the site.
+        self.assertIn("app.demo.example", reader.text)
+        self.assertIn("192.0.2.", reader.text)
 
-    def test_the_overview_offers_the_link_only_to_an_admin(self) -> None:
-        """A link that always refuses is worse than no link."""
+    def test_a_reader_is_given_no_button_and_no_form_that_changes_anything(self) -> None:
+        reader, admin = self.opened("reader"), self.opened("admin")
 
-        self.account = replace(self.account, role="operator")
-        client = self.client(replace(configuration(), demo_fixture=True))
-        self.sign_in(client)
+        self.assertIn(f'action="{self.OBJECT}/servers"', admin.text)
+        self.assertIn(f'href="{self.OBJECT}/edit"', admin.text)
+        for text in (
+            f'action="{self.OBJECT}/',
+            f'href="{self.OBJECT}/edit"',
+            "Open in the editor",
+            "data-advanced-dialog",
+            "selectable-rows",
+            'name="csrf_token"',
+        ):
+            with self.subTest(text=text):
+                self.assertNotIn(text, reader.text.split("</header>", 1)[1])
 
-        page = client.get("/proxies")
+    def test_a_reader_changes_nothing_through_the_object_s_forms(self) -> None:
+        self.opened("reader")
+        client = self.client_in
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        for action in ("servers", "unblock", "advanced", "lookup", "remove"):
+            with self.subTest(action=action):
+                response = client.post(
+                    f"{self.OBJECT}/{action}",
+                    data={
+                        auth.CSRF_FIELD: token,
+                        "idempotency_key": str(uuid4()),
+                        "state": "drain",
+                        "server": "pool/192.0.2.10:8080",
+                        "address": "198.51.100.7",
+                        "action": "save",
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(response.status_code, 403)
 
-        self.assertEqual(page.status_code, 200)
-        self.assertIn("public-web", page.text)
-        self.assertNotIn('href="/proxies/edge-demo/public-web"', page.text)
+    def test_a_reader_may_not_open_the_editor(self) -> None:
+        self.opened("reader")
+
+        self.assertEqual(self.client_in.get(f"{self.OBJECT}/edit").status_code, 403)
+
+    def test_the_overview_links_every_role_to_the_object(self) -> None:
+        for role in ("reader", "admin"):
+            with self.subTest(role=role):
+                self.account = replace(self.account, role=role)
+                client = self.client(replace(configuration(), demo_fixture=True))
+                self.sign_in(client)
+
+                page = client.get("/proxies")
+
+                self.assertEqual(page.status_code, 200)
+                self.assertIn(f'href="{self.OBJECT}"', page.text)
 
 
 class TheFixtureDescribesARealCluster(LoginTestCase):

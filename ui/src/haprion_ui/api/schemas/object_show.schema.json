@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.com/haprion/schemas/v1/api/object_show.schema.json",
   "title": "GET /api/v1/clusters/{cluster}/objects/{name}: result",
-  "description": "One object: its row in the list, and what its page adds. The document, the definition and the servers' states are given to a write token only.",
+  "description": "One object: its row in the list, and what its page adds.",
   "allOf": [
     { "$ref": "definitions.schema.json#/$defs/object_entry" },
     {
       "type": "object",
       "required": ["document", "definition", "publication", "commit", "observed_at", "stale", "server_states"],
       "properties": {
-        "document": { "type": ["string", "null"], "description": "Value. The object's stored YAML document; null for a read token, or for a proxy the platform did not write." },
+        "document": { "type": ["string", "null"], "description": "Value. The object's stored YAML document; null for a proxy the platform did not write." },
         "definition": { "description": "Value. The document parsed into JSON, for a script that does not read YAML; null where document is null or cannot be read. Its shape is the object schema's, not this API's." },
         "publication": {
           "type": ["object", "null"],
@@ -28,7 +28,7 @@
         "stale": { "type": "boolean", "description": "Value. True where the reading is older than two polls." },
         "server_states": {
           "type": ["object", "null"],
-          "description": "What each node says of each server of the object; null for a read token, or where the object has none to show.",
+          "description": "What each node says of each server of the object; null where the object has none to show.",
           "required": ["current", "observed_at", "servers"],
           "properties": {
             "current": { "type": "boolean", "description": "Value. False where the nodes do not run this version of the object yet, so no node's word is given." },

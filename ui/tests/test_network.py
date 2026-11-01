@@ -589,12 +589,11 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase, BadgeReading):
         self.assertIn('<a href="/proxies/service-demo/api">api</a>', page, "one by name")
         self.assertIn('<span class="table-empty">not used</span>', page)
 
-    def test_a_reader_reads_the_names_without_links(self) -> None:
+    def test_a_reader_reads_the_names_as_links_too(self) -> None:
         self.account = replace(self.account, role="reader")
         page = self.editable_page().text
 
-        self.assertIn('<td data-label="Used by">api</td>', page)
-        self.assertNotIn('<a href="/proxies/service-demo/api">', page)
+        self.assertIn('<a href="/proxies/service-demo/api">api</a>', page)
         self.assertIn('<a href="/proxies?cluster=edge-demo&amp;vip=public">2 proxies</a>', page)
 
     def test_objects_that_could_not_be_read_say_nothing(self) -> None:

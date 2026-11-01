@@ -571,15 +571,14 @@ class TheErrorCodeReachesThePage(LoginTestCase):
 
         self.assertIn("cluster_not_converged", body)
         #
-        # The code for everyone; the helper's prose beside it for an admin
-        # only, as the diagnostics are (2026-09-21). The message varies with
-        # the environment and is not part of the frozen vocabulary; the code
-        # is, and it is what a reader gets.
+        # The code and the helper's prose beside it, for every role: a
+        # reader is given the sentence as an admin is. Only the raw output
+        # (the diagnostics) stays an admin's.
         #
         self.assertIn("— not converged", body)
         self.account = replace(self.account, role="reader")
-        self.assertNotIn(
-            "not converged", self.page([job(state="blocked", outcome="blocked", result=envelope)])
+        self.assertIn(
+            "— not converged", self.page([job(state="blocked", outcome="blocked", result=envelope)])
         )
 
     def test_a_job_that_worked_carries_no_failure_row(self) -> None:
@@ -602,7 +601,7 @@ class TheErrorCodeReachesThePage(LoginTestCase):
         self.account = replace(self.account, role="reader")
         body = self.page([job(state="done", outcome="done", result=warned)])
         self.assertIn("vip_not_owned", body)
-        self.assertNotIn("no node owns the VIP", body)
+        self.assertIn("— no node owns the VIP", body)
         #
         # Another helper's warnings on success are not a row under it.
         #

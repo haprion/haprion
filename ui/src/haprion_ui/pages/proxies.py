@@ -116,7 +116,6 @@ def _nodes_reported(rows: Iterable[Any], cluster: str) -> bool:
 def proxy_listing(
     request: Request,
     config: Config,
-    role: str,
     query: Mapping[str, str],
     *,
     only: str | None = None,
@@ -387,14 +386,14 @@ def proxy_listing(
         "health": backend_lamps,
         "unmanaged": unmanaged,
         #
-        # A reader has no drafts to see: a draft is somebody's unfinished
-        # edit, and the row exists so its author can find it again.
+        # Every role is shown the drafts: a reader reads what an admin has
+        # written and not yet published.
         #
         #
         # Filtered, the table is what the objects say they use: a draft,
         # a publish on its way and a removal have no such answer yet.
         #
-        "drafts": drafts if role == "admin" and used is None else {},
+        "drafts": drafts if used is None else {},
         "publishing": publishing if used is None else {},
         "behind": behind,
         "reconfigured": reconfigured,
@@ -411,8 +410,8 @@ def proxy_listing(
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
 
-    def _proxy_listing(request: Request, role: str) -> dict[str, Any]:
-        return proxy_listing(request, config, role, request.query_params)
+    def _proxy_listing(request: Request) -> dict[str, Any]:
+        return proxy_listing(request, config, request.query_params)
 
     @router.get("/proxies", response_class=HTMLResponse)
     def proxy_overview(request: Request) -> Response:
@@ -420,7 +419,7 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        listing = _proxy_listing(request, session.role)
+        listing = _proxy_listing(request)
         sort, asked = proxies.TABLE.chosen(request)
         response = TEMPLATES.TemplateResponse(
             request,
@@ -461,7 +460,7 @@ def build_router(config: Config) -> APIRouter:
         session = current_session(request)
         if session is None:
             return JSONResponse({"detail": "not signed in"}, status_code=401)
-        listing = _proxy_listing(request, session.role)
+        listing = _proxy_listing(request)
         #
         # Fetched by name because a template module carries no type: the macro
         # is declared in the template and the checker cannot see it. The name
@@ -478,7 +477,6 @@ def build_router(config: Config) -> APIRouter:
             view.cluster: str(
                 macro(
                     view.cluster,
-                    session.role,
                     listing["drafts"].get(view.cluster, ()),
                     listing["publishing"].get(view.cluster, ()),
                     listing["listed"].get(view.cluster, ()),
@@ -806,16 +804,13 @@ def build_router(config: Config) -> APIRouter:
     def proxy_object(request: Request, cluster: str, name: str) -> Response:
         """One proxy as it is written, beside the row the nodes are serving.
 
-        Admin only, for the reason B68 gives about the preview: the stored
-        document names certificates and every backend address behind a site,
-        and the overview this is reached from deliberately shows neither.
+        Every role reads it: a reader sees what an admin sees, without the
+        buttons and forms that change something.
         """
 
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
-        if session.role != "admin":
-            return forbidden_page(request, config)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         clusters, object_rows = read_source(request, config, OBJECTS_SOURCE)
         if cluster not in clusters:
@@ -1174,6 +1169,7 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 "username": session.username,
                 "role": session.role,
+                "editable": config.management_writes and session.role == "admin",
                 "csrf_token": auth.csrf_token(token),
                 "section": "proxies",
                 "object": detail,
@@ -1214,6 +1210,7 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 "advanced_offered": (
                     config.management_writes
+                    and session.role == "admin"
                     and advanced is not None
                     and features.is_on(features.ADVANCED_CONFIG)
                     and not (draft is not None and draft.deleted)

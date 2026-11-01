@@ -170,6 +170,60 @@ def held_to(case: unittest.TestCase, operation: str, body: dict[str, Any]) -> No
     top = json.loads((SCHEMAS / f"{operation}.schema.json").read_text(encoding="utf-8"))
     resolver = registry().resolver(str(top["$id"]))
     case.assertEqual(undeclared(body["result"], parts(top, resolver)), [])
+    # A `read` token is given what an admin is; a secret is given to nobody.
+    case.assertEqual(secrets_in(body), [])
+
+
+SECRET_NAMES = frozenset(
+    {
+        "password",
+        "passphrase",
+        "secret",
+        "client_secret",
+        "private_key",
+        "sealed_key",
+        "token_hash",
+        "password_hash",
+        "session_secret",
+    }
+)
+SECRET_VALUES = re.compile(r"hap_[A-Za-z0-9_-]{43}|-----BEGIN [A-Z ]*PRIVATE KEY-----")
+
+
+def secrets_in(value: Any, path: str = "") -> list[str]:
+    """Where in an answer a secret's name or shape appears: a field of that name, a token, a key."""
+
+    found: list[str] = []
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            if str(key).lower() in SECRET_NAMES:
+                found.append(f"{path}/{key}")
+            found += secrets_in(inner, f"{path}/{key}")
+    elif isinstance(value, list):
+        for number, inner in enumerate(value):
+            found += secrets_in(inner, f"{path}/{number}")
+    elif isinstance(value, str) and SECRET_VALUES.search(value):
+        found.append(path)
+    return found
+
+
+class TheSecretScan(unittest.TestCase):
+    def test_it_finds_a_field_a_token_and_a_key(self) -> None:
+        issued = "hap_" + "A" * 43
+        answer = {
+            "result": {
+                "client_secret": "x",
+                "list": [{"note": f"see {issued}"}, {"pem": "-----BEGIN " + "PRIVATE KEY-----"}],
+            }
+        }
+
+        self.assertEqual(
+            secrets_in(answer),
+            ["/result/client_secret", "/result/list/0/note", "/result/list/1/pem"],
+        )
+
+    def test_it_passes_an_answer_without_one(self) -> None:
+        self.assertEqual(secrets_in({"result": {"name": "alpha", "hosts": ["example.com"]}}), [])
 
 
 class Checked(ApiTestCase):

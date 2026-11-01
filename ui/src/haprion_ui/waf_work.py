@@ -80,8 +80,8 @@ def _waf_documents(
 ) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
     """Each object's stored document, and its draft's where it has one (not a removal).
 
-    Drafts are an admin's unfinished work (B417), so a reader is given none:
-    the exceptions and findings are then the published ones.
+    `drafts` says whether the unfinished work is read too; the WAF page and the
+    API read it for every role, the attention list only what is published.
     """
 
     stored: dict[tuple[str, str], str] = {}
@@ -150,17 +150,16 @@ def waf_overview(
     config: Config,
     chosen: Sequence[str],
     *,
-    drafts: bool,
     count_requests: bool = True,
 ) -> WafOverview:
-    """What the WAF page shows; `drafts` only for a reader allowed an admin's unfinished work (B417)."""
+    """What the WAF page shows: the published exceptions and the saved drafts, to every role."""
 
     days = min(WAF_DAYS, config.traffic_logs.retention_days)
     since = datetime.now(UTC) - timedelta(days=days)
     rules = crs.installed_catalog()
     object_rows = waf_objects(request, config)
     with request.app.state.pool.connection() as connection:
-        stored, drafted = _waf_documents(object_rows, connection, chosen, drafts=drafts)
+        stored, drafted = _waf_documents(object_rows, connection, chosen, drafts=True)
         rows = db.waf_findings(connection, clusters=chosen, since=since)
         verdicts = db.waf_verdicts(connection, clusters=chosen, since=since)
         # Only the page's third tab shows it; a script that asks for findings does not pay for the count.
@@ -204,7 +203,7 @@ def waf_work_page(request: Request, config: Config, view: str, problem: str = ""
     clusters = listed_clusters(request, config)
     selected = cluster_id_of(request.query_params.get("cluster", ""))
     chosen = (selected,) if selected in clusters else tuple(clusters)
-    overview = waf_overview(request, config, chosen, drafts=session.role == "admin")
+    overview = waf_overview(request, config, chosen)
     days, findings, exceptions = overview.days, overview.findings, overview.exceptions
     return TEMPLATES.TemplateResponse(
         request,

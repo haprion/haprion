@@ -843,14 +843,13 @@ def replace_search_entries(
         else "where cluster = %(cluster)s and source = %(source)s"
     )
     wanted = sorted(
-        (entry.kind, entry.title, entry.label, entry.value, entry.href, entry.admin_only)
-        for entry in entries
+        (entry.kind, entry.title, entry.label, entry.value, entry.href) for entry in entries
     )
     with connection.cursor() as cursor:
         cursor.execute(
-            sql.SQL(
-                "select kind, title, label, value, href, admin_only from search_entry {scope}"
-            ).format(scope=scope),
+            sql.SQL("select kind, title, label, value, href from search_entry {scope}").format(
+                scope=scope
+            ),
             {"cluster": cluster, "source": source},
         )
         if sorted(tuple(row) for row in cursor.fetchall()) == wanted:
@@ -861,9 +860,9 @@ def replace_search_entries(
         )
         cursor.executemany(
             "insert into search_entry "
-            "(cluster, source, kind, title, label, value, href, admin_only) "
+            "(cluster, source, kind, title, label, value, href) "
             "values (%(cluster)s, %(source)s, %(kind)s, %(title)s, %(label)s, %(value)s, "
-            "%(href)s, %(admin_only)s)",
+            "%(href)s)",
             [
                 {
                     "cluster": entry.cluster,
@@ -873,7 +872,6 @@ def replace_search_entries(
                     "label": entry.label,
                     "value": entry.value,
                     "href": entry.href,
-                    "admin_only": entry.admin_only,
                 }
                 for entry in entries
             ],
@@ -918,7 +916,6 @@ def search(
     connection: Connection[Any],
     query: str,
     *,
-    role: str,
     clusters: Sequence[str],
     page: int = 1,
 ) -> search_index.Results:
@@ -945,15 +942,13 @@ def search(
             "               case when kind = 'certificate' then '' else cluster end as shown_cluster "
             "          from search_entry "
             "         where lower(value) like %(pattern)s "
-            "           and (cluster is null or cluster = any(%(clusters)s)) "
-            "           and (%(admin)s or not admin_only)) hits "
+            "           and (cluster is null or cluster = any(%(clusters)s))) hits "
             " group by kind, shown_cluster, title, href "
             " order by array_position(%(kinds)s::text[], kind), shown_cluster, lower(title) "
             " limit %(limit)s offset %(offset)s",
             {
                 "pattern": like_pattern(query),
                 "clusters": list(clusters),
-                "admin": role == "admin",
                 "kinds": kinds,
                 "limit": search_index.PAGE_SIZE,
                 "offset": (page - 1) * search_index.PAGE_SIZE,
@@ -967,7 +962,7 @@ def search(
             cluster=cluster or None,
             title=title,
             matched=matched or "",
-            href=search_index.reader_href(kind, href, role),
+            href=href,
         )
         for kind, cluster, title, href, matched, _total in rows
     ]

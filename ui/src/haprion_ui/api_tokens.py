@@ -123,6 +123,18 @@ def reaches(held: str, needed: str) -> bool:
     return held == "write" and needed in ("read", "block")
 
 
+def reads_everything(held: str) -> bool:
+    """Whether a token is given all that an admin is shown: a reader reads everything.
+
+    `read` is a reader and `write` an admin, and both see the same data (the
+    object documents, drafts, server states, the helpers' sentences); only
+    `write` changes anything. A `block` token reads its own blocks and
+    nothing of the rest.
+    """
+
+    return held in ("read", "write")
+
+
 @dataclass(frozen=True, slots=True)
 class Verdict:
     """Whether a token may be used for this call, and if not, why (for the log)."""

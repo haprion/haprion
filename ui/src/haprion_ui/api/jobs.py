@@ -32,13 +32,12 @@ def _iso(moment: datetime | None) -> str | None:
 def _entitled(caller: Caller) -> bool:
     """Whether the token may be given the helper's own sentences.
 
-    The Jobs page gives them to an admin and withholds them from a reader,
-    because a sentence can name paths and hosts. A `write` token is the
-    admin's level, so it is given what an admin is; the helper's raw stderr
-    is never part of the API.
+    The Jobs page gives them to every signed-in role, so a `read` token and a
+    `write` token are given them alike; the helper's raw stderr is never part
+    of the API.
     """
 
-    return api_tokens.reaches(caller.issued.level, "write")
+    return api_tokens.reads_everything(caller.issued.level)
 
 
 def _summary(job: db.Job, view: jobs.JobView, actor: str | None) -> dict[str, Any]:
@@ -77,7 +76,7 @@ def _overview(
         jobs.build_job_overview(
             rows,
             awaiting=awaiting,
-            diagnostics=_entitled(caller),
+            sentences=_entitled(caller),
             judged=[],
             writes=request.app.state.config.management_writes,
         ).jobs

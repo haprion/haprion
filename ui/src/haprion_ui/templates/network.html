@@ -5,12 +5,12 @@
 {#-
   Which objects use a VIP, a source or a group (26-10-10): one by name, more
   as a count that opens the proxy listing narrowed to them (26-10-11), so the
-  row stays one line however many there are. The name is linked for an admin,
-  who is the one the object page is for; the listing is anybody's. A dash
+  row stays one line however many there are. The name is linked to its object page,
+  which every role reads. A dash
   where the objects could not be read.
 -#}
 {% macro object_name(name, cluster) -%}
-{% if role == 'admin' %}<a href="/proxies/{{ cluster }}/{{ name }}">{{ name }}</a>{% else %}{{ name }}{% endif %}
+<a href="/proxies/{{ cluster }}/{{ name }}">{{ name }}</a>
 {%- endmacro %}
 {% macro used_by(known, names, cluster, kind, value) -%}
 {% if known is none %}<span class="table-empty">—</span>{% elif not names %}<span class="table-empty">not used</span>{% elif names | length == 1 %}{{ object_name(names[0], cluster) }}{% else %}<a href="/proxies?{{ {'cluster': cluster, kind: value} | urlencode }}">{{ names | length }} prox{{ 'y' if names | length == 1 else 'ies' }}</a>{% endif %}

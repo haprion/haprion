@@ -10,7 +10,9 @@ every route on both sides.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -167,6 +169,31 @@ class EachRouteAnswersOnlyItsLevel(ApiTestCase):
                             self.assertEqual(response.json()["error"]["code"], "forbidden")
                     walked += 1
         self.assertGreaterEqual(walked, 3)
+
+
+class AReadTokenIsAReader(ApiTestCase):
+    """A reader reads everything an admin reads: no read route answers less to `read` than to `write`."""
+
+    def test_the_levels_that_read_everything(self) -> None:
+        self.assertEqual(
+            {held: api_tokens.reads_everything(held) for held in api_tokens.LEVELS},
+            {"read": True, "block": False, "write": True},
+        )
+
+    def test_no_route_tells_a_read_token_from_a_write_token_but_where_it_writes(self) -> None:
+        #
+        # The only place the API still asks whether a token is `write` and not
+        # `read` is the block routes' own sentences, which a changing call
+        # answers: a read token cannot make that call. A new place has to be
+        # named here, and be one that changes something.
+        #
+        asking = []
+        for path in sorted(Path(api.__file__).parent.glob("*.py")):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                code = line.split("#", 1)[0]
+                if re.search(r'level\s*==\s*"write"|reaches\([^)]*"write"\)', code):
+                    asking.append(f"{path.name}:{number}")
+        self.assertEqual(asking, ["blocks.py:191"])
 
 
 class EveryRouteRefusesWhatItDoesNotTake(ApiTestCase):

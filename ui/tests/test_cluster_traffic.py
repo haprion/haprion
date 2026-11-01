@@ -137,14 +137,18 @@ class WhoMayCompare(ReadingACluster):
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(answer.headers["location"], "/login")
 
-    def test_an_operator_is_refused(self) -> None:
-        """It names every frontend and backend, which the overview will not show."""
+    def test_a_reader_reads_it_as_an_admin_does(self) -> None:
+        """Every role reads the page, which has no control that changes anything."""
 
-        self.account = replace(self.account, role="operator")
-        client = self.client(replace(configuration(), demo_fixture=True))
-        self.sign_in(client)
+        pages = {}
+        for role in ("reader", "admin"):
+            self.account = replace(self.account, role=role)
+            client = self.client(replace(configuration(), demo_fixture=True))
+            self.sign_in(client)
+            pages[role] = client.get("/clusters/edge-demo/metrics")
 
-        self.assertEqual(client.get("/clusters/edge-demo/metrics").status_code, 403)
+        self.assertEqual({r.status_code for r in pages.values()}, {200})
+        self.assertNotIn('<form method="post"', pages["reader"].text.split("</header>", 1)[1])
 
     def test_a_cluster_that_does_not_exist_is_not_a_page(self) -> None:
         answer = self.admin().get("/clusters/nowhere/metrics")  # type: ignore[attr-defined]

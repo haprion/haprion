@@ -6715,9 +6715,9 @@ class TheSearchIndex(unittest.TestCase):
             db.replace_search_entries(connection, cluster=cluster, source=source, entries=entries)
             connection.commit()
 
-    def search(self, query: str, *, role: str = "admin", page: int = 1) -> Any:
+    def search(self, query: str, *, page: int = 1) -> Any:
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
-            return db.search(connection, query, role=role, clusters=["si-a", "si-b"], page=page)
+            return db.search(connection, query, clusters=["si-a", "si-b"], page=page)
 
     def objects(self, cluster: str, *names: str) -> list[Any]:
         return search_index.object_entries(
@@ -6741,7 +6741,7 @@ class TheSearchIndex(unittest.TestCase):
             db.prune_search_entries(connection, [])
             connection.commit()
 
-    def test_a_backend_is_found_with_what_matched_and_only_by_an_admin(self) -> None:
+    def test_a_backend_is_found_with_what_matched(self) -> None:
         self.write("si-a", "objects", self.objects("si-a", "shop", "api"))
 
         found = self.search("198.51.100.11")
@@ -6751,8 +6751,6 @@ class TheSearchIndex(unittest.TestCase):
             (hit.title, hit.matched, hit.href),
             ("api", "Backend 198.51.100.11:8080", "/proxies/si-a/api"),
         )
-        self.assertEqual(self.search("198.51.100.11", role="reader").total, 0)
-        self.assertEqual(self.search("api", role="reader").groups[0].hits[0].href, "/proxies")
 
     def test_the_objects_that_name_a_server_in_one_cluster(self) -> None:
         """26-10-18: the object page's *Also in*, read by the web role from the same rows."""

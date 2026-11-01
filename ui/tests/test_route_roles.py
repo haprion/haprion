@@ -16,6 +16,8 @@ from dataclasses import replace
 from typing import Any
 from unittest import mock
 
+from fastapi.testclient import TestClient
+
 from haprion_ui import auth
 from tests.test_login import LoginTestCase, configuration
 
@@ -47,6 +49,50 @@ PUBLIC = {
 # with a page of its own (400).
 #
 REFUSED_ITS_OWN_WAY = {"/logout": 200, "/proxies/{cluster}/{name}/remove": 400}
+
+
+#
+# The pages a reader is told *Administrators only*: the forms where something is
+# made, changed or removed, and the settings, the profiles, the certificate
+# receivers and the API tokens, where access is handled. Every other page a
+# reader reads as an admin does; a page added here says why it is not read.
+#
+READER_REFUSED_PAGES = {
+    "/backups/restore/new",
+    "/certificates/import",
+    "/certificates/new",
+    "/certificates/receivers",
+    "/certificates/receivers/key",
+    "/certificates/receivers/new",
+    "/dns-profiles",
+    "/dns-profiles/new",
+    "/dns-profiles/{profile_id}/remove",
+    "/dns-profiles/{profile_id}/replace",
+    "/first-cluster/{name}",
+    "/ndes-profiles",
+    "/ndes-profiles/new",
+    "/ndes-profiles/servers/new",
+    "/ndes-profiles/{profile_id}/remove",
+    "/ndes-profiles/{profile_id}/replace",
+    "/proxies/{cluster}/new",
+    "/proxies/{cluster}/{name}/edit",
+    "/proxies/{cluster}/{name}/remove",
+    "/settings",
+    "/settings/api-tokens",
+    "/settings/api-tokens/new",
+    "/settings/api-tokens/{name}/extend",
+    "/settings/api-tokens/{name}/revoke",
+    "/settings/clusters/{cluster}",
+    "/settings/features/{name}",
+    "/settings/new-cluster",
+    "/settings/new-user",
+    "/settings/nodes/{cluster}",
+    "/settings/oidc",
+    "/settings/status-access",
+    "/settings/users/{name}",
+    "/settings/users/{name}/delete",
+    "/waf/allow",
+}
 
 
 def routes(found: list[Any], out: list[Any]) -> list[Any]:
@@ -113,6 +159,28 @@ class EveryRouteAnswersAsTheRoleAllows(LoginTestCase):
 
         self.assertGreater(len(answered), 50)
         self.assertEqual({path: code for path, code in answered.items() if code != 403}, {})
+
+    def test_a_reader_is_refused_only_the_pages_that_change_or_hand_out_access(self) -> None:
+        """A reader reads everything an admin reads; a page a reader is refused is named here."""
+
+        self.account = replace(self.account, role="reader")
+        app = self.app_client()
+        client: Any = TestClient(app.app, base_url=str(app.base_url), raise_server_exceptions=False)
+        self.assertEqual(self.sign_in(client).status_code, 303)
+
+        refused = set()
+        walked = 0
+        for route in routes(client.app.routes, []):
+            if "GET" not in route.methods or route.path in PUBLIC:
+                continue
+            walked += 1
+            response = client.get(concrete(route), follow_redirects=False)
+            if response.status_code == 403:
+                refused.add(route.path)
+
+        self.assertGreater(walked, 40)
+        self.assertEqual(sorted(refused - READER_REFUSED_PAGES), [])
+        self.assertEqual(sorted(READER_REFUSED_PAGES - refused), [])
 
     def test_an_admin_s_post_without_the_session_s_token_does_nothing(self) -> None:
         """Review 26-10-30, E5: the CSRF check is written by hand in each route, in

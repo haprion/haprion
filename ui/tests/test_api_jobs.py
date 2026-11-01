@@ -184,18 +184,20 @@ class TheJobList(JobsApiTestCase):
         self.assertIsNone(pending["actor"])
         self.assertEqual(self.listed, [{"clusters": None, "state": None, "limit": 51, "own": None}])
 
-    def test_the_helper_s_sentence_goes_to_a_token_at_the_admin_s_level_only(self) -> None:
+    def test_the_helper_s_sentence_goes_to_a_read_token_as_to_a_write_token(self) -> None:
         self.rows = [failed_job()]
 
-        reader = self.get("/jobs").json()["result"]["jobs"][0]
-        writer = self.get("/jobs", level="write").json()["result"]["jobs"][0]
-
-        self.assertEqual(
-            (reader["error_code"], reader["error_message"]), ("candidate_invalid", None)
-        )
-        self.assertEqual(writer["error_message"], "Backend node-a is not valid.")
-        self.assertNotIn("stderr", self.get("/jobs", level="write").text)
-        self.assertNotIn("redacted progress", self.get("/jobs", level="write").text)
+        for level in ("read", "write"):
+            with self.subTest(level=level):
+                job = self.get("/jobs", level=level).json()["result"]["jobs"][0]
+                self.assertEqual(
+                    (job["error_code"], job["error_message"]),
+                    ("candidate_invalid", "Backend node-a is not valid."),
+                )
+                # The helper's raw output is in no answer.
+                self.assertNotIn("stderr", self.get("/jobs", level=level).text)
+                self.assertNotIn("redacted progress", self.get("/jobs", level=level).text)
+        self.assertEqual(self.get("/jobs", level="block").status_code, 403)
 
     def test_a_token_limited_to_clusters_is_given_those_clusters_jobs_only(self) -> None:
         self.rows = [
@@ -415,7 +417,7 @@ class OneJob(JobsApiTestCase):
 
         self.assertEqual((reader["state"], reader["outcome"]), ("partial", "partial"))
         self.assertEqual(reader["warning_codes"], ["node_behind"])
-        self.assertIsNone(reader["warning_message"])
+        self.assertEqual(reader["warning_message"], "node-b is behind.")
         self.assertEqual(writer["warning_message"], "node-b is behind.")
 
     def test_a_job_still_running_is_not_finished(self) -> None:

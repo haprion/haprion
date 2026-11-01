@@ -81,18 +81,18 @@ def objects_reading(*entries: dict[str, Any]) -> ClusterObjects:
 class TheRowsFromAReading(unittest.TestCase):
     def test_an_objects_values_and_what_each_is(self) -> None:
         rows = search_index.object_entries("alpha", {"objects": [SHOP_ENTRY, API_ENTRY]})
-        shop = {(row.label, row.value, row.admin_only) for row in rows if row.title == "shop"}
+        shop = {(row.label, row.value) for row in rows if row.title == "shop"}
         api = {(row.label, row.value) for row in rows if row.title == "api"}
 
         self.assertEqual(
             shop,
             {
-                ("", "shop", False),
-                ("Host", "shop.example.com", False),
-                ("VIP main", "198.51.100.20", False),
-                ("Source of VIP main", "198.51.100.25", False),
-                ("Backend", "192.0.2.10:8080", True),
-                ("Backend", "192.0.2.11:8080", True),
+                ("", "shop"),
+                ("Host", "shop.example.com"),
+                ("VIP main", "198.51.100.20"),
+                ("Source of VIP main", "198.51.100.25"),
+                ("Backend", "192.0.2.10:8080"),
+                ("Backend", "192.0.2.11:8080"),
             },
         )
         self.assertIn(("Source outbound", "203.0.113.5"), api)
@@ -153,24 +153,21 @@ class TheRowsFromAReading(unittest.TestCase):
 class SearchingInMemory(unittest.TestCase):
     """The demo fixture, which has no rows in the database."""
 
-    def find(
-        self, query: str, *, role: str = "admin", page: int = 1, names: int = 0
-    ) -> search_index.Results:
+    def find(self, query: str, *, page: int = 1, names: int = 0) -> search_index.Results:
         many = [entry(f"site{n:03d}") for n in range(names)]
         rows = search_index.object_entries("alpha", {"objects": [SHOP_ENTRY, API_ENTRY, *many]})
-        return search_index.matching(rows, query, role=role, clusters=["alpha"], page=page)
+        return search_index.matching(rows, query, clusters=["alpha"], page=page)
 
     def test_an_empty_query_searches_nothing(self) -> None:
         self.assertEqual(self.find("  ").total, 0)
 
-    def test_a_backend_says_what_matched_and_only_an_admin_finds_it(self) -> None:
+    def test_a_backend_says_what_matched(self) -> None:
         hit = self.find("192.0.2.11").groups[0].hits[0]
 
         self.assertEqual((hit.title, hit.matched), ("shop", "Backend 192.0.2.11:8080"))
-        self.assertEqual(self.find("192.0.2.11", role="reader").total, 0)
 
-    def test_a_reader_is_taken_to_the_listing(self) -> None:
-        self.assertEqual(self.find("api", role="reader").groups[0].hits[0].href, "/proxies")
+    def test_a_proxy_leads_to_its_page(self) -> None:
+        self.assertEqual(self.find("api").groups[0].hits[0].href, "/proxies/alpha/api")
 
     def test_pages_of_a_hundred(self) -> None:
         third = self.find("site", page=3, names=250)
@@ -285,12 +282,16 @@ class ThePages(LoginTestCase):
 
         self.assertIn('<form class="header-search" method="get" action="/search"', page.text)
 
-    def test_the_search_asks_the_database_with_the_role_and_the_page(self) -> None:
-        page = self.get("/search?q=192.0.2.10&page=2", role="reader")
+    def test_the_search_asks_the_database_with_the_page_and_no_role(self) -> None:
+        # A reader is searched the same as an admin: the servers' addresses included.
+        for role in ("reader", "admin"):
+            with self.subTest(role=role):
+                page = self.get("/search?q=192.0.2.10&page=2", role=role)
 
-        self.assertEqual(page.status_code, 200)
-        self.assertEqual(self.searched[0]["query"], "192.0.2.10")
-        self.assertEqual((self.searched[0]["role"], self.searched[0]["page"]), ("reader", 2))
+                self.assertEqual(page.status_code, 200)
+                self.assertEqual(self.searched[0]["query"], "192.0.2.10")
+                self.assertEqual(self.searched[0]["page"], 2)
+                self.assertNotIn("role", self.searched[0])
         self.assertIn('name="q" value="192.0.2.10"', page.text)
 
     def test_a_page_that_is_not_a_number_is_the_first(self) -> None:
@@ -303,6 +304,12 @@ class ThePages(LoginTestCase):
 
         self.assertEqual(self.searched, [])
         self.assertIn("Backend 192.0.2.10:8080", page.text)
+
+    def test_a_reader_finds_a_backend_and_is_led_to_the_object(self) -> None:
+        page = self.get("/search?q=192.0.2.10", role="reader", demo_fixture=True)
+
+        self.assertIn("Backend 192.0.2.10:8080", page.text)
+        self.assertIn('href="/proxies/edge-demo/public-web"', page.text)
 
     def test_a_query_with_markup_is_shown_as_text(self) -> None:
         page = self.get("/search?q=%3Cscript%3E")

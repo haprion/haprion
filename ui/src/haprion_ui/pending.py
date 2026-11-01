@@ -78,6 +78,11 @@ class PendingRow:
     stale: bool
     moved: bool = False
     #
+    # Where a reader goes from the row: the page a reader may open, or none
+    # (the editor and a cluster's settings answer a reader with a refusal).
+    #
+    read_link: str = ""
+    #
     # What a saved network description changes and who it reaches (B277):
     # one line per VIP, source or group, under the row.
     #
@@ -250,6 +255,7 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
                 updated_by=row.updated_by,
                 updated_at=row.updated_at,
                 link=proxy_path(cluster, row.object_id, "edit"),
+                read_link=proxy_path(cluster, row.object_id) if row.object_id in published else "",
                 stale=moved or (row.base_document is None and row.base_hash != head),
                 moved=moved,
             )
@@ -262,9 +268,9 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
     # than send somebody to save again over the same lagging page.
     #
     lagging: list[str] = []
-    for kind, label, link in (
-        ("network", "Network description", "/network"),
-        ("settings", "Logs & metrics", f"/settings/clusters/{cluster}"),
+    for kind, label, link, read_link in (
+        ("network", "Network description", "/network", "/network"),
+        ("settings", "Logs & metrics", f"/settings/clusters/{cluster}", ""),
     ):
         change = changes.get(kind)
         if change is not None:
@@ -286,6 +292,7 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
                     updated_by=change.updated_by,
                     updated_at=change.updated_at,
                     link=link,
+                    read_link=read_link,
                     stale=heads.get(kind) == head and change.base_hash != head,
                     details=(
                         _network_changes(request, config, cluster, change.document, state, saved)

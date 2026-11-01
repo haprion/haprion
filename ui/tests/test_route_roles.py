@@ -17,12 +17,15 @@ from datetime import UTC, datetime
 from html import unescape
 from typing import Any
 from unittest import mock
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
 from haprion_ui import auth, db
 from tests.test_cluster_traffic import ReadingACluster
 from tests.test_login import LoginTestCase, configuration
+from tests.test_package import row as saved_object
+from tests.test_saved_changes import saved
 
 #
 # What a reader may post: signing in and out, and their own password.
@@ -371,6 +374,54 @@ class AReaderIsGivenWhatAnAdminIsGivenToRead(ReadingACluster):
             patch = mock.patch(f"haprion_ui.db.{target}", return_value=value)
             patch.start()
             self.addCleanup(patch.stop)
+        #
+        # Saved changes on the demonstration cluster, so Versions lists them:
+        # an object that is published, one that is new, the network and the
+        # settings. A link in that list is a link on a reader's page.
+        #
+        self.saved_rows = [
+            saved_object("public-web", cluster="edge-demo"),
+            saved_object(
+                "brand-new", cluster="edge-demo", id=UUID("22222222-2222-4222-8222-222222222222")
+            ),
+        ]
+        changes = {
+            "network": saved("network", "{}"),
+            "settings": saved("settings", "{}"),
+        }
+        for target, effect in (
+            (
+                "cluster_drafts",
+                lambda _c, cluster: self.saved_rows if cluster == "edge-demo" else [],
+            ),
+            ("cluster_changes", lambda _c, cluster: changes if cluster == "edge-demo" else {}),
+            ("draft_publishes", lambda _c, **_: []),
+        ):
+            patch = mock.patch(f"haprion_ui.db.{target}", side_effect=effect)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_the_fixture_gives_versions_a_list_of_saved_changes(self) -> None:
+        self.assertIn("Pending changes", self.pages("reader")["/history"][1])
+
+    def test_every_link_on_a_reader_s_page_leads_to_a_page_a_reader_may_open(self) -> None:
+        """The other direction: a link the page draws that answers the reader with a refusal."""
+
+        reader = self.pages("reader")
+        client = self.client_of["reader"]
+
+        refused: dict[str, list[str]] = {}
+        for page, (_code, text) in reader.items():
+            found = set(map(unescape, re.findall(r'(?:href|data-href)="(/[^"]*)"', text)))
+            leading = [
+                link
+                for link in sorted(found)
+                if not link.startswith(("/static", "/logout"))
+                and client.get(link.split("#")[0], follow_redirects=False).status_code == 403
+            ]
+            if leading:
+                refused[page] = leading
+        self.assertEqual(refused, {})
 
     def test_a_reader_s_page_has_no_form_but_the_sign_out(self) -> None:
         reader = self.pages("reader")

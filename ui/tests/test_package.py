@@ -373,6 +373,9 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         page = self.page(client)
 
         self.assertIn("Pending changes", page)
+        self.assertIn('href="/proxies/alpha/shop"', page)
+        self.assertNotIn("/proxies/alpha/shop/edit", page)
+        self.assertNotIn("/settings/clusters/alpha", page)
         self.assertNotIn('action="/history/alpha/publish"', page)
         self.assertNotIn('name="comment"', page)
         self.assertEqual(self.publish(client).status_code, 403)

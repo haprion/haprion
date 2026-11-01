@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -12,7 +12,7 @@ from haprion_ui import api_tokens, dashboard
 from haprion_ui.api import contract
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import Caller, in_scope, needs
-from haprion_ui.attention import Item
+from haprion_ui.attention import Attention, Item
 from haprion_ui.reading import NETWORK_SOURCE, STATUS_SOURCE, listed_clusters, read_source
 from haprion_ui.views import attention_items
 
@@ -119,6 +119,21 @@ def cluster_show(
     return answer(request, entries[0], cluster=cluster)
 
 
+def _fresh(attention: Attention, caller: Caller, stale_after: timedelta) -> bool:
+    """Whether the readings behind the list are recent: the token's own clusters' where it is limited."""
+
+    if not caller.issued.clusters:
+        return attention.fresh
+    ages = [
+        age
+        for cluster, age in attention.status_age.items()
+        if api_tokens.covers(caller.issued, cluster)
+    ]
+    if not ages:
+        return attention.fresh
+    return all(age is not None and age <= stale_after.total_seconds() for age in ages)
+
+
 @router.get("/attention", name="attention_list", responses=contract.responses("attention_list"))
 def attention_list(request: Request, caller: Caller = Depends(needs("read"))) -> JSONResponse:  # noqa: B008
     """Needs attention as the dashboard lists it, within the token's clusters.
@@ -127,18 +142,21 @@ def attention_list(request: Request, caller: Caller = Depends(needs("read"))) ->
     tokens) are the installation's, and only a token limited to no cluster sees them.
     """
 
-    items = attention_items(request, request.app.state.config).items
+    config = request.app.state.config
+    attention = attention_items(request, config)
     return answer(
         request,
         {
+            "generated_at": _iso(attention.generated_at),
+            "fresh": _fresh(attention, caller, config.poller.stale_after),
             "items": [
                 _attention(item)
-                for item in items
+                for item in attention.items
                 if (
                     not caller.issued.clusters
                     if item.cluster is None
                     else api_tokens.covers(caller.issued, item.cluster)
                 )
-            ]
+            ],
         },
     )

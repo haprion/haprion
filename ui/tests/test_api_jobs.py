@@ -118,6 +118,16 @@ class JobsApiTestCase(ApiTestCase):
 
 
 class TheJobList(JobsApiTestCase):
+    def test_a_cluster_that_does_not_exist_is_not_found_unless_it_has_jobs(self) -> None:
+        # Review 26-11-01, c-P3-6: a mistyped name was "no failures" for good.
+        self.rows = [a_job(id=60, cluster="gone")]
+        mistyped = self.get("/jobs?cluster=alpah&state=failed")
+        self.assertEqual(
+            (mistyped.status_code, mistyped.json()["error"]["code"]), (404, "not_found")
+        )
+        self.assertEqual(self.get("/jobs?cluster=gone&state=failed").status_code, 200)
+        self.assertEqual(self.get("/jobs?cluster=beta").json()["result"]["jobs"], [])
+
     def test_the_newest_jobs_are_listed_with_what_tells_their_outcome(self) -> None:
         certificate = a_job(
             id=43,

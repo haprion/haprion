@@ -4,11 +4,11 @@
   "title": "GET /api/v1/clusters/{cluster}/traffic: result",
   "description": "The traffic log's requests, newest first, as the Traffic logs page reads them. A row names the client that made the request.",
   "type": "object",
-  "required": ["enabled", "from", "to", "requests", "truncated", "limit", "nodes"],
+  "required": ["enabled", "from", "to", "requests", "truncated", "next", "limit", "nodes"],
   "properties": {
     "enabled": { "type": "boolean", "description": "Value. False where this installation keeps no traffic log; the list is then empty." },
-    "from": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. The start of the window read: as asked, or an hour before to." },
-    "to": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. The end of the window read: as asked, or now." },
+    "from": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. The start of the window read, itself included: as asked, or an hour before to." },
+    "to": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. The end of the window read, itself included: as asked, or now." },
     "requests": {
       "type": "array",
       "description": "The requests in the window, newest first.",
@@ -43,6 +43,7 @@
       }
     },
     "truncated": { "type": "boolean", "description": "Value. True where more requests match than were listed." },
+    "next": { "type": ["string", "null"], "description": "Value. Where the next page begins, to give as before; null where truncated is false. An opaque string: it names the last request listed, and the next page neither repeats a request nor drops one with the same time." },
     "limit": { "type": "integer", "minimum": 1, "description": "Value. The most this answer lists, as asked or the default." },
     "nodes": {
       "type": "array",

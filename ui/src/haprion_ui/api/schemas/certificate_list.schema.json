@@ -4,7 +4,7 @@
   "title": "GET /api/v1/certificates: result",
   "description": "The registry as the Certificates page lists it, within the token's clusters. A token limited to some clusters is given the certificates deployed to those clusters, and their targets and State judged over those clusters alone.",
   "type": "object",
-  "required": ["certificates", "count", "truncated", "observed_at", "stale"],
+  "required": ["certificates", "count", "truncated", "registry", "observed_at", "stale"],
   "properties": {
     "certificates": {
       "type": "array",
@@ -58,8 +58,9 @@
     },
     "count": { "type": "integer", "minimum": 0, "description": "Value. How many certificates the token may see in all." },
     "truncated": { "type": "boolean", "description": "Value. True where more certificates exist than are listed." },
-    "observed_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the registry was last read; null where it never was." },
-    "stale": { "type": "boolean", "description": "Value. True where the registry reading is older than two polls." }
+    "registry": { "enum": ["read", "unreadable", "none"], "description": "Code. read: the list is the registry. unreadable: the registry could not be read (or has not been yet), so the list is what the clusters' own listings say they serve, with source unknown; an empty list then says nothing. none: the installation declares no registry, and the list is the clusters' listings." },
+    "observed_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the manager last tried to read the registry, whether or not it could; null where it never did." },
+    "stale": { "type": "boolean", "description": "Value. True where the reading behind the list is older than two polls or missing: the registry, or for unreadable and none a cluster's listing." }
   },
   "additionalProperties": true
 }

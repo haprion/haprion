@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 
-from haprion_ui.db import ClusterCertificates
+from haprion_ui.db import ClusterCertificates, ManagerCertificates
 from tests.test_api import ApiTestCase
 from tests.test_certificates import registered, with_registry
 
@@ -241,17 +241,88 @@ class TheCertificateList(ApiTestCase):
         refused = self.get(self.issue(), "?limit=0")
         self.assertEqual((refused.status_code, refused.json()["error"]["code"]), (400, "bad_input"))
 
-    def test_no_registry_is_an_empty_list(self) -> None:
+    def listing(self, cluster: str, identifier: str, days_left: int) -> ClusterCertificates:
+        """A cluster's own listing of one certificate it serves."""
+
+        not_after = NOW + timedelta(days=days_left, hours=1)
+        return ClusterCertificates(
+            cluster=cluster,
+            observed_at=NOW - timedelta(seconds=15),
+            outcome="done",
+            result={
+                "certificates": [
+                    {
+                        "id": identifier,
+                        "deployable": True,
+                        "valid": True,
+                        "referenced_by_cluster": True,
+                        "common_name": f"{identifier}.example.com",
+                        "sans": [f"{identifier}.example.com"],
+                        "issuer": "Example CA",
+                        "lifecycle": "static",
+                        "not_after": not_after.isoformat(),
+                    }
+                ]
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+
+    def test_a_registry_that_could_not_be_read_is_not_an_empty_list(self) -> None:
+        # Review 26-11-01, c-P2-1: "no certificates, fresh" was said of a failed reading.
+        failed = ManagerCertificates(
+            observed_at=NOW - timedelta(seconds=20),
+            outcome="failed",
+            result={},
+            warnings=[],
+            error={"code": "registry_invalid", "message": "unreadable"},
+            poll_error=None,
+        )
+        listings = [self.listing("alpha", "web", 2)]
+        with (
+            mock.patch("haprion_ui.db.manager_certificates", return_value=failed),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=listings),
+        ):
+            result = self.get(self.issue()).json()["result"]
+        self.assertEqual((result["registry"], result["stale"]), ("unreadable", True))
+        self.assertEqual(result["observed_at"], failed.observed_at.isoformat())
+        [web] = result["certificates"]
+        self.assertEqual((web["id"], web["source"], web["days_left"]), ("web", "unknown", 2))
+        self.assertEqual([(t["name"], t["kind"]) for t in web["targets"]], [("alpha", "cluster")])
+
+    def test_nothing_read_yet_is_unreadable_too(self) -> None:
         self.entries = []
         with mock.patch("haprion_ui.db.cluster_certificates", return_value=[]):
             result = self.get(self.issue()).json()["result"]
         self.assertEqual(
-            result,
-            {
-                "certificates": [],
-                "count": 0,
-                "truncated": False,
-                "observed_at": None,
-                "stale": False,
-            },
+            (result["certificates"], result["registry"], result["stale"], result["observed_at"]),
+            ([], "unreadable", True, None),
         )
+
+    def test_an_installation_without_a_registry_lists_what_its_clusters_serve(self) -> None:
+        declared_none = ManagerCertificates(
+            observed_at=NOW - timedelta(seconds=20),
+            outcome="done",
+            result={},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        listings = [self.listing("alpha", "web", 2), self.listing("beta", "shop", 40)]
+        with (
+            mock.patch("haprion_ui.db.manager_certificates", return_value=declared_none),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=listings),
+        ):
+            everyone = self.get(self.issue()).json()["result"]
+            beta = self.get(self.issue(clusters=["beta"])).json()["result"]
+        self.assertEqual((everyone["registry"], everyone["stale"]), ("none", False))
+        self.assertEqual(
+            [(c["id"], c["days_left"]) for c in everyone["certificates"]],
+            [("shop", 40), ("web", 2)],
+        )
+        self.assertEqual(everyone["certificates"][1]["expiry_state"], "critical")
+        self.assertEqual([c["id"] for c in beta["certificates"]], ["shop"])
+
+    def test_a_read_registry_says_so(self) -> None:
+        self.assertEqual(self.get(self.issue()).json()["result"]["registry"], "read")

@@ -947,8 +947,11 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         registry = registry_views(request, config)
+        listed = listed_clusters(
+            request, config
+        )  # before the connection: a read holds one at a time
         with request.app.state.pool.connection() as connection:
-            drafts = db.live_drafts(connection, listed_clusters(request, config))
+            drafts = db.live_drafts(connection, listed)
             recent = db.recent_jobs(connection)
         picked: certificate_delete.Selection | None = None
         try:
@@ -1243,8 +1246,11 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         registry = registry_views(request, config)
         choices = certificate_choices(request, config)
+        listed = listed_clusters(
+            request, config
+        )  # before the connection: a read holds one at a time
         with request.app.state.pool.connection() as connection:
-            drafts = db.live_drafts(connection, listed_clusters(request, config))
+            drafts = db.live_drafts(connection, listed)
             recent = db.recent_jobs(connection)
         picked: certificate_retarget.Selection | None = None
         try:
@@ -1325,8 +1331,11 @@ def build_router(config: Config) -> APIRouter:
 
         registry = registry_views(request, config)
         choices = certificate_choices(request, config)
+        listed = listed_clusters(
+            request, config
+        )  # before the connection: a read holds one at a time
         with request.app.state.pool.connection() as connection:
-            drafts = db.live_drafts(connection, listed_clusters(request, config))
+            drafts = db.live_drafts(connection, listed)
         try:
             picked = certificate_retarget.selection(
                 action, tuple(certificate), registry, choices.clusters, choices.receivers, drafts
@@ -1781,8 +1790,11 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
 
         registry = registry_views(request, config)
+        listed = listed_clusters(
+            request, config
+        )  # before the connection: a read holds one at a time
         with request.app.state.pool.connection() as connection:
-            drafts = db.live_drafts(connection, listed_clusters(request, config))
+            drafts = db.live_drafts(connection, listed)
         try:
             picked = certificate_delete.selection(tuple(certificate), registry, drafts)
         except certificate_delete.SelectionProblem as refused:

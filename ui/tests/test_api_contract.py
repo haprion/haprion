@@ -48,6 +48,7 @@ from tests.test_api_certificates import registry as certificate_registry
 from tests.test_api_changes import SECOND, SHOP_CHANGED, ChangesTestCase, saved_row
 from tests.test_api_clusters_objects import ReadingTestCase, renamed
 from tests.test_api_jobs import REQUEST, JobsApiTestCase, a_job, failed_job
+from tests.test_api_pool import forbid_nesting, with_traffic_log
 from tests.test_api_servers import KEY as WRITE_KEY
 from tests.test_api_servers import HealthCheckCase, Queueing
 from tests.test_api_traffic import NODE
@@ -198,6 +199,13 @@ class Checked(ApiTestCase):
                         self.assertEqual(response.status_code, self.STATUS, response.text)
                         held_to(self, operation, response.json())
 
+    def test_no_route_takes_a_second_connection_while_it_holds_one(self) -> None:
+        # With the traffic log on, which is where the reads used to nest (review 26-11-01).
+        nested = forbid_nesting(self)
+        with_traffic_log(self)
+        self.test_every_answer_is_the_one_its_schema_describes()
+        self.assertEqual(nested, [])
+
 
 Change = tuple[str, str, dict[str, Any], tuple[str, ...]]
 
@@ -232,6 +240,12 @@ class Written(ApiTestCase):
                     )
                     self.assertIn(response.status_code, (200, 202), response.text)
                     held_to(self, operation, response.json())
+
+    def test_no_route_takes_a_second_connection_while_it_holds_one(self) -> None:
+        nested = forbid_nesting(self)
+        with_traffic_log(self)
+        self.test_every_answer_is_the_one_its_schema_describes()
+        self.assertEqual(nested, [])
 
 
 class TheClusterAndObjectRoutes(Checked, ReadingTestCase):

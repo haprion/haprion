@@ -14,6 +14,7 @@ from dataclasses import replace
 from typing import Any
 from unittest import mock
 
+import psycopg
 from fastapi.testclient import TestClient
 from starlette.routing import Mount
 
@@ -166,3 +167,81 @@ class EachRouteAnswersOnlyItsLevel(ApiTestCase):
                             self.assertEqual(response.json()["error"]["code"], "forbidden")
                     walked += 1
         self.assertGreaterEqual(walked, 3)
+
+
+class EveryRouteRefusesWhatItDoesNotTake(ApiTestCase):
+    """Review 26-11-01, c-P3-3: a parameter a route does not declare is a 400, never ignored."""
+
+    def test_every_route_names_the_parameter_it_does_not_take(self) -> None:
+        client = self.client(replace(configuration(), management_writes=True))
+        client = TestClient(
+            client.app, base_url=str(client.base_url), raise_server_exceptions=False
+        )
+        quiet = mock.patch.object(logging.getLogger("haprion_ui.api"), "disabled", True)
+        quiet.start()
+        self.addCleanup(quiet.stop)
+        secret = self.issue(level="write")
+        walked = 0
+        for route in api_routes(client):
+            if route.path == "/openapi.json":
+                continue
+            for method in sorted(route.methods - {"HEAD"}):
+                with self.subTest(method=method, path=route.path):
+                    response = client.request(
+                        method,
+                        api.PREFIX + concrete(route) + "?since=2026-10-01",
+                        headers={"Authorization": f"Bearer {secret}"},
+                        json=None if method == "GET" else {},
+                    )
+                    self.assertEqual(response.status_code, 400)
+                    error = response.json()["error"]
+                    self.assertEqual(error["code"], "bad_input")
+                    self.assertIn("since", error["message"])
+                walked += 1
+        self.assertGreaterEqual(walked, 20)
+
+    def test_a_call_without_a_token_is_still_the_one_401(self) -> None:
+        with self.assertLogs("haprion_ui.api"):
+            response = self.client().get("/api/v1/clusters?since=1")
+        self.assertEqual(response.status_code, 401)
+
+    def test_the_parameters_a_route_takes_are_not_refused(self) -> None:
+        with (
+            mock.patch("haprion_ui.db.listed_jobs", return_value=[]),
+            mock.patch("haprion_ui.db.requested_by", return_value={}),
+        ):
+            response = self.client().get(
+                "/api/v1/jobs?limit=5&state=failed",
+                headers={"Authorization": f"Bearer {self.issue()}"},
+            )
+        self.assertEqual(response.status_code, 200)
+
+
+class AQueryTheDatabaseStopsIsATimeoutOnEveryRead(ApiTestCase):
+    """Review 26-11-01, c-P3-2: `statement_timeout` is `query_timeout` wherever it strikes."""
+
+    def test_the_cancelled_query_is_not_an_outage(self) -> None:
+        cancelled = psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
+        quiet = mock.patch.object(logging.getLogger("haprion_ui.api"), "disabled", True)
+        quiet.start()
+        self.addCleanup(quiet.stop)
+        secret = self.issue(level="write")
+        calls = (
+            ("haprion_ui.db.cluster_statuses", "/clusters"),
+            ("haprion_ui.db.cluster_objects", "/clusters/alpha/objects"),
+            ("haprion_ui.db.cluster_certificates", "/certificates"),
+            ("haprion_ui.db.listed_jobs", "/jobs"),
+            ("haprion_ui.db.waf_findings", "/clusters/alpha/waf/findings"),
+        )
+        for target, path in calls:
+            with (
+                self.subTest(path=path),
+                mock.patch("haprion_ui.db.cluster_objects", return_value=[]),
+                mock.patch(target, side_effect=cancelled),
+                mock.patch("haprion.crs.installed_catalog", return_value={}),
+            ):
+                response = self.client(replace(configuration(), clusters=("alpha", "beta"))).get(
+                    "/api/v1" + path, headers={"Authorization": f"Bearer {secret}"}
+                )
+                self.assertEqual(response.status_code, 503, path)
+                self.assertEqual(response.json()["error"]["code"], "query_timeout", path)

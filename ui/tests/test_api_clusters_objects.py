@@ -240,6 +240,19 @@ class TheAttentionList(ReadingTestCase):
         items = self.result("/attention", scope=["beta"])["items"]
         self.assertEqual([(i["cluster"], i["subject"]) for i in items], [("beta", "node-c")])
 
+    def test_it_says_when_the_readings_behind_it_are_old(self) -> None:
+        # Review 26-11-01, c-P3-4: a cluster never read gives no row; `fresh` is how a monitor knows.
+        shown = attention.Attention(self.WHEN, (), {"alpha": 20, "beta": None}, False)
+        with mock.patch("haprion_ui.api.clusters.attention_items", return_value=shown):
+            everyone = self.result("/attention")
+            alpha = self.result("/attention", scope=["alpha"])
+            beta = self.result("/attention", scope=["beta"])
+        self.assertEqual(
+            (everyone["fresh"], everyone["generated_at"]), (False, "2026-10-31T09:30:00+00:00")
+        )
+        self.assertTrue(alpha["fresh"])
+        self.assertFalse(beta["fresh"])
+
 
 class TheObjectList(ReadingTestCase):
     def test_the_objects_are_the_proxies_pages_rows(self) -> None:

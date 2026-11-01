@@ -136,6 +136,11 @@ class CertificateView:
     # chain behind it is another file. Empty where the engine did not say.
     #
     chain: str = ""
+    #
+    # When the certificate ends, for a reader that wants the moment and not
+    # the page's date (the API, where there is no registry to give it).
+    #
+    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +373,13 @@ class CertificateOverview:
     # than an empty view that looks like a fault.
     #
     registry: RegistryView | None = None
+    #
+    # Why `registry` is what it is: "read", "unreadable" (the manager's reading
+    # failed or was never made) or "none" (the policy names no registry), and
+    # when the manager last read, failed or not (26-11-01).
+    #
+    registry_state: str = "none"
+    registry_observed_at: datetime | None = None
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -517,6 +529,7 @@ def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
         tone=tone,
         valid_from=_date(entry.get("not_before")),
         wildcard=any(name.startswith("*.") for name in _sans(entry.get("sans"))),
+        expires_at=_expiry(entry.get("not_after")),
     )
 
 
@@ -1385,6 +1398,15 @@ def _manager_result(manager: ManagerCertificates | None) -> Mapping[str, Any] | 
     return _mapping(manager.result)
 
 
+def registry_state(manager: ManagerCertificates | None) -> str:
+    """Whether the registry was read, could not be, or the installation declares none."""
+
+    result = _manager_result(manager)
+    if result is None:
+        return "unreadable"
+    return "read" if isinstance(result.get("registry"), Mapping) else "none"
+
+
 def interface_served(
     manager: ManagerCertificates | None, *, now: datetime | None = None
 ) -> ServedView | None:
@@ -1623,6 +1645,8 @@ def build_certificate_overview(
         if registry
         else sum(entry.tone in {"critical", "warning"} for entry in distinct.values()),
         registry=registry,
+        registry_state=registry_state(manager),
+        registry_observed_at=manager.observed_at if manager is not None else None,
     )
 
 

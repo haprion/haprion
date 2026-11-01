@@ -50,6 +50,7 @@
 {% else %}
 <section class="cluster-card"><p class="empty-state">Nothing found in the last {{ days }} days.</p></section>
 {% endfor %}
+{% if findings_truncated %}<p class="preview-notice"><span class="status-orb status-warning" aria-hidden="true"></span>Only the newest findings are shown.</p>{% endif %}
 {% else %}
 {#
   One card per object, as on Findings (26-10-11): an exception belongs to the

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
 from haprion_ui import waf
-from haprion_ui.db import WafCounted
+from haprion_ui.db import ProxyDraft, WafCounted, WafFindings
 from tests.test_api import ApiTestCase
 from tests.test_editor_page import OBJECTS
 from tests.test_waf_page import CATALOG, LOGGING, SEEN, AnExceptionThatDoesNotWork, finding
@@ -61,6 +61,7 @@ class TheFindings(WafCase):
             body["result"],
             {
                 "days": 7,
+                "truncated": False,
                 "objects": [
                     {
                         "object": "shop",
@@ -110,7 +111,10 @@ class TheFindings(WafCase):
 
     def test_no_findings_is_an_empty_list(self) -> None:
         with mock.patch("haprion_ui.db.waf_findings", return_value=[]):
-            self.assertEqual(self.get("findings").json()["result"], {"days": 7, "objects": []})
+            self.assertEqual(
+                self.get("findings").json()["result"],
+                {"days": 7, "truncated": False, "objects": []},
+            )
 
     def test_exceptions_are_empty_where_the_objects_carry_none(self) -> None:
         self.assertEqual(self.get("exceptions").json()["result"], {"days": 7, "exceptions": []})
@@ -213,3 +217,64 @@ class TheMomentAnExceptionWasAdded(WafCase):
                 self.assertEqual(
                     (shown["added_by"], shown["reason"], shown["field"]), (None, None, None)
                 )
+
+
+#
+# A string only the draft holds. An admin's unfinished work is for `write`
+# (B417); a `read` token that is handed it has been given more than the
+# objects list gives it.
+#
+CANARY = "canary-pentest-for-customer-x"
+DRAFT = LOGGING.replace("name: shop", "name: newsite") + (
+    "  exceptions: [{rule: 942100, field: 'ARGS:q', paths: [/secret-admin], "
+    f"at: '2026-10-02T14:00:00Z', reason: {CANARY}, by: admin}}]\n"
+)
+
+
+class TheDraftsOfAnAdmin(WafCase):
+    def setUp(self) -> None:
+        super().setUp()
+        draft = ProxyDraft(
+            cluster="alpha",
+            object_id="newsite",
+            yaml=DRAFT,
+            base_version=None,
+            base_hash="",
+            revision=1,
+            updated_by="admin",
+            updated_at=datetime(2026, 10, 2, 14, 0, tzinfo=UTC),
+            deleted=False,
+            stage="draft",
+            replaces=None,
+        )
+        patch = mock.patch("haprion_ui.waf_work.settled_drafts", return_value=[draft])
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_a_read_token_is_given_none_of_it(self) -> None:
+        for path in ("exceptions", "findings"):
+            with self.subTest(path=path):
+                response = self.get(path, level="read")
+                self.assertEqual(response.status_code, 200)
+                for each in (CANARY, "newsite", "/secret-admin"):
+                    self.assertNotIn(each, response.text)
+
+    def test_a_write_token_is_given_it(self) -> None:
+        response = self.get("exceptions", level="write")
+        self.assertIn(CANARY, response.text)
+        [row] = [r for r in response.json()["result"]["exceptions"] if r["object"] == "newsite"]
+        self.assertTrue(row["in_draft"])
+
+
+class TheFindingsThatWereCut(WafCase):
+    def test_a_cut_is_said(self) -> None:
+        cut = WafFindings(self.findings)
+        cut.truncated = True
+        with mock.patch("haprion_ui.db.waf_findings", return_value=cut):
+            self.assertTrue(self.get("findings").json()["result"]["truncated"])
+
+    def test_the_request_count_is_not_asked_for(self) -> None:
+        with mock.patch("haprion_ui.db.waf_request_count") as counted:
+            self.get("findings")
+            self.get("exceptions")
+        counted.assert_not_called()

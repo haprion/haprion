@@ -4,8 +4,10 @@
   "title": "GET /api/v1/attention: result",
   "description": "Needs attention as the dashboard lists it, within the token's clusters. Rows that belong to no cluster are given to a token limited to no cluster only.",
   "type": "object",
-  "required": ["items"],
+  "required": ["generated_at", "fresh", "items"],
   "properties": {
+    "generated_at": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. When the list was worked out." },
+    "fresh": { "type": "boolean", "description": "Value. True where the readings behind the list are recent: every cluster's status read within two polls (the token's own clusters, where it is limited). False is how a monitor sees that the manager has stopped reading; the list may then be missing rows." },
     "items": { "type": "array", "items": { "$ref": "definitions.schema.json#/$defs/attention_item" }, "description": "The rows, the worst first." }
   },
   "additionalProperties": true

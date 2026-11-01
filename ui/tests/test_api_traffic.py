@@ -114,6 +114,7 @@ class TheTrafficRoute(ApiTestCase):
                 "to": asked_to,
                 "requests": [EXPECTED_ROW],
                 "truncated": False,
+                "next": None,
                 "limit": 100,
                 "nodes": [
                     {
@@ -292,4 +293,46 @@ class TheTrafficRoute(ApiTestCase):
         )
         result = response.json()["result"]
         self.assertEqual((result["enabled"], result["requests"], result["nodes"]), (False, [], []))
+        self.read.assert_not_called()
+
+    def test_a_cut_list_gives_the_place_to_go_on_from(self) -> None:
+        # Review 26-11-01, c-P3-8: three rows share one time, two are asked for.
+        rows = tuple(entry(request=number) for number in (3, 2, 1))
+        self.read.return_value = Reading(rows, (), 0, False)
+        first = self.get("?limit=2").json()["result"]
+        self.assertIsNotNone(first["next"])
+        self.assertIsNone(self.read.call_args.kwargs["before"])
+        self.read.return_value = Reading(rows[2:], (), 0, False)
+        second = self.get("?limit=2&before=" + first["next"]).json()["result"]
+        self.assertEqual([row["request_number"] for row in second["requests"]], [1])
+        self.assertIsNone(second["next"])
+        # The place is the last row listed, and the read starts after it.
+        self.assertEqual(self.read.call_args.kwargs["before"], (SEEN, 2, "node-a"))
+
+    def test_a_place_that_was_not_given_is_a_400(self) -> None:
+        for before in ("x", "bm90LWEtcGxhY2U", "MjAyNi0xMC0zMXx4fG5vZGUtYQ"):
+            with self.subTest(before=before):
+                response = self.get("?before=" + before)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["error"]["code"], "bad_input")
+
+    def test_a_time_the_log_cannot_hold_is_a_400_not_a_500(self) -> None:
+        for query in (
+            "?to=0001-01-01T00:00:00Z",
+            "?from=0001-01-01T00:00:00Z",
+            "?from=1969-12-31T23:59:59Z",
+            "?to=9999-12-31T23:59:59Z",
+            "?from=9999-12-31T23:59:59-01:00",
+        ):
+            with self.subTest(query=query):
+                response = self.get(query)
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(response.json()["error"]["code"], "bad_input")
+
+    def test_a_parameter_the_call_does_not_take_is_refused_by_name(self) -> None:
+        response = self.get("?since=2026-10-01T00:00:00Z")
+        self.assertEqual(response.status_code, 400)
+        error = response.json()["error"]
+        self.assertEqual(error["code"], "bad_input")
+        self.assertIn("since", error["message"])
         self.read.assert_not_called()

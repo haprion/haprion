@@ -70,7 +70,7 @@ from haprion_ui.reading import (
 )
 from haprion_ui.saved_work import saved_network_rows
 from haprion_ui.templates import TEMPLATES
-from haprion_ui.waf_work import waf_not_working
+from haprion_ui.waf_work import waf_not_working, waf_objects
 
 logger = logging.getLogger("haprion_ui")
 
@@ -756,6 +756,10 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         taken_out=read_certificate_takeouts(request, config),
     )
     items: list[attention.Item] = []
+    #
+    # Read before the connection is taken: a read holds one at a time (26-11-01).
+    #
+    waf_objects_read = waf_objects(request, config) if config.traffic_logs.enabled else []
     with request.app.state.pool.connection() as connection:
         features.read_in(db.feature_switches(connection))
         recent, judged = attention_jobs(connection, clusters)
@@ -775,7 +779,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         items += attention.from_api_tokens(db.api_tokens(connection), now=now)
         if config.traffic_logs.enabled:
             items += attention.from_waf(
-                waf_not_working(request, config, connection, clusters),
+                waf_not_working(waf_objects_read, config, connection, clusters),
                 describe=waf.where,
             )
     if config.traffic_logs.enabled:

@@ -4,9 +4,10 @@
   "title": "GET /api/v1/clusters/{cluster}/waf/findings: result",
   "description": "What the WAF found per object and rule over the last days, still needing a decision. A finding quotes what the engine matched in a request, so it can hold a visitor's input.",
   "type": "object",
-  "required": ["days", "objects"],
+  "required": ["days", "truncated", "objects"],
   "properties": {
     "days": { "type": "integer", "minimum": 1, "description": "Value. How many days back the findings reach." },
+    "truncated": { "type": "boolean", "description": "Value. True where the week held more findings than are given: the newest are, the older ones are not." },
     "objects": {
       "type": "array",
       "description": "The objects with findings, by name.",

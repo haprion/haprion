@@ -6532,6 +6532,16 @@ class WhatAnExceptionLetThroughIsNoFinding(unittest.TestCase):
         # Newest first; the installation's own rule (1900xx) is a finding too.
         self.assertEqual([row.rule_id for row in findings], [942100, 190002])
 
+    def test_findings_cut_at_the_limit_keep_the_newest_and_say_so(self) -> None:
+        # Review 26-11-01, c-P3-5: the cut was by the alphabet, and silent.
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            since = self.now - timedelta(days=1)
+            whole = db.waf_findings(connection, clusters=["ct-a"], since=since)
+            with mock.patch("haprion_ui.db.waf.WAF_FINDING_LIMIT", 1):
+                cut = db.waf_findings(connection, clusters=["ct-a"], since=since)
+        self.assertFalse(whole.truncated)
+        self.assertEqual(([row.rule_id for row in cut], cut.truncated), ([942100], True))
+
     def test_each_exception_counts_within_its_field_and_paths(self) -> None:
         root = db.CounterScope("ct-a", "shop", 342100, "ARGS:q", ("/",))
         other = db.CounterScope("ct-a", "shop", 342100, "ARGS:q", ("/x",))
@@ -9796,6 +9806,16 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
         self.store(path="/eighth", request_number=8)
 
         self.assertEqual(self.paths(), ["/ninth", "/eighth", "/seventh", "/old"])
+
+    def test_a_page_that_follows_another_repeats_nothing_and_drops_nothing(self) -> None:
+        # Review 26-11-01, c-P3-8: three requests in one second, two to a page.
+        for path in ("/a", "/b", "/c"):
+            self.store(path=path)
+        first = self.read(limit=2)
+        self.assertEqual([entry.path for entry in first.entries], ["/c", "/b"])
+        last = first.entries[-1]
+        second = self.read(limit=2, before=(last.at, last.request, last.node))
+        self.assertEqual([entry.path for entry in second.entries], ["/a"])
 
     def test_status_narrows_by_code_or_class_and_nothing_else_is_a_status(self) -> None:
         self.store(path="/ok")

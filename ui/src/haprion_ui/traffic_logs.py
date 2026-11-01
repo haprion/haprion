@@ -506,6 +506,7 @@ def read_database(
     server_addresses: Mapping[tuple[str, str, str], str] | None = None,
     waf: str = "",
     owned: tuple[Sequence[str], Sequence[str]] | None = None,
+    before: tuple[datetime, int, str] | None = None,
 ) -> Reading:
     """Read indexed rows while retaining the collector's per-node freshness files.
 
@@ -516,6 +517,11 @@ def read_database(
     for the requests refused or redirected before any backend - an access rule,
     a dynamic block, the WAF - which carry the frontend's name instead. A name
     is compared without its port and case, as the Host header may carry both.
+
+    `before` is the place a page ended at - a row's time, request number and
+    node - and the rows read are those after it in the order shown, so a page
+    that follows another neither repeats a row nor drops one that shares the
+    time (26-11-01).
     """
 
     wanted = (cluster,) if cluster else clusters
@@ -569,6 +575,9 @@ def read_database(
     if to_at is not None:
         conditions.append(sql.SQL("occurred_at <= %s"))
         parameters.append(to_at)
+    if before is not None:
+        conditions.append(sql.SQL("(occurred_at, request_number, node) < (%s, %s, %s)"))
+        parameters.extend(before)
     parameters.append(min(max(limit, 1), 10_000))
     statement = sql.SQL("""
         select cluster, node, occurred_at as at, request_number as request,
@@ -577,7 +586,7 @@ def read_database(
                rule, termination
           from traffic_log_read
          where {}
-         order by occurred_at desc, request_number desc
+         order by occurred_at desc, request_number desc, node desc
          limit %s
     """).format(sql.SQL(" and ").join(conditions))
     with connection.cursor(row_factory=class_row(Entry)) as cursor:

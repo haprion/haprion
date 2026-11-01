@@ -39,6 +39,7 @@ from haprion_ui.api import (
 )
 from haprion_ui.api.answers import Refusal, refusal
 from haprion_ui.api.caller import CONCURRENT_CALLS, HELPER_CALLS, Caller, current_caller
+from haprion_ui.api.parameters import only_declared_parameters
 from haprion_ui.config import Config
 
 PREFIX = "/api/v1"
@@ -53,6 +54,8 @@ def build_api(config: Config) -> FastAPI:
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        # The route's own name, as the envelope's `operation`, so a generated client has readable methods.
+        generate_unique_id_function=lambda route: route.name,
     )
     api.state.config = config
     api.state.slots = threading.BoundedSemaphore(CONCURRENT_CALLS)
@@ -67,7 +70,7 @@ def build_api(config: Config) -> FastAPI:
         codes = {404: "not_found", 405: "method_not_allowed"}
         return refusal(
             request,
-            Refusal(exc.status_code, codes.get(exc.status_code, "refused"), str(exc.detail)),
+            Refusal(exc.status_code, codes.get(exc.status_code, "bad_input"), str(exc.detail)),
         )
 
     #
@@ -78,6 +81,26 @@ def build_api(config: Config) -> FastAPI:
     async def bad_input(request: Request, exc: RequestValidationError) -> Response:
         fields = sorted({".".join(str(part) for part in error["loc"]) for error in exc.errors()})
         return refusal(request, Refusal(400, "bad_input", f"Not valid: {', '.join(fields)}."))
+
+    #
+    # The database's statement_timeout (5 s) stopped a query. Registered apart
+    # from the next: the cause is a heavy question, not a database that is
+    # down, and trying again at once gives the same answer. Starlette picks
+    # the handler by the exception's class order, so this one wins for it.
+    #
+    @api.exception_handler(psycopg.errors.QueryCanceled)
+    async def query_cancelled(request: Request, exc: psycopg.errors.QueryCanceled) -> Response:
+        logger.warning(
+            "api: %s %s: the query was cancelled: %s", request.method, request.url.path, exc
+        )
+        return refusal(
+            request,
+            Refusal(
+                503,
+                "query_timeout",
+                "The query took too long; narrow from and to, or the search, where the call has them.",
+            ),
+        )
 
     @api.exception_handler(psycopg.OperationalError)
     async def database_errors(request: Request, exc: psycopg.OperationalError) -> Response:
@@ -112,7 +135,7 @@ def build_api(config: Config) -> FastAPI:
         waf,
         jobs,
     ):
-        api.include_router(module.router)
+        api.include_router(module.router, dependencies=[Depends(only_declared_parameters)])
 
     @api.get("/openapi.json", include_in_schema=False)
     def openapi(caller: Caller = Depends(current_caller)) -> JSONResponse:  # noqa: B008

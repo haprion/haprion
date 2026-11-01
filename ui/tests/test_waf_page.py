@@ -13,7 +13,7 @@ from haprion import crs
 from haprion.crs import Rule
 
 from haprion_ui import waf
-from haprion_ui.db import WafCounted, WafFinding
+from haprion_ui.db import ProxyDraft, WafCounted, WafFinding, WafFindings
 from tests.test_editor_page import OBJECTS, SHOP, EditorTestCase
 
 SEEN = datetime(2026, 10, 2, 14, 30, tzinfo=UTC)
@@ -547,6 +547,41 @@ class ThePage(EditorTestCase):
         self.assertIn('href="/proxies/alpha/shop/edit?open=waf">shop</a>', text)
         self.assertIn('Publish it on <a href="/history">Versions</a>', text)
         self.assertNotIn("Publish it there", text)
+
+    def test_a_reader_is_given_none_of_an_admins_drafts(self) -> None:
+        # Drafts are for write (B417); the page used to show a reader the draft's exceptions.
+        canary = "canary-pentest-for-customer-x"
+        document = LOGGING.replace("name: shop", "name: newsite") + (
+            "  exceptions: [{rule: 942100, field: 'ARGS:q', paths: [/secret-admin], "
+            f"at: '2026-10-02T14:00:00Z', reason: {canary}, by: admin}}]\n"
+        )
+        draft = ProxyDraft(
+            cluster="alpha",
+            object_id="newsite",
+            yaml=document,
+            base_version=None,
+            base_hash="",
+            revision=1,
+            updated_by="admin",
+            updated_at=SEEN,
+            deleted=False,
+            stage="draft",
+            replaces=None,
+        )
+        with mock.patch("haprion_ui.waf_work.settled_drafts", return_value=[draft]):
+            admin = self.editor().get("/waf?view=exceptions").text
+            self.account = replace(self.account, role="reader")
+            client = self.editor()
+            for view in ("exceptions", "findings"):
+                self.assertNotIn(canary, client.get(f"/waf?view={view}").text)
+        self.assertIn(canary, admin)
+
+    def test_a_cut_list_of_findings_says_so(self) -> None:
+        cut = WafFindings([finding()])
+        cut.truncated = True
+        with mock.patch("haprion_ui.db.waf_findings", return_value=cut):
+            self.assertIn("Only the newest findings are shown", self.editor().get("/waf").text)
+        self.assertNotIn("Only the newest findings are shown", self.editor().get("/waf").text)
 
     def test_a_reader_sees_findings_and_changes_nothing(self) -> None:
         self.account = replace(self.account, role="reader")

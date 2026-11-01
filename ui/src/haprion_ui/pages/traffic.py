@@ -82,6 +82,9 @@ def build_router(config: Config) -> APIRouter:
         session = current_session(request)
         if session is None:
             return JSONResponse({"detail": "not signed in"}, status_code=401)
+        listed = listed_clusters(
+            request, config
+        )  # before the connection: a read holds one at a time
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
             busy = {
@@ -99,7 +102,7 @@ def build_router(config: Config) -> APIRouter:
             #
             catching_up = db.clusters_catching_up(
                 connection,
-                listed_clusters(request, config),
+                listed,
                 within=timedelta(seconds=config.poller.interval_seconds * 2),
             )
         #
@@ -658,11 +661,14 @@ def build_router(config: Config) -> APIRouter:
         # warning reports.
         #
         if config.traffic_logs.enabled:
+            listed = listed_clusters(
+                request, config
+            )  # before the connection: a read holds one at a time
             with request.app.state.pool.connection() as connection:
                 reading = traffic_logs.read_database(
                     connection,
                     config.traffic_logs.directory,
-                    listed_clusters(request, config),
+                    listed,
                     limit=config.traffic_logs.max_lines,
                     cluster=selected_cluster,
                     status=selected_status,
@@ -707,7 +713,11 @@ def build_router(config: Config) -> APIRouter:
         if waf_page:
             listed = listed_clusters(request, config)
             chosen = (selected_cluster,) if selected_cluster in listed else tuple(listed)
-            waf_tabs = {"tab_counts": waf_overview(request, config, chosen).tab_counts()}
+            waf_tabs = {
+                "tab_counts": waf_overview(
+                    request, config, chosen, drafts=session.role == "admin"
+                ).tab_counts()
+            }
         response = TEMPLATES.TemplateResponse(
             request,
             "logs.html",

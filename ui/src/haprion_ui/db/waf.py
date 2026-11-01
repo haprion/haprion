@@ -40,9 +40,15 @@ WAF_FINDING_PATHS = 20
 WAF_FINDING_LIMIT = 500
 
 
+class WafFindings(list[WafFinding]):
+    """The findings read, and whether the week held more than were handed out."""
+
+    truncated: bool = False
+
+
 def waf_findings(
     connection: Connection[Any], *, clusters: Sequence[str], since: datetime
-) -> list[WafFinding]:
+) -> WafFindings:
     """What the engine matched since then, per cluster, object, rule and field.
 
     Read from the counts kept as the matches arrive (0054), not from the
@@ -75,18 +81,28 @@ def waf_findings(
             "       coalesce(clients.clients, 0) as clients, paths.last_seen, paths.matched, "
             "       paths.paths, paths.path_count "
             "  from paths left join clients using (cluster, object, rule_id, field) "
-            " order by paths.cluster, paths.object, paths.last_seen desc "
+            " order by paths.last_seen desc "
             " limit %(limit)s",
             {
                 "clusters": list(clusters),
                 "since": since,
                 "paths": WAF_FINDING_PATHS,
-                "limit": WAF_FINDING_LIMIT,
+                # One more than shown, which is how a cut is told from a full list.
+                "limit": WAF_FINDING_LIMIT + 1,
                 "first": WAF_RULE_FIRST,
                 "engine": crs.ENGINE_RULE_FILE,
             },
         )
-        return cursor.fetchall()
+        fetched = cursor.fetchall()
+    #
+    # The newest findings are kept, not the first objects in the alphabet: the
+    # one that matters is the one that is happening now.
+    #
+    found = WafFindings(fetched[:WAF_FINDING_LIMIT])
+    found.truncated = len(fetched) > WAF_FINDING_LIMIT
+    # Newest first within an object, as before; the objects in order.
+    found.sort(key=lambda row: (row.cluster, row.object))
+    return found
 
 
 #

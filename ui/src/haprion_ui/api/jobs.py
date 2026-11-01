@@ -12,6 +12,7 @@ from haprion_ui import api_tokens, db, jobs
 from haprion_ui.api import contract
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import Caller, in_scope, needs
+from haprion_ui.reading import listed_clusters
 
 router = APIRouter(tags=["jobs"])
 
@@ -96,11 +97,20 @@ def job_list(
     if cluster is not None:
         in_scope(caller, cluster)
         scope: list[str] | None = [cluster]
+        listed = cluster in listed_clusters(request, request.app.state.config)
     else:
         # A token limited to clusters has no part in a job that has none, but
         # the ones it queued itself (a certificate's): it must be able to follow them.
         scope = caller.issued.clusters or None
+        listed = True
     with request.app.state.pool.connection() as connection:
+        #
+        # A removed cluster's jobs stay in the history, so a name the
+        # installation no longer lists is real if it has any; a mistyped one
+        # would otherwise be "no failures" for good.
+        #
+        if not listed and not db.listed_jobs(connection, clusters=scope, state=None, limit=1):
+            raise Refusal(404, "not_found", "No such cluster or object.")
         #
         # One more than asked, which is how a cut list is told from a full one.
         #

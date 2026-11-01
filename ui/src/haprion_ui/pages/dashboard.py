@@ -112,6 +112,9 @@ def build_router(config: Config) -> APIRouter:
             network_readings=network_rows,
         )
         moment = datetime.now(UTC)
+        traffic_clusters = listed_clusters(
+            request, config
+        )  # before the connection: a read holds one at a time
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
             #
@@ -119,7 +122,6 @@ def build_router(config: Config) -> APIRouter:
             # on 2026-10-01: traffic is a fact about a cluster's VIPs).
             #
             recent_since = moment - traffic_summary.recent_window(config.poller.interval_seconds)
-            traffic_clusters = listed_clusters(request, config)
             day_traffic = db.read_traffic_summaries(
                 connection,
                 clusters=traffic_clusters,

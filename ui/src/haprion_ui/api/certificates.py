@@ -33,7 +33,12 @@ from haprion_ui.api import contract, writing
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import Caller, in_scope, needs
 from haprion_ui.certificate_reading import certificate_choices, registry_views
-from haprion_ui.certificates import RegistryCertificateView, TargetView
+from haprion_ui.certificates import (
+    CertificateOverview,
+    CertificateView,
+    RegistryCertificateView,
+    TargetView,
+)
 from haprion_ui.reading import listed_clusters
 from haprion_ui.sorting import tone_rank
 from haprion_ui.views import read_certificate_overview
@@ -108,6 +113,64 @@ def _certificate(entry: RegistryCertificateView, caller: Caller, now: datetime) 
     }
 
 
+def _from_clusters(
+    overview: CertificateOverview, caller: Caller, now: datetime
+) -> tuple[list[dict[str, Any]], bool]:
+    """What the clusters' own listings say they serve, where there is no registry to read.
+
+    The Certificates page and Needs attention do the same: with no registry
+    the listings are the only word. A certificate is one row however many of
+    the token's clusters serve it, with the worst of their states. Whether any of the token's clusters is unread
+    or stale comes with them.
+    """
+
+    found: dict[str, list[CertificateView]] = {}
+    clusters: dict[str, list[str]] = {}
+    unread = False
+    for cluster in overview.clusters:
+        if not cluster.configured or not api_tokens.covers(caller.issued, cluster.cluster):
+            continue
+        unread = unread or cluster.stale or cluster.observed_at is None
+        for view in cluster.certificates:
+            if view.referenced:
+                found.setdefault(view.identifier, []).append(view)
+                clusters.setdefault(view.identifier, []).append(cluster.cluster)
+    rows = []
+    for identifier, views in sorted(found.items()):
+        first = views[0]
+        worst = min(views, key=lambda each: tone_rank(each.state_tone))
+        left = first.expires_at - now if first.expires_at is not None else None
+        rows.append(
+            {
+                "id": identifier,
+                "common_name": first.common_name,
+                "names": list(first.sans),
+                "issuer": first.issuer if first.usable else None,
+                "source": "unknown",
+                "lifecycle": first.lifecycle
+                if first.lifecycle in {"acme", "static"}
+                else "unknown",
+                "readable": first.usable,
+                "problem": first.problem,
+                "not_after": _iso(first.expires_at),
+                "days_left": left.days if left is not None else None,
+                "expired": left is not None and left.total_seconds() <= 0,
+                "expiry_state": first.tone,
+                "state": {
+                    "label": worst.state_label,
+                    "detail": worst.state_detail,
+                    "tone": worst.state_tone,
+                },
+                "needs_publish": False,
+                "targets": [
+                    {"name": name, "kind": "cluster", "published_at": None, "current": None}
+                    for name in clusters[identifier]
+                ],
+            }
+        )
+    return rows, unread
+
+
 def visible(entry: RegistryCertificateView, caller: Caller) -> bool:
     """Whether the token may see a certificate: one deployed to a cluster it covers.
 
@@ -136,15 +199,29 @@ def certificate_list(
     overview, _, _ = read_certificate_overview(request.app.state.config, request)
     registry = overview.registry
     now = datetime.now(UTC)
-    shown = [entry for entry in registry.certificates if visible(entry, caller)] if registry else []
+    #
+    # "No certificates" is only said of a registry that was read. Without one
+    # the answer is what the clusters list, as on the page, and it says which.
+    #
+    if registry is not None:
+        shown = [
+            _certificate(entry, caller, now)
+            for entry in registry.certificates
+            if visible(entry, caller)
+        ]
+        stale = registry.stale
+    else:
+        shown, unread = _from_clusters(overview, caller, now)
+        stale = unread or overview.registry_state == "unreadable"
     return answer(
         request,
         {
-            "certificates": [_certificate(entry, caller, now) for entry in shown[:limit]],
+            "certificates": shown[:limit],
             "count": len(shown),
             "truncated": len(shown) > limit,
-            "observed_at": _iso(registry.observed_at) if registry is not None else None,
-            "stale": registry.stale if registry is not None else False,
+            "registry": overview.registry_state,
+            "observed_at": _iso(overview.registry_observed_at),
+            "stale": stale,
         },
     )
 
@@ -282,8 +359,9 @@ def _queue(
 
 
 def _live_drafts(request: Request) -> list[db.ProxyDraft]:
+    clusters = listed_clusters(request, request.app.state.config)  # before the connection is taken
     with request.app.state.pool.connection() as connection:
-        return db.live_drafts(connection, listed_clusters(request, request.app.state.config))
+        return db.live_drafts(connection, clusters)
 
 
 @router.post(

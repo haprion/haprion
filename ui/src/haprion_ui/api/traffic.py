@@ -8,10 +8,10 @@ carefully as a login.
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-import psycopg
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from haprion.proxy_model import NAME_BODY
@@ -46,6 +46,33 @@ def known_cluster(request: Request, cluster: str) -> None:
 
     if cluster not in listed_clusters(request, request.app.state.config):
         raise Refusal(404, "not_found", "No such cluster or object.")
+
+
+#
+# What a window may name. Beyond these Python or the database cannot hold the
+# time once an hour is taken from it or an offset applied; no log reaches back
+# before 1970 or past year 9999 (review 26-11-01, c-P3-7).
+#
+EARLIEST = datetime(1970, 1, 1, tzinfo=UTC)
+LATEST = datetime(9999, 1, 1, tzinfo=UTC)
+
+
+def _cursor(entry: traffic_logs.Entry) -> str:
+    """The place after a row, as an opaque string: its time, request number and node."""
+
+    text = f"{moment(entry.at)}|{entry.request}|{entry.node}"
+    return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+
+def _place(cursor: str | None) -> tuple[datetime, int, str] | None:
+    if cursor is None:
+        return None
+    try:
+        text = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        at, request, node = text.split("|")
+        return datetime.fromisoformat(at), int(request), node
+    except ValueError:
+        raise Refusal(400, "bad_input", "before is not a place this log gave.") from None
 
 
 def _utc(at: datetime | None) -> datetime | None:
@@ -107,6 +134,7 @@ def traffic_list(
     to: datetime | None = None,
     waf: Literal["hits", "none"] | None = None,
     object_: Annotated[str | None, Query(alias="object", pattern=rf"^{NAME_BODY}$")] = None,
+    before: Annotated[str | None, Query(max_length=300)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     caller: Caller = Depends(needs("read")),  # noqa: B008
 ) -> JSONResponse:
@@ -116,12 +144,16 @@ def traffic_list(
     known_cluster(request, cluster)
     config = request.app.state.config
     from_at, to_at = _utc(from_), _utc(to)
+    for name, at in (("from", from_at), ("to", to_at)):
+        if at is not None and not EARLIEST <= at < LATEST:
+            raise Refusal(400, "bad_input", f"{name} is not a time the log can hold.")
     if from_at is not None and to_at is not None and from_at > to_at:
         raise Refusal(400, "bad_input", "from must be earlier than to.")
     #
     # A window wider than the retention is harmless: the table holds no more
     # than that. A missing end is now, a missing start an hour before the end.
     #
+    after = _place(before)
     to_shown = to_at or datetime.now(UTC)
     from_shown = from_at or to_shown - DEFAULT_WINDOW
     reading = traffic_logs.Reading((), (), 0, False)
@@ -140,32 +172,27 @@ def traffic_list(
         ):
             raise Refusal(404, "not_found", "No such cluster or object.")
         addresses, owned = log_scope(object_rows, cluster=cluster, selected_object=object_ or "")
-        try:
-            with request.app.state.pool.connection() as connection:
-                #
-                # One more than asked for, so a cut is known and not guessed.
-                #
-                reading = traffic_logs.read_database(
-                    connection,
-                    config.traffic_logs.directory,
-                    listed_clusters(request, config),
-                    limit=limit + 1,
-                    cluster=cluster,
-                    status=status or "",
-                    substring=q or "",
-                    from_at=from_shown,
-                    to_at=to_at,
-                    server_addresses=addresses,
-                    waf=waf or "",
-                    owned=owned,
-                )
-        except psycopg.errors.QueryCanceled:
-            # The database's statement_timeout: a narrower window is the way on.
-            raise Refusal(
-                503,
-                "query_timeout",
-                "The query took too long; narrow from and to, or the search.",
-            ) from None
+        # Read before the connection is taken: a read holds one at a time (26-11-01).
+        clusters = listed_clusters(request, config)
+        with request.app.state.pool.connection() as connection:
+            #
+            # One more than asked for, so a cut is known and not guessed.
+            #
+            reading = traffic_logs.read_database(
+                connection,
+                config.traffic_logs.directory,
+                clusters,
+                limit=limit + 1,
+                cluster=cluster,
+                status=status or "",
+                substring=q or "",
+                from_at=from_shown,
+                to_at=to_at,
+                server_addresses=addresses,
+                waf=waf or "",
+                owned=owned,
+                before=after,
+            )
         if reading.filter_error is not None:
             raise Refusal(400, "bad_input", reading.filter_error)
     return answer(
@@ -176,6 +203,8 @@ def traffic_list(
             "to": moment(to_shown),
             "requests": [_request(entry) for entry in reading.entries[:limit]],
             "truncated": len(reading.entries) > limit,
+            # Where the next page begins: pass it as `before`.
+            "next": _cursor(reading.entries[limit - 1]) if len(reading.entries) > limit else None,
             "limit": limit,
             "nodes": [_node(item) for item in reading.nodes],
         },

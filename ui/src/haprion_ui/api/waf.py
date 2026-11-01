@@ -23,6 +23,12 @@ from haprion_ui.waf_work import waf_overview
 router = APIRouter(tags=["waf"])
 
 
+def _drafts(caller: Caller) -> bool:
+    """Drafts are an admin's unfinished work (B417): a `write` token is given them, `read` the published."""
+
+    return api_tokens.reaches(caller.issued.level, "write")
+
+
 def _finding(finding: Finding) -> dict[str, Any]:
     return {
         "rule": finding.rule,
@@ -92,11 +98,18 @@ def waf_findings(
 
     in_scope(caller, cluster)
     known_cluster(request, cluster)
-    overview = waf_overview(request, request.app.state.config, (cluster,))
+    overview = waf_overview(
+        request,
+        request.app.state.config,
+        (cluster,),
+        drafts=_drafts(caller),
+        count_requests=False,
+    )
     return answer(
         request,
         {
             "days": overview.days,
+            "truncated": overview.truncated,
             "objects": [
                 _object(card)
                 for card in overview.findings
@@ -121,7 +134,13 @@ def waf_exceptions(
 
     in_scope(caller, cluster)
     known_cluster(request, cluster)
-    overview = waf_overview(request, request.app.state.config, (cluster,))
+    overview = waf_overview(
+        request,
+        request.app.state.config,
+        (cluster,),
+        drafts=_drafts(caller),
+        count_requests=False,
+    )
     return answer(
         request,
         {

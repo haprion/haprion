@@ -65,12 +65,25 @@ from haprion_ui.templates import TEMPLATES
 WAF_DAYS = 7
 
 
-def _waf_documents(
-    request: Request, config: Config, connection: Any, clusters: Sequence[str]
-) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
-    """Each object's stored document, and its draft's where it has one (not a removal)."""
+def waf_objects(request: Request, config: Config) -> list[Any]:
+    """The objects reading, taken before a connection is: a read holds one at a time (26-11-01)."""
 
-    _, object_rows = read_source(request, config, OBJECTS_SOURCE)
+    return list(read_source(request, config, OBJECTS_SOURCE)[1])
+
+
+def _waf_documents(
+    object_rows: Sequence[Any],
+    connection: Any,
+    clusters: Sequence[str],
+    *,
+    drafts: bool,
+) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
+    """Each object's stored document, and its draft's where it has one (not a removal).
+
+    Drafts are an admin's unfinished work (B417), so a reader is given none:
+    the exceptions and findings are then the published ones.
+    """
+
     stored: dict[tuple[str, str], str] = {}
     readings: dict[str, Any] = {}
     for row in object_rows:
@@ -81,7 +94,7 @@ def _waf_documents(
             if view.readable:
                 stored[(row.cluster, view.name)] = view.document
     drafted: dict[tuple[str, str], str] = {}
-    for cluster in clusters:
+    for cluster in clusters if drafts else ():
         names = {name for owner, name in stored if owner == cluster}
         for draft in top_layers(
             settled_drafts(connection, cluster, objects_reading_of(readings.get(cluster), names))
@@ -99,6 +112,11 @@ class WafOverview:
     findings: list[Any]
     exceptions: list[Any]
     request_count: int
+    #
+    # True where the findings stop at the newest the database hands out; the
+    # rest of the week is not shown (26-11-01).
+    #
+    truncated: bool = False
 
     def tab_counts(self) -> dict[str, int]:
         return {
@@ -109,13 +127,13 @@ class WafOverview:
 
 
 def waf_not_working(
-    request: Request, config: Config, connection: Any, chosen: Sequence[str]
+    object_rows: Sequence[Any], config: Config, connection: Any, chosen: Sequence[str]
 ) -> set[tuple[str, str, Any]]:
     """The published exceptions the WAF page marks *Not working*, for the attention list."""
 
     days = min(WAF_DAYS, config.traffic_logs.retention_days)
     since = datetime.now(UTC) - timedelta(days=days)
-    stored, _drafted = _waf_documents(request, config, connection, chosen)
+    stored, _drafted = _waf_documents(object_rows, connection, chosen, drafts=False)
     rows = db.waf_findings(connection, clusters=chosen, since=since)
     reached = {
         (cluster, moment): done
@@ -127,15 +145,28 @@ def waf_not_working(
     return waf.ineffective_exceptions(rows, stored, reached)
 
 
-def waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> WafOverview:
+def waf_overview(
+    request: Request,
+    config: Config,
+    chosen: Sequence[str],
+    *,
+    drafts: bool,
+    count_requests: bool = True,
+) -> WafOverview:
+    """What the WAF page shows; `drafts` only for a reader allowed an admin's unfinished work (B417)."""
+
     days = min(WAF_DAYS, config.traffic_logs.retention_days)
     since = datetime.now(UTC) - timedelta(days=days)
     rules = crs.installed_catalog()
+    object_rows = waf_objects(request, config)
     with request.app.state.pool.connection() as connection:
-        stored, drafted = _waf_documents(request, config, connection, chosen)
+        stored, drafted = _waf_documents(object_rows, connection, chosen, drafts=drafts)
         rows = db.waf_findings(connection, clusters=chosen, since=since)
         verdicts = db.waf_verdicts(connection, clusters=chosen, since=since)
-        request_count = db.waf_request_count(connection, clusters=chosen, since=since)
+        # Only the page's third tab shows it; a script that asks for findings does not pay for the count.
+        request_count = (
+            db.waf_request_count(connection, clusters=chosen, since=since) if count_requests else 0
+        )
         #
         # What each exception let through, as its counter counted it within
         # what the exception covers (B273, review 26-10-11).
@@ -161,6 +192,7 @@ def waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> Waf
             stored, drafted, rules, waf.ineffective_exceptions(rows, stored, reached), counted
         ),
         request_count=request_count,
+        truncated=getattr(rows, "truncated", False),
     )
 
 
@@ -172,7 +204,7 @@ def waf_work_page(request: Request, config: Config, view: str, problem: str = ""
     clusters = listed_clusters(request, config)
     selected = cluster_id_of(request.query_params.get("cluster", ""))
     chosen = (selected,) if selected in clusters else tuple(clusters)
-    overview = waf_overview(request, config, chosen)
+    overview = waf_overview(request, config, chosen, drafts=session.role == "admin")
     days, findings, exceptions = overview.days, overview.findings, overview.exceptions
     return TEMPLATES.TemplateResponse(
         request,
@@ -189,6 +221,7 @@ def waf_work_page(request: Request, config: Config, view: str, problem: str = ""
             "selected_cluster": selected if selected in clusters else "",
             "findings": findings,
             "tab_counts": overview.tab_counts(),
+            "findings_truncated": overview.truncated,
             "exceptions": exceptions,
             "where": waf.where,
             "saved": request.query_params.get("saved", "")[:40],

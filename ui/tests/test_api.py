@@ -103,10 +103,10 @@ class TheToken(unittest.TestCase):
         self.assertFalse(api_tokens.covers(one, "beta"))
 
     def test_names_days_and_sources_are_checked_before_the_table_is(self) -> None:
-        for name in ("docker1-fail2ban", "a", "a" * 64):
+        for name in ("docker1-fail2ban", "a", "a" * 58):
             with self.subTest(name=name):
                 self.assertEqual(api_tokens.name_problem(name), "")
-        for name in ("", "-a", "a-", "A", "a_b", "a" * 65, "a b"):
+        for name in ("", "-a", "a-", "A", "a_b", "a" * 59, "a" * 64, "a b"):
             with self.subTest(name=name):
                 self.assertNotEqual(api_tokens.name_problem(name), "")
         self.assertEqual(api_tokens.days_problem(730), "")

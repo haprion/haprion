@@ -1866,6 +1866,28 @@ class ARealDatabase(unittest.TestCase):
             self.assertFalse(db.holds_singleton_lock(holder, key))
             self.assertTrue(db.try_singleton_lock(other, key))
 
+    def test_an_unread_list_moves_the_time_and_keeps_the_list(self) -> None:
+        """Review 26-11-01, omvända 3 P2-1: the poller's heartbeat for a cycle whose list
+        helper could not be read, as the poller's own role."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("delete from cluster_list")
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            db.touch_cluster_list(connection, ["fallback"])
+            connection.commit()
+            db.record_cluster_list(connection, ["alpha"])
+            connection.commit()
+            before = _first(connection.execute("select observed_at from cluster_list"))
+            time.sleep(0.01)
+            db.touch_cluster_list(connection, [])
+            connection.commit()
+            row = connection.execute("select clusters, observed_at from cluster_list").fetchone()
+        if row is None:
+            self.fail("the cluster list row is gone")
+        self.assertEqual(row[0], ["alpha"])
+        self.assertGreater(row[1], before)
+
     def test_the_web_reads_the_traces_of_the_manager_s_services(self) -> None:
         """B333: the poller's cluster list and the partitions' horizon, as the web."""
 

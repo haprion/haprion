@@ -781,6 +781,23 @@ def record_cluster_list(connection: Connection[Any], clusters: Sequence[str]) ->
         )
 
 
+def touch_cluster_list(connection: Connection[Any], fallback: Sequence[str]) -> None:
+    """Move the cluster list's time without changing the list; `fallback` only where none is stored.
+
+    The poller's heartbeat for a cycle whose list could not be read. The row's
+    trigger sets `observed_at` on every update, so an update that leaves the
+    list as it is says the cycle ran and nothing more.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute("update cluster_list set clusters = clusters where id = 1")
+        if cursor.rowcount == 0:
+            cursor.execute(
+                "insert into cluster_list (clusters) values (%(clusters)s) on conflict (id) do nothing",
+                {"clusters": Jsonb(list(fallback))},
+            )
+
+
 def replace_search_entries(
     connection: Connection[Any],
     *,

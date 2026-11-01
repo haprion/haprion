@@ -254,7 +254,7 @@ class MakingATokenOnThePage(TokensPage):
 
     def test_each_refusal_keeps_what_was_typed_and_writes_nothing(self) -> None:
         cases: dict[str, dict[str, Any]] = {
-            "The name must be 1 to 64 lowercase": {"name": "Not Valid"},
+            "The name must be 1 to 58 lowercase": {"name": "Not Valid"},
             "The level must be read, block or write.": {"level": "admin"},
             "gamma is not a cluster": {"clusters": ["gamma"]},
             "Proxies can only be chosen for a block token.": {"objects": ["shop"]},

@@ -573,6 +573,7 @@ class NoClusterYet(unittest.TestCase):
         recorded: list[tuple[str, ...]] = []
         passes: list[tuple[str, ...]] = []
         self.calls: list[str] = []
+        self.touched: list[tuple[str, ...]] = []
 
         class Passes:
             def __init__(self, **_kwargs: Any) -> None:
@@ -653,6 +654,13 @@ class NoClusterYet(unittest.TestCase):
                 )
             )
             stack.enter_context(
+                unittest.mock.patch.object(
+                    db,
+                    "touch_cluster_list",
+                    lambda _connection, fallback: self.touched.append(tuple(fallback)),
+                )
+            )
+            stack.enter_context(
                 unittest.mock.patch.object(service, "sleep_until_notified", return_value=notified)
             )
             code = poller.main([])
@@ -680,8 +688,17 @@ class NoClusterYet(unittest.TestCase):
 
         _code, recorded, followed = self.run_main(listed=None, configured=("alpha",), turns=2)
 
-        self.assertEqual(recorded, [("alpha",), ("alpha",)])
+        self.assertEqual((recorded, self.touched), ([], [("alpha",), ("alpha",)]))
         self.assertEqual(followed, [("alpha",), ("alpha",)])
+
+    def test_an_unread_list_does_not_overwrite_the_stored_one(self) -> None:
+        """Review 26-11-01, omvända 3 P2-1: at a start with the list helper unread and
+        no list in `ui.toml`, the heartbeat wrote an empty list - "no cluster" to every
+        page. Only the time may move."""
+
+        _code, recorded, _ = self.run_main(listed=None, configured=(), turns=1)
+
+        self.assertEqual((recorded, self.touched), ([], [()]))
 
     def test_a_lock_lost_during_the_cycle_stops_the_managers_own_writes(self) -> None:
         """The helpers of the cycle take time: the lock is looked at before each write."""

@@ -150,6 +150,7 @@ from haprion_ui.db.clusters import (
     retention_completed,
     search,
     settle_cluster_pass,
+    touch_cluster_list,
     versions_without_diff,
 )
 from haprion_ui.db.core import (
@@ -561,6 +562,7 @@ __all__ = [
     "record_cluster_history",
     "record_cluster_inventory",
     "record_cluster_list",
+    "touch_cluster_list",
     "record_cluster_network",
     "record_cluster_objects",
     "record_cluster_settings",

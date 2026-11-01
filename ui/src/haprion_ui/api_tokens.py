@@ -38,7 +38,13 @@ EXPIRY_WARNING = timedelta(days=30)
 SECRET_MARKER = "hap_"  # noqa: S105 - the marker every secret starts with, not a secret
 SECRET_SHAPE = re.compile(r"hap_[A-Za-z0-9_-]{43}")
 SHOWN_CHARACTERS = 12
-NAME_SHAPE = re.compile(r"[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?")
+#
+# A new name holds 58 characters, so `token:` and the name fit the 64 a saved
+# change's author and the commit trailer hold whole: two names cut to the same
+# 64 would be one author (review 26-11-01, omvända 3 P3-1). The table's own
+# check stays at 64 for a token made before.
+#
+NAME_SHAPE = re.compile(r"[a-z0-9]([a-z0-9-]{0,56}[a-z0-9])?")
 
 
 def new_secret() -> str:
@@ -81,7 +87,7 @@ def name_problem(name: str) -> str:
 
     if not NAME_SHAPE.fullmatch(name):
         return (
-            "must be 1 to 64 lowercase letters, digits and hyphens, "
+            "must be 1 to 58 lowercase letters, digits and hyphens, "
             "starting and ending with a letter or digit"
         )
     return ""

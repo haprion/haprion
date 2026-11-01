@@ -1239,13 +1239,19 @@ def main(argv: list[str] | None = None) -> int:
                             logger.info("the cluster list changed: %s", ", ".join(listed))
                         known = listed
                     #
-                    # Written every cycle, read or not: the row's age is the
-                    # cycle's heartbeat (Needs attention), and a list helper
-                    # that cannot be read - or is not installed yet - does not
-                    # stop the cycle. Then it holds the list in use.
+                    # Every cycle, read or not: the row's age is the cycle's
+                    # heartbeat (Needs attention), and a list helper that
+                    # cannot be read - or is not installed yet - does not stop
+                    # the cycle. Unread, only the time moves: the list stored
+                    # is the last one read, and overwriting it with the
+                    # fallback (empty, as a rule) would tell every page there
+                    # is no cluster (review 26-11-01, omvända 3 P2-1).
                     #
                     with pool.connection() as connection:
-                        db.record_cluster_list(connection, known)
+                        if listed is not None:
+                            db.record_cluster_list(connection, known)
+                        else:
+                            db.touch_cluster_list(connection, known)
                         connection.commit()
                     index_cluster_list(pool, known)
                     #

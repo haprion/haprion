@@ -5791,15 +5791,15 @@ the database. Two is the recommended starting point, commonly one internal and o
 not a maximum.
 
 **It has been run with two clusters of two nodes each, and is built for up to about ten clusters and twenty
-nodes.** Nothing enforces that figure. It is where the manager's reads, which run one after another, stop
-being comfortable:
+nodes.** Nothing enforces that figure. It is the size at which the manager's background work should be
+timed before it grows further:
 
-- **The poller** reads cluster by cluster and node by node. With two clusters of two nodes, a pass takes
-  about two and a half seconds, against a default `interval_seconds` of 20. The status read costs about
-  0.3 s per node, and the cluster's other readings about 0.7 s whatever its size. A node that is switched
-  off adds five seconds to every pass (the SSH connect timeout). A node that connects and then never
-  answers adds up to sixty (the status read's own limit). Either one delays every cluster's reading, not
-  only its own.
+- **The poller** reads up to eight clusters at once, and a cluster's nodes at once; a cluster's own readings
+  run one after another. With two clusters of two nodes, a pass takes about two seconds, against a default
+  `interval_seconds` of 20. A node that is switched off adds five seconds to its cluster's reading (the SSH
+  connect timeout). A node that connects and then never answers adds up to sixty (the status read's own
+  limit). The other clusters' readings are written as soon as they are read, but the next pass starts when
+  the slowest cluster is done, so such a node makes every cluster's reading less frequent.
 - **The traffic-log collector** runs once a minute and fetches from up to eight nodes at once - about a
   second for four current nodes. A node with a backlog is fetched for up to thirty seconds before the run
   imports what it has. A node that does not answer holds one of the eight slots for ten to thirty seconds.

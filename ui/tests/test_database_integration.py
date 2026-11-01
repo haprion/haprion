@@ -9941,7 +9941,11 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
         # A node writes what it likes; a network must not stop on it.
         self.store(path="/junk", client="not an address")
         self.store(path="/host", host="192.0.2.10", client="203.0.113.9")
+        # A mask a node should never write is dropped: the client is the address (omvända P3-2).
+        self.store(path="/masked", client="198.51.100.9/24")
 
+        self.assertEqual(self.paths(substring="198.51.100.9"), ["/masked"])
+        self.assertEqual(sorted(self.paths(substring="198.51.100.0/24")), ["/far", "/masked"])
         self.assertEqual(sorted(self.paths(substring="192.0.2.10")), ["/host", "/mapped", "/one"])
         # Mapped, the term is the IPv4 client; the text is searched as typed.
         self.assertEqual(sorted(self.paths(substring="::ffff:192.0.2.10")), ["/mapped", "/one"])

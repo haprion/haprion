@@ -85,7 +85,7 @@ def upgrade() -> None:
         AS $$
         begin
             if pg_input_is_valid(client, 'inet') then
-                return client::inet;
+                return host(client::inet)::inet;
             end if;
             return null;
         end;

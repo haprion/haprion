@@ -86,7 +86,7 @@ def _place(cursor: str | None) -> tuple[datetime, tuple[datetime, int, str]] | N
         text = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
         start, at, request, node = text.split("|")
         number = int(request)
-        if not NODE_NAME.match(node) or not 0 <= number < 2**63:
+        if not NODE_NAME.fullmatch(node) or not 0 <= number < 2**63:
             raise ValueError(node)
         return datetime.fromisoformat(start), (datetime.fromisoformat(at), number, node)
     except ValueError:

@@ -483,6 +483,4 @@ class TheFindingDot(unittest.TestCase):
         self.assertIn('class="status-dot status-critical" title="Critical"', self.dot())
 
     def test_an_exception_is_grey_and_keeps_the_severity_as_hover_text(self) -> None:
-        self.assertIn(
-            'class="status-dot status-unknown" title="Critical"', self.dot(decided=True)
-        )
+        self.assertIn('class="status-dot status-unknown" title="Critical"', self.dot(decided=True))

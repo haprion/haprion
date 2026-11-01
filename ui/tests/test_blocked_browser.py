@@ -15,7 +15,9 @@ from unittest import mock
 
 from haprion_ui import demo
 from haprion_ui.templates import STATIC_DIRECTORY
-from tests.test_blocked import BadgeReading, DraftReading, configuration
+from tests.test_busy_clusters import BadgeReading
+from tests.test_login import configuration
+from tests.test_object_page import DraftReading
 
 if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
     raise RuntimeError(

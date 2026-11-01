@@ -15,7 +15,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import exit_codes
+from haprion import exit_codes, geo
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import changes_publish
 from haprion.cluster_settings import LOCATION as SETTINGS_LOCATION
@@ -322,6 +322,30 @@ class ChangesPublishTests(ObjectsPublishFixture):
 
             self.assertEqual(code, 0)
             self.assertIs(document["result"]["changed"], False)
+            self.assertEqual(count_versions(self.repo), versions)
+
+    def test_a_regeneration_keeps_the_countries_the_version_ran(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            document = proxy("shop", "shop.example.com").replace(
+                "routes:", "allow_from: [country:SE]\nroutes:"
+            )
+            self.seed(shop=document)
+            older = geo.Countries("2026-10-01", {"SE": ("192.0.2.0/25",)})
+            newer = geo.Countries("2026-11-01", {"SE": ("203.0.113.0/24",)})
+            with mock.patch.object(geo, "location_database", lambda: lambda _c: older):
+                self.publish(policy, self.changes(regenerate=True))
+            versions = count_versions(self.repo)
+
+            #
+            # The database is replaced every day: what a regeneration publishes is
+            # what the page showed, the published networks, not today's.
+            #
+            with mock.patch.object(geo, "location_database", lambda: lambda _c: newer):
+                code, document_, _err = self.publish(policy, self.changes(regenerate=True))
+
+            self.assertEqual(code, 0)
+            self.assertIs(document_["result"]["changed"], False)
             self.assertEqual(count_versions(self.repo), versions)
 
     def test_the_flag_is_a_real_boolean(self) -> None:

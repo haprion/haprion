@@ -306,6 +306,17 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             # binds on a VIP is decided there. A node that did not answer is
             # not a refusal (26-10-15).
             #
+            #
+            # A regeneration publishes what the reading showed: the countries'
+            # networks are the version's own, as the reading and a revert have
+            # them, and not today's database, which is replaced every day. A
+            # publish that changes something reads today's.
+            #
+            def countries(base: Mapping[str, bytes]) -> geo.CountryReader:
+                if regenerate and not (objects or network is not None or settings is not None):
+                    return geo.tree_reader(base, geo.location_database())
+                return geo.location_database()
+
             held = HeldPorts()
             if objects or network is not None or regenerate:
                 held = held_ports.read(policy, cluster)
@@ -316,7 +327,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     cluster=cluster,
                     objects=objects,
                     certificate_sans=certificate_sans,
-                    country_reader=geo.location_database(),
+                    country_reader=countries(base_files),
                     rule_set=crs.installed,
                     allow_certificate_mismatch=allow_certificate_mismatch,
                     settings_document=canonical,

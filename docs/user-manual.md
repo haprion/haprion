@@ -143,9 +143,9 @@ publishing, and compares the result with what the nodes run. When they differ, *
 *Publishing again would change what the cluster runs*, with the cause where one is known, such as *the WAF
 rule set 4.25.1 → 4.25.2*. Open the row's **Versions** button: the page lists the causes, the proxies
 that differ and the files, line by line. **Publish & deploy** there publishes only the regenerated
-configuration and deploys it. Nothing happens until you choose it, so the traffic is reloaded when you
+configuration, with the country networks the published version carries, and deploys it. Nothing happens until you choose it, so the traffic is reloaded when you
 want it. If versions were saved after the published one, publishing carries them too, and the page says
-so. A reader sees what would change, but not the files. Nothing is shown when a publish would change
+so. A reader sees the same page without the button. Nothing is shown when a publish would change
 nothing, or when nothing is published yet. When the installed release cannot generate the published
 configuration, a row of its own says so with the reason, and a publish would be refused the same way.
 For troubleshooting, `haprion-config-status -c <cluster> --diff` prints the same difference.
@@ -4908,7 +4908,7 @@ What they have in common:
 **Publishing again without a change.** `changes_publish` (the request behind *Publish & deploy*) takes
 `regenerate: true` in place of an object, a network or settings: the generated layer is made again with
 the installed release and published as a version, which is what `haprion-config-status` reports as owed.
-It is held to the checks any publish is held to, and publishes nothing new when nothing differs.
+It is held to the checks any publish is held to, and publishes nothing new when nothing differs; the countries' networks stay the published version's.
 
 What is not a setting cannot be described in a file: drafts, previews, downloads of key material, and the
 password a person changes for themselves. `haprion-user` still has one-off commands for an account:

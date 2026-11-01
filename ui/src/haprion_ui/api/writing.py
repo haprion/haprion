@@ -26,7 +26,7 @@ from uuid import UUID, uuid4
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from haprion_ui import api_tokens, db, operations
+from haprion_ui import api_tokens, db, operations, refusals
 from haprion_ui.api.answers import Refusal, answer
 from haprion_ui.api.caller import NOT_VALID, Caller
 
@@ -107,6 +107,14 @@ def queue(
                 409,
                 "cluster_busy",
                 "Another job runs on this cluster; try again when it has finished.",
+                headers={"Retry-After": "30"},
+            ) from None
+        except db.CertificateBusy as busy:
+            connection.rollback()
+            raise Refusal(
+                409,
+                "certificate_busy",
+                refusals.conflict_sentence(busy),
                 headers={"Retry-After": "30"},
             ) from None
         except db.RequestConflict:

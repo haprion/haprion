@@ -28,7 +28,6 @@ from haprion_ui import (
     db,
     features,
     operations,
-    refusals,
 )
 from haprion_ui.api import contract, writing
 from haprion_ui.api.answers import Refusal, answer
@@ -260,14 +259,9 @@ def _queue(
     payload: Mapping[str, Any],
     detail: Mapping[str, Any],
 ) -> JSONResponse:
-    try:
-        return writing.queue(
-            request, caller, operation=operation, cluster=None, payload=payload, detail=detail
-        )
-    except db.CertificateBusy as busy:
-        raise Refusal(
-            409, "certificate_busy", refusals.conflict_sentence(busy), headers={"Retry-After": "30"}
-        ) from None
+    return writing.queue(
+        request, caller, operation=operation, cluster=None, payload=payload, detail=detail
+    )
 
 
 def _live_drafts(request: Request) -> list[db.ProxyDraft]:

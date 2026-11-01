@@ -287,9 +287,12 @@ def object_block(
     """
 
     in_scope(caller, cluster, name)
+    #
+    # Not refused with management writes off (B419): a block publishes no
+    # configuration, it adds an address to the object's table on the nodes.
+    # Lifting one is a job, and stays off with the other changes.
+    #
     config = request.app.state.config
-    if not config.management_writes:
-        raise writing.WRITES_OFF
     if cluster not in listed_clusters(request, config) or not NAME.fullmatch(name):
         raise NOT_FOUND
     wanted: list[str] = []

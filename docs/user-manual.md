@@ -4535,7 +4535,8 @@ curl -sS -X DELETE https://mgr.example.com/api/v1/clusters/alpha/objects/shop/bl
 
 The answer is 202 with the job's number and `follow`, the path to read it at. The same `Idempotency-Key` asking
 for the same thing is the same job. A *Write* token blocks on any proxy, like an admin. Blocking and lifting
-are refused (403 `writes_off`) on an installation where changes are switched off.
+A block is placed even where changes are switched off, since it publishes nothing; lifting one is a job and is
+refused there (403 `writes_off`).
 
 What a token can read:
 

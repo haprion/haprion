@@ -403,12 +403,12 @@ class TheRequestIsChecked(BlockingTestCase):
         self.assertEqual(self.place(secret, {"addresses": ["203.0.113.7"] * 64}).status_code, 200)
         self.assertEqual(self.asked[-1][2], ["203.0.113.7"])
 
-    def test_with_writes_off_nothing_is_asked(self) -> None:
+    def test_a_block_is_placed_with_writes_off(self) -> None:
+        """B419: a block publishes nothing; only lifting it waits for writes."""
+
         response = self.place(self.blocker(), writes=False)
-        self.assertEqual(
-            (response.status_code, response.json()["error"]["code"]), (403, "writes_off")
-        )
-        self.assertEqual(self.asked, [])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.asked[-1][2], ["203.0.113.7"])
 
 
 class ReadingOwnBlocks(BlockingTestCase):

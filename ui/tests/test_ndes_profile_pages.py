@@ -130,6 +130,13 @@ class NdesPages(NdesRoutes):
         self.assertEqual(self.post_ndes(client, csrf_token=str(uuid4())).status_code, 403)
         self.assertEqual(self.created, [])
 
+    def test_text_in_the_address_is_not_drawn_as_the_product_s_warning(self) -> None:
+        reader = self.writing_client(role="reader")
+        page = reader.get("/ndes-profiles?server_problem=The+CA+key+leaked%3B+call+555-0100").text
+
+        self.assertNotIn("The CA key leaked", page)
+        self.assertNotIn("form-problem", page)
+
     def test_a_reader_reads_both_lists_without_a_control_or_a_secret(self) -> None:
         reader = self.writing_client(role="reader")
         page = reader.get("/ndes-profiles").text
@@ -404,6 +411,7 @@ class TheNdesServers(NdesRoutes):
             data={"csrf_token": csrf, "endpoint": ENDPOINT},
             follow_redirects=True,
         )
+        self.assertEqual(refused.status_code, 409)
         self.assertIn("is used by internal-ca", refused.text)
         self.assertIn(ENDPOINT, self.servers)
 

@@ -7,7 +7,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from time import monotonic, sleep
 from typing import Annotated
-from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Form, Request, Response
@@ -477,6 +476,17 @@ def build_router(config: Config) -> APIRouter:
         gate = reading_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
+        return _ndes_list_page(request, gate)
+
+    def _ndes_list_page(
+        request: Request,
+        gate: AuthenticatedSession,
+        *,
+        server_problem: str = "",
+        status_code: int = 200,
+    ) -> Response:
+        """The list, with a refusal of its own drawing: never text the address carries."""
+
         with request.app.state.pool.connection() as connection:
             profiles = db.ndes_profiles(connection)
             recent = db.profile_jobs(connection, "ndes_profile_apply")
@@ -518,12 +528,13 @@ def build_router(config: Config) -> APIRouter:
                 "servers_problem": servers_problem,
                 "servers_in_use": {p.endpoint for p in profiles if p.endpoint},
                 "server_expiry": expiry,
-                "server_problem": request.query_params.get("server_problem", "")[:300],
+                "server_problem": server_problem[:300],
                 "refresh": any(p.label in {"Applying", "Removing"} for p in statuses.values()),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
             },
+            status_code=status_code,
         )
 
     def _ndes_server_page(
@@ -662,17 +673,13 @@ def build_router(config: Config) -> APIRouter:
             used = [p.id for p in db.ndes_profiles(connection) if p.endpoint == endpoint]
         if used:
             problem = endpoint + " is used by " + ", ".join(used)
-            return RedirectResponse(
-                "/ndes-profiles?" + urlencode({"server_problem": problem}), status_code=303
-            )
+            return _ndes_list_page(request, gate, server_problem=problem, status_code=409)
         try:
             ndes_server_socket.ask("remove", endpoint=endpoint)
         except NdesServerError as exc:
             if exc.code == "unanswered":
                 _audit_unanswered(request, gate, "ndes_server_removed", {"endpoint": endpoint})
-            return RedirectResponse(
-                "/ndes-profiles?" + urlencode({"server_problem": str(exc)}), status_code=303
-            )
+            return _ndes_list_page(request, gate, server_problem=str(exc), status_code=409)
         with request.app.state.pool.connection() as connection:
             db.record_audit_event(
                 connection,

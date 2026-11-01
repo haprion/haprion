@@ -26,7 +26,7 @@
           "frontend": { "type": "string", "description": "Value. HAProxy's frontend that took the request." },
           "backend": { "type": "string", "description": "Value. HAProxy's backend that served it." },
           "server": { "type": "string", "description": "Value. The server that answered, with its port." },
-          "status": { "type": "integer", "description": "Value. The HTTP status sent to the client." },
+          "status": { "type": "integer", "description": "Value. The HTTP status sent to the client; 0 where none was sent, because the client left or the node closed the connection." },
           "request_time": { "type": "integer", "description": "Value. Milliseconds for the client to send the request; -1 where it never did." },
           "queue_time": { "type": "integer", "description": "Value. Milliseconds in the queue; -1 where the request never queued." },
           "connect_time": { "type": "integer", "description": "Value. Milliseconds to connect to the server; -1 where it never did." },

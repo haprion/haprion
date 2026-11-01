@@ -2758,9 +2758,19 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
         #
         # The more specific name is set last, so it wins over the general one.
         #
+        # A client that left is refused by closing the connection, `reject`,
+        # and not by the 503: nobody receives that, and it reads as an outage.
+        # Not refusing at all is no option either (measured 26-11-01, HAProxy
+        # 3.4.7): a client that only half-closes its side - it sent the request
+        # and shut down writing - still has the request forwarded to the server
+        # uninspected, which is a WAF bypass. `reject` stops both a reset and a
+        # half-close before a byte reaches the server, and is logged without a
+        # status. Every other failure keeps the 503.
+        #
         lines += [
             f"    http-request set-var(txn.rule) str(waf-engine:deny) if {host} {failed}",
             f"    http-request set-var(txn.rule) str({WAF_INTERRUPTED}:deny) if {host} {left}",
+            f"    http-request reject if {host} {left}",
             f"    http-request deny deny_status 503 if {host} {failed}",
         ]
     else:

@@ -849,7 +849,13 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
         text("frontend", 128),
         text("backend", 128),
         text("server", 128),
-        number("status", low=0, high=999),
+        #
+        # -1 is HAProxy's "no response was sent": a client that left, or a
+        # connection closed by `reject` (26-11-01). The column holds 0..999, so
+        # such a request is kept as 0 - dropped it would leave the traffic log
+        # without exactly the requests that never got an answer.
+        #
+        max(number("status", low=-1, high=999), 0),
         number("request_time"),
         number("queue_time"),
         number("connect_time"),

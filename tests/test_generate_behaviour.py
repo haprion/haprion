@@ -28,6 +28,7 @@ import os
 import shutil
 import socket
 import ssl
+import struct
 import subprocess
 import tempfile
 import threading
@@ -2596,8 +2597,11 @@ backends:
 def body_server(port: int) -> ThreadingHTTPServer:
     """Answers any method with how many body bytes reached it."""
 
+    seen: list[str] = []  # the paths that reached it
+
     class Handler(BaseHTTPRequestHandler):
         def answer(self) -> None:
+            seen.append(self.path)
             received = 0
             if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
                 while True:
@@ -2621,6 +2625,7 @@ def body_server(port: int) -> ThreadingHTTPServer:
             """Silence."""
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.seen = seen  # type: ignore[attr-defined]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
@@ -3504,21 +3509,34 @@ class WafEngineThatNeverAnswers(WafEngineThatDoesNotAnswer):
 
     engine_silent = True
 
-    def leave(self, host: str, name: str) -> list[dict[str, object]]:
-        """Eight clients that close after a tenth of a second, and their records.
+    def leave(self, host: str, name: str, how: str) -> list[dict[str, object]]:
+        """Eight clients that leave after a tenth of a second, and their records.
 
-        HAProxy does not always notice the close before its own 500 ms timeout
-        (2 of 14 on 3.4.7: code 1), so one request cannot prove a code 4.
+        `how` is `reset` (RST) or `half` (the request sent, then writing shut
+        down - the case a missing refusal would forward to the server).
+        HAProxy does not always notice the close before its own 500 ms
+        timeout (2 of 14 on 3.4.7: code 1), so one request cannot prove a code 4.
         """
 
         entries = []
         for number in range(8):
             path = f"/{name}-{number}"
-            with socket.create_connection(("127.0.0.1", self.port), timeout=5) as client:
+            client = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+            try:
                 client.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
+                if how == "half":
+                    client.shutdown(socket.SHUT_WR)
+                else:
+                    client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
                 time.sleep(0.1)
+            finally:
+                client.close()
             entries.append(self.record(path))
         return entries
+
+    def reached_the_server(self, name: str) -> list[str]:
+        time.sleep(0.2)
+        return [path for path in self.servers[0].seen if path.startswith(f"/{name}-")]  # type: ignore[attr-defined]
 
     def check(self, entries: list[dict[str, object]], left: str, timed_out: str) -> None:
         codes = {entry["waf_error"] for entry in entries}
@@ -3527,12 +3545,20 @@ class WafEngineThatNeverAnswers(WafEngineThatDoesNotAnswer):
             expected = left if entry["waf_error"] == 4 else timed_out
             self.assertEqual(entry["rule"], expected, entry)
 
-    def test_a_client_that_left_is_named_so_and_still_refused(self) -> None:
-        entries = self.leave("closed.example.com", "left-closed")
-        self.check(entries, "waf-engine/interrupted:deny", "waf-engine:deny")
+    def test_a_client_that_left_is_closed_on_without_an_answer_and_reaches_nothing(self) -> None:
+        """26-11-01: `reject`, not the 503 nobody gets and not nothing - a half-close got through."""
+
+        for how in ("reset", "half"):
+            with self.subTest(how):
+                name = f"left-closed-{how}"
+                entries = self.leave("closed.example.com", name, how)
+                self.assertEqual(self.reached_the_server(name), [])
+                self.check(entries, "waf-engine/interrupted:deny", "waf-engine:deny")
+                for entry in entries:
+                    self.assertEqual(entry["status"], -1 if entry["waf_error"] == 4 else 503, entry)
 
     def test_a_client_that_left_is_named_so_where_the_object_lets_it_through(self) -> None:
-        entries = self.leave("looks.example.com", "left-looks")
+        entries = self.leave("looks.example.com", "left-looks", "reset")
         self.check(entries, "waf-engine/interrupted:log", "waf-engine:log")
 
     def test_a_client_that_stays_is_named_as_before(self) -> None:
@@ -3751,7 +3777,7 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
             for line in frontend.configuration["1000-frontends.cfg"].splitlines()
             if "txn.coraza.error" in line
             and "set-var(txn.rule)" in line
-            or ("deny_status 503" in line and "txn.coraza.error" in line)
+            or ("txn.coraza.error" in line and ("deny_status 503" in line or "reject" in line))
         ]
 
     def test_a_client_that_left_is_named_after_the_general_engine_failure(self) -> None:
@@ -3764,12 +3790,14 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
             [
                 "http-request set-var(txn.rule) str(waf-engine:deny)",
                 "http-request set-var(txn.rule) str(waf-engine/interrupted:deny)",
+                "http-request reject",
                 "http-request deny deny_status 503",
             ],
         )
         self.assertIn(left, lines[1])
+        self.assertIn(left, lines[2])
         self.assertIn("{ var(txn.coraza.error) -m found }", lines[0])
-        self.assertIn("{ var(txn.coraza.error) -m found }", lines[2])
+        self.assertIn("{ var(txn.coraza.error) -m found }", lines[3])
 
     def test_a_logged_engine_failure_names_the_client_leaving_first(self) -> None:
         lines = self.engine_error_lines("allow")

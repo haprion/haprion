@@ -693,13 +693,16 @@ class TheTrafficLogPage(LoginTestCase):
         self.healthy_meta()
         with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
             mirror.write(
-                record(request=2, path="/thumb", status=503, rule="waf-engine/interrupted:deny")
+                record(request=2, path="/thumb", status=0, rule="waf-engine/interrupted:deny")
             )
 
         label = "Client left before the WAF answered"
         everything = self.page()
-        self.assertIn(f'status-badge-critical">{label}</span>', everything)
-        self.assertIn('title="waf-engine/interrupted:deny', everything)
+        # The request column is narrow: the short label there, the whole one in its title.
+        self.assertIn('status-badge-critical">Client left</span>', everything)
+        self.assertIn(f'title="{label}, waf-engine/interrupted:deny — ', everything)
+        # No response was sent: the status is stored as 0 and shown as a dash.
+        self.assertIn('status-badge-warning">–</span>', everything)
         self.assertIn('data-export-rule="waf-engine/interrupted"', everything)
         with (
             patch("haprion_ui.db.cluster_objects", return_value=[]),

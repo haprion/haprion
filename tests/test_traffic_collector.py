@@ -341,6 +341,41 @@ class TrafficCollectorTests(unittest.TestCase):
             with self.subTest(odd=odd):
                 self.assertEqual(waf_id(odd), "")
 
+    def test_a_request_that_got_no_response_is_kept_with_status_zero(self) -> None:
+        """26-11-01: HAProxy logs -1 for a closed connection; the column holds 0..999."""
+
+        record = {
+            "schema": 1,
+            "at": 1_700_000_000,
+            "client": "192.0.2.1",
+            "method": "GET",
+            "host": "a.example.test",
+            "path": "/",
+            "frontend": "f",
+            "backend": "b",
+            "server": "",
+            "status": -1,
+            "request_time": 0,
+            "queue_time": -1,
+            "connect_time": -1,
+            "response_time": -1,
+            "total_time": 100,
+            "bytes": 0,
+        }
+
+        def status(value: object) -> int:
+            return int(
+                _database_row("alpha", "node-a", json.dumps(record | {"status": value}).encode())[
+                    12
+                ]
+            )
+
+        self.assertEqual(status(-1), 0)
+        self.assertEqual(status(503), 503)
+        for odd in (-2, 1000, "x"):
+            with self.subTest(odd=odd), self.assertRaises(CollectorError):
+                status(odd)
+
     def test_how_the_session_ended_is_kept_when_it_has_its_form(self) -> None:
         """0106: HAProxy's two letters; a record from before has none."""
 

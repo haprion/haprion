@@ -38,7 +38,8 @@ class ObjectChange:
     #
     # The object's page, which every role may open; none for a name that is no
     # object's (the reading is the engine's text, and a link is built from
-    # names the pages accept only).
+    # names the pages accept only), and none for one that is no longer
+    # generated: the page answers 404 for an object nothing stores or serves.
     #
     link: str = ""
 
@@ -100,7 +101,9 @@ def build(cluster: str, row: ClusterRegeneration | None) -> Regenerated:
             name=_text(entry.get("name")),
             change=CHANGES.get(_text(entry.get("change")), _text(entry.get("change"))),
             parts=", ".join(PARTS.get(part, str(part)) for part in entry.get("parts") or ()),
-            link=_object_link(cluster, _text(entry.get("name"))),
+            link=_object_link(cluster, _text(entry.get("name")))
+            if _text(entry.get("change")) == "changed"
+            else "",
         )
         for entry in result.get("objects") or ()
         if isinstance(entry, Mapping) and _text(entry.get("name"))

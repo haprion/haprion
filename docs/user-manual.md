@@ -998,6 +998,11 @@ process could reset would be a lock whose key is kept behind the door. An unlock
 nothing: `haprion-user unlock` (and, for an admin, the interface) records an unlock, and the throttle
 counts failures since the latest success or unlock for that name. The failed attempts stay in the record.
 
+A name that no account has is never stored in clear text, here or in the audit trail: it may have been a
+password typed into the wrong field. The throttle keeps such a name as a keyed digest that cannot be turned
+back into the text, and counts it exactly as it counts a real one, so a locked name looks the same whether or
+not an account has it. The key is held by the database and no service account can read it.
+
 **The client address.** It is taken from `X-Forwarded-For`, which the nginx site *overwrites* rather than
 appends to, so a request cannot supply its own. The web service accepts connections only on
 `/run/haprion-web.sock`. Only root and nginx's workers (`www-data`) may open that socket, so no other

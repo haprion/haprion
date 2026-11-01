@@ -74,6 +74,21 @@ class TheView(LoginTestCase):
             ["/proxies/alpha/shop", ""],
         )
 
+    def test_an_object_no_longer_generated_is_not_linked(self) -> None:
+        """Its page answers 404 once nothing stores or serves the object."""
+
+        row = regeneration(
+            objects=[
+                {"name": "shop", "change": "absent", "parts": []},
+                {"name": "blog", "change": "changed", "parts": []},
+            ]
+        )
+
+        self.assertEqual(
+            [entry.link for entry in regenerated.build("alpha", row).objects],
+            ["", "/proxies/alpha/blog"],
+        )
+
     def test_the_states_are_the_engines_outcomes(self) -> None:
         for outcome in ("changed", "refused", "unchanged", "unpublished"):
             row = regeneration(outcome=outcome)

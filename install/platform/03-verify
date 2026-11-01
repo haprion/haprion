@@ -45,7 +45,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napi_token\napp_session\napp_user\nattention_ack\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_regeneration\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\nproxy_draft\nretention_run\nsearch_entry\nstatus_access\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
+expected_tables=$'alembic_version\napi_token\napp_session\napp_user\nattention_ack\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_regeneration\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\nproxy_draft\nretention_run\nsearch_entry\nstatus_access\nthrottle_key\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -305,7 +305,7 @@ fi
 # anyone else call. A function runs with its owner's rights when it is a
 # definer's, so EXECUTE on one is a grant of what it does (0085).
 #
-expected_routines=$'app_web\tjob_attention_evidence\tEXECUTE\napp_worker\thold_jobs_queued_before\tEXECUTE'
+expected_routines=$'app_web\tjob_attention_evidence\tEXECUTE\napp_web\tthrottle_name\tEXECUTE\napp_worker\thold_jobs_queued_before\tEXECUTE'
 actual_routines="$(run -c "
     select grantee, routine_name, privilege_type
       from information_schema.routine_privileges

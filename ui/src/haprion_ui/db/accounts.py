@@ -114,12 +114,16 @@ def record_login_attempt(
     failures *since the last success*, so without the success rows a person who
     mistypes a password four times and then logs in correctly would still be
     carrying those four failures for the rest of the window.
+
+    The name is stored as `throttle_name` gives it (0114): the account's own
+    when an account has the typed one, otherwise a keyed digest - what is typed
+    in the user field may be a password. Counted per typed name either way.
     """
 
     with connection.cursor() as cursor:
         cursor.execute(
             "insert into login_attempt (username_normalised, client_ip, succeeded) "
-            "values (lower(%(username)s), %(client_ip)s, %(succeeded)s)",
+            "values (throttle_name(%(username)s), %(client_ip)s, %(succeeded)s)",
             {"username": username, "client_ip": client_ip, "succeeded": succeeded},
         )
 
@@ -145,7 +149,7 @@ def lock_sign_in(connection: Connection[Any], *, username: str) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
             "select pg_advisory_xact_lock(%(space)s::integer,"
-            " hashtext('haprion-sign-in:' || lower(%(username)s)))",
+            " hashtext('haprion-sign-in:' || throttle_name(%(username)s)))",
             {"space": SIGN_IN_LOCKS, "username": username},
         )
 
@@ -168,7 +172,7 @@ _SOURCE_PREFIX = "case when family({ip}) = 6 then 64 else 32 end"
 
 def _locked_sql(name: str) -> str:
     """The expression that is true while `name` (a SQL expression holding a
-    normalised username) may not be tried; `%(source)s` is an address or NULL for any."""
+    name as `login_attempt` stores it) may not be tried; `%(source)s` is an address or NULL for any."""
 
     own = _SOURCE_PREFIX.format(ip="a.client_ip")
     asked = _SOURCE_PREFIX.format(ip="%(source)s::inet")
@@ -215,7 +219,7 @@ def login_locked(
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select " + _locked_sql("lower(%(username)s)"),
+            "select " + _locked_sql("throttle_name(%(username)s)"),
             {
                 "username": username,
                 "source": client_ip,

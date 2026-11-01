@@ -5458,6 +5458,72 @@ class AccountsFromTheWeb(unittest.TestCase):
             connection.commit()
             self.assertFalse(self.locked_from(connection, "dave", "203.0.113.1", 1))
 
+    def test_a_name_no_account_has_is_stored_as_a_digest_and_locks_as_a_known_one_does(
+        self,
+    ) -> None:
+        """0114: a password typed in the user field is not kept, and the lock is the same."""
+
+        typed = "Hunter2-Pass"
+        with self.web_connection() as connection:
+            for name in ("carol", typed):
+                for _ in range(3):
+                    db.record_login_attempt(
+                        connection, username=name, client_ip="192.0.2.1", succeeded=False
+                    )
+            connection.commit()
+            for name in ("carol", typed, typed.upper()):
+                self.assertTrue(self.locked_from(connection, name, "192.0.2.1", 3), name)
+                self.assertFalse(self.locked_from(connection, name, "192.0.2.1", 4), name)
+                self.assertFalse(self.locked_from(connection, name, "192.0.2.2", 3), name)
+            self.assertFalse(self.locked_from(connection, "other-typed", "192.0.2.1", 1))
+        with self.connect() as connection:
+            stored = [
+                name
+                for (name,) in connection.execute(
+                    "select distinct username_normalised from login_attempt order by 1"
+                )
+            ]
+        self.assertEqual(len(stored), 2)
+        self.assertIn("carol", stored)
+        digest = next(name for name in stored if name != "carol")
+        self.assertTrue(digest.startswith(chr(31)))
+        self.assertLessEqual(len(digest), 64)
+        self.assertNotIn("hunter", digest.lower())
+        self.assertFalse(any("hunter" in name.lower() for name in stored))
+
+    def test_the_web_cannot_read_the_key_the_digest_is_made_with(self) -> None:
+        with self.web_connection() as connection:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("select key from throttle_key")
+            connection.rollback()
+            first = connection.execute("select throttle_name('nobody')").fetchone()
+            again = connection.execute("select throttle_name('NOBODY')").fetchone()
+        self.assertEqual(first, again)
+
+    def test_the_sign_in_lock_is_the_same_for_repeated_attempts_at_an_unknown_name(self) -> None:
+        with self.web_connection() as connection:
+            db.lock_sign_in(connection, username="Hunter2-Pass")
+            first = connection.execute(
+                "select classid::bigint, objid::bigint from pg_locks"
+                " where locktype = 'advisory' and pid = pg_backend_pid()"
+            ).fetchall()
+            connection.rollback()
+            db.lock_sign_in(connection, username="hunter2-pass")
+            again = connection.execute(
+                "select classid::bigint, objid::bigint from pg_locks"
+                " where locktype = 'advisory' and pid = pg_backend_pid()"
+            ).fetchall()
+            connection.rollback()
+            db.lock_sign_in(connection, username="another-typed-name")
+            other = connection.execute(
+                "select classid::bigint, objid::bigint from pg_locks"
+                " where locktype = 'advisory' and pid = pg_backend_pid()"
+            ).fetchall()
+            connection.rollback()
+        self.assertEqual(len(first), 1)
+        self.assertEqual(first, again)
+        self.assertNotEqual(first, other)
+
     def test_settings_reads_the_same_lock_as_the_sign_in_for_a_prefix_and_an_account(
         self,
     ) -> None:
@@ -10700,6 +10766,42 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
             ],
         )
         self.assertEqual(searched, (0,))
+
+    def test_a_name_typed_at_a_failed_sign_in_is_kept_as_a_digest_unless_an_account_has_it(
+        self,
+    ) -> None:
+        """0114: the throttle's rows no longer hold a name nobody has, and keep their count."""
+
+        self.alembic("upgrade", "0113")
+        with self.scratch() as connection:
+            connection.execute(
+                "insert into app_user (username, password_hash, role) "
+                "values ('Operator', '$argon2id$placeholder', 'admin')"
+            )
+            insert = (
+                "insert into login_attempt (username_normalised, client_ip, succeeded) "
+                "values (%s, '192.0.2.1', false)"
+            )
+            for name in ("operator", "hunter2-pass", "hunter2-pass", "?"):
+                connection.execute(insert, (name,))
+            connection.commit()
+
+        self.alembic("upgrade", "head")
+
+        with self.scratch() as connection:
+            rows = connection.execute(
+                "select username_normalised, count(*) from login_attempt group by 1 order by 1"
+            ).fetchall()
+            digest = connection.execute("select throttle_name('Hunter2-Pass')").fetchone()
+        stored = {name: count for name, count in rows}
+        self.assertEqual(stored.pop("operator"), 1)
+        self.assertEqual(sorted(stored.values()), [1, 2])
+        for name in stored:
+            self.assertTrue(name.startswith(chr(31)))
+            self.assertLessEqual(len(name), 64)
+            self.assertNotIn("hunter2", name)
+        self.assertIn(digest[0] if digest else None, stored)
+        self.assertEqual(stored[digest[0] if digest else ""], 2)
 
     def test_a_restore_run_again_after_a_failed_one_still_revokes_the_token_revoked_after_the_dump(
         self,

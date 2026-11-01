@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Whether the node's preparation step differs between two revisions.
+
+    tools/node-step-changed <from-rev> [<to-rev>]       (to-rev defaults to HEAD)
+
+A node records a digest of the step directory the package installs
+(/usr/share/haprion-node/install) when it last ran haprion-node-prepare, and
+asks to run it again when the package brings a step with another digest. This
+computes that digest for two revisions of the repository: the files the
+revision's node_package.CONTENTS puts in the step directory, digested by the
+same step_digest the node's status script uses (read from that script here, not
+written a second time). Used by the release notes: do the nodes have to
+prepare again?
+
+Prints "unchanged", or "changed" and the files that differ, one per line.
+Exit 0: unchanged. Exit 1: changed. Exit 2: could not be told.
+"""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+STATUS_SCRIPT = ROOT / "install/node/haprion-node-status"
+
+
+class Failed(Exception):
+    pass
+
+
+def git(*arguments: str) -> bytes:
+    done = subprocess.run(  # noqa: S603 - fixed executable, the arguments are revisions and paths
+        ["/usr/bin/git", "-C", str(ROOT), *arguments], capture_output=True, check=False
+    )
+    if done.returncode != 0:
+        raise Failed(f"git {' '.join(arguments)}: {done.stderr.decode().strip()}")
+    return done.stdout
+
+
+def step_digest_function() -> Any:
+    """The node status script's step_digest, cut from its source."""
+
+    text = STATUS_SCRIPT.read_text(encoding="utf-8")
+    try:
+        code = text[text.index("def step_digest(") : text.index("def read_preparation(")]
+    except ValueError as error:
+        raise Failed(f"{STATUS_SCRIPT} no longer has step_digest") from error
+    namespace: dict[str, Any] = {"hashlib": hashlib, "Path": Path}
+    exec(compile(code, str(STATUS_SCRIPT), "exec"), namespace)  # noqa: S102 - the repository's own code
+    return namespace["step_digest"]
+
+
+def contents_at(revision: str) -> tuple[str, dict[str, tuple[str, int]]]:
+    """INSTALL_DIR and CONTENTS of node_package.py as that revision has them.
+
+    Only the module's imports and plain assignments are run: enough for the
+    table, and nothing of the revision's code that does work.
+    """
+
+    source = git("show", f"{revision}:src/haprion/node_package.py").decode()
+    keep: list[ast.stmt] = []
+    for statement in ast.parse(source).body:
+        if isinstance(statement, ast.Import) or (
+            isinstance(statement, ast.ImportFrom) and not (statement.module or "").startswith("haprion")
+        ):
+            keep.append(statement)
+        elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            keep.append(statement)
+    namespace: dict[str, Any] = {}
+    try:
+        exec(  # noqa: S102 - the repository's own table, imports and assignments only
+            compile(ast.Module(body=keep, type_ignores=[]), f"{revision}:node_package.py", "exec"),
+            namespace,
+        )
+        return namespace["INSTALL_DIR"], namespace["CONTENTS"]
+    except Exception as error:
+        raise Failed(f"{revision}: node_package.py's CONTENTS cannot be read: {error}") from error
+
+
+def step_files(revision: str) -> dict[str, bytes]:
+    """The step directory at a revision: path inside it -> content."""
+
+    install_dir, contents = contents_at(revision)
+    prefix = install_dir.lstrip("/") + "/"
+    return {
+        destination.removeprefix(prefix): git("show", f"{revision}:{source}")
+        for destination, (source, _) in contents.items()
+        if destination.startswith(prefix)
+    }
+
+
+def digest_of(files: dict[str, bytes], step_digest: Any) -> str:
+    with tempfile.TemporaryDirectory() as raw:
+        for name, content in files.items():
+            path = Path(raw) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        return str(step_digest(Path(raw)))
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) not in (1, 2) or argv[0].startswith("-"):
+        print(__doc__, file=sys.stderr)
+        return 2
+    first, last = argv[0], (argv[1] if len(argv) == 2 else "HEAD")
+    try:
+        step_digest = step_digest_function()
+        before, after = step_files(first), step_files(last)
+        if digest_of(before, step_digest) == digest_of(after, step_digest):
+            print(f"unchanged: the node step is the same at {first} and {last}")
+            return 0
+        print(f"changed: the node step differs between {first} and {last}")
+        for name in sorted(set(before) | set(after)):
+            if name not in before:
+                print(f"  added    {name}")
+            elif name not in after:
+                print(f"  removed  {name}")
+            elif before[name] != after[name]:
+                print(f"  changed  {name}")
+        return 1
+    except Failed as error:
+        print(f"node-step-changed: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

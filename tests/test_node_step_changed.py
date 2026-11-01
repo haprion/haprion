@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 BASE = Path(__file__).resolve().parents[1]
 TOOL = BASE / "tools" / "node-step-changed"
@@ -121,6 +122,16 @@ class TheNodeStepBetweenTwoRevisions(unittest.TestCase):
         self.commit("two")
         self.assertEqual(self.run_tool(first)[0], 1)
         self.assertEqual(self.run_tool("HEAD")[0], 0)
+
+    def test_neither_revision_may_be_an_option(self) -> None:
+        for revisions in (("-x",), ("HEAD", "--output=elsewhere"), ("HEAD", "-p")):
+            with (
+                self.subTest(revisions=revisions),
+                mock.patch.object(self.tool, "git", side_effect=AssertionError("git was run")),
+            ):
+                code, shown = self.run_tool(*revisions)
+                self.assertEqual(code, 2)
+                self.assertIn("Whether the node's preparation step differs", shown)
 
     def test_a_revision_that_does_not_exist_is_an_error_not_an_answer(self) -> None:
         self.assertEqual(self.run_tool("no-such-revision")[0], 2)

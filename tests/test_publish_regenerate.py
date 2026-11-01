@@ -56,7 +56,8 @@ PUBLISHED: dict[str, Any] = envelope(
 
 class Terminal:
     def __init__(self, reading: dict[str, Any] | None = CHANGED, answer: Any = PUBLISHED) -> None:
-        self.reading, self.answer, self.sent = reading, answer, []
+        self.reading, self.answer = reading, answer
+        self.sent: list[dict[str, Any]] = []
         self.out, self.err = io.StringIO(), io.StringIO()
 
     def run(self, request: str) -> subprocess.CompletedProcess[str]:

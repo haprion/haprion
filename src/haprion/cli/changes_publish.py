@@ -97,7 +97,7 @@ WORDS = Words(
     message=MESSAGE,
     helper="changes publish",
     doing="publishing saved changes",
-    moved="the configuration changed since these changes were saved. Review them and try again.",
+    moved="the configuration changed since this was read or saved. Review it and try again.",
     invalid="these changes did not produce a valid HAProxy candidate. Nothing was published.",
 )
 __all__ = ["HELPER", "MAX_OBJECTS", "OPERATION", "SUDO", "build_request", "main"]

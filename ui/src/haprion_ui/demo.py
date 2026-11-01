@@ -992,7 +992,7 @@ def regeneration_rows(now: datetime | None = None) -> tuple[ClusterRegeneration,
                     "truncated": False,
                     "files": [
                         {
-                            "path": "nodes/node-a/haproxy.cfg",
+                            "path": "conf.d/1001-shop.cfg",
                             "status": "modified",
                             "old_path": None,
                             "added": 1,

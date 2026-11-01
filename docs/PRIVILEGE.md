@@ -67,7 +67,7 @@ has `restrict` and its own forced command, so a key can run exactly one command 
 
 | Node account | Keys from the manager | What they run |
 |---|---|---|
-| `_haprion-trigger` | config deploy, certificate deploy, server state | fetch and install a release; fetch certificates; drain, maintenance, ready, unblock |
+| `_haprion-trigger` | config deploy, certificate deploy, server state | fetch and install a release; fetch certificates; drain, maintenance, ready, unblock, block |
 | `_haprion-status` | status, probe | read the node's status; try a health check |
 | `_haprion-backup` | state backup | write the node's state archive to the manager |
 | `_haprion-logread` | traffic collector | read the traffic log and the WAF journal |
@@ -229,7 +229,7 @@ the candidate's hash.
 Every escalation on a node uses `sudo -n`, so a missing rule fails at once instead of waiting for a
 password. The rules are in one file, `/etc/sudoers.d/haprion-node`, one per forced command. Most take
 no arguments. The certificate rules (`haprion-cert-pull`, `haprion-cert-remove`) and the server-state
-rules (`set`, `unblock`) do: a list of certificate IDs, or a server and state, cannot be expressed in
+rules (`set`, `unblock`, `block`) do: a list of certificate IDs, or a server and state, cannot be expressed in
 sudoers more tightly than a wildcard. They are checked twice instead - by the unprivileged trigger
 the key runs, and again by the root command.
 

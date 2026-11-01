@@ -199,9 +199,9 @@ def retire_block_clients(host: Host) -> tuple[list[str], list[str]]:
     removed += [str(path) for path in rules]
     if any(user.pw_name == RETIRED_ACCOUNT for user in host.users()):
         #
-        # Locked and expired, then its processes ended: userdel refuses an
-        # account a process runs as, and a client connected at this moment
-        # would hold one. pkill answers 1 when there were none.
+        # Locked and expired first, so a client connecting at this moment is
+        # refused; `--force` because userdel otherwise refuses an account that
+        # still has a process, as one connected then would.
         #
         ran(
             host,
@@ -209,8 +209,12 @@ def retire_block_clients(host: Host) -> tuple[list[str], list[str]]:
             f"locking {RETIRED_ACCOUNT}",
             failed,
         )
-        host.run(["/usr/bin/pkill", "--signal", "KILL", "--uid", RETIRED_ACCOUNT])
-        if ran(host, ["/usr/sbin/userdel", RETIRED_ACCOUNT], f"user {RETIRED_ACCOUNT}", failed):
+        if ran(
+            host,
+            ["/usr/sbin/userdel", "--force", RETIRED_ACCOUNT],
+            f"user {RETIRED_ACCOUNT}",
+            failed,
+        ):
             removed.append(f"user {RETIRED_ACCOUNT}")
     group = f"group {RETIRED_ACCOUNT}"
     if host.group_exists(RETIRED_ACCOUNT) and ran(

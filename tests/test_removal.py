@@ -468,8 +468,7 @@ class TheSshBlockingOfAnEarlierReleaseIsRetired(unittest.TestCase):
             [line for line in ran if "_haprion-block" in line],
             [
                 "/usr/sbin/usermod --lock --expiredate 1 _haprion-block",
-                "/usr/bin/pkill --signal KILL --uid _haprion-block",
-                "/usr/sbin/userdel _haprion-block",
+                "/usr/sbin/userdel --force _haprion-block",
                 "/usr/sbin/groupdel _haprion-block",
             ],
         )

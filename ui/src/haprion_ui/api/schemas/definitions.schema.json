@@ -545,7 +545,6 @@
         "cluster_define",
         "server_state",
         "dynamic_unblock",
-        "block_client",
         "backup_run",
         "backup_schedule",
         "node_restore_prepare",

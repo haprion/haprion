@@ -1801,18 +1801,34 @@ def read_blocked() -> dict[str, dict[str, Any]] | None:
 # over through, not a connection to anybody.
 #
 # The connection is established 0.1 s after a reload, but the tables arrive
-# five seconds later (3.4.7, 26-11-01, two nodes, empty and 8000-entry tables
-# alike). What tells them apart is the `flags=` of the remote peer's own
-# block, on the line with `appctx:`: 0x100020 until the peer has taught this
-# one its tables, 0x100028 from the moment it has, and in steady state. The
-# bit is 0x8; the section's flags are not used, they differ between a node
+# five seconds later (3.4.7, 26-11-01, two nodes): the new process asks the
+# old one first, then the remote peer after HAProxy's resync timeout. The
+# remote peer's own block (`flags=` on the line with `appctx:`) gains 0x8 when
+# that peer has taught this one its tables - but only the first time after a
+# start: at a second reload the flag stays 0x100020 although the tables are
+# back after 5.1 s (six reloads in a row, review 26-11-01, B424 omvända P2-1).
+# So a peer is also taken as synced once its connection is older than the
+# resync took, read from the line's `last_hdshk=` (seconds since the
+# handshake). The section's flags are not used; they differ between a node
 # alone, a node whose peer is down and one resyncing.
 #
 PEER_LINE = re.compile(
     r"^\s*0x[0-9a-f]+: id=([^\s(]+)\(remote,(active|inactive)\) addr=(\S+) .*last_status=(\S+)"
 )
+PEER_HANDSHAKE = re.compile(r"last_hdshk=((?:\d+[dhms])+)(?:\s|$)")
 PEER_BLOCK_FLAGS = re.compile(r"^\s+flags=0x([0-9a-f]+) appctx:")
 PEER_TAUGHT = 0x8
+PEER_RESYNCED_AFTER = 6  # seconds: the measured 5.0-5.1 s, and a margin
+
+
+def handshake_age(line: str) -> int:
+    """Seconds since the peer's handshake (`2s`, `1m4s`, `2h5m`), 0 when not said."""
+
+    found = PEER_HANDSHAKE.search(line)
+    if found is None:
+        return 0
+    units = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+    return sum(int(n) * units[u] for n, u in re.findall(r"(\d+)([dhms])", found.group(1)))
 
 
 def parse_peers(text: str) -> list[dict[str, Any]]:
@@ -1830,6 +1846,7 @@ def parse_peers(text: str) -> list[dict[str, Any]]:
                 "connected": state == "active" and status == "ESTA",
                 "synced": False,
             }
+            connected_for = handshake_age(line)
             peers.append(current)
             continue
         if re.match(r"^\s*0x[0-9a-f]+: id=", line):
@@ -1837,7 +1854,9 @@ def parse_peers(text: str) -> list[dict[str, Any]]:
             continue
         flags = PEER_BLOCK_FLAGS.match(line)
         if flags is not None and current is not None:
-            current["synced"] = current["connected"] and bool(int(flags.group(1), 16) & PEER_TAUGHT)
+            current["synced"] = current["connected"] and (
+                bool(int(flags.group(1), 16) & PEER_TAUGHT) or connected_for >= PEER_RESYNCED_AFTER
+            )
     return peers[:8]
 
 

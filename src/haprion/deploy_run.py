@@ -638,10 +638,11 @@ def _node_lost(
 # the nodes it shares them with before the next one is touched (B270, B424).
 # The connection is up 0.1 s after the reload, but the peer teaches its tables
 # only after HAProxy's resync, five seconds later (measured on 3.4.7, 26-11-01:
-# `ESTA` at 0.1 s, the entries and the peer's `flags` going 0x100020 to
-# 0x100028 at 5.0 s, with empty tables as with 8000 entries). A second node
-# reloaded in between loses every block and counter on both, so the wait is
-# for the node to say the tables have come (`synced`), not for the connection.
+# `ESTA` at 0.1 s, the entries back at 5.0-5.1 s). A second node reloaded in
+# between loses every block and counter on both, so the wait is for the node to
+# say the tables have come (`synced`), not for the connection. The node says it
+# from the peer's flag after the first start, and from the connection's age at
+# every later reload, where the flag never changes (`haprion-node-status`).
 #
 PEERS_WAIT_SECONDS = 15
 

@@ -32,6 +32,10 @@ DOWN = CONNECTED.replace("(remote,active)", "(remote,inactive)").replace(
 
 # Two seconds after a reload (3.4.7, 26-11-01): connected, tables not yet taught.
 RESYNCING = CONNECTED.replace("flags=0x100028 appctx", "flags=0x100020 appctx")
+# A second reload (3.4.7, 26-11-01): the flag never gains 0x8 again, but the
+# tables are back after 5.1 s - a connection older than that is synced.
+RELOADED_AGAIN = RESYNCING.replace("last_hdshk=2s", "last_hdshk=7s")
+LONG_SINCE = RESYNCING.replace("last_hdshk=2s", "last_hdshk=1m4s")
 
 
 class ReadingShowPeers(unittest.TestCase):
@@ -51,6 +55,14 @@ class ReadingShowPeers(unittest.TestCase):
     def test_a_peer_that_has_not_taught_its_tables_yet_is_not_synced(self) -> None:
         peer = self.parse(RESYNCING)[0]
         self.assertEqual((peer["connected"], peer["synced"]), (True, False))
+
+    def test_a_second_reload_is_synced_once_the_resync_has_had_its_time(self) -> None:
+        """Review 26-11-01, B424 omvända P2-1: 0x8 comes only after the first start."""
+
+        for text in (RELOADED_AGAIN, LONG_SINCE):
+            with self.subTest(text=text.split("last_hdshk=")[1].split()[0]):
+                peer = self.parse(text)[0]
+                self.assertEqual((peer["connected"], peer["synced"]), (True, True))
 
     def test_a_peer_that_does_not_answer(self) -> None:
         peer = self.parse(DOWN)[0]

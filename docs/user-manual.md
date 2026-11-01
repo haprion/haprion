@@ -911,26 +911,29 @@ schema, so the tool works when nobody can sign in.
 
 ### What the two roles see
 
-A **reader** sees the state of the clusters and can press nothing. A reader's menu has the dashboard,
-*Proxies*, *Versions*, *Certificates*, *Metrics*, *Traffic logs*, *Network* and *Events*, plus *WAF logs*
-when the WAF engine switch is on and *Node backups* when node backups are on
-([Features and advanced configuration](#features-and-advanced-configuration)).
+A **reader** reads the clusters and their configuration as an admin does, and changes nothing: no button, no form. A reader's menu has the
+dashboard, *Proxies*, *Versions*, *Certificates*, *Metrics*, *Traffic logs*, *Network* and *Events*, plus
+*WAF logs* when the WAF engine switch is on and *Node backups* when node backups are on
+([Features and advanced configuration](#features-and-advanced-configuration)). The object pages with
+their drafts and server states, a version's *Diff*, the search with the servers' addresses, the traffic
+log with each request's destination and the jobs with their error sentences are the same for both roles;
+only the diagnostics under a job are an admin's.
+Key material, token secrets and passwords are shown to nobody.
 
-Pages that carry the configuration itself are an administrator's: an object's page, a version's *Diff*,
-*Settings*, the certificate receivers, node restores and the audit trail. They show every backend address,
-whatever an advanced text wrote, or where key material goes. A reader who opens one is told
-*Administrators only*.
+An **admin** can queue the operations the interface offers, and has the pages where settings are made and
+access material is handled: *Settings*, the certificate receivers, the profiles, node restores and the audit
+trail. A reader who opens one of them is told *Administrators only*.
 
-An **admin** can queue the operations the interface offers, and sees two more things:
+Both roles see, on a job that did not end cleanly, **the error code** such as `cluster_not_converged` or
+`ssh_unreachable`, and the helper's own sentence beside it. The code is a fixed string that does not depend on
+the environment, and it is shown as it is rather than translated. The command line prints the same string
+beside its message, and the audit trail records it, so what a terminal said and what the page says can be
+compared directly.
 
-- **The error code** of an operation that did not end cleanly, such as `cluster_not_converged` or
-  `ssh_unreachable`. It is a fixed string that does not depend on the environment, and it is shown as it
-  is rather than translated. The command line prints the same string beside its message, and the audit
-  trail records it, so what a terminal said and what the page says can be compared directly.
-- **The operation's diagnostics**: its error output, with secrets masked, and the evidence a refusal
-  carries. They are folded away under the job until you open them. Before the text is stored, private
-  keys, sensitive paths and any assignment to a token, password, secret, credential, API key, access key
-  or private key are masked. The text is capped at 64 KiB.
+An admin sees one more thing, **the operation's diagnostics**: its error output, with secrets masked, and the
+evidence a refusal carries. They are folded away under the job until you open them. Before the text is
+stored, private keys, sensitive paths and any assignment to a token, password, secret, credential, API key,
+access key or private key are masked. The text is capped at 64 KiB.
 
 The diagnostics contain **real host names, node names and HAProxy's own output** - that is what makes them
 worth showing. Masking covers secrets, not the identity of your environment. So a screenshot of that panel
@@ -4430,7 +4433,7 @@ A token is made under *Settings* → *API tokens* → *Add token*. It has:
 
 - **a name**, which is what the audit record shows for every change made with it, as `token:` and the name.
   Reading is not recorded there: a read shows only as the token's *Last used*, and in nginx's access log;
-- **a level**: *Read* sees what a reader sees. *Block* blocks addresses on its proxies, nothing else.
+- **a level**: *Read* is a reader: it reads all that an admin reads, drafts and servers' states included. *Block* blocks addresses on its proxies, nothing else.
   *Write* does what an admin does;
 - **a scope**: the clusters it may see, optional, and for a *Block* token the proxies it may block on,
   at least one. A *Block* token without a proxy is refused, so that none is ever made for all of them by
@@ -4543,12 +4546,12 @@ What a token can read:
 | `/clusters`, `/clusters/{cluster}` | Status: nodes, which holds the VIP, versions, what needs attention |
 | `/attention` | *Needs attention* as the dashboard lists it: each row's `kind`, `severity`, `cluster`, `subject`, `message`, `since` and `variant`, with `generated_at` and `fresh`: `fresh` is false when a cluster's status has not been read within two polls (a limited token's own clusters), the sign that the manager has stopped reading and the list may be missing rows. A token limited to some clusters gets those clusters' rows only, none of the installation's own (certificates, the poller, packages, tokens) |
 | `/clusters/{cluster}/objects` | The objects, as *Proxies* lists them (`limit`, `offset`) |
-| `/clusters/{cluster}/objects/{name}` | One object. Its document, its servers' addresses and states, and why an object cannot be read, only for a *Write* token |
+| `/clusters/{cluster}/objects/{name}` | One object: its document, its servers' addresses and states, and why an object cannot be read |
 | `/clusters/{cluster}/objects/{name}/history` | The cluster's versions, published or not (`limit`) |
 | `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now, with `block_for` (how long a block lasts; null where the object has no dynamic blocking), the time left and `reason` (`requests`, `errors`, `connections`, `manual` for an address placed through the API, or null where the block does not say). A *Block* token reads this too, for the proxies it may block on |
 | `/certificates` | The certificates, when they end and where they are (`limit`). `registry` says what the list is: `read` (the registry), `unreadable` (the registry could not be read, or not yet: the list is what the clusters say they serve, `stale` is true and an empty list says nothing) or `none` (the installation declares no registry: the clusters' own lists). |
 | `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`, `before`). `q` is the page's search: text in the host, the path and the backend, a client address or network, or part of a destination. Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read. Both ends are included. When `truncated` is true, `next` is where the next page begins: pass it as `before`, with the same other parameters, and each request is listed once even where several share a time. The place also holds the window the first page was read from, so a later page stays in it when the call named no `from` |
-| `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through, over the last `days` days (in the answer). The newest findings are given, and `truncated` says when older ones were left out. A *Read* token is given what is published; a *Write* token also what an admin has drafted |
+| `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through, over the last `days` days (in the answer). The newest findings are given, and `truncated` says when older ones were left out. The exceptions and findings include what an admin has drafted and not yet published (`in_draft`) |
 | `/jobs`, `/jobs/{job_id}` | Jobs and how they went (`cluster`, `state`, `limit`); a `cluster` that does not exist and has no jobs is a 404 |
 
 Times are ISO 8601 with their offset, and `from` and `to` take the same. A time without an offset is read as UTC, not as the manager's own zone. A `+` in an offset must be URL-encoded as `%2B`, or it reaches the manager as a space and the call is refused; `curl --data-urlencode` does it. A time before 1970 or after year 9998 is refused. A query parameter a call does not take, such as `since` for `from`, is refused with `bad_input` naming it, never ignored. A server's check is given as a

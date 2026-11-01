@@ -103,7 +103,11 @@ def remove(paths: Iterable[Path]) -> list[str]:
 
 
 def ran(host: Host, argv: list[str], what: str, failed: list[str]) -> bool:
-    done = host.run(argv)
+    try:
+        done = host.run(argv)
+    except OSError as exc:  # the command did not start: a missing binary, fork refused
+        failed.append(f"{what}: {exc}")
+        return False
     if done.returncode != 0:
         failed.append(f"{what}: {(done.stderr or done.stdout).strip() or done.returncode}")
     return done.returncode == 0
@@ -188,8 +192,10 @@ def retire_block_clients(host: Host) -> tuple[list[str], list[str]]:
     """Take away the ssh blocking path an earlier release installed: what went, and what could not.
 
     The rule goes first, so the account can no longer reach a helper when it is
-    locked and ended; the home last, as the account's keys are in it. Nothing
-    is an error when it is already gone, so an update can run this every time.
+    locked and ended; the home with the account's keys next, so no step that
+    fails after it leaves a key behind. A step that fails is reported and the
+    rest still run. Nothing is an error when it is already gone, so an update
+    can run this every time.
     """
 
     removed: list[str] = []
@@ -197,7 +203,18 @@ def retire_block_clients(host: Host) -> tuple[list[str], list[str]]:
     rules = with_copies(host, RETIRED_SUDOERS)
     failed += remove(rules)
     removed += [str(path) for path in rules]
-    if any(user.pw_name == RETIRED_ACCOUNT for user in host.users()):
+    home = host.path(RETIRED_HOME)
+    if home.exists() or home.is_symlink():
+        before = len(failed)
+        failed += remove([home])
+        if len(failed) == before:
+            removed.append(str(home))
+    try:
+        has_account = any(user.pw_name == RETIRED_ACCOUNT for user in host.users())
+    except (OSError, KeyError) as exc:
+        failed.append(f"reading the accounts: {exc}")
+        has_account = False
+    if has_account:
         #
         # Locked and expired first, so a client connecting at this moment is
         # refused; `--force` because userdel otherwise refuses an account that
@@ -217,14 +234,11 @@ def retire_block_clients(host: Host) -> tuple[list[str], list[str]]:
         ):
             removed.append(f"user {RETIRED_ACCOUNT}")
     group = f"group {RETIRED_ACCOUNT}"
-    if host.group_exists(RETIRED_ACCOUNT) and ran(
-        host, ["/usr/sbin/groupdel", RETIRED_ACCOUNT], group, failed
-    ):
+    try:
+        has_group = host.group_exists(RETIRED_ACCOUNT)
+    except OSError as exc:
+        failed.append(f"looking for {group}: {exc}")
+        has_group = False
+    if has_group and ran(host, ["/usr/sbin/groupdel", RETIRED_ACCOUNT], group, failed):
         removed.append(group)
-    home = host.path(RETIRED_HOME)
-    if home.exists() or home.is_symlink():
-        before = len(failed)
-        failed += remove([home])
-        if len(failed) == before:
-            removed.append(str(home))
     return removed, failed

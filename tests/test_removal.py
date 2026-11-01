@@ -495,6 +495,24 @@ class TheSshBlockingOfAnEarlierReleaseIsRetired(unittest.TestCase):
         self.assertFalse(self.machine.path("/etc/sudoers.d/haprion-block").exists())
         self.assertFalse(self.machine.path("/etc/haprion/block-clients").exists())
 
+    def test_a_command_that_cannot_start_leaves_no_key_and_is_named(self) -> None:
+        """A missing binary or a refused fork raises; the keys go before any command runs."""
+
+        machine = self.machine
+
+        def cannot_start(argv: list[str], *, input_text: str | None = None) -> Any:
+            raise FileNotFoundError(2, "No such file or directory", argv[0])
+
+        machine.run = cannot_start  # type: ignore[method-assign]
+
+        code, said = self.retire()
+
+        self.assertEqual(code, 1)
+        self.assertFalse(machine.path("/etc/haprion/block-clients/.ssh/authorized_keys").exists())
+        self.assertFalse(machine.path("/etc/sudoers.d/haprion-block").exists())
+        self.assertIn("could not remove locking _haprion-block", said)
+        self.assertIn("could not remove user _haprion-block", said)
+
     def test_the_update_runs_it_only_once_the_release_is_proved(self) -> None:
         update = (INSTALL / "platform/update-platform-release").read_text()
         proved = update.index("\nproved=yes\n")

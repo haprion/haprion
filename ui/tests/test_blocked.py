@@ -12,6 +12,7 @@ import html
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -453,11 +454,23 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
             page.text,
         )
 
-    def test_a_reader_is_told_how_many_without_a_link(self) -> None:
+    def test_a_reader_is_given_the_same_links_as_an_admin(self) -> None:
         page = self.writing_client(role="reader").get("/")
 
-        self.assertIn("2 addresses blocked dynamically</span>", page.text)
-        self.assertNotIn("public-web#blocked", page.text)
+        self.assertIn(
+            '2 addresses blocked dynamically: <a href="/proxies/edge-demo/public-web#blocked"',
+            page.text,
+        )
+
+    def test_a_reader_is_told_a_deploy_is_stopped_on_certificates(self) -> None:
+        stop = SimpleNamespace(
+            headline="Deploy blocked: node-b is missing example-net", sentence="s"
+        )
+        with mock.patch("haprion_ui.jobs.certificate_blocks", return_value={"edge-demo": stop}):
+            page = self.writing_client(role="reader").get("/").text
+
+        self.assertIn("Deploy blocked: node-b is missing example-net", page)
+        self.assertNotIn("Deploy certificates", page)
 
     def test_a_readers_count_is_on_the_operations_line_not_in_the_header(self) -> None:
         """The header's line ran its traffic figures under it at 1280 px (26-10-12)."""
@@ -468,7 +481,7 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
 
         self.assertNotIn("blocked dynamically", header)
         operations = rest.split('class="operations-line"', 1)[1].split("</footer>", 1)[0]
-        self.assertIn("2 addresses blocked dynamically</span>", operations)
+        self.assertIn("2 addresses blocked dynamically: <a", operations)
 
 
 if __name__ == "__main__":

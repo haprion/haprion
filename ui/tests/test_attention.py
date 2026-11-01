@@ -968,6 +968,37 @@ class ThePageListsWhatPublishingAgainWouldChange(LoginTestCase):
         self.assertIn("Publishing again would change what", page)
         self.assertIn('href="/history/alpha/regenerated"', page)
 
+    def test_a_reader_is_led_to_the_regenerated_page_too(self) -> None:
+        self.account = replace(self.account, role="reader")
+
+        page = self.page([regeneration()])
+
+        self.assertIn('href="/history/alpha/regenerated"', page)
+
+    def test_a_reader_is_led_to_the_token_list_and_not_to_settings(self) -> None:
+        self.account = replace(self.account, role="reader")
+        client = self.client(replace(configuration(), clusters=("alpha",), management_writes=True))
+        self.sign_in(client)
+        rows = [
+            attention.Item("api_token", "warning", None, "t", "m", None, "/settings/api-tokens"),
+            attention.Item(
+                "forwarding",
+                "warning",
+                "alpha",
+                "r",
+                "m",
+                None,
+                "/settings/clusters/alpha#delivery",
+            ),
+        ]
+        shown = attention.Attention(generated_at=NOW, items=tuple(rows), status_age={}, fresh=True)
+        with mock.patch("haprion_ui.pages.dashboard.attention_items", return_value=shown):
+            page = client.get("/").text
+
+        row = page.split('aria-label="Needs attention"', 1)[1].split("</section>", 1)[0]
+        self.assertIn('class="secondary-button" href="/settings/api-tokens"', row)
+        self.assertNotIn("/settings/clusters/alpha", row)
+
     def test_no_difference_is_no_row(self) -> None:
         page = self.page([regeneration(outcome="unchanged")])
 

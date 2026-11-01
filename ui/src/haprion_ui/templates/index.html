@@ -3,8 +3,8 @@
 {% block title %}Dashboard — Haprion{% endblock %}
 {% block head_extra %}{% if live_seconds %}<meta name="haproxy-live" content="{{ live_seconds }}">{% endif %}{% endblock %}
 {% block content %}
-{#- The warnings on a cluster's Operations line: an admin's, with links to the objects, and a reader's, counts only (26-10-12). -#}
-{% macro operations_warnings(cluster, held, out, links=true) %}{% if links %}{% if held %}<span class="warning-text"><span class="status-dot status-warning" aria-hidden="true"></span>{% set total = held.values() | sum %}{% set names = held | list %}{{ total }} {{ 'address' if total == 1 else 'addresses' }} blocked dynamically: {% for name in names[:3] %}<a href="/proxies/{{ cluster.cluster }}/{{ name }}#blocked" title="{{ held[name] }} blocked">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% if names | length > 3 %} <span title="{{ names[3:] | join(', ') }}">+{{ names | length - 3 }} more</span>{% endif %}</span>{% endif %}{% if out %}<span class="warning-text"><span class="status-dot status-warning" aria-hidden="true"></span>{{ out.total }} {{ 'server' if out.total == 1 else 'servers' }} in drain/maintenance: {% for item in out.shown %}{% if item.owned %}<a href="/proxies/{{ cluster.cluster }}/{{ item.name }}#servers" title="{{ item.servers }} {{ 'server' if item.servers == 1 else 'servers' }}">{{ item.name }}</a>{% else %}<span title="A backend no object claims">{{ item.name }}</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if out.rest %} <span title="{{ out.rest | map(attribute='name') | join(', ') }}">+{{ out.rest | length }} more</span>{% endif %}</span>{% endif %}{% else %}{% if held %}<span class="warning-text"><span class="status-dot status-warning" aria-hidden="true"></span>{% set total = held.values() | sum %}{{ total }} {{ 'address' if total == 1 else 'addresses' }} blocked dynamically</span>{% endif %}{% if out %}<span class="warning-text"><span class="status-dot status-warning" aria-hidden="true"></span>{{ out.total }} {{ 'server' if out.total == 1 else 'servers' }} in drain/maintenance</span>{% endif %}{% endif %}{% endmacro %}
+{#- The warnings on a cluster's Operations line, with links to the objects: the same for every role. -#}
+{% macro operations_warnings(cluster, held, out) %}{% if held %}<span class="warning-text"><span class="status-dot status-warning" aria-hidden="true"></span>{% set total = held.values() | sum %}{% set names = held | list %}{{ total }} {{ 'address' if total == 1 else 'addresses' }} blocked dynamically: {% for name in names[:3] %}<a href="/proxies/{{ cluster.cluster }}/{{ name }}#blocked" title="{{ held[name] }} blocked">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% if names | length > 3 %} <span title="{{ names[3:] | join(', ') }}">+{{ names | length - 3 }} more</span>{% endif %}</span>{% endif %}{% if out %}<span class="warning-text"><span class="status-dot status-warning" aria-hidden="true"></span>{{ out.total }} {{ 'server' if out.total == 1 else 'servers' }} in drain/maintenance: {% for item in out.shown %}{% if item.owned %}<a href="/proxies/{{ cluster.cluster }}/{{ item.name }}#servers" title="{{ item.servers }} {{ 'server' if item.servers == 1 else 'servers' }}">{{ item.name }}</a>{% else %}<span title="A backend no object claims">{{ item.name }}</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if out.rest %} <span title="{{ out.rest | map(attribute='name') | join(', ') }}">+{{ out.rest | length }} more</span>{% endif %}</span>{% endif %}{% endmacro %}
 {% from "_network-change.html" import network_change %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <script defer src="{{ url_for('static', path='/dialogs.js') }}?v={{ asset_token }}"></script>
@@ -46,9 +46,9 @@
 
 {#
   What needs doing (B274): under the four cards, only when there is
-  something, worst first. Each row goes where the fix is; a reader is told
-  and not sent to a page that only writes, nor is an admin while management
-  writes are off (`needs_writes`). What somebody chose - a drain, a
+  something, worst first. Each row goes where the fix is; a reader is sent where an admin is, but not
+  to Settings; nor is an admin while management writes are off
+  (`needs_writes`). What somebody chose - a drain, a
   maintenance page, a block - is on the cluster's Operations line instead.
 #}
 {% if attention and attention.items %}
@@ -57,7 +57,7 @@
   <ul class="attention-list">
     {% for item in attention.items %}
     {% set text %}<span class="status-dot status-{{ item.severity }}" aria-hidden="true"></span><span class="attention-text">{% if item.cluster %}<strong>{{ item.cluster }}</strong>: {% endif %}{% if item.subject and item.subject != item.cluster %}{{ item.subject }} · {% endif %}{{ item.message }}{% if item.since %} <time datetime="{{ item.since.isoformat() }}">{{ item.since | shown_at }}</time>{% endif %}</span>{% endset %}
-    <li><div class="attention-row">{{ text }}</div>{% set go = role == 'admin' and (management_writes or not item.needs_writes) %}{% set ack = management_writes and role == 'admin' %}{% if go or ack %}<div class="attention-actions">{% if go %}<a class="secondary-button" href="{{ item.link }}">{{ item.page }}</a>{% endif %}{% if ack %}<form method="post" action="/attention/acknowledge" class="attention-ack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="kind" value="{{ item.kind }}"><input type="hidden" name="cluster" value="{{ item.cluster or '' }}"><input type="hidden" name="subject" value="{{ item.subject }}"><input type="hidden" name="severity" value="{{ item.severity }}"><input type="hidden" name="variant" value="{{ item.variant }}"><button class="secondary-button" type="submit">Acknowledge</button></form>{% endif %}</div>{% endif %}</li>
+    <li><div class="attention-row">{{ text }}</div>{% set go = item.reader_opens if role != 'admin' else (management_writes or not item.needs_writes) %}{% set ack = management_writes and role == 'admin' %}{% if go or ack %}<div class="attention-actions">{% if go %}<a class="secondary-button" href="{{ item.link }}">{{ item.page }}</a>{% endif %}{% if ack %}<form method="post" action="/attention/acknowledge" class="attention-ack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="kind" value="{{ item.kind }}"><input type="hidden" name="cluster" value="{{ item.cluster or '' }}"><input type="hidden" name="subject" value="{{ item.subject }}"><input type="hidden" name="severity" value="{{ item.severity }}"><input type="hidden" name="variant" value="{{ item.variant }}"><button class="secondary-button" type="submit">Acknowledge</button></form>{% endif %}</div>{% endif %}</li>
     {% endfor %}
   </ul>
 </section>
@@ -109,6 +109,7 @@
         {#- Dynamic blocking and held servers (B271) are on the Operations line below, for everyone. -#}
         {% set held_here = blocked_counts.get(cluster.cluster) if blocked_counts else none %}
         {% set out_here = held_servers.get(cluster.cluster) if held_servers else none %}
+        {% set stopped_here = certificate_blocks.get(cluster.cluster) if certificate_blocks else none %}
         <span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>
         {% if cluster.observed_at %}
         <time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at | shown_at }}">{{ cluster.age_label }}</time>
@@ -230,9 +231,9 @@
       {% endif %}
       {% endif %}
     </footer>
-    {% elif held_here or out_here %}
+    {% elif held_here or out_here or stopped_here %}
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
-      <div><div class="operations-line"><strong>Operations</strong>{{ operations_warnings(cluster, held_here, out_here, links=false) }}</div></div>
+      <div><div class="operations-line"><strong>Operations</strong>{{ operations_warnings(cluster, held_here, out_here) }}</div>{% if stopped_here %}<span class="warning-text" title="{{ stopped_here.sentence }}"><span class="status-dot status-warning" aria-hidden="true"></span>{{ stopped_here.headline }}</span>{% endif %}</div>
     </footer>
     {% endif %}
   </article>

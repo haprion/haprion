@@ -118,6 +118,12 @@ class Item:
         )
 
     @property
+    def reader_opens(self) -> bool:
+        """Whether a reader may open the row's page: all but Settings, bar the token list."""
+
+        return not self.needs_writes or self.link == "/settings/api-tokens"
+
+    @property
     def key(self) -> tuple[str, str, str, str, str]:
         """What an acknowledgement names (B299, B406): the row as the list shows it.
 

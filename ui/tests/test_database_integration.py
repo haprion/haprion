@@ -4373,6 +4373,51 @@ class TheQueueNoLongerTakesABlockClient(unittest.TestCase):
         )
         self.assertTrue(claimed is None or claimed.operation != "block_client")
 
+    def test_one_queued_by_an_old_web_after_0109_s_ending_is_ended_by_0110(self) -> None:
+        """0109's ending and its constraint are two statements; a row between them stands."""
+
+        path = Path(__file__).parents[1] / "migrations/versions/0110_job_request_digest.py"
+        spec = importlib.util.spec_from_file_location("migration_0110", path)
+        if spec is None or spec.loader is None:
+            self.fail(f"{path} cannot be loaded")
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        recorded: list[str] = []
+        with mock.patch.object(migration.op, "execute", side_effect=recorded.append):
+            migration.upgrade()
+        # The update runs with the constraint out, and the constraint is back after it.
+        drop, ending, constraint = (
+            next(i for i, sql in enumerate(recorded) if needle in sql)
+            for needle in ("drop constraint job_operation_allowed", "update job", "not valid")
+        )
+        self.assertLess(drop, ending)
+        self.assertLess(ending, constraint)
+        with self.connect() as connection, connection.cursor() as cursor:
+            # What the database looks like after 0109: narrower constraint, not validated.
+            cursor.execute("alter table job drop constraint job_operation_allowed")
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key) "
+                "values ('block_client', 'straggler', '{}', %s)",
+                (uuid4(),),
+            )
+            cursor.execute(
+                "alter table job add constraint job_operation_allowed "
+                "check (operation <> 'block_client') not valid"
+            )
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                cursor.execute(migration.END_UNFINISHED)
+            connection.rollback()
+            cursor.execute("alter table job drop constraint job_operation_allowed")
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key) "
+                "values ('block_client', 'straggler', '{}', %s)",
+                (uuid4(),),
+            )
+            cursor.execute(migration.END_UNFINISHED)
+            cursor.execute("select state from job where cluster = 'straggler'")
+            self.assertEqual(cursor.fetchall(), [("failed",)])
+            connection.rollback()
+
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):

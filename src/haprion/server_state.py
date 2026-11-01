@@ -347,6 +347,12 @@ def normalized_address(value: object) -> str | None:
         address = None
     if address is None:
         return None
+    #
+    # A zone (`fe80::1%x`) may hold any character but `%`, a line break among
+    # them; the nodes refuse it, and the root helper writes this to its journal.
+    #
+    if isinstance(address, ipaddress.IPv6Address) and address.scope_id is not None:
+        return None
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
         address = address.ipv4_mapped
     return str(address)

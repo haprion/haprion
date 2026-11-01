@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from haprion import block_api_socket, exit_codes, helper_socket
+from haprion import block_api_socket, exit_codes, helper_socket, server_state
 from haprion.cli import block_api_helper
 from haprion.config import DeployIdentity, Node
 from tests.test_server_state_command import (
@@ -154,6 +154,18 @@ class TheObjectIsChecked(Fixture):
                 assert document is not None
                 self.assertEqual(document["error"]["code"], "bad_input")  # type: ignore[index]
         self.assertEqual(self.asked, [])
+
+    def test_an_address_with_a_zone_is_not_an_address_and_cannot_forge_a_journal_line(self) -> None:
+        forged = "fe80::1%\nblock store in alpha: 198.51.100.1 for token:x"
+        self.assertIsNone(server_state.normalized_address(forged))
+        self.assertIsNone(server_state.normalized_address("fe80::1%eth0"))
+        self.assertEqual(server_state.normalized_address("::ffff:203.0.113.9"), "203.0.113.9")
+        code, document, journal = self.block("store", ["203.0.113.9", forged])
+        self.assertEqual(code, exit_codes.REFUSED, document)
+        assert document is not None
+        self.assertEqual(document["error"]["code"], "bad_input")  # type: ignore[index]
+        self.assertEqual(self.asked, [])
+        self.assertEqual(journal.count("\n"), 1)
 
     def test_a_policy_without_a_server_state_identity_is_the_installation(self) -> None:
         self.write_policy(identity=False)

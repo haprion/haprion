@@ -143,6 +143,25 @@ def publish_payload(
     }
 
 
+def regenerate_payload(
+    *, expected_head: str, comment: str, requested_by: str, deploy: bool = False
+) -> dict[str, Any]:
+    """The `changes_publish` job that publishes the generated layer made again (0.99.11).
+
+    No part is carried: not the saved package, only the layer the installed
+    product would write for the published version. The dashboard-side page and
+    the API ask the same job.
+    """
+
+    return {
+        "regenerate": True,
+        "expected_head": expected_head,
+        "comment": comment.strip(),
+        "requested_by": requested_by,
+        **({"deploy": True} if deploy else {}),
+    }
+
+
 def held_server_counts(
     request: Request, config: Config, clusters: Iterable[str], status_rows: Iterable[Any]
 ) -> dict[str, held_servers.HeldServers]:

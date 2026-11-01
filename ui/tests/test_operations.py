@@ -623,6 +623,44 @@ class PublishingSavedChanges(unittest.TestCase):
             },
         )
 
+    def test_a_regeneration_is_a_publish_that_carries_no_part(self) -> None:
+        payload = {"expected_head": "abc123", "comment": "Again", "regenerate": True}
+        prepared = operations.prepare(
+            operation="changes_publish",
+            cluster="alpha",
+            request_id=UUID("3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f"),
+            payload=payload,
+        )
+
+        self.assertIs(json.loads(prepared.request)["parameters"]["regenerate"], True)
+        self.assertEqual(
+            json.loads(prepared.request),
+            json.loads(
+                changes_publish.build_request(
+                    "alpha",
+                    "3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f",
+                    expected_head="abc123",
+                    comment="Again",
+                    regenerate=True,
+                )
+            ),
+        )
+
+    def test_an_empty_package_is_refused_unless_it_regenerates(self) -> None:
+        payload = {"expected_head": "abc123", "comment": "Again"}
+        for extra in ({}, {"regenerate": False}):
+            with self.subTest(extra=extra), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="changes_publish",
+                    cluster="alpha",
+                    request_id=UUID("3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f"),
+                    payload={**payload, **extra},
+                )
+
+    def test_regenerate_is_a_boolean(self) -> None:
+        with self.assertRaises(operations.BadPayload):
+            self.prepare(regenerate="true")
+
     def test_the_helper_is_named_by_the_engine_and_not_written_again(self) -> None:
         prepared = self.prepare()
 

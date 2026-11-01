@@ -382,6 +382,22 @@ SOURCES: tuple[Source, ...] = (
         ),
         reading=dict,
     ),
+    #
+    # Whether publishing again would change what runs (0.99.11). With the
+    # fingerprint of the answer already held, so a published version nothing has
+    # changed under is answered without making its layer again.
+    #
+    Source(
+        "regeneration",
+        None,
+        db.record_cluster_regeneration,
+        asks=lambda connection, cluster: (
+            {"unchanged_since": known}
+            if (known := db.regeneration_fingerprint(connection, cluster))
+            else {}
+        ),
+        reading=dict,
+    ),
 )
 
 

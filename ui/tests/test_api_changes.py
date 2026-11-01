@@ -638,6 +638,55 @@ class Publishing(ChangesTestCase):
         self.send("POST", "/clusters/alpha/publish", name="a" * 64)
         self.assertEqual(len(self.queued[0]["payload"]["requested_by"]), 64)
 
+    def test_regenerate_publishes_the_layer_made_again_and_not_what_is_saved(self) -> None:
+        self.rows = [saved_row()]
+        response = self.send("POST", "/clusters/alpha/publish", body={"regenerate": True})
+        self.assertEqual(response.status_code, 202, response.text)
+        (queued,) = self.queued
+        self.assertEqual(queued["operation"], "changes_publish")
+        self.assertEqual(
+            queued["payload"],
+            {
+                "regenerate": True,
+                "expected_head": HEAD_COMMIT,
+                "comment": changes.DEFAULT_REGENERATE_COMMENT,
+                "requested_by": ACTOR,
+                "deploy": True,
+            },
+        )
+        (event,) = self.events
+        self.assertIs(event["detail"]["regenerate"], True)
+
+    def test_regenerate_needs_nothing_saved_and_takes_a_comment(self) -> None:
+        response = self.send(
+            "POST",
+            "/clusters/alpha/publish",
+            body={"regenerate": True, "deploy": False, "comment": "Hi"},
+        )
+        self.assertEqual(response.status_code, 202, response.text)
+        payload = self.queued[0]["payload"]
+        self.assertEqual((payload["comment"], "deploy" in payload), ("Hi", False))
+
+    def test_regenerate_must_be_a_boolean_and_an_unknown_cluster_is_a_404(self) -> None:
+        self.refused(
+            self.send("POST", "/clusters/alpha/publish", body={"regenerate": "yes"}),
+            400,
+            "bad_input",
+        )
+        self.refused(
+            self.send("POST", "/clusters/gamma/publish", body={"regenerate": True}),
+            404,
+            "not_found",
+        )
+        self.assertEqual(self.queued, [])
+
+    def test_a_cluster_with_no_history_read_cannot_be_regenerated(self) -> None:
+        self.history = []
+        self.refused(
+            self.send("POST", "/clusters/alpha/publish", body={"regenerate": True}), 409, "conflict"
+        )
+        self.assertEqual(self.queued, [])
+
     def test_nothing_saved_is_a_409_of_its_own(self) -> None:
         self.refused(self.send("POST", "/clusters/alpha/publish"), 409, "nothing_to_publish")
         self.assertEqual(self.queued, [])

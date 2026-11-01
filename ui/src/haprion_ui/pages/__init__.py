@@ -14,6 +14,7 @@ from haprion_ui.pages import (
     first_cluster,
     profiles,
     proxies,
+    regenerated,
     settings,
     sign_in,
     traffic,
@@ -31,5 +32,6 @@ def build_router(config: Config) -> APIRouter:
     router.include_router(backups.build_router(config))
     router.include_router(sign_in.build_router(config))
     router.include_router(first_cluster.build_router(config))
+    router.include_router(regenerated.build_router(config))
     router.include_router(dashboard.build_router(config))
     return router

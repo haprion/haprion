@@ -44,7 +44,7 @@ from haprion_ui.editor_flow import (
     state_reading,
     unresolved_servers,
 )
-from haprion_ui.pending import pending_package, publish_payload
+from haprion_ui.pending import pending_package, publish_payload, regenerate_payload
 from haprion_ui.preview import Preview
 from haprion_ui.reading import (
     HISTORY_SOURCE,
@@ -69,6 +69,7 @@ NOT_FOUND = Refusal(404, "not_found", "No such cluster or object.")
 # version's, and the page will not publish without one.
 #
 DEFAULT_COMMENT = "Published through the API."
+DEFAULT_REGENERATE_COMMENT = "Regenerated with the installed version."
 
 
 class PublishBody(BaseModel):
@@ -80,6 +81,11 @@ class PublishBody(BaseModel):
     # Versions page's *Publish*, which leaves the deploy to a later call.
     #
     deploy: bool = Field(default=True, strict=True)
+    #
+    # Publish the generated layer made again with the installed product, and
+    # nothing saved (the *Publish & deploy* of the regenerated page, 0.99.11).
+    #
+    regenerate: bool = Field(default=False, strict=True)
 
 
 class RevertBody(BaseModel):
@@ -627,15 +633,44 @@ def cluster_publish(
     config = request.app.state.config
     if cluster not in listed_clusters(request, config):
         raise NOT_FOUND
+    comment = asked.comment.strip() or (
+        DEFAULT_REGENERATE_COMMENT if asked.regenerate else DEFAULT_COMMENT
+    )
+    problem = comment_problem(comment)
+    if problem:
+        raise _bad(f"The comment {problem}.")
+    if asked.regenerate:
+        #
+        # Not the saved package: the published version's layer, made again. The
+        # head it is made on is the one this reading holds, which the helper
+        # fences on.
+        #
+        clusters, history_rows = read_source(request, config, HISTORY_SOURCE)
+        overview = history.build_history_overview(
+            clusters, history_rows, stale_after=config.poller.stale_after
+        )
+        view = next((view for view in overview.clusters if view.cluster == cluster), None)
+        if view is None or not view.head_commit:
+            raise Refusal(409, "conflict", "The cluster's newest version is not known yet.")
+        return writing.queue(
+            request,
+            caller,
+            operation="changes_publish",
+            cluster=cluster,
+            payload=regenerate_payload(
+                expected_head=view.head_commit,
+                comment=comment,
+                requested_by=caller.stored_actor,
+                deploy=asked.deploy,
+            ),
+            detail={"regenerate": True},
+            body=asked,
+        )
     package = pending_package(request, config, cluster)
     if package.problem:
         raise Refusal(409, "conflict", package.problem)
     if not package.rows:
         raise Refusal(409, "nothing_to_publish", "Nothing is saved to publish.")
-    comment = asked.comment.strip() or DEFAULT_COMMENT
-    problem = comment_problem(comment)
-    if problem:
-        raise _bad(f"The comment {problem}.")
     return writing.queue(
         request,
         caller,

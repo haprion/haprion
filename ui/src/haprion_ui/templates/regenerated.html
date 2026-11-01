@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% from "_busy.html" import busy_badge %}
+{% block title %}{{ view.cluster }} published again — Haprion{% endblock %}
+{% block content %}
+{#
+  What publishing a cluster again would change, with the installed product
+  (0.99.11): the engine's comparison, kept by the poller. The decision is made
+  here - nothing reaches the nodes until an admin publishes.
+#}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/history', 'Versions') }}<h1>{{ view.cluster }}</h1></div>
+  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}</div>
+</section>
+
+{% if view.state == 'unchanged' %}
+<p class="preview-notice">Publishing again would not change what {{ view.cluster }} runs.</p>
+{% elif view.state == 'unpublished' %}
+<p class="preview-notice">Nothing is published for {{ view.cluster }} yet.</p>
+{% elif view.state == 'unread' %}
+<p class="preview-notice">This has not been read for {{ view.cluster }} yet. The poller reads it within a minute or two.</p>
+{% elif view.state == 'refused' %}
+<article class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>The installed version cannot publish {{ view.cluster }} again</h3>{% if view.message %}<p>{{ view.message }}</p>{% endif %}</div></div></header>
+</article>
+{% else %}
+<article class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Publishing again would change what {{ view.cluster }} runs</h3><p>Made again with {{ view.installed_version }}, {{ view.files_changed }} file{{ '' if view.files_changed == 1 else 's' }} differ from the published version.</p></div></div></header>
+  {% if view.causes %}<ul class="removal-consequences">{% for cause in view.causes %}<li>{{ cause[:1] | upper }}{{ cause[1:] }}</li>{% endfor %}</ul>{% endif %}
+  {% if view.objects %}
+  <div class="table-scroll"><table class="node-table regenerated-table"><thead><tr><th>Proxy</th><th>Change</th><th>Parts</th></tr></thead><tbody>
+    {% for entry in view.objects %}
+    <tr><td data-label="Proxy"><strong>{{ entry.name }}</strong></td><td data-label="Change">{{ entry.change }}</td><td data-label="Parts">{{ entry.parts or '—' }}</td></tr>
+    {% endfor %}
+  </tbody></table></div>
+  {% endif %}
+  {% if ahead %}<p class="table-note">Publishing also carries the {{ ahead }} version{{ '' if ahead == 1 else 's' }} saved after the published one.</p>{% endif %}
+  {% if role == 'admin' and view.changes and view.changes.files %}
+  <section class="version-changes" aria-label="Changes in {{ view.cluster }} when published again">
+    <header class="version-changes-head"><h2>Changes</h2><p><span>{{ view.changes.files | length }} file{{ '' if view.changes.files | length == 1 else 's' }} · <span class="diff-added">+{{ view.changes.added }}</span> <span class="diff-removed">−{{ view.changes.removed }}</span></span></p></header>
+    {% set changes = view.changes %}
+    {% include "_diff-files.html" %}
+  </section>
+  {% endif %}
+  {% if management_writes and role == 'admin' %}
+  <footer class="cluster-actions" aria-label="{{ view.cluster }} operations">
+    {% if running %}
+    <div class="action-buttons" data-busy="{{ view.cluster }}">{{ busy_badge(running) }}</div>
+    {% else %}
+    <form method="post" action="/history/{{ view.cluster }}/regenerated" class="action-buttons">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_head" value="{{ head }}">
+      <input type="hidden" name="fingerprint" value="{{ view.fingerprint }}">
+      <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+      <button class="primary-button" type="submit">Publish &amp; deploy</button>
+    </form>
+    {% endif %}
+  </footer>
+  {% endif %}
+</article>
+{% endif %}
+{% endblock %}

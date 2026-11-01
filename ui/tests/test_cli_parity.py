@@ -185,6 +185,10 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/history/{cluster}/publish": NotASetting(
         "publishes what was saved in the interface; the terminal's apply publishes at once (B293)"
     ),
+    "/history/{cluster}/regenerated": NotASetting(
+        "publishes the layer made again with the installed release; the helper's `regenerate` "
+        "is the same request, and haprion-config-status --diff shows what it would change"
+    ),
     "/login": NotASetting("signs in"),
     "/logout": NotASetting("signs out"),
     "/account/password": NotASetting("the signed-in person's own password; haprion-user reset"),

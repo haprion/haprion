@@ -121,6 +121,12 @@ SETTINGS_SOURCE = Source(
     lambda connection: db.cluster_settings(connection),
 )
 
+REGENERATION_SOURCE = Source(
+    demo.regeneration_rows,
+    lambda connection: db.cluster_regeneration(connection),
+    lambda connection, cluster: db.cluster_regeneration(connection, cluster=cluster),
+)
+
 OBJECTS_SOURCE = Source(
     demo.object_rows,
     lambda connection: db.cluster_objects(connection),

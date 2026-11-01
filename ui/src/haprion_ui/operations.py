@@ -1377,7 +1377,16 @@ def prepare(
             "removed_backends",
             "backend_renames",
             "deploy",
+            "regenerate",
         )
+        #
+        # `regenerate` publishes the generated layer made again with the
+        # installed product, with no part changed: the one publish that carries
+        # no object, network or settings (0.99.11).
+        #
+        regenerate = payload.get("regenerate", False)
+        if not isinstance(regenerate, bool):
+            raise BadPayload("regenerate must be true or false")
         #
         # `deploy` asks the worker to deploy the version once it is recorded,
         # in the same job (B257). Read by the worker, never passed on.
@@ -1408,7 +1417,7 @@ def prepare(
         for key, document in (("network", network), ("settings", settings)):
             if key in payload and (not isinstance(document, str) or not document):
                 raise BadPayload(f"{key} must be a non-empty document")
-        if carried is None and network is None and settings is None:
+        if carried is None and network is None and settings is None and not regenerate:
             raise BadPayload("a publish carries objects, a network or settings")
         expected_head = payload.get("expected_head")
         comment = payload.get("comment")
@@ -1435,6 +1444,7 @@ def prepare(
                 settings=settings,
                 allow_certificate_mismatch=override,
                 requested_by=_requested_by(payload),
+                regenerate=regenerate,
             ),
         )
 

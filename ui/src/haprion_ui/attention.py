@@ -18,6 +18,7 @@ this application growing one.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 from collections.abc import Collection, Iterable, Mapping, Sequence
@@ -211,6 +212,7 @@ PAGES = {
     "node_package": "Dashboard",
     "traffic_stream": "Dashboard",
     "api_token": "Settings",
+    "regeneration": "Versions",
 }
 KINDS = tuple(PAGES)
 
@@ -888,6 +890,87 @@ def from_packages(rows: Sequence[PackageWaiting]) -> list[Item]:
         )
         for row in rows
     ]
+
+
+#
+# How much of an engine's refusal a row carries: one line, with the whole
+# message on the page it links to.
+#
+REGENERATION_MESSAGE = 160
+
+
+def regeneration_page(cluster: str) -> str:
+    """Where the difference is read and the decision made."""
+
+    return f"/history/{cluster}/regenerated"
+
+
+def regeneration_cause(cause: Mapping[str, Any]) -> str | None:
+    """One cause the engine could name, in words; none for a kind this does not know."""
+
+    if cause.get("kind") != "rule_set":
+        return None
+    return f"the WAF rule set {cause.get('published')} → {cause.get('installed')}"
+
+
+def regeneration_variant(result: Mapping[str, Any]) -> str:
+    """A short digest of the answer, so a later, different difference is a new row.
+
+    Everything but the fingerprint, which moves with the inputs rather than
+    with the difference: an acknowledged difference stays acknowledged while it
+    is the same one.
+    """
+
+    kept = {key: value for key, value in result.items() if key != "fingerprint"}
+    encoded = json.dumps(kept, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def from_regeneration(rows: Iterable[Any]) -> list[Item]:
+    """Clusters where publishing again would change what runs, or would be refused (0.99.11).
+
+    Only from a reading that was made: a failed one says nothing, and neither
+    does an answer of unchanged or unpublished.
+    """
+
+    items: list[Item] = []
+    for row in sorted(rows, key=lambda reading: reading.cluster):
+        result = row.result
+        if row.outcome != "done" or not isinstance(result, Mapping):
+            continue
+        outcome = result.get("outcome")
+        if outcome == "changed":
+            causes = [
+                said
+                for cause in result.get("causes") or ()
+                if isinstance(cause, Mapping) and (said := regeneration_cause(cause))
+            ]
+            message = f"Publishing again would change what {row.cluster} runs" + (
+                f" ({', '.join(causes)})" if causes else ""
+            )
+        elif outcome == "refused":
+            why = str(result.get("message") or "").strip()
+            if len(why) > REGENERATION_MESSAGE:
+                why = why[: REGENERATION_MESSAGE - 1] + "…"
+            message = (
+                f"The installed version cannot publish {row.cluster}'s configuration again"
+                + (f": {why}" if why else "")
+            )
+        else:
+            continue
+        items.append(
+            Item(
+                kind="regeneration",
+                severity="warning",
+                cluster=row.cluster,
+                subject=row.cluster,
+                message=message,
+                since=None,
+                link=regeneration_page(row.cluster),
+                variant=regeneration_variant(result),
+            )
+        )
+    return items
 
 
 def from_api_tokens(rows: Sequence[ApiToken], *, now: datetime) -> list[Item]:

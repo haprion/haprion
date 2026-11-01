@@ -1991,6 +1991,55 @@ class ARealDatabase(unittest.TestCase):
             connection.execute("delete from cluster_settings")
             connection.commit()
 
+    def test_the_poller_records_the_regeneration_and_web_only_reads_it(self) -> None:
+        # 0112: what publishing again would change, written only by the poller.
+        result = {"outcome": "changed", "fingerprint": "a" * 64, "files_changed": 2}
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            db.record_cluster_regeneration(
+                connection, cluster="alpha", outcome="done", result=result
+            )
+            self.assertEqual(db.regeneration_fingerprint(connection, "alpha"), "a" * 64)
+            before = db.cluster_regeneration(connection, cluster="alpha")[0].observed_at
+            # An answer that still stands keeps what is stored and moves its time.
+            db.record_cluster_regeneration(
+                connection,
+                cluster="alpha",
+                outcome="done",
+                result={"published_commit": None, "fingerprint": "a" * 64, "unchanged": True},
+            )
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            (row,) = db.cluster_regeneration(connection)
+            self.assertEqual((row.cluster, row.result), ("alpha", result))
+            self.assertGreater(row.observed_at, before)
+            for write in (
+                lambda: db.record_cluster_regeneration(
+                    connection, cluster="beta", outcome="done", result=result
+                ),
+                lambda: connection.execute("update cluster_regeneration set outcome = 'failed'"),
+                lambda: connection.execute("delete from cluster_regeneration"),
+            ):
+                with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                    write()
+                connection.rollback()
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            # A failed reading replaces the answer, and with it the fingerprint.
+            db.record_cluster_regeneration(connection, cluster="alpha", outcome="failed", result={})
+            self.assertIsNone(db.regeneration_fingerprint(connection, "alpha"))
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.record_cluster_regeneration(
+                    connection, cluster="alpha", outcome="odd", result={}
+                )
+            connection.rollback()
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.record_cluster_regeneration(
+                    connection, cluster="alpha", outcome="done", result={"diff": "x" * 8_500_000}
+                )
+            connection.rollback()
+        with self.connect() as connection:
+            connection.execute("delete from cluster_regeneration")
+            connection.commit()
+
     def test_the_poller_replaces_the_cluster_list_and_web_only_reads_it(self) -> None:
         # Fas 16 (B206/B211): one row, replaced by update, so no delete grant.
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:

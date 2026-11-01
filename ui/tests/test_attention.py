@@ -861,6 +861,120 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
         self.assertEqual([item.message for item in listed], ["traffic log: 20 000 lines queued"])
 
 
+def regeneration(
+    cluster: str = "alpha", reading: str = "done", **result: Any
+) -> db.ClusterRegeneration:
+    body: dict[str, Any] = {
+        "outcome": "changed",
+        "fingerprint": "a" * 64,
+        "published_commit": "b" * 40,
+        "published_version": 4,
+        "installed_version": "0.99.11",
+        "managed": True,
+        "message": None,
+        "causes": [],
+        "objects": [{"name": "shop", "change": "changed", "parts": ["listener"]}],
+        "files_changed": 1,
+        "diff": None,
+    }
+    body.update(result)
+    return db.ClusterRegeneration(
+        cluster=cluster,
+        observed_at=NOW,
+        outcome=reading,
+        result=body,
+        warnings=[],
+        error=None,
+        poll_error=None,
+    )
+
+
+class WhatPublishingAgainWouldChange(unittest.TestCase):
+    """0.99.11: a difference between the published version and what the installed product writes."""
+
+    def test_a_difference_is_a_warning_that_leads_to_where_it_is_read(self) -> None:
+        (item,) = attention.from_regeneration([regeneration()])
+
+        self.assertEqual(
+            (item.kind, item.severity, item.cluster, item.link, item.page),
+            ("regeneration", "warning", "alpha", "/history/alpha/regenerated", "Versions"),
+        )
+        self.assertEqual(item.message, "Publishing again would change what alpha runs")
+
+    def test_a_cause_the_engine_names_is_said(self) -> None:
+        (item,) = attention.from_regeneration(
+            [
+                regeneration(
+                    causes=[{"kind": "rule_set", "published": "4.25.1", "installed": "4.25.2"}]
+                )
+            ]
+        )
+
+        self.assertEqual(
+            item.message,
+            "Publishing again would change what alpha runs (the WAF rule set 4.25.1 → 4.25.2)",
+        )
+
+    def test_a_refusal_is_its_own_row_with_the_engines_words(self) -> None:
+        (item,) = attention.from_regeneration(
+            [regeneration(outcome="refused", message="a listener clashes")]
+        )
+
+        self.assertEqual(
+            item.message,
+            "The installed version cannot publish alpha's configuration again: a listener clashes",
+        )
+        self.assertEqual(item.severity, "warning")
+
+    def test_a_long_refusal_is_cut_to_one_line(self) -> None:
+        (item,) = attention.from_regeneration([regeneration(outcome="refused", message="x" * 1000)])
+
+        self.assertLess(len(item.message), 260)
+        self.assertTrue(item.message.endswith("…"))
+
+    def test_nothing_is_raised_for_unchanged_unpublished_or_a_failed_reading(self) -> None:
+        for row in (
+            regeneration(outcome="unchanged"),
+            regeneration(outcome="unpublished", managed=False),
+            regeneration(reading="failed"),
+            regeneration(reading="unavailable"),
+        ):
+            with self.subTest(row.outcome, result=row.result["outcome"]):
+                self.assertEqual(attention.from_regeneration([row]), [])
+
+    def test_the_variant_follows_the_difference_and_not_the_inputs(self) -> None:
+        (first,) = attention.from_regeneration([regeneration()])
+        (same,) = attention.from_regeneration([regeneration(fingerprint="c" * 64)])
+        (another,) = attention.from_regeneration(
+            [regeneration(objects=[{"name": "api", "change": "changed", "parts": ["routing"]}])]
+        )
+
+        self.assertEqual(first.variant, same.variant)
+        self.assertNotEqual(first.variant, another.variant)
+        self.assertLessEqual(len(first.variant), 128)
+        self.assertNotEqual(first.key, another.key)
+
+
+class ThePageListsWhatPublishingAgainWouldChange(LoginTestCase):
+    def page(self, rows: list[db.ClusterRegeneration]) -> str:
+        client = self.client(replace(configuration(), clusters=("alpha",)))
+        self.sign_in(client)
+        with mock.patch("haprion_ui.db.cluster_regeneration", return_value=rows):
+            return client.get("/").text
+
+    def test_a_difference_is_a_row_that_leads_to_the_regenerated_page(self) -> None:
+        page = self.page([regeneration()])
+
+        self.assertIn("Publishing again would change what", page)
+        self.assertIn('href="/history/alpha/regenerated"', page)
+
+    def test_no_difference_is_no_row(self) -> None:
+        page = self.page([regeneration(outcome="unchanged")])
+
+        self.assertNotIn("Publishing again would change", page)
+        self.assertNotIn("/history/alpha/regenerated", page)
+
+
 class EveryKindHasALabel(unittest.TestCase):
     def test_every_kind_names_the_page_its_row_goes_to(self) -> None:
         #

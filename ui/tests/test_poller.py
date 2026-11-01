@@ -472,16 +472,17 @@ class Passes(unittest.TestCase):
                 "network",
                 "cluster_settings",
                 "objects",
+                "regeneration",
             ],
         )
         #
         # Partial is allowed only where the read has more than one place to
         # fail: status reaches two nodes, and a backup listing reads one
-        # directory per node. The other six are each one read of one place.
+        # directory per node. The other seven are each one read of one place.
         #
         self.assertEqual(
             [source.partial_ok for source in poller.SOURCES],
-            [True, False, False, True, False, False, False, False],
+            [True, False, False, True, False, False, False, False, False],
         )
 
     def test_the_backup_source_asks_for_every_retained_archive(self) -> None:
@@ -496,13 +497,22 @@ class Passes(unittest.TestCase):
 
         self.assertEqual(source.reading({}), {"limit": None, "node": None})
 
-    def test_the_six_manager_local_readings_are_one_call(self) -> None:
+    def test_the_seven_manager_local_readings_are_one_call(self) -> None:
         """N2 (2026-10-08): one sudo call for what touches only the manager."""
 
         local = [source.operation for source in poller.SOURCES if source.run is None]
 
         self.assertEqual(
-            local, ["list", "list_backups", "cert_list", "network", "cluster_settings", "objects"]
+            local,
+            [
+                "list",
+                "list_backups",
+                "cert_list",
+                "network",
+                "cluster_settings",
+                "objects",
+                "regeneration",
+            ],
         )
         self.assertTrue(all(source.reading is not None for source in poller.SOURCES[2:]))
 
@@ -915,6 +925,65 @@ class TheObjectsReadingSendsWhatItHolds(unittest.TestCase):
                 reading={"outcome": "done", "result": {"unchanged": True, "objects": []}},
             )
         replace.assert_not_called()
+
+
+class TheRegenerationReadingSendsWhatItHolds(unittest.TestCase):
+    """0.99.11: the fingerprint of the held answer goes to the helper; an unchanged answer keeps what is stored."""
+
+    def source(self) -> poller.Source:
+        return next(source for source in poller.SOURCES if source.operation == "regeneration")
+
+    def test_the_held_fingerprint_is_asked_with(self) -> None:
+        asks = self.source().asks
+        if asks is None:
+            raise AssertionError("the regeneration source asks nothing")
+        with unittest.mock.patch("haprion_ui.db.regeneration_fingerprint", return_value="f" * 64):
+            self.assertEqual(asks(object(), "alpha"), {"unchanged_since": "f" * 64})
+        with unittest.mock.patch("haprion_ui.db.regeneration_fingerprint", return_value=None):
+            self.assertEqual(asks(object(), "alpha"), {})
+
+    def test_the_answer_is_stored_by_the_regeneration_recorder_and_asks_for_nothing_else(
+        self,
+    ) -> None:
+        source = self.source()
+
+        self.assertIs(source.record, db.record_cluster_regeneration)
+        self.assertEqual(source.run, None)
+        if source.reading is None:
+            raise AssertionError("the regeneration source is not a manager-local reading")
+        self.assertEqual(
+            source.reading({"unchanged_since": "f" * 64}), {"unchanged_since": "f" * 64}
+        )
+
+    def test_an_unchanged_answer_leaves_the_search_alone(self) -> None:
+        with unittest.mock.patch("haprion_ui.db.replace_search_entries") as replace:
+            poller._index(
+                TheSearchIndexIsKeptBesideTheReadings.Pool(),
+                self.source(),
+                cluster="alpha",
+                reading={"outcome": "done", "result": {"unchanged": True}},
+            )
+        replace.assert_not_called()
+
+    def test_a_failed_envelope_is_a_failed_reading_and_no_answer_is_stored_in_its_place(
+        self,
+    ) -> None:
+        failed = document(
+            "regeneration",
+            outcome="failed",
+            error={"code": "regeneration_unavailable", "message": "no"},
+        )
+        completed = subprocess.CompletedProcess([], 1, json.dumps(failed), "")
+        row = poller._judge(
+            completed,
+            cluster="alpha",
+            operation="regeneration",
+            accept_partial=False,
+            asked=REQUEST,
+        )
+
+        self.assertEqual(row["outcome"], "failed")
+        self.assertEqual(row["result"], {})
 
 
 class TheManagerIsReadWithoutACluster(unittest.TestCase):

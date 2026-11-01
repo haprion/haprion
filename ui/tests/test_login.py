@@ -230,6 +230,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.cluster_networks", return_value=[]),
             mock.patch("haprion_ui.db.cluster_settings", return_value=[]),
             mock.patch("haprion_ui.db.cluster_objects", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_regeneration", return_value=[]),
             #
             # The listing reads drafts now, so every page that renders it
             # calls this. Defaulted to none rather than left unpatched: a

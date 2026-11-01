@@ -133,7 +133,8 @@
             "preparation",
             "node_package",
             "traffic_stream",
-            "api_token"
+            "api_token",
+            "regeneration"
           ],
           "description": "Code. What kind of fault the row reports."
         },

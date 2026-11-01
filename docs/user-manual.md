@@ -136,6 +136,20 @@ again. The cluster keeps the nodes it has now. Their keepalived settings, shared
 addresses are made again for today's nodes, so a node added since stays in service. The version's WAF
 rule set and country networks come back as it ran them, not as installed today.
 
+**After an upgrade of Haprion.** A newer release can generate other configuration from the same objects, and
+so can a newer WAF rule set. The nodes keep running what was published until the cluster is published
+again. The manager makes each cluster's published version again with the installed release, without
+publishing, and compares the result with what the nodes run. When they differ, *Needs attention* says
+*Publishing again would change what the cluster runs*, with the cause where one is known, such as *the WAF
+rule set 4.25.1 → 4.25.2*. Open the row's **Versions** button: the page lists the causes, the proxies
+that differ and the files, line by line. **Publish & deploy** there publishes only the regenerated
+configuration and deploys it. Nothing happens until you choose it, so the traffic is reloaded when you
+want it. If versions were saved after the published one, publishing carries them too, and the page says
+so. A reader sees what would change, but not the files. Nothing is shown when a publish would change
+nothing, or when nothing is published yet. When the installed release cannot generate the published
+configuration, a row of its own says so with the reason, and a publish would be refused the same way.
+For troubleshooting, `haprion-config-status -c <cluster> --diff` prints the same difference.
+
 **Publish & deploy.** When a cluster has saved changes, its dashboard card offers *Publish & deploy N
 changes* instead of *Deploy configuration*. A dialog lists the changes and takes the comment. One job then
 publishes and deploys: the worker deploys the version the publish recorded. The job ends when the deploy
@@ -172,7 +186,7 @@ haprion-deploy -c alpha
 ```
 
 `haprion-config-status` also says whether publishing again would change what the nodes run. A new
-release of Haprion can generate other configuration from the same objects, and no saved version records
+release of Haprion can generate other configuration from the same objects, and no version records
 that. The published version is generated again with the installed release, without publishing, and the
 files a node would run are compared with the ones it runs. When they differ, the report says so:
 
@@ -4027,6 +4041,9 @@ box is not shown.
   any of them; a warning when some are down, or down on one node only. An object without a health check
   has no lamp and is not listed.
 - **A cluster whose status has not been read** for two poll intervals.
+- **A cluster where publishing again would change what runs**, as a warning, and one where the installed
+  release would refuse the published configuration. The row's **Versions** button opens the difference.
+  Acknowledging it holds until the difference is another one.
 - **A WAF exception** marked *Not working*.
 - **A node backup** that is missing, old or failed.
 - **Traffic log collection** on a node that failed, has not succeeded for five minutes, or is still
@@ -4154,8 +4171,8 @@ haprion_status_age_seconds{cluster="alpha"} 12
 haprion_status_age_seconds{cluster="beta"} 14
 ```
 
-`kind` is one of `backup`, `certificate`, `cluster`, `forwarding`, `job`, `logs`, `manager`, `node`,
-`node_package`, `preparation`, `reading`, `service`, `traffic_stream` and `waf`. Every kind and
+`kind` is one of `api_token`, `backup`, `certificate`, `cluster`, `forwarding`, `job`, `logs`, `manager`, `node`,
+`node_package`, `preparation`, `reading`, `regeneration`, `service`, `traffic_stream` and `waf`. Every kind and
 severity pair is present, even at 0, so an alert expression never meets a missing series.
 
 #### Uptime Kuma
@@ -4687,7 +4704,7 @@ the *Proxies* page as saved by `token:` and the token's name. Nothing reaches th
 |---|---|
 | `/clusters/{cluster}/objects` | **POST** saves a new object from its document. Answered 201 with the saved change; the same document again answers 201 with `changed` false |
 | `/clusters/{cluster}/objects/{name}` | **PUT** replaces the object's saved change, or saves a change over the object as published. **DELETE** saves its removal, held to the same rules as PUT |
-| `/clusters/{cluster}/publish` | **POST** publishes everything saved for the cluster as one version (`comment`, optional, and `deploy`, true unless you say false). Answered 202 with the job |
+| `/clusters/{cluster}/publish` | **POST** publishes everything saved for the cluster as one version (`comment`, optional, and `deploy`, true unless you say false). With `regenerate` true it publishes instead the published version's configuration made again with the installed release, whatever is saved (a cluster with no version read yet is a 409). Answered 202 with the job |
 | `/clusters/{cluster}/revert` | **POST** publishes an earlier version again (`version`). Answered 202 with the job |
 
 The body of a save is the object itself, as JSON or as YAML - the same document the *Proxies* page stores. It
@@ -8544,7 +8561,7 @@ own - the hardest kind of divergence to find.
 
 **Where the results go.** The results go to cache tables with one row per cluster:
 `cluster_status`, `cluster_inventory`, `cluster_history`, `cluster_certificates`,
-`cluster_network`, `cluster_backups`, `cluster_settings`, `cluster_objects` and `cluster_list`.
+`cluster_network`, `cluster_backups`, `cluster_settings`, `cluster_objects`, `cluster_regeneration` and `cluster_list`.
 Every page shows how old the answer it uses is. `observed_at` is set by the database - by default on
 insert and by a trigger on update - and the poller holds no `update` on that column. A poller that
 could write it could report a cluster it never reached as freshly observed.

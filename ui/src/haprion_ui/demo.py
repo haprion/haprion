@@ -25,6 +25,7 @@ from haprion_ui.db import (
     ClusterInventory,
     ClusterNetwork,
     ClusterObjects,
+    ClusterRegeneration,
     ClusterSettingsRow,
     ClusterStatus,
     ManagerCertificates,
@@ -963,6 +964,77 @@ def _engine_fields(cluster: str, entries: list[dict[str, Any]]) -> list[dict[str
         "groups",
     )
     return [{**entry, **{key: computed[entry["name"]][key] for key in fields}} for entry in entries]
+
+
+def regeneration_rows(now: datetime | None = None) -> tuple[ClusterRegeneration, ...]:
+    """One cluster where publishing again would change what runs, one where it would not."""
+
+    observed = (now or datetime.now(UTC)) - timedelta(seconds=25)
+    return (
+        ClusterRegeneration(
+            cluster="edge-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "outcome": "changed",
+                "fingerprint": "e" * 64,
+                "published_commit": f"{24:040d}",
+                "published_version": 24,
+                "installed_version": "0.99.11",
+                "managed": True,
+                "message": None,
+                "causes": [{"kind": "rule_set", "published": "4.25.1", "installed": "4.25.2"}],
+                "objects": [{"name": "public-web", "change": "changed", "parts": ["listener"]}],
+                "files_changed": 1,
+                "diff": {
+                    "commit": f"{24:040d}",
+                    "parent": None,
+                    "truncated": False,
+                    "files": [
+                        {
+                            "path": "nodes/node-a/haproxy.cfg",
+                            "status": "modified",
+                            "old_path": None,
+                            "added": 1,
+                            "removed": 1,
+                            "binary": False,
+                            "lines": [
+                                "@@ -41,7 +41,7 @@ frontend public-web",
+                                " bind 192.0.2.10:443 ssl crt-list /etc/haproxy/public-web.crtlist",
+                                "-    http-request set-var(txn.rule_set) str(4.25.1)",
+                                "+    http-request set-var(txn.rule_set) str(4.25.2)",
+                                " default_backend public-web",
+                            ],
+                        }
+                    ],
+                },
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+        ClusterRegeneration(
+            cluster="service-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "outcome": "unchanged",
+                "fingerprint": "f" * 64,
+                "published_commit": f"{12:040d}",
+                "published_version": 12,
+                "installed_version": "0.99.11",
+                "managed": True,
+                "message": None,
+                "causes": [],
+                "objects": [],
+                "files_changed": 0,
+                "diff": None,
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+    )
 
 
 def object_rows(now: datetime | None = None) -> tuple[ClusterObjects, ...]:

@@ -1794,17 +1794,19 @@ either way the answer comes at once:
 - `deny` answers 503 and records `waf-engine:deny`. This is the default: a WAF that lets requests through
   uninspected is no control.
 - `allow` serves the request uninspected and records `waf-engine:log`. Choose it for an object where
-  staying up matters more.
+  staying up matters more. It applies to the engine failing, never to a request whose client has left
+  (below): an object in `mode: block` refuses that one whatever `on_engine_error` says.
 
 Either way the node's traffic record carries `waf_error`, HAProxy's reason: `1` is an engine that took longer
 than half a second, `256` and up a connection to it that failed.
 
 **When the client leaves first**, `waf_error` is `4` and the record names the rule `waf-engine/interrupted`
-(`waf-engine/interrupted:deny` or `waf-engine/interrupted:log`, by `on_engine_error`). The client closed the
+(`waf-engine/interrupted:deny` or `waf-engine/interrupted:log`). The client closed the
 request while the engine was still checking it, for instance a browser that cancelled an image it no longer
-needed. It is not an engine fault. With `deny` the node closes the connection without an answer and nothing
-reaches the server; the request is logged without a status, shown as a dash. A client that stays still gets the
-503. A query or alert outside the product that should find every request the engine gave no answer for
+needed. It is not an engine fault. An object in `mode: block`, or with `on_engine_error: deny`, closes the
+connection without an answer and nothing reaches the server; the request is logged without a status, shown as
+a dash. An object in `mode: log` refuses nothing and records `waf-engine/interrupted:log`. A client that
+stays still gets the 503 (`deny`) or is served (`allow`). A query or alert outside the product that should find every request the engine gave no answer for
 matches the prefix `waf-engine`.
 
 A node whose engine is not running, while the published release has rules, is marked *WAF engine stopped*
@@ -3750,7 +3752,8 @@ another order. Sorting on *Bytes* therefore shows the largest of the newest matc
 request of the week.
 
 **What a row shows.** The time, the cluster and node, the client, the request, the status, the destination
-and the size - nothing more. When the WAF matched a rule, the *Request* cell starts with a badge naming
+and the size - nothing more. A dash in *Status* means no answer was sent: the client left first, or the
+node closed the connection; the export leaves that cell empty. When the WAF matched a rule, the *Request* cell starts with a badge naming
 the rule: red when the rule refused the request, amber when it only logged it. Rows can be ticked and
 saved with *Export selected (.csv)*. The file has the row's columns plus *Rule* and *Mode* (`denied` or
 `logged`), empty when no rule matched; from *WAF logs* it is named `waf-logs-…`.
@@ -4731,7 +4734,7 @@ the *Proxies* page as saved by `token:` and the token's name. Nothing reaches th
 |---|---|
 | `/clusters/{cluster}/objects` | **POST** saves a new object from its document. Answered 201 with the saved change; the same document again answers 201 with `changed` false |
 | `/clusters/{cluster}/objects/{name}` | **PUT** replaces the object's saved change, or saves a change over the object as published. **DELETE** saves its removal, held to the same rules as PUT |
-| `/clusters/{cluster}/publish` | **POST** publishes everything saved for the cluster as one version (`comment`, optional, and `deploy`, true unless you say false). With `regenerate` true it publishes instead the published version's configuration made again with the installed release, whatever is saved (a cluster with no version read yet is a 409). Answered 202 with the job |
+| `/clusters/{cluster}/publish` | **POST** publishes everything saved for the cluster as one version (`comment`, optional, and `deploy`, true unless you say false). With `regenerate` true it publishes instead the published version's configuration made again with the installed release; it is a 409 while changes are saved (publishing those does the same) and for a cluster with no version read yet. Answered 202 with the job |
 | `/clusters/{cluster}/revert` | **POST** publishes an earlier version again (`version`). Answered 202 with the job |
 
 The body of a save is the object itself, as JSON or as YAML - the same document the *Proxies* page stores. It
@@ -5452,6 +5455,10 @@ in the section linked.
   arguments past the limit are judged by the object's mode, like a rule set match. But no exception lets
   one through: what was not read cannot be narrowed to a field
   ([A request the engine cannot read](#the-waf-engine)).
+- **A client that shuts down its sending side right after the request is refused on a guarded object.**
+  Some scripts and tools (`nc -N`) half-close their HTTP/1 connection once the request is sent. The node
+  cannot tell that from a client that left, and a request the engine has not judged is never forwarded, so
+  the connection is closed without an answer ([When the client leaves first](#the-waf-engine)).
 
 
 ## Environment reference

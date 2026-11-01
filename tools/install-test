@@ -158,6 +158,8 @@ LEFT_BY_SHARED_PACKAGES = (
     r"^/var/log/(apt|dpkg\.log|alternatives\.log|btmp|wtmp|lastlog|faillog|letsencrypt)(/|$)",
     # rsyslog's logs, the haproxy package's among them, which its purge keeps.
     r"^/var/log/(syslog|auth\.log|user\.log|kern\.log|messages|dmesg|haproxy\.log)(\.[0-9]+)?$",
+    # The second name rsyslogd runs from (see CONTAINERFILE), made when it starts.
+    r"^/usr/local/sbin/rsyslogd-itest$",
     # keepalived's routing protocol name, written by its package's script.
     r"^/etc/iproute2(/rt_addrprotos\.d(/keepalived\.conf)?)?$",
     r"^/etc/(passwd|group|shadow|gshadow|subuid|subgid)-?$",
@@ -190,6 +192,15 @@ CONTAINER_UNITS = (
 # (policy-rc.d) and carry one set of host keys for every container; a real
 # machine does neither, so both are undone.
 #
+# rsyslogd runs from a second name for the same file. The host's AppArmor
+# profile for /usr/sbin/rsyslogd (loaded because the host has rsyslog) holds
+# for the container's rsyslogd too, and it refuses signals from the profile the
+# container's init has through podman and crun: systemd could not stop it
+# ("Failed to kill main process ... Permission denied"), so every restart left
+# the old rsyslogd reading the same socket as the new one, and the traffic log
+# sometimes went to the old one without the traffic rule (measured 26-11-01).
+# A VM's init is unconfined and signals it freely.
+#
 CONTAINERFILE = """\
 FROM {image}
 RUN apt-get update -q \\
@@ -202,7 +213,12 @@ RUN apt-get update -q \\
       'Before=ssh.service ssh.socket' 'ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key' \\
       '[Service]' 'Type=oneshot' 'ExecStart=/usr/bin/ssh-keygen -A' \\
       '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/ssh-host-keys.service \\
- && systemctl enable ssh-host-keys.service
+ && systemctl enable ssh-host-keys.service \\
+ && mkdir -p /etc/systemd/system/rsyslog.service.d \\
+ && printf '%s\\n' '[Service]' \\
+      'ExecStartPre=+/bin/ln -f /usr/sbin/rsyslogd /usr/local/sbin/rsyslogd-itest' \\
+      'ExecStart=' 'ExecStart=/usr/local/sbin/rsyslogd-itest -n -iNONE' \\
+      > /etc/systemd/system/rsyslog.service.d/itest-unconfined.conf
 CMD ["/sbin/init"]
 """
 
@@ -950,6 +966,32 @@ class Run:
         if missing:
             raise Failed("missing after installation:\n  " + "\n  ".join(missing))
 
+    def one_rsyslogd_per_node(self) -> None:
+        """Exactly one rsyslogd on each node, the one rsyslog.service runs.
+
+        Another one reads the same socket and may take a record the traffic rule
+        was written for; it is there when systemd cannot stop a unit's process
+        (see CONTAINERFILE). Checked here so that fails every time, not as a
+        record missing now and then.
+        """
+
+        for role in NODES:
+            _, found = self.on(
+                role, "pgrep -a -f '^/usr/(local/)?sbin/[r]syslogd' || true", check=False
+            )
+            _, main = self.on(role, "systemctl show rsyslog -p MainPID --value")
+            processes = [line.split()[0] for line in found.splitlines() if line.strip()]
+            if processes != [main.strip()]:
+                _, journal = self.on(
+                    role,
+                    "journalctl -u rsyslog --no-pager -o cat | grep -E 'left-over|Failed to kill' | tail -5",
+                    check=False,
+                )
+                raise Failed(
+                    f"{role} runs rsyslogd {processes} and rsyslog.service's main process is "
+                    f"{main.strip()}:\n{found}{journal}"
+                )
+
     def services_running(self) -> None:
         for role in NODES:
             self.on(role, "systemctl is-active haproxy keepalived")
@@ -1095,6 +1137,7 @@ def run_one(
             )
             for role in NODES
         ]
+        step("one rsyslogd on each node, rsyslog.service's own", run.one_rsyslogd_per_node)
         step(
             f"haprion-cluster add with {NODES[0]}: joined, version 1 published",
             lambda: run.create_cluster(blocks[0]),
@@ -1105,6 +1148,10 @@ def run_one(
             lambda: run.add_node(NODES[1], blocks[1]),
         )
         step("the joins warned of nothing", run.joined_quietly)
+        step(
+            "still one rsyslogd on each node after the joins turned the traffic log on",
+            run.one_rsyslogd_per_node,
+        )
         step(
             "each node's keys read its own cluster alone, from its own address",
             run.a_node_reads_its_own_cluster_alone,

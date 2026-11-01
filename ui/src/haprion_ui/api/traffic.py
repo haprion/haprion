@@ -9,6 +9,7 @@ carefully as a login.
 from __future__ import annotations
 
 import base64
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
@@ -41,6 +42,10 @@ def moment(at: datetime) -> str:
     return (at if at.tzinfo is not None else at.replace(tzinfo=UTC)).isoformat()
 
 
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
 def known_cluster(request: Request, cluster: str) -> None:
     """A cluster this installation does not list is answered as one outside the token's scope."""
 
@@ -57,20 +62,33 @@ EARLIEST = datetime(1970, 1, 1, tzinfo=UTC)
 LATEST = datetime(9999, 1, 1, tzinfo=UTC)
 
 
-def _cursor(entry: traffic_logs.Entry) -> str:
-    """The place after a row, as an opaque string: its time, request number and node."""
+NODE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
-    text = f"{moment(entry.at)}|{entry.request}|{entry.node}"
+
+def _cursor(entry: traffic_logs.Entry, from_shown: datetime) -> str:
+    """The place after a row, as an opaque string.
+
+    Its time, request number and node, and the start of the window it was cut
+    from: a read without `from` starts an hour before now, and a next page that
+    started an hour before a later now would drop the oldest rows (26-11-01).
+    """
+
+    text = f"{moment(from_shown)}|{moment(entry.at)}|{entry.request}|{entry.node}"
     return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
 
 
-def _place(cursor: str | None) -> tuple[datetime, int, str] | None:
+def _place(cursor: str | None) -> tuple[datetime, tuple[datetime, int, str]] | None:
+    """The window start and the place a cursor holds; a 400 for anything this log did not give."""
+
     if cursor is None:
         return None
     try:
         text = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
-        at, request, node = text.split("|")
-        return datetime.fromisoformat(at), int(request), node
+        start, at, request, node = text.split("|")
+        number = int(request)
+        if not NODE_NAME.match(node) or not 0 <= number < 2**63:
+            raise ValueError(node)
+        return datetime.fromisoformat(start), (datetime.fromisoformat(at), number, node)
     except ValueError:
         raise Refusal(400, "bad_input", "before is not a place this log gave.") from None
 
@@ -153,9 +171,14 @@ def traffic_list(
     # A window wider than the retention is harmless: the table holds no more
     # than that. A missing end is now, a missing start an hour before the end.
     #
-    after = _place(before)
-    to_shown = to_at or datetime.now(UTC)
-    from_shown = from_at or to_shown - DEFAULT_WINDOW
+    held = _place(before)
+    after = held[1] if held else None
+    to_shown = to_at or _now()
+    #
+    # A page that follows another stays in the window the first one was cut
+    # from, so the rows are each listed once however much later it is asked.
+    #
+    from_shown = from_at or (_utc(held[0]) if held else None) or to_shown - DEFAULT_WINDOW
     reading = traffic_logs.Reading((), (), 0, False)
     if config.traffic_logs.enabled:
         _, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
@@ -204,7 +227,9 @@ def traffic_list(
             "requests": [_request(entry) for entry in reading.entries[:limit]],
             "truncated": len(reading.entries) > limit,
             # Where the next page begins: pass it as `before`.
-            "next": _cursor(reading.entries[limit - 1]) if len(reading.entries) > limit else None,
+            "next": _cursor(reading.entries[limit - 1], from_shown)
+            if len(reading.entries) > limit
+            else None,
             "limit": limit,
             "nodes": [_node(item) for item in reading.nodes],
         },

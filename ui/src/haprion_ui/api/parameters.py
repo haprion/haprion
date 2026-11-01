@@ -36,6 +36,13 @@ def only_declared_parameters(
     """
 
     del caller
+    #
+    # A NUL byte cannot be a PostgreSQL text value: left alone it is a 500 where
+    # a parameter reaches a query (26-11-01).
+    #
+    for value in (*request.query_params.values(), *request.path_params.values()):
+        if isinstance(value, str) and "\x00" in value:
+            raise Refusal(400, "bad_input", "A parameter holds a character no value can.")
     route = request.scope.get("route")
     if not isinstance(route, APIRoute):
         return

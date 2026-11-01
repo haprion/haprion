@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -308,6 +309,41 @@ class TheTrafficRoute(ApiTestCase):
         self.assertIsNone(second["next"])
         # The place is the last row listed, and the read starts after it.
         self.assertEqual(self.read.call_args.kwargs["before"], (SEEN, 2, "node-a"))
+
+    def test_a_next_page_stays_in_the_window_the_first_was_cut_from(self) -> None:
+        # Without `from` the window is an hour before now; an hour later the next page
+        # must still start where the first did, or the oldest rows are dropped.
+        rows = tuple(entry(request=number) for number in (3, 2, 1))
+        self.read.return_value = Reading(rows, (), 0, False)
+        first = self.get("?limit=2").json()["result"]
+        first_from = datetime.fromisoformat(first["from"])
+        later = datetime.now(UTC) + timedelta(hours=1)
+        with mock.patch("haprion_ui.api.traffic._now", return_value=later):
+            second = self.get("?limit=2&before=" + first["next"]).json()["result"]
+        self.assertEqual(self.read.call_args.kwargs["from_at"], first_from)
+        self.assertEqual(second["from"], first["from"])
+        # A `from` the caller names still wins.
+        self.get("?limit=2&from=2026-10-01T00:00:00Z&before=" + first["next"])
+        self.assertEqual(self.read.call_args.kwargs["from_at"], datetime(2026, 10, 1, tzinfo=UTC))
+
+    def test_a_nul_byte_or_a_place_outside_the_table_is_a_400_not_a_500(self) -> None:
+        def cursor(text: str) -> str:
+            return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+        start = "2026-10-31T11:00:00+00:00|2026-10-31T11:59:30+00:00"
+        for query in (
+            "?before=" + cursor(f"{start}|7|node-a\x00"),
+            "?before=" + cursor(f"{start}|7|no de"),
+            "?before=" + cursor(f"{start}|{2**63}|node-a"),
+            "?before=" + cursor(f"{start}|-1|node-a"),
+            "?q=a%00b",
+            "?object=a%00",
+            "?status=2%00x",
+        ):
+            with self.subTest(query=query):
+                response = self.get(query)
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(response.json()["error"]["code"], "bad_input")
 
     def test_a_place_that_was_not_given_is_a_400(self) -> None:
         for before in ("x", "bm90LWEtcGxhY2U", "MjAyNi0xMC0zMXx4fG5vZGUtYQ"):

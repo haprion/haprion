@@ -205,6 +205,15 @@ class EveryRouteRefusesWhatItDoesNotTake(ApiTestCase):
             response = self.client().get("/api/v1/clusters?since=1")
         self.assertEqual(response.status_code, 401)
 
+    def test_a_nul_byte_in_any_parameter_is_a_400_not_a_500(self) -> None:
+        # PostgreSQL text cannot hold NUL; psycopg refuses it on the client.
+        headers = {"Authorization": f"Bearer {self.issue()}"}
+        for path in ("/jobs?cluster=a%00b", "/clusters/a%00b", "/clusters/alpha/objects/a%00b"):
+            with self.subTest(path=path):
+                response = self.client().get("/api/v1" + path, headers=headers)
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(response.json()["error"]["code"], "bad_input")
+
     def test_the_parameters_a_route_takes_are_not_refused(self) -> None:
         with (
             mock.patch("haprion_ui.db.listed_jobs", return_value=[]),

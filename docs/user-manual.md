@@ -1556,6 +1556,12 @@ dynamic_block:
 
 At least one trigger must be set.
 
+**Tip: an application that loads many small files needs no request limit.** A photo library such as Immich asks
+for one thumbnail per picture. Scrolling through a large album can send thousands of requests in ten seconds, so
+any *Requests* value is either too low for the people using it or too high to stop anything. Leave *Requests*
+empty and set *Errors*. A scanner or a password guesser leaves 4xx answers behind; normal use of such an
+application leaves almost none.
+
 **What counts as an error.** The errors are the 4xx answers the object's servers give - what a scanner or
 a password guesser leaves behind. A 5xx is the application's fault and is not counted. Nor are answers
 HAProxy gives itself - the refusal of a block, the rate limit's 429 - so a block cannot extend itself, and an

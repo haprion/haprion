@@ -156,11 +156,18 @@ class Poller:
     def stale_after(self) -> timedelta:
         """How old a reading may be before it is shown as stale.
 
-        Two rounds, and the time one cluster's reading may take: the poller
-        reads the clusters one after another, so a node that takes the
-        connection and never answers held every other cluster back by up to
-        the status timeout, and two rounds alone called them stale (review
-        26-10-24, 02-09).
+        Each cluster is read on its own cycle: its sources, then the interval
+        from its own finish. A healthy cluster's reading is therefore at most
+        one interval plus its own read old, however long another cluster
+        hangs. This allows that, one more interval for a cycle that starts
+        late (it waited for one of the poller's parallel slots, or a
+        notification came while it was reading), and the status timeout for a
+        node that answers slowly. What it protects against is a cluster that
+        really has stopped being read: it turns stale after about two
+        intervals and a minute, and a briefly slow one does not flicker.
+        (Until 26-11-01 the clusters were read in passes and the next pass
+        waited for the slowest, which is why one silent cluster called the
+        healthy ones stale; review 26-10-24, 02-09.)
         """
 
         return timedelta(seconds=2 * self.interval_seconds + STATUS_TIMEOUT_SECONDS)

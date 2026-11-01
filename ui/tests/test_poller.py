@@ -38,6 +38,19 @@ REQUEST = "00000000-0000-4000-8000-000000000001"
 _FIXED_REQUEST = unittest.mock.patch.object(poller, "new_request_id", return_value=REQUEST)
 
 
+def poll_once(
+    pool: Any,
+    config: Any,
+    sources: tuple[poller.Source, ...] = poller.SOURCES,
+    *,
+    clusters: tuple[str, ...] | None = None,
+) -> int:
+    """Every listed cluster's sources once, in order; how many answered well."""
+
+    listed = tuple(clusters if clusters is not None else config.clusters)
+    return sum(poller._poll_cluster_sources(pool, cluster, sources) for cluster in listed)
+
+
 def setUpModule() -> None:
     _FIXED_REQUEST.start()
 
@@ -290,7 +303,7 @@ class Passes(unittest.TestCase):
             poller.Source("inventory", inventory_helper, record),
             poller.Source("list", list_helper, record),
         )
-        healthy = poller.poll_once(Pool(), config, sources)
+        healthy = poll_once(Pool(), config, sources)
 
         self.assertEqual(healthy, 2)
         # The clusters are read at once, so only each cluster's own order is
@@ -349,7 +362,7 @@ class Passes(unittest.TestCase):
             poller=Poller(interval_seconds=60),
         )
         with self.assertLogs("haprion_ui.poller", "ERROR") as logged:
-            healthy = poller.poll_once(
+            healthy = poll_once(
                 Pool(), config, (poller.Source("status", helper, record, partial_ok=True),)
             )
 
@@ -396,7 +409,7 @@ class Passes(unittest.TestCase):
                 side_effect=lambda _c, cluster: order.append(f"settle {cluster}"),
             ),
         ):
-            poller.poll_once(Pool(), None, sources, clusters=("alpha",))  # type: ignore[arg-type]
+            poll_once(Pool(), None, sources, clusters=("alpha",))
 
         self.assertEqual(order, ["begin alpha", "record alpha", "record alpha", "settle alpha"])
 
@@ -434,7 +447,7 @@ class Passes(unittest.TestCase):
             unittest.mock.patch("haprion_ui.db.settle_cluster_pass", side_effect=refused),
             self.assertLogs("haprion_ui.poller", level="WARNING") as logged,
         ):
-            healthy = poller.poll_once(Pool(), None, sources, clusters=("alpha",))  # type: ignore[arg-type]
+            healthy = poll_once(Pool(), None, sources, clusters=("alpha",))
 
         self.assertEqual((healthy, written), (1, ["alpha"]))
         self.assertEqual(len([line for line in logged.output if "pass not marked" in line]), 2)
@@ -545,7 +558,7 @@ class NoClusterYet(unittest.TestCase):
     """A new installation has no cluster (B302); the poller runs, it does not exit."""
 
     def run_main(
-        self, *, holds: bool = True
+        self, *, holds: bool = True, notified: bool = False
     ) -> tuple[int, list[tuple[str, ...]], list[tuple[str, ...]]]:
         """One pass of `main` against nothing, with the lock held or lost before it."""
 
@@ -564,9 +577,23 @@ class NoClusterYet(unittest.TestCase):
         def session(_database: Any) -> Any:
             yield object()
 
-        def record_pass(_pool: Any, _config: Any, *, clusters: tuple[str, ...]) -> int:
-            passes.append(clusters)
-            return 0
+        self.woken = 0
+        self.stopped = False
+        test = self
+
+        class Readers:
+            def __init__(self, _pool: Any, **_kwargs: Any) -> None:
+                self.stopped = False
+
+            def follow(self, clusters: tuple[str, ...]) -> None:
+                passes.append(clusters)
+
+            def wake(self) -> None:
+                test.woken += 1
+
+            def stop(self) -> list[str]:
+                test.stopped = True
+                return []
 
         pool = unittest.mock.MagicMock()
         patches = {
@@ -577,7 +604,7 @@ class NoClusterYet(unittest.TestCase):
                 )
             ),
             "index_cluster_list": unittest.mock.Mock(),
-            "poll_once": record_pass,
+            "ClusterReaders": Readers,
             "StopRequest": OnePass,
         }
         with contextlib.ExitStack() as stack:
@@ -606,7 +633,9 @@ class NoClusterYet(unittest.TestCase):
                     lambda _connection, clusters: recorded.append(tuple(clusters)),
                 )
             )
-            stack.enter_context(unittest.mock.patch.object(service, "sleep_until_notified"))
+            stack.enter_context(
+                unittest.mock.patch.object(service, "sleep_until_notified", return_value=notified)
+            )
             code = poller.main([])
         return code, recorded, passes
 
@@ -618,6 +647,13 @@ class NoClusterYet(unittest.TestCase):
 
         with self.assertLogs("haprion_ui", "ERROR"):
             self.assertEqual(self.run_main(holds=False), (75, [], []))
+        self.assertTrue(self.stopped)
+
+    def test_a_finished_job_wakes_the_clusters_and_the_clock_does_not(self) -> None:
+        self.run_main(notified=True)
+        self.assertEqual(self.woken, 1)
+        self.run_main(notified=False)
+        self.assertEqual(self.woken, 0)
 
 
 class TheClusterList(unittest.TestCase):
@@ -673,44 +709,6 @@ class TheClusterList(unittest.TestCase):
                 self.assertEqual(settings_tool.known_clusters(object(), settings), expected)
                 self.assertEqual(reading._cluster_list(request, settings), expected)
 
-    def test_a_pass_goes_over_the_listed_clusters_not_the_configured_ones(self) -> None:
-        asked: list[str] = []
-
-        class Pool:
-            def connection(self) -> Any:
-                return self
-
-            def __enter__(self) -> Any:
-                return self
-
-            def __exit__(self, *_: object) -> None:
-                return None
-
-            def commit(self) -> None:
-                return None
-
-        def helper(cluster: str, _request: str) -> Any:
-            asked.append(cluster)
-            return completed(envelope())
-
-        from haprion_ui.config import Config, Database, Poller, Throttle
-        from haprion_ui.config import Session as SessionPolicy
-
-        configured = Config(
-            database=Database(name="x", socket_directory="/tmp"),  # noqa: S108
-            management_writes=False,
-            demo_fixture=False,
-            session=SessionPolicy(inactivity_minutes=600, absolute_hours=168, cookie_secure=True),
-            throttle=Throttle(max_failures=10, window_minutes=15),
-            clusters=("alpha",),
-            poller=Poller(interval_seconds=60),
-        )
-        source = poller.Source("status", helper, lambda _c, **_k: None)
-
-        poller.poll_once(Pool(), configured, (source,), clusters=("gamma", "delta"))
-
-        self.assertCountEqual(asked, ["gamma", "delta"])
-
     def test_a_source_s_extra_request_is_built_from_what_is_kept(self) -> None:
         """The listing asks for the diffs it has not kept yet (B220); a failure there costs only that."""
 
@@ -749,38 +747,6 @@ class TheClusterList(unittest.TestCase):
             ):
                 poller._poll_cluster_sources(Pool(), "a", (source,))
             self.assertEqual(calls, [expected])
-
-    def test_the_clusters_are_read_at_once(self) -> None:
-        """Fas 16 punkt 1: a pass takes as long as its slowest cluster, not their sum."""
-
-        import threading
-
-        clusters = ("alpha", "beta", "gamma")
-        # Each helper waits until all three clusters are being read; in series
-        # the first would wait alone and the barrier would break.
-        together = threading.Barrier(len(clusters), timeout=5)
-
-        class Pool:
-            def connection(self) -> Any:
-                return self
-
-            def __enter__(self) -> Any:
-                return self
-
-            def __exit__(self, *_: object) -> None:
-                return None
-
-            def commit(self) -> None:
-                return None
-
-        def helper(cluster: str, _request: str) -> Any:
-            together.wait()
-            return completed(envelope(cluster=cluster))
-
-        source = poller.Source("status", helper, lambda _c, **_k: None)
-        healthy = poller.poll_once(Pool(), None, (source,), clusters=clusters)  # type: ignore[arg-type]
-
-        self.assertEqual(healthy, 3)
 
 
 class TheSearchIndexIsKeptBesideTheReadings(unittest.TestCase):
@@ -1056,6 +1022,241 @@ class ThePackagesWaitingAreKeptWhenTheyChange(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
+    """2026-11-01: a cluster that stops answering delays itself and nobody else."""
+
+    class Pool:
+        def connection(self) -> Any:
+            return self
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def commit(self) -> None:
+            return None
+
+    def readers(
+        self, helper: Any, *, interval: int = 1, limit: int | None = None
+    ) -> tuple[poller.ClusterReaders, list[tuple[str, float]]]:
+        import time
+
+        recorded: list[tuple[str, float]] = []
+
+        def record(_c: object, **kwargs: Any) -> None:
+            recorded.append((kwargs["cluster"], time.monotonic()))
+
+        source = poller.Source("status", helper, record)
+        return (
+            poller.ClusterReaders(
+                self.Pool(), interval_seconds=interval, sources=(source,), limit=limit
+            ),
+            recorded,
+        )
+
+    @staticmethod
+    def until(condition: Any, seconds: float = 10.0) -> bool:
+        import time
+
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if condition():
+                return True
+            time.sleep(0.02)
+        return bool(condition())
+
+    def test_a_hung_cluster_does_not_hold_back_the_other(self) -> None:
+        import threading
+        import time
+
+        release = threading.Event()
+        entered = threading.Event()
+
+        def helper(cluster: str, _request: str) -> Any:
+            if cluster == "external":
+                entered.set()
+                release.wait(30)
+            return completed(envelope(cluster=cluster))
+
+        readers, recorded = self.readers(helper)
+        started = time.monotonic()
+        try:
+            readers.follow(("external", "internal"))
+            self.assertTrue(entered.wait(5))
+            self.assertTrue(
+                self.until(lambda: sum(1 for c, _ in recorded if c == "internal") >= 4, 15)
+            )
+            elapsed = time.monotonic() - started
+            internal = [at for c, at in recorded if c == "internal"]
+            gaps = [b - a for a, b in zip(internal, internal[1:], strict=False)]
+            self.assertEqual([c for c, _ in recorded if c == "external"], [])
+            # One interval of one second plus its own (instant) read.
+            self.assertLess(max(gaps), 1.8)
+            stale_after = config.Poller(interval_seconds=1).stale_after.total_seconds()
+            self.assertLess(time.monotonic() - internal[-1], stale_after)
+            print(
+                f"\n[timing] internal read {len(internal)} times in {elapsed:.2f}s with "
+                f"external hung; largest gap {max(gaps):.2f}s (interval 1s)"
+            )
+        finally:
+            release.set()
+            readers.stop(5)
+
+    def test_never_more_readings_at_once_than_the_limit(self) -> None:
+        import threading
+        import time
+
+        now = 0
+        most = 0
+        guard = threading.Lock()
+
+        def helper(cluster: str, _request: str) -> Any:
+            nonlocal now, most
+            with guard:
+                now += 1
+                most = max(most, now)
+            time.sleep(0.15)
+            with guard:
+                now -= 1
+            return completed(envelope(cluster=cluster))
+
+        readers, recorded = self.readers(helper, limit=3)
+        try:
+            names = tuple(f"c{n}" for n in range(8))
+            readers.follow(names)
+            self.assertTrue(self.until(lambda: len({c for c, _ in recorded}) == len(names)))
+        finally:
+            readers.stop(5)
+        self.assertEqual(most, 3)
+
+    def test_the_default_limit_is_the_module_s(self) -> None:
+        readers, _ = self.readers(lambda c, r: completed(envelope(cluster=c)))
+        for _ in range(poller.MAX_PARALLEL_CLUSTERS):
+            self.assertTrue(readers._slots.acquire(blocking=False))
+        self.assertFalse(readers._slots.acquire(blocking=False))
+
+    def test_a_cluster_added_is_read_and_one_removed_is_let_go(self) -> None:
+        def helper(cluster: str, _request: str) -> Any:
+            return completed(envelope(cluster=cluster))
+
+        readers, recorded = self.readers(helper)
+        try:
+            readers.follow(("alpha",))
+            self.assertTrue(self.until(lambda: {c for c, _ in recorded} == {"alpha"}))
+            readers.follow(("alpha", "beta"))
+            self.assertTrue(self.until(lambda: {c for c, _ in recorded} == {"alpha", "beta"}))
+            readers.follow(("beta",))
+            self.assertTrue(self.until(lambda: "alpha" not in readers._readers))
+            seen = sum(1 for c, _ in recorded if c == "alpha")
+            beta = sum(1 for c, _ in recorded if c == "beta")
+            self.assertTrue(self.until(lambda: sum(1 for c, _ in recorded if c == "beta") > beta))
+            self.assertEqual(sum(1 for c, _ in recorded if c == "alpha"), seen)
+        finally:
+            readers.stop(5)
+
+    def test_a_removed_cluster_finishes_the_reading_in_flight(self) -> None:
+        import threading
+
+        release = threading.Event()
+        entered = threading.Event()
+
+        def helper(cluster: str, _request: str) -> Any:
+            entered.set()
+            release.wait(10)
+            return completed(envelope(cluster=cluster))
+
+        readers, recorded = self.readers(helper)
+        try:
+            readers.follow(("alpha",))
+            self.assertTrue(entered.wait(5))
+            readers.follow(())
+            self.assertEqual(recorded, [])
+            release.set()
+            self.assertTrue(self.until(lambda: len(recorded) == 1))
+            self.assertTrue(self.until(lambda: not readers._readers))
+            self.assertEqual(len(recorded), 1)
+        finally:
+            release.set()
+            readers.stop(5)
+
+    def test_stop_lets_readings_in_flight_finish_and_starts_none(self) -> None:
+        import threading
+        import time
+
+        release = threading.Event()
+        entered = threading.Event()
+
+        def helper(cluster: str, _request: str) -> Any:
+            entered.set()
+            release.wait(10)
+            return completed(envelope(cluster=cluster))
+
+        readers, recorded = self.readers(helper)
+        readers.follow(("alpha",))
+        self.assertTrue(entered.wait(5))
+        done: list[list[str]] = []
+        stopper = threading.Thread(target=lambda: done.append(readers.stop(10)))
+        stopper.start()
+        time.sleep(0.3)
+        self.assertEqual(done, [])  # still waiting for the reading in flight
+        release.set()
+        stopper.join(5)
+        self.assertEqual(done, [[]])
+        self.assertEqual(len(recorded), 1)  # the reading in flight was written
+        readers.follow(("alpha", "beta"))  # nothing starts after a stop
+        time.sleep(0.3)
+        self.assertEqual(len(recorded), 1)
+        self.assertEqual(readers._readers, {})
+
+    def test_stop_leaves_within_its_grace_when_a_cluster_hangs(self) -> None:
+        import threading
+        import time
+
+        release = threading.Event()
+        entered = threading.Event()
+
+        def helper(cluster: str, _request: str) -> Any:
+            entered.set()
+            release.wait(30)
+            return completed(envelope(cluster=cluster))
+
+        readers, _ = self.readers(helper)
+        readers.follow(("alpha",))
+        self.assertTrue(entered.wait(5))
+        began = time.monotonic()
+        try:
+            with self.assertLogs("haprion_ui.poller", "WARNING"):
+                still = readers.stop(0.5)
+            took = time.monotonic() - began
+            self.assertEqual(still, ["alpha"])
+            self.assertLess(took, 2.0)
+        finally:
+            release.set()
+
+    def test_a_finished_job_reads_the_cluster_again_at_once(self) -> None:
+        import time
+
+        readers, recorded = self.readers(lambda c, r: completed(envelope(cluster=c)), interval=30)
+        try:
+            readers.follow(("alpha",))
+            self.assertTrue(self.until(lambda: len(recorded) == 1))
+            began = time.monotonic()
+            readers.wake()
+            self.assertTrue(self.until(lambda: len(recorded) == 2, 5))
+            self.assertLess(time.monotonic() - began, 5)
+        finally:
+            readers.stop(5)
+
+    def test_a_change_between_read_and_not_read_is_logged_once(self) -> None:
+        reader = poller._Reader()
+        with self.assertLogs("haprion_ui.poller", "INFO") as logged:
+            for outcome in (True, True, False, False, True, True):
+                poller.ClusterReaders._noted("alpha", reader, outcome)
+        self.assertEqual([line.split(":", 2)[0] for line in logged.output], ["WARNING", "INFO"])
 
 
 class EachReadingAcceptsWhatItsSchemaAllows(unittest.TestCase):

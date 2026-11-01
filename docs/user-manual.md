@@ -2906,7 +2906,7 @@ The ID, the node path, and the nodes' names and hosts must all be free. A certif
 already be in the registry. A cluster without a certificate serves plain HTTP and TCP; an HTTPS object
 waits for a certificate issued or uploaded for it.
 
-**After creation.** The poller polls and draws the new cluster from its next pass
+**After creation.** The poller polls and draws the new cluster from its next cycle
 ([Which clusters get polled](#which-clusters-get-polled)). Its first version, *Cluster alpha created*,
 holds the layout and the files generated for its nodes. It is published as the cluster is made: version
 1, with no objects yet, checked like any other. The first deploy rolls it out. It writes each node's
@@ -4250,17 +4250,18 @@ request that asked for the state it is in.
 
 ### How often status is refreshed
 
-The poller reads the clusters every `poller.interval_seconds` (in `ui.toml`): 20 seconds by default,
-between 10 and 3600. The interval is a pause *after* each pass, not a fixed period. The real cadence is
-therefore the interval plus however long a pass takes - measured at 2-3 seconds for two clusters on the
-reference machine. A pass for two clusters is about eight helper calls: one for the cluster list, one for
-the manager's own certificates, and three per cluster. Of those, only each cluster's status reading
-reaches the nodes.
+The poller reads every cluster every `poller.interval_seconds` (in `ui.toml`): 20 seconds by default,
+between 10 and 3600. Each cluster has its own cycle, and the interval is a pause *after* its reading, not
+a fixed period. A cluster's real cadence is therefore the interval plus however long its own reading
+takes - measured at 2-3 seconds for a cluster of two nodes on the reference machine. A cluster that
+stops answering delays only itself: the others go on being read every interval and stay fresh. The
+manager's own work (the cluster list, its certificates, packages) has its own cycle of one interval.
+A cluster's reading is a few helper calls, and only its status reading reaches the nodes.
 
 **A finished job wakes the poller, as well as the clock.** Publishing or deploying through the interface
 queues a job, and the poller reads the clusters again as soon as that job ends. Those changes therefore
 appear without waiting. A change made *outside* the interface does wait: `haprion-publish` or
-`haprion-deploy` run on the command line queues no job, nothing is notified, and until the next pass the
+`haprion-deploy` run on the command line queues no job, nothing is notified, and until the cluster is next read the
 pages show the reading taken before the change. An object deployed from the command line therefore keeps
 its *Inactive · deploy to add* badge for up to one interval. That is the interface being careful, not
 wrong.
@@ -5807,12 +5808,12 @@ not a maximum.
 nodes.** Nothing enforces that figure. It is the size at which the manager's background work should be
 timed before it grows further:
 
-- **The poller** reads up to eight clusters at once, and a cluster's nodes at once; a cluster's own readings
-  run one after another. With two clusters of two nodes, a pass takes about two seconds, against a default
-  `interval_seconds` of 20. A node that is switched off adds five seconds to its cluster's reading (the SSH
-  connect timeout). A node that connects and then never answers adds up to sixty (the status read's own
-  limit). The other clusters' readings are written as soon as they are read, but the next pass starts when
-  the slowest cluster is done, so such a node makes every cluster's reading less frequent.
+- **The poller** reads every cluster on its own cycle, up to eight clusters at once, and a cluster's nodes
+  at once; a cluster's own readings run one after another. A cluster of two nodes takes about two seconds
+  to read, against a default `interval_seconds` of 20. A node that is switched off adds five seconds to its
+  cluster's reading (the SSH connect timeout). A node that connects and then never answers adds up to sixty
+  (the status read's own limit). Only that cluster waits: the others are read on their own cycles and are
+  not called stale. Past eight clusters that hang at the same time, the rest wait for a free place.
 - **The traffic-log collector** runs once a minute and fetches from up to eight nodes at once - about a
   second for four current nodes. A node with a backlog is fetched for up to thirty seconds before the run
   imports what it has. A node that does not answer holds one of the eight slots for ten to thirty seconds.
@@ -5820,7 +5821,7 @@ timed before it grows further:
 - **The worker** runs one job at a time for the whole installation. A deploy or backup on one cluster
   queues every other cluster's jobs behind it.
 
-An installation growing past that size should time a complete poller pass and a collector run against
+An installation growing past that size should time a cluster's reading and a collector run against
 their intervals before it adds more.
 
 Each cluster card is marked with one of six colours
@@ -6243,7 +6244,7 @@ For a file in a cluster's directory that no entry names - a certificate placed t
 - `haprion-cert-list --registry` asks the manager for the whole registry and for what the interface is
   served with. It answers even before the first cluster exists.
 
-The poller reads it the same way, once a pass.
+The poller reads it the same way, once a cycle.
 
 #### Certificate publication hook
 
@@ -8335,7 +8336,7 @@ command line runs, through exact sudoers rules:
 
 Only the status reading reaches the nodes; inventory reads the published commit. `haprion-readings-helper` answers, in one call, the six
 readings that touch only the management host: versions, backup archives, certificates, the network
-description, the cluster settings and the stored objects. It runs their own helpers, so a pass is
+description, the cluster settings and the stored objects. It runs their own helpers, so a cluster's reading is
 one sudo call rather than six lines in the host's journal.
 
 For the polling interval and refresh behaviour, see
@@ -8654,13 +8655,13 @@ run the helper directly as root.
 ##### Which clusters get polled
 
 The clusters `clusters.yaml` lists, in its order. The poller asks `haprion-cluster-list-helper` on
-every pass - through one sudoers rule, because the application accounts cannot read the engine's
+every cycle - through one sudoers rule, because the application accounts cannot read the engine's
 configuration and must not - and keeps the answer in one row that the pages read. A cluster created
-or removed from Settings is therefore polled and drawn from the next pass on, and its colour
+or removed from Settings is therefore polled and drawn from the next cycle on, and its colour
 follows its place in the file.
 
 `clusters` in `ui.toml` is the fallback: the list used before the poller has read one, and while
-the helper cannot be read. A pass that cannot read the list polls the clusters it knew rather than
+the helper cannot be read. A cycle that cannot read the list polls the clusters it knew rather than
 none. An empty `ui.toml` list with no readable cluster file leaves the poller nothing to do, and it
 says so instead of starting.
 

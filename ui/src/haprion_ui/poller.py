@@ -29,8 +29,8 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,7 +56,7 @@ from haprion_ui import (
     service,
     update_check,
 )
-from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
+from haprion_ui.config import DEFAULT_CONFIG_PATH
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
 
@@ -76,11 +76,20 @@ POLLER_LOCK_KEY = 0x48415052
 #
 MAX_ERROR_BYTES = 2000
 #
-# How many clusters one pass reads at a time. Each runs its helpers in turn,
-# and each helper asks its nodes at once; this bounds the SSH sessions and
-# processes a pass can have open, not how many clusters there may be.
+# How many clusters are read at a time. Each runs its helpers in turn, and each
+# helper asks its nodes at once; this bounds the SSH sessions and processes the
+# poller can have open, not how many clusters there may be.
 #
 MAX_PARALLEL_CLUSTERS = 8
+#
+# How long a stop waits for readings in flight before the process leaves
+# anyway. The unit sets no `TimeoutStopSec`, so systemd's default of 90 seconds
+# applies; this stays well inside it, and a reading that has not finished by
+# then is a hung node's, which the status read's own 60-second limit has not
+# yet ended. Leaving costs that reading and nothing else: each write is its
+# own transaction.
+#
+STOP_GRACE_SECONDS = 45
 
 type RunHelper = Callable[[str, str], Any]
 type Recorder = Callable[..., None]
@@ -642,7 +651,7 @@ def read_cluster_list(
     asked = new_request_id()
     try:
         completed = run(asked)
-    except Exception as exc:  # noqa: BLE001 - any failure is "not known this pass"
+    except Exception as exc:  # noqa: BLE001 - any failure is "not known this cycle"
         logger.warning("the cluster list could not be read: %s", exc)
         return None
     envelope = answers.accepted(
@@ -676,39 +685,147 @@ def read_cluster_list(
     return names or None
 
 
-def poll_once(
-    pool: Any,
-    config: Config,
-    sources: tuple[Source, ...] = SOURCES,
-    *,
-    clusters: tuple[str, ...] | None = None,
-) -> int:
-    """One pass over every configured cluster. Returns how many answered well.
+class _Reader:
+    """One cluster's reading thread and what it is told."""
 
-    Each source of each cluster is written in its own transaction. A pass that
-    fails halfway then leaves what it did read updated, rather than discarding
-    good readings because a later one went wrong.
+    __slots__ = ("last_read", "retired", "thread", "wake")
 
-    The count returned is the status source only. It is what "read" means to
-    an operator watching the log; a cluster whose nodes are healthy
-    while its listing could not be read is a smaller problem, and it is logged
-    as its own line rather than folded into that number.
+    def __init__(self) -> None:
+        self.wake = threading.Event()
+        self.retired = False
+        self.last_read: bool | None = None
+        self.thread: threading.Thread | None = None
+
+
+class ClusterReaders:
+    """Every listed cluster is read at its own pace (2026-11-01).
+
+    One thread per cluster: read its sources, then wait the interval from *its
+    own* finish, or until a finished job wakes it. A node that connects and
+    never answers holds its cluster's reading for up to a minute and costs that
+    cluster alone; the others go on being read every interval, and none of them
+    turns stale because of it. When the clusters were read in passes, the next
+    pass waited for the slowest one.
+
+    Threads rather than a scheduler because each cluster's cycle is a plain
+    loop and the only thing shared is a count: a semaphore holds at most
+    `MAX_PARALLEL_CLUSTERS` readings at once. A thread waiting for a slot holds
+    no database connection, and neither does one running a helper; the writes
+    stay short transactions from the pool.
+
+    Each source of each cluster is written in its own transaction. A reading
+    that fails halfway then leaves what it did read updated, rather than
+    discarding good readings because a later one went wrong.
     """
 
-    listed = tuple(clusters if clusters is not None else config.clusters)
-    if not listed:
-        return 0
-    #
-    # The clusters at once, each one's sources in order (Fas 16 punkt 1). A
-    # cluster's readings are separate helpers over SSH, and in series a pass
-    # grew with every cluster and every node that did not answer. The writes
-    # stay short transactions from the pool; a thread waits for a connection
-    # rather than holding one while its helper runs.
-    #
-    with ThreadPoolExecutor(max_workers=min(len(listed), MAX_PARALLEL_CLUSTERS)) as threads:
-        return sum(
-            threads.map(lambda cluster: _poll_cluster_sources(pool, cluster, sources), listed)
+    def __init__(
+        self,
+        pool: Any,
+        *,
+        interval_seconds: int,
+        sources: tuple[Source, ...] = SOURCES,
+        limit: int | None = None,
+    ) -> None:
+        self._pool = pool
+        self._interval = interval_seconds
+        self._sources = sources
+        self._slots = threading.BoundedSemaphore(limit or MAX_PARALLEL_CLUSTERS)
+        self._lock = threading.Lock()
+        self._readers: dict[str, _Reader] = {}
+        self._stopped = False
+
+    def follow(self, clusters: Sequence[str]) -> None:
+        """Read exactly these clusters: start the new, retire the gone.
+
+        A retired cluster's reading in flight finishes; nothing is started for
+        it afterwards. One put back before its thread has left is kept as it is.
+        """
+
+        with self._lock:
+            if self._stopped:
+                return
+            for name, reader in self._readers.items():
+                if name not in clusters:
+                    reader.retired = True
+                    reader.wake.set()
+            for name in clusters:
+                kept = self._readers.get(name)
+                if kept is not None:
+                    kept.retired = False
+                    continue
+                fresh = _Reader()
+                fresh.thread = threading.Thread(
+                    target=self._run, args=(name, fresh), name=f"read-{name}", daemon=True
+                )
+                self._readers[name] = fresh
+                fresh.thread.start()
+
+    def wake(self) -> None:
+        """A finished job: every cluster not reading now reads again at once."""
+
+        with self._lock:
+            for reader in self._readers.values():
+                reader.wake.set()
+
+    def stop(self, grace: float = STOP_GRACE_SECONDS) -> list[str]:
+        """Start nothing more, wait for readings in flight; the clusters still reading."""
+
+        import time
+
+        with self._lock:
+            self._stopped = True
+            readers = dict(self._readers)
+            for reader in readers.values():
+                reader.wake.set()
+        deadline = time.monotonic() + grace
+        for reader in readers.values():
+            if reader.thread is not None:
+                reader.thread.join(max(0.0, deadline - time.monotonic()))
+        still = sorted(
+            name for name, r in readers.items() if r.thread is not None and r.thread.is_alive()
         )
+        if still:
+            logger.warning("leaving with %s still being read", ", ".join(still))
+        return still
+
+    def _leaving(self, name: str, reader: _Reader) -> bool:
+        with self._lock:
+            if not (self._stopped or reader.retired):
+                return False
+            if self._readers.get(name) is reader:
+                del self._readers[name]
+            return True
+
+    def _run(self, name: str, reader: _Reader) -> None:
+        while not self._leaving(name, reader):
+            #
+            # Cleared before the reading, not after: a job that ends while the
+            # cluster is being read asks for another reading, as it did when
+            # the notification waited in the queue for the next sleep.
+            #
+            reader.wake.clear()
+            if not self._slots.acquire(timeout=1):
+                continue
+            try:
+                read = _poll_cluster_sources(self._pool, name, self._sources) > 0
+            except Exception:  # one cluster's failure is not the others'
+                logger.exception("cluster %s: the reading failed", name)
+                read = False
+            finally:
+                self._slots.release()
+            self._noted(name, reader, read)
+            reader.wake.wait(self._interval)
+
+    @staticmethod
+    def _noted(name: str, reader: _Reader, read: bool) -> None:
+        """A cluster's change between read and not read; not a line per interval."""
+
+        if read != reader.last_read:
+            if not read:
+                logger.warning("cluster %s is not being read", name)
+            elif reader.last_read is not None:
+                logger.info("cluster %s is read again", name)
+        reader.last_read = read
 
 
 def _extra(pool: Any, cluster: str | None, source: Source) -> Mapping[str, Any]:
@@ -786,7 +903,7 @@ def _local_readings(
 
 #
 # What the manager holds - the certificate registry and what the interface is
-# served with - is asked for with no cluster, once a pass, whether or not a
+# served with - is asked for with no cluster, once a cycle, whether or not a
 # cluster exists (B304). It travelled in each cluster's certificate listing,
 # so a manager with no cluster yet said nothing about its own certificates.
 #
@@ -798,7 +915,7 @@ class PackageWatch:
 
     Read from dpkg's status and apt's lists on this host, which the poller's
     sandbox leaves readable; the reader reads them again only when one has
-    changed, so a pass that finds nothing new costs a stat of each file.
+    changed, so a cycle that finds nothing new costs a stat of each file.
     """
 
     def __init__(self, reader: package_inventory.Reader | None = None) -> None:
@@ -819,7 +936,7 @@ class PackageWatch:
             with pool.connection() as connection:
                 db.replace_package_waiting(connection, found, at=datetime.now(UTC))
                 connection.commit()
-        except Exception as exc:  # noqa: BLE001 - kept again on the next pass
+        except Exception as exc:  # noqa: BLE001 - kept again on the next cycle
             logger.warning("the manager's packages were not recorded: %s", exc)
             return
         self.kept = found
@@ -975,8 +1092,8 @@ def main(argv: list[str] | None = None) -> int:
     # The cluster file decides which clusters exist (B206); `ui.toml`'s list is
     # the fallback while the list helper cannot be read, and the only list
     # before it was installed. None at all is an installation whose first
-    # cluster is not created yet (B302): the poller runs its passes, records
-    # that there is none, and takes up the first one the pass after it exists.
+    # cluster is not created yet (B302): the poller runs its cycles, records
+    # that there is none, and takes up the first one the cycle after it exists.
     #
     installed = importlib.metadata.version("haprion-ui")
     listed_at_start = read_cluster_list()
@@ -994,7 +1111,7 @@ def main(argv: list[str] | None = None) -> int:
         #
         # The lock is taken on its own autocommit connection, held for the whole
         # run and never pooled. Two things would otherwise take it away: a pooled
-        # connection is returned between passes, and a session-scoped lock goes
+        # connection is returned between cycles, and a session-scoped lock goes
         # back with it - and a lock taken in transaction mode leaves an open
         # transaction that `idle_in_transaction_session_timeout` closes ten
         # seconds later, releasing the lock while this process keeps polling.
@@ -1013,62 +1130,69 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             #
-            # A pass is finished before the process leaves. Killing a poller
-            # mid-write would corrupt nothing - each write is one
-            # transaction - but finishing means no row is left looking stale
-            # for no reason.
+            # Readings in flight are finished before the process leaves, for a
+            # bounded time. Killing a poller mid-write would corrupt nothing -
+            # each write is one transaction - but finishing means no row is
+            # left looking stale for no reason.
             #
-            stopping = StopRequest(what="after this pass")
+            stopping = StopRequest(what="after the readings in flight")
             asker = update_check.Asker()
             packages = PackageWatch()
-            while not stopping.requested():
-                #
-                # Asked again before every pass. The lock lives as long as its
-                # session, and that session can end on its own while the pool
-                # works on - a second poller could then take the lock while this
-                # one kept writing (review 2026-10-18, A1). Leaving with 75 lets
-                # systemd start a fresh one, which takes the lock or finds it
-                # held. A pass already under way finishes; each write is its own
-                # transaction, so that window costs a duplicate reading at most.
-                #
-                if not db.holds_singleton_lock(lock_connection, POLLER_LOCK_KEY):
-                    logger.error("the poller lock on %s was lost; exiting", database)
-                    return exit_codes.BLOCKED
-                listed = read_cluster_list()
-                if listed is not None:
-                    if listed != known:
-                        logger.info("the cluster list changed: %s", ", ".join(listed))
-                    known = listed
-                    with pool.connection() as connection:
-                        db.record_cluster_list(connection, known)
-                        connection.commit()
-                index_cluster_list(pool, known)
-                poll_manager(pool)
-                packages.poll(pool)
-                #
-                # Once a day at most, and only while its switch is on (B342);
-                # it decides that itself, so most passes it reads one row. On
-                # its own thread: GitHub never holds up the clusters.
-                #
-                asker.start(pool, installed=installed, now=datetime.now(UTC))
-                healthy = poll_once(pool, config, clusters=known)
-                if known:
-                    logger.info(
-                        # Read, not in step with what is published (R2 F18): a node
-                        # past the published version answers as well as one on it.
-                        "%d/%s read",
-                        healthy,
-                        labels.counted(len(known), "cluster"),
-                    )
-                else:
-                    logger.info("no cluster yet; Settings - Create cluster makes the first")
-                #
-                # Woken by a finished job as well as by the clock. A publish
-                # that changed a cluster used to sit invisible until the next
-                # tick, so a page said "observed just now" about a reading taken
-                # before the change it was being consulted about.
-                #
-                service.sleep_until_notified(stopping, listener, config.poller.interval_seconds)
+            readers = ClusterReaders(pool, interval_seconds=config.poller.interval_seconds)
+            try:
+                while not stopping.requested():
+                    #
+                    # Asked again before every cycle. The lock lives as long as
+                    # its session, and that session can end on its own while the
+                    # pool works on - a second poller could then take the lock
+                    # while this one kept writing (review 2026-10-18, A1). Leaving
+                    # with 75 lets systemd start a fresh one, which takes the lock
+                    # or finds it held. Readings under way finish, for a bounded
+                    # time; each write is its own transaction, so that window
+                    # costs a duplicate reading at most.
+                    #
+                    if not db.holds_singleton_lock(lock_connection, POLLER_LOCK_KEY):
+                        logger.error("the poller lock on %s was lost; exiting", database)
+                        return exit_codes.BLOCKED
+                    listed = read_cluster_list()
+                    if listed is not None:
+                        if listed != known:
+                            logger.info("the cluster list changed: %s", ", ".join(listed))
+                        known = listed
+                        with pool.connection() as connection:
+                            db.record_cluster_list(connection, known)
+                            connection.commit()
+                    index_cluster_list(pool, known)
+                    #
+                    # The clusters are read by their own threads, each at its
+                    # own pace; this loop is the manager's cycle, one interval,
+                    # and no cluster that hangs holds it up. A cluster added to
+                    # the list is picked up here, a removed one let go.
+                    #
+                    readers.follow(known)
+                    if not known:
+                        logger.info("no cluster yet; Settings - Create cluster makes the first")
+                    poll_manager(pool)
+                    packages.poll(pool)
+                    #
+                    # Once a day at most, and only while its switch is on (B342);
+                    # it decides that itself, so most cycles it reads one row. On
+                    # its own thread: GitHub never holds up the clusters.
+                    #
+                    asker.start(pool, installed=installed, now=datetime.now(UTC))
+                    #
+                    # Woken by a finished job as well as by the clock. A publish
+                    # that changed a cluster used to sit invisible until the next
+                    # tick, so a page said "observed just now" about a reading
+                    # taken before the change it was being consulted about. The
+                    # clusters are told too, so they read again at once.
+                    #
+                    if service.sleep_until_notified(
+                        stopping, listener, config.poller.interval_seconds
+                    ):
+                        readers.wake()
+            finally:
+                readers.stop()
     finally:
         listener.close()
         pool.close()

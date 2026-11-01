@@ -53,7 +53,7 @@ class StopRequest:
             time.sleep(1)
 
 
-def sleep_until_notified(stopping: StopRequest, listener: object, seconds: int) -> None:
+def sleep_until_notified(stopping: StopRequest, listener: object, seconds: int) -> bool:
     """Wait for a notification, the interval, or a stop - whichever is first.
 
     A function rather than a method on `StopRequest`, and both arguments
@@ -72,10 +72,13 @@ def sleep_until_notified(stopping: StopRequest, listener: object, seconds: int) 
     So a lost notification costs latency and nothing else: the interval still
     expires, and the loop still asks. That is what keeps this an optimisation
     rather than a second source of truth.
+
+    True when a notification ended the wait; False for the interval or a stop.
     """
 
     for _ in range(seconds):
         if stopping.requested():
-            return
+            return False
         for _notification in listener.notifies(timeout=1.0, stop_after=1):  # type: ignore[attr-defined]
-            return
+            return True
+    return False

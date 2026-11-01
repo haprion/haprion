@@ -336,6 +336,8 @@ def build_router(config: Config) -> APIRouter:
         #
         # What a refusal needs is read before the connection is taken: the
         # readers take their own, and two at once is how the pool runs dry.
+        # They are the poller's cached readings, outside any lock: they lagged
+        # before too, and the switch's own condition guards a double flip.
         #
         objects = (
             list(read_source(request, config, OBJECTS_SOURCE)[1])

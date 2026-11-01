@@ -375,6 +375,8 @@ class TheApiAnswers(ApiTestCase):
         self.assertTrue(slots.acquire(blocking=False), "answered calls gave their places back")
 
     def test_calls_in_flight_hold_their_places(self) -> None:
+        # Concurrent requests by design: each holds its connection while it waits.
+        self.concurrent_connections = True
         client = self.api()
         headers = {"Authorization": f"Bearer {self.issue()}"}
         slots = self.slots(client)

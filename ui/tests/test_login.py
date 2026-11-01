@@ -84,6 +84,12 @@ class FakePool:
     a handler that holds one while a reader takes another leaves the pool dry
     under a few concurrent requests (review 26-11-01). `LoginTestCase` fails the
     test that left anything in `nested`, so every page test is that gate.
+
+    The same holds across threads: `peak` is the most connections out at once
+    from any thread, and `LoginTestCase` fails a test whose peak passes one - a
+    handler that holds one while `read_concurrently` runs its readers. A test
+    that runs the readers with none held, or sends concurrent requests, says so
+    with `concurrent_connections = True`.
     """
 
     def __init__(self) -> None:
@@ -91,6 +97,9 @@ class FakePool:
         self.rollbacks = 0
         self.nested: list[str] = []
         self._held = threading.local()
+        self._out = 0
+        self._out_lock = threading.Lock()
+        self.peak = 0
 
     @contextmanager
     def connection(self) -> Any:
@@ -103,6 +112,9 @@ class FakePool:
             self.nested.append(" > ".join(frames[-3:]))
             raise AssertionError("a connection was asked for while one is held")
         self._held.depth = 1
+        with self._out_lock:
+            self._out += 1
+            self.peak = max(self.peak, self._out)
         try:
             yield self
         except Exception:
@@ -110,6 +122,8 @@ class FakePool:
             raise
         finally:
             self._held.depth = 0
+            with self._out_lock:
+                self._out -= 1
 
     def commit(self) -> None:
         self.commits += 1
@@ -125,6 +139,8 @@ class FakePool:
 
 
 class LoginTestCase(unittest.TestCase):
+    concurrent_connections = False
+
     def _save_change(self, _c: object, **values: Any) -> Any:
         """A saved network or settings document, as the table would answer (B257)."""
 
@@ -143,6 +159,10 @@ class LoginTestCase(unittest.TestCase):
     def _no_connection_was_nested(self) -> None:
         self.assertEqual(self.pool.nested, [], "a handler took a second connection")
 
+    def _no_connection_was_held_across_threads(self) -> None:
+        if not self.concurrent_connections:
+            self.assertLessEqual(self.pool.peak, 1, "connections were held at once")
+
     def setUp(self) -> None:
         self.account = Account(
             id=1,
@@ -153,6 +173,7 @@ class LoginTestCase(unittest.TestCase):
         )
         self.pool = FakePool()
         self.addCleanup(self._no_connection_was_nested)
+        self.addCleanup(self._no_connection_was_held_across_threads)
         self.saved_changes: list[dict[str, Any]] = []
         self.sessions: dict[bytes, AuthenticatedSession] = {}
         self.attempts: list[tuple[str, str, bool]] = []

@@ -641,6 +641,17 @@ def cluster_publish(
         raise _bad(f"The comment {problem}.")
     if asked.regenerate:
         #
+        # Not over saved changes, as the page refuses it (26-11-01): they would
+        # be left "Saved against an older version" and have to be saved again.
+        #
+        if pending_package(request, config, cluster).rows:
+            raise Refusal(
+                409,
+                "conflict",
+                "Changes are saved for this cluster. Publishing them also makes the "
+                "configuration again with the installed version.",
+            )
+        #
         # Not the saved package: the published version's layer, made again. The
         # head it is made on is the one this reading holds, which the helper
         # fences on.

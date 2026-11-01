@@ -638,8 +638,7 @@ class Publishing(ChangesTestCase):
         self.send("POST", "/clusters/alpha/publish", name="a" * 64)
         self.assertEqual(len(self.queued[0]["payload"]["requested_by"]), 64)
 
-    def test_regenerate_publishes_the_layer_made_again_and_not_what_is_saved(self) -> None:
-        self.rows = [saved_row()]
+    def test_regenerate_publishes_the_layer_made_again(self) -> None:
         response = self.send("POST", "/clusters/alpha/publish", body={"regenerate": True})
         self.assertEqual(response.status_code, 202, response.text)
         (queued,) = self.queued
@@ -656,6 +655,15 @@ class Publishing(ChangesTestCase):
         )
         (event,) = self.events
         self.assertIs(event["detail"]["regenerate"], True)
+
+    def test_regenerate_is_refused_while_changes_are_saved_as_the_page_refuses(self) -> None:
+        """26-11-01: it would leave them "Saved against an older version"."""
+
+        self.rows = [saved_row()]
+        response = self.send("POST", "/clusters/alpha/publish", body={"regenerate": True})
+        self.refused(response, 409, "conflict")
+        self.assertIn("Changes are saved for this cluster", response.json()["error"]["message"])
+        self.assertEqual(self.queued, [])
 
     def test_regenerate_needs_nothing_saved_and_takes_a_comment(self) -> None:
         response = self.send(

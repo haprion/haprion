@@ -66,11 +66,14 @@ def contents_at(revision: str) -> tuple[str, dict[str, tuple[str, int]]]:
     source = git("show", f"{revision}:src/haprion/node_package.py").decode()
     keep: list[ast.stmt] = []
     for statement in ast.parse(source).body:
-        if isinstance(statement, ast.Import) or (
-            isinstance(statement, ast.ImportFrom) and not (statement.module or "").startswith("haprion")
+        if (
+            isinstance(statement, ast.Import)
+            or (
+                isinstance(statement, ast.ImportFrom)
+                and not (statement.module or "").startswith("haprion")
+            )
+            or isinstance(statement, (ast.Assign, ast.AnnAssign))
         ):
-            keep.append(statement)
-        elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
             keep.append(statement)
     namespace: dict[str, Any] = {}
     try:

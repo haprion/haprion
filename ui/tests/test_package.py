@@ -365,12 +365,16 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertEqual(answer.status_code, 400)
         self.assertIn("Nothing is saved to publish", answer.text)
 
-    def test_a_reader_sees_no_list_and_may_not_publish(self) -> None:
+    def test_a_reader_sees_the_list_and_may_not_publish(self) -> None:
         self.rows = [row()]
         self.account = replace(self.account, role="reader")
         client = self.editor()
 
-        self.assertNotIn("Pending changes", self.page(client))
+        page = self.page(client)
+
+        self.assertIn("Pending changes", page)
+        self.assertNotIn('action="/history/alpha/publish"', page)
+        self.assertNotIn('name="comment"', page)
         self.assertEqual(self.publish(client).status_code, 403)
         self.assertEqual(self.queued, [])
 

@@ -43,8 +43,8 @@
         {% endfor %}
       </tbody></table></div>
       {% if package.problem %}
-      <p class="preview-notice form-problem"><strong>{{ package.problem }}</strong>{% for row in package.rows if row.stale %}<a class="secondary-button" href="{{ row.link }}">Open {{ row.name }}</a>{% endfor %}</p>
-      {% else %}
+      <p class="preview-notice form-problem"><strong>{{ package.problem }}</strong>{% if role == 'admin' %}{% for row in package.rows if row.stale %}<a class="secondary-button" href="{{ row.link }}">Open {{ row.name }}</a>{% endfor %}{% endif %}</p>
+      {% elif role == 'admin' %}
       <form method="post" action="/history/{{ cluster.cluster }}/publish" class="form-grid pending-publish">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="expected_head" value="{{ package.head }}">

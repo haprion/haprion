@@ -556,7 +556,8 @@ def build_router(config: Config) -> APIRouter:
             running = jobs.in_flight(db.recent_jobs(connection), writes=config.management_writes)
         #
         # What is saved and not yet published, per cluster (B257): the one
-        # place a publish is made. Only where a publish could be.
+        # place a publish is made. Only where a publish could be; a reader
+        # sees the list, not the controls.
         #
         pending = (
             {
@@ -564,7 +565,7 @@ def build_router(config: Config) -> APIRouter:
                 for view in overview.clusters
                 if view.configured
             }
-            if config.management_writes and session.role == "admin"
+            if config.management_writes
             else {}
         )
         return TEMPLATES.TemplateResponse(

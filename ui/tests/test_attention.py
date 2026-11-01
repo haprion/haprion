@@ -1491,6 +1491,8 @@ class TheDashboardBox(LoginTestCase):
             ("/settings", True),
             ("/settings#external-monitoring", True),
             ("/settings/clusters/alpha#delivery", True),
+            ("/settings/api-tokens", False),
+            ("/settings/api-tokens/new", True),
             ("/settingsx", False),
             ("/certificates", False),
             ("/#cluster-alpha", False),

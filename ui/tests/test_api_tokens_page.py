@@ -162,6 +162,31 @@ class TheList(TokensPage):
         self.sign_in(client)
         return client
 
+    def read_only_admin(self) -> TestClient:
+        client = self.client(
+            replace(configuration(), management_writes=False, clusters=("alpha", "beta"))
+        )
+        self.assertEqual(self.sign_in(client).status_code, 303)
+        return client
+
+    def test_an_admin_with_writes_off_reads_the_list_and_goes_back_to_a_page_that_answers(
+        self,
+    ) -> None:
+        client = self.read_only_admin()
+        page = client.get("/settings/api-tokens")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn('href="/settings#api-tokens"', page.text)
+        self.assertEqual(client.get("/settings").status_code, 404)
+        self.assertIn('href="/"', page.text[page.text.index("<main") :])
+
+    def test_an_admin_with_writes_off_is_given_the_button_of_a_token_ending_soon(self) -> None:
+        self.tokens = [a_token(name="soon", expires_at=NOW + timedelta(days=5, hours=1))]
+        page = self.read_only_admin().get("/").text
+
+        self.assertIn("soon · API token expires in 5 days", page)
+        self.assertIn('class="secondary-button" href="/settings/api-tokens"', page)
+
     def test_a_reader_is_refused_every_page_but_the_list(self) -> None:
         client = self.reader()
         for path in ("/new", "/monitoring/revoke", "/monitoring/extend"):
@@ -523,7 +548,7 @@ class NeedsAttention(TokensPage):
             ],
         )
         self.assertTrue(all(item.link == "/settings/api-tokens" for item in items))
-        self.assertTrue(all(item.page == "Settings" and item.needs_writes for item in items))
+        self.assertTrue(all(item.page == "Settings" and not item.needs_writes for item in items))
         # An acknowledged warning does not hide the day the token stops working.
         self.assertNotEqual(
             attention.from_api_tokens(

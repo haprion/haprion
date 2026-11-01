@@ -110,18 +110,21 @@ class Item:
 
         Every page under /settings is behind the write gate and answers 404
         without it, so in read-only mode such a row is text, not a link
-        (review 26-10-24, 04-02).
+        (review 26-10-24, 04-02). The list of API tokens is the exception: it
+        answers every role, with or without writes.
         """
 
+        if self.link == "/settings/api-tokens":
+            return False
         return self.link == "/settings" or self.link.startswith(
             ("/settings/", "/settings#", "/settings?")
         )
 
     @property
     def reader_opens(self) -> bool:
-        """Whether a reader may open the row's page: all but Settings, bar the token list."""
+        """Whether a reader may open the row's page: all but Settings."""
 
-        return not self.needs_writes or self.link == "/settings/api-tokens"
+        return not self.needs_writes
 
     @property
     def key(self) -> tuple[str, str, str, str, str]:

@@ -10,7 +10,7 @@
   are an admin's, with writes on.
 #}
 <section class="page-heading">
-  <div class="heading-title">{% if role == 'admin' %}{{ back_button('/settings#api-tokens', 'Settings') }}{% else %}{{ back_button('/', 'Dashboard') }}{% endif %}<h1>API tokens</h1></div>
+  <div class="heading-title">{% if can_change %}{{ back_button('/settings#api-tokens', 'Settings') }}{% else %}{{ back_button('/', 'Dashboard') }}{% endif %}<h1>API tokens</h1></div>
 </section>
 
 {% if problem %}

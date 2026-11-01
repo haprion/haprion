@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import unittest
 from dataclasses import replace
+from html import unescape
 from typing import Any
 from unittest import mock
 
@@ -267,3 +268,91 @@ class EveryRouteAnswersAsTheRoleAllows(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+#
+# The pages a reader reads as an admin does, walked on the demonstration data.
+#
+PARITY_PAGES = (
+    "/",
+    "/proxies",
+    "/history",
+    "/network",
+    "/certificates",
+    "/jobs",
+    "/metrics",
+    "/logs",
+    "/waf",
+    "/waf?view=exceptions",
+    "/backups",
+    "/search?q=192",
+    "/proxies/edge-demo/public-web",
+    "/clusters/edge-demo/metrics",
+)
+
+
+class AReaderIsGivenWhatAnAdminIsGivenToRead(LoginTestCase):
+    """A reader reads everything and changes nothing, on the page and not only at the route.
+
+    The route walk above proves what a reader is refused; it cannot see a
+    button or a link the page forgot to draw. These read the pages.
+    """
+
+    def pages(self, role: str) -> dict[str, tuple[int, str]]:
+        self.account = replace(self.account, role=role)
+        app = self.client(replace(configuration(), demo_fixture=True, management_writes=True))
+        client: Any = TestClient(app.app, base_url=str(app.base_url), raise_server_exceptions=False)
+        self.assertEqual(self.sign_in(client).status_code, 303)
+        self.client_of[role] = client
+        return {
+            page: (answer.status_code, answer.text)
+            for page, answer in ((page, client.get(page)) for page in PARITY_PAGES)
+        }
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.client_of: dict[str, Any] = {}
+
+    def test_a_reader_s_page_has_no_form_but_the_sign_out(self) -> None:
+        reader = self.pages("reader")
+
+        posted = {
+            page: sorted(set(re.findall(r'<form[^>]*method="post"[^>]*action="([^"]+)"', text)))
+            for page, (code, text) in reader.items()
+            if code == 200
+        }
+        self.assertGreater(len(posted), 7)
+        self.assertEqual(
+            {page: [a for a in forms if a != "/logout"] for page, forms in posted.items()},
+            {page: [] for page in posted},
+        )
+
+    def test_a_reader_is_given_every_link_to_a_page_a_reader_may_open(self) -> None:
+        admin = self.pages("admin")
+        reader = self.pages("reader")
+        client = self.client_of["reader"]
+
+        missing: dict[str, list[str]] = {}
+        compared = 0
+        for page, (code, text) in reader.items():
+            if code != 200 or admin[page][0] != 200:
+                continue
+            compared += 1
+            shown = set(map(unescape, re.findall(r'href="(/[^"]*)"', text)))
+            wanted = set(map(unescape, re.findall(r'href="(/[^"]*)"', admin[page][1])))
+            lacking = []
+            for link in sorted(wanted - shown):
+                if link.startswith("/static"):
+                    continue
+                if client.get(link.split("#")[0], follow_redirects=False).status_code == 200:
+                    lacking.append(link)
+            if lacking:
+                missing[page] = lacking
+        self.assertGreater(compared, 7)
+        self.assertEqual(missing, {})
+
+    def test_a_reader_has_a_link_to_the_list_of_api_tokens(self) -> None:
+        reader = self.pages("reader")
+
+        self.assertIn('href="/settings/api-tokens"', reader["/"][1])
+        self.assertEqual(self.client_of["reader"].get("/settings/api-tokens").status_code, 200)

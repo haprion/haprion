@@ -6,6 +6,8 @@ import contextlib
 import io
 import json
 import re
+import shutil
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -180,6 +182,36 @@ class TheHelpersOfAReleaseThatWasTakenOut(unittest.TestCase):
             + tuple(requirements.socket_helpers)
         )
         self.assertEqual(sorted(needed - set(scripts) - set(compatibility.RETIRED_HELPERS)), [])
+
+    def test_the_fixture_is_the_newest_release_s_own_file(self) -> None:
+        """The fixture is kept current by this, not by a comment (review 26-11-01, P2-1):
+        where the tags are - the release gate runs here - it must be the file the
+        newest tagged release shipped, so the next tag fails the gate until it is
+        replaced. CI checks out without tags and leaves it to the gate here."""
+
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("no git here")
+        try:
+            tag = subprocess.run(  # noqa: S603 - fixed program, fixed arguments
+                [git, "-C", str(ROOT), "describe", "--tags", "--abbrev=0", "--match", "v*"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            shipped = subprocess.run(  # noqa: S603 - fixed program, the tag git named
+                [git, "-C", str(ROOT), "show", f"{tag}:ui/src/haprion_ui/compatibility.json"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("no release tag in this checkout")
+        self.assertEqual(
+            json.loads(PREVIOUS.read_text()),
+            json.loads(shipped),
+            f"replace {PREVIOUS.name} with {tag}'s ui/src/haprion_ui/compatibility.json",
+        )
 
     def test_a_retired_helper_is_really_gone_from_the_cli(self) -> None:
         scripts = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["scripts"]

@@ -84,6 +84,14 @@ class ARetiredOperationIsJudgedByNobody(unittest.TestCase):
         self.assertEqual([item.id for item in judged], [2])
         self.assertNotEqual(jobs.failure_label(retired, "block_client", "failed"), "block_client")
         self.assertEqual(jobs._operation("block_client"), "External blocking client (removed)")
+        #
+        # One the upgrade ended as `unknown` says there is nothing left to
+        # check, rather than sending a person to look at what it changed.
+        #
+        ended = replace(retired, state="unknown", outcome="unknown")
+        self.assertEqual(
+            jobs.unknown_note(ended), "Blocking over ssh was removed; there is nothing to check."
+        )
         self.assertNotIn("Block client", jobs._operation("block_client"))
 
 

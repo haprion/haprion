@@ -167,8 +167,8 @@ app_web	feature_switch	SELECT	enabled, name, remembered, updated_at, updated_by
 app_web	feature_switch	UPDATE	enabled, remembered, updated_by
 app_web	getting_started	INSERT	hidden_by
 app_web	getting_started	SELECT	hidden, hidden_at, hidden_by
-app_web	job	INSERT	cluster, idempotency_key, operation, payload
-app_web	job	SELECT	attempts, cluster, created_at, exit_code, finished_at, held_decided_by, held_decision, held_since, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt
+app_web	job	INSERT	cluster, idempotency_key, operation, payload, request_digest
+app_web	job	SELECT	attempts, cluster, created_at, exit_code, finished_at, held_decided_by, held_decision, held_since, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_digest, request_id, result, started_at, state, stderr_excerpt
 app_web	job	UPDATE	held_decided_by, held_decision
 app_web	job_claim_gate	SELECT	paused_by, paused_until
 app_web	login_attempt	INSERT	client_ip, succeeded, username_normalised
@@ -516,6 +516,12 @@ allow "$WEB_USER" "receives the database-derived payload hash" \
        values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid())
        returning payload_hash is not null" \
       "t"
+
+allow "$WEB_USER" "can store the digest of the request that queued a job" \
+      "insert into job (operation, cluster, payload, idempotency_key, request_digest)
+       values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid(), decode(repeat('ab', 32), 'hex'))
+       returning octet_length(request_digest)" \
+      "32"
 
 #
 # The account writes 0039 grants, planned against no row: PostgreSQL checks the

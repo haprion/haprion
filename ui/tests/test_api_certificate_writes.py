@@ -275,7 +275,7 @@ class IssuingACertificate(CertificateWriteCase):
         self.refusal = db.CertificateBusy()
         response = self.issue_one(self.write())
         self.assertRefused(response, 409, "certificate_busy")
-        self.assertEqual(response.headers["retry-after"], "30")
+        self.assertEqual(response.headers["retry-after"], "5")
         self.refusal = db.RequestConflict()
         self.assertRefused(self.issue_one(self.write()), 409, "idempotency_conflict")
         self.assertEqual(self.events, [])
@@ -547,3 +547,114 @@ class DeletingACertificate(CertificateWriteCase):
         self.refusal = db.RequestConflict()
         self.assertRefused(self.delete(self.write(), "example.com"), 409, "idempotency_conflict")
         self.assertNotEqual(KEY, str(uuid4()))
+
+
+class RepeatingACall(CertificateWriteCase):
+    """Review 26-11-01, a-P2-1: a retry with the same key is the job it queued, whatever the registry says now."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        patch = mock.patch("haprion_ui.api.certificates.certificate_choices", return_value=CHOICES)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def remember(self) -> None:
+        """What the database holds after the first call: the job under the key, with the call's digest."""
+
+        self.under_key[KEY] = (
+            queued(operation="cert_issue", cluster=None),
+            self.queued[-1]["request_digest"],
+        )
+        self.queued.clear()
+        self.events.clear()
+
+    def assertAnsweredWithTheJob(self, response: Any) -> None:
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()["result"]["job"]["id"], 7)
+        self.assertEqual((self.queued, self.events), ([], []))
+
+    def changed_registry(self, *, without: str) -> Any:
+        registry = self.registry()
+        del registry[without]
+        return mock.patch("haprion_ui.api.certificates.registry_views", return_value=registry)
+
+    def test_a_renewal_repeated_while_it_runs_is_answered_with_its_job(self) -> None:
+        secret = self.write()
+        self.send("POST", "/certificates/example.com/renew", secret)
+        self.remember()
+        registry = self.registry()
+        registry["example.com"] = replace(registry["example.com"], state_active=True)
+        with mock.patch("haprion_ui.api.certificates.registry_views", return_value=registry):
+            self.assertAnsweredWithTheJob(
+                self.send("POST", "/certificates/example.com/renew", secret)
+            )
+
+    def test_an_issue_repeated_once_the_name_is_registered_is_answered_with_its_job(self) -> None:
+        secret = self.write()
+        body = {"domain": "new.example.net", "method": "dns-01", "clusters": ["alpha"]}
+        self.send("POST", "/certificates", secret, body)
+        self.remember()
+        taken = replace(CHOICES, registered=(*CHOICES.registered, "new.example.net"))
+        with mock.patch("haprion_ui.api.certificates.certificate_choices", return_value=taken):
+            self.assertAnsweredWithTheJob(self.send("POST", "/certificates", secret, body))
+
+    def test_a_deletion_repeated_once_the_certificate_is_gone_is_answered_with_its_job(
+        self,
+    ) -> None:
+        secret = self.write()
+        self.send("DELETE", "/certificates/example.com", secret)
+        self.remember()
+        with self.changed_registry(without="example.com"):
+            self.assertAnsweredWithTheJob(self.send("DELETE", "/certificates/example.com", secret))
+
+    def test_a_retarget_repeated_once_the_places_are_as_asked_is_answered_with_its_job(
+        self,
+    ) -> None:
+        secret = self.write()
+        body = {"action": "add", "clusters": ["beta"], "formats": {}}
+        first = self.send("PUT", "/certificates/example.com/targets", secret, body)
+        self.assertEqual(first.status_code, 202, first.text)
+        self.remember()
+        with self.changed_registry(without="example.com"):
+            self.assertAnsweredWithTheJob(
+                self.send("PUT", "/certificates/example.com/targets", secret, body)
+            )
+
+    def test_the_same_key_for_another_certificate_is_refused_not_answered_with_the_first_job(
+        self,
+    ) -> None:
+        secret = self.write()
+        self.send("DELETE", "/certificates/example.com", secret)
+        self.remember()
+        other = self.send("DELETE", "/certificates/old.example.com", secret)
+        self.assertEqual(
+            (other.status_code, other.json()["error"]["code"]), (409, "idempotency_conflict")
+        )
+        self.assertNotIn("new one", other.json()["error"]["message"])
+
+    def test_writes_off_is_the_first_refusal_of_every_certificate_route(self) -> None:
+        """Review 26-11-01, a-P3-8: before the registry is read, whatever it would say."""
+
+        secret = self.write()
+        for method, path, body in (
+            (
+                "POST",
+                "/certificates",
+                {"domain": "example.com", "method": "dns-01", "clusters": ["alpha"]},
+            ),
+            ("POST", "/certificates/missing.example.org/renew", None),
+            (
+                "PUT",
+                "/certificates/missing.example.org/targets",
+                {"action": "add", "clusters": ["beta"]},
+            ),
+            ("DELETE", "/certificates/missing.example.org", None),
+            (
+                "POST",
+                "/certificates",
+                {"domain": "example.com", "method": "dns-01", "clusters": ["gamma"]},
+            ),
+        ):
+            with self.subTest(path=path):
+                response = self.send(method, path, secret, body, writes=False, key=None)
+                self.assertRefused(response, 403, "writes_off")

@@ -4507,8 +4507,9 @@ values and shows text, never matches on it.
 A *Write* token issues, renews, republishes and deletes certificates. Each call queues the job the
 *Certificates* page queues, with the same checks, and is answered `202` with the job to follow at
 `/api/v1/jobs/{id}`. Every change carries an `Idempotency-Key` header holding a new UUID: a retry with the same
-key is the same job, and the same key asking for something else is refused (`409 idempotency_conflict`).
-Changes are off where the installation has switched management writes off (`403 writes_off`).
+key and the same call is the same job, even after it has run, and the same key asking for something else is
+refused (`409 idempotency_conflict`). A token limited to some clusters reads the certificate jobs it queued
+itself, and no other certificate job. Changes are off where the installation has switched management writes off (`403 writes_off`).
 
 ```bash
 # Issue a certificate for a name and publish it to a cluster (a token with the level Write)
@@ -4530,7 +4531,7 @@ else, and publishes to its clusters only. Any other certificate is answered `404
 exist, and a receiver is answered `403 forbidden` whether or not it exists. A private key never passes
 through the API, so importing a certificate or a key, uploading a renewed file, a signing request and the
 interface's own certificate stay in the interface. Another certificate job running is `409 certificate_busy`
-with `Retry-After`, and a name already in the registry is `409 already_exists`.
+with `Retry-After: 5`, and a name already in the registry is `409 already_exists`.
 
 ### Changing objects
 
@@ -4541,8 +4542,8 @@ the *Proxies* page as saved by `token:` and the token's name. Nothing reaches th
 
 | Path under `/api/v1` | What it does |
 |---|---|
-| `/clusters/{cluster}/objects` | **POST** saves a new object from its document. Answered 201 with the saved change |
-| `/clusters/{cluster}/objects/{name}` | **PUT** replaces the object's saved change, or saves a change over the object as published. **DELETE** saves its removal |
+| `/clusters/{cluster}/objects` | **POST** saves a new object from its document. Answered 201 with the saved change; the same document again answers 201 with `changed` false |
+| `/clusters/{cluster}/objects/{name}` | **PUT** replaces the object's saved change, or saves a change over the object as published. **DELETE** saves its removal, held to the same rules as PUT |
 | `/clusters/{cluster}/publish` | **POST** publishes everything saved for the cluster as one version (`comment`, optional, and `deploy`, true unless you say false). Answered 202 with the job |
 | `/clusters/{cluster}/revert` | **POST** publishes an earlier version again (`version`). Answered 202 with the job |
 
@@ -4550,13 +4551,21 @@ The body of a save is the object itself, as JSON or as YAML - the same document 
 is checked as the page checks it. A document that is not an object is refused with 400 `bad_input`, and an
 object that does not fit the cluster (an address it does not have, a certificate it cannot use) is saved all
 the same, as a draft is: the answer's `check` says whether it fits and why not. The answer's `revision` is the
-saved change's, and `If-Match` with it makes a replace refuse (409 `conflict`) if somebody saved in between.
-Saying what is already there saves nothing (`changed` is false). A name that exists, an object with a draft
-somebody has not finished in the interface, and a rename are not done through the API: create a new object and
-remove the old one.
+saved change's, and `If-Match` with it makes a replace or a removal refuse (409 `conflict`) if somebody saved
+in between; `If-Match: 0` says that nothing is saved yet. Saying what is already there saves nothing
+(`changed` is false). A name that exists, an object with a draft somebody has not finished in the interface, and
+a rename are not done through the API: create a new object and remove the old one.
+
+Removing an object is held to what replacing one is held to. A removal is refused with 409 `conflict` while the
+object has a draft somebody is editing in the interface, and while it has changes somebody else saved, unless
+`If-Match` names the revision of those changes: the removal then takes them with it, as the page's *Remove*
+does. Where *Advanced config* or the *WAF engine* is switched off under *Settings*, a document may not change
+an object's advanced config or start the engine on it (400 `bad_input`); what an object already has stays.
 
 Publishing and going back are jobs, as on the pages: they need an `Idempotency-Key` header holding a new UUID for
-each change, so that a call repeated after a lost answer is the same job and not two. The answer is 202 with
+each change, so that a call repeated after a lost answer is the same job and not two: the same key with the same
+call is answered with the job already queued, even after it has run, and the same key with another call is
+refused (409 `idempotency_conflict`). The answer is 202 with
 the job and where to follow it (`/api/v1/jobs/{id}`). A publish carries every change saved on the cluster,
 whoever saved it, as the page's does; it is refused with 409 `nothing_to_publish` when nothing is saved and with
 409 `conflict` when the saved changes cannot be published as they are (the message says which).

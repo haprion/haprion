@@ -97,13 +97,20 @@ def job_list(
         in_scope(caller, cluster)
         scope: list[str] | None = [cluster]
     else:
-        # A token limited to clusters has no part in a job that has none.
+        # A token limited to clusters has no part in a job that has none, but
+        # the ones it queued itself (a certificate's): it must be able to follow them.
         scope = caller.issued.clusters or None
     with request.app.state.pool.connection() as connection:
         #
         # One more than asked, which is how a cut list is told from a full one.
         #
-        rows = db.listed_jobs(connection, clusters=scope, state=state, limit=limit + 1)
+        rows = db.listed_jobs(
+            connection,
+            clusters=scope,
+            state=state,
+            limit=limit + 1,
+            clusterless_by=caller.actor if scope and cluster is None else None,
+        )
         truncated = len(rows) > limit
         rows = rows[:limit]
         actors = db.requested_by(connection, [row.request_id for row in rows])
@@ -132,17 +139,20 @@ def job_show(
 
     with request.app.state.pool.connection() as connection:
         job = db.job_by_id(connection, job_id)
-        #
-        # A job outside the token's scope is answered as one that is not
-        # there; a job with no cluster is outside every limited token's.
-        #
-        if (
-            job is None
-            or (job.cluster is None and caller.issued.clusters)
-            or (job.cluster is not None and not api_tokens.covers(caller.issued, job.cluster))
-        ):
+        if job is None:
             raise NOT_FOUND
         actors = db.requested_by(connection, [job.request_id])
+        #
+        # A job outside the token's scope is answered as one that is not
+        # there; a job with no cluster is outside every limited token's but the
+        # one that queued it (review 26-11-01, a-P2-2).
+        #
+        if (
+            job.cluster is None
+            and caller.issued.clusters
+            and actors.get(job.request_id) != caller.actor
+        ) or (job.cluster is not None and not api_tokens.covers(caller.issued, job.cluster)):
+            raise NOT_FOUND
         #
         # The page captions a follow-up on the newest job that owes one, so a
         # job is read among its cluster's newest and not alone; one older than

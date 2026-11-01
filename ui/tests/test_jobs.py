@@ -173,10 +173,10 @@ class QueueConflictsAreClassifiedAfterTheKeyLookup(unittest.TestCase):
     def test_a_same_request_is_returned_when_the_cluster_index_reports_first(self) -> None:
         existing = queued_job()
 
-        self.assertIs(
-            self.queue("job_one_active_per_cluster", existing),
-            existing,
-        )
+        returned = self.queue("job_one_active_per_cluster", existing)
+
+        # The same job, marked as one this call did not queue.
+        self.assertEqual(returned, replace(existing, fresh=False))
 
     def test_a_different_request_still_reports_a_busy_cluster(self) -> None:
         with self.assertRaises(db.ClusterBusy):

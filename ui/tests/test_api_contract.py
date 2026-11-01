@@ -448,7 +448,8 @@ class TheObjectWriteRoutes(Checked, ChangesTestCase):
     }
 
     def test_every_answer_is_the_one_its_schema_describes(self) -> None:
-        self.rows = [saved_row()]
+        # The token's own change, which a removal takes without being told its revision.
+        self.rows = [saved_row(updated_by=f"token{':'}monitoring")]
         for operation, calls in self.CALLS.items():
             for call in calls:
                 method, path = call.split(" ")

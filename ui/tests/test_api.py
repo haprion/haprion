@@ -133,8 +133,11 @@ class ApiTestCase(LoginTestCase):
         super().setUp()
         self.tokens: dict[bytes, db.ApiToken] = {}
         self.touched: list[tuple[int, str]] = []
+        self.under_key: dict[str, tuple[db.Job, bytes | None]] = {}
         for patch in (
             mock.patch("haprion_ui.db.api_token_by_hash", side_effect=self._token),
+            # No job queued under any key yet unless a test says (`self.under_key`).
+            mock.patch("haprion_ui.db.job_for_call", side_effect=self._under_key),
             mock.patch("haprion_ui.db.touch_api_token", side_effect=self._touch),
             mock.patch("haprion_ui.db.cluster_list", return_value=("alpha", "beta")),
             mock.patch.object(caller, "FAILURES", caller.Failures()),
@@ -142,8 +145,20 @@ class ApiTestCase(LoginTestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def _token(self, _c: object, token_hash: bytes) -> db.ApiToken | None:
+    def _token(self, _c: object, token_hash: bytes, *, lock: bool = False) -> db.ApiToken | None:
+        del lock
         return self.tokens.get(token_hash)
+
+    def _under_key(
+        self, _c: object, key: Any, *, request_digest: bytes
+    ) -> tuple[db.Job, bool] | None:
+        """The job a test says was queued under this key, and whether for this very call."""
+
+        found = self.under_key.get(str(key))
+        if found is None:
+            return None
+        job, digest = found
+        return job, digest is None or digest == request_digest
 
     def _touch(self, _c: object, token_id: int, source: str) -> None:
         self.touched.append((token_id, source))

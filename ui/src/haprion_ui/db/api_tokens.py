@@ -58,12 +58,20 @@ _API_COLUMNS = (
 _API_SELECT = "select" + _API_COLUMNS + "from api_token"
 
 
-def api_token_by_hash(connection: Connection[Any], token_hash: bytes) -> ApiToken | None:
-    """The token with this hash, revoked and expired ones included: the caller judges."""
+def api_token_by_hash(
+    connection: Connection[Any], token_hash: bytes, *, lock: bool = False
+) -> ApiToken | None:
+    """The token with this hash, revoked and expired ones included: the caller judges.
+
+    `lock` holds the row `for share` until the transaction ends: a write that
+    judges the token again in its own transaction makes a revocation wait for
+    it, or see it, and cannot be slipped past between the read and the commit
+    (review 26-11-01, a-P3-4).
+    """
 
     with connection.cursor(row_factory=class_row(ApiToken)) as cursor:
         cursor.execute(
-            _API_SELECT + " where token_hash = %(token_hash)s",
+            _API_SELECT + " where token_hash = %(token_hash)s" + (" for share" if lock else ""),
             {"token_hash": token_hash},
         )
         return cursor.fetchone()

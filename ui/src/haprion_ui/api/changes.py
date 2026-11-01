@@ -10,7 +10,11 @@ the change. Publishing and going back are jobs, as the pages queue them.
 * **Nothing is lost silently.** A change somebody saved in the interface is
   not overwritten by a create; a replace is held to the revision the caller
   names in `If-Match`, and to the draft nobody has finished (the editor's own
-  rule: finish or discard it there).
+  rule: finish or discard it there). A removal is held to the same two, and to
+  a change somebody else saved unless `If-Match` names its revision.
+* **The switches are the page's.** *Advanced config* and *WAF engine* off:
+  a document may not change the object's advanced text or start the engine on
+  it, as the page's form and dialog do not offer either (review 26-11-01, a-P3-3).
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ from haprion.proxy_model import ModelError
 from haprion.version_history import comment_problem
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from haprion_ui import db, history
+from haprion_ui import db, features, history
 from haprion_ui import editor as editor_module
 from haprion_ui.api import contract, writing
 from haprion_ui.api.answers import Refusal, answer
@@ -115,9 +119,18 @@ def _requested_by(caller: Caller) -> str:
     return caller.trailer_actor
 
 
-async def document_body(request: Request) -> bytes:
-    """The request's body, read up to what an object may be."""
+async def document_body(
+    request: Request,
+    caller: Caller = Depends(needs("write")),  # noqa: B008
+) -> bytes:
+    """The request's body, read up to what an object may be, once the token is judged.
 
+    The caller is a dependency of this one so that no route can read a body
+    for a call without a valid token: that call is a `401`, not a `413`
+    (review 26-11-01, b-P3-8).
+    """
+
+    del caller
     received = bytearray()
     async for chunk in request.stream():
         received += chunk
@@ -174,6 +187,53 @@ def _protocol_of(text: str, name: str) -> str | None:
     listen = data.get("listen")
     protocol = listen.get("protocol") if isinstance(listen, dict) else None
     return protocol if isinstance(protocol, str) else None
+
+
+def _read(name: str, text: str | None) -> dict[str, Any]:
+    if text is None:
+        return {}
+    try:
+        return proxy_model.read_document(name, text.encode())
+    except ModelError:
+        return {}
+
+
+def _inspects(name: str, text: str | None) -> bool:
+    if text is None:
+        return False
+    try:
+        return proxy_model.load_proxy(name, text.encode()).inspected is not None
+    except (ModelError, UnicodeError):
+        return False
+
+
+def held_to_switches(request: Request, name: str, document: str, base: str | None) -> None:
+    """A document the switches would not have the page write is a `400`, as it is on the page.
+
+    The page offers neither the advanced text nor the WAF engine while its
+    switch is off: what the object already has stays, and cannot be changed or
+    started. `base` is the object as it stands - the saved change, else the
+    published one, else None for a new object.
+    """
+
+    with request.app.state.pool.connection() as connection:
+        features.read_in(db.feature_switches(connection))
+    if not features.is_on(features.ADVANCED_CONFIG) and _read(name, document).get(
+        "advanced"
+    ) != _read(name, base).get("advanced"):
+        raise _bad(
+            "Advanced config is switched off on this installation, so an object's advanced "
+            "config cannot be changed."
+        )
+    if (
+        not features.is_on(features.WAF_ENGINE)
+        and _inspects(name, document)
+        and not _inspects(name, base)
+    ):
+        raise _bad(
+            "The WAF engine is switched off on this installation, so an object cannot start "
+            "using it."
+        )
 
 
 def checked_document(state: EditorState, name: str, text: str) -> tuple[str, Preview]:
@@ -257,6 +317,7 @@ def _written(
     """Write one saved change and its audit row in one transaction; a lost race is a `409`."""
 
     with request.app.state.pool.connection() as connection:
+        writing.still_valid(connection, request, caller)
         try:
             saved: db.ProxyDraft = save(connection)
         except db.DraftConflict as conflict:
@@ -299,10 +360,33 @@ def object_create(
     in_scope(caller, cluster, name)
     state = _state(request, cluster)
     document, preview = checked_document(state, name, text)
+    held_to_switches(request, name, document, None)
     with request.app.state.pool.connection() as connection:
         work = settled_work(connection, cluster, name, state_reading(state))
     if any(view.name == name for view in state.stored):
         raise Refusal(409, "conflict", "A proxy of that name already exists in this cluster.")
+    saved_here = work.saved
+    # The same document again is a retry whose answer was lost: nothing more to save.
+    if (
+        work.draft is None
+        and saved_here is not None
+        and not saved_here.deleted
+        and editor_module.unchanged(document, saved_here.yaml)
+    ):
+        response = answer(
+            request,
+            _saved(
+                saved_here,
+                name,
+                changed=False,
+                removal=False,
+                check=_check(request, preview, name, text),
+            ),
+            cluster=cluster,
+            status=201,
+        )
+        response.headers["Location"] = f"/api/v1/clusters/{cluster}/objects/{name}"
+        return response
     if work.top is not None:
         raise Refusal(
             409,
@@ -341,14 +425,25 @@ def object_create(
 
 
 def _revision(request: Request) -> int | None:
-    """The revision named in `If-Match` (quoted or not), or None without the header."""
+    """The revision named in `If-Match` (quoted or not), or None without the header.
+
+    0 says "nothing is saved yet": a revision starts at 1.
+    """
 
     value = request.headers.get("If-Match", "").strip().removeprefix("W/").strip('"')
     if not request.headers.get("If-Match"):
         return None
     if not digits.is_digits(value):
-        raise _bad("If-Match holds the revision of the saved change, a whole number.")
+        raise _bad(
+            "If-Match holds the revision of the saved change, a whole number; 0 means nothing is saved."
+        )
     return int(value)
+
+
+def _not_at(name: str, held: int | None, saved: db.ProxyDraft | None) -> bool:
+    """Whether `If-Match` names another revision than the saved change's (0 where none is saved)."""
+
+    return held is not None and held != (saved.revision if saved is not None else 0)
 
 
 @router.put(
@@ -376,6 +471,17 @@ def object_replace(
     if stored is None and work.saved is None:
         raise NOT_FOUND
     document, preview = checked_document(state, name, text)
+    saved = work.saved
+    held_to_switches(
+        request,
+        name,
+        document,
+        saved.yaml
+        if saved is not None and not saved.deleted
+        else stored.document
+        if stored
+        else None,
+    )
     check = _check(request, preview, name, text)
     if work.draft is not None:
         raise Refusal(
@@ -383,8 +489,7 @@ def object_replace(
             "conflict",
             f"{name} has a draft. Save or discard it in the editor first.",
         )
-    saved = work.saved
-    if held is not None and held != (saved.revision if saved is not None else None):
+    if _not_at(name, held, saved):
         raise Refusal(
             409,
             "conflict",
@@ -441,16 +546,41 @@ def object_remove(
     name: str,
     caller: Caller = Depends(needs("write")),  # noqa: B008
 ) -> JSONResponse:
-    """Save the removal of a published object, for the next publish."""
+    """Save the removal of a published object, for the next publish.
+
+    Held to what a replace is held to: a draft somebody is editing is not
+    taken away, and neither is a change somebody else saved unless `If-Match`
+    names its revision (review 26-11-01, a-P2-3).
+    """
 
     in_scope(caller, cluster, name)
     _writes_on(request)
+    held = _revision(request)
     state = _state(request, cluster)
     stored = next((view for view in state.stored if view.name == name), None)
     if stored is None:
         raise NOT_FOUND
     with request.app.state.pool.connection() as connection:
         work = settled_work(connection, cluster, name, state_reading(state))
+    if work.draft is not None:
+        raise Refusal(
+            409,
+            "conflict",
+            f"{name} has a draft. Save or discard it in the editor first.",
+        )
+    if _not_at(name, held, work.saved):
+        raise Refusal(
+            409,
+            "conflict",
+            f"The saved changes to {name} are not at revision {held}; read them again.",
+        )
+    if work.saved is not None and held is None and work.saved.updated_by != caller.actor:
+        raise Refusal(
+            409,
+            "conflict",
+            f"{name} has changes saved by {work.saved.updated_by}. Name their revision "
+            f"({work.saved.revision}) in If-Match to remove it all the same.",
+        )
     saved = _written(
         request,
         caller,
@@ -493,6 +623,8 @@ def cluster_publish(
     _writes_on(request)
     writing.idempotency_key(request)
     asked = _json(body, PublishBody, empty_ok=True)
+    if (again := writing.replayed(request, caller, asked)) is not None:
+        return again
     config = request.app.state.config
     if cluster not in listed_clusters(request, config):
         raise NOT_FOUND
@@ -514,6 +646,7 @@ def cluster_publish(
             package, comment=comment, requested_by=_requested_by(caller), deploy=asked.deploy
         ),
         detail={"changes": [row.name for row in package.rows]},
+        body=asked,
     )
 
 
@@ -535,6 +668,8 @@ def cluster_revert(
     _writes_on(request)
     writing.idempotency_key(request)
     asked = _json(body, RevertBody)
+    if (again := writing.replayed(request, caller, asked)) is not None:
+        return again
     config = request.app.state.config
     clusters, history_rows = read_source(request, config, HISTORY_SOURCE)
     if cluster not in clusters:
@@ -565,4 +700,5 @@ def cluster_revert(
             expected_head=view.head_commit,
         ),
         detail={"version": version.number},
+        body=asked,
     )

@@ -495,6 +495,10 @@ def object_unblock(
     """Lift the block on addresses: the job the object page's *Unblock* queues."""
 
     in_scope(caller, cluster, name)
+    if not request.app.state.config.management_writes:
+        raise writing.WRITES_OFF
+    if (again := writing.replayed(request, caller, body)) is not None:
+        return again
     if cluster not in listed_clusters(request, request.app.state.config) or not NAME.fullmatch(
         name
     ):
@@ -507,4 +511,5 @@ def object_unblock(
         cluster=cluster,
         payload=payload,
         detail={"object": name, "addresses": payload["addresses"]},
+        body=body,
     )

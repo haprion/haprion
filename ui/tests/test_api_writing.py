@@ -73,6 +73,8 @@ class QueueingAChange(ApiTestCase):
         mounted: Any = next(r for r in app.routes if isinstance(r, Mount) and r.path == api.PREFIX)
 
         def change(request: Request, caller: Caller = Depends(needs("write"))) -> JSONResponse:  # noqa: B008
+            if (again := writing.replayed(request, caller)) is not None:
+                return again
             return writing.queue(
                 request,
                 caller,
@@ -163,7 +165,9 @@ class QueueingAChange(ApiTestCase):
         revoked = replace(live, revoked_at=datetime.now(UTC), revoked_by="admin")
         reads = iter([live, revoked])
         with (
-            mock.patch("haprion_ui.db.api_token_by_hash", side_effect=lambda _c, _d: next(reads)),
+            mock.patch(
+                "haprion_ui.db.api_token_by_hash", side_effect=lambda _c, _d, **_k: next(reads)
+            ),
             self.assertLogs("haprion_ui.api", "WARNING") as logged,
         ):
             response = self.post(client, secret)
@@ -177,3 +181,85 @@ class QueueingAChange(ApiTestCase):
             with self.subTest(level=level):
                 self.assertEqual(self.post(client, self.issue(level=level)).status_code, 403)
         self.assertEqual(self.queued, [])
+
+    def test_a_retry_is_the_job_already_queued_and_writes_no_second_history_row(self) -> None:
+        """Review 26-11-01, a-P2-1 and a-P3-5: the key is held to the call, and a retry queues nothing."""
+
+        client = self.writing_client()
+        secret = self.issue(level="write")
+        self.assertEqual(self.post(client, secret).status_code, 202)
+        (queued,) = self.queued
+        self.assertEqual(len(queued["request_digest"]), 32)
+        self.under_key[IDEMPOTENT] = (a_job(id=41), queued["request_digest"])
+        again = self.post(client, secret)
+        self.assertEqual(again.status_code, 202, again.text)
+        self.assertEqual(again.json()["result"]["job"]["id"], 41)
+        self.assertEqual(again.headers["location"], "/api/v1/jobs/41")
+        self.assertEqual((len(self.queued), len(self.events)), (1, 1))
+
+    def test_a_key_used_for_another_call_is_a_409_that_does_not_say_to_do_it_again(self) -> None:
+        client = self.writing_client()
+        secret = self.issue(level="write")
+        self.under_key[IDEMPOTENT] = (a_job(id=41), b"\0" * 32)
+        response = self.post(client, secret)
+        self.assertEqual(
+            (response.status_code, response.json()["error"]["code"]), (409, "idempotency_conflict")
+        )
+        message = response.json()["error"]["message"]
+        self.assertIn("another change", message)
+        self.assertNotIn("new one", message)
+        self.assertEqual((self.queued, self.events), ([], []))
+
+    def test_another_token_s_key_is_not_answered_with_its_job(self) -> None:
+        client = self.writing_client()
+        self.assertEqual(self.post(client, self.issue(level="write")).status_code, 202)
+        self.under_key[IDEMPOTENT] = (a_job(id=41), self.queued[0]["request_digest"])
+        other = self.issue(level="write", name="other-token", id=8)
+        response = self.post(client, other)
+        self.assertEqual(
+            (response.status_code, response.json()["error"]["code"]), (409, "idempotency_conflict")
+        )
+
+    def test_a_replay_with_writes_off_is_still_refused(self) -> None:
+        client = self.writing_client(writes=False)
+        self.under_key[IDEMPOTENT] = (a_job(id=41), b"\0" * 32)
+        self.assertEqual(self.post(client, self.issue(level="write")).status_code, 403)
+
+    def test_a_key_the_queue_had_already_seen_writes_no_second_history_row(self) -> None:
+        client = self.writing_client()
+        secret = self.issue(level="write")
+        with mock.patch("haprion_ui.db.queue_job", return_value=a_job(fresh=False)):
+            response = self.post(client, secret)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.events, [])
+
+    def test_a_busy_cluster_held_for_a_person_says_so_and_promises_nothing(self) -> None:
+        """Review 26-11-01, a-P3-1."""
+
+        client = self.writing_client()
+        secret = self.issue(level="write")
+        self.refusal = db.ClusterBusy("alpha", active=a_job(held_since=datetime.now(UTC)))
+        held = self.post(client, secret, key=str(uuid4()))
+        self.assertEqual(held.json()["error"]["code"], "cluster_busy")
+        self.assertIn("Run or Discard", held.json()["error"]["message"])
+        self.assertNotIn("retry-after", held.headers)
+        self.refusal = db.ClusterBusy("alpha", active=a_job(created_at=datetime.now(UTC)))
+        busy = self.post(client, secret, key=str(uuid4()))
+        self.assertIn("try again", busy.json()["error"]["message"])
+        self.assertEqual(busy.headers["retry-after"], "5")
+
+    def test_a_token_revoked_during_the_write_is_judged_with_its_row_held(self) -> None:
+        """Review 26-11-01, a-P3-4: the row is read `for share`, so a revocation waits or is seen."""
+
+        client = self.writing_client()
+        secret = self.issue(level="write")
+        seen: list[bool] = []
+        original = self._token
+
+        def watching(connection: object, token_hash: bytes, *, lock: bool = False) -> Any:
+            seen.append(lock)
+            return original(connection, token_hash, lock=lock)
+
+        with mock.patch("haprion_ui.db.api_token_by_hash", side_effect=watching):
+            self.assertEqual(self.post(client, secret).status_code, 202)
+        self.assertEqual(seen, [False, True])

@@ -82,12 +82,23 @@ class JobsApiTestCase(ApiTestCase):
         clusters: Collection[str] | None,
         state: str | None,
         limit: int,
+        clusterless_by: str | None = None,
     ) -> list[db.Job]:
-        self.listed.append({"clusters": clusters, "state": state, "limit": limit})
+        self.listed.append(
+            {"clusters": clusters, "state": state, "limit": limit, "own": clusterless_by}
+        )
         return [
             row
             for row in self.rows
-            if (clusters is None or row.cluster in clusters)
+            if (
+                clusters is None
+                or row.cluster in clusters
+                or (
+                    row.cluster is None
+                    and clusterless_by is not None
+                    and self.actors.get(row.request_id) == clusterless_by
+                )
+            )
             and (state is None or row.state == state)
         ][:limit]
 
@@ -161,7 +172,7 @@ class TheJobList(JobsApiTestCase):
         )
         self.assertEqual(pending["subjects"], ["example.com", "example.net"])
         self.assertIsNone(pending["actor"])
-        self.assertEqual(self.listed, [{"clusters": None, "state": None, "limit": 51}])
+        self.assertEqual(self.listed, [{"clusters": None, "state": None, "limit": 51, "own": None}])
 
     def test_the_helper_s_sentence_goes_to_a_token_at_the_admin_s_level_only(self) -> None:
         self.rows = [failed_job()]
@@ -187,6 +198,21 @@ class TheJobList(JobsApiTestCase):
 
         self.assertEqual([job["id"] for job in response.json()["result"]["jobs"]], [2])
         self.assertEqual(self.listed[-1]["clusters"], ["beta"])
+
+    def test_a_limited_token_lists_the_certificate_jobs_it_queued_and_no_others(self) -> None:
+        """Review 26-11-01, a-P2-2."""
+
+        own, other = UUID(int=3), UUID(int=4)
+        self.rows = [
+            a_job(id=2, cluster="beta"),
+            a_job(id=3, cluster=None, operation="cert_publish", request_id=own),
+            a_job(id=4, cluster=None, operation="cert_publish", request_id=other),
+        ]
+        self.actors = {own: f"token{':'}monitoring", other: f"token{':'}someone-else"}
+
+        response = self.get("/jobs", clusters=["beta"])
+
+        self.assertEqual([job["id"] for job in response.json()["result"]["jobs"]], [2, 3])
 
     def test_a_cluster_outside_the_token_is_as_if_it_were_not_there(self) -> None:
         self.rows = [a_job(id=1, cluster="alpha")]
@@ -412,6 +438,19 @@ class OneJob(JobsApiTestCase):
 
         self.assertEqual(self.get("/jobs/41").status_code, 200)
         self.assertEqual(self.get("/jobs/41", clusters=["alpha"]).status_code, 404)
+
+    def test_a_limited_token_follows_the_certificate_job_it_queued_and_no_other(self) -> None:
+        """Review 26-11-01, a-P2-2: the 202 names a job the token must be able to read."""
+
+        own, other = UUID(int=3), UUID(int=4)
+        self.rows = [
+            a_job(id=3, operation="cert_publish", cluster=None, request_id=own),
+            a_job(id=4, operation="cert_publish", cluster=None, request_id=other),
+        ]
+        self.actors = {own: f"token{':'}monitoring", other: f"token{':'}someone-else"}
+
+        self.assertEqual(self.get("/jobs/3", clusters=["alpha"]).status_code, 200)
+        self.assertEqual(self.get("/jobs/4", clusters=["alpha"]).status_code, 404)
 
     def test_a_job_that_is_not_there_is_a_404_and_a_number_that_is_no_id_a_400(self) -> None:
         self.assertEqual(self.get("/jobs/41").status_code, 404)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -54,6 +54,11 @@ class Job:
     # (review 26-10-29, A2). The same for every row of one read.
     #
     worker_busy: bool = False
+    #
+    # False on the row `queue_job` hands back for a key it had already seen: the
+    # job exists, this call queued nothing (review 26-11-01, a-P3-5).
+    #
+    fresh: bool = True
 
     @property
     def waits_for_decision(self) -> bool:
@@ -230,11 +235,14 @@ def listed_jobs(
     clusters: Collection[str] | None = None,
     state: str | None = None,
     limit: int,
+    clusterless_by: str | None = None,
 ) -> list[Job]:
     """The newest jobs of these clusters, optionally in one state: exactly `limit` at most.
 
     `clusters` None is every job, those with no cluster among them; a list is
-    the jobs of those clusters alone. Unlike `recent_jobs` nothing in flight
+    the jobs of those clusters alone, and with `clusterless_by` also the jobs
+    with none that this actor queued (a limited API token's certificate jobs).
+    Unlike `recent_jobs` nothing in flight
     is added beyond the limit, since a caller that asks for a number is
     owed no more than it.
     """
@@ -246,11 +254,17 @@ def listed_jobs(
             "       idempotency_key, attempts, held_since, held_decision, held_decided_by, "
             f"       {_LEASE_COLUMNS} "
             "  from job "
-            " where (%(clusters)s::text[] is null or cluster = any(%(clusters)s)) "
+            " where (%(clusters)s::text[] is null or cluster = any(%(clusters)s) "
+            "        or (cluster is null and %(own)s::text is not null and exists ("
+            "            select 1 from audit_event "
+            "             where audit_event.request_id = job.request_id "
+            "               and audit_event.action = 'queue_job' "
+            "               and audit_event.actor = %(own)s))) "
             "   and (%(state)s::text is null or state = %(state)s) "
             " order by created_at desc, id desc "
             " limit %(limit)s",
             {
+                "own": clusterless_by,
                 "clusters": None if clusters is None else sorted(clusters),
                 "state": state,
                 "limit": limit,
@@ -450,6 +464,7 @@ def queue_job(
     cluster: str | None,
     payload: Mapping[str, Any],
     idempotency_key: UUID,
+    request_digest: bytes | None = None,
 ) -> Job:
     """Ask for an operation. Say nothing about what happened.
 
@@ -479,6 +494,7 @@ def queue_job(
         "cluster": cluster,
         "payload": Jsonb(payload),
         "key": str(idempotency_key),
+        "digest": request_digest,
     }
     conflict: BaseException | None = None
     constraint = ""
@@ -491,8 +507,8 @@ def queue_job(
         #
         with savepoint(connection), connection.cursor(row_factory=class_row(Job)) as cursor:
             cursor.execute(
-                "insert into job (operation, cluster, payload, idempotency_key) "
-                "values (%(operation)s, %(cluster)s, %(payload)s, %(key)s) "
+                "insert into job (operation, cluster, payload, idempotency_key, request_digest) "
+                "values (%(operation)s, %(cluster)s, %(payload)s, %(key)s, %(digest)s) "
                 "returning id, request_id, operation, cluster, payload, state, created_at, "
                 "          started_at, finished_at, exit_code, outcome, result, "
                 "          stderr_excerpt, idempotency_key, attempts",
@@ -565,7 +581,40 @@ def queue_job(
                 raise CertificateBusy(active=active) from conflict
             raise ClusterBusy(cluster, active=active) from conflict
         raise RequestConflict(str(idempotency_key))
-    return existing
+    return replace(existing, fresh=False)
+
+
+def job_for_call(
+    connection: Connection[Any], key: UUID, *, request_digest: bytes
+) -> tuple[Job, bool] | None:
+    """The job queued under this key, and whether it was queued for this very request.
+
+    For the API, whose payload is built from the state at the call: after the
+    job has run the same call builds another payload, so the key is held to the
+    digest of the request instead (0110). None when the key is new. A job
+    queued without a digest - a page's, or one from before - is never the
+    answer to an API call.
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts "
+            "  from job "
+            " where idempotency_key = %(key)s",
+            {"key": str(key)},
+        )
+        job = cursor.fetchone()
+    if job is None:
+        return None
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select coalesce(request_digest = %(digest)s, false) from job where id = %(id)s",
+            {"digest": request_digest, "id": job.id},
+        )
+        row = cursor.fetchone()
+    return job, bool(row and row[0])
 
 
 def active_job(connection: Connection[Any], cluster: str | None) -> Job | None:

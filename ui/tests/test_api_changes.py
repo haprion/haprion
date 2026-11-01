@@ -266,7 +266,7 @@ class CreatingAnObject(ChangesTestCase):
 
     def test_a_name_that_is_taken_is_a_409(self) -> None:
         self.refused(self.send("POST", "/clusters/alpha/objects", body=SHOP), 409, "conflict")
-        self.rows = [saved_row(object_id="console", yaml=SECOND)]
+        self.rows = [saved_row(object_id="console", yaml=SECOND.replace("8080", "9091"))]
         self.refused(self.send("POST", "/clusters/alpha/objects", body=SECOND), 409, "conflict")
         self.draft = saved_row(object_id="console", yaml=SECOND, stage="draft")
         self.rows = []
@@ -488,12 +488,35 @@ class RemovingAnObject(ChangesTestCase):
         (event,) = self.events
         self.assertEqual(event["detail"]["removed"], True)
 
-    def test_a_saved_change_and_a_draft_over_the_object_are_taken_into_the_removal(self) -> None:
-        self.rows = [saved_row()]
+    def test_a_removal_over_a_draft_nobody_finished_is_a_409_and_writes_nothing(self) -> None:
+        """Review 26-11-01, a-P2-3: the page's own *Remove* is unchanged, the API's is held like a replace."""
+
+        self.rows = [saved_row(updated_by=ACTOR)]
         self.draft = saved_row(stage="draft", revision=5)
-        self.send("DELETE", "/clusters/alpha/objects/shop")
+        response = self.send("DELETE", "/clusters/alpha/objects/shop")
+        self.refused(response, 409, "conflict")
+        self.assertIn("draft", response.json()["error"]["message"])
+        self.assertEqual((self.changes, self.events), ([], []))
+
+    def test_a_change_somebody_else_saved_is_taken_only_when_if_match_names_it(self) -> None:
+        self.rows = [saved_row()]
+        refused = self.send("DELETE", "/clusters/alpha/objects/shop")
+        self.refused(refused, 409, "conflict")
+        self.assertIn("operator", refused.json()["error"]["message"])
+        self.refused(
+            self.send("DELETE", "/clusters/alpha/objects/shop", headers={"If-Match": "2"}),
+            409,
+            "conflict",
+        )
+        self.assertEqual(self.changes, [])
+        taken = self.send("DELETE", "/clusters/alpha/objects/shop", headers={"If-Match": "3"})
+        self.assertEqual(taken.status_code, 200, taken.text)
         (written,) = self.changes
-        self.assertEqual((written["saved_revision"], written["draft_revision"]), (3, 5))
+        self.assertEqual((written["saved_revision"], written["draft_revision"]), (3, None))
+
+    def test_a_change_the_token_saved_itself_is_taken_without_if_match(self) -> None:
+        self.rows = [saved_row(updated_by=ACTOR)]
+        self.assertEqual(self.send("DELETE", "/clusters/alpha/objects/shop").status_code, 200)
 
     def test_an_object_that_is_not_published_is_a_404(self) -> None:
         self.refused(self.send("DELETE", "/clusters/alpha/objects/console"), 404, "not_found")
@@ -735,3 +758,169 @@ class TheTokensItNeedsDoNotAppearInTheAnswers(ChangesTestCase):
         )
         self.assertNotIn(secret, response.text)
         self.assertNotIn(api_tokens.secret_hash(secret).hex(), response.text)
+
+
+class RepeatingACall(ChangesTestCase):
+    """Review 26-11-01, a-P2-1: a retry with the same key is the job it queued, whatever the state is now."""
+
+    def remember(self) -> None:
+        self.under_key[IDEMPOTENT] = (a_job(), self.queued[-1]["request_digest"])
+        self.queued.clear()
+        self.events.clear()
+
+    def test_a_publish_repeated_after_it_ran_is_answered_with_its_job(self) -> None:
+        self.rows = [saved_row()]
+        self.assertEqual(
+            self.send("POST", "/clusters/alpha/publish", body={"comment": "Move"}).status_code, 202
+        )
+        self.remember()
+        self.rows = []
+        again = self.send("POST", "/clusters/alpha/publish", body={"comment": "Move"})
+        self.assertEqual(again.status_code, 202, again.text)
+        self.assertEqual(again.json()["result"]["job"]["id"], 41)
+        self.assertEqual((self.queued, self.events), ([], []))
+
+    def test_a_revert_repeated_after_the_head_moved_is_answered_with_its_job(self) -> None:
+        self.assertEqual(
+            self.send("POST", "/clusters/alpha/revert", body={"version": 1}).status_code, 202
+        )
+        self.remember()
+        moved = versions()
+        moved.result["versions"][0]["hash"] = "f" * 40
+        self.history = [moved]
+        again = self.send("POST", "/clusters/alpha/revert", body={"version": 1})
+        self.assertEqual(again.status_code, 202, again.text)
+        self.assertEqual(self.queued, [])
+
+    def test_the_same_key_with_another_body_is_refused_after_the_job_ran(self) -> None:
+        self.rows = [saved_row()]
+        self.send("POST", "/clusters/alpha/publish", body={"comment": "Move"})
+        self.remember()
+        self.rows = []
+        other = self.send("POST", "/clusters/alpha/publish", body={"comment": "Something else"})
+        self.refused(other, 409, "idempotency_conflict")
+
+    def test_a_call_without_a_valid_token_with_a_large_body_is_a_401_not_a_413(self) -> None:
+        """Review 26-11-01, b-P3-8: the token is judged before the body is read."""
+
+        client = self.writes()
+        big = b"x" * (changes.MAX_DOCUMENT + 10)
+        for path in (
+            "/clusters/alpha/revert",
+            "/clusters/alpha/publish",
+            "/clusters/alpha/objects",
+        ):
+            with self.subTest(path=path):
+                response = client.post(
+                    "/api/v1" + path,
+                    content=big,
+                    headers={"Authorization": "Bearer nonsense", "Idempotency-Key": IDEMPOTENT},
+                )
+                self.assertEqual(response.status_code, 401, path)
+
+
+class HonouringTheSwitches(ChangesTestCase):
+    """Review 26-11-01, a-P3-3: what the page does not offer while a switch is off, the API does not write."""
+
+    ADVANCED = SHOP + "advanced: |\n  retries 5\n"
+    WAF = SHOP + "waf:\n  mode: log\n"
+
+    def off(self, *names: str) -> None:
+        self.switches = {name: mock.Mock(enabled=False) for name in names}
+
+    def test_advanced_text_cannot_be_added_or_changed_while_its_switch_is_off(self) -> None:
+        self.off("advanced_config")
+        self.refused(
+            self.send("PUT", "/clusters/alpha/objects/shop", body=self.ADVANCED), 400, "bad_input"
+        )
+        self.refused(
+            self.send(
+                "POST", "/clusters/alpha/objects", body=self.ADVANCED.replace("shop", "console")
+            ),
+            400,
+            "bad_input",
+        )
+        self.assertEqual(self.changes, [])
+
+    def test_advanced_text_is_written_while_its_switch_is_on(self) -> None:
+        response = self.send("PUT", "/clusters/alpha/objects/shop", body=self.ADVANCED)
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def test_advanced_text_already_there_may_stay_while_its_switch_is_off(self) -> None:
+        self.off("advanced_config")
+        self.rows = [saved_row(yaml=self.ADVANCED)]
+        response = self.send(
+            "PUT", "/clusters/alpha/objects/shop", body=self.ADVANCED.replace("8080", "9091")
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def test_the_engine_cannot_be_started_while_its_switch_is_off(self) -> None:
+        self.off("waf_engine")
+        self.refused(
+            self.send("PUT", "/clusters/alpha/objects/shop", body=self.WAF), 400, "bad_input"
+        )
+        self.assertEqual(self.changes, [])
+
+    def test_an_object_already_using_the_engine_may_be_changed_or_turned_off(self) -> None:
+        self.off("waf_engine")
+        self.rows = [saved_row(yaml=self.WAF)]
+        self.assertEqual(
+            self.send("PUT", "/clusters/alpha/objects/shop", body=SHOP).status_code, 200
+        )
+
+
+class RetriesAndRevisions(ChangesTestCase):
+    def test_creating_the_same_object_again_is_a_no_change(self) -> None:
+        """Review 26-11-01, a-P3-6: a retry after a lost answer is harmless."""
+
+        first = self.send("POST", "/clusters/alpha/objects", body=SECOND)
+        self.assertEqual(first.status_code, 201, first.text)
+        (written,) = self.changes
+        self.changes.clear()
+        self.events.clear()
+        self.rows = [saved_row(object_id="console", yaml=written["yaml"], updated_by=ACTOR)]
+        again = self.send("POST", "/clusters/alpha/objects", body=SECOND, key=str(uuid4()))
+        self.assertEqual(again.status_code, 201, again.text)
+        result = again.json()["result"]
+        self.assertEqual((result["changed"], result["revision"]), (False, 3))
+        self.assertEqual((self.changes, self.events), ([], []))
+
+    def test_if_match_zero_says_nothing_is_saved_yet(self) -> None:
+        """Review 26-11-01, a-P3-7."""
+
+        document = SHOP.replace("8080", "9091")
+        self.rows = [saved_row()]
+        self.refused(
+            self.send(
+                "PUT", "/clusters/alpha/objects/shop", body=document, headers={"If-Match": "0"}
+            ),
+            409,
+            "conflict",
+        )
+        self.rows = []
+        ok = self.send(
+            "PUT", "/clusters/alpha/objects/shop", body=document, headers={"If-Match": "0"}
+        )
+        self.assertEqual(ok.status_code, 200, ok.text)
+
+    def test_a_token_revoked_during_a_direct_write_saves_nothing(self) -> None:
+        """Review 26-11-01, a-P3-4: judged again in the write's own transaction."""
+
+        secret = self.issue(level="write")
+        (digest,) = self.tokens
+        live = self.tokens[digest]
+        revoked = replace(live, revoked_at=datetime.now(UTC), revoked_by="admin")
+        reads = iter([live, revoked])
+        with (
+            mock.patch(
+                "haprion_ui.db.api_token_by_hash", side_effect=lambda _c, _d, **_k: next(reads)
+            ),
+            self.assertLogs("haprion_ui.api", "WARNING"),
+        ):
+            response = self.writes().put(
+                "/api/v1/clusters/alpha/objects/shop",
+                content=SHOP.replace("8080", "9091"),
+                headers={"Authorization": f"Bearer {secret}"},
+            )
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual((self.changes, self.events), ([], []))

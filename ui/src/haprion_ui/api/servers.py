@@ -76,6 +76,10 @@ def object_servers(
     """
 
     in_scope(caller, cluster, name)
+    if not request.app.state.config.management_writes:
+        raise writing.WRITES_OFF
+    if (again := writing.replayed(request, caller, body)) is not None:
+        return again
     _listed(request, cluster)
     if not NAME.fullmatch(name):
         raise NOT_FOUND
@@ -88,6 +92,7 @@ def object_servers(
         cluster=cluster,
         payload=job_payloads.server_state(name, chosen, state),
         detail={"object": name, "state": state, "servers": chosen},
+        body=body,
     )
 
 
@@ -110,6 +115,11 @@ def cluster_deploy(
     """
 
     in_scope(caller, cluster)
+    if not request.app.state.config.management_writes:
+        raise writing.WRITES_OFF
+    asked = body if body is not None else DeployBody()
+    if (again := writing.replayed(request, caller, asked)) is not None:
+        return again
     _listed(request, cluster)
     version = body.expected_version if body is not None else None
     return writing.queue(
@@ -119,6 +129,7 @@ def cluster_deploy(
         cluster=cluster,
         payload=job_payloads.deploy(allow_vip_unknown=False, expected_version=version),
         detail={"expected_version": version} if version is not None else None,
+        body=asked,
     )
 
 

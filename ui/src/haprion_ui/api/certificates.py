@@ -222,15 +222,25 @@ def _own(
     return entry
 
 
-def _ready(request: Request, caller: Caller, clusters: Sequence[str] = ()) -> None:
-    """What is refused before anything is read: no key, a cluster out of scope.
+def _ready(
+    request: Request,
+    caller: Caller,
+    clusters: Sequence[str] = (),
+    body: BaseModel | None = None,
+) -> JSONResponse | None:
+    """What is refused before anything is read - writes off, no key, a cluster out of scope - or the answer to a retry.
 
-    Writes switched off is `writing.queue`'s, last, as for every change.
+    Writes switched off comes first, as for every change (review 26-11-01,
+    a-P3-8). A call this key already queued is answered with its job before the
+    registry is read: what the registry says has changed once the job ran.
     """
 
+    if not request.app.state.config.management_writes:
+        raise writing.WRITES_OFF
     writing.idempotency_key(request)
     for cluster in clusters:
         in_scope(caller, cluster)
+    return writing.replayed(request, caller, body)
 
 
 def _only_clusters(caller: Caller, receivers: Sequence[str]) -> None:
@@ -258,9 +268,16 @@ def _queue(
     operation: str,
     payload: Mapping[str, Any],
     detail: Mapping[str, Any],
+    body: BaseModel | None = None,
 ) -> JSONResponse:
     return writing.queue(
-        request, caller, operation=operation, cluster=None, payload=payload, detail=detail
+        request,
+        caller,
+        operation=operation,
+        cluster=None,
+        payload=payload,
+        detail=detail,
+        body=body,
     )
 
 
@@ -282,7 +299,8 @@ def certificate_issue(
 ) -> JSONResponse:
     """Issue a certificate from a CA the manager talks to (ACME or NDES), as *New certificate* does."""
 
-    _ready(request, caller, body.clusters)
+    if (again := _ready(request, caller, body.clusters, body)) is not None:
+        return again
     _only_clusters(caller, body.receivers)
     if body.exportable and caller.issued.clusters:
         raise CLUSTERS_ONLY
@@ -327,6 +345,7 @@ def certificate_issue(
         operation=certificate_form.operation_of(form),
         payload=payload,
         detail={"certificate": name},
+        body=body,
     )
 
 
@@ -343,7 +362,8 @@ def certificate_renewal(
 ) -> JSONResponse:
     """Renew a certificate the way its source is made: certbot again, or the NDES enrollment again."""
 
-    _ready(request, caller)
+    if (again := _ready(request, caller)) is not None:
+        return again
     registry = registry_views(request, request.app.state.config)
     entry = _own(registry, certificate_id, caller)
     if entry.placeholder:
@@ -378,7 +398,8 @@ def certificate_targets(
 ) -> JSONResponse:
     """Publish a certificate to more places, or take it from some, as *Publish to…* and *Remove from…*."""
 
-    _ready(request, caller, body.clusters)
+    if (again := _ready(request, caller, body.clusters, body)) is not None:
+        return again
     _only_clusters(caller, body.receivers)
     config = request.app.state.config
     entry = _own(registry_views(request, config), certificate_id, caller)
@@ -426,6 +447,7 @@ def certificate_targets(
         operation="cert_target",
         payload=payload,
         detail={"certificate": certificate_id, "action": body.action},
+        body=body,
     )
 
 
@@ -463,7 +485,8 @@ def certificate_removal(
 ) -> JSONResponse:
     """Delete a certificate, refused while a draft names it as the page refuses; the nodes' own refusals come on the job."""
 
-    _ready(request, caller)
+    if (again := _ready(request, caller)) is not None:
+        return again
     _own(registry_views(request, request.app.state.config), certificate_id, caller)
     named = certificate_delete.draft_references(_live_drafts(request), (certificate_id,))
     if named:

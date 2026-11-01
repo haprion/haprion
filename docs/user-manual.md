@@ -916,13 +916,15 @@ dashboard, *Proxies*, *Versions*, *Certificates*, *Metrics*, *Traffic logs*, *Ne
 *WAF logs* when the WAF engine switch is on and *Node backups* when node backups are on
 ([Features and advanced configuration](#features-and-advanced-configuration)). The object pages with
 their drafts and server states, a version's *Diff*, the search with the servers' addresses, the traffic
-log with each request's destination and the jobs with their error sentences are the same for both roles;
-only the diagnostics under a job are an admin's.
-Key material, token secrets and passwords are shown to nobody.
+log with each request's destination, the jobs with their error sentences and diagnostics, the audit trail,
+the advanced configuration of an object and the dashboard's reasons for a reading that failed are the same
+for both roles. The lists of API tokens, DNS profiles, NDES profiles and certificate receivers are read
+by both. A reader gets the list alone: no button, no form.
+Key material, token secrets, password hashes and the values of a profile are shown to nobody.
 
 An **admin** can queue the operations the interface offers, and has the pages where settings are made and
-access material is handled: *Settings*, the certificate receivers, the profiles, node restores and the audit
-trail. A reader who opens one of them is told *Administrators only*.
+access material is handled: *Settings*, the forms that add, replace, extend, revoke or remove a token, a
+profile or a receiver, and node restores. A reader who opens one of them is told *Administrators only*.
 
 Both roles see, on a job that did not end cleanly, **the error code** such as `cluster_not_converged` or
 `ssh_unreachable`, and the helper's own sentence beside it. The code is a fixed string that does not depend on
@@ -930,7 +932,7 @@ the environment, and it is shown as it is rather than translated. The command li
 beside its message, and the audit trail records it, so what a terminal said and what the page says can be
 compared directly.
 
-An admin sees one more thing, **the operation's diagnostics**: its error output, with secrets masked, and the
+Both roles see **the operation's diagnostics** too: its error output, with secrets masked, and the
 evidence a refusal carries. They are folded away under the job until you open them. Before the text is
 stored, private keys, sensitive paths and any assignment to a token, password, secret, credential, API key,
 access key or private key are masked. The text is capped at 64 KiB.
@@ -939,8 +941,8 @@ The diagnostics contain **real host names, node names and HAProxy's own output**
 worth showing. Masking covers secrets, not the identity of your environment. So a screenshot of that panel
 does not belong in an issue, a README, a support ticket or anywhere else outside the installation.
 
-Readers do not see the diagnostics. Administrators do, because the person who runs the installation needs
-them to find a fault without opening an SSH session every time something fails.
+They are shown so that whoever runs the installation can find a fault without opening an SSH session every
+time something fails. The API does not return them.
 
 ### How a session works
 
@@ -4269,7 +4271,7 @@ dashboard.
 *Events* has three views: *Jobs*, *Nodes* and *Audit*.
 
 **Jobs** lists the newest jobs and their outcome, and under *By*, who queued each one, taken from the
-record. An admin also sees each job's diagnostics.
+record. Each job that failed has its diagnostics under it.
 
 **Nodes** shows what the nodes did on their own:
 
@@ -4293,7 +4295,7 @@ The poller writes this view by comparing each status reading with the one before
 - A restart of HAProxy is not listed. A reload starts HAProxy's uptime again too, so the two cannot be
   told apart, and a deploy is already listed under *Jobs*.
 
-**Audit**, for an admin only, is the rest of the record, newest first, fifty to a page by default. It
+**Audit** is the rest of the record, read by both roles, newest first, fifty to a page by default. It
 holds:
 
 - sign-ins and failed attempts;

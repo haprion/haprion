@@ -239,4 +239,4 @@ These rules are shared by config deploy and certificate deploy:
 - Redaction happens before persistence and before UI display. At minimum it masks private-key PEM
   blocks, token/password/secret assignments, and paths containing `.ssh`, `/secrets/`,
   `/etc/ssl/private/`, or private certificate-distribution paths.
-- Raw stderr is never used to decide operation state and is never returned to a reader role.
+- Raw stderr is never used to decide operation state. Only the redacted, bounded text is shown, and it is shown to every signed-in role; the API does not return it.

@@ -52,9 +52,11 @@ pages - the CLI drives the same root helpers.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import functools
 import hashlib
 import json
+import math
 import re
 import shlex
 import subprocess
@@ -63,6 +65,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar, TypeVar
 
@@ -102,6 +105,21 @@ backends:
         port: 9080
 """
 BACKEND_BODY = "install-test backend"
+#
+# What the API steps add to the published object: dynamic blocking whose limit
+# no request of the test reaches, so that only an address the API blocks is
+# ever blocked. The change goes in through the API, as a write token does it.
+#
+BLOCKING = """\
+dynamic_block:
+  max_requests: 100000
+  block_for: 30m
+"""
+#
+# The addresses the API steps block (RFC 5737, TEST-NET-3).
+#
+BLOCKED = "203.0.113.7"
+BURST = tuple(f"203.0.113.{last}" for last in range(21, 27))
 #
 # What a machine holds, for the removal's comparison (B372): the files where an
 # installation puts things, the accounts, and the packages installed. apt's and
@@ -588,6 +606,109 @@ class Run:
     def deploy(self) -> str:
         _, output = self.on("mgr", f"haprion-deploy -c {CLUSTER}")
         return output
+
+    # --- the API ------------------------------------------------------------
+
+    def api_token(self, name: str, *flags: str) -> str:
+        """A token made on the manager; its secret stays in root-only files there.
+
+        Returns the path of the header file `curl -H @` reads, so that neither
+        the command nor the log of this run ever holds the secret.
+        """
+
+        header = f"/root/api-{name}.header"
+        self.on(
+            "mgr",
+            f"umask 077 && haprion-api-token add {name} {' '.join(flags)} --days 1 "
+            f"> /root/api-{name}.secret 2>/dev/null "
+            f"&& printf 'Authorization: Bearer %s\\n' \"$(cat /root/api-{name}.secret)\" > {header}",
+        )
+        return header
+
+    def api(
+        self,
+        header: str,
+        method: str,
+        path: str,
+        body: str | None = None,
+        *,
+        key: bool = False,
+    ) -> tuple[int, dict[str, Any], int]:
+        """One call through nginx: the status, the answer's JSON and its Retry-After (0 for none)."""
+
+        extra = '-H "Idempotency-Key: $(cat /proc/sys/kernel/random/uuid)" ' if key else ""
+        json_body = body is not None and body.lstrip().startswith("{")
+        data = "--data-binary @- " if body else ""
+        data = "-H 'Content-Type: application/json' " + data if json_body else data
+        _, output = self.on(
+            "mgr",
+            f"h=$(mktemp); b=$(curl -sSk -X {method} -H @{header} {extra}{data}-D $h "
+            f"-w '\\n%{{http_code}}' https://127.0.0.1/api/v1{path}); "
+            "printf '%s\\n' \"$b\"; grep -i '^retry-after:' $h || true; rm -f $h",
+            stdin=body,
+        )
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        wait = 0
+        if lines and lines[-1].lower().startswith("retry-after:"):
+            wait = int(lines.pop().partition(":")[2])
+        try:
+            document = json.loads("\n".join(lines[:-1]))
+        except ValueError:
+            document = {}
+        return int(lines[-1]), document if isinstance(document, dict) else {}, wait
+
+    def api_write(
+        self, header: str, method: str, path: str, body: str | None = None, deadline: float = 300
+    ) -> int:
+        """A change queued as a client does: a 409 is asked again after its Retry-After.
+
+        Returns the job's id. Any other answer than 202 is a failure.
+        """
+
+        until = time.monotonic() + deadline
+        while True:
+            status, document, wait = self.api(header, method, path, body, key=True)
+            if status == 409 and wait and time.monotonic() + wait < until:
+                time.sleep(wait)
+                continue
+            result = document.get("result")
+            if status != 202 or not isinstance(result, dict):
+                raise Failed(f"{method} {path} answered {status}, not 202:\n{document}")
+            return int(result["job"]["id"])
+
+    def api_job(self, header: str, job: int, seconds: float = 180) -> dict[str, Any]:
+        """The job as the API shows it once it has finished; a failure names its state and error."""
+
+        until = time.monotonic() + seconds
+        while True:
+            status, document, _ = self.api(header, "GET", f"/jobs/{job}")
+            result = document.get("result")
+            if status != 200 or not isinstance(result, dict):
+                raise Failed(f"GET /jobs/{job} answered {status}:\n{document}")
+            if result.get("finished"):
+                if result.get("state") != "done":
+                    raise Failed(
+                        f"job {job} ended {result.get('state')}: {result.get('error_code')} "
+                        f"{result.get('error_message')}"
+                    )
+                return result
+            if time.monotonic() > until:
+                raise Failed(f"job {job} is still {result.get('state')} after {seconds:.0f} s")
+            time.sleep(1)
+
+    def table_holds(self, role: str, address: str) -> bool:
+        """Whether the node's HAProxy holds the address in the shop's blocked table."""
+
+        ask = (
+            "import socket; s = socket.socket(socket.AF_UNIX); "
+            "s.connect('/run/haproxy/manager.sock'); "
+            f"s.sendall(b'show table mgd-shop-dynblock key {address}\\n'); "
+            "s.shutdown(socket.SHUT_WR); print(s.makefile().read())"
+        )
+        _, answer = self.on(role, f"/usr/bin/python3 -I -c {shlex.quote(ask)}")
+        if "# table: mgd-shop-dynblock," not in answer:
+            raise Failed(f"{role} runs no blocking table for the shop:\n{answer}")
+        return f"key={address} " in answer
 
     # --- what an operator checks --------------------------------------------
 
@@ -1080,6 +1201,179 @@ def run_one(
             run.on("mgr", "rm -f /root/api-token /root/api-header /root/api-answer")
 
         step("an API token made, used through nginx and revoked", an_api_token_is_made_and_used)
+
+        def a_write_goes_to_done() -> str:
+            """B416, release 3: a change saved and published through the API reaches the nodes.
+
+            A write token saves the object with dynamic blocking (PUT) and
+            publishes it (POST, with a new Idempotency-Key), is answered 202
+            with the job to follow, and the job is followed to `done`. What
+            the job did is read on both nodes: HAProxy runs the blocking
+            table the new version defines.
+            """
+
+            header = run.api_token("install-test-write", "--level write", f"--cluster {CLUSTER}")
+            document = OBJECT.format(backend=run.address("mgr")) + BLOCKING
+            #
+            # The poller reads the cluster's repository on its interval; until
+            # it has, there is no base to change objects against (409) or no
+            # stored object to replace (404).
+            #
+            until = time.monotonic() + 120
+            while True:
+                status, answer, _ = run.api(
+                    header, "PUT", f"/clusters/{CLUSTER}/objects/shop", document
+                )
+                if status == 200 or time.monotonic() > until or status not in (404, 409):
+                    break
+                time.sleep(5)
+            result = answer.get("result")
+            if status != 200 or not isinstance(result, dict) or result.get("changed") is not True:
+                raise Failed(f"saving the object through the API answered {status}:\n{answer}")
+            publish = f"/clusters/{CLUSTER}/publish"
+            status, answer, _ = run.api(header, "POST", publish, '{"comment": "API test"}')
+            if status != 400:
+                raise Failed(f"a publish without an Idempotency-Key answered {status}:\n{answer}")
+            job = run.api_write(header, "POST", publish, '{"comment": "API test"}')
+            finished = run.api_job(header, job)
+            for role in NODES:
+                run.table_holds(role, BLOCKED)  # fails when the table is not there
+            print(
+                f"job {job}: queued {finished['queued_at']}, started {finished['started_at']}, "
+                f"finished {finished['finished_at']}"
+            )
+            return header
+
+        write_header = step(
+            "a write through the API goes to done on both nodes", a_write_goes_to_done
+        )
+
+        def a_block_token_blocks() -> str:
+            """B416, release 2: a `block` token places a block through nginx, and it is on the nodes.
+
+            The token is limited to the shop. The block is read on both nodes
+            (the table HAProxy answers from) and, once the poller has read
+            the nodes, through the API as the object page shows it. Not
+            tried: a block with management writes off - switching them off
+            means rewriting the UI's configuration and restarting it, which
+            this test does not do.
+            """
+
+            header = run.api_token(
+                "install-test-block", "--level block", f"--cluster {CLUSTER}", "--object shop"
+            )
+            path = f"/clusters/{CLUSTER}/objects/shop/blocks"
+            status, answer, _ = run.api(header, "POST", path, json.dumps({"addresses": [BLOCKED]}))
+            result = answer.get("result")
+            if status != 200 or not isinstance(result, dict) or result.get("blocked") != [BLOCKED]:
+                raise Failed(f"the block answered {status}:\n{answer}")
+            for role in NODES:
+                if not run.table_holds(role, BLOCKED):
+                    raise Failed(f"{role} holds no block for {BLOCKED}")
+            until = time.monotonic() + 120
+            while True:
+                status, answer, _ = run.api(header, "GET", path)
+                result = answer.get("result")
+                listed = result.get("addresses", []) if isinstance(result, dict) else []
+                if status == 200 and any(one.get("address") == BLOCKED for one in listed):
+                    break
+                if time.monotonic() > until:
+                    raise Failed(f"the API never listed the block ({status}):\n{answer}")
+                time.sleep(5)
+            run.on("mgr", "rm -f /root/api-install-test-block.*")
+            return header
+
+        block_header = step("a block token blocks an address through nginx", a_block_token_blocks)
+
+        def a_block_is_lifted_by_a_job() -> None:
+            """B416: lifting a block is a job; it ends `done` and the address is gone from both nodes."""
+
+            path = f"/clusters/{CLUSTER}/objects/shop/blocks"
+            job = run.api_write(write_header, "DELETE", path, json.dumps({"addresses": [BLOCKED]}))
+            run.api_job(write_header, job)
+            for role in NODES:
+                if run.table_holds(role, BLOCKED):
+                    raise Failed(f"{role} still holds the block for {BLOCKED}")
+
+        step("lifting the block is a job that ends done", a_block_is_lifted_by_a_job)
+
+        def jobs_wait_in_the_queue_for_a_minute_at_most() -> None:
+            """Plan 6, release 3: the queue's wait per job, measured on what this harness can do.
+
+            Measures: several API writes sent at once to the one cluster (the
+            harness has alpha only), each an *Unblock* job; the database lets
+            one run at a time per cluster, so the rest are answered 409
+            `cluster_busy` and are sent again after Retry-After as a client
+            does. For each job: the wait (queued to started) and the time to
+            done, from the API; the step fails if the p95 wait is over a
+            minute.
+
+            Does not measure: two clusters at once, or certificate jobs
+            beside a cluster job (the other kind the database lets run
+            together). Issuing a certificate needs a CA reachable from the
+            harness (ACME or NDES with an enrollment) and the harness has
+            none, and a second cluster needs more containers. So this is the
+            worker's pickup time under a burst, not the queue wait that two
+            clusters would show; the plan's check across clusters is made on
+            a lab with two.
+            """
+
+            path = f"/clusters/{CLUSTER}/objects/shop/blocks"
+            for address in BURST:
+                status, answer, _ = run.api(
+                    block_header, "POST", path, json.dumps({"addresses": [address]})
+                )
+                if status != 200:
+                    raise Failed(f"blocking {address} answered {status}:\n{answer}")
+            with concurrent.futures.ThreadPoolExecutor(len(BURST)) as pool:
+                queued = [
+                    pool.submit(
+                        run.api_write, write_header, "DELETE", path, json.dumps({"addresses": [a]})
+                    )
+                    for a in BURST
+                ]
+                ids = [each.result() for each in queued]
+            waits = []
+            for job in sorted(ids):
+                done = run.api_job(write_header, job)
+                moments = [
+                    datetime.fromisoformat(done[field])
+                    for field in ("queued_at", "started_at", "finished_at")
+                ]
+                waits.append((moments[1] - moments[0]).total_seconds())
+                print(
+                    f"job {job}: waited {waits[-1]:.1f} s, "
+                    f"done after {(moments[2] - moments[0]).total_seconds():.1f} s"
+                )
+            ranked = sorted(waits)
+            p95 = ranked[min(len(ranked) - 1, math.ceil(0.95 * len(ranked)) - 1)]
+            print(f"{len(waits)} jobs, p95 wait {p95:.1f} s")
+            if p95 > 60:
+                raise Failed(f"the p95 wait in the queue is {p95:.1f} s, over a minute")
+            for role in NODES:
+                held = [address for address in BURST if run.table_holds(role, address)]
+                if held:
+                    raise Failed(f"{role} still holds blocks for {held}")
+
+        step(
+            "a burst of API writes waits a minute at most",
+            jobs_wait_in_the_queue_for_a_minute_at_most,
+        )
+
+        def the_tokens_are_revoked() -> None:
+            """A revoked token is refused (401) at once, and nothing of the tokens stays on the manager."""
+
+            for name, header in (
+                ("install-test-write", write_header),
+                ("install-test-block", block_header),
+            ):
+                run.on("mgr", f"haprion-api-token revoke {name}")
+                status, _, _ = run.api(header, "GET", "/clusters")
+                if status != 401:
+                    raise Failed(f"the revoked token {name} was answered {status}, not 401")
+            run.on("mgr", "rm -f /root/api-install-test-*")
+
+        step("the API tokens are revoked and refused", the_tokens_are_revoked)
 
         def removed_steps_down() -> tuple[str, str]:
             """B319, Fas 18 finding 73: a removed node left running took the address."""

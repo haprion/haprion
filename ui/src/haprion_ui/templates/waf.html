@@ -68,7 +68,7 @@
     <tbody>
       {% for row in rows %}
       <tr>
-        <td title="{{ row.message }}">{{ finding_what(row.kind, row.explanation, row.severity, row.message) }}</td>
+        <td title="{{ row.message }}">{{ finding_what(row.kind, row.explanation, row.severity, row.message, true) }}</td>
         <td title="{{ where(row.exception, row.name) }}">{{ where(row.exception, row.name) }}</td>
         <td{% if row.exception.reason %} title="{{ row.exception.reason }}">{{ row.exception.reason }}{% else %}><span class="table-empty">—</span>{% endif %}</td>
         {#- What the exception let through, as its counter counted it (B273); a dash where nothing counts it. -#}

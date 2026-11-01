@@ -15,6 +15,7 @@ from haprion_ui import waf
 from haprion_ui.db import ClusterObjects, FeatureSwitch, ProxyDraft
 from haprion_ui.form_groups import form_groups
 from haprion_ui.preview import DEFAULTS, build_document, form_from_document
+from haprion_ui.templates import TEMPLATES
 from tests.test_editor_page import COMMIT, OBJECTS, OBSERVED, SHOP, EditorTestCase
 
 EXCEPTION = {
@@ -401,6 +402,8 @@ class TheGroupOnTheEditor(EditorTestCase):
         self.assertIn("q on /search", rows)
         self.assertIn("id, every path", rows)
         self.assertEqual(rows.count("Not published"), 1, "only the exception not yet published")
+        self.assertNotIn("status-critical", rows)
+        self.assertNotIn("status-warning", rows)
 
     def test_remove_draws_the_page_without_it_and_saves_nothing(self) -> None:
         # 26-10-03: change one's mind on the publishing page, not back in WAF logs.
@@ -467,3 +470,19 @@ class TheGroupOnTheEditor(EditorTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheFindingDot(unittest.TestCase):
+    """A finding's dot is the rule's severity; an exception's is grey, the severity in its title."""
+
+    def dot(self, **extra: Any) -> str:
+        macro = TEMPLATES.env.get_template("_waf-finding.html").module.finding_what  # type: ignore[attr-defined]
+        return str(macro("SQL injection", "", "critical", "q on /search", **extra))
+
+    def test_a_finding_is_drawn_in_its_severity(self) -> None:
+        self.assertIn('class="status-dot status-critical" title="Critical"', self.dot())
+
+    def test_an_exception_is_grey_and_keeps_the_severity_as_hover_text(self) -> None:
+        self.assertIn(
+            'class="status-dot status-unknown" title="Critical"', self.dot(decided=True)
+        )

@@ -474,6 +474,9 @@ class ThePage(EditorTestCase):
         self.assertIn('href="/proxies/alpha/shop/edit">Edit proxy</a>', card)
         self.assertIn("<thead><tr><th>Finding</th><th>Where</th>", card)
         self.assertNotIn("<th>Object</th>", listing)
+        # An exception is a decision taken: its dot is grey, the severity only the hover text.
+        self.assertRegex(card, r'class="status-dot status-unknown" title="\w+"')
+        self.assertNotRegex(card, r"status-dot status-(critical|warning)")
 
     def test_no_exception_anywhere_says_so_once(self) -> None:
         listing = self.editor().get("/waf?view=exceptions").text

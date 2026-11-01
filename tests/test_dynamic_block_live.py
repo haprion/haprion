@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import http.client
 import io
+import json
 import shutil
 import socket
 import subprocess
@@ -36,6 +37,7 @@ from haprion import cluster_settings
 from haprion.config import Vip
 from haprion.generate import block_tables, generate
 from haprion.proxy_model import load_proxy
+from haprion.traffic_stream import TRAFFIC_LOG_SOCKET
 from tests.test_node_blocked import parsing
 from tests.test_node_server_state import load_helper
 
@@ -95,7 +97,36 @@ def _until(check: Callable[[], bool]) -> bool:
 
 @unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
 class TwoNodesBlock(unittest.TestCase):
+    def _collect(self, receiver: socket.socket, into: list[str]) -> None:
+        while True:
+            try:
+                into.append(receiver.recv(8192).decode(errors="replace"))
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+
+    def reasons(self, node: str, name: str = "shop") -> dict[str, str | None]:
+        """Each blocked address's reason on one node, as `haprion-node-status` reads it."""
+
+        entries = parsing()["parse_blocked_entries"](
+            self.runtime(node, f"show table {block_tables(name)[1]}")
+        )
+        return {entry["address"]: entry["reason"] for entry in entries}
+
+    def logged(self, node: str, rule: str) -> bool:
+        def said() -> bool:
+            rules = (
+                json.loads(line[line.index("{") :]).get("rule")
+                for line in list(self.records[node])
+                if "{" in line
+            )
+            return rule in rules
+
+        return _until(said)
+
     def setUp(self) -> None:
+        self.records: dict[str, list[str]] = {}
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, True)
 
@@ -173,6 +204,19 @@ backends:
                 "    timeout client 5s\n"
                 "    timeout server 5s\n"
             )
+            #
+            # The traffic record, as the node writes it, to a datagram socket
+            # of the test's own instead of the node's traffic socket (B424).
+            #
+            log_path = directory / "traffic.sock"
+            receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            receiver.bind(str(log_path))
+            receiver.settimeout(0.2)
+            self.addCleanup(receiver.close)
+            self.records[address] = []
+            threading.Thread(
+                target=self._collect, args=(receiver, self.records[address]), daemon=True
+            ).start()
             files = generate(
                 [shop, db],
                 vips={"main": Vip(name="main", address=address)},
@@ -181,9 +225,12 @@ backends:
                 settings=settings,
                 node_addresses=NODES,
                 trusted_proxies=(f"{PROXY}/32",),
+                traffic_logging=True,
             ).configuration
             for name, content in files.items():
-                (directory / "conf.d" / name).write_text(content)
+                (directory / "conf.d" / name).write_text(
+                    content.replace(TRAFFIC_LOG_SOCKET, str(log_path))
+                )
             process = subprocess.Popen(  # the local haproxy, a generated config
                 [
                     binary,
@@ -275,8 +322,16 @@ backends:
         self.assertEqual([self.get(a, ATTACKER) for _ in range(5)], [200] * 5)
         self.assertEqual(self.get(a, ATTACKER), 404)
         self.assertEqual(self.get(a, "127.0.0.12"), 200, "a neighbour is served")
+        self.assertEqual(self.reasons(a)[ATTACKER], "requests")
+        self.assertTrue(
+            self.logged(a, "dynamic-block/requests:deny"), "the refused request says why"
+        )
 
         self.assertTrue(_until(lambda: ATTACKER in self.blocked(b)), "the block reached node B")
+        self.assertTrue(
+            _until(lambda: self.reasons(b).get(ATTACKER) == "requests"),
+            "the reason travelled with the block to node B",
+        )
         self.assertEqual(self.get(b, ATTACKER), 404)
         left = self.blocked(b)[ATTACKER]
         self.assertLessEqual(left, 60_000)
@@ -313,6 +368,25 @@ backends:
         self.assertEqual([self.get(a, GUESSER, "/missing") for _ in range(4)], [404] * 4)
         self.assertEqual(self.get(a, GUESSER), 404, "the valid page is blocked now")
         self.assertIn(GUESSER, self.blocked(a))
+        self.assertEqual(self.reasons(a)[GUESSER], "errors")
+        self.assertTrue(self.logged(a, "dynamic-block/errors:deny"))
+
+    def test_a_block_placed_by_hand_says_so_and_a_limit_renews_it(self) -> None:
+        a = NODES[0][1]
+        helper = load_helper()
+        helper.LOCK_FILE = str(self.root / "block.lock")
+        helper.ADMIN_SOCKET = str(self.sockets[a])
+        with contextlib.redirect_stdout(io.StringIO()):
+            helper.command_block("shop", ["127.0.0.40"])
+        self.assertEqual(self.reasons(a), {"127.0.0.40": "manual"})
+        self.assertEqual(self.get(a, "127.0.0.40"), 404)
+        self.assertTrue(self.logged(a, "dynamic-block/manual:deny"))
+        #
+        # Going over a limit afterwards is the reason that stands.
+        #
+        for _ in range(6):
+            self.get(a, "127.0.0.40")
+        self.assertEqual(self.reasons(a)["127.0.0.40"], "requests")
 
     def test_an_exempt_address_is_never_blocked(self) -> None:
         a = NODES[0][1]
@@ -339,6 +413,7 @@ backends:
         self.assertEqual([answered() for _ in range(3)], [True] * 3)
         self.assertFalse(answered())
         self.assertIn(TCP_CLIENT, self.blocked(a, "db"))
+        self.assertEqual(self.reasons(a, "db")[TCP_CLIENT], "connections")
 
 
 if __name__ == "__main__":

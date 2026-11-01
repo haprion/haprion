@@ -654,7 +654,7 @@ class TheDynamicBlockTheObjectAsksFor(unittest.TestCase):
         result = check(written)
         self.assertIsNone(result.problem)
         self.assertIn(
-            "deny_status 429 if { var(txn.rule) -m str dynamic-block:deny }",
+            "deny_status 429 if { var(txn.dynblock) -m found }",
             result.files["1001-app.cfg"],
         )
 

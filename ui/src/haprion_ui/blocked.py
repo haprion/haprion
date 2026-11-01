@@ -23,6 +23,17 @@ from typing import Any
 
 from haprion.server_state import MAX_ADDRESSES
 
+#
+# Why an address is blocked, as the nodes report it (B424), and how the page
+# says it. A block the old configuration placed has no reason: shown as none.
+#
+REASON_TEXT = {
+    "requests": "Too many requests",
+    "errors": "Too many errors",
+    "connections": "Too many connections",
+    "manual": "Blocked by hand or the API",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class BlockedAddress:
@@ -31,6 +42,9 @@ class BlockedAddress:
     until: datetime | None
     """When the longest of the nodes' blocks ends, from the reading's time."""
 
+    reason: str | None = None
+    """Which limit placed the block, or None where the node did not say (an older block)."""
+
     ending: bool = False
     """The time ran out by the reading's account, and no reading has said since.
 
@@ -38,6 +52,12 @@ class BlockedAddress:
     the block after the reading, and a row that went and came back would say
     something untrue twice (26-10-10). The next reading settles it.
     """
+
+    @property
+    def reason_text(self) -> str:
+        """The reason as the page says it; empty where the node did not say."""
+
+        return REASON_TEXT.get(self.reason or "", "")
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +125,7 @@ def object_card(
     moment = now or datetime.now(UTC)
     counts: list[int] = []
     found: dict[str, tuple[list[str], int]] = {}
+    reasons: dict[str, tuple[str, int]] = {}
     for node, blocked in _nodes(rows, cluster):
         mine = blocked.get(name)
         if not isinstance(mine, Mapping):
@@ -119,11 +140,19 @@ def object_card(
             left = left if isinstance(left, int) and not isinstance(left, bool) else 0
             nodes, longest = found.get(item["address"], ([], 0))
             found[item["address"]] = ([*nodes, node], max(longest, left))
+            #
+            # The node with the most time left placed (or renewed) the block
+            # last, so its reason is the one shown.
+            #
+            reason = item.get("reason")
+            if reason in REASON_TEXT and left >= reasons.get(item["address"], ("", -1))[1]:
+                reasons[item["address"]] = (reason, left)
     addresses = tuple(
         BlockedAddress(
             address=address,
             nodes=tuple(nodes),
             until=until,
+            reason=reasons.get(address, (None, 0))[0],
             ending=until is not None and until <= moment,
         )
         for address, (nodes, left) in sorted(found.items(), key=lambda pair: _sort_key(pair[0]))

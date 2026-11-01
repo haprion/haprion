@@ -417,7 +417,8 @@
                   "required": ["address", "expires_in_ms"],
                   "properties": {
                     "address": { "type": "string", "minLength": 2, "maxLength": 45 },
-                    "expires_in_ms": { "type": "integer", "minimum": 0 }
+                    "expires_in_ms": { "type": "integer", "minimum": 0 },
+                    "reason": { "enum": ["requests", "errors", "connections", "manual", null] }
                   },
                   "additionalProperties": false
                 }

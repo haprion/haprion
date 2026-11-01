@@ -1726,6 +1726,15 @@ BLOCKED_TABLE = re.compile(
     r"^# table: mgd-([a-z][a-z0-9_-]{0,39})-dynblock, type: \S+, size:\d+, used:(\d+)$"
 )
 BLOCKED_ENTRY = re.compile(r"^0x[0-9a-f]+: key=(\S+) .*\bexp=(\d+)\b")
+#
+# The reason the entry was placed for (B424), the table's `gpt0`: 1 too many
+# requests, 2 too many errors, 3 too many new connections, 4 by hand or through
+# the API (`generate.BLOCK_REASONS`). An entry the old configuration placed has
+# no `gpt0` at all, and one with 0 or a number not listed says nothing: both
+# are reported with no reason.
+#
+BLOCKED_REASON = re.compile(r"\bgpt0=(\d+)\b")
+BLOCK_REASONS = {1: "requests", 2: "errors", 3: "connections", 4: "manual"}
 MAX_BLOCKED_LISTED = 100
 MAX_BLOCKED_OBJECTS = 500
 
@@ -1742,7 +1751,7 @@ def parse_blocked_tables(text: str) -> dict[str, int]:
 
 
 def parse_blocked_entries(text: str) -> list[dict[str, Any]]:
-    """One table's entries as [{address, expires_in_ms}], an IPv4 address written plainly."""
+    """One table's entries as [{address, expires_in_ms, reason}], an IPv4 address written plainly."""
 
     entries: list[dict[str, Any]] = []
     for line in text.splitlines():
@@ -1757,7 +1766,11 @@ def parse_blocked_entries(text: str) -> list[dict[str, Any]]:
             continue
         if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
             address = address.ipv4_mapped
-        entries.append({"address": str(address), "expires_in_ms": int(match.group(2))})
+        stored = BLOCKED_REASON.search(line)
+        reason = BLOCK_REASONS.get(int(stored.group(1))) if stored else None
+        entries.append(
+            {"address": str(address), "expires_in_ms": int(match.group(2)), "reason": reason}
+        )
         if len(entries) == MAX_BLOCKED_LISTED:
             break
     return entries

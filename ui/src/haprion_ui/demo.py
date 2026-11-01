@@ -139,8 +139,8 @@ BLOCKED = {
     "public-web": {
         "count": 2,
         "addresses": [
-            {"address": "198.51.100.23", "expires_in_ms": 1_640_000},
-            {"address": "2001:db8:44::17", "expires_in_ms": 734_000},
+            {"address": "198.51.100.23", "expires_in_ms": 1_640_000, "reason": "requests"},
+            {"address": "2001:db8:44::17", "expires_in_ms": 734_000, "reason": "errors"},
         ],
     }
 }

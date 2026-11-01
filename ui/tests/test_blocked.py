@@ -75,6 +75,55 @@ class TheCard(unittest.TestCase):
         )
         self.assertEqual(card.addresses[0].until, OBSERVED + timedelta(minutes=30))
 
+    def test_a_row_says_which_limit_placed_it_and_nothing_where_unsaid(self) -> None:
+        def entry(address: str, left: int, **extra: Any) -> dict[str, Any]:
+            return {"address": address, "expires_in_ms": left, **extra}
+
+        card = blocked.object_card(
+            [
+                reading(
+                    (
+                        "node-a",
+                        {
+                            "shop": {
+                                "count": 4,
+                                "addresses": [
+                                    entry("192.0.2.1", 1000, reason="requests"),
+                                    entry("192.0.2.2", 1000, reason="manual"),
+                                    entry("192.0.2.3", 1000),
+                                    entry("192.0.2.4", 1000, reason="gibberish"),
+                                ],
+                            }
+                        },
+                    ),
+                    # The node with the most time left placed or renewed the block last.
+                    (
+                        "node-b",
+                        {
+                            "shop": {
+                                "count": 1,
+                                "addresses": [entry("192.0.2.1", 5000, reason="errors")],
+                            }
+                        },
+                    ),
+                )
+            ],
+            cluster="alpha",
+            name="shop",
+            now=OBSERVED,
+        )
+        if card is None:
+            self.fail("an object holding blocked addresses has a card")
+        self.assertEqual(
+            [(row.address, row.reason, row.reason_text) for row in card.addresses],
+            [
+                ("192.0.2.1", "errors", "Too many errors"),
+                ("192.0.2.2", "manual", "Blocked by hand or the API"),
+                ("192.0.2.3", None, ""),
+                ("192.0.2.4", None, ""),
+            ],
+        )
+
     def test_the_count_beyond_the_listed_hundred_is_kept(self) -> None:
         card = blocked.object_card(
             [reading(("node-a", {"shop": held(250, ("192.0.2.7", 1000))}))],
@@ -225,6 +274,12 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
         self.assertIn('value="2001:db8:44::17"', card)
         self.assertIn("edge-a, edge-b", card)
         self.assertIn(">Unblock</button>", card)
+        #
+        # B424: each row says which limit placed the block, in plain words.
+        #
+        self.assertIn("<th>Reason</th>", card)
+        self.assertIn('data-label="Reason">Too many requests</td>', card)
+        self.assertIn('data-label="Reason">Too many errors</td>', card)
 
     def test_read_only_lists_them_without_boxes(self) -> None:
         page = self.writing_client(writes=False).get("/proxies/edge-demo/public-web")

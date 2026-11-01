@@ -1536,8 +1536,8 @@ The rate limit is a different tool: it refuses only what is over the limit, and 
 - *Window* (`10s`), *Block for* (`30m`) and *Answer with* (`404`) come filled in.
 - *Never blocked* takes groups from the *Network* page, and addresses or ranges, as *Reachable from* does.
 
-**Watching and lifting blocks.** The object's page lists the addresses its block holds, with the nodes
-holding each and the time left. An admin ticks them and presses *Unblock*. The cluster's dashboard card
+**Watching and lifting blocks.** The object's page lists the addresses its block holds, with the time left, the reason
+and the nodes holding each. An admin ticks them and presses *Unblock*. The cluster's dashboard card
 says how many addresses are blocked. An admin's *Operations* row names the objects - three of them, then
 how many more - with a link to each.
 
@@ -1559,8 +1559,15 @@ At least one trigger must be set.
 **What counts as an error.** The errors are the 4xx answers the object's servers give - what a scanner or
 a password guesser leaves behind. A 5xx is the application's fault and is not counted. Nor are answers
 HAProxy gives itself, so a block cannot extend itself. A blocked request's traffic record says
-`dynamic-block:deny`, which tells it apart from a 404 the application gave. A tcp object closes a blocked
-address's connection before a byte is forwarded.
+`dynamic-block/requests:deny`, `dynamic-block/errors:deny` or `dynamic-block/manual:deny`, which tells it apart
+from a 404 the application gave and names the limit that placed the block (`dynamic-block:deny` where the
+block does not say). A tcp object closes a blocked address's connection before a byte is forwarded.
+
+**Why an address is blocked.** Each block keeps the reason it was placed for, in the same table entry, so it
+reaches the other nodes with the block. It is *Too many requests* or *Too many errors* when the address went
+over that limit, *Too many connections* for a tcp object's limit, and *Blocked by hand or the API* for an
+address placed by an admin or through the API. An address over both limits shows the requests. A block
+placed before the object had a reason, and one that a node cannot tell, shows none.
 
 **Which address is blocked.** The one the rate limit counts: behind a trusted proxy, the last element of
 `X-Forwarded-For`; otherwise the address the connection came from. Many visitors behind one NAT address
@@ -4493,7 +4500,7 @@ What a token can read:
 | `/clusters/{cluster}/objects` | The objects, as *Proxies* lists them (`limit`, `offset`) |
 | `/clusters/{cluster}/objects/{name}` | One object. Its document, its servers' addresses and states, and why an object cannot be read, only for a *Write* token |
 | `/clusters/{cluster}/objects/{name}/history` | The cluster's versions, published or not (`limit`) |
-| `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now, with the time left. A *Block* token reads this too, for the proxies it may block on |
+| `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now, with the time left and `reason` (`requests`, `errors`, `connections`, `manual` for an address placed by hand or through the API, or null where the block does not say). A *Block* token reads this too, for the proxies it may block on |
 | `/certificates` | The certificates, when they end and where they are (`limit`). `registry` says what the list is: `read` (the registry), `unreadable` (the registry could not be read, or not yet: the list is what the clusters say they serve, `stale` is true and an empty list says nothing) or `none` (the installation declares no registry: the clusters' own lists). |
 | `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`, `before`). `q` is the page's search: text in the host, the path and the backend, a client address or network, or part of a destination. Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read. Both ends are included. When `truncated` is true, `next` is where the next page begins: pass it as `before`, with the same other parameters, and each request is listed once even where several share a time. The place also holds the window the first page was read from, so a later page stays in it when the call named no `from` |
 | `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through, over the last `days` days (in the answer). The newest findings are given, and `truncated` says when older ones were left out. A *Read* token is given what is published; a *Write* token also what an admin has drafted |

@@ -80,7 +80,7 @@ def configuration(root: Path, servers: list[tuple[str, str, int]], *, socket: bo
         "backend mgd-shop-dynblock-rate",
         "    stick-table type ipv6 size 1k expire 10s store http_req_rate(10s)",
         "backend mgd-shop-dynblock",
-        "    stick-table type ipv6 size 1k expire 30m store gpc(1)",
+        "    stick-table type ipv6 size 1k expire 30m store gpc(1),gpt(1)",
     ]
     return "\n".join(line for line in lines if line) + "\n"
 
@@ -388,6 +388,11 @@ class TheHelperLiftsABlock(RunningHaproxy):
         blocked = str(self.helper.ask(["show table mgd-shop-dynblock"]))
         self.assertIn("key=::ffff:192.0.2.9 ", blocked)
         self.assertIn("key=2001:db8::9 ", blocked)
+        #
+        # B424: placed by hand or through the API, which the entry says: the
+        # fourth reason, as the status reading maps it to `manual`.
+        #
+        self.assertEqual(blocked.count("gpt0=4"), 2, blocked)
         self.assertNotIn(
             "192.0.2.9", str(self.helper.ask(["show table mgd-shop-dynblock-rate"])),
             "the count is not touched: the block is the blocked table's alone",

@@ -31,6 +31,22 @@ ENTRIES = """\
 0x7f149cc751d0: key=2001:db8::7 use=1 exp=59000 shard=1 gpc0=0
 
 """
+#
+# B424: the same table when its entries say why they were placed (`gpt0`), and
+# one that was placed by a configuration with no such data, or with a value this
+# reading does not know.
+#
+REASONED = """\
+# table: mgd-shop-dynblock, type: ipv6, size:1048576, used:5
+0x1: key=::ffff:192.0.2.1 use=0 exp=1000 shard=0 gpt0=1 gpc0=1
+0x2: key=::ffff:192.0.2.2 use=0 exp=2000 shard=0 gpt0=2 gpc0=1
+0x3: key=::ffff:192.0.2.3 use=0 exp=3000 shard=0 gpt0=3 gpc0=1
+0x4: key=::ffff:192.0.2.4 use=0 exp=4000 shard=0 gpt0=4 gpc0=1
+0x5: key=::ffff:192.0.2.5 use=0 exp=5000 shard=0 gpt0=0 gpc0=1
+0x6: key=::ffff:192.0.2.6 use=0 exp=6000 shard=0 gpt0=9 gpc0=1
+0x7: key=::ffff:192.0.2.7 use=0 exp=7000 shard=0 gpc0=1
+
+"""
 
 
 def parsing() -> dict[str, Any]:
@@ -52,9 +68,16 @@ class ReadingTheBlockedTables(unittest.TestCase):
         self.assertEqual(
             self.parsing["parse_blocked_entries"](ENTRIES),
             [
-                {"address": "192.0.2.7", "expires_in_ms": 1793254},
-                {"address": "2001:db8::7", "expires_in_ms": 59000},
+                {"address": "192.0.2.7", "expires_in_ms": 1793254, "reason": None},
+                {"address": "2001:db8::7", "expires_in_ms": 59000, "reason": None},
             ],
+        )
+
+    def test_an_entry_says_why_it_was_placed_or_nothing(self) -> None:
+        found = self.parsing["parse_blocked_entries"](REASONED)
+        self.assertEqual(
+            [entry["reason"] for entry in found],
+            ["requests", "errors", "connections", "manual", None, None, None],
         )
 
     def test_the_listing_stops_at_a_hundred(self) -> None:

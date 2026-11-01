@@ -132,6 +132,15 @@ RATE_COUNTER = 1
 BLOCK_COUNT_COUNTER = 3
 BLOCK_MARK_COUNTER = 4
 BLOCK_RULE = "dynamic-block:deny"
+#
+# Which limit placed a block (B424): the number the blocked table keeps in its
+# `gpt(1)` beside the mark, and the rule name the refused request's traffic
+# record carries - `dynamic-block/<reason>:deny`, so the `:deny` ending and
+# the part before the colon keep reading as they did. 0 is an entry the old
+# configuration placed, which says nothing and is logged as `BLOCK_RULE`.
+#
+BLOCK_REASONS = {1: "requests", 2: "errors", 3: "connections", 4: "manual"}
+BLOCK_REASON_BY_NAME = {name: code for code, name in BLOCK_REASONS.items()}
 
 FRONTEND_FILE = "1000-frontends.cfg"
 #
@@ -3191,7 +3200,7 @@ def _block_tables(proxy: Proxy, peers: str | None) -> list[str]:
         _stick_table(window, stored, peers),
         "",
         f"backend {blocked}",
-        _stick_table(block.block_for, "gpc(1)", peers),
+        _stick_table(block.block_for, "gpc(1),gpt(1)", peers),
     ]
 
 
@@ -3215,6 +3224,41 @@ def _block_exempt(
     by_forwarded = _acl_name(proxy.name, "dynblock-exempt-fwd")
     lines += _address_acl(by_forwarded, "req.hdr_ip(X-Forwarded-For,-1)", block.exempt, networks)
     return lines, f" !{by_source}", f" !{by_forwarded}"
+
+
+def _mark_reasons(reasons: Sequence[tuple[str, str]]) -> list[str]:
+    """The rules that store which limit placed the block, on the counter that marks it (B424).
+
+    Only a request that was marked reaches the entry: an address that was not
+    tracked (an exempt one, or one under the limits) has no counter there, and
+    the action does nothing. The limit written last wins when both were passed,
+    so the requests' is written after the errors'.
+    """
+
+    return [
+        f"    http-request sc-set-gpt(0,{BLOCK_MARK_COUNTER}) {BLOCK_REASON_BY_NAME[reason]} "
+        f"if {acl}"
+        for reason, acl in reversed(reasons)
+    ]
+
+
+def _block_rule_lines(limits: Sequence[str]) -> list[str]:
+    """The traffic record's rule for a request the block refuses, named by the stored reason.
+
+    `dynamic-block:deny` first, which is what an entry with no reason (the old
+    configuration's) keeps; the reason then renames it. Only the reasons the
+    object can store are named: its limits, and an address placed by hand.
+    """
+
+    return [
+        f"    http-request set-var(txn.rule) str({BLOCK_RULE}) if {{ var(txn.dynblock) -m found }}",
+        *(
+            f"    http-request set-var(txn.rule) str(dynamic-block/{reason}:deny) "
+            f"if {{ var(txn.dynblock) -m int {code} }}"
+            for code, reason in BLOCK_REASONS.items()
+            if reason in (*limits, "manual")
+        ),
+    ]
 
 
 def _http_block_lines(
@@ -3245,12 +3289,19 @@ def _http_block_lines(
     # Two lines with one name are one condition, read as an OR - so either
     # limit is enough. Read when a rule asks, after this request was counted.
     #
-    for fetch, limit in (
-        (f"sc_http_req_rate({BLOCK_COUNT_COUNTER})", block.max_requests),
-        (f"sc_http_err_rate({BLOCK_COUNT_COUNTER})", block.max_errors),
+    reasons: list[tuple[str, str]] = []
+    for fetch, limit, reason in (
+        (f"sc_http_req_rate({BLOCK_COUNT_COUNTER})", block.max_requests, "requests"),
+        (f"sc_http_err_rate({BLOCK_COUNT_COUNTER})", block.max_errors, "errors"),
     ):
         if limit is not None:
             lines.append(f"    acl {over} {fetch} gt {limit}")
+            #
+            # One name per limit as well, to tell which one it was (B424).
+            #
+            own = _acl_name(proxy.name, f"dynblock-over-{reason}")
+            lines.append(f"    acl {own} {fetch} gt {limit}")
+            reasons.append((reason, own))
     count = f"    http-request track-sc{BLOCK_COUNT_COUNTER}"
     mark = f"    http-request track-sc{BLOCK_MARK_COUNTER}"
     forwarded = "req.hdr_ip(X-Forwarded-For,-1)"
@@ -3260,21 +3311,24 @@ def _http_block_lines(
             f"{count} src table {counted} if !{TRUSTED_ACL}{exempt_source}",
             f"{mark} {forwarded} table {blocked} if {TRUSTED_ACL}{exempt_forwarded} {over}",
             f"{mark} src table {blocked} if !{TRUSTED_ACL}{exempt_source} {over}",
-            f"    http-request set-var(txn.rule) str({BLOCK_RULE}) "
-            f"if {TRUSTED_ACL}{exempt_forwarded} {{ {forwarded},in_table({blocked}) }} "
-            f"|| !{TRUSTED_ACL}{exempt_source} {{ src,in_table({blocked}) }}",
+            *_mark_reasons(reasons),
+            f"    http-request set-var(txn.dynblock) {forwarded},table_gpt(0,{blocked}) "
+            f"if {TRUSTED_ACL}{exempt_forwarded} {{ {forwarded},in_table({blocked}) }}",
+            f"    http-request set-var(txn.dynblock) src,table_gpt(0,{blocked}) "
+            f"if !{TRUSTED_ACL}{exempt_source} {{ src,in_table({blocked}) }}",
         ]
     else:
         condition = f" if{exempt_source}" if exempt_source else ""
         lines += [
             f"{count} src table {counted}{condition}",
             f"{mark} src table {blocked} if{exempt_source} {over}",
-            f"    http-request set-var(txn.rule) str({BLOCK_RULE}) "
+            *_mark_reasons(reasons),
+            f"    http-request set-var(txn.dynblock) src,table_gpt(0,{blocked}) "
             f"if{exempt_source} {{ src,in_table({blocked}) }}",
         ]
+    lines += _block_rule_lines([reason for reason, _ in reasons])
     lines.append(
-        f"    http-request deny deny_status {block.status} "
-        f"if {{ var(txn.rule) -m str {BLOCK_RULE} }}"
+        f"    http-request deny deny_status {block.status} if {{ var(txn.dynblock) -m found }}"
     )
     return lines
 
@@ -3300,6 +3354,8 @@ def _tcp_block_lines(proxy: Proxy, networks: Mapping[str, Sequence[str]]) -> lis
         f"    tcp-request connection track-sc{BLOCK_COUNT_COUNTER} src table {counted}{condition}",
         f"    tcp-request connection track-sc{BLOCK_MARK_COUNTER} src table {blocked} "
         f"if{exempt} {over}",
+        f"    tcp-request connection sc-set-gpt(0,{BLOCK_MARK_COUNTER}) "
+        f"{BLOCK_REASON_BY_NAME['connections']} if{exempt} {over}",
         f"    tcp-request connection reject if{exempt} {{ src,in_table({blocked}) }}",
     ]
 

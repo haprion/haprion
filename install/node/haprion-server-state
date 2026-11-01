@@ -648,6 +648,14 @@ def command_update_certs(identifiers: list[str]) -> int:
         os.close(held_lock)
 
 
+#
+# The reason a block stores in the table's `gpt(1)` when it was placed by hand
+# or through the API (B424): `generate.BLOCK_REASONS`' last. The limits that
+# place a block themselves write 1 to 3 in the generated rules.
+#
+BLOCK_BY_HAND = 4
+
+
 def block_tables(name: str) -> tuple[str, str]:
     return f"mgd-{name}-dynblock-rate", f"mgd-{name}-dynblock"
 
@@ -712,7 +720,13 @@ def change_block(name: str, words: list[str], *, placing: bool) -> int:
         for start in range(0, len(addresses), UNBLOCK_BATCH):
             batch = addresses[start : start + UNBLOCK_BATCH]
             if placing:
-                ask([f"set table {blocked} key {address} data.gpc[0] 1" for address in batch])
+                ask(
+                    [
+                        f"set table {blocked} key {address} data.gpc[0] 1 "
+                        f"data.gpt[0] {BLOCK_BY_HAND}"
+                        for address in batch
+                    ]
+                )
                 continue
             ask(
                 [

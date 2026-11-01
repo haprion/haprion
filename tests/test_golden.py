@@ -1384,18 +1384,70 @@ backends:
             [
                 "acl mgd-shop-dynblock-exempt src 192.0.2.10/32",
                 "acl mgd-shop-dynblock-over sc_http_req_rate(3) gt 300",
+                "acl mgd-shop-dynblock-over-requests sc_http_req_rate(3) gt 300",
                 "http-request track-sc3 src table mgd-shop-dynblock-rate "
                 "if !mgd-shop-dynblock-exempt",
                 "http-request track-sc4 src table mgd-shop-dynblock "
                 "if !mgd-shop-dynblock-exempt mgd-shop-dynblock-over",
-                "http-request set-var(txn.rule) str(dynamic-block:deny) "
+                "http-request sc-set-gpt(0,4) 1 if mgd-shop-dynblock-over-requests",
+                "http-request set-var(txn.dynblock) src,table_gpt(0,mgd-shop-dynblock) "
                 "if !mgd-shop-dynblock-exempt { src,in_table(mgd-shop-dynblock) }",
+                "http-request set-var(txn.rule) str(dynamic-block:deny) "
+                "if { var(txn.dynblock) -m found }",
+                "http-request set-var(txn.rule) str(dynamic-block/requests:deny) "
+                "if { var(txn.dynblock) -m int 1 }",
+                "http-request set-var(txn.rule) str(dynamic-block/manual:deny) "
+                "if { var(txn.dynblock) -m int 4 }",
+                "http-request deny deny_status 429 if { var(txn.dynblock) -m found }",
                 "backend mgd-shop-dynblock-rate",
                 "backend mgd-shop-dynblock",
             ],
         )
         self.assertNotIn("mgd-trusted-proxy", text)
-        self.assertIn("deny_status 429 if { var(txn.rule) -m str dynamic-block:deny }", text)
+        self.assertIn("deny_status 429 if { var(txn.dynblock) -m found }", text)
+
+    def test_each_limit_stores_its_own_reason_and_an_exempt_address_none(self) -> None:
+        body = self.SHOP.format(exempt="192.0.2.10").replace(
+            "  max_requests: 300\n", "  max_requests: 300\n  max_errors: 20\n"
+        )
+        text = generate(
+            [load_proxy("shop", body.encode())], vips=dict(DEFAULT_VIPS), default_vip="main"
+        ).configuration["1001-shop.cfg"]
+        self.assertIn("store gpc(1),gpt(1)", text)
+        lines = [line.strip() for line in text.splitlines()]
+        self.assertIn("acl mgd-shop-dynblock-over-requests sc_http_req_rate(3) gt 300", lines)
+        self.assertIn("acl mgd-shop-dynblock-over-errors sc_http_err_rate(3) gt 20", lines)
+        #
+        # The requests' reason is written last, so it is the one kept when
+        # both limits were passed; each is set on the mark's own counter,
+        # which an exempt address never gets, so it is left alone.
+        #
+        sets = [line for line in lines if "sc-set-gpt" in line]
+        self.assertEqual(
+            sets,
+            [
+                "http-request sc-set-gpt(0,4) 2 if mgd-shop-dynblock-over-errors",
+                "http-request sc-set-gpt(0,4) 1 if mgd-shop-dynblock-over-requests",
+            ],
+        )
+        self.assertIn(
+            "http-request track-sc4 src table mgd-shop-dynblock "
+            "if !mgd-shop-dynblock-exempt mgd-shop-dynblock-over",
+            lines,
+        )
+        self.assertLess(
+            lines.index(
+                "http-request track-sc4 src table mgd-shop-dynblock "
+                "if !mgd-shop-dynblock-exempt mgd-shop-dynblock-over"
+            ),
+            lines.index(sets[0]),
+        )
+
+    def test_a_tcp_object_stores_the_connections_reason(self) -> None:
+        text = (
+            Path(__file__).parent / "golden" / "dynamic-block" / "1000-frontends.cfg"
+        ).read_text()
+        self.assertIn("tcp-request connection sc-set-gpt(0,4) 3 if", text)
 
     def test_the_block_is_counted_before_the_rate_limit_refuses(self) -> None:
         """A flood refused with 429 first would never be counted, and never blocked."""

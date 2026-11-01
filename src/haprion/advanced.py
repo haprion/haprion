@@ -1246,7 +1246,15 @@ def _stick_table_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: O
 # them. A test holds the list against every `txn.` name in generate.py.
 #
 GENERATED_VARIABLES = frozenset(
-    {"txn.access_path", "txn.client", "txn.hsts", "txn.rule", "txn.traffic_host", "txn.waf_body"}
+    {
+        "txn.access_path",
+        "txn.client",
+        "txn.dynblock",
+        "txn.hsts",
+        "txn.rule",
+        "txn.traffic_host",
+        "txn.waf_body",
+    }
 )
 #
 # What writes a variable: the actions and the converter of the same names, and

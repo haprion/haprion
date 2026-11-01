@@ -115,6 +115,7 @@ def _address(row: blocked.BlockedAddress, now: datetime) -> dict[str, Any]:
         "seconds_left": max(0, int((row.until - now).total_seconds())) if row.until else None,
         "ending": row.ending,
         "nodes": list(row.nodes),
+        "reason": row.reason,
     }
 
 

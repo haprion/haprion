@@ -131,6 +131,28 @@ class TheBlocksOfAnObject(ApiTestCase):
         self.assertEqual(addresses[0]["until"], (self.observed + timedelta(minutes=40)).isoformat())
         self.assertAlmostEqual(addresses[0]["seconds_left"], 39 * 60, delta=5)
 
+    def test_each_address_carries_its_reason_or_null(self) -> None:
+        self.statuses = status(
+            self.observed,
+            (
+                "node-a",
+                {
+                    "shop": {
+                        "count": 2,
+                        "addresses": [
+                            {"address": "192.0.2.7", "expires_in_ms": 1000, "reason": "manual"},
+                            {"address": "192.0.2.10", "expires_in_ms": 1000},
+                        ],
+                    }
+                },
+            ),
+        )
+        addresses = self.get(self.issue()).json()["result"]["addresses"]
+        self.assertEqual(
+            [(row["address"], row["reason"]) for row in addresses],
+            [("192.0.2.7", "manual"), ("192.0.2.10", None)],
+        )
+
     def test_an_object_that_blocks_nothing_has_an_empty_list_and_the_default_time(self) -> None:
         body = self.get(self.issue(), name="intranet").json()
         self.assertEqual(

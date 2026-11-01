@@ -10673,7 +10673,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         with self.scratch() as connection:
             connection.execute(
                 "insert into app_user (username, password_hash, role) "
-                "values ('Operator', 'x', 'admin')"
+                "values ('Operator', '$argon2id$placeholder', 'admin')"
             )
             insert = "insert into audit_event (actor, action, detail) values (%s, %s, %s::jsonb)"
             connection.execute(insert, ("hunter2-pass", "login_failed", '{"reason": "rejected"}'))

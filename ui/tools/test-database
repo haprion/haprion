@@ -49,9 +49,22 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+#
+# A day partition is a day in the server's zone. A test that names the day
+# by its UTC date is off by one for an hour a night in Stockholm, and fails
+# once a month at midnight (26-11-01). The server here runs where the two
+# dates differ for the whole run: twelve hours behind UTC before noon UTC,
+# fourteen ahead after (POSIX `Etc/GMT+12` is UTC-12).
+#
+if (( 10#$(date -u +%H) < 12 )); then
+    server_zone="Etc/GMT+12"
+else
+    server_zone="Etc/GMT-14"
+fi
+
 mkdir -m 700 "$socket_dir"
 "${pg_bindir}/initdb" -D "$data_dir" --no-locale --encoding=UTF8 --auth=trust >/dev/null
-"${pg_bindir}/pg_ctl" -D "$data_dir" -o "-h '' -k ${socket_dir}" -w start >/dev/null
+"${pg_bindir}/pg_ctl" -D "$data_dir" -o "-h '' -k ${socket_dir} -c TimeZone=${server_zone}" -w start >/dev/null
 started=true
 
 psql=("${pg_bindir}/psql" -h "$socket_dir" -d postgres -v ON_ERROR_STOP=1 -qtAX)

@@ -1828,7 +1828,7 @@ class ARealDatabase(unittest.TestCase):
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             self.assertIsNotNone(db.cluster_list_observed(connection))
             horizons = db.partition_horizons(connection, ["traffic_log", "metric_frontend", "nope"])
-        today = datetime.now(UTC).date()
+            today = _first(connection.execute("select current_date"))
         traffic, metric = horizons["traffic_log"], horizons["metric_frontend"]
         self.assertTrue(traffic is not None and traffic >= today + timedelta(days=3))
         self.assertTrue(metric is not None and metric >= today + timedelta(days=9))
@@ -2216,9 +2216,8 @@ class ARealDatabase(unittest.TestCase):
                 cursor.execute("select id from app_user limit 0")
 
     def test_poller_can_write_metrics_but_cannot_read_jobs(self) -> None:
-        now = datetime.now(UTC)
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("select metric_partition('metric_frontend', %s::date)", (now.date(),))
+            cursor.execute("select metric_partition('metric_frontend', current_date)")
         with (
             self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
             connection.cursor() as cursor,
@@ -3536,7 +3535,10 @@ class ARealDatabase(unittest.TestCase):
             ("node-a", at(18, 5), 14_360, 4),
         ]
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("select metric_partition('metric_frontend', %s::date)", (day.date(),))
+            cursor.executemany(
+                "select metric_partition('metric_frontend', (%s::timestamptz)::date)",
+                [(observed,) for _node, observed, _uptime, _count in rows],
+            )
             cursor.executemany(
                 "insert into metric_frontend "
                 "(cluster, node, frontend, observed_at, owns_vip, uptime_sec, req_tot) "
@@ -3595,10 +3597,9 @@ class ARealDatabase(unittest.TestCase):
             ("dash-b", "node-c", "mgd-one-http", 2, True, 1120, 777, 777, 777),
         ]
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("select metric_partition('metric_frontend', %s::date)", (start.date(),))
-            cursor.execute(
-                "select metric_partition('metric_frontend', %s::date)",
-                ((start + timedelta(minutes=2)).date(),),
+            cursor.executemany(
+                "select metric_partition('metric_frontend', (%s::timestamptz)::date)",
+                [(start,), (start + timedelta(minutes=2),)],
             )
             cursor.executemany(
                 "insert into metric_frontend "
@@ -8209,8 +8210,10 @@ class AReloadThatKeepsTheCountersIsNoRestart(unittest.TestCase):
         )
         with self.connect() as connection:
             for table in ("metric_backend_member", "metric_frontend"):
-                for day in (self.start.date(), (self.start + timedelta(hours=3)).date()):
-                    connection.execute("select metric_partition(%s, %s::date)", (table, day))
+                for at in (self.start, self.start + timedelta(hours=3)):
+                    connection.execute(
+                        "select metric_partition(%s, (%s::timestamptz)::date)", (table, at)
+                    )
                 connection.execute(
                     psycopg.sql.SQL("delete from {} where cluster = %s").format(
                         psycopg.sql.Identifier(table)

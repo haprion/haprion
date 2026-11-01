@@ -7,47 +7,141 @@ asks over `/run/haprion/block.sock`; this runs as root, because the key that
 reaches the nodes and the cluster's repository are root's.
 
 The web has judged the token and its scope, so there is no client to check;
-everything else is `haprion-block-helper`'s, shared as `block_helper.prepare`:
-the object exists in the cluster's newest version and blocks at all. An
-address the object exempts is not refused for the whole request, as the ssh
-path does, but left out and said, so one exempt address in a fail2ban's list
-does not stop the others - the answer is `partial` and names it.
+what is left is `prepare`: the object exists in the cluster's newest version
+and blocks at all. An address the object exempts is not refused for the whole
+request but left out and said, so one exempt address in a fail2ban's list does
+not stop the others - the answer is `partial` and names it.
 
-Like that helper it can do nothing else: it does not lift a block, set a
-server's state or read anything back but the nodes' answers. What was blocked,
-on which object and for whom goes to the journal; the web writes the same into
-the audit trail.
+It can do nothing else: it does not lift a block, set a server's state or read
+anything back but the nodes' answers - which is why it is a helper of its own
+rather than an operation of `haprion-server-state-helper`, whose request could
+name any of those. What was blocked, on which object and for whom goes to the
+journal; the web writes the same into the audit trail.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import exit_codes
-from haprion.cli.block_helper import Refused, place, prepare
+import yaml
+
+from haprion import exit_codes, safe_yaml
 from haprion.cli.server_state_helper import write_unblocked
-from haprion.config import DEFAULT_POLICY_PATH
+from haprion.config import (
+    DEFAULT_POLICY_PATH,
+    NETWORK_FILE,
+    Cluster,
+    ConfigError,
+    DeployIdentity,
+    load_policy,
+    load_runtime_config,
+)
+from haprion.git_command import GitError
 from haprion.helper_protocol import (
     HelperProtocolError,
+    config_error_code,
     read_helper_request,
     require_no_arguments,
     write_failure,
 )
+from haprion.managed_network import load_mapping
+from haprion.managed_publish import PROXY_PREFIX, managed_proxies
+from haprion.proxy_model import ModelError, Proxy
+from haprion.repo_snapshot import PublishError, read_tree_files, resolve_head
 from haprion.server_state import (
     BLOCK_OPERATION,
     ServerStateError,
     UnblockCall,
+    Unblocked,
     addresses,
     ask_unblock,
+    block,
+    blocking,
     exempted,
+    find_object,
     object_name,
 )
 from haprion.version_history import UnfitName, trailer_name
 
 PARAMETERS = frozenset({"object", "addresses", "actor"})
+
+
+class Refused(Exception):
+    """The block cannot be placed as asked. Nothing was sent to a node."""
+
+    def __init__(self, code: str, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.exit_code = exit_code
+
+
+@dataclass(frozen=True, slots=True)
+class Placement:
+    """What a block is placed with: the object as its newest version has it, and the nodes."""
+
+    proxy: Proxy
+    cluster: Cluster
+    identity: DeployIdentity
+    networks: Mapping[str, Sequence[str]]
+
+
+def prepare(cluster_id: str, name: str, *, policy_path: Path, require_secure: bool) -> Placement:
+    """The cluster, its nodes and the object in its newest version, if it blocks at all.
+
+    Raises `Refused` with the code and exit status the caller reports. The
+    check that names the caller (the token) is the web's own.
+    """
+
+    try:
+        policy = load_policy(policy_path, require_secure=require_secure)
+        cluster = load_runtime_config(policy, require_secure=require_secure).cluster(cluster_id)
+    except ConfigError as exc:
+        raise Refused(config_error_code(exc.exit_code), str(exc), exc.exit_code) from exc
+    identity = policy.server_state_identity
+    if identity is None:
+        raise Refused(
+            "server_state_unavailable",
+            "no server state identity is configured. Add server_state_identity with "
+            "'user' and 'key' to the runtime policy.",
+            exit_codes.CONFIG,
+        )
+
+    try:
+        _branch, head = resolve_head(cluster.config_path)
+        files = read_tree_files(
+            cluster.config_path, head, (f"{PROXY_PREFIX}{name}.yaml", str(NETWORK_FILE))
+        )
+        proxy = blocking(find_object(managed_proxies(files), name))
+        written = files.get(str(NETWORK_FILE))
+        networks = (
+            load_mapping(
+                safe_yaml.load(written), ownership_vip=cluster.vip, location=str(NETWORK_FILE)
+            ).networks
+            if written is not None
+            else cluster.networks
+        )
+    except ServerStateError as exc:
+        raise Refused(exc.code, str(exc), exc.exit_code) from exc
+    except (ConfigError, GitError, PublishError, ModelError, OSError, yaml.YAMLError) as exc:
+        raise Refused(
+            "dependency_unavailable",
+            f"cannot read the cluster's newest version: {exc}",
+            exit_codes.NOT_FOUND,
+        ) from exc
+    return Placement(proxy, cluster, identity, networks)
+
+
+def place(
+    placement: Placement, wanted: Sequence[str], *, ask: UnblockCall = ask_unblock
+) -> tuple[Unblocked, ...]:
+    """Every node of the cluster asked once to block `wanted`, which the caller has checked."""
+
+    return block(placement.cluster.nodes, placement.identity, placement.proxy, wanted, ask=ask)
 
 
 def main(

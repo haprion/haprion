@@ -39,6 +39,7 @@ def load(name: str) -> ModuleType:
 
 MANAGER = load("remove-manager")
 NODE = load("node-remove")
+RETIRE = load("retire-block-clients")
 
 
 class Machine(MANAGER.Host):  # type: ignore[misc, name-defined]
@@ -154,6 +155,9 @@ class AManager(unittest.TestCase):
             "/var/lib/systemd/timers/stamp-haprion-backup.timer",
             "/var/lib/systemd/timers/stamp-haprion-state-backup@alpha.timer",
             "/etc/sudoers.d/haprion-worker",
+            "/etc/sudoers.d/haprion-block",
+            "/etc/haprion/block-clients/clients.yaml",
+            "/etc/haprion/block-clients/.ssh/authorized_keys",
             "/etc/nginx/sites-available/haprion",
             "/etc/nginx/sites-available/default",
             "/etc/tmpfiles.d/haprion.conf",
@@ -180,6 +184,8 @@ class AManager(unittest.TestCase):
         )
         machine.account("_haprion-pull", "/home/_haprion-pull")
         machine.account("_haprion-web", "/")
+        # Not in the fragment: a release before 0.99.10 made it, and this one's fragment does not.
+        machine.account("_haprion-block", "/etc/haprion/block-clients")
         machine.account("crx-lb-01-example-com", "/srv/certdist/receivers/lb-01.example.com")
         machine.accounts.append(
             pwd.struct_passwd(("operator", "x", 1000, 1000, "", "/home/operator", "/bin/bash"))
@@ -267,6 +273,8 @@ class AManager(unittest.TestCase):
             "/etc/systemd/system/haprion-web.service.replaced-20261001-101010",
             "/etc/systemd/system/sockets.target.wants/haprion-web.socket",
             "/etc/sudoers.d/haprion-worker",
+            "/etc/sudoers.d/haprion-block",
+            "/etc/haprion/block-clients",
             "/etc/nginx/sites-available/haprion",
             "/etc/nginx/sites-enabled/haprion",
             "/etc/tmpfiles.d/haprion.conf",
@@ -310,6 +318,7 @@ class AManager(unittest.TestCase):
             "userdel crx-lb-01-example-com",
             "userdel _haprion-pull",
             "userdel _haprion-web",
+            "userdel _haprion-block",
             "groupdel haprion",
             "delete --non-interactive --cert-name shop.example.com",
             "ssh-keygen -R node-a.example.com",
@@ -405,6 +414,112 @@ class AManager(unittest.TestCase):
         code, said = self.main()
         self.assertEqual(code, 1)
         self.assertIn("cannot be read", said)
+
+
+class TheSshBlockingOfAnEarlierReleaseIsRetired(unittest.TestCase):
+    """0.99.7 to 0.99.9 let a client block over ssh; the API replaced it (B419)."""
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.machine = Machine(self.directory.name)
+        for name in (
+            "/etc/sudoers.d/haprion-block",
+            "/etc/sudoers.d/haprion-block.replaced-20261031-101010",
+            "/etc/haprion/block-clients/clients.yaml",
+            "/etc/haprion/block-clients/.ssh/authorized_keys",
+            # The operator's own and Haprion's other files stay.
+            "/etc/sudoers.d/haprion-worker",
+            "/etc/sudoers.d/svc-other",
+            "/etc/haprion/runtime-policy.yaml",
+        ):
+            self.machine.write(name)
+        self.machine.account("_haprion-block", "/etc/haprion/block-clients")
+
+    def retire(self) -> tuple[int, str]:
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = RETIRE.main(self.machine)
+        return code, out.getvalue()
+
+    def test_the_rule_the_account_the_keys_and_the_registry_go(self) -> None:
+        code, said = self.retire()
+
+        self.assertEqual(code, 0, said)
+        for gone in (
+            "/etc/sudoers.d/haprion-block",
+            "/etc/sudoers.d/haprion-block.replaced-20261031-101010",
+            "/etc/haprion/block-clients",
+        ):
+            with self.subTest(gone=gone):
+                self.assertFalse(self.machine.path(gone).exists())
+        for kept in (
+            "/etc/sudoers.d/haprion-worker",
+            "/etc/sudoers.d/svc-other",
+            "/etc/haprion/runtime-policy.yaml",
+        ):
+            with self.subTest(kept=kept):
+                self.assertTrue(self.machine.path(kept).exists())
+        ran = [" ".join(argv) for argv in self.machine.ran]
+        self.assertEqual(
+            [line for line in ran if "_haprion-block" in line],
+            [
+                "/usr/sbin/usermod --lock --expiredate 1 _haprion-block",
+                "/usr/bin/pkill --signal KILL --uid _haprion-block",
+                "/usr/sbin/userdel _haprion-block",
+                "/usr/sbin/groupdel _haprion-block",
+            ],
+        )
+        self.assertIn("removed  user _haprion-block", said)
+
+    def test_a_second_run_finds_nothing_and_says_nothing(self) -> None:
+        self.retire()
+        self.machine.accounts.clear()
+        self.machine.groups.clear()
+        self.machine.ran.clear()
+
+        code, said = self.retire()
+
+        self.assertEqual((code, said, self.machine.ran), (0, "", []))
+
+    def test_an_account_that_cannot_be_removed_is_said_and_the_run_fails(self) -> None:
+        self.machine.fails = {"userdel"}
+
+        code, said = self.retire()
+
+        self.assertEqual(code, 1)
+        self.assertIn("could not remove user _haprion-block", said)
+        # The rule and the keys went before it: it can reach nothing.
+        self.assertFalse(self.machine.path("/etc/sudoers.d/haprion-block").exists())
+        self.assertFalse(self.machine.path("/etc/haprion/block-clients").exists())
+
+    def test_the_update_runs_it_only_once_the_release_is_proved(self) -> None:
+        update = (INSTALL / "platform/update-platform-release").read_text()
+        proved = update.index("\nproved=yes\n")
+        self.assertLess(proved, update.index("\n../retire-block-clients"))
+        self.assertTrue(os.access(INSTALL / "retire-block-clients", os.X_OK))
+
+    def test_nothing_the_steps_install_names_the_account_any_more(self) -> None:
+        self.assertFalse(hasattr(accounts, "BLOCK"))
+        for script in (
+            INSTALL / "accounts.sh",
+            INSTALL / "sysusers/haprion.conf",
+            INSTALL / "sudoers/haprion",
+        ):
+            self.assertNotIn("block-client", script.read_text())
+            self.assertNotIn("_haprion-block", script.read_text())
+        for step in sorted((INSTALL / "platform").glob("[0-9]*")):
+            self.assertNotIn("haprion-block.sudoers", step.read_text(), step.name)
+        self.assertEqual(
+            sorted(p.name for p in (INSTALL / "platform/examples").glob("*block*")),
+            [
+                "haprion-block-api-helper.socket.example",
+                "haprion-block-api-helper@.service.example",
+            ],
+        )
 
 
 class PostgresqlFilesAsTheyWere(unittest.TestCase):

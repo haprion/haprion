@@ -42,7 +42,7 @@
   "additionalProperties": true,
   "$defs": {
     "unblock_result": {
-      "description": "Dynamic blocking lifted (B271) or placed (B412, haprion-block-helper): per node, whether every address left both of the object's tables after the second round - or is in its blocked table - each address's own answer, and why not.",
+      "description": "Dynamic blocking lifted (B271) or placed (B416, haprion-block-api-helper): per node, whether every address left both of the object's tables after the second round - or is in its blocked table - each address's own answer, and why not.",
       "type": "object",
       "required": ["object", "nodes"],
       "properties": {

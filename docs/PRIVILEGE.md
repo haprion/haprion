@@ -16,12 +16,11 @@ intrusion equal to worker access, which is deploy rights.
 | Account | What it is | Root helpers it may reach | Private keys it holds | Database role |
 |---|---|---|---|---|
 | `_haprion-web` | the web interface | six sockets: probe, name lookup, certificate export, sign-in, NDES servers, block | none stored | `app_web` |
-| `_haprion-worker` | runs the jobs the interface queues | fifteen sudo helpers and five sockets (below) | none | `app_worker` |
+| `_haprion-worker` | runs the jobs the interface queues | fourteen sudo helpers and five sockets (below) | none | `app_worker` |
 | `_haprion-poller` | reads status, metrics and listings in the background | four read-only sudo helpers | none | `app_poller` |
 | `_haprion-collector` | fetches the traffic log from the nodes | none | one read-only key to the nodes' logs | `app_collector` |
 | `_haprion-oidc` | talks to the sign-in provider for the web | is itself the helper behind the sign-in socket | the key that opens the stored client secret | none |
 | `_haprion-pull`, `_haprion-cert-pull` | the accounts the nodes fetch releases and certificates from | none | none (the nodes hold the keys) | none |
-| `_haprion-block` | the account block clients ask over ssh to block an address from outside | one sudo helper, `haprion-block-helper`, which can only place a block on the client's own objects | none (the clients hold the keys; each is locked with `restrict`, `from=` and a forced command naming the client) | none |
 | human operators | members of `sudo`; the users in `CONFIG_EDITORS` | the operator helpers, through `%sudo` rules; `sudoedit` on declared files, for the users in `CONFIG_EDITORS` | their own | none |
 
 The operators' sudo rules (`/etc/sudoers.d/haprion`) are granted to `%sudo` and never to `%haprion`,
@@ -32,9 +31,9 @@ configuration repositories, the cluster file and the certificate registry.
 A block for an API token of the `block` level is placed by `haprion-block-api-helper`, a per-request
 root helper on `/run/haprion/block.sock` that only the web account may connect to. The web has judged
 the token and its scope; the helper checks that the object exists in the cluster's newest version,
-blocks at all and does not exempt the address, and then does what `haprion-block-helper` does for a
-block client: asks each node, with the server state key, to block the addresses. It cannot lift a
-block, set a server's state or return the key, and it writes nothing.
+blocks at all and does not exempt the address, and then asks each node, with the server state key,
+to block the addresses. It cannot lift a block, set a server's state or return the key, and it
+writes nothing.
 
 The name lookup is done by a per-request helper running as a dynamic user with network access and
 nothing else; the web process itself reaches only localhost.
@@ -239,8 +238,6 @@ the key runs, and again by the root command.
 - The web has no sudo rule.
 - The poller may run only its four read-only helpers.
 - The worker may run only the helpers its job operations need.
-- The block clients' account may run only `haprion-block-helper`, with no arguments; the client and the
-  object come in the request, and the helper holds them to the registry the client helper writes.
 - No rule grants a shell, an interpreter, an editor, an arbitrary program, a wildcard path, a
   preserved environment or free arguments - except the node rules described above, whose arguments
   are validated twice.

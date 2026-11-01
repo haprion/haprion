@@ -29,7 +29,6 @@ from haprion_ui import (
     api_tokens,
     config,
     db,
-    external_blocking,
     moments,
     tool_answer,
 )
@@ -55,7 +54,7 @@ def _choices(connection: Any) -> tuple[tuple[str, ...], dict[str, tuple[str, ...
         for row in db.cluster_objects(connection)
         if not polled or getattr(row, "cluster", None) in clusters
     ]
-    return clusters, {name: external_blocking.blocking_objects(readings, name) for name in clusters}
+    return clusters, {name: api_token_apply.blocking_objects(readings, name) for name in clusters}
 
 
 def command_add(args: argparse.Namespace) -> int:

@@ -151,6 +151,7 @@ SHARED = (
     "install/setup.sh",
     "install/haprion-setup",
     "install/remove-manager",
+    "install/retire-block-clients",
     "install/removal.py",
     "install/01-manager-prepare",
     "install/02-manager-config",

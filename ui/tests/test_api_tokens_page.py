@@ -68,7 +68,7 @@ class TokensPage(LoginTestCase):
             mock.patch("haprion_ui.db.delete_api_token", side_effect=delete),
             mock.patch("haprion_ui.db.record_audit_event", side_effect=record),
             mock.patch(
-                "haprion_ui.external_blocking.blocking_objects",
+                "haprion_ui.api_token_apply.blocking_objects",
                 side_effect=lambda _r, cluster: ("shop", "store") if cluster == "alpha" else (),
             ),
         ):
@@ -175,7 +175,7 @@ class MakingATokenOnThePage(TokensPage):
     def test_without_a_proxy_to_choose_the_block_level_is_closed_and_says_why(self) -> None:
         """Review 26-10-31, P3-8: the level was offered, and could not be filled in."""
 
-        with mock.patch("haprion_ui.external_blocking.blocking_objects", return_value=()):
+        with mock.patch("haprion_ui.api_token_apply.blocking_objects", return_value=()):
             page = self.admin().get("/settings/api-tokens/new").text
             refused = self.post(
                 self.admin(), "/settings/api-tokens/new", **self.fill(level="block")

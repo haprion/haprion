@@ -470,7 +470,7 @@ And the web's way to a block for an API token:
 `haprion-block-api-helper.socket` (`/run/haprion/block.sock`, group
 `_haprion-web`) and the per-request `haprion-block-api-helper@.service`, root with a
 read-only sandbox and the network to the nodes. It places a block on every node of a
-cluster, as `haprion-block-helper` does for a block client, and writes nothing. The
+cluster, and writes nothing. The
 CLI release must carry `haprion-block-api-helper`.
 
 ## Step 6 — backups that have been read back

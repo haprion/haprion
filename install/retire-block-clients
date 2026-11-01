@@ -1,0 +1,37 @@
+#!/usr/bin/python3
+"""Take away the ssh blocking path an earlier release installed (B419).
+
+    sudo ./retire-block-clients
+
+What `update-platform-release` runs once an update is proved: the account
+`_haprion-block`, its sudo rule and its home with the registry of clients and
+their keys. The API's `block` token replaced them. Nothing is said when there
+is nothing to remove, so it can run on every update.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+#
+# Beside its shared module, as remove-manager is. Isolated mode (python3 -I)
+# leaves the script's own directory off the path, and no bytecode is written
+# beside a file dpkg does not own.
+#
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from removal import Host, retire_block_clients  # noqa: E402 - after the path switch above
+
+
+def main(host: Host | None = None) -> int:
+    removed, failed = retire_block_clients(host or Host())
+    for name in removed:
+        print(f"  removed  {name}")
+    for problem in failed:
+        print(f"WARN: could not remove {problem}", file=sys.stderr)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

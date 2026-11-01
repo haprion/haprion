@@ -447,6 +447,15 @@ files_settled=yes
 proved=yes
 
 #
+# What 0.99.7 to 0.99.9 installed for blocking over ssh (B419), now that the
+# release that replaces it runs: the account, its sudo rule and its home. Only
+# now, so that an update that is put back leaves the previous release its own.
+# Said only when there is something to remove; a failure is a warning, as the
+# update is proved without it.
+#
+../retire-block-clients || warn "the ssh blocking account was not all removed; run: sudo $(pwd)/../retire-block-clients"
+
+#
 # Release retention (B156), only now that the update is proved: a new release
 # has been added, and a failed activation is exactly when nothing may go.
 # Ten stay (RELEASES_KEPT in the environment overrides) - a release

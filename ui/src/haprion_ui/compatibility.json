@@ -2,10 +2,10 @@
   "schema_version": 1,
   "requires": {
     "database_baseline": "0100",
-    "database_head": "0108",
+    "database_head": "0109",
     "rollback_safe_from": "0100",
     "database_revisions": [
-      "0108"
+      "0109"
     ],
     "engine_api": 39,
     "node_api": 1,
@@ -29,8 +29,7 @@
       "haprion-cert-scep-helper",
       "haprion-cert-import-helper",
       "haprion-cert-request-helper",
-      "haprion-server-state-helper",
-      "haprion-block-client-helper"
+      "haprion-server-state-helper"
     ],
     "socket_helpers": {
       "haprion-cert-receiver-helper": "/run/haprion/cert-receiver.sock",

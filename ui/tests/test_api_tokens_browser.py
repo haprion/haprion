@@ -49,7 +49,7 @@ class TheTokensPage(LoginTestCase):
                 "haprion_ui.db.api_tokens", side_effect=lambda _c: list(demo.api_token_rows())
             ),
             mock.patch(
-                "haprion_ui.external_blocking.blocking_objects", return_value=("shop", "store")
+                "haprion_ui.api_token_apply.blocking_objects", return_value=("shop", "store")
             ),
             mock.patch(
                 "haprion_ui.db.create_api_token",
@@ -134,7 +134,7 @@ class TheTokensPage(LoginTestCase):
             return ("shop",) if cluster == "edge-demo" else ("store",)
 
         with (
-            mock.patch("haprion_ui.external_blocking.blocking_objects", side_effect=by_cluster),
+            mock.patch("haprion_ui.api_token_apply.blocking_objects", side_effect=by_cluster),
             self.signed_in(1280, "/settings/api-tokens/new") as page,
         ):
             page.check("input[name=level][value=block]")

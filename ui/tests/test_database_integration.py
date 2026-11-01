@@ -4277,6 +4277,28 @@ class AProfileIdMayHoldADot(unittest.TestCase):
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheQueueNoLongerTakesABlockClient(unittest.TestCase):
+    """Migration 0109 (B419): no new `block_client` job; the ones already run stay history."""
+
+    def connect(self) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}")
+
+    def test_a_new_one_is_refused_and_the_constraint_leaves_old_rows_alone(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select convalidated from pg_constraint where conname = 'job_operation_allowed'"
+            )
+            self.assertFalse(_first(cursor))
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key) "
+                    "values ('block_client', 'alpha', '{}', %s)",
+                    (uuid4(),),
+                )
+            connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
     """Migration 0025: sealed DNS provider profiles and the job that applies them.
 

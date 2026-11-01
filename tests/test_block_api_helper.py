@@ -1,7 +1,7 @@
 """`haprion-block-api-helper` and the web's way to it (B416): a block placed in the same call.
 
-The fixture is `test_block_clients`': a real policy, the shipped cluster file
-and a repository with the objects committed. `store` blocks; `shop` does not.
+The fixture is `test_server_state_command`'s: a real policy, the shipped
+cluster file and a repository with the objects committed. `store` blocks; `shop` does not.
 """
 
 from __future__ import annotations
@@ -16,10 +16,19 @@ from unittest import mock
 from haprion import block_api_socket, exit_codes, helper_socket
 from haprion.cli import block_api_helper
 from haprion.config import DeployIdentity, Node
-from tests.test_block_clients import EXEMPTING
-from tests.test_server_state_command import REQUEST_ID, HelperFixture, commit, unblocked
+from tests.test_server_state_command import (
+    REQUEST_ID,
+    STORE,
+    HelperFixture,
+    commit,
+    unblocked,
+)
 
 ACTOR = f"token{':'}fail2ban"
+EXEMPTING = STORE.replace(
+    b"dynamic_block: {max_requests: 300, block_for: 30m}",
+    b"dynamic_block: {max_requests: 300, block_for: 30m, exempt: [192.0.2.0/24]}",
+)
 
 
 class Fixture(HelperFixture):
@@ -97,7 +106,7 @@ class AnAddressIsBlockedOnEveryNode(Fixture):
         self.assertEqual(document["error"]["code"], "node_block_failed")  # type: ignore[index]
 
 
-class TheObjectIsCheckedAsTheSshPathChecksIt(Fixture):
+class TheObjectIsChecked(Fixture):
     def test_an_object_that_does_not_block_or_is_not_there_asks_no_node(self) -> None:
         for name, code in (("shop", "bad_input"), ("nowhere", "server_not_found")):
             with self.subTest(name):

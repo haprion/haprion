@@ -1010,7 +1010,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
                     self.fail(f"{operation} is in OPERATIONS and prepare does not know it")
                 except operations.BadPayload:
                     pass
-        for retired in ("publish", "x"):
+        for retired in ("publish", "block_client", "x"):
             with self.subTest(operation=retired), self.assertRaises(operations.UnknownOperation):
                 operations.prepare(
                     operation=retired, cluster="alpha", request_id=uuid4(), payload={}

@@ -18,9 +18,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from haprion import address_ranges
+import yaml
+from haprion import address_ranges, safe_yaml
 
 from haprion_ui import api_tokens, db, moments
+from haprion_ui.objects import cluster_object_views
 
 OPERATION = "api_token"
 SOURCES_LIMIT = 32
@@ -34,6 +36,21 @@ class Refused(Exception):
     def __init__(self, message: str, *, code: str = "bad_input") -> None:
         super().__init__(message)
         self.code = code
+
+
+def blocking_objects(readings: Iterable[db.ClusterObjects], cluster: str) -> tuple[str, ...]:
+    """The cluster's objects with dynamic blocking, by name, from its newest reading."""
+
+    reading = next((entry for entry in readings if entry.cluster == cluster), None)
+    names: list[str] = []
+    for view in cluster_object_views(reading):
+        try:
+            document: Any = safe_yaml.load(view.document)
+        except yaml.YAMLError:
+            continue
+        if isinstance(document, dict) and isinstance(document.get("dynamic_block"), dict):
+            names.append(view.name)
+    return tuple(sorted(names))
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +110,7 @@ def problem(
     if new.objects and new.level != "block":
         return "Proxies can only be chosen for a block token."
     #
-    # External blocking names its objects, and a token that blocks on all of
+    # A block token names its objects, and a token that blocks on all of
     # them would be the widest one the installation can make, by omission.
     #
     if new.level == "block" and not new.objects:

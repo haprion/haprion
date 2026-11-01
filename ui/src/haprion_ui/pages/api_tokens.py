@@ -17,7 +17,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Form, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
-from haprion_ui import api_token_apply, api_tokens, auth, db, demo, external_blocking, moments
+from haprion_ui import api_token_apply, api_tokens, auth, db, demo, moments
 from haprion_ui.access import admin_write_gate, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
@@ -99,7 +99,7 @@ def build_router(config: Config) -> APIRouter:
         clusters, readings = read_source(request, config, OBJECTS_SOURCE)
         readings = list(readings)
         return clusters, {
-            name: external_blocking.blocking_objects(readings, name) for name in clusters
+            name: api_token_apply.blocking_objects(readings, name) for name in clusters
         }
 
     def list_page(

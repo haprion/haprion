@@ -323,7 +323,7 @@ def write_unblocked(
 ) -> int:
     """`done` when every node took every address, `partial` when some did, else `failed`.
 
-    For an unblock and for a block (`haprion-block-helper`) alike: the nodes
+    For an unblock and for a block (`haprion-block-api-helper`) alike: the nodes
     answer both the same way. `spared` are addresses the object exempts that
     were left out of the request (`haprion-block-api-helper`): each is a
     warning, so an answer that blocked the rest is `partial` and says which.

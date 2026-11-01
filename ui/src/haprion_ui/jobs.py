@@ -202,7 +202,6 @@ OPERATION_LABELS = {
     "cluster_define": "Create or remove cluster",
     "server_state": "Set server state",
     "dynamic_unblock": "Unblock addresses",
-    "block_client": "External blocking client",
     "backup_run": "Back up cluster nodes",
     "backup_schedule": "Change backup schedule",
     "node_restore_prepare": "Prepare node restore",
@@ -323,7 +322,6 @@ SUBJECT_FIELDS = {
     "cert_delete": "certificates",
     "server_state": "object",
     "dynamic_unblock": "object",
-    "block_client": "client",
     "dns_profile_apply": "profile",
     "ndes_profile_apply": "profile",
 }
@@ -1001,7 +999,6 @@ UNKNOWN_NEXT: dict[str, str] = {
     "cluster_node": "It may have changed the cluster's nodes. Check Settings before trying again.",
     "server_state": "It may have taken effect. Check the server's state on its proxy before setting it again.",
     "dynamic_unblock": "It may have taken effect. Check the proxy's blocked addresses before unblocking again.",
-    "block_client": "It may have taken effect. Check External blocking in Settings before trying again.",
     "backup_run": "An archive may have been taken. Check Node backups before running it again.",
     "backup_schedule": "Check the schedule on Node backups before changing it again.",
     "cert_issue": _ISSUED,
@@ -1435,7 +1432,6 @@ RUNNING_LABELS = {
     "cluster_define": "Changing clusters",
     "server_state": "Setting server state",
     "dynamic_unblock": "Unblocking addresses",
-    "block_client": "Changing a block client",
 }
 
 
@@ -1496,7 +1492,6 @@ FAILURE_LABELS = {
     "cluster_define": "Cluster change failed",
     "server_state": "Server state change failed",
     "dynamic_unblock": "Unblock failed",
-    "block_client": "Block client change failed",
     "changes_publish": "Publish failed",
     "cert_issue": "Certificate issue failed",
     "cert_import": "Certificate import failed",

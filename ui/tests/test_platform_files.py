@@ -385,9 +385,6 @@ class TheListsAreTheSteps(unittest.TestCase):
         ("07-platform-services", '"/etc/sudoers.d/${WORKER_SUDOERS}"'): (
             "examples/haprion-worker.sudoers.example"
         ),
-        ("07-platform-services", '"/etc/sudoers.d/${BLOCK_SUDOERS}"'): (
-            "examples/haprion-block.sudoers.example"
-        ),
         ("07-platform-services", '"/etc/systemd/system/${WORKER_UNIT}"'): (
             "examples/haprion-worker.service.example"
         ),

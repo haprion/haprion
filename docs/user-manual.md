@@ -3657,7 +3657,9 @@ on purpose.
 
 **Filtering.** You can filter by cluster, by status class (2xx to 5xx), by whether the WAF matched a rule
 (*Rule hits* or *No rule hits*), by a search text and by a from/to time. The search finds text in the host,
-the path and the backend, and understands AND, OR, NOT, parentheses and quoted phrases. A filter searches
+the path and the backend, and also a term that is a client address (`192.0.2.5`), a network (`192.0.2.0/24`)
+or part of a destination (`192.0.2.10:8080`, or a server's name); it understands AND, OR, NOT, parentheses
+and quoted phrases. A filter searches
 every day the database holds. The page then shows the newest matches: at most `max_lines` of them, 500 by
 default and 10 000 at most.
 
@@ -4493,7 +4495,7 @@ What a token can read:
 | `/clusters/{cluster}/objects/{name}/history` | The cluster's versions, published or not (`limit`) |
 | `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now, with the time left. A *Block* token reads this too, for the proxies it may block on |
 | `/certificates` | The certificates, when they end and where they are (`limit`). `registry` says what the list is: `read` (the registry), `unreadable` (the registry could not be read, or not yet: the list is what the clusters say they serve, `stale` is true and an empty list says nothing) or `none` (the installation declares no registry: the clusters' own lists). |
-| `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`, `before`). Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read. Both ends are included. When `truncated` is true, `next` is where the next page begins: pass it as `before`, with the same other parameters, and each request is listed once even where several share a time. The place also holds the window the first page was read from, so a later page stays in it when the call named no `from` |
+| `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`, `before`). `q` is the page's search: text in the host, the path and the backend, a client address or network, or part of a destination. Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read. Both ends are included. When `truncated` is true, `next` is where the next page begins: pass it as `before`, with the same other parameters, and each request is listed once even where several share a time. The place also holds the window the first page was read from, so a later page stays in it when the call named no `from` |
 | `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through, over the last `days` days (in the answer). The newest findings are given, and `truncated` says when older ones were left out. A *Read* token is given what is published; a *Write* token also what an admin has drafted |
 | `/jobs`, `/jobs/{job_id}` | Jobs and how they went (`cluster`, `state`, `limit`); a `cluster` that does not exist and has no jobs is a 404 |
 
@@ -8241,7 +8243,7 @@ database (`schema_version` 2); a file without one is refused.
 retention timer, which runs with privileges, creates daily partitions ahead of time and removes
 expired data by dropping whole partitions. The application accounts can neither create nor drop
 partitions, and none of them can delete traffic rows. PostgreSQL's `pg_trgm` extension is installed
-once by platform step 2, so substring searches on host, path and backend use per-day GIN indexes.
+once by platform step 2, so substring searches on host, path and backend use per-day GIN indexes, and a search for a client address a per-day index on the client.
 
 **The manager's mirror follows that setting rather than keeping a window of its own.** Each run
 keeps the days the database still holds, plus one more as the margin it would replay from after a

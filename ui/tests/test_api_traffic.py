@@ -169,6 +169,22 @@ class TheTrafficRoute(ApiTestCase):
         self.assertEqual(asked["owned"], ((), ("shop.example.com",)))
         self.assertEqual(asked["server_addresses"], {("alpha", "web", "s1"): "192.0.2.10:8080"})
 
+    def test_q_is_given_the_destinations_it_may_search(self) -> None:
+        # The route shows each row's destination, so `q` may find it, as the page's does.
+        from haprion_ui import traffic_logs
+
+        self.get("?q=192.0.2.10")
+        asked = self.read.call_args.kwargs
+        parameters: list[Any] = []
+        statement = traffic_logs._search_sql(
+            traffic_logs._Parser(traffic_logs._tokens(asked["substring"])).parse(),
+            parameters,
+            asked["server_addresses"],
+        ).as_string(None)
+        self.assertIn("(cluster, backend, server) in", statement)
+        self.assertIn("client = any(%s)", statement)
+        self.assertEqual(parameters[-3:], [["alpha"], ["web"], ["s1"]])
+
     def test_an_object_the_cluster_does_not_have_is_not_found(self) -> None:
         """A mistyped name must not read as "no requests", for ever, in a monitoring script."""
 

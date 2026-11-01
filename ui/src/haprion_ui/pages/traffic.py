@@ -641,9 +641,11 @@ def build_router(config: Config) -> APIRouter:
         else:
             time_filter_error = None
         #
-        # HAProxy knows generated backend members only as s1, s2, ... . Resolve
-        # those positions before filtering so the one shared search field can
-        # find the configured destination as well as the hidden backend name.
+        # HAProxy knows generated backend members only as s1, s2, ... . The
+        # search turns a term into the servers whose configured destination
+        # holds it before it asks, so the one shared search field finds the
+        # destination as well as the hidden backend name, for everyone this
+        # page shows destinations to (every role that can open it).
         # This intentionally follows the current document: after a backend is
         # edited, old records follow the new ordering rather than pretending
         # the mirror preserved historical configuration that it never stored.

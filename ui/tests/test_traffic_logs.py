@@ -121,6 +121,69 @@ def record(**overrides: object) -> bytes:
     return json.dumps(value).encode("utf-8") + b"\n"
 
 
+class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
+    """A term is also a client address, a network and a destination (26-11-01); PostgreSQL's half is in test_database_integration."""
+
+    ADDRESSES = {
+        ("alpha", "be-shop", "s1"): "198.51.100.7:8080",
+        ("alpha", "be-shop", "s2"): "Backend.Internal:9090",
+        ("beta", "be-other", "s1"): "198.51.100.7:8080",
+    }
+
+    def built(self, text: str, destinations: Any = None) -> tuple[str, list[Any]]:
+        parameters: list[Any] = []
+        expression = traffic_logs._Parser(traffic_logs._tokens(text)).parse()
+        statement = traffic_logs._search_sql(expression, parameters, destinations)
+        return statement.as_string(None), parameters
+
+    def test_an_address_is_the_client_in_either_form_and_still_text(self) -> None:
+        for term in ("192.0.2.5", "::ffff:192.0.2.5"):
+            with self.subTest(term=term):
+                statement, parameters = self.built(term)
+                self.assertIn("client = any(%s)", statement)
+                self.assertIn("ilike", statement)
+                self.assertEqual(parameters[1], ["192.0.2.5", "::ffff:192.0.2.5"])
+        self.assertEqual(self.built("2001:DB8::1")[1][1], ["2001:db8::1"])
+
+    def test_a_network_is_the_clients_in_it(self) -> None:
+        statement, parameters = self.built("192.0.2.77/24")
+        self.assertIn("traffic_log_client_in(client, %s::inet)", statement)
+        self.assertEqual(parameters[1], "192.0.2.0/24")
+
+    def test_what_is_no_address_is_text_only(self) -> None:
+        for term in ("shop", "192.0.2", "192.0.2.300", "192.0.2.0/33", "/health"):
+            with self.subTest(term=term):
+                statement, parameters = self.built(term)
+                self.assertNotIn("client", statement)
+                self.assertEqual(len(parameters), 1)
+
+    def test_a_term_that_names_a_destination_asks_for_its_servers(self) -> None:
+        statement, parameters = self.built("198.51.100.7", self.ADDRESSES)
+        self.assertIn("(cluster, backend, server) in", statement)
+        self.assertEqual(
+            parameters[-3:],
+            [["alpha", "beta"], ["be-shop", "be-other"], ["s1", "s1"]],
+        )
+        # By host, whatever its case, as the text search reads.
+        self.assertEqual(
+            self.built("backend.internal", self.ADDRESSES)[1][-3:],
+            [["alpha"], ["be-shop"], ["s2"]],
+        )
+
+    def test_a_reader_not_given_destinations_cannot_search_them(self) -> None:
+        given: Any
+        for given in (None, {}):
+            statement, parameters = self.built("198.51.100.7", given)
+            self.assertNotIn("unnest", statement)
+            self.assertEqual(len(parameters), 2)
+
+    def test_not_covers_all_three(self) -> None:
+        statement, _ = self.built("not 198.51.100.7", self.ADDRESSES)
+        self.assertTrue(statement.startswith("not (("))
+        self.assertIn("client = any(%s)", statement)
+        self.assertIn("unnest", statement)
+
+
 class StoredRows:
     """A connection whose `traffic_log_read` holds every record of the mirror files.
 

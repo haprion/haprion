@@ -10,6 +10,7 @@ much this process reads, how long a field is, or what a template renders.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -330,7 +331,41 @@ def like_pattern(query: str) -> str:
     return f"%{escaped}%"
 
 
-def _search_sql(expression: _Expression, parameters: list[Any]) -> sql.Composable:
+def client_match(value: str) -> tuple[str, list[str]] | None:
+    """How a term names a client: `("address", texts)` or `("network", [cidr])`, else None.
+
+    An address is written the way the log writes it: an IPv4-mapped IPv6 address
+    is the IPv4 address (as the rest of the interface reads one), and the log
+    may carry either form, so both are asked for. A network is any `address/bits`.
+    """
+
+    try:
+        if "/" in value:
+            return "network", [str(ipaddress.ip_network(value, strict=False))]
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    if isinstance(address, ipaddress.IPv4Address):
+        return "address", [str(address), f"::ffff:{address}"]
+    return "address", [str(address)]
+
+
+def _destinations(
+    value: str, addresses: Mapping[tuple[str, str, str], str]
+) -> list[tuple[str, str, str]]:
+    """The generated servers whose configured destination holds the term, as the text search reads."""
+
+    needle = value.lower()
+    return [key for key, address in addresses.items() if needle in address.lower()]
+
+
+def _search_sql(
+    expression: _Expression,
+    parameters: list[Any],
+    destinations: Mapping[tuple[str, str, str], str] | None = None,
+) -> sql.Composable:
     # Keep this expression byte-for-byte aligned with the per-partition
     # pg_trgm index created by migration 0030: the planner uses it only for
     # this exact expression, and only through `traffic_log_read` (0083).
@@ -343,14 +378,42 @@ def _search_sql(expression: _Expression, parameters: list[Any]) -> sql.Composabl
         # name or an encoded path, not LIKE's wildcards (review 2026-10-20, D1).
         #
         parameters.append(like_pattern(expression.value))
-        return sql.SQL("{} ilike %s").format(searchable)
+        found: list[sql.Composable] = [sql.SQL("{} ilike %s").format(searchable)]
+        #
+        # The client, which is a column of its own: an address is that client
+        # (the index of 0111), a network every client in it. The text above is
+        # still searched, as a host can be an address.
+        #
+        client = client_match(expression.value)
+        if client is not None and client[0] == "address":
+            found.append(sql.SQL("client = any(%s)"))
+            parameters.append(client[1])
+        elif client is not None:
+            found.append(sql.SQL("traffic_log_client_in(client, %s::inet)"))
+            parameters.append(client[1][0])
+        #
+        # The destination is configuration, not a column: the generated names
+        # the log carries (`s2`) are resolved before the query, and the servers
+        # whose destination holds the term are asked for here. Only a reader
+        # shown destinations is given them to search (`destinations`).
+        #
+        servers = _destinations(expression.value, destinations) if destinations else []
+        if servers:
+            found.append(
+                sql.SQL(
+                    "(cluster, backend, server) in"
+                    " (select * from unnest(%s::text[], %s::text[], %s::text[]))"
+                )
+            )
+            parameters.extend([[key[index] for key in servers] for index in range(3)])
+        return sql.SQL("({})").format(sql.SQL(" or ").join(found))
     if isinstance(expression, _Not):
-        return sql.SQL("not ({})").format(_search_sql(expression.value, parameters))
+        return sql.SQL("not ({})").format(_search_sql(expression.value, parameters, destinations))
     operator = sql.SQL(" and " if isinstance(expression, _And) else " or ")
     return sql.SQL("({}){}({})").format(
-        _search_sql(expression.left, parameters),
+        _search_sql(expression.left, parameters, destinations),
         operator,
-        _search_sql(expression.right, parameters),
+        _search_sql(expression.right, parameters, destinations),
     )
 
 
@@ -547,7 +610,7 @@ def read_database(
         conditions.append(sql.SQL("status between %s and %s"))
         parameters.extend((status_class * 100, status_class * 100 + 99))
     if substring:
-        conditions.append(_search_sql(expression, parameters))
+        conditions.append(_search_sql(expression, parameters, server_addresses))
     if owned is not None:
         backends, hosts = owned
         names = [host.lower() for host in hosts if not host.startswith(("!", "*."))]

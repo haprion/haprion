@@ -8,8 +8,8 @@ Service accounts start with an underscore, as Debian asks of system accounts
 (Policy 9.2.1); it also keeps an account from being named like the command it
 runs. The group operators join does not, like `docker` or `libvirt`.
 
-`install/accounts.sh` holds the same names for the installation steps, and
-`install/sysusers/` the fragments; a test keeps all three in step.
+`install/accounts.sh` and `install/manager-accounts.sh` hold the same names for
+the installation steps, and `install/sysusers/` the fragments; a test keeps all three in step.
 """
 
 from __future__ import annotations

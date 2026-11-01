@@ -523,6 +523,7 @@ class TheSshBlockingOfAnEarlierReleaseIsRetired(unittest.TestCase):
         self.assertFalse(hasattr(accounts, "BLOCK"))
         for script in (
             INSTALL / "accounts.sh",
+            INSTALL / "manager-accounts.sh",
             INSTALL / "sysusers/haprion.conf",
             INSTALL / "sudoers/haprion",
         ):

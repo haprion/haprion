@@ -117,7 +117,7 @@ else
 fi
 checker_module="$(release_module "${checker_root}/venv/bin/python")" \
     || die "cannot tell which package the release this package installed is"
-# shellcheck disable=SC2153 # UI_CONFIG is accounts.sh's, read through lib.sh
+# shellcheck disable=SC2153 # UI_CONFIG is manager-accounts.sh's, read through lib.sh
 ui_lines="$("${python_root}/venv/bin/python" - \
     "$module" "$UI_CONFIG" <<'PY'
 import importlib

@@ -206,6 +206,7 @@ def library_functions() -> set[str]:
         "lib.sh",
         "node-lib.sh",
         "accounts.sh",
+        "manager-accounts.sh",
         "defaults.sh",
         "setup.sh",
         "node-installation.sh",
@@ -254,6 +255,7 @@ def manager_scripts() -> list[Path]:
             "lib.sh",
             "node-lib.sh",
             "accounts.sh",
+        "manager-accounts.sh",
             "defaults.sh",
         )
     ]

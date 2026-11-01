@@ -24,7 +24,7 @@
 #
 #     sudo ./03-verify
 #
-# It reads no answers file: the names it checks are fixed (accounts.sh).
+# It reads no answers file: the names it checks are fixed (manager-accounts.sh).
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"

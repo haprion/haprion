@@ -17,7 +17,8 @@ and the tool that applies it, and the platform's own installation:
     /usr/lib/haprion/ui/            the release archive and PAYLOAD, which names
                                     it with its digest
     /usr/share/haprion-ui/install/  the platform steps (install/platform with
-                                    lib.sh, node-lib.sh, accounts.sh and
+                                    lib.sh, node-lib.sh, accounts.sh,
+                                    manager-accounts.sh and
                                     defaults.sh), and beside it the tools and
                                     certbot lock the optional steps use
     /usr/sbin/haprion-<command>     backup, drain, export, profiles, retention,
@@ -147,6 +148,7 @@ SHARED = (
     "install/lib.sh",
     "install/node-lib.sh",
     "install/accounts.sh",
+    "install/manager-accounts.sh",
     "install/defaults.sh",
     "install/setup.sh",
     "install/haprion-setup",

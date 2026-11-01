@@ -58,7 +58,7 @@ from removal import (  # noqa: E402 - after the path and the bytecode switch abo
 )
 
 #
-# The fixed names (install/accounts.sh, B266). A test holds these to it.
+# The fixed names (install/manager-accounts.sh, B266). A test holds these to it.
 #
 DB_NAME = "haprion"
 DB_ROLES = (

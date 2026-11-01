@@ -17,6 +17,8 @@
 
 # shellcheck source=node-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/node-lib.sh"
+# shellcheck source=manager-accounts.sh
+source "$(dirname "${BASH_SOURCE[0]}")/manager-accounts.sh"
 # shellcheck source=defaults.sh
 source "$(dirname "${BASH_SOURCE[0]}")/defaults.sh"
 
@@ -150,7 +152,7 @@ ensure_identity_directories() {
 #
 #
 # One value from /etc/haprion/ui-admin.conf, read rather than run. The file
-# names DB_NAME, which accounts.sh holds read-only, so sourcing it from a step
+# names DB_NAME, which manager-accounts.sh holds read-only, so sourcing it from a step
 # is fatal (26-10-09). The last assignment wins, as it would in a shell.
 #
 #

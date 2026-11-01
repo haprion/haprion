@@ -65,8 +65,9 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         (work / "lib.sh").write_text((ROOT / "install/lib.sh").read_text() + "need_root() { :; }\n")
         shutil.copy2(ROOT / "install/node-lib.sh", work / "node-lib.sh")
         shutil.copy2(ROOT / "install/defaults.sh", work / "defaults.sh")
-        (work / "accounts.sh").write_text(
-            (ROOT / "install/accounts.sh")
+        shutil.copy2(ROOT / "install/accounts.sh", work / "accounts.sh")
+        (work / "manager-accounts.sh").write_text(
+            (ROOT / "install/manager-accounts.sh")
             .read_text()
             .replace("readonly UI_ROOT=/opt/haprion-ui", f"readonly UI_ROOT={work / 'ui'}")
         )

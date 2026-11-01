@@ -1124,7 +1124,7 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
     them while sending an installed release's module flags it did not know:
     only running it shows what it hands the module. The wrapper is copied
     unchanged; its `../lib.sh` is the real one with the root check alone left
-    out, because `$EUID` cannot be faked, and its `accounts.sh` the real one
+    out, because `$EUID` cannot be faked, and its `manager-accounts.sh` the real one
     with the release root moved into the test's directory.
     """
 
@@ -1138,8 +1138,9 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         shutil.copy2(ROOT / "install/node-lib.sh", work / "node-lib.sh")
         shutil.copy2(ROOT / "install/defaults.sh", work / "defaults.sh")
         self.payload = work / "PAYLOAD"
-        (work / "accounts.sh").write_text(
-            (ROOT / "install/accounts.sh")
+        shutil.copy2(ROOT / "install/accounts.sh", work / "accounts.sh")
+        (work / "manager-accounts.sh").write_text(
+            (ROOT / "install/manager-accounts.sh")
             .read_text()
             .replace("readonly UI_ROOT=/opt/haprion-ui", f"readonly UI_ROOT={self.root}")
             .replace(

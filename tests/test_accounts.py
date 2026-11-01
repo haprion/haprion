@@ -1,6 +1,7 @@
 """The fixed account names (B266) are stated three times; this holds them together.
 
-`haprion.accounts` for the engine, `install/accounts.sh` for the
+`haprion.accounts` for the engine, `install/accounts.sh` and
+`install/manager-accounts.sh` (and JOIN_USER in `install/node/haprion-node-key`) for the
 installation steps, and the sysusers fragments that create the accounts. A name
 changed in one and not the others would install an account nobody uses, or a
 sudoers rule for an account that does not exist.
@@ -21,7 +22,7 @@ MANAGER = INSTALL / "sysusers/haprion.conf"
 NODE = INSTALL / "sysusers/haprion-node.conf"
 
 #
-# accounts.sh's variable for each name in the module. A name the module has
+# The scripts' variable for each name in the module. A name the module has
 # and the script does not is a failure, not a skip.
 #
 SHELL_NAMES = {
@@ -66,8 +67,12 @@ def module_names() -> dict[str, str]:
 
 
 def shell_names() -> dict[str, str]:
-    script = f'source "{INSTALL / "accounts.sh"}"; ' + " ".join(
-        f'printf "%s=%s\\n" {variable} "${variable}";' for variable in SHELL_NAMES.values()
+    script = (
+        f'source "{INSTALL / "accounts.sh"}"; source "{INSTALL / "manager-accounts.sh"}"; '
+        f'source <(grep "^readonly JOIN_USER=" "{INSTALL / "node/haprion-node-key"}"); '
+        + " ".join(
+            f'printf "%s=%s\\n" {variable} "${variable}";' for variable in SHELL_NAMES.values()
+        )
     )
     done = subprocess.run(  # fixed interpreter, the repository's file
         ["/bin/bash", "-c", script], capture_output=True, text=True, check=True
@@ -182,7 +187,7 @@ class AnOldAnswersFile(unittest.TestCase):
 
 
 class TheAdminFileIsReadNotRun(unittest.TestCase):
-    """`ui-admin.conf` names DB_NAME, which accounts.sh holds read-only (B266).
+    """`ui-admin.conf` names DB_NAME, which manager-accounts.sh holds read-only (B266).
 
     Sourced by a step that has loaded lib.sh, the assignment is fatal: step 6
     stopped there on a running installation 26-10-09. Steps read single values instead.

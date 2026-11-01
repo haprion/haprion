@@ -1,46 +1,23 @@
 # shellcheck shell=bash
 #
-# Haprion's fixed account, group and database names and places (B266), for the
-# installation steps. Sourced by node-lib.sh. The same names are in
-# src/haprion/accounts.py and install/sysusers/; a test keeps the three in
-# step.
+# Haprion's fixed account and group names (B266) a node's step uses, sourced by
+# node-lib.sh. The step directory is carried by the node package and its digest
+# is the record of which step last ran, so this file holds only what the node's
+# step reads: a test fails on a name it does not. The manager's names are in
+# manager-accounts.sh. All of them are also in src/haprion/accounts.py and
+# install/sysusers/; a test keeps them in step.
 #
-# shellcheck disable=SC2034 # read by the steps that source lib.sh
+# shellcheck disable=SC2034 # read by the steps that source node-lib.sh
 
-# The management host.
-readonly CONFIG_GROUP=haprion
-readonly PLATFORM_GROUP=_haprion-ui
+# The management host's accounts, as the node creates them.
 readonly PULL_USER=_haprion-pull
 readonly CERT_PULL_USER=_haprion-cert-pull
-readonly WEB_USER=_haprion-web
-readonly WORKER_USER=_haprion-worker
-readonly POLLER_USER=_haprion-poller
-readonly COLLECTOR_USER=_haprion-collector
-readonly OIDC_USER=_haprion-oidc
-readonly DB_NAME=haprion
-readonly WEB_UNIT=haprion-web.service
-readonly WORKER_UNIT=haprion-worker.service
-readonly POLLER_UNIT=haprion-poller.service
-readonly WORKER_SUDOERS=haprion-worker
-readonly POLLER_SUDOERS=haprion-poller
-readonly DB_MIGRATION_ROLE=_haprion-migrate
-
-# Where the web platform lives: Debian's places for code, configuration and
-# state. What grows with traffic is put on a volume of its own by mounting it
-# at these paths, never by moving them (user manual, "Where the data lives").
-readonly UI_ROOT=/opt/haprion-ui
-readonly UI_CONFIG=/etc/haprion/ui.toml
-readonly UI_SECRETS=/etc/haprion/ui-secrets
-readonly UI_DATA=/var/lib/haprion-ui
-# What the haprion-ui package installed: RELEASE_ID names its release.
-readonly UI_PAYLOAD=/usr/lib/haprion/ui/PAYLOAD
 
 # Each node.
 readonly TRIGGER_USER=_haprion-trigger
 readonly STATUS_USER=_haprion-status
 readonly BACKUP_USER=_haprion-backup
 readonly LOGREAD_USER=_haprion-logread
-readonly JOIN_USER=_haprion-join
 readonly LOGS_GROUP=_haprion-logs
 readonly WAF_GROUP=_haprion-waf
 readonly DNS_GROUP=_haprion-dns

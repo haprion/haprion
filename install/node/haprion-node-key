@@ -35,6 +35,10 @@ NODE_CONF="${NODE_CONF:-/etc/haprion/node.conf}"
 JOIN_DIR="${JOIN_DIR:-/var/lib/haprion-node}"
 JOIN_KEY="${JOIN_DIR}/join_key"
 JOIN_MARK="${JOIN_DIR}/joined"
+# The account the manager joins as (the sysusers fragment and haprion-node-join
+# name it too; a test keeps them in step). Not in accounts.sh: the step does
+# not use it, and a change here asks no node to prepare again.
+readonly JOIN_USER=_haprion-join
 JOIN_KEYS="${JOIN_KEYS:-/home/${JOIN_USER}/.ssh/authorized_keys}"
 JOIN_SUDOERS="${JOIN_SUDOERS:-/etc/sudoers.d/haprion-node-join}"
 HOST_KEY_FILE="${HOST_KEY_FILE:-/etc/ssh/ssh_host_ed25519_key.pub}"

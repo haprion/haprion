@@ -1005,7 +1005,7 @@ class WhatLibShReadsShipsWithIt(unittest.TestCase):
         }
 
     def test_lib_sh_reads_the_node_s_library_the_accounts_and_the_defaults(self) -> None:
-        self.assertEqual(self.sourced("lib.sh"), {"node-lib.sh", "accounts.sh", "defaults.sh"})
+        self.assertEqual(self.sourced("lib.sh"), {"node-lib.sh", "accounts.sh", "manager-accounts.sh", "defaults.sh"})
         self.assertEqual(self.sourced("node-lib.sh"), {"accounts.sh"})
 
     def test_the_node_package_carries_them(self) -> None:
@@ -1091,7 +1091,7 @@ class TheNodesLibraryIsTheNodesAlone(unittest.TestCase):
 
     def test_every_function_the_node_s_library_defines_is_one_a_node_runs(self) -> None:
         node = self.functions("node-lib.sh", "node-installation.sh")
-        shared = set(self.functions("accounts.sh", "defaults.sh")) - {""}
+        shared = set(self.functions("accounts.sh", "manager-accounts.sh", "defaults.sh")) - {""}
         own = set(node) - shared - {""} - set(self.functions("node-installation.sh"))
         self.assertTrue(own)
         self.assertEqual(own - self.reached(node), set())
@@ -1318,6 +1318,23 @@ class TheNodeHasNoManagerDefaults(unittest.TestCase):
                     if not (match["after"] or "").startswith((":", "}")) or (match["after"] == "}"):
                         unsafe.append(f"{name}: {match.group(0)}")
         self.assertEqual(unsafe, [])
+
+    def test_every_name_the_node_s_accounts_file_sets_is_one_the_step_reads(self) -> None:
+        """26-11-01: accounts.sh carried the manager's names, and removing three of
+        them changed the digest of every node's step. What the step directory
+        holds is what the step uses, nothing the manager alone reads."""
+        accounts = (INSTALL / "accounts.sh").read_text()
+        defined = re.findall(r"^readonly ([A-Z_]+)=", accounts, re.MULTILINE)
+        self.assertTrue(defined)
+        code = "\n".join(
+            line
+            for name in self.NODE_FILES
+            if name != "accounts.sh"
+            for line in (INSTALL / name).read_text().splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        unused = [name for name in defined if not re.search(rf"\b{name}\b", code)]
+        self.assertEqual(unused, [], "set by the node's accounts file, read by no node step")
 
     def test_answers_load_without_defaults_sh(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

@@ -68,6 +68,7 @@ names used below, that is a bug in the software, not in this guide.
   - [Tokens](#tokens)
   - [Calling it](#calling-it)
   - [Blocking an address](#blocking-an-address)
+  - [Example: fail2ban in front of Authentik](#example-fail2ban-in-front-of-authentik)
   - [Changing certificates](#changing-certificates)
   - [Changing objects](#changing-objects)
   - [Servers, deploying and the health check](#servers-deploying-and-the-health-check)
@@ -4461,14 +4462,8 @@ curl -sS -X POST https://mgr.example.com/api/v1/clusters/alpha/objects/shop/bloc
      -d '{"addresses": ["203.0.113.7"]}'
 ```
 
-```ini
-# fail2ban: /etc/fail2ban/action.d/haprion.local
-[Definition]
-actionban = curl -fsS -X POST https://mgr.example.com/api/v1/clusters/<cluster>/objects/<proxy>/blocks \
-            -H "Authorization: Bearer <token>" -H 'Content-Type: application/json' \
-            -d '{"addresses": ["<ip>"]}'
-actionunban =
-```
+A ban tool such as fail2ban calls this when it bans; a complete setup is in
+[Example: fail2ban in front of Authentik](#example-fail2ban-in-front-of-authentik).
 
 The body names one to 64 addresses. The answer's `result` gives the proxy's *Block for* in `block_for` (how long a
 block lasts), the addresses a node took in `blocked`, the addresses left out in `refused`, and what each node
@@ -4526,6 +4521,110 @@ full description of the calls, generated from the code, is `/api/v1/openapi.json
 It describes each field as a code (a fixed set of values, listed there), as text (the interface's own words,
 which may change) or as a plain value such as a name, a number or a time; a script matches on codes and
 values and shows text, never matches on it.
+
+### Example: fail2ban in front of Authentik
+
+Authentik logs a failed sign-in with the visitor's address. fail2ban reads that log, and when an address fails
+too often it asks Haprion to block it. The block then holds on every node of the cluster, in front of
+Authentik, rather than on the host Authentik runs on. fail2ban needs no firewall rights for this, so it also
+runs in a container without `NET_ADMIN` or the host's network.
+
+The example uses the cluster `alpha`, the proxy `auth` in front of Authentik, the manager
+`mgr.example.com` and the fail2ban host `192.0.2.20`. Use your own names.
+
+**1. The proxy.** `auth` needs [dynamic blocking](#dynamic-blocking), or the call is refused (400 `bad_input`).
+Set *Errors*, for example `20`: it turns blocking on and catches scanners as well. *Requests* can stay empty;
+the sign-in page's password guessers are fail2ban's. Set *Block for*, for example `60m`.
+
+**2. The token.** Make one as in [Tokens](#tokens), named `fail2ban-auth`: level *Block*, the cluster `alpha`,
+the proxy `auth`, and `192.0.2.20` as where it may be called from. That is the address the manager sees;
+fail2ban in a container on a bridge network calls from its host's address.
+
+**3. The token on the fail2ban host.** Keep it in a file of its own that only root reads, as the header curl
+sends. It is then not in the action, not in the shell's history and not in the process list:
+
+```bash
+sudo install -d -m 700 /etc/fail2ban/haprion
+read -rsp 'Token: ' token && echo
+printf 'Authorization: Bearer %s\n' "$token" | sudo sh -c 'umask 077 && cat > /etc/fail2ban/haprion/auth-header'
+unset token
+```
+
+If the manager's certificate comes from your own CA, copy that CA's certificate to
+`/etc/fail2ban/haprion/ca.crt` and keep `--cacert` below. With a public certificate, leave `--cacert` out.
+Check the file, the address and the token in one call; the answer names the token, its level and its proxy:
+
+```bash
+sudo curl -sS --cacert /etc/fail2ban/haprion/ca.crt -H @/etc/fail2ban/haprion/auth-header \
+     https://mgr.example.com/api/v1/token
+```
+
+**4. The action.** `/etc/fail2ban/action.d/haprion.conf`:
+
+```ini
+# Ask Haprion to block the address on the proxy's nodes. The block ends by
+# itself after the proxy's "Block for"; an admin lifts one earlier with
+# Unblock on the proxy's page, so there is no unban.
+[Definition]
+actionstart =
+actionstop =
+actioncheck =
+actionban = curl -fsS --max-time 20 --cacert /etc/fail2ban/haprion/ca.crt -H @/etc/fail2ban/haprion/auth-header -H 'Content-Type: application/json' -X POST -d '{"addresses": ["<ip>"]}' https://mgr.example.com/api/v1/clusters/<cluster>/objects/<proxy>/blocks
+actionunban =
+
+[Init]
+cluster =
+proxy =
+```
+
+`-f` makes curl fail on a refusal, and fail2ban then logs the error. An answer where only some nodes took the
+block is a 200 with `partial`; the proxy's *Blocked addresses* shows which nodes hold it.
+
+**5. The filter.** Authentik's server writes a failed sign-in as an event line with `"action": "login_failed"`
+and the visitor's address in `"client_ip"`. This filter reads it from the journal, for a server container that
+logs to journald (`logging: driver: journald` in its compose file). `/etc/fail2ban/filter.d/authentik.conf`:
+
+```ini
+[Definition]
+failregex = "action": "login_failed",.*"client_ip": "<ADDR>"
+ignoreregex =
+journalmatch = CONTAINER_NAME=authentik-server-1
+```
+
+`journalmatch` is the container's name; `docker ps` shows yours. `client_ip` is the visitor's address only when
+Authentik takes it from the `X-Forwarded-For` HAProxy sends. Fail one sign-in on purpose and check that the
+line names your own address, not a node's. `fail2ban-regex` tests the filter against the journal before the
+jail uses it.
+
+**6. The jail.** `/etc/fail2ban/jail.d/authentik.local`:
+
+```ini
+# Five failed sign-ins in ten minutes block the address on the proxy auth.
+# bantime matches the proxy's "Block for".
+[authentik]
+enabled  = true
+backend  = systemd
+filter   = authentik
+action   = haprion[cluster=alpha, proxy=auth]
+maxretry = 5
+findtime = 10m
+bantime  = 60m
+```
+
+**7. Try it.** Reload fail2ban and ban a documentation address by hand:
+
+```bash
+sudo fail2ban-client reload
+sudo fail2ban-client set authentik banip 203.0.113.7
+```
+
+The proxy's page lists `203.0.113.7` under *Blocked addresses*, on every node, with the reason *Blocked by hand
+or the API*. The audit record shows *Blocked … through the API*, with `token:` and the name `fail2ban-auth`. Lift it with
+*Unblock*, or let it end.
+
+An address in the proxy's *Never blocked* is never blocked: the call is refused (400), and fail2ban logs the
+failed action. To stop fail2ban's blocks at once, revoke the token; blocks already placed end after
+*Block for*.
 
 ### Changing certificates
 

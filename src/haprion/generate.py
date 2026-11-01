@@ -2767,8 +2767,9 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
     # engine failing but the client choosing, with a healthy engine (measured
     # 26-11-01 with the real engine and CRS, `mode: block` + `allow`: 11 and 15
     # of 20 SQLi/XSS requests reached the server when the client half-closed
-    # right after sending; 0 of 20 once refused). Only a log-only object lets
-    # it through, since it refuses nothing anyway.
+    # right after sending; 0 of 20 once refused). Only a log-only object that
+    # allows lets it through, since it refuses nothing at all. The default,
+    # `mode: log` with `on_engine_error: deny`, refuses it.
     #
     refuse_left = waf.mode == "block" or waf.on_engine_error == "deny"
     if waf.on_engine_error == "deny":

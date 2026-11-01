@@ -3893,6 +3893,20 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
         self.assertIn("-m int 4", lines[0])
         self.assertNotIn("reject", frontend.configuration["1000-frontends.cfg"])
 
+    def test_the_default_object_refuses_the_client_that_left(self) -> None:
+        """`mode: log` with the default `on_engine_error: deny` refuses on an engine error, so it rejects."""
+
+        lines = self.engine_error_lines("deny")
+        default = self.layer("  mode: log")
+        written = [
+            line.strip().split(" if ")[0]
+            for line in default.configuration["1000-frontends.cfg"].splitlines()
+            if "txn.coraza.error" in line
+            and ("set-var(txn.rule)" in line or "reject" in line or "deny_status 503" in line)
+        ]
+        self.assertEqual(written, [line.split(" if ")[0] for line in lines])
+        self.assertIn("http-request reject", written)
+
     def test_each_object_is_an_application_and_an_unknown_name_inspects_nothing(self) -> None:
         layer = self.layer("  paranoia: 3\n  exceptions: [{rule: 920350}]")
         engine = layer.waf_files["coraza.yaml"]

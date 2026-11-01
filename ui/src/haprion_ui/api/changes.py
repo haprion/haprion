@@ -114,17 +114,6 @@ def _writes_on(request: Request) -> None:
         raise writing.WRITES_OFF
 
 
-def _requested_by(caller: Caller) -> str:
-    """The name a version records for the token, as the history names the actor.
-
-    The commit trailer holds sixty-four characters; a token name may use them
-    all. Cut here rather than refused by the helper after the cluster's lock
-    was taken - the audit row beside the job has the whole of it.
-    """
-
-    return caller.trailer_actor
-
-
 async def document_body(
     request: Request,
     caller: Caller = Depends(needs("write")),  # noqa: B008
@@ -418,7 +407,7 @@ def object_create(
             cluster=cluster,
             object_id=name,
             document=document,
-            updated_by=caller.actor,
+            updated_by=caller.stored_actor,
             saved_revision=None,
             draft_revision=None,
         ),
@@ -531,7 +520,7 @@ def object_replace(
             cluster=cluster,
             object_id=name,
             document=document,
-            updated_by=caller.actor,
+            updated_by=caller.stored_actor,
             replaces=replaces,
             saved_revision=revision,
             draft_revision=None,
@@ -584,7 +573,7 @@ def object_remove(
             "conflict",
             f"The saved changes to {name} are not at revision {held}; read them again.",
         )
-    if work.saved is not None and held is None and work.saved.updated_by != caller.actor:
+    if work.saved is not None and held is None and work.saved.updated_by != caller.stored_actor:
         raise Refusal(
             409,
             "conflict",
@@ -604,7 +593,7 @@ def object_remove(
             stored,
             cluster=cluster,
             existing=work,
-            updated_by=caller.actor,
+            updated_by=caller.stored_actor,
         ),
         detail={"removed": True},
     )
@@ -653,7 +642,7 @@ def cluster_publish(
         operation="changes_publish",
         cluster=cluster,
         payload=publish_payload(
-            package, comment=comment, requested_by=_requested_by(caller), deploy=asked.deploy
+            package, comment=comment, requested_by=caller.stored_actor, deploy=asked.deploy
         ),
         detail={"changes": [row.name for row in package.rows]},
         body=asked,
@@ -706,7 +695,7 @@ def cluster_revert(
         payload=history.revert_payload(
             version=version.number,
             expected_commit=version.expected_commit,
-            requested_by=_requested_by(caller),
+            requested_by=caller.stored_actor,
             expected_head=view.head_commit,
         ),
         detail={"version": version.number},

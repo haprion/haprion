@@ -61,6 +61,12 @@ CONCURRENT_CALLS = 3
 HELPER_CALLS = 8
 
 #
+# How long a block that was asked of the nodes waits for its place again
+# before it is answered without one.
+#
+PLACE_WAIT = 10.0
+
+#
 # What counts as guessing. A missing header, a revoked or expired token and a
 # token used from outside its addresses are callers that are configured wrong.
 #
@@ -90,11 +96,14 @@ class Caller:
         return f"token:{self.issued.name}"
 
     @property
-    def trailer_actor(self) -> str:
-        """`actor` as a commit trailer and the block helper hold it: sixty-four characters.
+    def stored_actor(self) -> str:
+        """`actor` as a column or a trailer that holds sixty-four characters keeps it.
 
         A token name may use sixty-four itself, and `token:` comes before it.
-        Cut here rather than refused further in; the audit row has the whole.
+        Used for a saved change's `updated_by`, the commit trailer and the
+        block helper, and for comparing with what those hold; cut here rather
+        than refused further in. The audit row's actor has no limit and keeps
+        the whole name.
         """
 
         return self.actor[:MAX_NAME_LENGTH]
@@ -210,12 +219,22 @@ class Place:
             self._held = False
             self._slots.release()
 
-    def take_again(self) -> None:
-        """Wait for a place; the others hold theirs for a database read at most."""
+    def take_again(self, timeout: float | None = None) -> None:
+        """Wait for a place, `PLACE_WAIT` seconds at most; the others hold theirs for a read.
 
-        if not self._held:
-            self._slots.acquire()
+        Past the bound the call goes on without one: what it does next is
+        the audit row of a block the nodes already hold and its answer, which
+        must not be lost for want of a place (review 26-11-01, P3-4). `release`
+        then has nothing to give back.
+        """
+
+        if self._held:
+            return
+        wait = PLACE_WAIT if timeout is None else timeout
+        if self._slots.acquire(timeout=wait):
             self._held = True
+        else:
+            logger.warning("api: no place came free in %s seconds; the call goes on without", wait)
 
 
 def a_call_at_a_time(request: Request) -> Iterator[Place]:

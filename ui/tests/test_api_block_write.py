@@ -15,7 +15,7 @@ from uuid import UUID
 from haprion import block_api_socket
 
 from haprion_ui import blocked, db
-from haprion_ui.api import writing
+from haprion_ui.api import caller, writing
 from tests.test_api import ApiTestCase
 from tests.test_api_blocks import BLOCKING, SHOP, held, status, stored
 from tests.test_api_writing import IDEMPOTENT, a_job
@@ -265,6 +265,36 @@ class PlacingABlock(BlockingTestCase):
             response = self.place(secret)
         self.assertEqual(response.status_code, 401)
         self.assertEqual((self.asked, self.events), ([], []))
+
+    def test_a_block_whose_place_never_comes_back_is_still_recorded_and_answered(self) -> None:
+        """Review 26-11-01, P3-4: the wait for a place is bounded, and the nodes already hold the block."""
+
+        client = self.client_with()
+        state = next(
+            route.app.state
+            for route in client.app.routes
+            if getattr(route, "path", "") == "/api/v1"
+        )
+        taken: list[bool] = []
+
+        def answered(addresses: list[str]) -> dict[str, Any]:
+            # Other calls fill every place while the nodes are asked.
+            while state.slots.acquire(blocking=False):
+                taken.append(True)
+            return helper_answer([node("node-a", addresses)])
+
+        self.answer = answered
+        headers = {"Authorization": f"Bearer {self.blocker()}"}
+        with (
+            mock.patch.object(caller, "PLACE_WAIT", 0.05),
+            self.assertLogs("haprion_ui.api", "WARNING"),
+        ):
+            response = client.post(PATH, json={"addresses": ["203.0.113.7"]}, headers=headers)
+        for _ in taken:
+            state.slots.release()
+        self.assertEqual((response.status_code, response.json()["outcome"]), (200, "done"))
+        self.assertEqual([event["action"] for event in self.events], ["api_block"])
+        self.assertEqual(state.slots._value, 3)
 
     def test_a_block_gives_its_place_back_while_the_nodes_are_asked(self) -> None:
         """Review 26-11-01, b-P3-4: ten to forty-five seconds with no connection held."""

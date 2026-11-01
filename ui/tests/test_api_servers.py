@@ -198,6 +198,44 @@ class TheServerStates(Queueing):
         self.assertEqual(self.jobs, [])
 
 
+class Repeating(Queueing):
+    """Review 26-11-01, P3-1: a retry under the same key is the job it queued, on every route."""
+
+    def assertRepeatedIsTheJob(self, path: str, body: Any, *, method: str = "post") -> None:
+        send = self.post if method == "post" else self.delete
+        first = send(path, body)
+        self.assertEqual(first.status_code, 202, first.text)
+        (job,) = self.jobs
+        self.under_key[KEY] = (queued(id=77), job["request_digest"])
+        self.jobs.clear()
+        self.audited.clear()
+        again = send(path, body)
+        self.assertEqual(again.status_code, 202, again.text)
+        self.assertEqual(again.json()["result"]["job"]["id"], 77)
+        self.assertEqual((self.jobs, self.audited), ([], []))
+
+    def delete(self, path: str, body: Any) -> Any:
+        secret = self.issue(level="write")
+        headers = {"Authorization": f"Bearer {secret}", "Idempotency-Key": KEY}
+        return self.writing().request("DELETE", "/api/v1" + path, json=body, headers=headers)
+
+    def test_server_states(self) -> None:
+        self.assertRepeatedIsTheJob(
+            f"/clusters/{self.cluster}/objects/{self.name}/servers",
+            {"servers": ["web/192.0.2.10:8080"], "state": "drain"},
+        )
+
+    def test_deploy(self) -> None:
+        self.assertRepeatedIsTheJob(f"/clusters/{self.cluster}/deploy", {"expected_version": 7})
+
+    def test_unblock(self) -> None:
+        self.assertRepeatedIsTheJob(
+            f"/clusters/{self.cluster}/objects/{self.name}/blocks",
+            {"addresses": ["203.0.113.7"]},
+            method="delete",
+        )
+
+
 class TheDeploy(Queueing):
     def page_queues(self, **form: Any) -> dict[str, Any]:
         client = self.writing()

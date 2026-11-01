@@ -365,7 +365,7 @@ def object_block(
     place.release()
     try:
         document = block_api_socket.ask(
-            cluster, name, wanted, actor=caller.trailer_actor, request_id=str(request_id)
+            cluster, name, wanted, actor=caller.stored_actor, request_id=str(request_id)
         )
     except block_api_socket.HelperBusy as dropped:
         #

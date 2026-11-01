@@ -57,6 +57,7 @@ from haprion_ui import (
     traffic_logs,
 )
 from haprion_ui import jobs as jobs_module
+from haprion_ui.api.caller import Caller
 from haprion_ui.metrics import METRIC_COUNTERS
 
 DSN = os.environ.get("HAPRION_UI_TEST_DATABASE_DSN", "")
@@ -268,18 +269,29 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(same and (same[0].id, same[1]), (job.id, True))
             self.assertEqual(other and (other[0].id, other[1]), (job.id, False))
             #
-            # A job queued with no digest (a page's) is never an API call's answer.
+            # A job queued with no digest (a page's, or one from before 0110) is
+            # not judged by the digest: the queue's own payload check decides.
             #
             page = db.queue_job(
                 connection, operation="deploy", cluster="qsix", payload={}, idempotency_key=plain
             )
             connection.commit()
             unkeyed = db.job_for_call(connection, plain, request_digest=digest)
-            self.assertEqual(unkeyed and (unkeyed[0].id, unkeyed[1]), (page.id, False))
+            self.assertIsNone(unkeyed)
             again = db.queue_job(
                 connection, operation="deploy", cluster="qsix", payload={}, idempotency_key=plain
             )
             self.assertFalse(again.fresh)
+            self.assertEqual(again.id, page.id)
+            with self.assertRaises(db.RequestConflict):
+                db.queue_job(
+                    connection,
+                    operation="deploy",
+                    cluster="qsix",
+                    payload={"other": 1},
+                    idempotency_key=plain,
+                    request_digest=digest,
+                )
             connection.rollback()
         self.addCleanup(self.forget_job, job.id)
         self.addCleanup(self.forget_job, page.id)
@@ -10534,6 +10546,67 @@ class ApiTokensInTheDatabase(unittest.TestCase):
             self.assertEqual(db.api_token_by_hash(connection, digest), made)
             self.assertIsNone(db.api_token_by_hash(connection, os.urandom(32)))
             self.assertEqual([token.name for token in db.api_tokens(connection)], ["monitoring"])
+
+    def test_a_token_name_of_sixty_four_characters_saves_changes_as_the_api_stores_them(
+        self,
+    ) -> None:
+        """Review 26-11-01, P2-1: `token:` and the name are over the saved change's sixty-four."""
+
+        token = self.make(name="a" * 64, level="write")
+        caller = Caller(issued=token, source="192.0.2.1")
+        self.assertGreater(len(caller.actor), 64)
+        self.assertEqual(len(caller.stored_actor), 64)
+        common: dict[str, Any] = {
+            "cluster": "alpha",
+            "base_version": None,
+            "base_hash": "a" * 40,
+            "base_document": "",
+            "draft_revision": None,
+        }
+        try:
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+                with self.assertRaises(psycopg.errors.CheckViolation):
+                    db.save_change(
+                        connection,
+                        object_id="shop",
+                        yaml="name: shop\n",
+                        updated_by=caller.actor,
+                        saved_revision=None,
+                        **common,
+                    )
+                connection.rollback()
+                created = db.save_change(
+                    connection,
+                    object_id="shop",
+                    yaml="name: shop\n",
+                    updated_by=caller.stored_actor,
+                    saved_revision=None,
+                    **common,
+                )
+                replaced = db.save_change(
+                    connection,
+                    object_id="shop",
+                    yaml="name: shop2\n",
+                    updated_by=caller.stored_actor,
+                    saved_revision=created.revision,
+                    **common,
+                )
+                removed = db.save_change(
+                    connection,
+                    object_id="shop",
+                    yaml="name: shop2\n",
+                    updated_by=caller.stored_actor,
+                    deleted=True,
+                    saved_revision=replaced.revision,
+                    **common,
+                )
+                connection.commit()
+            # What the removal compares with is what the row holds.
+            self.assertEqual(removed.updated_by, caller.stored_actor)
+        finally:
+            with self.connect() as connection:
+                connection.execute("delete from proxy_draft where cluster = 'alpha'")
+                connection.commit()
 
     def test_a_token_read_for_share_cannot_be_revoked_until_the_reader_is_done(self) -> None:
         """Review 26-11-01, a-P3-4: the write that judges the token holds its row."""

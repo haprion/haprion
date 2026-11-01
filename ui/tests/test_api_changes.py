@@ -466,6 +466,35 @@ class ReplacingAnObject(ChangesTestCase):
         )
 
 
+class ATokenNameThatFillsTheField(ChangesTestCase):
+    """Review 26-11-01, P2-1: `token:` and sixty-four characters are over the column's sixty-four."""
+
+    NAME = "a" * 64
+    STORED = f"token{':'}{NAME}"[:64]
+
+    def test_create_replace_and_remove_store_the_actor_in_sixty_four_characters(self) -> None:
+        self.assertEqual(
+            self.send("POST", "/clusters/alpha/objects", body=SECOND, name=self.NAME).status_code,
+            201,
+        )
+        replaced = self.send(
+            "PUT", "/clusters/alpha/objects/shop", body=SHOP_CHANGED, name=self.NAME
+        )
+        self.assertEqual(replaced.status_code, 200, replaced.text)
+        self.rows = [saved_row(updated_by=self.STORED)]
+        removed = self.send("DELETE", "/clusters/alpha/objects/shop", name=self.NAME)
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.assertEqual([c["updated_by"] for c in self.changes], [self.STORED] * 3)
+        self.assertEqual(len(self.STORED), 64)
+        # The history keeps the whole name.
+        self.assertEqual({e["actor"] for e in self.events}, {f"token{':'}{self.NAME}"})
+
+    def test_a_removal_of_the_token_s_own_change_is_not_taken_for_another_s(self) -> None:
+        self.rows = [saved_row(updated_by=self.STORED)]
+        removed = self.send("DELETE", "/clusters/alpha/objects/shop", name=self.NAME)
+        self.assertEqual(removed.status_code, 200, removed.text)
+
+
 class RemovingAnObject(ChangesTestCase):
     def test_a_published_object_is_saved_for_removal_as_the_page_does(self) -> None:
         client = self.editor()

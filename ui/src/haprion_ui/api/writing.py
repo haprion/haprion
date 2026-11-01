@@ -232,6 +232,16 @@ def queue(
             raise busy_refusal("certificate_busy", busy, None) from None
         except db.RequestConflict:
             connection.rollback()
+            #
+            # Two retries of one call racing: the other's job may have been
+            # committed since the payload was compared, and it is the answer
+            # (review 26-11-01, P3-2).
+            #
+            found = db.job_for_call(
+                connection, key, request_digest=request_digest(request, caller, body)
+            )
+            if found is not None and found[1]:
+                return accepted(request, found[0])
             raise KEY_REUSED from None
         #
         # A key the queue had already seen (two retries racing) queued nothing:

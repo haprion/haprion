@@ -220,6 +220,34 @@ class QueueingAChange(ApiTestCase):
             (response.status_code, response.json()["error"]["code"]), (409, "idempotency_conflict")
         )
 
+    def test_two_retries_racing_are_both_answered_with_the_one_job(self) -> None:
+        """Review 26-11-01, P3-2: the queue's conflict is judged by the call's digest, not the payload."""
+
+        client = self.writing_client()
+        secret = self.issue(level="write")
+        self.assertEqual(self.post(client, secret).status_code, 202)
+        digest = self.queued[0]["request_digest"]
+        self.queued.clear()
+        self.events.clear()
+        self.refusal = db.RequestConflict()
+        for found, status in (
+            ((a_job(id=41), True), 202),
+            ((a_job(id=41), False), 409),
+            (None, 409),
+        ):
+            with (
+                self.subTest(found=found),
+                mock.patch("haprion_ui.db.job_for_call", side_effect=[None, found]) as looked,
+            ):
+                response = self.post(client, secret)
+                self.assertEqual(response.status_code, status, response.text)
+                self.assertEqual(looked.call_args.kwargs["request_digest"], digest)
+                if status == 202:
+                    self.assertEqual(response.json()["result"]["job"]["id"], 41)
+                else:
+                    self.assertEqual(response.json()["error"]["code"], "idempotency_conflict")
+        self.assertEqual(self.events, [])
+
     def test_a_replay_with_writes_off_is_still_refused(self) -> None:
         client = self.writing_client(writes=False)
         self.under_key[IDEMPOTENT] = (a_job(id=41), b"\0" * 32)

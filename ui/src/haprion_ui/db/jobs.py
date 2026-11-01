@@ -591,9 +591,9 @@ def job_for_call(
 
     For the API, whose payload is built from the state at the call: after the
     job has run the same call builds another payload, so the key is held to the
-    digest of the request instead (0110). None when the key is new. A job
-    queued without a digest - a page's, or one from before - is never the
-    answer to an API call.
+    digest of the request instead (0110). None when the key is new, and when
+    the job has no digest - a page's, or one queued before 0110: `queue_job`
+    judges that retry by the payload, as it did before.
     """
 
     with connection.cursor(row_factory=class_row(Job)) as cursor:
@@ -610,11 +610,14 @@ def job_for_call(
         return None
     with connection.cursor() as cursor:
         cursor.execute(
-            "select coalesce(request_digest = %(digest)s, false) from job where id = %(id)s",
+            "select request_digest is not null, coalesce(request_digest = %(digest)s, false) "
+            "  from job where id = %(id)s",
             {"digest": request_digest, "id": job.id},
         )
         row = cursor.fetchone()
-    return job, bool(row and row[0])
+    if row is None or not row[0]:
+        return None
+    return job, bool(row[1])
 
 
 def active_job(connection: Connection[Any], cluster: str | None) -> Job | None:

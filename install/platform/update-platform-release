@@ -453,7 +453,8 @@ proved=yes
 # Said only when there is something to remove; a failure is a warning, as the
 # update is proved without it.
 #
-../retire-block-clients || warn "the ssh blocking account was not all removed; run: sudo $(pwd)/../retire-block-clients"
+/usr/bin/python3 -I ../retire-block-clients \
+    || warn "the ssh blocking account was not all removed; run: sudo /usr/bin/python3 -I $(pwd)/../retire-block-clients"
 
 #
 # Release retention (B156), only now that the update is proved: a new release

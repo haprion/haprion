@@ -516,7 +516,7 @@ class TheSshBlockingOfAnEarlierReleaseIsRetired(unittest.TestCase):
     def test_the_update_runs_it_only_once_the_release_is_proved(self) -> None:
         update = (INSTALL / "platform/update-platform-release").read_text()
         proved = update.index("\nproved=yes\n")
-        self.assertLess(proved, update.index("\n../retire-block-clients"))
+        self.assertLess(proved, update.index("\n/usr/bin/python3 -I ../retire-block-clients"))
         self.assertTrue(os.access(INSTALL / "retire-block-clients", os.X_OK))
 
     def test_nothing_the_steps_install_names_the_account_any_more(self) -> None:

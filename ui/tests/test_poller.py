@@ -562,10 +562,10 @@ class NoClusterYet(unittest.TestCase):
     def run_main(
         self,
         *,
-        holds: bool = True,
+        holds: Any = True,
         notified: bool = False,
         turns: int = 1,
-        listed: tuple[str, ...] = (),
+        listed: tuple[str, ...] | None = (),
         configured: tuple[str, ...] = (),
     ) -> tuple[int, list[tuple[str, ...]], list[tuple[str, ...]]]:
         """`turns` passes of `main` against nothing, with the lock held or lost before them."""
@@ -607,7 +607,11 @@ class NoClusterYet(unittest.TestCase):
                 return []
 
         pool = unittest.mock.MagicMock()
+        self.manager = unittest.mock.Mock()
+        self.packages = unittest.mock.MagicMock()
         patches = {
+            "poll_manager": self.manager,
+            "PackageWatch": unittest.mock.MagicMock(return_value=self.packages),
             "read_cluster_list": unittest.mock.Mock(side_effect=self.list_read(listed)),
             "load_config": unittest.mock.Mock(
                 return_value=unittest.mock.Mock(
@@ -635,7 +639,11 @@ class NoClusterYet(unittest.TestCase):
                 unittest.mock.patch.object(db, "try_singleton_lock", return_value=True)
             )
             stack.enter_context(
-                unittest.mock.patch.object(db, "holds_singleton_lock", return_value=holds)
+                unittest.mock.patch.object(
+                    db,
+                    "holds_singleton_lock",
+                    **({"side_effect": holds} if callable(holds) else {"return_value": holds}),
+                )
             )
             stack.enter_context(
                 unittest.mock.patch.object(
@@ -650,8 +658,8 @@ class NoClusterYet(unittest.TestCase):
             code = poller.main([])
         return code, recorded, passes
 
-    def list_read(self, listed: tuple[str, ...]) -> Any:
-        def read() -> tuple[str, ...]:
+    def list_read(self, listed: tuple[str, ...] | None) -> Any:
+        def read() -> tuple[str, ...] | None:
             self.calls.append("list")
             return listed
 
@@ -666,6 +674,33 @@ class NoClusterYet(unittest.TestCase):
         with self.assertLogs("haprion_ui", "ERROR"):
             self.assertEqual(self.run_main(holds=False), (75, [], []))
         self.assertTrue(self.stopped)
+
+    def test_the_heartbeat_is_written_when_the_list_cannot_be_read(self) -> None:
+        """The row's age says the cycle runs; an unreadable list helper does not stop it."""
+
+        _code, recorded, followed = self.run_main(listed=None, configured=("alpha",), turns=2)
+
+        self.assertEqual(recorded, [("alpha",), ("alpha",)])
+        self.assertEqual(followed, [("alpha",), ("alpha",)])
+
+    def test_a_lock_lost_during_the_cycle_stops_the_managers_own_writes(self) -> None:
+        """The helpers of the cycle take time: the lock is looked at before each write."""
+
+        for held_for, written, manager, packages in ((0, 0, 0, 0), (1, 1, 0, 0), (2, 1, 1, 0)):
+            looks = 0
+
+            def holds(*_a: object, _until: int = held_for) -> bool:
+                nonlocal looks
+                looks += 1
+                return looks <= _until
+
+            with self.subTest(held_for=held_for), self.assertLogs("haprion_ui", "ERROR"):
+                code, recorded, _ = self.run_main(holds=holds, listed=("alpha",))
+                self.assertEqual(code, 75)
+                self.assertEqual(
+                    (len(recorded), self.manager.call_count, self.packages.poll.call_count),
+                    (written, manager, packages),
+                )
 
     def test_a_finished_job_wakes_the_clusters_and_the_clock_does_not(self) -> None:
         self.run_main(notified=True, turns=2)
@@ -1087,7 +1122,13 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
             self.addCleanup(patch.stop)
 
     def readers(
-        self, helper: Any, *, interval: int = 1, limit: int | None = None, partial: bool = False
+        self,
+        helper: Any,
+        *,
+        interval: int = 1,
+        limit: int | None = None,
+        partial: bool = False,
+        stop_requested: Any = lambda: False,
     ) -> tuple[poller.ClusterReaders, list[tuple[str, float]]]:
         import time
 
@@ -1099,7 +1140,11 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
         source = poller.Source("status", helper, record, partial_ok=partial)
         return (
             poller.ClusterReaders(
-                self.Pool(), interval_seconds=interval, sources=(source,), limit=limit
+                self.Pool(),
+                interval_seconds=interval,
+                sources=(source,),
+                limit=limit,
+                stop_requested=stop_requested,
             ),
             recorded,
         )
@@ -1277,6 +1322,38 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
 
         self.assertEqual(recorded, [])
         self.assertTrue(any("is leaving" in line for line in logged.output))
+
+    def test_a_stop_requested_by_the_signal_cuts_the_reading_before_stop_is_reached(self) -> None:
+        """The real order: SIGTERM reaches the helper at once; `stop()` a second later."""
+
+        import signal
+        import threading
+
+        from haprion_ui.service import StopRequest
+
+        for number in (signal.SIGTERM, signal.SIGINT):
+            self.addCleanup(signal.signal, number, signal.getsignal(number))
+        stopping = StopRequest(what="test")
+        release = threading.Event()
+        entered = threading.Event()
+
+        def helper(_cluster: str, _request: str) -> Any:
+            entered.set()
+            release.wait(10)
+            return completed("", returncode=-15)
+
+        readers, recorded = self.readers(helper, stop_requested=stopping.requested)
+        try:
+            readers.follow(("alpha",))
+            self.assertTrue(entered.wait(5))
+            signal.raise_signal(signal.SIGTERM)  # the handler sets the request; no stop() yet
+            self.assertTrue(stopping.requested())
+            release.set()
+            self.assertTrue(self.until(lambda: not readers._readers))
+            self.assertEqual(recorded, [])
+        finally:
+            release.set()
+            readers.stop(5)
 
     def test_a_reading_that_ends_after_the_stop_is_not_written_either(self) -> None:
         recorded, _ = self.stopped_in_flight(lambda c: completed(envelope(cluster=c)))
@@ -1545,6 +1622,8 @@ class MainWithTheRealReaders(unittest.TestCase):
 
             def requested(self) -> bool:
                 nonlocal asked
+                if threading.current_thread() is not threading.main_thread():
+                    return False  # the readers ask too; only the loop's asks count turns
                 asked += 1
                 return asked > len(lists)
 
@@ -1657,7 +1736,7 @@ class MainWithTheRealReaders(unittest.TestCase):
         def holds(*_: object) -> bool:
             nonlocal checks
             checks += 1
-            if checks == 1:
+            if checks <= 3:  # the three looks of the first cycle
                 return True
             # The second look finds the lock gone while alpha's reading is out.
             threading.Timer(0.3, release.set).start()

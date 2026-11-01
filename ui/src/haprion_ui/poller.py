@@ -734,8 +734,13 @@ class ClusterReaders:
         interval_seconds: int,
         sources: tuple[Source, ...] = SOURCES,
         limit: int | None = None,
+        stop_requested: Callable[[], bool] = lambda: False,
     ) -> None:
         self._pool = pool
+        # Asked, not copied: a stop is requested by the signal handler, up to
+        # a second before `stop()` is reached, and systemd has signalled the
+        # helpers by then. One source of truth, no polling delay.
+        self._stop_requested = stop_requested
         self._interval = interval_seconds
         self._sources = sources
         self._slots = threading.BoundedSemaphore(limit or MAX_PARALLEL_CLUSTERS)
@@ -809,7 +814,7 @@ class ClusterReaders:
 
     def _leaving(self, name: str, reader: _Reader) -> bool:
         with self._lock:
-            if not (self._stopped or reader.retired):
+            if not (self._stopped or self._stop_requested() or reader.retired):
                 return False
             if self._readers.get(name) is reader:
                 del self._readers[name]
@@ -827,7 +832,10 @@ class ClusterReaders:
                 continue
             try:
                 outcome = _poll_cluster_sources(
-                    self._pool, name, self._sources, discard=lambda: self._stopped
+                    self._pool,
+                    name,
+                    self._sources,
+                    discard=lambda: self._stopped or self._stop_requested(),
                 )
                 #
                 # Read is read, whatever it found: a node down is the node's
@@ -1039,7 +1047,10 @@ def _poll_cluster_sources(
     `DROPPED` when `discard()` turned true: the poller is leaving, and a reading
     that ended after that is not written - it may have been cut short by the
     stop that is under way, and after a lost lock another poller may be the one
-    writing. What is already written stays.
+    writing. What is already written stays. A reading dropped between its
+    sources leaves the pass begun and not settled; harmless, since every row
+    is judged by its own age and the marker only holds a page that waits for a
+    finished job until that job is older than two intervals (2026-11-01).
     """
 
     status: str | None = None
@@ -1194,31 +1205,48 @@ def main(argv: list[str] | None = None) -> int:
             stopping = StopRequest(what="after the readings in flight")
             asker = update_check.Asker()
             packages = PackageWatch()
-            readers = ClusterReaders(pool, interval_seconds=config.poller.interval_seconds)
+            readers = ClusterReaders(
+                pool,
+                interval_seconds=config.poller.interval_seconds,
+                stop_requested=stopping.requested,
+            )
             woken = False
             try:
                 while not stopping.requested():
                     #
-                    # Asked again before every cycle. The lock lives as long as
-                    # its session, and that session can end on its own while the
+                    # Asked again before every cycle, and again before each of
+                    # the manager's own writes. The lock lives as long as its
+                    # session, and that session can end on its own while the
                     # pool works on - a second poller could then take the lock
-                    # while this one kept writing (review 2026-10-18, A1). Leaving
-                    # with 75 lets systemd start a fresh one, which takes the lock
-                    # or finds it held. Readings under way finish, for a bounded
-                    # time; each write is its own transaction, so that window
-                    # costs a duplicate reading at most.
+                    # while this one kept writing (review 2026-10-18, A1).
+                    # Leaving with 75 lets systemd start a fresh one, which
+                    # takes the lock or finds it held. Readings under way are
+                    # dropped; the helpers of the manager's cycle (the list,
+                    # the manager's own reading) take their time, hence the
+                    # look before the writes that follow them.
                     #
-                    if not db.holds_singleton_lock(lock_connection, POLLER_LOCK_KEY):
+                    def lock_held() -> bool:
+                        if db.holds_singleton_lock(lock_connection, POLLER_LOCK_KEY):
+                            return True
                         logger.error("the poller lock on %s was lost; exiting", database)
-                        return exit_codes.BLOCKED
+                        return False
+
                     listed = read_cluster_list()
+                    if not lock_held():
+                        return exit_codes.BLOCKED
                     if listed is not None:
                         if listed != known:
                             logger.info("the cluster list changed: %s", ", ".join(listed))
                         known = listed
-                        with pool.connection() as connection:
-                            db.record_cluster_list(connection, known)
-                            connection.commit()
+                    #
+                    # Written every cycle, read or not: the row's age is the
+                    # cycle's heartbeat (Needs attention), and a list helper
+                    # that cannot be read - or is not installed yet - does not
+                    # stop the cycle. Then it holds the list in use.
+                    #
+                    with pool.connection() as connection:
+                        db.record_cluster_list(connection, known)
+                        connection.commit()
                     index_cluster_list(pool, known)
                     #
                     # The clusters are read by their own threads, each at its
@@ -1235,7 +1263,11 @@ def main(argv: list[str] | None = None) -> int:
                         readers.wake()
                     if not known:
                         logger.info("no cluster yet; Settings - Create cluster makes the first")
+                    if not lock_held():
+                        return exit_codes.BLOCKED
                     poll_manager(pool)
+                    if not lock_held():
+                        return exit_codes.BLOCKED
                     packages.poll(pool)
                     #
                     # Once a day at most, and only while its switch is on (B342);

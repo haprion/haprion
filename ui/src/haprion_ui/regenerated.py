@@ -14,6 +14,7 @@ from typing import Any
 
 from haprion import proxy_model
 from haprion.config import CLUSTER_ID
+
 from haprion_ui import attention, version_changes
 from haprion_ui.db import ClusterRegeneration
 

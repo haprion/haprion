@@ -932,7 +932,7 @@ the advanced configuration of an object and the dashboard's reasons for a readin
 for both roles. The lists of API tokens, DNS profiles, NDES profiles and certificate receivers are read
 by both. A reader gets the list alone: no button, no form.
 Account password hashes, keys, sealed material (the values of a profile) and token secrets are shown to
-nobody. Configuration text is shown to every role that reads the object. That includes whatever an admin
+nobody. Configuration text is shown to every role that reads the object, and to every `read` token. That includes whatever an admin
 pasted into an object's advanced config, and the hand-written files of the cluster repository, such as a
 `userlist` or a `stats auth` line. Keep passwords out of that text.
 
@@ -4332,8 +4332,8 @@ holds:
 
 Each row is one sentence; a row with more to it opens beneath itself when clicked. You can filter by
 cluster, by who or by a word (a search reaches back 90 days), and page through it as through the traffic
-log. A failed sign-in under a name no account has shows as *unknown user*, never the name typed - which
-may have been a password. The record is append-only: no role may change or delete a row. The nightly
+log. A failed sign-in under a name no account has shows as *unknown user*. The name typed is not stored - it
+may have been a password - so no search, filter or sort reaches it. The record is append-only: no role may change or delete a row. The nightly
 retention removes rows older than two years.
 
 On an object's *Servers* card, a server in drain or maintenance says *Set by <name> · <time>*: the newest

@@ -255,7 +255,7 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
                 updated_by=row.updated_by,
                 updated_at=row.updated_at,
                 link=proxy_path(cluster, row.object_id, "edit"),
-                read_link=proxy_path(cluster, row.object_id) if row.object_id in published else "",
+                read_link=proxy_path(cluster, row.object_id),
                 stale=moved or (row.base_document is None and row.base_hash != head),
                 moved=moved,
             )

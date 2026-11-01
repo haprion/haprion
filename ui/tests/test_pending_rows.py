@@ -27,7 +27,9 @@ def saved(object_id: str, *, deleted: bool = False) -> SimpleNamespace:
 
 
 class TheRowsOfThePackage(unittest.TestCase):
-    def rows(self, *objects: SimpleNamespace, published: tuple[str, ...] = ()) -> list[pending.PendingRow]:
+    def rows(
+        self, *objects: SimpleNamespace, published: tuple[str, ...] = ()
+    ) -> list[pending.PendingRow]:
         state = SimpleNamespace(
             commit="head", stored=[SimpleNamespace(name=name) for name in published]
         )

@@ -38,7 +38,7 @@ from haprion_ui.api import (
     waf,
 )
 from haprion_ui.api.answers import Refusal, refusal
-from haprion_ui.api.caller import CONCURRENT_CALLS, Caller, current_caller
+from haprion_ui.api.caller import CONCURRENT_CALLS, HELPER_CALLS, Caller, current_caller
 from haprion_ui.config import Config
 
 PREFIX = "/api/v1"
@@ -56,6 +56,7 @@ def build_api(config: Config) -> FastAPI:
     )
     api.state.config = config
     api.state.slots = threading.BoundedSemaphore(CONCURRENT_CALLS)
+    api.state.helper_calls = threading.BoundedSemaphore(HELPER_CALLS)
 
     @api.exception_handler(Refusal)
     async def refused(request: Request, exc: Refusal) -> Response:

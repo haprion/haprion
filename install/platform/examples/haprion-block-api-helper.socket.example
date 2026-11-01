@@ -25,8 +25,10 @@ SocketGroup=WEB_USER
 SocketMode=0660
 # One connection is one request, in its own short-lived instance.
 Accept=yes
-# The API answers three calls at once at most (api.caller.CONCURRENT_CALLS);
-# a connection past this is dropped at once and told to come back.
+# A block gives back its place among the API's three calls while the nodes
+# are asked, so the web bounds its calls to this socket by this number
+# (api.caller.HELPER_CALLS); a connection past it is dropped at once and the
+# caller told to come back.
 MaxConnections=8
 RemoveOnStop=yes
 

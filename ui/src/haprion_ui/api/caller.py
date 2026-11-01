@@ -36,6 +36,7 @@ from datetime import UTC, datetime
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from haprion.version_history import MAX_NAME_LENGTH
 
 from haprion_ui import api_tokens, db
 from haprion_ui.access import client_address
@@ -51,6 +52,13 @@ REMEMBERED_SOURCES = 4096
 # a call that cannot have one is told to come back, not queued.
 #
 CONCURRENT_CALLS = 3
+
+#
+# The block helper's socket takes eight connections (`MaxConnections=8` in its
+# unit); a block asks it without a place of its own, so the calls to it are
+# bounded by the socket's number here.
+#
+HELPER_CALLS = 8
 
 #
 # What counts as guessing. A missing header, a revoked or expired token and a
@@ -80,6 +88,16 @@ class Caller:
         """Who the history names for what this call does."""
 
         return f"token:{self.issued.name}"
+
+    @property
+    def trailer_actor(self) -> str:
+        """`actor` as a commit trailer and the block helper hold it: sixty-four characters.
+
+        A token name may use sixty-four itself, and `token:` comes before it.
+        Cut here rather than refused further in; the audit row has the whole.
+        """
+
+        return self.actor[:MAX_NAME_LENGTH]
 
 
 def source_key(source: str) -> str:
@@ -174,7 +192,33 @@ BUSY = Refusal(
 )
 
 
-def a_call_at_a_time(request: Request) -> Iterator[None]:
+class Place:
+    """The call's one of `CONCURRENT_CALLS` places, which a call may give back while it waits.
+
+    A block waits ten to forty-five seconds for the nodes and holds no
+    database connection then, which is what the places protect. It lets go
+    before it asks (`release`) and takes one again for the audit row
+    (`take_again`); the helper calls are bounded by `HELPER_CALLS` instead.
+    """
+
+    def __init__(self, slots: threading.BoundedSemaphore) -> None:
+        self._slots = slots
+        self._held = True
+
+    def release(self) -> None:
+        if self._held:
+            self._held = False
+            self._slots.release()
+
+    def take_again(self) -> None:
+        """Wait for a place; the others hold theirs for a database read at most."""
+
+        if not self._held:
+            self._slots.acquire()
+            self._held = True
+
+
+def a_call_at_a_time(request: Request) -> Iterator[Place]:
     """One of the API's `CONCURRENT_CALLS` places, held until the call is answered."""
 
     slots: threading.BoundedSemaphore = request.app.state.slots
@@ -186,20 +230,22 @@ def a_call_at_a_time(request: Request) -> Iterator[None]:
             client_address(request),
         )
         raise BUSY
+    place = Place(slots)
     try:
-        yield
+        yield place
     finally:
-        slots.release()
+        place.release()
 
 
 def current_caller(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(BEARER),  # noqa: B008 - FastAPI's way
-    _place: None = Depends(a_call_at_a_time),
+    place: Place = Depends(a_call_at_a_time),  # noqa: B008
 ) -> Caller:
     """The token this request carries, judged; a `Refusal` when it may not be used."""
 
     del credentials  # read below from the header itself, the one place it is parsed
+    request.state.place = place
     source = client_address(request)
     secret = api_tokens.bearer_secret(request.headers.get("authorization"))
     token = None

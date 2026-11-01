@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from haprion import digits, dnsdist_config, proxy_model, resolve_socket
 from haprion.proxy_model import ModelError
-from haprion.version_history import MAX_NAME_LENGTH, comment_problem
+from haprion.version_history import comment_problem
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from haprion_ui import db, history
@@ -112,7 +112,7 @@ def _requested_by(caller: Caller) -> str:
     was taken - the audit row beside the job has the whole of it.
     """
 
-    return caller.actor[:MAX_NAME_LENGTH]
+    return caller.trailer_actor
 
 
 async def document_body(request: Request) -> bytes:

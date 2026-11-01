@@ -4372,7 +4372,9 @@ A token is made under *Settings* → *API tokens* → *Add token*. It has:
   *Write* does what an admin does;
 - **a scope**: the clusters it may see, optional, and for a *Block* token the proxies it may block on,
   at least one. A *Block* token without a proxy is refused, so that none is ever made for all of them by
-  leaving the choice out. Without clusters a token sees every cluster;
+  leaving the choice out. Without clusters a token sees every cluster. A *Block* token's proxies are names:
+  it reaches the proxy of that name in each cluster it may see, also in a cluster added later, so choose
+  the clusters if the same name is used for another proxy elsewhere;
 - **where it may be called from**, optional: addresses or networks. From anywhere else the token is
   refused, as if it did not exist;
 - **how long it is valid**: 30 days to two years, one year unless you choose otherwise.
@@ -4454,8 +4456,8 @@ said in `nodes`. Asking again for an address only renews its time, so a call can
   `address_exempt` or `address_invalid`, and the other addresses are blocked. A node that did not take it is in
   `nodes` with `failed`, and in `warnings`. A *Block* token is not told why; a *Write* token is.
 - `failed` (502, `blocking_failed`): no node took the block. Nothing holds it.
-- 504 `outcome_unknown`: the block service was asked and did not answer. The block may or may not be placed, so
-  read the proxy's blocks before asking again.
+- 504 `outcome_unknown`: the block service was asked and did not answer. The block may or may not be placed;
+  blocking the address again is harmless, it only renews the time.
 - 400 `bad_input`: a body that is not one to 64 addresses, none of the addresses being an IP address, or a proxy
   that does not block (it has no dynamic blocking in its newest version, or all addresses are exempt).
 
@@ -4471,9 +4473,11 @@ curl -sS -X DELETE https://mgr.example.com/api/v1/clusters/alpha/objects/shop/bl
 ```
 
 The answer is 202 with the job's number and `follow`, the path to read it at. The same `Idempotency-Key` asking
-for the same thing is the same job. A *Write* token blocks on any proxy, like an admin. Blocking and lifting
+for the same thing is the same job. A *Write* token blocks on any proxy, like an admin.
 A block is placed even where changes are switched off, since it publishes nothing; lifting one is a job and is
-refused there (403 `writes_off`).
+refused there (403 `writes_off`). *Settings* is closed there too, so to stop the blocks a *Block* token places,
+revoke it on the manager with `sudo haprion-api-token revoke <name>`; a block already placed lasts the proxy's
+*Block for*.
 
 What a token can read:
 

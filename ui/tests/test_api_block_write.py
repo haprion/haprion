@@ -226,6 +226,84 @@ class PlacingABlock(BlockingTestCase):
         self.assertEqual([w["code"] for w in body["warnings"]], ["address_invalid"])
         self.assertEqual(self.events[0]["detail"]["refused"], ["not-an-address"])
 
+    def test_an_address_with_a_zone_is_left_out_and_the_others_are_blocked(self) -> None:
+        """Review 26-11-01, b-P2-1: the nodes refuse a zone, and it would stop every address."""
+
+        zoned = "fe80::1%x\nblock shop in alpha: 198.51.100.1 for token:x"
+        response = self.place(self.blocker(), {"addresses": ["203.0.113.7", zoned, "fe80::1%eth0"]})
+
+        body = response.json()
+        self.assertEqual((response.status_code, body["outcome"]), (200, "partial"))
+        self.assertEqual(self.asked[0][2], ["203.0.113.7"])
+        self.assertEqual(
+            [(r["address"], r["code"]) for r in body["result"]["refused"]],
+            [(zoned, "address_invalid"), ("fe80::1%eth0", "address_invalid")],
+        )
+        self.assertEqual(body["result"]["blocked"], ["203.0.113.7"])
+
+    def test_a_token_name_that_fills_the_name_field_still_blocks(self) -> None:
+        """Review 26-11-01, b-P3-3: `token:` and sixty-four characters are over what the helper takes."""
+
+        name = "a" * 64
+        secret = self.issue(level="block", name=name, clusters=["alpha"], objects=["shop"])
+        self.assertEqual(self.place(secret).status_code, 200)
+        self.assertEqual(self.asked[0][3], f"token{':'}{name}"[:64])
+        self.assertEqual(self.events[0]["actor"], f"token{':'}{name}")
+
+    def test_a_token_revoked_while_the_request_ran_places_no_block(self) -> None:
+        """Review 26-11-01, b-P3-5: judged again right before the helper is asked."""
+
+        secret = self.blocker()
+        (digest,) = self.tokens
+        live = self.tokens[digest]
+        revoked = replace(live, revoked_at=datetime.now(UTC), revoked_by="admin")
+        reads = iter([live, revoked])
+        with (
+            mock.patch("haprion_ui.db.api_token_by_hash", side_effect=lambda _c, _d: next(reads)),
+            self.assertLogs("haprion_ui.api", "WARNING"),
+        ):
+            response = self.place(secret)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual((self.asked, self.events), ([], []))
+
+    def test_a_block_gives_its_place_back_while_the_nodes_are_asked(self) -> None:
+        """Review 26-11-01, b-P3-4: ten to forty-five seconds with no connection held."""
+
+        client = self.client_with()
+        state = next(
+            route.app.state
+            for route in client.app.routes
+            if getattr(route, "path", "") == "/api/v1"
+        )
+        free: list[int] = []
+
+        def answered(addresses: list[str]) -> dict[str, Any]:
+            free.append(state.slots._value)
+            return helper_answer([node("node-a", addresses)])
+
+        self.answer = answered
+        headers = {"Authorization": f"Bearer {self.blocker()}"}
+        body = {"addresses": ["203.0.113.7"]}
+        self.assertEqual(client.post(PATH, json=body, headers=headers).status_code, 200)
+        self.assertEqual(free, [state.slots._value], "all places free while the helper is asked")
+        self.assertEqual(state.slots._value, 3, "the place is given back at the end")
+
+        self.raising = block_api_socket.HelperSilent("The block service did not answer in time.")
+        self.assertEqual(client.post(PATH, json=body, headers=headers).status_code, 504)
+        self.assertEqual(state.slots._value, 3)
+
+        taken = 0
+        while state.helper_calls.acquire(blocking=False):
+            taken += 1
+        self.raising = None
+        asked = len(self.asked)
+        with self.assertLogs("haprion_ui.api", "WARNING"):
+            busy = client.post(PATH, json=body, headers=headers)
+        self.assertEqual((busy.status_code, busy.json()["error"]["code"]), (429, "busy"))
+        self.assertEqual((len(self.asked), state.slots._value), (asked, 3))
+        for _ in range(taken):
+            state.helper_calls.release()
+
     def test_nothing_that_is_an_address_asks_no_node(self) -> None:
         response = self.place(self.blocker(), {"addresses": ["x", "y"]})
 
@@ -347,7 +425,10 @@ class PlacingABlock(BlockingTestCase):
         self.assertEqual(self.events[0]["detail"]["outcome"], "unknown")
 
         self.raising = block_api_socket.HelperBusy("dropped")
-        response = self.place(secret)
+        with self.assertLogs("haprion_ui.api", "WARNING") as logged:
+            response = self.place(secret)
+        self.assertIn("dropped the connection before answering", logged.output[0])
+        self.assertIn("ended before it read", logged.output[0])
         self.assertEqual((response.status_code, response.json()["error"]["code"]), (429, "busy"))
         self.assertEqual(response.headers["retry-after"], "1")
         self.assertEqual(len(self.events), 1)

@@ -10,6 +10,7 @@ is an ordinary job, as the object page's *Unblock* queues it.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -25,7 +26,16 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from haprion_ui import api_tokens, blocked, db, objects
 from haprion_ui.api import contract, writing
 from haprion_ui.api.answers import Refusal, answer, operation_of
-from haprion_ui.api.caller import Caller, Needs, current_caller, in_scope, needs
+from haprion_ui.api.caller import (
+    BUSY,
+    NOT_VALID,
+    Caller,
+    Needs,
+    Place,
+    current_caller,
+    in_scope,
+    needs,
+)
 from haprion_ui.preview import DEFAULTS
 from haprion_ui.reading import OBJECTS_SOURCE, STATUS_SOURCE, listed_clusters, read_source
 
@@ -41,6 +51,10 @@ NOT_FOUND = Refusal(404, "not_found", "No such cluster or object.")
 #
 GENERIC_NODE = "The node did not take the block."
 GENERIC_SERVICE = "The block service could not place the block."
+OUTCOME_UNKNOWN = (
+    "The block service did not answer, so the block may or may not have been placed; "
+    "blocking the address again is harmless, it only renews the time."
+)
 
 
 class ReadsOwnBlocks(Needs):
@@ -317,11 +331,54 @@ def object_block(
 
     request_id = uuid4()
     detail: dict[str, Any] = {"object": name, "addresses": wanted}
+    #
+    # The token is judged again here, as a queued write's is: a revocation
+    # that came while this request read the objects stops the block.
+    #
+    with request.app.state.pool.connection() as connection:
+        token = db.api_token_by_hash(connection, caller.digest)
+    verdict = api_tokens.evaluate(token, now=datetime.now(UTC), source=caller.source)
+    if not verdict.usable:
+        logger.warning(
+            "api: %s %s from %s refused before the block was asked: %s (token %s)",
+            request.method,
+            request.url.path,
+            caller.source,
+            verdict.reason,
+            caller.issued.name,
+        )
+        raise NOT_VALID
+    #
+    # The nodes take ten to forty-five seconds and no database connection is
+    # held meanwhile, so the API's place is given back (`caller.Place`) and the
+    # helper's own number of connections bounds the calls instead.
+    #
+    helper_calls: threading.BoundedSemaphore = request.app.state.helper_calls
+    if not helper_calls.acquire(blocking=False):
+        logger.warning(
+            "api: %s from %s refused: the block service has as many calls as it takes",
+            request.url.path,
+            caller.source,
+        )
+        raise BUSY
+    place: Place = request.state.place
+    place.release()
     try:
         document = block_api_socket.ask(
-            cluster, name, wanted, actor=caller.actor, request_id=str(request_id)
+            cluster, name, wanted, actor=caller.trailer_actor, request_id=str(request_id)
         )
-    except block_api_socket.HelperBusy:
+    except block_api_socket.HelperBusy as dropped:
+        #
+        # A full socket and an instance that died before it read look the same
+        # from here (a reset). The API cannot fill the socket on its own, so the
+        # second is likely: said in the log, answered as the first.
+        #
+        logger.warning(
+            "api: the block service dropped the connection before answering: %s; "
+            "it is busy, or its instance ended before it read the request",
+            dropped,
+        )
+        place.take_again()
         raise Refusal(
             429,
             "busy",
@@ -329,18 +386,18 @@ def object_block(
             headers={"Retry-After": "1"},
         ) from None
     except block_api_socket.HelperSilent:
+        place.take_again()
         _recorded(request, caller, cluster, request_id, {**detail, "outcome": "unknown"})
-        raise Refusal(
-            504,
-            "outcome_unknown",
-            "The block service did not answer, so the block may or may not have been placed; "
-            "read the object's blocks before asking again.",
-        ) from None
+        raise Refusal(504, "outcome_unknown", OUTCOME_UNKNOWN) from None
     except block_api_socket.HelperUnavailable as unavailable:
+        place.take_again()
         logger.warning("api: the block service could not be asked: %s", unavailable)
         raise Refusal(
             503, "unavailable", _sentence(caller, str(unavailable), GENERIC_SERVICE)
         ) from None
+    finally:
+        helper_calls.release()
+    place.take_again()
 
     outcome = document.get("outcome")
     reported = document.get("result")

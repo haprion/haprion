@@ -721,14 +721,20 @@ def attention_jobs(connection: Any, clusters: Collection[str]) -> tuple[list[db.
     runs on a cluster that is gone, and a new cluster given the name would
     inherit them (review 26-10-25, 4-02). An unread list hides nothing. The
     newest are returned as read, for what is about the manager rather than a
-    cluster.
+    cluster. An operation the queue no longer takes is judged by nobody, for the
+    same reason: nothing can run it again to settle it (B419, 26-11-01).
     """
 
     recent = db.recent_jobs(connection, limit=ATTENTION_RECENT)
     known = {job.id for job in recent}
     every = recent + [job for job in db.attention_evidence(connection) if job.id not in known]
     judged = sorted(
-        (job for job in every if job.cluster is None or not clusters or job.cluster in clusters),
+        (
+            job
+            for job in every
+            if job.operation not in jobs.RETIRED_OPERATIONS
+            and (job.cluster is None or not clusters or job.cluster in clusters)
+        ),
         key=lambda job: (job.created_at, job.id),
         reverse=True,
     )

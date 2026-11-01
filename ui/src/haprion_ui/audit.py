@@ -56,6 +56,8 @@ OPERATION_NAMES: Mapping[str, str] = {
     "cluster_define": "a cluster change",
     "server_state": "a server state change",
     "dynamic_unblock": "an unblock",
+    # Retired (B419, 26-11-01): the audit log keeps what it said.
+    "block_client": "an external blocking client change",
 }
 
 SERVER_STATES: Mapping[str, str] = {"drain": "drain", "maint": "maintenance", "ready": "ready"}

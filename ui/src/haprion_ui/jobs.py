@@ -212,8 +212,19 @@ OPERATION_LABELS = {
 }
 
 
+#
+# Operations the queue no longer takes whose jobs stay in the history (B419, 26-11-01):
+# named for the jobs page, never judged by Needs attention - nothing can run them
+# again to settle a failure. Kept apart from OPERATION_LABELS, which is the set the
+# worker runs and the API's enumeration.
+#
+RETIRED_OPERATIONS = {"block_client": "External blocking client (removed)"}
+
+
 def _operation(value: str) -> str:
-    return OPERATION_LABELS.get(value, value.replace("_", " ").capitalize())
+    return OPERATION_LABELS.get(value) or RETIRED_OPERATIONS.get(
+        value, value.replace("_", " ").capitalize()
+    )
 
 
 def deploys(job: Job) -> bool:
@@ -1028,6 +1039,8 @@ def unknown_note(job: Job) -> str | None:
     #
     if action_names(job) == ACTION_NAMES[("cert_scep", "abandon")]:
         return _CERTIFICATE
+    if job.operation in RETIRED_OPERATIONS:
+        return "Blocking over ssh was removed; there is nothing to check."
     return UNKNOWN_NEXT.get(
         ending_step(job), "It may have taken effect. Check what it changes before trying again."
     )
@@ -1396,7 +1409,7 @@ def failure_label(job: Job, operation: str | None = None, state: str | None = No
     elif state == "partial" and operation in PARTIAL_LABELS:
         return PARTIAL_LABELS[operation]
     else:
-        label = FAILURE_LABELS.get(operation, operation)
+        label = FAILURE_LABELS.get(operation) or RETIRED_OPERATIONS.get(operation, operation)
     # Not failed: it may have worked (R2, F19 - a backup that was taken read *Backup failed*).
     if state == "unknown" and label.endswith(" failed"):
         return f"{label.removesuffix(' failed')}: outcome unknown"

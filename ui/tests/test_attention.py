@@ -58,6 +58,35 @@ def node(
     )
 
 
+class ARetiredOperationIsJudgedByNobody(unittest.TestCase):
+    """B419, 26-11-01: a `block_client` job that failed, or that the upgrade ended,
+    cannot be settled by a later run, as the queue no longer takes it."""
+
+    def test_its_failure_is_not_a_row_but_is_named_on_the_jobs_page(self) -> None:
+        from haprion_ui import views
+
+        retired = replace(
+            job(state="failed", outcome="failed", operation="block_client"),
+            id=1,
+            created_at=NOW - timedelta(hours=1),
+        )
+        other = replace(
+            job(state="failed", outcome="failed", operation="deploy"),
+            id=2,
+            created_at=NOW - timedelta(hours=2),
+        )
+        with (
+            mock.patch.object(db, "recent_jobs", return_value=[retired, other]),
+            mock.patch.object(db, "attention_evidence", return_value=[]),
+        ):
+            _, judged = views.attention_jobs(mock.Mock(), ["alpha"])
+
+        self.assertEqual([item.id for item in judged], [2])
+        self.assertNotEqual(jobs.failure_label(retired, "block_client", "failed"), "block_client")
+        self.assertEqual(jobs._operation("block_client"), "External blocking client (removed)")
+        self.assertNotIn("Block client", jobs._operation("block_client"))
+
+
 class EachKindComesAndGoes(unittest.TestCase):
     def test_a_failed_job_stands_until_the_same_operation_works(self) -> None:
         failed = job(state="failed", outcome="failed", operation="deploy")

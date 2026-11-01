@@ -7,8 +7,8 @@ installation takes them from.
 
 from __future__ import annotations
 
+import importlib.util
 import re
-import sys
 import unittest
 from pathlib import Path
 
@@ -77,11 +77,11 @@ class TheProbeFailsOnWhatTheRemovalLeft(unittest.TestCase):
     """A failed removal of the ssh blocking path shows here, not only in apt's output (B419)."""
 
     def test_the_account_the_rule_and_the_home_are_failures_the_removal_names(self) -> None:
-        sys.path.insert(0, str(BASE / "install"))
-        try:
-            import removal
-        finally:
-            sys.path.pop(0)
+        spec = importlib.util.spec_from_file_location("removal", BASE / "install" / "removal.py")
+        if spec is None or spec.loader is None:
+            self.fail("install/removal.py cannot be loaded")
+        removal = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(removal)
         section = PROBE[PROBE.index("left by an earlier release") :]
         for name in (removal.RETIRED_ACCOUNT, removal.RETIRED_SUDOERS, removal.RETIRED_HOME):
             with self.subTest(name=name):

@@ -36,6 +36,7 @@ ENVIRONMENT = {
 }
 
 HEADER = "\nConfiguration - alpha\n\n"
+NOTHING_DIFFERS = {"outcome": "unchanged"}
 
 
 def git(repo: Path, *args: str) -> str:
@@ -80,7 +81,7 @@ class StatusFixture(unittest.TestCase):
         self,
         *argv: str,
         published: str | None = None,
-        regeneration: dict[str, Any] | None = None,
+        regeneration: dict[str, Any] | None = NOTHING_DIFFERS,
     ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         code = config_status.main(
@@ -176,9 +177,11 @@ class RegenerationTests(StatusFixture):
         )
 
         self.assertIn(
-            "\n  A publish would change what runs: 1 file; objects: shop (backends, routing)\n\n",
+            "\n  A publish would change what runs: 1 file; objects: shop (backends, routing)\n"
+            "  Publish it with: haprion-publish -c alpha --regenerate (",
             shown,
         )
+        self.assertIn("may still refuse)\n\n", shown)
         self.assertNotIn("balance leastconn", shown)
 
     def test_diff_prints_the_difference(self) -> None:
@@ -205,8 +208,8 @@ class RegenerationTests(StatusFixture):
             shown,
         )
 
-    def test_nothing_is_said_when_nothing_would_change_or_cannot_be_read(self) -> None:
-        for answer in ({"outcome": "unchanged", "diff": None}, {"outcome": "unpublished"}, None):
+    def test_nothing_is_said_when_nothing_would_change(self) -> None:
+        for answer in ({"outcome": "unchanged", "diff": None}, {"outcome": "unpublished"}):
             with self.subTest(answer=answer):
                 _, shown, _ = self.run_status(
                     "-c",
@@ -216,6 +219,23 @@ class RegenerationTests(StatusFixture):
                     regeneration=answer,
                 )
                 self.assertNotIn("publish", shown.split("Nothing unsent")[0])
+
+    def test_a_reading_that_is_missing_is_said_and_not_taken_for_nothing(self) -> None:
+        _, shown, _ = self.run_status(published=stamp("alpha", 1, self.commit), regeneration=None)
+        self.assertIn(
+            "  Whether a publish would change what runs: could not be read "
+            "(missing permission or helper)\n",
+            shown,
+        )
+
+        _, shown, _ = self.run_status(
+            published=stamp("alpha", 1, self.commit),
+            regeneration={"outcome": "unreadable", "message": "the commit is missing"},
+        )
+        self.assertIn(
+            "  Whether a publish would change what runs: could not be read: the commit is missing\n",
+            shown,
+        )
 
     def test_nothing_is_asked_when_nothing_is_published(self) -> None:
         asked: list[str] = []
@@ -239,7 +259,7 @@ class RegenerationTests(StatusFixture):
             "run",
             return_value=subprocess.CompletedProcess([], 0, stdout=answer, stderr=""),
         ) as run:
-            found = config_status._read_regeneration("alpha")
+            found = config_status.ask_regeneration("alpha")
 
         self.assertEqual(
             run.call_args.args[0], ["/usr/bin/sudo", "-n", config_status.REGENERATION_HELPER]
@@ -251,7 +271,17 @@ class RegenerationTests(StatusFixture):
             subprocess.CompletedProcess([], 0, stdout="not json", stderr=""),
         ):
             with mock.patch.object(subprocess, "run", return_value=completed):
-                self.assertIsNone(config_status._read_regeneration("alpha"))
+                self.assertIsNone(config_status.ask_regeneration("alpha"))
+        refused = json.dumps(
+            {"error": {"code": "regeneration_unavailable", "message": "no commit"}}
+        )
+        with mock.patch.object(
+            subprocess, "run", return_value=subprocess.CompletedProcess([], 69, stdout=refused)
+        ):
+            self.assertEqual(
+                config_status.ask_regeneration("alpha"),
+                {"outcome": "unreadable", "message": "no commit"},
+            )
 
     def test_the_helper_is_the_one_in_the_release(self) -> None:
         self.assertEqual(

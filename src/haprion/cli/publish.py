@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from haprion import exit_codes
+from haprion.cli import publish_regenerate
 from haprion.cli.caller import CallerError, looked_up, usage, without_answer
 from haprion.cli.caller import config_path as _config_path
 from haprion.envelope import failure, new_request_id
@@ -54,6 +55,8 @@ SUDO = "/usr/bin/sudo"
 USAGE = (
     "Usage:\n"
     "  haprion-publish -c <cluster> [--json] <comment>\n"
+    "  haprion-publish -c <cluster> --regenerate [-m <comment>] [--check]\n"
+    "                  [--expect <fingerprint>] [--allow-certificate-mismatch] [--json]\n"
     "\n"
     "Examples:\n"
     '  haprion-publish -c alpha "Add a backend server"\n'
@@ -62,6 +65,10 @@ USAGE = (
     "  --json\n"
     "        Print one result document on stdout instead of the report; the\n"
     "        progress goes to stderr.\n"
+    "  --regenerate\n"
+    "        Publish the generated configuration made again with the installed\n"
+    "        version, nothing else changed. --check says what that would change;\n"
+    "        --expect refuses unless the reading is the one --check printed.\n"
 )
 
 type RunHelper = Callable[[bytes], tuple[int, str, str]]
@@ -215,6 +222,10 @@ def main(
     config_path: ConfigPath = _config_path,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if "--regenerate" in argv:
+        return publish_regenerate.main(
+            argv, stream_out=stream_out, stream_err=stream_err, config_path=config_path
+        )
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
     cluster_id, comment, json_mode = _parse(argv)

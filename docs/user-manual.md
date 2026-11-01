@@ -195,11 +195,18 @@ files a node would run are compared with the ones it runs. When they differ, the
 ```
 
 `haprion-config-status -c alpha --diff` prints the difference, file by file, as `haprion-list --diff`
-does for a version. When the installed release refuses the published configuration, the line gives the
-reason instead, and a publish would be refused the same way. Nothing is printed when a publish would
-change nothing, or when the answer cannot be had (the report says nothing then, as it does for a
-published version it cannot read). The countries' networks are those of the published version, so a newer
-location database does not show up here; the installed WAF rule set does.
+does for a version. The line ends with the command that publishes it, `haprion-publish -c alpha
+--regenerate`, followed by `haprion-deploy -c alpha`; the publish makes its own checks (the ports the
+nodes hold, and HAProxy's own check of the result), so it can still refuse where the report did not.
+`haprion-publish -c alpha --regenerate --check` prints the same and a fingerprint of what it read;
+`--expect <fingerprint>` publishes only if the reading is still that one, as the button on the page does
+for the page it was drawn from. `-m` sets the version's comment, and `--allow-certificate-mismatch`
+publishes a name whose certificate does not cover it, which the interface cannot do. When the installed
+release refuses the published configuration, the line gives the reason instead, and a publish would be
+refused the same way. Nothing is printed when a publish would change nothing; when the answer cannot be
+had, the report says that, with the reason where the helper gave one. The countries' networks are those
+of the published version, so a newer location database does not show up here; the installed WAF rule set
+does.
 
 As in the interface, a deploy skips nodes that are already current. A node that answered its deploy and
 then cannot be read is waited for, up to 30 seconds by the clock; one that stays silent stops the rollout before the
@@ -4866,6 +4873,7 @@ are audited and versioned the same way.
 | *Network* | `haprion-network apply` |
 | A cluster's *Logs & metrics* | `haprion-cluster-settings apply` |
 | *Versions*: deploy, revert | `haprion-deploy`, `haprion-revert` |
+| *Versions*: publish again with the installed release | `haprion-publish --regenerate` |
 | Drain, maintenance, unblock | `haprion-server-state` |
 | *Settings → Nodes & clusters*: nodes and clusters | `haprion-node`, `haprion-cluster` |
 | *Certificates*: issue, import, request, NDES, publish | `haprion-cert-issue`, `-import`, `-request`, `-scep`, `-publish`, `-deploy` |
@@ -4908,6 +4916,7 @@ What they have in common:
 **Publishing again without a change.** `changes_publish` (the request behind *Publish & deploy*) takes
 `regenerate: true` in place of an object, a network or settings: the generated layer is made again with
 the installed release and published as a version, which is what `haprion-config-status` reports as owed.
+`haprion-publish -c <cluster> --regenerate` sends the same request.
 It is held to the checks any publish is held to, and publishes nothing new when nothing differs; the countries' networks stay the published version's.
 
 What is not a setting cannot be described in a file: drafts, previews, downloads of key material, and the

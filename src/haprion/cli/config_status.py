@@ -57,6 +57,7 @@ INTERFACE_PATHS = ("managed",)
 
 UNREADABLE = "could not be read (missing permission or helper)"
 UNPUBLISHED = "nothing published yet"
+UNREADABLE_OUTCOME = "unreadable"
 
 type ConfigPath = Callable[[str], Path]
 type ReadPublished = Callable[[str], str | None]
@@ -84,11 +85,13 @@ def _read_published(cluster_id: str) -> str | None:
     return None if completed.returncode != 0 else completed.stdout
 
 
-def _read_regeneration(cluster_id: str) -> Mapping[str, Any] | None:
-    """The regeneration helper's result, or None when it could not be had.
+def ask_regeneration(cluster_id: str) -> Mapping[str, Any] | None:
+    """The regeneration helper's result, or why it could not be had.
 
     Soft in the same way and for the same reason as the stamp above: nothing
-    here may take the rest of the report with it.
+    here may take the rest of the report with it. A helper that answered that
+    it could not read gives `{"outcome": "unreadable", "message": ...}`; one
+    that did not answer at all (no sudo rule, no helper) gives None.
     """
 
     request = {
@@ -106,13 +109,18 @@ def _read_regeneration(cluster_id: str) -> Mapping[str, Any] | None:
         text=True,
         check=False,
     )
-    if completed.returncode != 0:
-        return None
     try:
         document = json.loads(completed.stdout)
     except json.JSONDecodeError:
         return None
-    result = document.get("result") if isinstance(document, dict) else None
+    if not isinstance(document, dict):
+        return None
+    error = document.get("error")
+    if isinstance(error, dict) and error.get("message"):
+        return {"outcome": UNREADABLE_OUTCOME, "message": str(error["message"])}
+    result = document.get("result")
+    if completed.returncode != 0:
+        return None
     return result if isinstance(result, dict) and "outcome" in result else None
 
 
@@ -128,11 +136,17 @@ def _parse(argv: list[str]) -> tuple[str, bool]:
     return rest[1], diff
 
 
-def _regeneration_line(result: Mapping[str, Any] | None) -> str | None:
-    """What to say about a regeneration; nothing when a publish would change nothing."""
+def regeneration_line(result: Mapping[str, Any] | None, cluster_id: str) -> str | None:
+    """What to say about a regeneration; nothing when a publish would change nothing.
+
+    A reading that is missing is said, not left out: silence reads as "nothing
+    differs", which is the one thing it must not be taken for.
+    """
 
     if result is None:
-        return None
+        return f"  Whether a publish would change what runs: {UNREADABLE}\n"
+    if result.get("outcome") == UNREADABLE_OUTCOME:
+        return f"  Whether a publish would change what runs: could not be read: {result.get('message')}\n"
     if result.get("outcome") == "refused":
         return f"  The installed version cannot publish this configuration again: {result.get('message')}\n"
     if result.get("outcome") != "changed":
@@ -146,7 +160,11 @@ def _regeneration_line(result: Mapping[str, Any] | None) -> str | None:
     ]
     if objects:
         line += f"; objects: {', '.join(objects)}"
-    return line + "\n"
+    return (
+        line
+        + f"\n  Publish it with: haprion-publish -c {cluster_id} --regenerate"
+        + " (the publish makes its own checks, such as the ports the nodes hold, and may still refuse)\n"
+    )
 
 
 def _published_line(stamp: str | None) -> tuple[str, str]:
@@ -179,7 +197,7 @@ def main(
     stream_err: TextIO | None = None,
     config_path: ConfigPath = _config_path,
     read_published: ReadPublished = _read_published,
-    read_regeneration: ReadRegeneration = _read_regeneration,
+    read_regeneration: ReadRegeneration = ask_regeneration,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
@@ -213,7 +231,7 @@ def main(
         )
 
     regenerated = read_regeneration(cluster_id) if published_hash else None
-    line = _regeneration_line(regenerated)
+    line = regeneration_line(regenerated, cluster_id)
     if line is not None:
         writer.write(f"\n{line}")
         if show_diff and regenerated is not None and regenerated.get("diff"):

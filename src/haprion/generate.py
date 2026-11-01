@@ -133,7 +133,8 @@ BLOCK_COUNT_COUNTER = 3
 BLOCK_MARK_COUNTER = 4
 BLOCK_RULE = "dynamic-block:deny"
 #
-# Which limit placed a block (B424): the number the blocked table keeps in its
+# Which limit placed a block (B424) - more exactly, which last renewed it: every
+# request over a limit writes it again, and a limit may replace `manual`. The number the blocked table keeps in its
 # `gpt(1)` beside the mark, and the rule name the refused request's traffic
 # record carries - `dynamic-block/<reason>:deny`, so the `:deny` ending and
 # the part before the colon keep reading as they did. 0 is an entry the old
@@ -3348,7 +3349,9 @@ def _http_block_lines(
         # an address just over the rate limit is not blocked for "errors".
         # Nothing is counted for an address that is not tracked (an exempt one).
         #
-        lines.append(f"    http-response sc-inc-gpc(0,{BLOCK_COUNT_COUNTER}) if {{ status 400:499 }}")
+        lines.append(
+            f"    http-response sc-inc-gpc(0,{BLOCK_COUNT_COUNTER}) if {{ status 400:499 }}"
+        )
     return lines
 
 

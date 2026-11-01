@@ -1558,14 +1558,19 @@ At least one trigger must be set.
 
 **What counts as an error.** The errors are the 4xx answers the object's servers give - what a scanner or
 a password guesser leaves behind. A 5xx is the application's fault and is not counted. Nor are answers
-HAProxy gives itself, so a block cannot extend itself. A blocked request's traffic record says
+HAProxy gives itself - the refusal of a block, the rate limit's 429 - so a block cannot extend itself, and an
+address that only went over the rate limit is not blocked for errors. A blocked request's traffic record says
 `dynamic-block/requests:deny`, `dynamic-block/errors:deny` or `dynamic-block/manual:deny`, which tells it apart
-from a 404 the application gave and names the limit that placed the block (`dynamic-block:deny` where the
-block does not say). A tcp object closes a blocked address's connection before a byte is forwarded.
+from a 404 the application gave and names the limit that last renewed the block (`dynamic-block:deny` where the
+block does not say). Whatever limits the object has now, all four names can appear: a block lives on after
+the limit that placed it is removed. Through the API, `rule_name` of such a request is `dynamic-block` for
+records from before the reason was kept and `dynamic-block/<reason>` since; match on the prefix. A tcp object closes a blocked address's connection before a byte is forwarded.
 
 **Why an address is blocked.** Each block keeps the reason it was placed for, in the same table entry, so it
-reaches the other nodes with the block. It is *Too many requests* or *Too many errors* when the address went
-over that limit, *Too many connections* for a tcp object's limit, and *Blocked by hand or the API* for an
+reaches the other nodes with the block. It is the limit that last renewed the block: every request over a
+limit writes it again, so an address blocked by hand that then goes over a limit shows that limit instead
+of *Blocked by hand or the API*. It is *Too many requests* or *Too many errors* when the address went
+over that limit, *Too many new connections* for a tcp object's limit, and *Blocked by hand or the API* for an
 address placed by an admin or through the API. An address over both limits shows the requests. A block
 placed before the object had a reason, and one that a node cannot tell, shows none.
 

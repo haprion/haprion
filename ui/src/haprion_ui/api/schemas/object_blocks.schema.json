@@ -21,7 +21,7 @@
           "seconds_left": { "type": ["integer", "null"], "minimum": 0, "description": "Value. Seconds until until, at the time of the answer; 0 once passed." },
           "ending": { "type": "boolean", "description": "Value. True where the time ran out by the reading's account and no reading has said since." },
           "nodes": { "$ref": "definitions.schema.json#/$defs/names", "description": "Value. The nodes that hold the block." },
-          "reason": { "enum": ["requests", "errors", "connections", "manual", null], "description": "Value. Which limit placed the block: requests, errors or connections (the object's own limits), or manual for an address placed by hand or through the API; null where the node did not say, as for a block the earlier configuration placed." }
+          "reason": { "enum": ["requests", "errors", "connections", "manual", null], "description": "Value. Which limit placed the block or last renewed it (a later limit replaces manual): requests, errors or connections (the object's own limits), or manual for an address placed by hand or through the API; null where the node did not say, as for a block the earlier configuration placed." }
         },
         "additionalProperties": true
       }

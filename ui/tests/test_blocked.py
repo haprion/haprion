@@ -124,6 +124,9 @@ class TheCard(unittest.TestCase):
             ],
         )
 
+    def test_a_tcp_objects_reason_says_new_connections_as_the_form_does(self) -> None:
+        self.assertEqual(blocked.REASON_TEXT["connections"], "Too many new connections")
+
     def test_the_count_beyond_the_listed_hundred_is_kept(self) -> None:
         card = blocked.object_card(
             [reading(("node-a", {"shop": held(250, ("192.0.2.7", 1000))}))],

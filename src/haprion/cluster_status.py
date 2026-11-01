@@ -678,9 +678,7 @@ def _peers_synced(status: Mapping[str, Any]) -> tuple[tuple[str, bool], ...] | N
     return tuple(
         (
             str(peer.get("name", "")),
-            peer.get("synced") is True
-            if "synced" in peer
-            else peer.get("connected") is True,
+            peer.get("synced") is True if "synced" in peer else peer.get("connected") is True,
         )
         for peer in reported
         if isinstance(peer, Mapping)

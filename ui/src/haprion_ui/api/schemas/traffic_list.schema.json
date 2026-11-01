@@ -34,7 +34,7 @@
           "total_time": { "type": "integer", "description": "Value. Milliseconds for the whole request." },
           "bytes": { "type": "integer", "minimum": 0, "description": "Value. Bytes sent to the client." },
           "rule": { "type": "string", "description": "Value. The access rule the request met, as name:log or name:deny; empty where none." },
-          "rule_name": { "type": "string", "description": "Value. The rule's name; empty where none." },
+          "rule_name": { "type": "string", "description": "Value. The rule's name; empty where none. A request refused by dynamic blocking has dynamic-block, or dynamic-block/ and the reason (requests, errors, connections or manual) for requests logged since the reason was recorded, so match on the prefix dynamic-block." },
           "rule_action": { "enum": ["", "denied", "logged"], "description": "Code. What the rule did: denied the request, logged it, or empty where no rule applied." },
           "termination": { "type": "string", "pattern": "^[A-Za-z-]{0,4}$", "description": "Code. HAProxy's termination state, two letters for who ended the session and where (-- normally); empty where not recorded. Its values are HAProxy's, not this API's." },
           "ended": { "type": "string", "description": "Text. The termination state in words; empty where the session ended normally. Match on termination instead." }

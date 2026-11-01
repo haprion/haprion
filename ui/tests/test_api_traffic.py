@@ -158,6 +158,20 @@ class TheTrafficRoute(ApiTestCase):
         [row] = self.get().json()["result"]["requests"]
         self.assertEqual((row["rule_name"], row["rule_action"]), ("scanner", "logged"))
 
+    def test_a_dynamic_block_names_its_reason_after_the_prefix(self) -> None:
+        # B424: new rows carry `dynamic-block/<reason>`, old ones `dynamic-block`.
+        self.read.return_value = Reading(
+            (entry(rule="dynamic-block/errors:deny"), entry(rule="dynamic-block:deny")),
+            (),
+            0,
+            False,
+        )
+        rows = self.get().json()["result"]["requests"]
+        self.assertEqual(
+            [(row["rule_name"], row["rule_action"]) for row in rows],
+            [("dynamic-block/errors", "denied"), ("dynamic-block", "denied")],
+        )
+
     def test_the_filters_are_the_pages(self) -> None:
         self.get(
             "?status=5xx&q=api%20AND%20shop&from=2026-10-31T10:00:00Z&to=2026-10-31T11:00:00Z"

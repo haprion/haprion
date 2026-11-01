@@ -1396,6 +1396,10 @@ backends:
                 "if { var(txn.dynblock) -m found }",
                 "http-request set-var(txn.rule) str(dynamic-block/requests:deny) "
                 "if { var(txn.dynblock) -m int 1 }",
+                "http-request set-var(txn.rule) str(dynamic-block/errors:deny) "
+                "if { var(txn.dynblock) -m int 2 }",
+                "http-request set-var(txn.rule) str(dynamic-block/connections:deny) "
+                "if { var(txn.dynblock) -m int 3 }",
                 "http-request set-var(txn.rule) str(dynamic-block/manual:deny) "
                 "if { var(txn.dynblock) -m int 4 }",
                 "http-request deny deny_status 429 if { var(txn.dynblock) -m found }",
@@ -1405,6 +1409,8 @@ backends:
         )
         self.assertNotIn("mgd-trusted-proxy", text)
         self.assertIn("deny_status 429 if { var(txn.dynblock) -m found }", text)
+        self.assertNotIn("sc-inc-gpc", text, "no error limit, nothing counts errors")
+        self.assertNotIn("http_err_rate", text)
 
     def test_each_limit_stores_its_own_reason_and_an_exempt_address_none(self) -> None:
         body = self.SHOP.format(exempt="192.0.2.10").replace(
@@ -1416,7 +1422,13 @@ backends:
         self.assertIn("store gpc(1),gpt(1)", text)
         lines = [line.strip() for line in text.splitlines()]
         self.assertIn("acl mgd-shop-dynblock-over-requests sc_http_req_rate(3) gt 300", lines)
-        self.assertIn("acl mgd-shop-dynblock-over-errors sc_http_err_rate(3) gt 20", lines)
+        #
+        # Errors are the servers' 4xx, counted by hand: `http_err_rate` also
+        # counted HAProxy's own refusals, so a block extended itself (B424).
+        #
+        self.assertIn("acl mgd-shop-dynblock-over-errors sc_gpc_rate(0,3) gt 20", lines)
+        self.assertIn("http-response sc-inc-gpc(0,3) if { status 400:499 }", lines)
+        self.assertNotIn("http_err_rate", text.split("backend mgd-shop-dynblock-rate")[1])
         #
         # The requests' reason is written last, so it is the one kept when
         # both limits were passed; each is set on the mark's own counter,

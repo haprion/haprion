@@ -163,6 +163,38 @@ backends:
         port: {backend_port}
 """.encode(),
         )
+        #
+        # A rate limit well under the block's limits: its 429s are HAProxy's
+        # own answers, which must not count towards the error limit (B424).
+        #
+        limited = load_proxy(
+            "limited",
+            f"""schema: 1
+name: limited
+hostnames: [limited.example.com]
+listen:
+  protocol: http
+rate_limit:
+  window: 10s
+  max_requests: 6
+dynamic_block:
+  window: 10s
+  max_requests: 50
+  max_errors: 3
+  block_for: 1m
+routes:
+  - path: /
+    backend: slow
+backends:
+  slow:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {backend_port}
+""".encode(),
+        )
         db = load_proxy(
             "db",
             f"""schema: 1
@@ -218,7 +250,7 @@ backends:
                 target=self._collect, args=(receiver, self.records[address]), daemon=True
             ).start()
             files = generate(
-                [shop, db],
+                [shop, limited, db],
                 vips={"main": Vip(name="main", address=address)},
                 default_vip="main",
                 ports={"http": self.http_port, "https": _free_port()},
@@ -291,11 +323,18 @@ backends:
         self.assertEqual(count, len(entries))
         return {entry["address"]: entry["expires_in_ms"] for entry in entries}
 
-    def get(self, node: str, source: str, path: str = "/", forwarded: str = "") -> int:
+    def get(
+        self,
+        node: str,
+        source: str,
+        path: str = "/",
+        forwarded: str = "",
+        host: str = "shop.example.com",
+    ) -> int:
         connection = http.client.HTTPConnection(
             node, self.http_port, timeout=5, source_address=(source, 0)
         )
-        headers = {"Host": "shop.example.com"}
+        headers = {"Host": host}
         if forwarded:
             headers["X-Forwarded-For"] = forwarded
         try:
@@ -387,6 +426,35 @@ backends:
         for _ in range(6):
             self.get(a, "127.0.0.40")
         self.assertEqual(self.reasons(a)["127.0.0.40"], "requests")
+
+    def test_refusals_of_the_block_are_not_errors_and_the_reason_stands(self) -> None:
+        # B424 review: the block's own 404 counted in `http_err_rate`, so the fifth
+        # refused request (the error limit is 3, read a request late) turned `manual` into `errors`.
+        a = NODES[0][1]
+        helper = load_helper()
+        helper.LOCK_FILE = str(self.root / "block.lock")
+        helper.ADMIN_SOCKET = str(self.sockets[a])
+        with contextlib.redirect_stdout(io.StringIO()):
+            helper.command_block("shop", ["127.0.0.41"])
+        self.assertEqual([self.get(a, "127.0.0.41") for _ in range(5)], [404] * 5)
+        self.assertEqual(self.reasons(a)["127.0.0.41"], "manual")
+
+    def test_the_rate_limits_429_is_not_an_error(self) -> None:
+        # Six requests pass, then the rate limit answers 429 itself; four of
+        # those are over the error limit (3) if they were counted.
+        a = NODES[0][1]
+        host = "limited.example.com"
+        statuses = [self.get(a, "127.0.0.42", host=host) for _ in range(11)]
+        self.assertEqual(statuses, [200] * 6 + [429] * 5)
+        self.assertEqual(self.reasons(a, "limited"), {})
+
+    def test_application_errors_still_block_beside_a_rate_limit(self) -> None:
+        a = NODES[0][1]
+        host = "limited.example.com"
+        first = [self.get(a, "127.0.0.43", "/missing", host=host) for _ in range(4)]
+        self.assertEqual(first, [404] * 4)
+        self.get(a, "127.0.0.43", host=host)
+        self.assertEqual(self.reasons(a, "limited").get("127.0.0.43"), "errors")
 
     def test_an_exempt_address_is_never_blocked(self) -> None:
         a = NODES[0][1]

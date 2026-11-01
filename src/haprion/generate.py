@@ -3193,7 +3193,13 @@ def _block_tables(proxy: Proxy, peers: str | None) -> list[str]:
     if block.max_new_connections is not None:
         stored = f"conn_rate({window})"
     else:
-        stored = f"http_req_rate({window}),http_err_rate({window})"
+        #
+        # Errors are counted by hand from the servers' answers (`gpc0`, see
+        # `_http_block_lines`), not with `http_err_rate`: that counts HAProxy's
+        # own refusals too - the block's, the rate limit's 429 - and a blocked
+        # address would extend its own block (B424 review, measured on 3.4.7).
+        #
+        stored = f"http_req_rate({window}),gpc_rate(1,{window})"
     return [
         "",
         f"backend {counted}",
@@ -3242,12 +3248,14 @@ def _mark_reasons(reasons: Sequence[tuple[str, str]]) -> list[str]:
     ]
 
 
-def _block_rule_lines(limits: Sequence[str]) -> list[str]:
+def _block_rule_lines() -> list[str]:
     """The traffic record's rule for a request the block refuses, named by the stored reason.
 
     `dynamic-block:deny` first, which is what an entry with no reason (the old
-    configuration's) keeps; the reason then renames it. Only the reasons the
-    object can store are named: its limits, and an address placed by hand.
+    configuration's) keeps; the reason then renames it. All four reasons are
+    named whatever the object's limits are now: a limit can be removed while
+    blocks it placed live on (the blocked table keeps its entries across a
+    reload), and the page names their reason, so the record must too (B424).
     """
 
     return [
@@ -3256,7 +3264,6 @@ def _block_rule_lines(limits: Sequence[str]) -> list[str]:
             f"    http-request set-var(txn.rule) str(dynamic-block/{reason}:deny) "
             f"if {{ var(txn.dynblock) -m int {code} }}"
             for code, reason in BLOCK_REASONS.items()
-            if reason in (*limits, "manual")
         ),
     ]
 
@@ -3272,6 +3279,9 @@ def _http_block_lines(
     lives, and its traffic record says `dynamic-block:deny`, which is what
     tells it apart from a 404 the application gave. The answer is HAProxy's
     own, so it is not one of the errors counted: a block cannot extend itself.
+    That held only on paper until B424's review (26-11-01): `http_err_rate`
+    counted the refusals too, measured on 3.4.7, and errors are now counted
+    from the servers' answers alone.
     Measured on 3.4.6 (26-10-10, `private/ban-prov-20261010/`).
 
     Written before the rate limit's rules, which would otherwise refuse a
@@ -3292,7 +3302,7 @@ def _http_block_lines(
     reasons: list[tuple[str, str]] = []
     for fetch, limit, reason in (
         (f"sc_http_req_rate({BLOCK_COUNT_COUNTER})", block.max_requests, "requests"),
-        (f"sc_http_err_rate({BLOCK_COUNT_COUNTER})", block.max_errors, "errors"),
+        (f"sc_gpc_rate(0,{BLOCK_COUNT_COUNTER})", block.max_errors, "errors"),
     ):
         if limit is not None:
             lines.append(f"    acl {over} {fetch} gt {limit}")
@@ -3326,10 +3336,19 @@ def _http_block_lines(
             f"    http-request set-var(txn.dynblock) src,table_gpt(0,{blocked}) "
             f"if{exempt_source} {{ src,in_table({blocked}) }}",
         ]
-    lines += _block_rule_lines([reason for reason, _ in reasons])
+    lines += _block_rule_lines()
     lines.append(
         f"    http-request deny deny_status {block.status} if {{ var(txn.dynblock) -m found }}"
     )
+    if block.max_errors is not None:
+        #
+        # An error is a 4xx the server gave. `http-response` does not run for
+        # an answer HAProxy gives itself, so neither the block's refusal nor
+        # the rate limit's 429 is counted: a block cannot extend itself, and
+        # an address just over the rate limit is not blocked for "errors".
+        # Nothing is counted for an address that is not tracked (an exempt one).
+        #
+        lines.append(f"    http-response sc-inc-gpc(0,{BLOCK_COUNT_COUNTER}) if {{ status 400:499 }}")
     return lines
 
 

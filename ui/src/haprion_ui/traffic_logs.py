@@ -412,7 +412,7 @@ def _destinations(
     """The generated servers whose configured destination the term names.
 
     A term that is an address names the destinations on that host and no
-    other (`10.5.7.3` is not `10.5.7.33`); `address:port` the one destination;
+    other (`192.0.2.3` is not `192.0.2.33`); `address:port` the one destination;
     a network the hosts in it. Any other term is part of the text, as before
     (review 26-11-01, P2-2).
     """

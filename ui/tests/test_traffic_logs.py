@@ -187,7 +187,7 @@ class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
         )
 
     def test_an_address_is_the_destinations_host_and_not_the_start_of_one(self) -> None:
-        # Review 26-11-01, P2-2: `10.5.7.3` is not `10.5.7.33`, and `:80` not `:8080`.
+        # Review 26-11-01, P2-2: `192.0.2.3` is not `192.0.2.33`, and `:80` not `:8080`.
         given = {
             ("alpha", "be", "s1"): "192.0.2.10:8080",
             ("alpha", "be", "s2"): "192.0.2.1:80",

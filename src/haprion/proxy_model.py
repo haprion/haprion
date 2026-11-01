@@ -2749,7 +2749,17 @@ RESERVED_RULE_NAMES = (
     "waf-engine",
     "path-dots",
     "path-chars",
+    "waf-body",
+    "dynamic-block",
 )
+#
+# And the names the generator writes as `<name>/<reason>`: external queries are
+# told to match them on the prefix (`waf-engine`, `dynamic-block`), so a rule
+# whose name merely starts the same way would be counted with them. `/` is not
+# a character a rule name may hold, so only the plain prefix can collide
+# (checked 26-11-01).
+#
+RESERVED_RULE_PREFIXES = ("waf-engine", "dynamic-block")
 #
 # A rule list long enough to be a mistake rather than a policy, and short
 # enough that the shared frontend stays readable. Raised when someone needs it.
@@ -2826,6 +2836,12 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
         )
     if name in RESERVED_RULE_NAMES:
         raise ModelError(f"{location}.name {name} is written by the generator itself")
+    for prefix in RESERVED_RULE_PREFIXES:
+        if name.startswith(prefix):
+            raise ModelError(
+                f"{location}.name {name} starts like {prefix}, a name the generator writes "
+                f"and that a query matches on its beginning; choose a name that does not start with {prefix}"
+            )
     mode = _mode(data, location)
 
     path = data.get("path")

@@ -622,11 +622,30 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
         )
 
     def test_the_names_the_generator_writes_are_not_a_rule_s(self) -> None:
-        for name in ("deny-from", "body-limit", "body-unbounded", "path-dots", "path-chars"):
+        for name in (
+            "deny-from",
+            "body-limit",
+            "body-unbounded",
+            "path-dots",
+            "path-chars",
+            "waf-body",
+            "dynamic-block",
+        ):
             with self.subTest(name):
                 self.assertIn(
                     "generator itself", self.refused(f"deny_rules:\n  - name: {name}\n    path: /x")
                 )
+
+    def test_a_name_that_starts_like_a_prefix_queries_match_on_is_not_a_rule_s(self) -> None:
+        """`waf-engine` and `dynamic-block` are matched on their beginning (26-11-01)."""
+
+        for name in ("waf-engine-x", "waf-engineer", "dynamic-block-office"):
+            with self.subTest(name):
+                self.assertIn(
+                    "starts like",
+                    self.refused(f"deny_rules:\n  - name: {name}\n    path: /x"),
+                )
+        self.load("deny_rules:\n  - name: waf-rule\n    path: /x")
 
     def test_a_rule_path_is_written_as_it_reads_decoded(self) -> None:
         # Review 2026-10-04 F2: the rule reads the decoded, slash-merged path.

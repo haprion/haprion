@@ -292,10 +292,6 @@ def build_router(config: Config) -> APIRouter:
     # it, so a switch never reads off while a timer it meant to stop still runs.
     #
 
-    def _restore_waiting(request: Request) -> bool:
-        with request.app.state.pool.connection() as connection:
-            return feature_switch.restore_waiting(connection)
-
     @router.get("/settings/features/{name}", response_class=HTMLResponse)
     def feature_page(request: Request, name: str) -> Response:
         """The question before turning a feature off, when off does more than hide."""
@@ -337,12 +333,27 @@ def build_router(config: Config) -> APIRouter:
         if feature is None or enabled not in ("on", "off"):
             return PlainTextResponse("Not found", status_code=404)
         want = enabled == "on"
-        readings = feature_switch.Readings(
-            backup_overview=lambda: read_backup_overview(config, request),
-            objects=lambda: read_source(request, config, OBJECTS_SOURCE)[1],
-            restore_waiting=lambda: _restore_waiting(request),
+        #
+        # What a refusal needs is read before the connection is taken: the
+        # readers take their own, and two at once is how the pool runs dry.
+        #
+        objects = (
+            list(read_source(request, config, OBJECTS_SOURCE)[1])
+            if name == features.WAF_ENGINE and not want
+            else []
         )
+        overview = (
+            read_backup_overview(config, request)
+            if name == features.NODE_BACKUPS and not want
+            else None
+        )
+        refusal: features.SwitchRefused | None = None
         with request.app.state.pool.connection() as connection:
+            readings = feature_switch.Readings(
+                backup_overview=lambda: overview,
+                objects=lambda: objects,
+                restore_waiting=lambda: feature_switch.restore_waiting(connection),
+            )
             try:
                 feature_switch.switch(
                     connection,
@@ -357,8 +368,11 @@ def build_router(config: Config) -> APIRouter:
                 return PlainTextResponse("Not found", status_code=404)
             except features.SwitchRefused as problem:
                 connection.rollback()
-                return _settings_page(request, gate, problem=str(problem), status_code=409)
-            connection.commit()
+                refusal = problem
+            else:
+                connection.commit()
+        if refusal is not None:
+            return _settings_page(request, gate, problem=str(refusal), status_code=409)
         return RedirectResponse("/settings?switched=" + name + "-" + enabled, status_code=303)
 
     # - Settings -> Users (§16.4 U4, B189) ----------------------------------
@@ -624,6 +638,7 @@ def build_router(config: Config) -> APIRouter:
         #
         # Saved, and published with the next publish from Versions (B257).
         #
+        conflicted: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 change = db.save_cluster_change(
@@ -637,24 +652,27 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.DraftConflict as conflict:
                 connection.rollback()
-                return _cluster_settings_page(
-                    request,
-                    gate,
-                    cluster,
-                    head=expected_head,
-                    form=form,
-                    problem=str(conflict),
-                    status_code=409,
+                conflicted = str(conflict)
+            else:
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="save_change",
+                    cluster=cluster,
+                    request_id=uuid4(),
+                    detail={"kind": "settings", "revision": change.revision},
                 )
-            db.record_audit_event(
-                connection,
-                actor=gate.username,
-                action="save_change",
-                cluster=cluster,
-                request_id=uuid4(),
-                detail={"kind": "settings", "revision": change.revision},
+                connection.commit()
+        if conflicted is not None:
+            return _cluster_settings_page(
+                request,
+                gate,
+                cluster,
+                head=expected_head,
+                form=form,
+                problem=conflicted,
+                status_code=409,
             )
-            connection.commit()
         return RedirectResponse(page, status_code=303)
 
     # - Settings -> Nodes (Fas 16, B211) ------------------------------------

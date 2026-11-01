@@ -298,6 +298,7 @@ def build_router(config: Config) -> APIRouter:
             )
 
         payload = {"profile": sealed.profile_id, "revision": revision}
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 if existing is None:
@@ -322,58 +323,47 @@ def build_router(config: Config) -> APIRouter:
                     )
             except db.ProfileExists:
                 connection.rollback()
-                return _dns_profile_form_page(
-                    request,
-                    session,
-                    form,
-                    existing=existing,
-                    problem="Profile ID — a profile with this ID already exists.",
-                )
+                refusal = "Profile ID — a profile with this ID already exists."
             except db.ProfileMissing:
                 connection.rollback()
-                return _dns_profile_form_page(
-                    request,
-                    session,
-                    form,
-                    existing=existing,
-                    problem="The profile changed while this form was open. Reload and try again.",
-                )
-            #
-            # The row and the job are one transaction: a profile saved without
-            # its apply job would look stored and never reach certbot, which
-            # is the gap B147 closed.
-            #
-            try:
-                job = db.queue_job(
-                    connection,
-                    operation="dns_profile_apply",
-                    cluster=None,
-                    payload=payload,
-                    idempotency_key=key,
-                )
-            except db.CertificateBusy as busy:
-                connection.rollback()
-                return _dns_profile_form_page(
-                    request,
-                    session,
-                    form,
-                    existing=existing,
-                    problem=refusals.conflict_sentence(busy),
-                )
-            db.record_audit_event(
-                connection,
-                actor=session.username,
-                action="queue_job",
-                cluster=None,
-                request_id=job.request_id,
-                detail={
-                    "operation": "dns_profile_apply",
-                    "job": job.id,
-                    "profile": stored.id,
-                    "revision": stored.revision,
-                },
+                refusal = "The profile changed while this form was open. Reload and try again."
+            else:
+                #
+                # The row and the job are one transaction: a profile saved without
+                # its apply job would look stored and never reach certbot, which
+                # is the gap B147 closed.
+                #
+                try:
+                    job = db.queue_job(
+                        connection,
+                        operation="dns_profile_apply",
+                        cluster=None,
+                        payload=payload,
+                        idempotency_key=key,
+                    )
+                except db.CertificateBusy as busy:
+                    connection.rollback()
+                    refusal = refusals.conflict_sentence(busy)
+                else:
+                    db.record_audit_event(
+                        connection,
+                        actor=session.username,
+                        action="queue_job",
+                        cluster=None,
+                        request_id=job.request_id,
+                        detail={
+                            "operation": "dns_profile_apply",
+                            "job": job.id,
+                            "profile": stored.id,
+                            "revision": stored.revision,
+                        },
+                    )
+                    connection.commit()
+        # The form reads again, so it is drawn after the connection is given back.
+        if refusal is not None:
+            return _dns_profile_form_page(
+                request, session, form, existing=existing, problem=refusal
             )
-            connection.commit()
         _await_dns_profile_job(request, job.id)
         return RedirectResponse("/dns-profiles", status_code=303)
 

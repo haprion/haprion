@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from haprion.cert_receiver import crypt
 
-from haprion_ui import auth, certificate_receivers, jobs
+from haprion_ui import auth, certificate_receivers, db, jobs
 from tests.test_busy_clusters import held_job, workerless_job
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import reading as certificate_reading
@@ -746,6 +746,13 @@ class TheJobs(ReceiverRouteTestCase):
             },
         )
         self.assertEqual(self.audit[-1], "queue_job")
+
+    def test_a_busy_certificate_slot_is_said_on_the_page(self) -> None:
+        # The receiver's form is drawn again after the connection is given back.
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):
+            response = self.add(self.writing_client())
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("already running", response.text)
 
     def test_an_https_receiver_carries_its_allowlist(self) -> None:
         self.add(

@@ -12,7 +12,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haprion_ui import auth, certificate_renew, operations
+from haprion_ui import auth, certificate_renew, db, operations
 from haprion_ui.certificates import RegistryCertificateView
 from tests.test_certificate_activity import csr_pending_row
 from tests.test_certificate_delete import DeleteRouteTestCase
@@ -189,6 +189,13 @@ class TheRoutes(DeleteRouteTestCase):
         response = self.renew(client, "example.com", "old.example.com", confirm=True)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.queued, [])
+
+    def test_a_busy_certificate_slot_is_said_on_the_page(self) -> None:
+        # The question is drawn again after the connection is given back.
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):
+            response = self.renew(self.writing_client(), "example.com", confirm=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("already running", response.text)
 
     def test_the_gate_holds(self) -> None:
         self.assertEqual(

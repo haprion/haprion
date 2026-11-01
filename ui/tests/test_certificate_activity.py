@@ -9,7 +9,15 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion_ui import audit, auth, certificate_activity, certificate_renew, certificates, jobs
+from haprion_ui import (
+    audit,
+    auth,
+    certificate_activity,
+    certificate_renew,
+    certificates,
+    db,
+    jobs,
+)
 from haprion_ui.certificates import CertificateOverview
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import node, overview, registered, registry_of, status, with_registry
@@ -444,6 +452,25 @@ class AbandoningARequest(DeleteRouteTestCase):
             audit.ACTIVITY_PHRASES["queue_job"](event["detail"]),
             "Queued the abandon of the NDES request for wait.example.com (job 7)",
         )
+
+    def test_a_busy_certificate_slot_is_said_on_the_page(self) -> None:
+        with mock.patch(
+            "haprion_ui.db.cluster_certificates", return_value=[self.pending_reading()]
+        ):
+            client = self.writing_client()
+            token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+            with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):
+                response = client.post(
+                    "/certificates/abandon/confirm",
+                    data={
+                        "certificate": "wait.example.com",
+                        "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                        auth.CSRF_FIELD: token,
+                    },
+                    follow_redirects=False,
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("already running", response.text)
 
     def failed_reading(self, *, waiting: bool) -> Any:
         failed = registered("wait.example.com", fingerprint="a" * 64, kind="import")

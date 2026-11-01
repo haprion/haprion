@@ -233,6 +233,7 @@ def build_router(config: Config) -> APIRouter:
         known, blocking = choices(request)
         if text := api_token_apply.problem(new, clusters=known, blocking=blocking):
             return again(text)
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 made, secret = api_token_apply.issue(
@@ -240,8 +241,13 @@ def build_router(config: Config) -> APIRouter:
                 )
             except api_token_apply.Refused as refused:
                 connection.rollback()
-                return again(str(refused), 409)
-            connection.commit()
+                refusal = str(refused)
+            else:
+                connection.commit()
+                refusal = None
+        # The form reads again, so it is drawn after the connection is given back.
+        if refusal is not None:
+            return again(refusal, 409)
         return TEMPLATES.TemplateResponse(
             request,
             "settings-api-token-created.html",
@@ -331,6 +337,7 @@ def build_router(config: Config) -> APIRouter:
                 problem="The validity must be a number of days.",
                 status_code=400,
             )
+        refusal: api_token_apply.Refused | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 api_token_apply.extend(
@@ -338,12 +345,16 @@ def build_router(config: Config) -> APIRouter:
                 )
             except api_token_apply.Refused as refused:
                 connection.rollback()
-                if refused.code == "not_found":
-                    return list_page(request, gate, problem=str(refused), status_code=404)
-                return extend_form(
-                    request, gate, name, days=days, problem=str(refused), status_code=400
-                )
-            connection.commit()
+                refusal = refused
+            else:
+                connection.commit()
+                refusal = None
+        if refusal is not None:
+            if refusal.code == "not_found":
+                return list_page(request, gate, problem=str(refusal), status_code=404)
+            return extend_form(
+                request, gate, name, days=days, problem=str(refusal), status_code=400
+            )
         return RedirectResponse(LIST, status_code=303)
 
     def change(request: Request, name: str, csrf_token: str, action: str) -> Response:
@@ -354,16 +365,21 @@ def build_router(config: Config) -> APIRouter:
         if not auth.csrf_token_is_valid(token, csrf_token):
             return forbidden_page(request, config)
         do = api_token_apply.revoke if action == "revoke" else api_token_apply.remove
+        refusal: api_token_apply.Refused | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 do(connection, name, actor=gate.username, via="web")
             except api_token_apply.Refused as refused:
                 connection.rollback()
-                missing = refused.code == "not_found"
-                return list_page(
-                    request, gate, problem=str(refused), status_code=404 if missing else 409
-                )
-            connection.commit()
+                refusal = refused
+            else:
+                connection.commit()
+                refusal = None
+        if refusal is not None:
+            missing = refusal.code == "not_found"
+            return list_page(
+                request, gate, problem=str(refusal), status_code=404 if missing else 409
+            )
         return RedirectResponse(LIST, status_code=303)
 
     @router.post(LIST + "/{name}/revoke")

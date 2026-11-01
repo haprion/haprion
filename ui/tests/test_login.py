@@ -11,12 +11,15 @@ privilege suite that runs against the real database.
 from __future__ import annotations
 
 import re
+import threading
 import time
+import traceback
 import unittest
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import UUID
@@ -75,19 +78,38 @@ class FakePool:
     A block that raises is rolled back, as psycopg's pool does: a refusal the
     application answers for every route (review 26-10-24, 07-02) leaves its
     route's transaction that way rather than with a rollback of its own.
+
+    A connection asked for while the same thread holds one is refused and
+    written to `nested`, with where it was asked from. The real pool has six, so
+    a handler that holds one while a reader takes another leaves the pool dry
+    under a few concurrent requests (review 26-11-01). `LoginTestCase` fails the
+    test that left anything in `nested`, so every page test is that gate.
     """
 
     def __init__(self) -> None:
         self.commits = 0
         self.rollbacks = 0
+        self.nested: list[str] = []
+        self._held = threading.local()
 
     @contextmanager
     def connection(self) -> Any:
+        if getattr(self._held, "depth", 0):
+            frames = [
+                f"{Path(frame.filename).name}:{frame.lineno}"
+                for frame in traceback.extract_stack()
+                if "haprion_ui/" in frame.filename and "tests" not in frame.filename
+            ]
+            self.nested.append(" > ".join(frames[-3:]))
+            raise AssertionError("a connection was asked for while one is held")
+        self._held.depth = 1
         try:
             yield self
         except Exception:
             self.rollback()
             raise
+        finally:
+            self._held.depth = 0
 
     def commit(self) -> None:
         self.commits += 1
@@ -118,6 +140,9 @@ class LoginTestCase(unittest.TestCase):
             id=UUID("88888888-8888-4888-8888-888888888888"),
         )
 
+    def _no_connection_was_nested(self) -> None:
+        self.assertEqual(self.pool.nested, [], "a handler took a second connection")
+
     def setUp(self) -> None:
         self.account = Account(
             id=1,
@@ -127,6 +152,7 @@ class LoginTestCase(unittest.TestCase):
             password_hash=auth.hash_password(PASSWORD),
         )
         self.pool = FakePool()
+        self.addCleanup(self._no_connection_was_nested)
         self.saved_changes: list[dict[str, Any]] = []
         self.sessions: dict[bytes, AuthenticatedSession] = {}
         self.attempts: list[tuple[str, str, bool]] = []

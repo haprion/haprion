@@ -48,6 +48,15 @@ from haprion_ui.db import AuthenticatedSession
 from haprion_ui.templates import TEMPLATES
 
 
+class OidcRefusal(Exception):
+    """A provider sign-in that is not let in, with the sentence and the audit reason."""
+
+    def __init__(self, message: str, reason: str) -> None:
+        super().__init__(message)
+        self.message = message
+        self.reason = reason
+
+
 def local_login_held_back(account: db.Account | None, provider: db.OidcProvider | None) -> bool:
     return (
         account is not None
@@ -217,29 +226,31 @@ def build_router(config: Config) -> APIRouter:
                     },
                 )
                 connection.commit()
-                return login_again(request, config, error=SIGN_IN_FAILED)
-
-            assert account is not None  # noqa: S101 - accepted implies an account was found
-            #
-            # A new token on every login, which is what makes the rotation
-            # requirement real: nothing a browser held before signing in is
-            # still valid afterwards.
-            #
-            token = auth.new_session_token()
-            expires_at = auth.absolute_expiry(config.session)
-            db.create_session(
-                connection,
-                token_hash=auth.token_hash(token),
-                user_id=account.id,
-                expires_at=expires_at,
-            )
-            db.record_audit_event(
-                connection,
-                actor=account.username,
-                action="login",
-                detail={"client_ip": address, "role": account.role},
-            )
-            connection.commit()
+            else:
+                assert account is not None  # noqa: S101 - accepted implies an account was found
+                #
+                # A new token on every login, which is what makes the rotation
+                # requirement real: nothing a browser held before signing in is
+                # still valid afterwards.
+                #
+                token = auth.new_session_token()
+                expires_at = auth.absolute_expiry(config.session)
+                db.create_session(
+                    connection,
+                    token_hash=auth.token_hash(token),
+                    user_id=account.id,
+                    expires_at=expires_at,
+                )
+                db.record_audit_event(
+                    connection,
+                    actor=account.username,
+                    action="login",
+                    detail={"client_ip": address, "role": account.role},
+                )
+                connection.commit()
+        # The login form reads the provider, so it is drawn after the connection is given back.
+        if not accepted:
+            return login_again(request, config, error=SIGN_IN_FAILED)
 
         response = RedirectResponse("/", status_code=303)
         set_session_cookie(response, config, token, expires_at)
@@ -518,67 +529,73 @@ def build_router(config: Config) -> APIRouter:
         if not username or not subject:
             return refuse("The provider sent no name for you.", "no_username")
 
-        with request.app.state.pool.connection() as connection:
-            refused = oidc_account_refusal(
-                connection, issuer=issuer, subject=subject, username=username
-            )
-            if refused is not None:
-                connection.rollback()
-                return refuse(*refused)
-            account = db.account_by_oidc(connection, issuer=issuer, subject=subject)
-            if account is None:
-                # The check above found the name free; one taken in between is
-                # refused here by the insert.
-                if not db.create_oidc_account(
-                    connection, username=username, role=role, issuer=issuer, subject=subject
-                ):
-                    connection.rollback()
-                    return refuse(f"An account named {username} already exists here.", "name_taken")
+        #
+        # A refusal leaves the connection by raising: leaving rolls back what
+        # was begun, and the refusal's own audit row takes a connection of its
+        # own, which it cannot while this one is held.
+        #
+        try:
+            with request.app.state.pool.connection() as connection:
+                refused = oidc_account_refusal(
+                    connection, issuer=issuer, subject=subject, username=username
+                )
+                if refused is not None:
+                    raise OidcRefusal(*refused)
                 account = db.account_by_oidc(connection, issuer=issuer, subject=subject)
-            if account is None or account.disabled:
-                connection.rollback()
-                return refuse("That account is disabled here.", "disabled")
-            if account.role != role:
-                try:
-                    db.set_role(connection, user_id=account.id, role=role)
-                except db.LastAdmin:
-                    connection.rollback()
-                    return refuse(
-                        "Your role at the provider changed, and this is the last active admin here.",
-                        "last_admin",
+                if account is None:
+                    # The check above found the name free; one taken in between is
+                    # refused here by the insert.
+                    if not db.create_oidc_account(
+                        connection, username=username, role=role, issuer=issuer, subject=subject
+                    ):
+                        raise OidcRefusal(
+                            f"An account named {username} already exists here.", "name_taken"
+                        )
+                    account = db.account_by_oidc(connection, issuer=issuer, subject=subject)
+                if account is None or account.disabled:
+                    raise OidcRefusal("That account is disabled here.", "disabled")
+                if account.role != role:
+                    try:
+                        db.set_role(connection, user_id=account.id, role=role)
+                    except db.LastAdmin:
+                        raise OidcRefusal(
+                            "Your role at the provider changed, and this is the last active admin here.",
+                            "last_admin",
+                        ) from None
+                    db.record_audit_event(
+                        connection,
+                        actor=account.username,
+                        action="role_changed",
+                        detail={
+                            "account": account.username,
+                            "role": role,
+                            "previous": account.role,
+                            "via": "oidc",
+                        },
                     )
+                token = auth.new_session_token()
+                expires_at = auth.absolute_expiry(config.session, through_provider=True)
+                db.create_session(
+                    connection,
+                    token_hash=auth.token_hash(token),
+                    user_id=account.id,
+                    expires_at=expires_at,
+                    id_token=str(signed_in.get("id_token"))
+                    if provider.logout_mode == "provider"
+                    else None,
+                )
+                db.record_login_attempt(
+                    connection, username=account.username, client_ip=address, succeeded=True
+                )
                 db.record_audit_event(
                     connection,
                     actor=account.username,
-                    action="role_changed",
-                    detail={
-                        "account": account.username,
-                        "role": role,
-                        "previous": account.role,
-                        "via": "oidc",
-                    },
+                    action="login",
+                    detail={"client_ip": address, "role": role, "via": "oidc", "issuer": issuer},
                 )
-            token = auth.new_session_token()
-            expires_at = auth.absolute_expiry(config.session, through_provider=True)
-            db.create_session(
-                connection,
-                token_hash=auth.token_hash(token),
-                user_id=account.id,
-                expires_at=expires_at,
-                id_token=str(signed_in.get("id_token"))
-                if provider.logout_mode == "provider"
-                else None,
-            )
-            db.record_login_attempt(
-                connection, username=account.username, client_ip=address, succeeded=True
-            )
-            db.record_audit_event(
-                connection,
-                actor=account.username,
-                action="login",
-                detail={"client_ip": address, "role": role, "via": "oidc", "issuer": issuer},
-            )
-            connection.commit()
+                connection.commit()
+        except OidcRefusal as turned_away:
+            return refuse(turned_away.message, turned_away.reason)
 
         response = RedirectResponse("/", status_code=303)
         set_session_cookie(response, config, token, expires_at)

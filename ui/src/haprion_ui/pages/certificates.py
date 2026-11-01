@@ -239,6 +239,7 @@ def build_router(config: Config) -> APIRouter:
         except operations.BadPayload:
             return PlainTextResponse("Invalid operation parameters", status_code=400)
 
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(
@@ -250,18 +251,19 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.CertificateBusy as busy:
                 connection.rollback()
-                return _certificate_form_page(
-                    request, config, form, problem=refusals.conflict_sentence(busy)
+                refusal = refusals.conflict_sentence(busy)
+            else:
+                db.record_audit_event(
+                    connection,
+                    actor=session.username,
+                    action="queue_job",
+                    cluster=None,
+                    request_id=job.request_id,
+                    detail={"operation": operation, "job": job.id},
                 )
-            db.record_audit_event(
-                connection,
-                actor=session.username,
-                action="queue_job",
-                cluster=None,
-                request_id=job.request_id,
-                detail={"operation": operation, "job": job.id},
-            )
-            connection.commit()
+                connection.commit()
+        if refusal is not None:
+            return _certificate_form_page(request, config, form, problem=refusal)
         #
         # Back to the listing, where the request is the first row: it says
         # "Requesting" and refreshes until the CA has answered, and carries
@@ -689,6 +691,7 @@ def build_router(config: Config) -> APIRouter:
             )
         except operations.BadPayload:
             return PlainTextResponse("Invalid operation parameters", status_code=400)
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(
@@ -708,10 +711,7 @@ def build_router(config: Config) -> APIRouter:
                 if db.job_for_key(connection, key, operation="cert_import", cluster=None) is None:
                     if isinstance(refused, db.RequestConflict):
                         raise refused
-                    busy = refusals.conflict_sentence(refused)
-                    if form is not None:
-                        return _certificate_import_page(request, config, form, problem=busy)
-                    return PlainTextResponse(busy, status_code=409)
+                    refusal = refusals.conflict_sentence(refused)
             else:
                 db.record_audit_event(
                     connection,
@@ -726,6 +726,10 @@ def build_router(config: Config) -> APIRouter:
                     },
                 )
                 connection.commit()
+        if refusal is not None:
+            if form is not None:
+                return _certificate_import_page(request, config, form, problem=refusal)
+            return PlainTextResponse(refusal, status_code=409)
         if after:
             return RedirectResponse(after, status_code=303)
         if open_row:
@@ -1070,6 +1074,7 @@ def build_router(config: Config) -> APIRouter:
             return _certificate_renew_page(
                 request, gate, chosen=tuple(certificate), problem=str(refused)
             )
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(
@@ -1081,26 +1086,29 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.CertificateBusy as busy:
                 connection.rollback()
-                return _certificate_renew_page(
-                    request,
-                    gate,
-                    chosen=tuple(certificate),
-                    problem=refusals.conflict_sentence(busy),
+                refusal = refusals.conflict_sentence(busy)
+            else:
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="queue_job",
+                    cluster=None,
+                    request_id=job.request_id,
+                    detail={
+                        "operation": operation,
+                        "job": job.id,
+                        "certificate": renewal.identifier,
+                        "renew": True,
+                    },
                 )
-            db.record_audit_event(
-                connection,
-                actor=gate.username,
-                action="queue_job",
-                cluster=None,
-                request_id=job.request_id,
-                detail={
-                    "operation": operation,
-                    "job": job.id,
-                    "certificate": renewal.identifier,
-                    "renew": True,
-                },
+                connection.commit()
+        if refusal is not None:
+            return _certificate_renew_page(
+                request,
+                gate,
+                chosen=tuple(certificate),
+                problem=refusal,
             )
-            connection.commit()
         #
         # Back to the list, the row closed: its State cell says "Renewing"
         # from the table, and the detail was not asked for (2026-09-21).
@@ -1198,6 +1206,7 @@ def build_router(config: Config) -> APIRouter:
             )
         except operations.BadPayload:
             return PlainTextResponse("Invalid operation parameters", status_code=400)
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(
@@ -1209,26 +1218,29 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.CertificateBusy as busy:
                 connection.rollback()
-                return _certificate_abandon_page(
-                    request,
-                    gate,
-                    chosen=tuple(certificate),
-                    problem=refusals.conflict_sentence(busy),
+                refusal = refusals.conflict_sentence(busy)
+            else:
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="queue_job",
+                    cluster=None,
+                    request_id=job.request_id,
+                    detail={
+                        "operation": "cert_scep",
+                        "job": job.id,
+                        "certificate": row.identifier,
+                        "abandon": True,
+                    },
                 )
-            db.record_audit_event(
-                connection,
-                actor=gate.username,
-                action="queue_job",
-                cluster=None,
-                request_id=job.request_id,
-                detail={
-                    "operation": "cert_scep",
-                    "job": job.id,
-                    "certificate": row.identifier,
-                    "abandon": True,
-                },
+                connection.commit()
+        if refusal is not None:
+            return _certificate_abandon_page(
+                request,
+                gate,
+                chosen=tuple(certificate),
+                problem=refusal,
             )
-            connection.commit()
         return RedirectResponse(
             "/certificates?view=registry&open=" + row.identifier, status_code=303
         )
@@ -1355,6 +1367,7 @@ def build_router(config: Config) -> APIRouter:
                 request, gate, action, chosen=tuple(certificate), problem=str(refused)
             )
 
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(
@@ -1366,22 +1379,25 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.CertificateBusy as busy:
                 connection.rollback()
-                return _certificate_retarget_page(
-                    request,
-                    gate,
-                    action,
-                    chosen=tuple(certificate),
-                    problem=refusals.conflict_sentence(busy),
+                refusal = refusals.conflict_sentence(busy)
+            else:
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="queue_job",
+                    cluster=None,
+                    request_id=job.request_id,
+                    detail={"operation": "cert_target", "job": job.id, **payload},
                 )
-            db.record_audit_event(
-                connection,
-                actor=gate.username,
-                action="queue_job",
-                cluster=None,
-                request_id=job.request_id,
-                detail={"operation": "cert_target", "job": job.id, **payload},
+                connection.commit()
+        if refusal is not None:
+            return _certificate_retarget_page(
+                request,
+                gate,
+                action,
+                chosen=tuple(certificate),
+                problem=refusal,
             )
-            connection.commit()
         #
         # Back on the list as it was, also for one certificate: the change is
         # made from the selection, where no row was open, and the row's state
@@ -1513,6 +1529,7 @@ def build_router(config: Config) -> APIRouter:
             )
         except operations.BadPayload as refused:
             return again(str(refused))
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(
@@ -1524,26 +1541,29 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.CertificateBusy as busy:
                 connection.rollback()
-                return again(refusals.conflict_sentence(busy))
-            #
-            # The audit row names the receiver and the action, never the key:
-            # a public key is not a secret, but the audit log is not where a
-            # reader looks for one either.
-            #
-            db.record_audit_event(
-                connection,
-                actor=session.username,
-                action="queue_job",
-                cluster=None,
-                request_id=job.request_id,
-                detail={
-                    "operation": "cert_receiver",
-                    "job": job.id,
-                    "receiver": payload["receiver"],
-                    "action": payload["action"],
-                },
-            )
-            connection.commit()
+                refusal = refusals.conflict_sentence(busy)
+            else:
+                #
+                # The audit row names the receiver and the action, never the key:
+                # a public key is not a secret, but the audit log is not where a
+                # reader looks for one either.
+                #
+                db.record_audit_event(
+                    connection,
+                    actor=session.username,
+                    action="queue_job",
+                    cluster=None,
+                    request_id=job.request_id,
+                    detail={
+                        "operation": "cert_receiver",
+                        "job": job.id,
+                        "receiver": payload["receiver"],
+                        "action": payload["action"],
+                    },
+                )
+                connection.commit()
+        if refusal is not None:
+            return again(refusal)
         if password is not None:
             #
             # Drawn here rather than after a redirect: a redirect's next page
@@ -1831,6 +1851,7 @@ def build_router(config: Config) -> APIRouter:
                 request, gate, chosen=tuple(certificate), problem=str(refused)
             )
 
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(
@@ -1842,25 +1863,28 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.CertificateBusy as busy:
                 connection.rollback()
-                return _certificate_delete_page(
-                    request,
-                    gate,
-                    chosen=tuple(certificate),
-                    problem=refusals.conflict_sentence(busy),
+                refusal = refusals.conflict_sentence(busy)
+            else:
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="queue_job",
+                    cluster=None,
+                    request_id=job.request_id,
+                    detail={
+                        "operation": "cert_delete",
+                        "job": job.id,
+                        "certificates": list(picked.deletable),
+                    },
                 )
-            db.record_audit_event(
-                connection,
-                actor=gate.username,
-                action="queue_job",
-                cluster=None,
-                request_id=job.request_id,
-                detail={
-                    "operation": "cert_delete",
-                    "job": job.id,
-                    "certificates": list(picked.deletable),
-                },
+                connection.commit()
+        if refusal is not None:
+            return _certificate_delete_page(
+                request,
+                gate,
+                chosen=tuple(certificate),
+                problem=refusal,
             )
-            connection.commit()
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
     return router

@@ -528,6 +528,13 @@ class SavingAProfile(ProfileRouteTestCase):
         self.assertIn("already running", response.text)
         self.assertEqual(self.pool.rollbacks, 1)
 
+    def test_a_profile_id_taken_in_between_is_said_on_the_form(self) -> None:
+        with mock.patch("haprion_ui.db.create_dns_profile", side_effect=db.ProfileExists()):
+            response = self.post(self.writing_client())
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("a profile with this ID already exists", response.text)
+        self.assertEqual(self.pool.rollbacks, 1)
+
 
 class RemovingAProfile(ProfileRouteTestCase):
     def test_removal_has_a_confirmation_page_and_queues_a_fenced_job(self) -> None:

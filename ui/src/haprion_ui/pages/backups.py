@@ -224,6 +224,7 @@ def build_router(config: Config) -> APIRouter:
             )
         except operations.BadPayload as refused:
             return again(str(refused))
+        refusal: str | None = None
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(
@@ -244,8 +245,9 @@ def build_router(config: Config) -> APIRouter:
                 if earlier is None:
                     if isinstance(refused, db.RequestConflict):
                         raise refused
-                    return again(refusals.conflict_sentence(refused))
-                job = earlier
+                    refusal = refusals.conflict_sentence(refused)
+                else:
+                    job = earlier
             else:
                 #
                 # The run, node and archive, never the fingerprint or the pasted
@@ -260,6 +262,9 @@ def build_router(config: Config) -> APIRouter:
                     detail={"operation": operation, "job": job.id, "run": payload["run"]},
                 )
                 connection.commit()
+        # The form reads again, so it is drawn after the connection is given back.
+        if refusal is not None:
+            return again(refusal)
         #
         # To the run as the queue stored it, and only when it is still a run
         # ID: the row the insert returned, not the value this request carried.

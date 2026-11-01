@@ -249,6 +249,17 @@ class ThePage(SettingsClusterTestCase):
         self.assertEqual(settings.metrics.port, 8405)  # type: ignore[union-attr]
         self.assertEqual((change["base_hash"], change["updated_by"]), ("b" * 40, "operator"))
 
+    def test_a_conflicting_save_draws_the_form_again_on_one_connection(self) -> None:
+        with mock.patch(
+            "haprion_ui.db.save_cluster_change",
+            side_effect=db.DraftConflict("the saved settings changed since they were read"),
+        ):
+            response = self.save(self.client_for())
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("the saved settings changed since they were read", response.text)
+        self.assertNotIn("save_change", self.audit)
+
     def test_shared_counters_are_saved_with_their_port(self) -> None:
         response = self.save(self.client_for(), peers_on="on", peers_port="10000")
 

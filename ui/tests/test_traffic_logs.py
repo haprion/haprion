@@ -140,15 +140,34 @@ class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
         for term in ("192.0.2.5", "::ffff:192.0.2.5"):
             with self.subTest(term=term):
                 statement, parameters = self.built(term)
-                self.assertIn("client = any(%s)", statement)
+                self.assertIn("traffic_log_client_inet(client) = any(%s::inet[])", statement)
                 self.assertIn("ilike", statement)
                 self.assertEqual(parameters[1], ["192.0.2.5", "::ffff:192.0.2.5"])
         self.assertEqual(self.built("2001:DB8::1")[1][1], ["2001:db8::1"])
 
-    def test_a_network_is_the_clients_in_it(self) -> None:
+    def test_a_network_is_the_clients_in_it_in_both_forms(self) -> None:
         statement, parameters = self.built("192.0.2.77/24")
-        self.assertIn("traffic_log_client_in(client, %s::inet)", statement)
-        self.assertEqual(parameters[1], "192.0.2.0/24")
+        self.assertEqual(statement.count("traffic_log_client_inet(client) <<= %s::inet"), 2)
+        self.assertEqual(parameters[1:], ["192.0.2.0/24", "::ffff:192.0.2.0/120"])
+        # A mapped network is the IPv4 one, and an IPv6 network has the one form.
+        self.assertEqual(self.built("::ffff:192.0.2.0/120")[1][1:], parameters[1:])
+        self.assertEqual(self.built("2001:db8::/32")[1][1:], ["2001:db8::/32"])
+
+    def test_a_network_with_a_zone_is_refused_and_an_address_with_one_is_text(self) -> None:
+        # Review 26-11-01, P3-1: PostgreSQL cannot read it, so it was a 500.
+        with self.assertRaises(traffic_logs.SearchSyntaxError):
+            self.built("fe80::%eth0/64")
+        statement, parameters = self.built("fe80::1%eth0")
+        self.assertNotIn("client", statement)
+        self.assertEqual(len(parameters), 1)
+        reading = traffic_logs.read_database(
+            StoredRows(Path("/nonexistent")),  # type: ignore[arg-type]
+            Path("/nonexistent"),
+            ("alpha",),
+            substring="fe80::%eth0/64",
+        )
+        self.assertIsNotNone(reading.filter_error)
+        self.assertEqual(reading.entries, ())
 
     def test_what_is_no_address_is_text_only(self) -> None:
         for term in ("shop", "192.0.2", "192.0.2.300", "192.0.2.0/33", "/health"):
@@ -159,29 +178,82 @@ class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
 
     def test_a_term_that_names_a_destination_asks_for_its_servers(self) -> None:
         statement, parameters = self.built("198.51.100.7", self.ADDRESSES)
-        self.assertIn("(cluster, backend, server) in", statement)
-        self.assertEqual(
-            parameters[-3:],
-            [["alpha", "beta"], ["be-shop", "be-other"], ["s1", "s1"]],
-        )
+        self.assertIn("(cluster || ' ' || backend || ' ' || server) = any(%s::text[])", statement)
+        self.assertNotIn("unnest", statement)
+        self.assertEqual(parameters[-1], ["alpha be-shop s1", "beta be-other s1"])
         # By host, whatever its case, as the text search reads.
         self.assertEqual(
-            self.built("backend.internal", self.ADDRESSES)[1][-3:],
-            [["alpha"], ["be-shop"], ["s2"]],
+            self.built("backend.internal", self.ADDRESSES)[1][-1], ["alpha be-shop s2"]
+        )
+
+    def test_an_address_is_the_destinations_host_and_not_the_start_of_one(self) -> None:
+        # Review 26-11-01, P2-2: `10.5.7.3` is not `10.5.7.33`, and `:80` not `:8080`.
+        given = {
+            ("alpha", "be", "s1"): "192.0.2.10:8080",
+            ("alpha", "be", "s2"): "192.0.2.1:80",
+            ("alpha", "be", "s3"): "[2001:db8::10]:443",
+            ("alpha", "be", "s4"): "app.example.com:80",
+        }
+
+        def servers(term: str) -> list[str]:
+            return [key[2] for key in traffic_logs._destinations(term, given)]
+
+        self.assertEqual(servers("192.0.2.1"), ["s2"])
+        self.assertEqual(servers("192.0.2.10"), ["s1"])
+        self.assertEqual(servers("192.0.2.1:80"), ["s2"])
+        self.assertEqual(servers("192.0.2.10:8080"), ["s1"])
+        self.assertEqual(servers("192.0.2.1:8080"), [])
+        self.assertEqual(servers("192.0.2.0/24"), ["s1", "s2"])
+        self.assertEqual(servers("198.51.100.0/24"), [])
+        self.assertEqual(servers("2001:db8::10"), ["s3"])
+        self.assertEqual(servers("[2001:db8::10]:443"), ["s3"])
+        self.assertEqual(servers("[2001:DB8::10]:80"), [])
+        self.assertEqual(servers("2001:db8::/32"), ["s3"])
+        # Anything else is part of the text, as before.
+        self.assertEqual(servers("example"), ["s4"])
+        self.assertEqual(servers(":80"), ["s1", "s2", "s4"])
+        self.assertEqual(servers("192.0.2"), ["s1", "s2"])
+        # No search for an address reads the servers' list as a substring.
+        statement, parameters = self.built("192.0.2.1", given)
+        self.assertEqual(parameters[-1], ["alpha be s2"])
+        statement, _ = self.built("192.0.2.5", given)
+        self.assertNotIn("= any(%s::text[])", statement)
+
+    def test_an_ipv6_destination_is_written_in_brackets_and_found_as_written(self) -> None:
+        proxy = load_proxy(
+            "shop",
+            b"schema: 1\nname: shop\nhostnames: [shop.example.com]\nlisten:\n  protocol: http\n"
+            b"routes:\n  - path: /\n    backend: web\nbackends:\n  web:\n"
+            b"    balance: roundrobin\n    servers:\n      - host: 2001:db8::10\n        port: 443\n",
+        )
+        given = configured_server_addresses("alpha", [proxy])
+        self.assertEqual(given, {("alpha", "web", "s1"): "[2001:db8::10]:443"})
+        self.assertEqual(
+            traffic_logs._destinations("[2001:db8::10]:443", given), [("alpha", "web", "s1")]
         )
 
     def test_a_reader_not_given_destinations_cannot_search_them(self) -> None:
         given: Any
         for given in (None, {}):
             statement, parameters = self.built("198.51.100.7", given)
-            self.assertNotIn("unnest", statement)
+            self.assertNotIn("= any(%s::text[])", statement)
             self.assertEqual(len(parameters), 2)
+
+    def test_or_is_one_condition_among_the_filters(self) -> None:
+        # Joined with `and`, a bare `a or b` would be `x and a or b`: the first
+        # parenthesis must close only at the very end.
+        statement, _ = self.built("shop or backend.internal")
+        depth = 0
+        for position, character in enumerate(statement):
+            depth += {"(": 1, ")": -1}.get(character, 0)
+            if depth == 0:
+                self.assertEqual(position, len(statement) - 1, statement)
 
     def test_not_covers_all_three(self) -> None:
         statement, _ = self.built("not 198.51.100.7", self.ADDRESSES)
         self.assertTrue(statement.startswith("not (("))
-        self.assertIn("client = any(%s)", statement)
-        self.assertIn("unnest", statement)
+        self.assertIn("traffic_log_client_inet(client) = any(%s::inet[])", statement)
+        self.assertIn("= any(%s::text[])", statement)
 
 
 class StoredRows:
@@ -707,6 +779,13 @@ class TheTrafficLogPage(LoginTestCase):
             "<strong>The search expression ends with an operator.</strong></p>",
             page,
         )
+
+    def test_a_network_with_a_zone_is_the_form_s_error_not_a_failure(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page(query="?q=fe80%3A%3A%25eth0%2F64")
+
+        self.assertIn("cannot name an interface zone", page)
 
     def test_the_page_shows_the_configured_destination_instead_of_s3(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(

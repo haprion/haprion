@@ -10,6 +10,7 @@ much this process reads, how long a field is, or what a template renders.
 
 from __future__ import annotations
 
+import builtins
 import ipaddress
 import json
 import os
@@ -59,6 +60,8 @@ class Entry:
     """The access rule the request met, as `name:log` or `name:deny`; empty if none."""
     termination: str = ""
     """HAProxy's two letters for how the session ended (0106); `--` normally."""
+    event: builtins.bytes = b""
+    """The row's own identity (its 32-byte `event_id`): the last tie-break in the order (0111)."""
 
     @property
     def ended(self) -> str:
@@ -331,34 +334,116 @@ def like_pattern(query: str) -> str:
     return f"%{escaped}%"
 
 
-def client_match(value: str) -> tuple[str, list[str]] | None:
-    """How a term names a client: `("address", texts)` or `("network", [cidr])`, else None.
+type _Ip = ipaddress.IPv4Address | ipaddress.IPv6Address
+type _Net = ipaddress.IPv4Network | ipaddress.IPv6Network
 
-    An address is written the way the log writes it: an IPv4-mapped IPv6 address
-    is the IPv4 address (as the rest of the interface reads one), and the log
-    may carry either form, so both are asked for. A network is any `address/bits`.
+
+def _plain(address: _Ip) -> _Ip:
+    """An IPv4-mapped IPv6 address as the IPv4 address, as the rest of the interface reads one."""
+
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
+
+
+def _ip_term(value: str) -> _Ip | _Net | None:
+    """The address or network a term is, or None; a network with a zone is refused.
+
+    `fe80::%eth0/64` is a network Python reads and PostgreSQL does not, and a
+    zone names an interface of one machine, which no client in a log has
+    (review 26-11-01, P3-1). An address with a zone is text.
     """
 
     try:
         if "/" in value:
-            return "network", [str(ipaddress.ip_network(value, strict=False))]
-        address = ipaddress.ip_address(value)
-    except ValueError:
+            if "%" in value:
+                raise SearchSyntaxError("A network in the search cannot name an interface zone.")
+            network = ipaddress.ip_network(value, strict=False)
+            if isinstance(network, ipaddress.IPv6Network) and network.prefixlen >= 96:
+                mapped = network.network_address.ipv4_mapped
+                if mapped is not None:
+                    return ipaddress.ip_network((mapped, network.prefixlen - 96))
+            return network
+        if "%" in value:
+            return None
+        return _plain(ipaddress.ip_address(value))
+    except ValueError as exc:
+        if isinstance(exc, SearchSyntaxError):
+            raise
         return None
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        address = address.ipv4_mapped
-    if isinstance(address, ipaddress.IPv4Address):
-        return "address", [str(address), f"::ffff:{address}"]
-    return "address", [str(address)]
+
+
+def client_match(value: str) -> tuple[str, list[str]] | None:
+    """How a term names a client: `("address", texts)` or `("network", [cidr, ...])`, else None.
+
+    An address is written the way the log writes it: an IPv4-mapped IPv6 address
+    is the IPv4 address (as the rest of the interface reads one), and the log
+    may carry either form, so both are asked for. A network is any `address/bits`
+    and asked for in both forms too, so a network matches the mapped clients an
+    address does and a mapped network the IPv4 ones (review 26-11-01, P3-2).
+    """
+
+    term = _ip_term(value)
+    if term is None:
+        return None
+    if isinstance(term, ipaddress.IPv4Network):
+        mapped = ipaddress.ip_network((f"::ffff:{term.network_address}", 96 + term.prefixlen))
+        return "network", [str(term), str(mapped)]
+    if isinstance(term, ipaddress.IPv6Network):
+        return "network", [str(term)]
+    if isinstance(term, ipaddress.IPv4Address):
+        return "address", [str(term), f"::ffff:{term}"]
+    return "address", [str(term)]
+
+
+def _endpoint(text: str) -> tuple[str, str]:
+    """A destination or a term as `(host, port)`: `host:port` or `[v6]:port`; the port may be empty."""
+
+    if text.startswith("["):
+        host, _, rest = text[1:].partition("]")
+        return host, rest.removeprefix(":")
+    host, separator, port = text.rpartition(":")
+    return (host, port) if separator and ":" not in host else (text, "")
 
 
 def _destinations(
     value: str, addresses: Mapping[tuple[str, str, str], str]
 ) -> list[tuple[str, str, str]]:
-    """The generated servers whose configured destination holds the term, as the text search reads."""
+    """The generated servers whose configured destination the term names.
+
+    A term that is an address names the destinations on that host and no
+    other (`10.5.7.3` is not `10.5.7.33`); `address:port` the one destination;
+    a network the hosts in it. Any other term is part of the text, as before
+    (review 26-11-01, P2-2).
+    """
 
     needle = value.lower()
-    return [key for key, address in addresses.items() if needle in address.lower()]
+    term = _ip_term(needle)
+    wanted_host, wanted_port = _endpoint(needle)
+    try:
+        wanted = _plain(ipaddress.ip_address(wanted_host)) if term is None and wanted_port else None
+    except ValueError:
+        wanted = None
+    found = []
+    for key, address in addresses.items():
+        if term is None and wanted is None:
+            if needle in address.lower():
+                found.append(key)
+            continue
+        host, port = _endpoint(address.lower())
+        try:
+            actual = _plain(ipaddress.ip_address(host))
+        except ValueError:
+            continue
+        if isinstance(term, ipaddress.IPv4Network | ipaddress.IPv6Network):
+            hit = actual.version == term.version and actual in term
+        elif term is not None:
+            hit = actual == term
+        else:
+            hit = actual == wanted and port == wanted_port
+        if hit:
+            found.append(key)
+    return found
 
 
 def _search_sql(
@@ -381,36 +466,47 @@ def _search_sql(
         found: list[sql.Composable] = [sql.SQL("{} ilike %s").format(searchable)]
         #
         # The client, which is a column of its own: an address is that client
-        # (the index of 0111), a network every client in it. The text above is
-        # still searched, as a host can be an address.
+        # (the index of 0111), a network every client in it, both as the
+        # expression the index holds, which never fails on what a node wrote.
+        # The text above is still searched, as a host can be an address.
         #
         client = client_match(expression.value)
-        if client is not None and client[0] == "address":
-            found.append(sql.SQL("client = any(%s)"))
-            parameters.append(client[1])
-        elif client is not None:
-            found.append(sql.SQL("traffic_log_client_in(client, %s::inet)"))
-            parameters.append(client[1][0])
+        if client is not None:
+            if client[0] == "address":
+                found.append(sql.SQL("traffic_log_client_inet(client) = any(%s::inet[])"))
+                parameters.append(client[1])
+            else:
+                found.append(
+                    sql.SQL("({})").format(
+                        sql.SQL(" or ").join(
+                            sql.SQL("traffic_log_client_inet(client) <<= %s::inet")
+                            for _ in client[1]
+                        )
+                    )
+                )
+                parameters.extend(client[1])
         #
         # The destination is configuration, not a column: the generated names
         # the log carries (`s2`) are resolved before the query, and the servers
         # whose destination holds the term are asked for here. Only a reader
-        # shown destinations is given them to search (`destinations`).
+        # shown destinations is given them to search (`destinations`). One
+        # hashed array of `cluster backend server` (no name holds a space): a
+        # subplan per term made the planner's cost pass the point where
+        # PostgreSQL compiles the query, which cannot be cancelled (P2-1).
         #
         servers = _destinations(expression.value, destinations) if destinations else []
         if servers:
-            found.append(
-                sql.SQL(
-                    "(cluster, backend, server) in"
-                    " (select * from unnest(%s::text[], %s::text[], %s::text[]))"
-                )
-            )
-            parameters.extend([[key[index] for key in servers] for index in range(3)])
+            found.append(sql.SQL("(cluster || ' ' || backend || ' ' || server) = any(%s::text[])"))
+            parameters.append([" ".join(key) for key in servers])
         return sql.SQL("({})").format(sql.SQL(" or ").join(found))
     if isinstance(expression, _Not):
         return sql.SQL("not ({})").format(_search_sql(expression.value, parameters, destinations))
     operator = sql.SQL(" and " if isinstance(expression, _And) else " or ")
-    return sql.SQL("({}){}({})").format(
+    #
+    # Wrapped as a whole: joined to the cluster, status and time with `and`, a
+    # bare `a or b` would let `b` through every one of them.
+    #
+    return sql.SQL("(({}){}({}))").format(
         _search_sql(expression.left, parameters, destinations),
         operator,
         _search_sql(expression.right, parameters, destinations),
@@ -435,7 +531,8 @@ def configured_server_addresses(
         for pool, backend in proxy.backends.items():
             runtime_backend = backend_name(proxy, pool)
             for index, server in enumerate(backend.servers):
-                address = f"{server.host}:{server.port}"
+                host = f"[{server.host}]" if ":" in server.host else server.host
+                address = f"{host}:{server.port}"
                 result[(cluster, runtime_backend, server_name(index))] = address
     return result
 
@@ -569,7 +666,7 @@ def read_database(
     server_addresses: Mapping[tuple[str, str, str], str] | None = None,
     waf: str = "",
     owned: tuple[Sequence[str], Sequence[str]] | None = None,
-    before: tuple[datetime, int, str] | None = None,
+    before: tuple[datetime, int, str, bytes] | None = None,
 ) -> Reading:
     """Read indexed rows while retaining the collector's per-node freshness files.
 
@@ -581,8 +678,8 @@ def read_database(
     a dynamic block, the WAF - which carry the frontend's name instead. A name
     is compared without its port and case, as the Host header may carry both.
 
-    `before` is the place a page ended at - a row's time, request number and
-    node - and the rows read are those after it in the order shown, so a page
+    `before` is the place a page ended at - a row's time, request number, node
+    and own identity - and the rows read are those after it in the order shown, so a page
     that follows another neither repeats a row nor drops one that shares the
     time (26-11-01).
     """
@@ -610,7 +707,10 @@ def read_database(
         conditions.append(sql.SQL("status between %s and %s"))
         parameters.extend((status_class * 100, status_class * 100 + 99))
     if substring:
-        conditions.append(_search_sql(expression, parameters, server_addresses))
+        try:
+            conditions.append(_search_sql(expression, parameters, server_addresses))
+        except SearchSyntaxError as exc:
+            return Reading((), (), 0, False, str(exc))
     if owned is not None:
         backends, hosts = owned
         names = [host.lower() for host in hosts if not host.startswith(("!", "*."))]
@@ -639,17 +739,19 @@ def read_database(
         conditions.append(sql.SQL("occurred_at <= %s"))
         parameters.append(to_at)
     if before is not None:
-        conditions.append(sql.SQL("(occurred_at, request_number, node) < (%s, %s, %s)"))
+        conditions.append(
+            sql.SQL("(occurred_at, request_number, node, event_id) < (%s, %s, %s, %s)")
+        )
         parameters.extend(before)
     parameters.append(min(max(limit, 1), 10_000))
     statement = sql.SQL("""
         select cluster, node, occurred_at as at, request_number as request,
                client, method, host, path, frontend, backend, server, status,
                request_time, queue_time, connect_time, response_time, total_time, bytes,
-               rule, termination
+               rule, termination, event_id as event
           from traffic_log_read
          where {}
-         order by occurred_at desc, request_number desc, node desc
+         order by occurred_at desc, request_number desc, node desc, event_id desc
          limit %s
     """).format(sql.SQL(" and ").join(conditions))
     with connection.cursor(row_factory=class_row(Entry)) as cursor:

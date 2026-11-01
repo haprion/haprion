@@ -2392,7 +2392,7 @@ class ARealDatabase(unittest.TestCase):
     def test_the_web_reads_the_traffic_log_through_a_view_and_holds_nothing_on_the_table(
         self,
     ) -> None:
-        """The view shows every column but the collector's bookkeeping (0083; the baseline, B369)."""
+        """The view shows every column but the insert time; `event_id` since 0111 (0083; the baseline, B369)."""
 
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -2417,7 +2417,7 @@ class ARealDatabase(unittest.TestCase):
             )
             indexed = _first(cursor)
             connection.rollback()
-        self.assertEqual(shown, sorted(set(columns) - {"event_id", "inserted_at"}))
+        self.assertEqual(shown, sorted(set(columns) - {"inserted_at"}))
         self.assertEqual(granted, 0)
         self.assertEqual(indexed, f"traffic_log_{datetime.now(UTC):%Y%m%d}_cluster")
 
@@ -9895,8 +9895,23 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
         first = self.read(limit=2)
         self.assertEqual([entry.path for entry in first.entries], ["/c", "/b"])
         last = first.entries[-1]
-        second = self.read(limit=2, before=(last.at, last.request, last.node))
+        second = self.read(limit=2, before=(last.at, last.request, last.node, last.event))
         self.assertEqual([entry.path for entry in second.entries], ["/a"])
+
+    def test_rows_that_share_time_number_and_node_are_each_on_one_page(self) -> None:
+        # Review 26-11-01, P3-3: two HAProxy processes both count a request 7 in one second.
+        for path in ("/a", "/b", "/c"):
+            self.store(path=path, request_number=7)
+        seen: list[str] = []
+        before = None
+        for _ in range(3):
+            page = self.read(limit=1, before=before)
+            self.assertEqual(len(page.entries), 1)
+            last = page.entries[0]
+            seen.append(last.path)
+            before = (last.at, last.request, last.node, last.event)
+        self.assertEqual(sorted(seen), ["/a", "/b", "/c"])
+        self.assertEqual(self.read(limit=1, before=before).entries, ())
 
     def test_status_narrows_by_code_or_class_and_nothing_else_is_a_status(self) -> None:
         self.store(path="/ok")
@@ -9931,8 +9946,16 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
         # Mapped, the term is the IPv4 client; the text is searched as typed.
         self.assertEqual(sorted(self.paths(substring="::ffff:192.0.2.10")), ["/mapped", "/one"])
         self.assertEqual(self.paths(substring="198.51.100.4"), ["/far"])
-        self.assertEqual(sorted(self.paths(substring="192.0.2.0/24")), ["/one", "/two"])
+        # A network finds the mapped client as an address does, and a mapped network the IPv4 ones.
+        self.assertEqual(sorted(self.paths(substring="192.0.2.0/24")), ["/mapped", "/one", "/two"])
+        self.assertEqual(
+            sorted(self.paths(substring="::ffff:192.0.2.0/120")), ["/mapped", "/one", "/two"]
+        )
         self.assertEqual(self.paths(substring="2001:db8::/32"), ["/six"])
+        # A zone is no client's: refused before the database is asked (review P3-1).
+        self.assertEqual(self.read(substring="fe80::%eth0/64").entries, ())
+        self.assertIsNotNone(self.read(substring="fe80::%eth0/64").filter_error)
+        self.assertEqual(self.paths(substring="fe80::1%eth0"), [])
         self.assertEqual(self.paths(substring="2001:DB8::1"), ["/six"])
         self.assertEqual(sorted(self.paths(substring="192.0.2.0/24 and not 192.0.2.10")), ["/two"])
         self.assertEqual(
@@ -9940,6 +9963,31 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
             ["/far", "/junk", "/six"],
         )
         self.assertEqual(self.paths(substring="203.0.113.0/24"), ["/host"])
+
+    def test_an_or_search_stays_within_the_cluster_and_the_other_filters(self) -> None:
+        """`a or b` is one condition among the filters, not a way out of them."""
+
+        self.store(path="/mine", client="192.0.2.10")
+        self.store(path="/failed", client="192.0.2.11", status=503)
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_COLLECTOR_ROLE']}") as c:
+            c.execute(
+                "insert into traffic_log (event_id, cluster, node, occurred_at, request_number,"
+                " client, method, host, path, frontend, backend, server, status, request_time,"
+                " queue_time, connect_time, response_time, total_time, bytes)"
+                " values (%s, 'other-cluster', 'node-a', %s, 1, '192.0.2.10', 'GET', 'h', '/theirs',"
+                " 'f', 'b', 's', 200, 0, 0, 0, 0, 0, 0)",
+                (uuid4().bytes * 2, self.now),
+            )
+            self.addCleanup(self.forget_other_cluster)
+
+        both = "192.0.2.10 or 192.0.2.11 or /theirs"
+        self.assertEqual(sorted(self.paths(substring=both)), ["/failed", "/mine"])
+        self.assertEqual(self.paths(substring=both, status="5xx"), ["/failed"])
+        self.assertEqual(self.paths(substring=both, from_at=self.now + timedelta(hours=1)), [])
+
+    def forget_other_cluster(self) -> None:
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}") as c:
+            c.execute("delete from traffic_log where cluster = 'other-cluster'")
 
     def test_a_destination_is_found_by_host_and_port_only_where_destinations_are_given(
         self,
@@ -9964,35 +10012,154 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
         self.assertEqual(found("198.51.100.7", None), [])
         self.assertEqual(self.paths(substring="198.51.100.7"), [])
 
-    def test_a_client_search_over_many_days_uses_the_clients_index(self) -> None:
-        """The plan names the per-day client index on every day it reads (0111)."""
+    def test_an_address_is_the_destinations_host_and_not_its_start(self) -> None:
+        """Review 26-11-01, P2-2: `192.0.2.1` is the client and not the server on `192.0.2.10`."""
 
-        days = [self.now.date() - timedelta(days=offset) for offset in range(3)]
+        addresses = {
+            (self.cluster, "be-app", "s1"): "192.0.2.10:8080",
+            (self.cluster, "be-app", "s2"): "[2001:db8::10]:443",
+        }
+        self.store(path="/client", client="192.0.2.1", server="s9")
+        self.store(path="/to-ten", client="203.0.113.9", server="s1")
+        self.store(path="/to-six", client="203.0.113.9", server="s2")
+
+        def found(term: str) -> list[str]:
+            return sorted(self.paths(substring=term, server_addresses=addresses))
+
+        self.assertEqual(found("192.0.2.1"), ["/client"])
+        self.assertEqual(found("192.0.2.10"), ["/to-ten"])
+        self.assertEqual(found("192.0.2.10:8080"), ["/to-ten"])
+        self.assertEqual(found("192.0.2.10:80"), [])
+        self.assertEqual(found("192.0.2.0/24"), ["/client", "/to-ten"])
+        self.assertEqual(found("[2001:db8::10]:443"), ["/to-six"])
+        self.assertEqual(found("2001:db8::10"), ["/to-six"])
+        self.assertEqual(found("8080"), ["/to-ten"])
+
+    def search_plan(self, term: str, addresses: Any = None) -> str:
+        """The plan of the statement `read_database` runs for this term, as the web role."""
+
+        plans: list[str] = []
+
+        class Cursor:
+            def __init__(self, real: Any) -> None:
+                self.real = real
+
+            def __enter__(self) -> Cursor:
+                return self
+
+            def __exit__(self, *_exc: object) -> None:
+                return None
+
+            def execute(self, statement: Any, parameters: Any) -> None:
+                rows = self.real.execute(
+                    "explain " + statement.as_string(self.real.connection), parameters
+                ).fetchall()
+                plans.append("\n".join(row[0] for row in rows))
+
+            def fetchall(self) -> list[Any]:
+                return []
+
+        class Connection:
+            def __init__(self, real: Any) -> None:
+                self.real = real
+
+            def cursor(self, **_options: Any) -> Cursor:
+                return Cursor(self.real.cursor())
+
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_WEB_ROLE']}") as c:
+            traffic_logs.read_database(
+                Connection(c),  # type: ignore[arg-type]
+                self.directory,
+                (self.cluster,),
+                substring=term,
+                server_addresses=addresses,
+            )
+        return plans[0]
+
+    def fill_days(self, count: int, clients: str) -> list[Any]:
+        days = [self.now.date() - timedelta(days=offset) for offset in range(count)]
         with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}") as c:
             for day in days:
                 c.execute("select traffic_log_partition(%s::date)", (day,))
                 c.execute(
-                    "insert into traffic_log (event_id, cluster, node, occurred_at,"
+                    "insert into traffic_log (event_id, cluster, node, occurred_at,"  # noqa: S608 - the test's own literal
                     " request_number, client, method, host, path, frontend, backend, server,"
                     " status, request_time, queue_time, connect_time, response_time,"
                     " total_time, bytes)"
                     " select sha256((%s || i)::bytea), %s, 'node-a', %s::date + interval '12 hours',"
-                    " i, '2001:db8::' || to_hex(i), 'GET', 'app.example.com',"
+                    " i, " + clients + ", 'GET', 'app.example.com',"
                     " '/p' || i %% 50, 'f', 'be-app', 's1', 200, 0, 0, 0, 0, 0, 0"
                     " from generate_series(1, 20000) as i",
-                    (str(day), self.cluster, day),
+                    (f"{self.cluster}{day}", self.cluster, day),
                 )
+        #
+        # Analyzed once the rows are committed, or the planner knows nothing of
+        # the cluster and picks the cluster's own index to avoid a sort.
+        #
+        with psycopg.connect(
+            f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}", autocommit=True
+        ) as c:
+            for day in days:
                 c.execute(f"analyze traffic_log_{day:%Y%m%d}")
-        parameters: list[Any] = [[self.cluster]]
-        expression = traffic_logs._Parser(traffic_logs._tokens("2001:db8::1f4")).parse()
-        condition = traffic_logs._search_sql(expression, parameters).as_string(None)
-        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_WEB_ROLE']}") as c:
-            rows = c.execute(
-                "explain select 1 from traffic_log_read where cluster = any(%s) and " + condition,  # noqa: S608 - the module's own condition
-                parameters,
-            ).fetchall()
-        plan = "\n".join(row[0] for row in rows)
-        print(plan)
+        return days
+
+    def test_a_network_search_over_many_days_uses_the_clients_index(self) -> None:
+        """The statement the page runs reads each day through its client index, not row by row (0111)."""
+
+        days = self.fill_days(3, "'2001:db8::' || to_hex(i)")
+        plan = self.search_plan("2001:db8::/120")
+        for day in days:
+            self.assertIn(f"traffic_log_{day:%Y%m%d}_client", plan)
+
+    def test_a_destination_that_starts_like_an_address_does_not_scan_the_log(self) -> None:
+        """`192.0.2.1` with a server on `192.0.2.10`: the client's index, as without the server."""
+
+        days = self.fill_days(3, "'2001:db8::' || to_hex(i)")
+        plan = self.search_plan("192.0.2.1", {(self.cluster, "be-app", "s1"): "192.0.2.10:8080"})
+        for day in days:
+            self.assertIn(f"traffic_log_{day:%Y%m%d}_client", plan)
+
+    def test_the_web_pool_does_not_compile_queries(self) -> None:
+        """A search of many terms is compiled by LLVM for minutes, and that is not cancelled (P2-1)."""
+
+        pool = db.pool(
+            mock.Mock(connection_string=f"{DSN} user={os.environ['HAPRION_UI_TEST_WEB_ROLE']}")
+        )
+        pool.open(wait=True)
+        self.addCleanup(pool.close)
+        with pool.connection() as connection:
+            self.assertEqual(connection.execute("show jit").fetchone(), ("off",))
+
+    def test_forty_terms_over_many_destinations_answer_within_the_web_limit(self) -> None:
+        """Review 26-11-01, P2-1: 40 terms, each in a destination, were cancelled after minutes."""
+
+        addresses = {
+            (self.cluster, f"be-{backend}", f"s{server}"): f"198.51.100.{server}:8080"
+            for backend in range(5)
+            for server in range(1, 11)
+        }
+        self.fill_days(2, "'192.0.2.' || (i %% 250)")
+        pool = db.pool(
+            mock.Mock(connection_string=f"{DSN} user={os.environ['HAPRION_UI_TEST_WEB_ROLE']}")
+        )
+        pool.open(wait=True)
+        self.addCleanup(pool.close)
+        started = time.monotonic()
+        with pool.connection() as connection:
+            traffic_logs.read_database(
+                connection,
+                self.directory,
+                (self.cluster,),
+                substring=" ".join(["8080"] * 40),
+                server_addresses=addresses,
+            )
+        self.assertLess(time.monotonic() - started, 4)
+
+    def test_a_client_search_over_many_days_uses_the_clients_index(self) -> None:
+        """The statement the page runs names the per-day client index on every day it reads (0111)."""
+
+        days = self.fill_days(3, "'2001:db8::' || to_hex(i)")
+        plan = self.search_plan("2001:db8::1f4")
         for day in days:
             self.assertIn(f"traffic_log_{day:%Y%m%d}_client", plan)
 

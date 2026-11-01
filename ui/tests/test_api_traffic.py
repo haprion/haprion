@@ -12,6 +12,7 @@ from unittest import mock
 
 import psycopg
 
+from haprion_ui import traffic_logs
 from haprion_ui.api.traffic import moment
 from haprion_ui.config import TrafficLogs
 from haprion_ui.traffic_logs import Entry, Freshness, Reading
@@ -44,6 +45,7 @@ def entry(**changes: Any) -> Entry:
         "bytes": 512,
     }
     values.update(changes)
+    values.setdefault("event", bytes([values["request"] % 256]) * 32)
     return Entry(**values)
 
 
@@ -72,6 +74,9 @@ EXPECTED_ROW = {
     "termination": "",
     "ended": "",
 }
+
+
+REAL_READ = traffic_logs.read_database
 
 
 class TheTrafficRoute(ApiTestCase):
@@ -171,7 +176,6 @@ class TheTrafficRoute(ApiTestCase):
 
     def test_q_is_given_the_destinations_it_may_search(self) -> None:
         # The route shows each row's destination, so `q` may find it, as the page's does.
-        from haprion_ui import traffic_logs
 
         self.get("?q=192.0.2.10")
         asked = self.read.call_args.kwargs
@@ -181,9 +185,9 @@ class TheTrafficRoute(ApiTestCase):
             parameters,
             asked["server_addresses"],
         ).as_string(None)
-        self.assertIn("(cluster, backend, server) in", statement)
-        self.assertIn("client = any(%s)", statement)
-        self.assertEqual(parameters[-3:], [["alpha"], ["web"], ["s1"]])
+        self.assertIn("= any(%s::text[])", statement)
+        self.assertIn("traffic_log_client_inet(client) = any(%s::inet[])", statement)
+        self.assertEqual(parameters[-1], ["alpha web s1"])
 
     def test_an_object_the_cluster_does_not_have_is_not_found(self) -> None:
         """A mistyped name must not read as "no requests", for ever, in a monitoring script."""
@@ -324,7 +328,7 @@ class TheTrafficRoute(ApiTestCase):
         self.assertEqual([row["request_number"] for row in second["requests"]], [1])
         self.assertIsNone(second["next"])
         # The place is the last row listed, and the read starts after it.
-        self.assertEqual(self.read.call_args.kwargs["before"], (SEEN, 2, "node-a"))
+        self.assertEqual(self.read.call_args.kwargs["before"], (SEEN, 2, "node-a", bytes([2]) * 32))
 
     def test_a_next_page_stays_in_the_window_the_first_was_cut_from(self) -> None:
         # Without `from` the window is an hour before now; an hour later the next page
@@ -347,11 +351,19 @@ class TheTrafficRoute(ApiTestCase):
             return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
 
         start = "2026-10-31T11:00:00+00:00|2026-10-31T11:59:30+00:00"
+        event = "ab" * 32
         for query in (
-            "?before=" + cursor(f"{start}|7|node-a\x00"),
-            "?before=" + cursor(f"{start}|7|no de"),
-            "?before=" + cursor(f"{start}|{2**63}|node-a"),
-            "?before=" + cursor(f"{start}|-1|node-a"),
+            "?before=" + cursor(f"{start}|7|node-a\x00|{event}"),
+            "?before=" + cursor(f"{start}|7|no de|{event}"),
+            # `$` in a regex also matches before a trailing newline (2042f126).
+            "?before=" + cursor(f"{start}|7|node-a\n|{event}"),
+            "?before=" + cursor(f"{start}|{2**63}|node-a|{event}"),
+            "?before=" + cursor(f"{start}|-1|node-a|{event}"),
+            "?before=" + cursor(f"{start}|7|node-a|{event[:-1]}"),
+            "?before=" + cursor(f"{start}|7|node-a|{'AB' * 32}"),
+            "?before=" + cursor(f"{start}|7|node-a"),
+            "?before="
+            + cursor(f"0001-01-01T00:00:00+00:00|2026-10-31T11:59:30+00:00|7|node-a|{event}"),
             "?q=a%00b",
             "?object=a%00",
             "?status=2%00x",
@@ -360,6 +372,13 @@ class TheTrafficRoute(ApiTestCase):
                 response = self.get(query)
                 self.assertEqual(response.status_code, 400, response.text)
                 self.assertEqual(response.json()["error"]["code"], "bad_input")
+
+    def test_a_network_with_a_zone_is_a_400_not_a_500(self) -> None:
+        # Review 26-11-01, P3-1: PostgreSQL cannot read it; the search says so before asking.
+        self.read.side_effect = REAL_READ
+        response = self.get("?q=fe80%3A%3A%25eth0%2F64")
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error"]["code"], "bad_input")
 
     def test_a_place_that_was_not_given_is_a_400(self) -> None:
         for before in ("x", "bm90LWEtcGxhY2U", "MjAyNi0xMC0zMXx4fG5vZGUtYQ"):

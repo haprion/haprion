@@ -3665,7 +3665,10 @@ on purpose.
 **Filtering.** You can filter by cluster, by status class (2xx to 5xx), by whether the WAF matched a rule
 (*Rule hits* or *No rule hits*), by a search text and by a from/to time. The search finds text in the host,
 the path and the backend, and also a term that is a client address (`192.0.2.5`), a network (`192.0.2.0/24`)
-or part of a destination (`192.0.2.10:8080`, or a server's name); it understands AND, OR, NOT, parentheses
+or a configured destination: an address (`192.0.2.10`) finds the destination on that host and no
+other, `192.0.2.10:8080` or `[2001:db8::10]:443` the one destination, a network the destinations in it,
+and any other text a part of the destination's address or host name. A network finds the clients and
+destinations in it, however the log writes them. The search understands AND, OR, NOT, parentheses
 and quoted phrases. A filter searches
 every day the database holds. The page then shows the newest matches: at most `max_lines` of them, 500 by
 default and 10 000 at most.
@@ -5186,6 +5189,9 @@ These gaps are not on the way to being filled. Each one is either impossible wit
 the manager does not own, or left out because the alternative is better done elsewhere. The details are
 in the section linked.
 
+- **A server named in advanced configuration is not found by its name.** The *Traffic logs* page shows
+  it, but the search reads the destinations the manager configured (their address or host name), not the
+  names of servers written in advanced configuration.
 - **A UDP service whose server answers - RADIUS, NTP, SNMP - is not balanced.** A server answers the
   address it sees. To let it see the client's own address, the answer must either pass back through the
   node, or come from the VIP itself. Passing back through the node means the node has to be the servers'

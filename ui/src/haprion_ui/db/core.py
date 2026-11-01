@@ -36,7 +36,13 @@ def pool(database: Database, *, min_size: int = 1, max_size: int = 4) -> Connect
         conninfo=database.connection_string,
         min_size=min_size,
         max_size=max_size,
-        kwargs={"cursor_factory": timing.TimedCursor},
+        #
+        # `jit=off`: PostgreSQL compiles a large query with LLVM, and that
+        # cannot be cancelled, so a search of many terms ran for minutes past
+        # the role's statement timeout. These services' queries are short and
+        # gain nothing from it (26-11-01).
+        #
+        kwargs={"cursor_factory": timing.TimedCursor, "options": "-c jit=off"},
         #
         # A connection is tried before it is lent. After a PostgreSQL restart
         # every idle one in the pool is dead, and each would otherwise fail

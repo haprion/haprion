@@ -62,33 +62,44 @@ EARLIEST = datetime(1970, 1, 1, tzinfo=UTC)
 LATEST = datetime(9999, 1, 1, tzinfo=UTC)
 
 
-NODE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+EVENT_ID = re.compile(r"[0-9a-f]{64}")
 
 
 def _cursor(entry: traffic_logs.Entry, from_shown: datetime) -> str:
     """The place after a row, as an opaque string.
 
-    Its time, request number and node, and the start of the window it was cut
+    Its time, request number, node and own identity (the last tie-break: two
+    HAProxy processes can both count a request 7 in one second), and the start of the window it was cut
     from: a read without `from` starts an hour before now, and a next page that
     started an hour before a later now would drop the oldest rows (26-11-01).
     """
 
-    text = f"{moment(from_shown)}|{moment(entry.at)}|{entry.request}|{entry.node}"
+    text = (
+        f"{moment(from_shown)}|{moment(entry.at)}|{entry.request}|{entry.node}|{entry.event.hex()}"
+    )
     return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
 
 
-def _place(cursor: str | None) -> tuple[datetime, tuple[datetime, int, str]] | None:
+def _place(cursor: str | None) -> tuple[datetime, tuple[datetime, int, str, bytes]] | None:
     """The window start and the place a cursor holds; a 400 for anything this log did not give."""
 
     if cursor is None:
         return None
     try:
         text = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
-        start, at, request, node = text.split("|")
+        start, at, request, node, event = text.split("|")
         number = int(request)
-        if not NODE_NAME.fullmatch(node) or not 0 <= number < 2**63:
+        if (
+            not traffic_logs.NODE_ID.fullmatch(node)
+            or not 0 <= number < 2**63
+            or not EVENT_ID.fullmatch(event)
+        ):
             raise ValueError(node)
-        return datetime.fromisoformat(start), (datetime.fromisoformat(at), number, node)
+        started, placed = datetime.fromisoformat(start), datetime.fromisoformat(at)
+        for moment_ in (started, placed):
+            if not EARLIEST <= (_utc(moment_) or EARLIEST) < LATEST:
+                raise ValueError(moment_)
+        return started, (placed, number, node, bytes.fromhex(event))
     except ValueError:
         raise Refusal(400, "bad_input", "before is not a place this log gave.") from None
 

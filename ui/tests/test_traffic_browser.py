@@ -75,6 +75,14 @@ class TheChartInABrowser(ReadingACluster):
     keeps the suite to a few seconds rather than a few minutes.
     """
 
+    #
+    # A real browser on a real server: the page's own reading and a hover's
+    # fetch can be in flight at once, two requests with a connection each.
+    # Under the full gate's load they met once (26-11-01) and the peak read 2.
+    # A handler that takes a second connection is still refused per thread.
+    #
+    concurrent_connections = True
+
     _playwright: ClassVar[Playwright]
     _browser: ClassVar[Browser]
 

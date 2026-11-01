@@ -24,6 +24,27 @@ CONTENTS = {
 """
 
 
+#
+# The node status script as the node digests with it: the function, between the
+# two markers the tool cuts it by.
+#
+STATUS = """\
+import hashlib
+
+
+def step_digest(directory):
+    lines = b""
+    for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+        name = "./" + str(path.relative_to(directory))
+        lines += f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {name}\\n".encode()
+    return hashlib.sha256(lines).hexdigest()
+
+
+def read_preparation():
+    return None
+"""
+
+
 def load_tool() -> Any:
     loader = importlib.machinery.SourceFileLoader("node_step_changed", str(TOOL))
     spec = importlib.util.spec_from_loader("node_step_changed", loader)
@@ -42,7 +63,7 @@ class TheNodeStepBetweenTwoRevisions(unittest.TestCase):
         self.write("src/haprion/node_package.py", TABLE)
         self.write("install/04-node-prepare", "prepare\n")
         self.write("install/accounts.sh", "readonly A=alpha\n")
-        self.write("install/node/haprion-node-status", "status\n")
+        self.write("install/node/haprion-node-status", STATUS)
         self.write("install/manager-only", "manager\n")
         self.commit("one")
         self.tool.ROOT = self.repo
@@ -89,9 +110,27 @@ class TheNodeStepBetweenTwoRevisions(unittest.TestCase):
     def test_a_file_outside_the_step_changes_nothing(self) -> None:
         first = self.git("rev-parse", "HEAD")
         self.write("install/manager-only", "other\n")
-        self.write("install/node/haprion-node-status", "status again\n")
+        self.write("install/node/haprion-node-status", STATUS + "\n# a comment below\n")
         second = self.commit("two")
         self.assertEqual(self.run_tool(first, second)[0], 0)
+
+    def test_a_changed_digest_function_is_a_changed_step(self) -> None:
+        """26-11-01: the digest of an old tag is its own, not today's."""
+
+        first = self.git("rev-parse", "HEAD")
+        self.write(
+            "install/node/haprion-node-status",
+            STATUS.replace("return hashlib.sha256(lines)", "return hashlib.sha256(b'v2' + lines)"),
+        )
+        second = self.commit("two")
+        code, out = self.run_tool(first, second)
+        self.assertEqual(code, 1, out)
+        self.assertIn("changed  the digest function", out)
+        # A revision is digested with its own function, whichever the working tree has.
+        self.assertNotEqual(
+            self.tool.digest_of({"a": b"x"}, self.tool.step_digest_function(first)),
+            self.tool.digest_of({"a": b"x"}, self.tool.step_digest_function(second)),
+        )
 
     def test_a_changed_file_in_the_step_is_named(self) -> None:
         first = self.git("rev-parse", "HEAD")
@@ -139,7 +178,7 @@ class TheNodeStepBetweenTwoRevisions(unittest.TestCase):
 
     def test_the_digest_is_the_one_a_node_computes(self) -> None:
         files = self.tool.step_files("HEAD")
-        digest = self.tool.digest_of(files, self.tool.step_digest_function())
+        digest = self.tool.digest_of(files, self.tool.step_digest_function("HEAD"))
         with tempfile.TemporaryDirectory() as raw:
             for name, content in files.items():
                 (Path(raw) / name).write_bytes(content)

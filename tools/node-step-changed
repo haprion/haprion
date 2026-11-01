@@ -8,10 +8,11 @@ A node records a digest of the step directory the package installs
 asks to run it again when the package brings a step with another digest. This
 computes that digest for two revisions of the repository: the files the
 revision's node_package.CONTENTS puts in the step directory, digested by the
-same step_digest the node's status script uses, read from that script in the
-working tree (not from the revisions, and not written a second time): the
-algorithm is the one installed today, so a revision that changed the algorithm
-itself is not told apart from one that did not. Used by the release notes: do the nodes have to
+step_digest of the node's status script as that same revision has it (cut from
+`git show <rev>:install/node/haprion-node-status`, not written a second time
+and not read from the working tree): a node digests with the script of the
+package it runs, so a revision that changed the algorithm itself is told apart
+from one that did not. Used by the release notes: do the nodes have to
 prepare again?
 
 Prints "unchanged", or "changed" and the files that differ, one per line.
@@ -29,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_SCRIPT = ROOT / "install/node/haprion-node-status"
+STATUS_SCRIPT = "install/node/haprion-node-status"
 
 
 class Failed(Exception):
@@ -45,16 +46,23 @@ def git(*arguments: str) -> bytes:
     return done.stdout
 
 
-def step_digest_function() -> Any:
-    """The node status script's step_digest, cut from its source."""
+def step_digest_source(revision: str) -> str:
+    """The node status script's step_digest as that revision has it."""
 
-    text = STATUS_SCRIPT.read_text(encoding="utf-8")
+    text = git("show", f"{revision}:{STATUS_SCRIPT}").decode("utf-8")
     try:
-        code = text[text.index("def step_digest(") : text.index("def read_preparation(")]
+        return text[text.index("def step_digest(") : text.index("def read_preparation(")]
     except ValueError as error:
-        raise Failed(f"{STATUS_SCRIPT} no longer has step_digest") from error
+        raise Failed(f"{revision}:{STATUS_SCRIPT} has no step_digest") from error
+
+
+def step_digest_function(revision: str) -> Any:
+    """The node status script's step_digest of a revision, cut from its source."""
+
     namespace: dict[str, Any] = {"hashlib": hashlib, "Path": Path}
-    exec(compile(code, str(STATUS_SCRIPT), "exec"), namespace)  # noqa: S102 - the repository's own code
+    exec(  # noqa: S102 - the repository's own code
+        compile(step_digest_source(revision), f"{revision}:{STATUS_SCRIPT}", "exec"), namespace
+    )
     return namespace["step_digest"]
 
 
@@ -115,12 +123,15 @@ def main(argv: list[str]) -> int:
         return 2
     first, last = argv[0], (argv[1] if len(argv) == 2 else "HEAD")
     try:
-        step_digest = step_digest_function()
         before, after = step_files(first), step_files(last)
-        if digest_of(before, step_digest) == digest_of(after, step_digest):
+        if digest_of(before, step_digest_function(first)) == digest_of(
+            after, step_digest_function(last)
+        ):
             print(f"unchanged: the node step is the same at {first} and {last}")
             return 0
         print(f"changed: the node step differs between {first} and {last}")
+        if step_digest_source(first) != step_digest_source(last):
+            print("  changed  the digest function (step_digest in haprion-node-status)")
         for name in sorted(set(before) | set(after)):
             if name not in before:
                 print(f"  added    {name}")

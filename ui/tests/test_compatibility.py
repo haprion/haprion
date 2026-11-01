@@ -140,14 +140,14 @@ class TheHelpersOfAReleaseThatWasTakenOut(unittest.TestCase):
         )
         report = compatibility.Report()
         with contextlib.redirect_stdout(io.StringIO()):
-            compatibility.check_cli_helpers(report, requirements, set(), Path("/nonexistent"), "old")
+            compatibility.check_cli_helpers(
+                report, requirements, set(), Path("/nonexistent"), "old"
+            )
         self.assertEqual(report.failures, 1)
 
     def test_the_sudoers_of_the_newer_package_pass_with_a_warning(self) -> None:
         helpers = ("haprion-deploy-helper", "haprion-block-client-helper")
-        rules = compatibility.expected_sudo_rules(
-            "svc-app", helpers[:1], Path("/opt/haprion")
-        )
+        rules = compatibility.expected_sudo_rules("svc-app", helpers[:1], Path("/opt/haprion"))
         with tempfile.TemporaryDirectory() as raw:
             (Path(raw) / "rules").write_text("\n".join(rules) + "\n")
             status = SimpleNamespace(st_uid=0, st_mode=0o100440)

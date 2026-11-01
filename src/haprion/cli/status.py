@@ -349,7 +349,10 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         #
         preparation = status.get("preparation")
         if isinstance(preparation, dict) and preparation.get("current") is False:
-            writer.write("  Preparation:  CHANGED - run  sudo haprion-node-prepare  on the node\n")
+            writer.write(
+                "  Preparation:  step differs from the one last run here"
+                " - run  sudo haprion-node-prepare  on the node\n"
+            )
         writer.write("\n")
 
     writer.write(f"VIP state:      {summary.get('vip_state')}\n")

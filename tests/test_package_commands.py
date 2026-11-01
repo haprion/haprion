@@ -255,7 +255,7 @@ def manager_scripts() -> list[Path]:
             "lib.sh",
             "node-lib.sh",
             "accounts.sh",
-        "manager-accounts.sh",
+            "manager-accounts.sh",
             "defaults.sh",
         )
     ]

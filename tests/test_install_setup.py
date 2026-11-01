@@ -1005,7 +1005,10 @@ class WhatLibShReadsShipsWithIt(unittest.TestCase):
         }
 
     def test_lib_sh_reads_the_node_s_library_the_accounts_and_the_defaults(self) -> None:
-        self.assertEqual(self.sourced("lib.sh"), {"node-lib.sh", "accounts.sh", "manager-accounts.sh", "defaults.sh"})
+        self.assertEqual(
+            self.sourced("lib.sh"),
+            {"node-lib.sh", "accounts.sh", "manager-accounts.sh", "defaults.sh"},
+        )
         self.assertEqual(self.sourced("node-lib.sh"), {"accounts.sh"})
 
     def test_the_node_package_carries_them(self) -> None:

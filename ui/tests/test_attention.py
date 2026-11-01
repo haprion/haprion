@@ -346,7 +346,11 @@ class EachKindComesAndGoes(unittest.TestCase):
                 ("node", "node-b", "critical"),
             ],
         )
-        self.assertIn("sudo haprion-node-prepare", items[0].message)
+        self.assertEqual(
+            items[0].message,
+            "the node's preparation step differs from the one last run on it:"
+            " run  sudo haprion-node-prepare  on the node",
+        )
         self.assertEqual(items[0].link, "/#cluster-alpha")
         self.assertNotEqual(items[1].key, items[2].key)
 

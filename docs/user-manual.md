@@ -3996,8 +3996,8 @@ box is not shown.
   reports Online, or a status reading that failed or returned no node.
 - **Nodes** that are down or have a warning - for example *Counters not shared*. A node that is only
   behind the published version is not listed: that is a publish waiting for its deploy.
-- **A node to prepare again**, as a warning, when its node package brings a changed preparation step:
-  run `sudo haprion-node-prepare` on it ([Installing and changing node scripts](#installing-and-changing-node-scripts)).
+- **A node to prepare again**, as a warning, when the preparation step its node package carries differs
+  from the one last run on it: run `sudo haprion-node-prepare` on it ([Installing and changing node scripts](#installing-and-changing-node-scripts)).
 - **A node on another node package than the manager's**, as a warning: its `haprion-node` is older than
   the one the manager's release carries, or newer. Older: an upgrade has not reached the node yet, and
   `apt upgrade` on it clears it. Newer: the manager has not been updated yet, or its CLI was rolled back.
@@ -7537,11 +7537,13 @@ package the manager's release carries. `haprion-status` says the same on the nod
 
 On a node that is already joined, the package replaces the node scripts and records their digests
 again; it changes nothing else. It does not run `04-node-prepare`, the step that sets up what the
-scripts need (accounts, sudo rules, the release layout, dnsdist, the log socket). When a release
-changes that step, the upgrade says so:
+scripts need (accounts, sudo rules, the release layout, dnsdist, the log socket). The node keeps a
+record of the step it last ran, and when the package brings a step that differs from it, the upgrade
+says so. It knows that the files differ, not what the difference does, so running the step again is
+the answer:
 
 ```text
-haprion-node: this release changes what the node's preparation sets up; run  sudo haprion-node-prepare
+haprion-node: this release's preparation step differs from the one last run on this node; run  sudo haprion-node-prepare
 ```
 
 A node upgraded without anyone reading that line says it too: its status reports it, and the

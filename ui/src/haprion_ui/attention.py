@@ -429,7 +429,7 @@ def from_dashboard(
                         severity="warning",
                         cluster=cluster.cluster,
                         subject=node.name,
-                        message="the node package changed what its preparation sets up:"
+                        message="the node's preparation step differs from the one last run on it:"
                         " run  sudo haprion-node-prepare  on the node",
                         since=None,
                         link=card_link(cluster.cluster),

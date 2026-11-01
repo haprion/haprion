@@ -181,7 +181,7 @@ if [ "$1" = configure ]; then
             || echo "{PACKAGE}: the record of its scripts was not written; run  sudo dpkg-reconfigure {PACKAGE}" >&2
         bash -c '. {INSTALL_DIR}/node-lib.sh && . {INSTALL_DIR}/node-installation.sh \\
             && if node_prepared_by {INSTALL_DIR}; then exit 0; else exit 1; fi' \\
-            || echo "{PACKAGE}: this release changes what the node's preparation sets up; run  sudo haprion-node-prepare" >&2
+            || echo "{PACKAGE}: this release's preparation step differs from the one last run on this node; run  sudo haprion-node-prepare" >&2
     fi
     {SBIN}/haprion-node-key --package \\
         || echo "{PACKAGE}: the block was not made; run  sudo {SBIN}/haprion-node-key" >&2

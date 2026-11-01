@@ -9,9 +9,10 @@
 Step 4 (04-node-prepare) sets up what the node scripts need beside them: the
 accounts and their sudo rules, the release layout, dnsdist, HAProxy's log
 socket, sshd's address. An upgrade of the package replaces the scripts and
-nothing else, so when a release changes what the step sets up, the step has to
-run again on each node - and the answers it ran with are the operator's file
-on another machine, or the document a manager joined the node with.
+nothing else, so when a release brings a step that differs from the one last
+run, the step has to run again on each node - and the answers it ran with are
+the operator's file on another machine, or the document a manager joined the
+node with.
 
 Both rendered node.conf, which is the node's own truth. The answers are read
 back out of it, as a node restore reads them out of an archive

@@ -807,7 +807,11 @@ class CallerTests(HelperFixture):
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
 
         self.assertEqual(out.count("Preparation:"), 1)
-        self.assertIn("Preparation:  CHANGED - run  sudo haprion-node-prepare  on the node", out)
+        self.assertIn(
+            "Preparation:  step differs from the one last run here"
+            " - run  sudo haprion-node-prepare  on the node",
+            out,
+        )
         self.assertLess(out.index("node-b ("), out.index("Preparation:"))
 
     def test_the_ipvs_file_has_a_line_of_its_own(self) -> None:

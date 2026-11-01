@@ -336,6 +336,16 @@ class ThePostinstAsksWhetherTheStepRan(unittest.TestCase):
     """0.99.1 -> 0.99.2 in the lab: a step that differs printed an ERROR line from
     node-lib.sh's trap above the advice, for what is the answer and not a failure."""
 
+    def test_it_says_what_it_knows_and_no_more(self) -> None:
+        """The check knows the step differs from the one last run here, not what it sets up."""
+
+        self.assertIn(
+            "haprion-node: this release's preparation step differs from the one last run on"
+            " this node; run  sudo haprion-node-prepare",
+            node_package.POSTINST,
+        )
+        self.assertNotIn("sets up", node_package.POSTINST)
+
     def asked(self, *, current: bool) -> subprocess.CompletedProcess[str]:
         command = re.search(r"bash -c '([^']*node_prepared_by[^']*)'", node_package.POSTINST)
         if command is None:

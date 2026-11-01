@@ -32,7 +32,7 @@
   {% if view.objects %}
   <div class="table-scroll"><table class="node-table regenerated-table"><thead><tr><th>Proxy</th><th>Change</th><th>Parts</th></tr></thead><tbody>
     {% for entry in view.objects %}
-    <tr><td data-label="Proxy"><strong>{{ entry.name }}</strong></td><td data-label="Change">{{ entry.change }}</td><td data-label="Parts">{{ entry.parts or '—' }}</td></tr>
+    <tr><td data-label="Proxy">{% if entry.link %}<a class="proxy-link" href="{{ entry.link }}"><strong>{{ entry.name }}</strong></a>{% else %}<strong>{{ entry.name }}</strong>{% endif %}</td><td data-label="Change">{{ entry.change }}</td><td data-label="Parts">{{ entry.parts or '—' }}</td></tr>
     {% endfor %}
   </tbody></table></div>
   {% endif %}

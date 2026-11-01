@@ -12,6 +12,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from haprion import proxy_model
+from haprion.config import CLUSTER_ID
 from haprion_ui import attention, version_changes
 from haprion_ui.db import ClusterRegeneration
 
@@ -32,6 +34,12 @@ class ObjectChange:
     name: str
     change: str
     parts: str
+    #
+    # The object's page, which every role may open; none for a name that is no
+    # object's (the reading is the engine's text, and a link is built from
+    # names the pages accept only).
+    #
+    link: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +74,12 @@ def _text(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _object_link(cluster: str, name: str) -> str:
+    if CLUSTER_ID.fullmatch(cluster) and proxy_model.NAME.fullmatch(name):
+        return f"/proxies/{cluster}/{name}"
+    return ""
+
+
 def build(cluster: str, row: ClusterRegeneration | None) -> Regenerated:
     """The page's view of the stored reading; `unread` when none was made, `failed` when it could not be."""
 
@@ -85,6 +99,7 @@ def build(cluster: str, row: ClusterRegeneration | None) -> Regenerated:
             name=_text(entry.get("name")),
             change=CHANGES.get(_text(entry.get("change")), _text(entry.get("change"))),
             parts=", ".join(PARTS.get(part, str(part)) for part in entry.get("parts") or ()),
+            link=_object_link(cluster, _text(entry.get("name"))),
         )
         for entry in result.get("objects") or ()
         if isinstance(entry, Mapping) and _text(entry.get("name"))

@@ -61,6 +61,19 @@ class TheView(LoginTestCase):
 
         self.assertEqual(regenerated.build("alpha", row).objects[0].change, "No longer generated")
 
+    def test_only_a_name_an_object_can_have_is_linked(self) -> None:
+        row = regeneration(
+            objects=[
+                {"name": "shop", "change": "changed", "parts": []},
+                {"name": "../x?y=1", "change": "changed", "parts": []},
+            ]
+        )
+
+        self.assertEqual(
+            [entry.link for entry in regenerated.build("alpha", row).objects],
+            ["/proxies/alpha/shop", ""],
+        )
+
     def test_the_states_are_the_engines_outcomes(self) -> None:
         for outcome in ("changed", "refused", "unchanged", "unpublished"):
             row = regeneration(outcome=outcome)
@@ -129,7 +142,9 @@ class ThePage(LoginTestCase):
         text = self.page(changed(), role="reader").text
 
         self.assertIn("Publishing again would change what alpha runs", text)
-        self.assertIn("<strong>shop</strong>", text)
+        self.assertIn(
+            '<a class="proxy-link" href="/proxies/alpha/shop"><strong>shop</strong></a>', text
+        )
         self.assertIn("option new", text)
         self.assertNotIn("Publish &amp; deploy", text)
 

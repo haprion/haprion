@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -4296,6 +4297,43 @@ class TheQueueNoLongerTakesABlockClient(unittest.TestCase):
                     (uuid4(),),
                 )
             connection.rollback()
+
+    def test_one_left_waiting_at_the_upgrade_does_not_stop_the_queue(self) -> None:
+        """A row the constraint refuses can never change state; 0109 ends it first."""
+
+        path = Path(__file__).parents[1] / "migrations/versions/0109_block_client_jobs_retired.py"
+        spec = importlib.util.spec_from_file_location("migration_0109", path)
+        if spec is None or spec.loader is None:
+            self.fail(f"{path} cannot be loaded")
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("alter table job drop constraint job_operation_allowed")
+            for state in ("pending", "running"):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "claim_token, worker_id, lease_until, started_at) "
+                    "values ('block_client', %s, '{}', %s, %s, "
+                    "        gen_random_uuid(), 'w', now() + interval '1 hour', now())",
+                    (f"retired-{state}", uuid4(), state),
+                )
+            cursor.execute(migration.END_UNFINISHED)
+            cursor.execute(
+                "alter table job add constraint job_operation_allowed "
+                "check (operation <> 'block_client') not valid"
+            )
+            cursor.execute(
+                "select cluster, state, outcome from job "
+                " where operation = 'block_client' order by cluster"
+            )
+            ended = cursor.fetchall()
+            claimed = db.claim_job(connection, worker_id="test", lease_seconds=60)
+            connection.rollback()
+        self.assertEqual(
+            ended,
+            [("retired-pending", "failed", "failed"), ("retired-running", "unknown", "unknown")],
+        )
+        self.assertTrue(claimed is None or claimed.operation != "block_client")
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

@@ -29,7 +29,27 @@ ROLLBACK_SAFE_BECAUSE = (
 )
 
 
+#
+# A `block_client` job still waiting or running at the upgrade is ended first.
+# The constraint is checked on every update too, so such a row could never
+# change state again: the worker takes the oldest waiting job, and that claim
+# would fail on every pass, with the job holding its cluster's one active slot.
+# One that waited never ran (`failed`); one that ran may have taken effect
+# (`unknown`).
+#
+END_UNFINISHED = """
+    update job
+       set state = case state when 'pending' then 'failed' else 'unknown' end,
+           outcome = case state when 'pending' then 'failed' else 'unknown' end,
+           finished_at = statement_timestamp(),
+           lease_until = null,
+           stderr_excerpt = 'Blocking over ssh was removed; the upgrade ended this job.'
+     where operation = 'block_client' and state in ('pending', 'running');
+"""
+
+
 def upgrade() -> None:
+    op.execute(END_UNFINISHED)
     #
     # Written out rather than joined from a list: the queue's tests read the
     # newest constraint from the migration's text.

@@ -153,7 +153,7 @@ def regeneration_line(result: Mapping[str, Any] | None, cluster_id: str) -> str 
         return None
     count = int(result.get("files_changed") or 0)
     noun = "file" if count == 1 else "files"
-    line = f"  A publish would change what runs: {count} {noun}"
+    line = f"  Publish and deploy to apply the update: {count} {noun} differ{'s' if count == 1 else ''}"
     objects = [
         f"{item['name']} ({', '.join(item['parts'])})" if item.get("parts") else str(item["name"])
         for item in result.get("objects") or []
@@ -163,7 +163,8 @@ def regeneration_line(result: Mapping[str, Any] | None, cluster_id: str) -> str 
     return (
         line
         + f"\n  Publish it with: haprion-publish -c {cluster_id} --regenerate"
-        + " (the publish makes its own checks, such as the ports the nodes hold, and may still refuse)\n"
+        + " (the publish makes its own checks, such as the ports the nodes hold, and may still refuse)"
+        + f"\n  Then deploy it with: haprion-deploy -c {cluster_id}\n"
     )
 
 

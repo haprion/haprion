@@ -177,11 +177,13 @@ class RegenerationTests(StatusFixture):
         )
 
         self.assertIn(
-            "\n  A publish would change what runs: 1 file; objects: shop (backends, routing)\n"
+            "\n  Publish and deploy to apply the update: 1 file differs; objects: shop (backends, routing)\n"
             "  Publish it with: haprion-publish -c alpha --regenerate (",
             shown,
         )
-        self.assertIn("may still refuse)\n\n", shown)
+        self.assertIn(
+            "may still refuse)\n  Then deploy it with: haprion-deploy -c alpha\n\n", shown
+        )
         self.assertNotIn("balance leastconn", shown)
 
     def test_diff_prints_the_difference(self) -> None:

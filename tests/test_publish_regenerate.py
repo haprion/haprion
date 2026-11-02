@@ -126,7 +126,9 @@ class PublishingTheRegeneration(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(terminal.sent, [])
         shown = terminal.out.getvalue()
-        self.assertIn("A publish would change what runs: 2 files; objects: shop (routing)", shown)
+        self.assertIn(
+            "Publish and deploy to apply the update: 2 files differ; objects: shop (routing)", shown
+        )
         self.assertIn(f"Fingerprint: {FINGERPRINT}", shown)
 
     def test_check_with_json_is_the_regeneration_document(self) -> None:

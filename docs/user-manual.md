@@ -140,8 +140,8 @@ rule set and country networks come back as it ran them, not as installed today.
 so can a newer WAF rule set. The nodes keep running what was published until the cluster is published
 again. The manager makes each cluster's published version again with the installed release, without
 publishing, and compares the result with what the nodes run. When they differ, *Needs attention* says
-*Publishing again would change what the cluster runs*, with the cause where one is known, such as *the WAF
-rule set 4.25.1 → 4.25.2*. Open the row's **Versions** button: the page lists the causes, the proxies
+*Publish & deploy to apply the update*, with the cause where one is known, such as *the WAF rule set
+4.25.1 → 4.25.2*. Open the row's **Versions** button: the page lists the causes, the proxies
 that differ and the files, line by line. **Publish & deploy** there publishes only the regenerated
 configuration, with the country networks the published version carries, and deploys it. Nothing happens until you choose it, so the traffic is reloaded when you
 want it. If versions were saved after the published one, publishing carries them too, and the page says
@@ -195,13 +195,14 @@ that. The published version is generated again with the installed release, witho
 files a node would run are compared with the ones it runs. When they differ, the report says so:
 
 ```
-  A publish would change what runs: 3 files; objects: shop (backends, routing), api (listener)
+  Publish and deploy to apply the update: 3 files differ; objects: shop (backends, routing), api (listener)
+  Publish it with: haprion-publish -c alpha --regenerate (the publish makes its own checks, ...)
+  Then deploy it with: haprion-deploy -c alpha
 ```
 
 `haprion-config-status -c alpha --diff` prints the difference, file by file, as `haprion-list --diff`
-does for a version. The line ends with the command that publishes it, `haprion-publish -c alpha
---regenerate`, followed by `haprion-deploy -c alpha`; the publish makes its own checks (the ports the
-nodes hold, and HAProxy's own check of the result), so it can still refuse where the report did not.
+does for a version. The publish makes its own checks (the ports the nodes hold, and HAProxy's own check
+of the result), so it can still refuse where the report did not.
 `haprion-publish -c alpha --regenerate --check` prints the same and a fingerprint of what it read;
 `--expect <fingerprint>` publishes only if the reading is still that one, as the button on the page does
 for the page it was drawn from. `-m` sets the version's comment, and `--allow-certificate-mismatch`
@@ -4076,7 +4077,7 @@ box is not shown.
   any of them; a warning when some are down, or down on one node only. An object without a health check
   has no lamp and is not listed.
 - **A cluster whose status has not been read** for two poll intervals.
-- **A cluster where publishing again would change what runs**, as a warning, and one where the installed
+- **A cluster where an update takes effect only with a publish and deploy**, as a warning, and one where the installed
   release would refuse the published configuration. The row's **Versions** button opens the difference.
   Acknowledging it holds until the difference is another one.
 - **A WAF exception** marked *Not working*.

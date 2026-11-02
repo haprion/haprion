@@ -954,7 +954,12 @@ def from_regeneration(rows: Iterable[Any]) -> list[Item]:
                 for cause in result.get("causes") or ()
                 if isinstance(cause, Mapping) and (said := regeneration_cause(cause))
             ]
-            message = f"Publishing again would change what {row.cluster} runs" + (
+            #
+            # What to do, in the button's own words (B433, 26-11-02): the row
+            # said what would differ and left the reader asking what changes
+            # and whether to act. The cause, where one is known, stays.
+            #
+            message = "Publish & deploy to apply the update" + (
                 f" ({', '.join(causes)})" if causes else ""
             )
         elif outcome == "refused":

@@ -27,7 +27,7 @@
 </article>
 {% else %}
 <article class="cluster-card">
-  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Publishing again would change what {{ view.cluster }} runs</h3><p>Made again with {{ view.installed_version }}, {{ view.files_changed }} file{{ ' differs' if view.files_changed == 1 else 's differ' }} from the published version. The publish makes its own checks, such as the ports the nodes hold, and can still refuse.</p></div></div></header>
+  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Publish &amp; deploy {{ view.cluster }} to apply the update</h3><p>Made again with {{ view.installed_version }}, {{ view.files_changed }} file{{ ' differs' if view.files_changed == 1 else 's differ' }} from the published version. The publish makes its own checks, such as the ports the nodes hold, and can still refuse.</p></div></div></header>
   {% if view.causes %}<ul class="removal-consequences regenerated-causes">{% for cause in view.causes %}<li>{{ cause[:1] | upper }}{{ cause[1:] }}</li>{% endfor %}</ul>{% endif %}
   {% if view.objects %}
   <div class="table-scroll"><table class="node-table regenerated-table"><thead><tr><th>Proxy</th><th>Change</th><th>Parts</th></tr></thead><tbody>

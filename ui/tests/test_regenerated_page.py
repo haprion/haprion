@@ -30,6 +30,10 @@ DIFF = {
         }
     ],
 }
+#
+# The form's button, not its words: the heading says "Publish & deploy" too (B433).
+#
+BUTTON = 'type="submit">Publish &amp; deploy</button>'
 CAUSE = {"kind": "rule_set", "published": "4.25.1", "installed": "4.25.2"}
 
 
@@ -127,7 +131,7 @@ class ThePage(LoginTestCase):
         )
         text = self.page(row).text
 
-        self.assertIn("Publishing again would change what alpha runs", text)
+        self.assertIn("Publish &amp; deploy alpha to apply the update", text)
         self.assertIn("The WAF rule set 4.25.1 → 4.25.2", text)
         self.assertIn("<strong>shop</strong>", text)
         self.assertIn("backends, routing", text)
@@ -140,7 +144,7 @@ class ThePage(LoginTestCase):
         text = self.page(changed()).text
 
         self.assertIn('action="/history/alpha/regenerated"', text)
-        self.assertIn("Publish &amp; deploy", text)
+        self.assertIn(BUTTON, text)
         self.assertIn(f'name="expected_head" value="{HEAD}"', text)
         self.assertIn(f'name="fingerprint" value="{"a" * 64}"', text)
 
@@ -148,7 +152,7 @@ class ThePage(LoginTestCase):
         text = self.page(changed(), writes=False).text
 
         self.assertIn("option new", text)
-        self.assertNotIn("Publish &amp; deploy", text)
+        self.assertNotIn(BUTTON, text)
         self.assertNotIn('method="post"', text.split("<main", 1)[1])
 
     def test_a_reader_sees_what_would_change_and_the_files_but_not_the_form(self) -> None:
@@ -156,12 +160,12 @@ class ThePage(LoginTestCase):
 
         text = self.page(changed(), role="reader").text
 
-        self.assertIn("Publishing again would change what alpha runs", text)
+        self.assertIn("Publish &amp; deploy alpha to apply the update", text)
         self.assertIn(
             '<a class="proxy-link" href="/proxies/alpha/shop"><strong>shop</strong></a>', text
         )
         self.assertIn("option new", text)
-        self.assertNotIn("Publish &amp; deploy", text)
+        self.assertNotIn(BUTTON, text)
 
     def test_versions_saved_after_the_published_one_are_said_to_come_along(self) -> None:
         self.assertIn(
@@ -175,7 +179,7 @@ class ThePage(LoginTestCase):
 
         self.assertIn("The installed version cannot publish alpha again", text)
         self.assertIn("a listener clashes", text)
-        self.assertNotIn("Publish &amp; deploy", text)
+        self.assertNotIn(BUTTON, text)
 
     def test_when_there_is_nothing_to_show_the_page_says_so_plainly(self) -> None:
         for row, words in (
@@ -193,7 +197,7 @@ class ThePage(LoginTestCase):
             with self.subTest(words=words):
                 text = self.page(row).text
                 self.assertIn(words, text)
-                self.assertNotIn("Publish &amp; deploy", text)
+                self.assertNotIn(BUTTON, text)
 
     def test_a_failed_reading_is_not_called_unread(self) -> None:
         text = self.page(
@@ -214,14 +218,14 @@ class ThePage(LoginTestCase):
             text = self.page(changed()).text
 
         self.assertIn("1 saved change waits to be published", text)
-        self.assertNotIn("Publish &amp; deploy", text)
+        self.assertNotIn(BUTTON, text)
         self.assertIn("1 file differs", self.page(changed(files_changed=1)).text)
 
     def test_a_busy_cluster_has_the_badge_in_place_of_the_form(self) -> None:
         from tests.test_job_page import job
 
         text = self.page(changed(), running=[job(state="running", operation="deploy")]).text
-        self.assertNotIn("Publish &amp; deploy", text)
+        self.assertNotIn(BUTTON, text)
         self.assertIn('data-busy="alpha"', text)
 
     def test_a_cluster_that_is_not_listed_is_a_404(self) -> None:

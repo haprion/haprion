@@ -899,7 +899,7 @@ class WhatPublishingAgainWouldChange(unittest.TestCase):
             (item.kind, item.severity, item.cluster, item.link, item.page),
             ("regeneration", "warning", "alpha", "/history/alpha/regenerated", "Versions"),
         )
-        self.assertEqual(item.message, "Publishing again would change what alpha runs")
+        self.assertEqual(item.message, "Publish & deploy to apply the update")
 
     def test_a_cause_the_engine_names_is_said(self) -> None:
         (item,) = attention.from_regeneration(
@@ -912,7 +912,7 @@ class WhatPublishingAgainWouldChange(unittest.TestCase):
 
         self.assertEqual(
             item.message,
-            "Publishing again would change what alpha runs (the WAF rule set 4.25.1 → 4.25.2)",
+            "Publish & deploy to apply the update (the WAF rule set 4.25.1 → 4.25.2)",
         )
 
     def test_a_refusal_is_its_own_row_with_the_engines_words(self) -> None:
@@ -965,7 +965,7 @@ class ThePageListsWhatPublishingAgainWouldChange(LoginTestCase):
     def test_a_difference_is_a_row_that_leads_to_the_regenerated_page(self) -> None:
         page = self.page([regeneration()])
 
-        self.assertIn("Publishing again would change what", page)
+        self.assertIn("Publish &amp; deploy to apply the update", page)
         self.assertIn('href="/history/alpha/regenerated"', page)
 
     def test_a_reader_is_led_to_the_regenerated_page_too(self) -> None:
@@ -1002,7 +1002,7 @@ class ThePageListsWhatPublishingAgainWouldChange(LoginTestCase):
     def test_no_difference_is_no_row(self) -> None:
         page = self.page([regeneration(outcome="unchanged")])
 
-        self.assertNotIn("Publishing again would change", page)
+        self.assertNotIn("to apply the update", page)
         self.assertNotIn("/history/alpha/regenerated", page)
 
 

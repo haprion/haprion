@@ -117,6 +117,17 @@ class DeployReport:
             "nodes": [report.as_dict() for report in self.nodes.values()],
         }
 
+    def _not_converged(self) -> str:
+        """Which nodes are not on the new version, said by name (26-11-02)."""
+
+        silent = [name for name, node in self.nodes.items() if not node.reachable]
+        if silent:
+            return f"no answer from {', '.join(silent)}"
+        behind = [name for name, node in self.nodes.items() if not node.verified]
+        if behind:
+            return f"not confirmed on the new version: {', '.join(behind)}"
+        return "not every node is on the new version"
+
     def as_envelope(self, cluster: str | None, *, request_id: str | None = None) -> dict[str, Any]:
         """The frozen `haprion-deploy` envelope.
 
@@ -136,12 +147,7 @@ class DeployReport:
             warnings = (*warnings, error)
             error = None
         if self.outcome is Outcome.PARTIAL and not warnings:
-            warnings = (
-                Message(
-                    code="cluster_not_converged",
-                    message="the cluster was not fully reconciled",
-                ),
-            )
+            warnings = (Message(code="cluster_not_converged", message=self._not_converged()),)
         return envelope(
             operation=self.operation,
             outcome=self.outcome.value,

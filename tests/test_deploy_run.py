@@ -780,6 +780,33 @@ class ZeroOwnerTests(unittest.TestCase):
         self.assertEqual(code, exit_codes.FAILED)
 
 
+class ThePartialWithoutAReasonNamesTheNodes(unittest.TestCase):
+    def warning(self, nodes: dict[str, deploy_run.NodeReport]) -> str:
+        report = DeployReport(
+            target=None,
+            override_used=False,
+            initial_summary={},
+            nodes=nodes,
+            outcome=deploy_run.Outcome.PARTIAL,
+        )
+        warnings = report.as_envelope("alpha")["warnings"]
+        self.assertEqual(warnings[0]["code"], "cluster_not_converged")
+        return str(warnings[0]["message"])
+
+    def test_the_nodes_that_did_not_answer_are_named(self) -> None:
+        said = self.warning(
+            {
+                "node-a": deploy_run.NodeReport("node-a", True, True, verified=True),
+                "node-b": deploy_run.NodeReport("node-b", False, None),
+            }
+        )
+        self.assertEqual(said, "no answer from node-b")
+
+    def test_without_a_silent_node_the_unconfirmed_ones_are_named(self) -> None:
+        said = self.warning({"node-a": deploy_run.NodeReport("node-a", True, False)})
+        self.assertEqual(said, "not confirmed on the new version: node-a")
+
+
 if __name__ == "__main__":
     unittest.main()
 

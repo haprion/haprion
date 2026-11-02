@@ -696,27 +696,17 @@ class TheTrafficLogPage(LoginTestCase):
                 record(request=2, path="/thumb", status=0, rule="waf-engine/interrupted:deny")
             )
 
-        label = "Client left before the WAF answered"
+        label = "The client cancelled the request before the WAF had answered; nothing reached the server"
         everything = self.page()
         # The request column is narrow: the short label there, the whole one in its title.
-        self.assertIn('status-badge-critical">Client left</span>', everything)
+        # Grey, not red: no rule decided anything (B434, 26-11-02).
+        self.assertIn('status-badge-unknown">Cancelled</span>', everything)
         self.assertIn(f'title="{label}, waf-engine/interrupted:deny — ', everything)
-        # No response was sent: the status is stored as 0 and shown as a dash.
-        self.assertIn('status-badge-warning">–</span>', everything)
+        # No response was sent: the status is stored as 0 and shown as a grey dash.
+        self.assertIn('status-badge-unknown">–</span>', everything)
         self.assertIn('data-export-rule="waf-engine/interrupted"', everything)
         # The export says the same as the page: an empty cell, not a 0 (26-11-01).
         self.assertIn('data-export-status=""', everything)
-        with (
-            patch("haprion_ui.db.cluster_objects", return_value=[]),
-            patch("haprion_ui.db.waf_findings", return_value=[]),
-            patch("haprion_ui.db.waf_verdicts", return_value={}),
-            patch("haprion_ui.db.waf_request_count", return_value=1),
-            patch("haprion_ui.db.waf_counted", return_value={}),
-            patch("haprion.crs.installed_catalog", return_value={}),
-        ):
-            waf = self.page(path="/waf", query="?view=requests")
-        self.assertIn(f'status-badge-critical">{label}</span>', waf)
-        self.assertIn('title="waf-engine/interrupted — denied"', waf)
 
     def test_the_traffic_page_filters_on_rule_hits_and_keeps_the_filter(self) -> None:
         self.healthy_meta()

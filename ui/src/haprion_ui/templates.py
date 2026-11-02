@@ -206,8 +206,16 @@ def moments_whole(text: str) -> Markup:
 # as it is.
 #
 RULE_LABELS = {
-    "waf-engine/interrupted": ("Client left before the WAF answered", "Client left"),
+    "waf-engine/interrupted": (
+        "The client cancelled the request before the WAF had answered; nothing reached the server",
+        "Cancelled",
+    ),
 }
+#
+# A rule that decided nothing is drawn grey, not as a refusal (B434, 26-11-02):
+# a cancelled request read as a WAF fault in red.
+#
+NEUTRAL_RULES = frozenset({"waf-engine/interrupted"})
 
 
 def rule_label(name: str, short: bool = False) -> str:
@@ -217,8 +225,18 @@ def rule_label(name: str, short: bool = False) -> str:
     return name if labels is None else labels[1 if short else 0]
 
 
+def rule_tone(rule: str) -> str:
+    """The badge colour for a traffic record's `name:mode` rule."""
+
+    name, _, mode = rule.partition(":")
+    if name in NEUTRAL_RULES:
+        return "unknown"
+    return "critical" if mode == "deny" else "warning"
+
+
 TEMPLATES.env.filters["shown_at"] = shown_at
 TEMPLATES.env.globals["rule_label"] = rule_label
+TEMPLATES.env.globals["rule_tone"] = rule_tone
 TEMPLATES.env.filters["moments_whole"] = moments_whole
 TEMPLATES.env.filters["shown_day"] = moments.day
 TEMPLATES.env.filters["shown_time"] = moments.time_of_day

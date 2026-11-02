@@ -2605,6 +2605,16 @@ class ARealDatabase(unittest.TestCase):
                 "0, 0, 0, 0, 0, 0, 'block-admin:deny') on conflict do nothing",
                 (b"q" * 32, now),
             )
+            # A request its client cancelled while the WAF checked it (B434).
+            connection.execute(
+                "insert into traffic_log (event_id, cluster, node, occurred_at, "
+                "request_number, client, method, host, path, frontend, backend, server, "
+                "status, request_time, queue_time, connect_time, response_time, "
+                "total_time, bytes, rule) values (%s, 'alpha', 'node-a', %s, 2, "
+                "'192.0.2.10', 'GET', 'cancelled.example.com', '/thumb', 'f', 'b', '<NOSRV>', 0, "
+                "0, 0, -1, -1, 0, 0, 'waf-engine/interrupted:deny') on conflict do nothing",
+                (b"c" * 32, now),
+            )
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select rule from traffic_log_read where host = 'rule.example.com'")
             self.assertEqual(cursor.fetchall(), [("block-admin:deny",)])
@@ -2627,6 +2637,9 @@ class ARealDatabase(unittest.TestCase):
         self.assertIn(
             ("rule.example.com", "block-admin:deny"), [(e.host, e.rule) for e in hits.entries]
         )
+        # A cancelled request is no rule hit: on the traffic page, not on the WAF page.
+        self.assertNotIn("cancelled.example.com", [e.host for e in hits.entries])
+        self.assertIn("cancelled.example.com", [e.host for e in none.entries])
         #
         # One object's requests (26-10-10): its backend, or its name before any.
         #
@@ -2676,7 +2689,14 @@ class ARealDatabase(unittest.TestCase):
         self.assertTrue(all(entry.backend == "b" for entry in by_backend.entries))
         self.assertEqual(nothing.entries, ())
         self.assertTrue(all(entry.rule for entry in hits.entries))
-        self.assertTrue(all(not entry.rule for entry in none.entries))
+        # No rule hit: no rule, or a request its client cancelled (B434).
+        self.assertTrue(
+            all(
+                not entry.rule or entry.rule.startswith("waf-engine/interrupted:")
+                for entry in none.entries
+            )
+        )
+        self.assertFalse(any(e.rule.startswith("waf-engine/interrupted:") for e in hits.entries))
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select count(*) from pg_indexes where indexname = %s",

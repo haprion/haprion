@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from haprion import crs
+from haprion.generate import WAF_INTERRUPTED
 from psycopg import Connection
 from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
@@ -269,15 +270,17 @@ def waf_request_count(
 ) -> int:
     """Requests a rule met (an access rule or the engine), the WAF page's Requests tab.
 
-    The same rows the tab lists (`rule <> ''`), counted over the page's days;
-    each partition's partial index on `occurred_at` (0050) answers it.
+    The same rows the tab lists (`rule <> ''`, less a request its client
+    cancelled, B434), counted over the page's days; each partition's partial
+    index on `occurred_at` (0050) answers it.
     """
 
     with connection.cursor() as cursor:
         cursor.execute(
             "select count(*)::int from traffic_log_read "
-            " where cluster = any(%(clusters)s) and occurred_at >= %(since)s and rule <> ''",
-            {"clusters": list(clusters), "since": since},
+            " where cluster = any(%(clusters)s) and occurred_at >= %(since)s and rule <> ''"
+            "   and rule not like %(cancelled)s",
+            {"clusters": list(clusters), "since": since, "cancelled": f"{WAF_INTERRUPTED}:%"},
         )
         row = cursor.fetchone()
         return int(row[0]) if row is not None else 0

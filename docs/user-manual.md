@@ -1811,7 +1811,8 @@ than half a second, `256` and up a connection to it that failed.
 request while the engine was still checking it, for instance a browser that cancelled an image it no longer
 needed. It is not an engine fault. An object in `mode: block`, or with `on_engine_error: deny`, closes the
 connection without an answer and nothing reaches the server; the request is logged without a status, shown as
-a dash. An object in `mode: log` with `on_engine_error: allow` refuses nothing and records `waf-engine/interrupted:log`. A client that
+a dash. The traffic log shows it as *Cancelled*, in grey: no rule decided anything, so the WAF page does not
+list it and the traffic page's *Rule hits* filter leaves it out (*No rule hits* keeps it). An object in `mode: log` with `on_engine_error: allow` refuses nothing and records `waf-engine/interrupted:log`. A client that
 stays still gets the 503 (`deny`) or is served (`allow`). A query or alert outside the product that should find every request the engine gave no answer for
 matches the prefix `waf-engine`.
 

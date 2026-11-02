@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from haprion.digits import is_digits
-from haprion.generate import backend_name
+from haprion.generate import WAF_INTERRUPTED, backend_name
 from haprion.proxy_model import Proxy, server_name, wildcard_expression, wildcard_matches
 from psycopg import Connection, sql
 from psycopg.rows import class_row
@@ -728,10 +728,17 @@ def read_database(
             )
         )
         parameters.extend((list(backends), names, patterns, excluded))
+    #
+    # A request the client cancelled while the WAF was checking it carries a
+    # rule name, since a rule closes it, but no rule decided anything: it is not
+    # a hit (B434, 26-11-02). It stays in the log, under "no rule hits".
+    #
     if waf == "hits":
-        conditions.append(sql.SQL("rule <> ''"))
+        conditions.append(sql.SQL("rule <> '' and rule not like %s"))
+        parameters.append(f"{WAF_INTERRUPTED}:%")
     elif waf == "none":
-        conditions.append(sql.SQL("rule = ''"))
+        conditions.append(sql.SQL("(rule = '' or rule like %s)"))
+        parameters.append(f"{WAF_INTERRUPTED}:%")
     if from_at is not None:
         conditions.append(sql.SQL("occurred_at >= %s"))
         parameters.append(from_at)

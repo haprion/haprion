@@ -153,7 +153,7 @@ New proxy*.
 | Name | a short name, for example `shop` |
 | Protocol | `HTTPS`, `HTTP`, `TCP`, `DNS` or `Syslog (UDP)` |
 | Hostnames | the names the site answers to, for example `shop.example.com` |
-| Port | usually 443 for HTTPS |
+| Port | TCP, DNS and syslog only; HTTP and HTTPS use the cluster's ports 80 and 443 |
 | VIP | the address it listens on; the default VIP unless you chose another |
 | Certificate | the certificate from step 5 |
 
@@ -233,7 +233,7 @@ Keep the local `admin` account: it is the way in when the provider is down.
 ## When something goes wrong
 
 Start on the **Dashboard** and on *Events → Jobs*: every operation is a job, and a job that did not end
-cleanly says why. An admin also sees the error code, which is what to search the manual for.
+cleanly says why. It also shows the error code, which is what to search the manual for.
 
 | You see | Look at |
 |---|---|

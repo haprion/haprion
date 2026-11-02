@@ -85,7 +85,7 @@ RECOMMENDS = "openssh-server, location, python3-location"
 # Entry points that are not operator commands, besides every `-helper`: what
 # the worker runs to reach a socket, and what a service or timer runs.
 #
-NOT_COMMANDS = frozenset({"haprion-cert-renew", "haprion-traffic-collector"})
+NOT_COMMANDS = frozenset({"haprion-traffic-collector"})
 POSTINST = f"""\
 #!/bin/sh
 set -e

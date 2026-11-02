@@ -2395,7 +2395,7 @@ fails until its node package is updated.
 **Renew…** is one button for every source. Tick exactly one row:
 
 - on a certbot certificate, it runs the renewal timer's `certbot renew --cert-name <lineage>` now, with
-  `--force-renewal` (`haprion-cert-renew --acme-now <id>` from the terminal). Let's Encrypt issues at
+  `--force-renewal` (`sudo haprion-cert-renew --acme-now <id>` from the terminal). Let's Encrypt issues at
   most five identical certificates a week;
 - on an NDES certificate, it enrolls again from the same profile, with the same names and targets
   ([Preparing Microsoft AD CS / NDES for CSR enrollment](#preparing-microsoft-ad-cs--ndes-for-csr-enrollment));
@@ -2501,7 +2501,7 @@ again next time.
 
 **Renewing by hand.**
 
-- `haprion-cert-renew --ndes-now <id>` renews one NDES certificate at once, due or not, and skips
+- `sudo haprion-cert-renew --ndes-now <id>` renews one NDES certificate at once, due or not, and skips
   certbot's renewals. Use it to test the path on a certificate template whose validity cannot be
   shortened per request, or to rotate a key.
 - `--acme-now <id>` does the same for a certbot lineage, forced. It skips certbot's normal renewal of

@@ -89,7 +89,10 @@ class TheTree(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(TOOL.operator_commands(wheel), ["haprion-deploy", "haprion-status"])
+        self.assertEqual(
+            TOOL.operator_commands(wheel),
+            ["haprion-cert-renew", "haprion-deploy", "haprion-status"],
+        )
 
     def test_the_package_tree_carries_the_payload_the_commands_and_the_rules(self) -> None:
         wheel = wheel_with(self.root, ["haprion-status", "haprion-status-helper"])

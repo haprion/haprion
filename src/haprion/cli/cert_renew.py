@@ -256,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
-        parser.error("must run as root")
+        parser.error("must run as root; run it with sudo")
     if any(not CERTIFICATE_ID.fullmatch(item) for item in args.acme_now):
         parser.error("--acme-now takes a certificate ID")
     if args.certbot is not None and not Path(args.certbot).is_absolute():

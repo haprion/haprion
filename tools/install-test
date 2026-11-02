@@ -1220,6 +1220,40 @@ def run_one(
 
         step("a second deploy changes nothing", converged)
 
+        def an_operator_reads_as_themself() -> None:
+            """install.md: the terminal's commands read the configuration as the account that runs them.
+
+            Everything above runs as root, so nothing ran them the way the
+            guide has an operator do: git refused root's repositories to a
+            member of the configuration group, and `haprion-list` and
+            `haprion-config-status` called them unusable (26-11-02).
+            """
+
+            run.on(
+                "mgr",
+                # No group of its own: the distributions have a group `operator` already.
+                "id operator >/dev/null 2>&1 || useradd --create-home --no-user-group operator; "
+                "usermod -a -G haprion operator",
+            )
+            try:
+                for command in (
+                    f"haprion-list -c {CLUSTER}",
+                    f"haprion-config-status -c {CLUSTER}",
+                ):
+                    code, output = run.on("mgr", f"runuser -u operator -- {command}", check=False)
+                    if code != 0 or "not a usable configuration repository" in output:
+                        raise Failed(
+                            f"`{command}` as a member of the group exited {code}:\n{output}"
+                        )
+            finally:
+                # The account is the test's, not Haprion's: the removal step counts what is left.
+                run.on("mgr", "userdel --remove operator", check=False)
+
+        step(
+            "an operator in the haprion group reads the history and the status",
+            an_operator_reads_as_themself,
+        )
+
         def an_api_token_is_made_and_used() -> None:
             """B416: a token made on the manager reads through nginx's /api/, and not once revoked.
 

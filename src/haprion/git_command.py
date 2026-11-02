@@ -7,12 +7,39 @@ differently depending on which entry point reached it.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 from haprion import exit_codes
 
 GIT = "/usr/bin/git"
+
+
+def trusted(repo: Path) -> list[str]:
+    """Git's trust in a repository root owns, for a caller that is not root.
+
+    The configuration repositories are root's and readable by the
+    configuration group, and the commands at the terminal read them as the
+    account that runs them (install.md). Git refuses a repository another
+    account owns - "dubious ownership" - and root's `safe.directory` entries
+    are in root's own configuration, so `haprion-list` and
+    `haprion-config-status` said the repository was not usable (26-11-02).
+
+    Trust here is one exact path, given on the command line, and only for a
+    repository root owns: only root can change it, and root can already do
+    anything to the caller, so nothing it holds can turn on the reader. A
+    repository another account owns is never trusted this way, and root
+    itself gets nothing - its trust stays in its own configuration.
+    """
+
+    if os.geteuid() == 0:
+        return []
+    try:
+        owner = repo.stat().st_uid
+    except OSError:
+        return []
+    return ["-c", f"safe.directory={repo}"] if owner == 0 else []
 
 
 class GitError(Exception):
@@ -31,7 +58,7 @@ def git(
     allow_failure: bool = False,
 ) -> bytes:
     completed = subprocess.run(  # noqa: S603 - argv is constructed here, never from input
-        [GIT, "-C", str(repo), *args],
+        [GIT, *trusted(repo), "-C", str(repo), *args],
         input=stdin,
         capture_output=True,
         check=False,
@@ -52,7 +79,7 @@ def git_bounded(repo: Path, *args: str, limit: int) -> bytes | None:
     """
 
     with subprocess.Popen(  # noqa: S603 - argv is constructed here, never from input
-        [GIT, "-C", str(repo), *args],
+        [GIT, *trusted(repo), "-C", str(repo), *args],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

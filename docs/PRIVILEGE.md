@@ -146,7 +146,10 @@ never hold a transaction open across a CLI command.
 - The answers the socket helpers keep for recovery are in `/var/lib/haprion/answers`, root's and
   readable by the worker's group, never writable by it. A helper locks its answer while it runs; the
   worker reads the lock and the answer and changes neither.
-- Git trusts each repository by an explicit `safe.directory` entry; wildcard trust is never used.
+- Git trusts each repository by an explicit `safe.directory` entry; wildcard trust is never used. Root's
+  entries are in root's own configuration. A member of the configuration group reading at the terminal
+  trusts a repository by its exact path on the command line, and only one that root owns: only root can
+  change it, so nothing in it can act against the reader.
 
 ## Helper boundary
 

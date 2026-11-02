@@ -3372,7 +3372,7 @@ sudo haprion-node-restore discard --run <run>
 sudo haprion-node-restore status --run <run>
 ```
 
-**The same three steps from the interface.** An administrator with management writes has *Restore…*
+**The same three steps from the interface.** An administrator with management writes has *Restore*
 on each archive row of the Node backups page. The form takes the temporary address and the mode: the
 node itself, or a test with its own host name, address and VIP. The run's own page,
 `/backups/restore/<run>`, then:

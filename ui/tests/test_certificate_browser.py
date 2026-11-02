@@ -344,7 +344,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             page.set_viewport_size({"width": 1280, "height": 800})
             header = page.locator(".certificate-form .cluster-header").first.bounding_box()
             fields = page.locator(".certificate-form .form-grid").first.bounding_box()
-            warning = page.locator(".challenge-warning").bounding_box()
+            warning = page.locator(".challenge-note").bounding_box()
 
             if header is None or fields is None or warning is None:
                 self.fail("the certificate header, guidance and fields must have layout boxes")
@@ -359,7 +359,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             )
 
             page.set_viewport_size({"width": 390, "height": 800})
-            warning = page.locator(".challenge-warning").bounding_box()
+            warning = page.locator(".challenge-note").bounding_box()
             if warning is None:
                 self.fail("the guidance must keep its layout box on a narrow screen")
             #

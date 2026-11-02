@@ -301,12 +301,16 @@ class TheFormPage(CertificateFormRouteTestCase):
     def test_validation_guidance_sits_at_the_top_and_the_form_has_no_cluster_accent(self) -> None:
         page = self.writing_client().get("/certificates/new").text
 
-        self.assertIn('class="challenge-warning certificate-guidance"', page)
+        self.assertIn('class="challenge-note certificate-guidance"', page)
         self.assertIn(
             "Certificate validation requires some knowledge of the chosen CA.",
             page,
         )
         self.assertIn("the domain must already point here", page)
+        # Information, not a warning: no triangle, and no vague "existing wildcard" (26-11-02).
+        self.assertNotIn("M12 4 3 20h18L12 4Z", page)
+        self.assertNotIn("existing wildcard", page)
+        self.assertIn("also covers <code>example.com</code> itself", page)
         #
         # Three lines: the general sentence, the two Let's Encrypt challenges,
         # the NDES one - the reader picks the line for the CA they chose.

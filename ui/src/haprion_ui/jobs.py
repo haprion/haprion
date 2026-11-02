@@ -22,6 +22,7 @@ failure. See B44.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -1202,7 +1203,8 @@ def _view(
     # older job's warning names none, so they are added where it does not.
     #
     unreconciled = unreconciled_nodes(job)
-    if unreconciled and not all(node in " ".join(spoken) for node in unreconciled):
+    said = set(re.findall(r"[A-Za-z0-9_.-]+", " ".join(spoken)))
+    if unreconciled and not all(node in said for node in unreconciled):
         spoken.append("no answer from " + ", ".join(unreconciled))
     return JobView(
         id=job.id,

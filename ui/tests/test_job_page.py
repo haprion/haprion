@@ -607,6 +607,12 @@ class TheErrorCodeReachesThePage(LoginTestCase):
         body = self.page([job(state="partial", outcome="partial", result=result)])
         self.assertIn("— no answer from node-b<", body)
         self.assertNotIn("no answer from node-b; no answer from node-b", body)
+        # A name is a whole word: node-b10 named is not node-b named.
+        result["warnings"] = [
+            {"code": "cluster_not_converged", "message": "no answer from node-b10"}
+        ]
+        body = self.page([job(state="partial", outcome="partial", result=result)])
+        self.assertIn("no answer from node-b10; no answer from node-b", body)
 
     def test_a_partial_deploy_names_its_reason_and_a_warned_deploy_its_warning(self) -> None:
         """Review 26-10-24, 02-03: a partial showed no reason, a warned deploy read clean."""

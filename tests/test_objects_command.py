@@ -458,7 +458,7 @@ class ObjectsCommandTests(unittest.TestCase):
         )
 
         self.assertEqual(code, 64)
-        self.assertEqual(err, "ERROR: bad_input: cluster nosuch is not defined\n")
+        self.assertEqual(err, "ERROR: [bad_input] cluster nosuch is not defined\n")
 
     def test_a_cluster_with_no_objects_says_so_rather_than_printing_a_header(self) -> None:
         code, out, _ = self.run_command(["-c", "alpha"], answer())

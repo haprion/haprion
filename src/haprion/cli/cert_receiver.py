@@ -228,7 +228,11 @@ def main(
         )
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-cert-receiver must run as root", exit_codes.NOT_ROOT)
+        return refuse(
+            "not_root",
+            "haprion-cert-receiver must run as root; run it with sudo",
+            exit_codes.NOT_ROOT,
+        )
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)

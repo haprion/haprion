@@ -600,7 +600,7 @@ class TheHelperAndTheCommand(RequestFixture):
             require_root=True,
         )
         self.assertEqual(code, 77)
-        self.assertIn("must run as root", errors.getvalue())
+        self.assertIn("must run as root; run it with sudo", errors.getvalue())
 
 
 class TheStateModuleAgreesWithTheInventory(unittest.TestCase):

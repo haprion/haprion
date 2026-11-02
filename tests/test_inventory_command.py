@@ -220,7 +220,7 @@ class InventoryCallerTests(unittest.TestCase):
         payload = subprocess.CompletedProcess(["helper"], 64, refused, "")
         code, _, err, _ = self.run_caller(["-c", "nosuch"], payload)
         self.assertEqual(code, 64)
-        self.assertEqual(err, "ERROR: bad_input: cluster nosuch is not defined\n")
+        self.assertEqual(err, "ERROR: [bad_input] cluster nosuch is not defined\n")
 
 
 if __name__ == "__main__":

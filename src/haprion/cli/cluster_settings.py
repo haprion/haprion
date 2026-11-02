@@ -109,7 +109,7 @@ def _result(document: Mapping[str, Any], operation: str) -> Mapping[str, Any]:
         raise ValueError("the helper returned an invalid result")
     error = document.get("error")
     if isinstance(error, Mapping):
-        raise ValueError(f"{error.get('code')}: {error.get('message')}")
+        raise ValueError(f"[{error.get('code')}] {error.get('message')}")
     result = document.get("result")
     if not isinstance(result, Mapping):
         raise ValueError("the helper returned an invalid result")

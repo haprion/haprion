@@ -409,7 +409,9 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-cert-scep must run as root", exit_codes.NOT_ROOT)
+        return refuse(
+            "not_root", "haprion-cert-scep must run as root; run it with sudo", exit_codes.NOT_ROOT
+        )
     if args.abandon and (
         args.resume or args.profile or args.domain or args.cluster or args.receiver
     ):

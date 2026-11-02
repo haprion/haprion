@@ -147,7 +147,11 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-backup-schedule must run as root", exit_codes.NOT_ROOT)
+        return refuse(
+            "not_root",
+            "haprion-backup-schedule must run as root; run it with sudo",
+            exit_codes.NOT_ROOT,
+        )
     if args.time is None and not args.disable:
         return refuse("bad_input", "--time is required unless --disable", exit_codes.USAGE)
     if args.time is None and (args.weekly or args.monthly is not None):

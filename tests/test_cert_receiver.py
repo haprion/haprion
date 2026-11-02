@@ -940,6 +940,21 @@ class TheCommand(ReceiverFixture):
         )
         return code, out.getvalue(), err.getvalue()
 
+    def test_a_caller_that_is_not_root_is_told_to_use_sudo(self) -> None:
+        import io
+
+        err = io.StringIO()
+        with mock.patch("haprion.cli.cert_receiver.os.geteuid", return_value=1000):
+            code = command.main(
+                ["list"],
+                policy_path=self.policy_path,
+                output_stream=io.StringIO(),
+                error_stream=err,
+                require_secure=False,
+            )
+        self.assertEqual(code, 77)
+        self.assertIn("run it with sudo", err.getvalue())
+
     def test_an_https_receiver_s_password_is_printed_once_and_kept_nowhere(self) -> None:
         """B306: made by the command, shown here, and only its hash on disk."""
 

@@ -99,7 +99,10 @@ def main(
 
     if require_root and os.geteuid() != 0:
         return refuse(
-            selected, "not_root", "haprion-state-backup must run as root", exit_codes.NOT_ROOT
+            selected,
+            "not_root",
+            "haprion-state-backup must run as root; run it with sudo",
+            exit_codes.NOT_ROOT,
         )
 
     try:

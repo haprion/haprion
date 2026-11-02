@@ -83,7 +83,7 @@ def usage(text: str) -> NoReturn:
 
 
 def helper_refusal(document: Mapping[str, Any]) -> str | None:
-    """What a helper's failed answer says, as `code: message`, or None if it did not fail.
+    """What a helper's failed answer says, as `[code] message`, the way the other commands print it, or None if it did not fail.
 
     The helper has told the reader in a structured field what is wrong - an
     unknown cluster, most often - and "invalid result" would send them to look
@@ -92,7 +92,7 @@ def helper_refusal(document: Mapping[str, Any]) -> str | None:
 
     error = document.get("error")
     if isinstance(error, Mapping) and error.get("message"):
-        return f"{error.get('code')}: {error.get('message')}"
+        return f"[{error.get('code')}] {error.get('message')}"
     return None
 
 

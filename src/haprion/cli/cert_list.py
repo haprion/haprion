@@ -83,7 +83,7 @@ def _result(document: Mapping[str, Any]) -> Mapping[str, Any]:
         raise ValueError("the certificate helper returned an invalid result")
     error = document.get("error")
     if isinstance(error, Mapping):
-        raise HelperFailure(f"{error.get('code')}: {error.get('message')}")
+        raise HelperFailure(f"[{error.get('code')}] {error.get('message')}")
     result = document.get("result")
     if not isinstance(result, Mapping):
         raise ValueError("the certificate helper returned an invalid result")

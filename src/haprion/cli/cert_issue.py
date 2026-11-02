@@ -267,7 +267,9 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haprion-cert-issue must run as root", exit_codes.NOT_ROOT)
+        return refuse(
+            "not_root", "haprion-cert-issue must run as root; run it with sudo", exit_codes.NOT_ROOT
+        )
     try:
         formats = cert_job.format_flags(format_flags, receivers)
     except HelperProtocolError as exc:

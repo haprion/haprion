@@ -316,7 +316,7 @@ def main(
         return exit_codes.USAGE
 
     if require_root and os.geteuid() != 0:
-        errors.write("ERROR: haprion-node-restore must run as root\n")
+        errors.write("ERROR: haprion-node-restore must run as root; run it with sudo\n")
         return exit_codes.NOT_ROOT
 
     as_json = "--json" in options

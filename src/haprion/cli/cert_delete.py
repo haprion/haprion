@@ -46,8 +46,10 @@ def main(
         prog="haprion-cert-delete",
         description="Delete certificates from the registry, the targets, certbot and the nodes.",
     )
-    parser.add_argument("certificates", nargs="+", metavar="certificate")
-    parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "certificates", nargs="+", metavar="certificate", help="the ID of a certificate to delete"
+    )
+    parser.add_argument("--json", action="store_true", help="print the result as JSON")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     request = cert_delete_helper.build_request(
         new_request_id(), certificates=tuple(args.certificates)

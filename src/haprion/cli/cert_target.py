@@ -48,10 +48,16 @@ def _parser() -> argparse.ArgumentParser:
         prog="haprion-cert-target",
         description="Publish certificates to more clusters or receivers, or withdraw them.",
     )
-    parser.add_argument("action", choices=("add", "remove"))
-    parser.add_argument("certificates", nargs="+", metavar="certificate")
-    parser.add_argument("--cluster", action="append", default=[])
-    parser.add_argument("--receiver", action="append", default=[])
+    parser.add_argument(
+        "action", choices=("add", "remove"), help="publish to the targets, or withdraw"
+    )
+    parser.add_argument(
+        "certificates", nargs="+", metavar="certificate", help="the ID of a certificate"
+    )
+    parser.add_argument("--cluster", action="append", default=[], help="a cluster; may be repeated")
+    parser.add_argument(
+        "--receiver", action="append", default=[], help="a receiver; may be repeated"
+    )
     parser.add_argument(
         "--format",
         action="append",
@@ -62,7 +68,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-deploy", action="store_true", help="publish without rolling the clusters out"
     )
-    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--json", action="store_true", help="print the result as JSON")
     return parser
 
 

@@ -11,6 +11,7 @@ interface's upload, and lands on the targets named here.
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from collections.abc import Mapping, Sequence
@@ -116,7 +117,9 @@ def main(
 ) -> int:
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
-    parser = arguments.ArgumentParser(description=__doc__)
+    parser = arguments.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--id", required=True, help="the certificate's name in the registry")
     parser.add_argument(
         "--domain",
@@ -131,8 +134,15 @@ def main(
         choices=sorted(KEY_TYPES),
         help=f"the key to make (default {DEFAULT_KEY_TYPE})",
     )
-    parser.add_argument("--cluster", action="append", default=[])
-    parser.add_argument("--receiver", action="append", default=[])
+    parser.add_argument(
+        "--cluster",
+        action="append",
+        default=[],
+        help="a cluster the certificate goes to; may be repeated",
+    )
+    parser.add_argument(
+        "--receiver", action="append", default=[], help="a receiver it goes to; may be repeated"
+    )
     parser.add_argument(
         "--format",
         action="append",
@@ -146,7 +156,7 @@ def main(
         help="for this manager's own interface certificate: no targets; the signed "
         "certificate is installed with haprion-tls when it is imported",
     )
-    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--json", action="store_true", help="print the result as JSON")
     try:
         args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     except SystemExit as exc:

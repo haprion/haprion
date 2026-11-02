@@ -40,19 +40,36 @@ from haprion.node_enrollment import BLOCK_PREFIX, MAX_BLOCK_BYTES, V2_PREFIXES
 def _parser() -> argparse.ArgumentParser:
     parser = arguments.ArgumentParser(prog="haprion-cluster")
     actions = parser.add_subparsers(dest="action", required=True)
-    create = actions.add_parser("add")
-    create.add_argument("-c", "--cluster", required=True)
-    create.add_argument("--display-name")
-    create.add_argument("--vip", required=True)
-    create.add_argument("--node-path", required=True)
-    create.add_argument("--certificate")
-    create.add_argument("--host", action="append", required=True)
-    create.add_argument("--prefix", type=int)
-    create.add_argument("--interface")
-    create.add_argument("--json", action="store_true")
-    remove = actions.add_parser("remove")
-    remove.add_argument("-c", "--cluster", required=True)
-    remove.add_argument("--json", action="store_true")
+    create = actions.add_parser(
+        "add",
+        help="create a cluster",
+        description="Create a cluster from the nodes' blocks on stdin.",
+    )
+    create.add_argument("-c", "--cluster", required=True, help="the new cluster's ID")
+    create.add_argument("--display-name", help="the name shown in the interface (default: the ID)")
+    create.add_argument("--vip", required=True, help="the address the cluster serves on")
+    create.add_argument(
+        "--node-path", required=True, help="the directory on the nodes that holds the configuration"
+    )
+    create.add_argument(
+        "--certificate", help="the certificate ID the cluster starts with (optional)"
+    )
+    create.add_argument(
+        "--host",
+        action="append",
+        required=True,
+        help="a node, in the order of the blocks on stdin; give it once or twice",
+    )
+    create.add_argument("--prefix", type=int, help="the VIP's prefix length")
+    create.add_argument("--interface", help="the network interface the VIP is on")
+    create.add_argument("--json", action="store_true", help="print the result as JSON")
+    remove = actions.add_parser(
+        "remove",
+        help="remove a cluster",
+        description="Archive a cluster's configuration and forget it.",
+    )
+    remove.add_argument("-c", "--cluster", required=True, help="the cluster to remove")
+    remove.add_argument("--json", action="store_true", help="print the result as JSON")
     return parser
 
 

@@ -409,6 +409,8 @@ class EachKindComesAndGoes(unittest.TestCase):
             expiry_label="4 days left",
             state_label="On all 2 nodes",
             interface=False,
+            exportable=False,
+            targets=("alpha",),
             placeholder=False,
         )
         registry = SimpleNamespace(certificates=(row,), interface=None, served=None)
@@ -418,6 +420,27 @@ class EachKindComesAndGoes(unittest.TestCase):
         self.assertEqual(
             [(item.subject, item.message) for item in items], [("shop.example.com", "4 days left")]
         )
+
+    def test_an_expired_certificate_that_goes_nowhere_is_a_warning(self) -> None:
+        def listed(**kept: object) -> str:
+            row = SimpleNamespace(
+                identifier="old.example.com",
+                tone="critical",
+                state_tone="warning",
+                expiry_label="expired",
+                state_label="No targets",
+                interface=False,
+                exportable=False,
+                targets=(),
+                placeholder=False,
+            )
+            row.__dict__.update(kept)
+            registry = SimpleNamespace(certificates=(row,), interface=None, served=None)
+            return attention.from_certificates(registry, ())[0].severity
+
+        self.assertEqual(listed(), "warning")
+        self.assertEqual(listed(targets=("alpha",)), "critical")
+        self.assertEqual(listed(exportable=True), "critical")
 
     def test_the_interface_certificate_counts_only_by_its_expiry(self) -> None:
         row = SimpleNamespace(

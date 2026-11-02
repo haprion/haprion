@@ -4056,7 +4056,8 @@ box is not shown.
 - **Certificates** that are running out, cannot be read, or are not where they should be - the
   interface's own included. A certificate renewed by hand is a warning with 30 days left; one from ACME
   with 25 days left (certbot renews at 30, so 25 means renewal is failing). Under seven days it is
-  critical.
+  critical, unless it has no targets and is not
+  for installing by hand: nothing runs on it, so it stays a warning.
 - **Jobs**: the latest job of an operation on a cluster that failed, partly worked, was blocked or ended
   *unknown* - until a later run of the same operation on the same thing works, however long that takes.
   A blocked job changed nothing and is a warning.

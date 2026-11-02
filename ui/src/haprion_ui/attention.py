@@ -555,6 +555,12 @@ def from_certificates(
             if not tones:
                 continue
             severity: Severity = "critical" if "critical" in tones else "warning"
+            #
+            # A certificate that goes nowhere - no target, not for installing by
+            # hand, not the interface's - takes nothing down by expiring (26-11-02).
+            #
+            if not (row.interface or row.exportable or row.targets):
+                severity = "warning"
             parts = []
             if _severity(row.tone):
                 parts.append(_expires(row.expiry_label))

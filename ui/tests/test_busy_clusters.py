@@ -99,6 +99,11 @@ class EveryPageThatDeploysSaysTheClusterIsBusy(BusyPagesTestCase):
                 self.assertIn("Deploying", page.text)
                 self.assertIn('href="/jobs"', page.text)
 
+    def test_the_date_column_does_not_claim_the_version_was_published(self) -> None:
+        page = self.page("/history", "haprion_ui.db.cluster_histories", [])
+        self.assertIn("<th>Date</th><th>Published by</th>", page.text)
+        self.assertNotIn("<th>Published</th>", page.text)
+
     def test_the_versions_page_greys_its_publish_buttons_out(self) -> None:
         #
         # One per row, and the same refusal underneath: a revert is a job, and

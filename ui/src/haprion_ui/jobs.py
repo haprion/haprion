@@ -1197,8 +1197,13 @@ def _view(
         else tuple(entry for entry in warnings_of(job) if entry[0] in WORKER_WARNINGS)
     )
     spoken = [message for _, message in warned if message]
-    if unreconciled := unreconciled_nodes(job):
-        spoken.append("not reconciled: " + ", ".join(unreconciled))
+    #
+    # The nodes that did not answer, in the engine's words since 0.99.12; an
+    # older job's warning names none, so they are added where it does not.
+    #
+    unreconciled = unreconciled_nodes(job)
+    if unreconciled and not all(node in " ".join(spoken) for node in unreconciled):
+        spoken.append("no answer from " + ", ".join(unreconciled))
     return JobView(
         id=job.id,
         operation=named[0] if (named := action_names(job)) else _operation(job.operation),

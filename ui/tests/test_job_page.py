@@ -599,7 +599,14 @@ class TheErrorCodeReachesThePage(LoginTestCase):
 
         body = self.page([job(state="partial", outcome="partial", result=result)])
 
-        self.assertIn("— not fully reconciled; not reconciled: node-b", body)
+        self.assertIn("— not fully reconciled; no answer from node-b", body)
+        #
+        # The engine names the nodes itself since 0.99.12: said once, not twice.
+        #
+        result["warnings"] = [{"code": "cluster_not_converged", "message": "no answer from node-b"}]
+        body = self.page([job(state="partial", outcome="partial", result=result)])
+        self.assertIn("— no answer from node-b<", body)
+        self.assertNotIn("no answer from node-b; no answer from node-b", body)
 
     def test_a_partial_deploy_names_its_reason_and_a_warned_deploy_its_warning(self) -> None:
         """Review 26-10-24, 02-03: a partial showed no reason, a warned deploy read clean."""

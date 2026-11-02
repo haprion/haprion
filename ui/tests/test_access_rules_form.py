@@ -204,7 +204,8 @@ class AddingAndRemovingRulesInTheBrowser(EditorTestCase):
         self.assertEqual(rule.locator("[data-rule-title]").inner_text(), "authentik-admin")
         badge = rule.locator("[data-rule-badge]")
         self.assertEqual(badge.inner_text(), "Denying")
-        self.assertIn("status-badge-critical", badge.get_attribute("class") or "")
+        # A deliberate refusal is not an alarm: grey, as the group's badge (B437).
+        self.assertIn("status-badge-unknown", badge.get_attribute("class") or "")
         self.assertEqual(rule.locator("[data-rule-summary]").inner_text(), "No condition")
         rule.locator("input[name=rule_path]").fill("/if/admin")
         self.assertEqual(

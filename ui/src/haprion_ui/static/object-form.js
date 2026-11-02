@@ -499,7 +499,7 @@
       const deny = rule.querySelector("select[name='rule_mode']").value === "deny";
       const badge = rule.querySelector("[data-rule-badge]");
       badge.textContent = deny ? "Denying" : "Logging";
-      badge.classList.toggle("status-badge-critical", deny);
+      badge.classList.toggle("status-badge-unknown", deny);
       badge.classList.toggle("status-badge-warning", !deny);
       if (!["rule_name", "rule_mode"].includes(event.target.name)) {
         const line = rule.querySelector("[data-rule-summary]");

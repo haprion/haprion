@@ -41,7 +41,7 @@
 
 {% macro rule_card(rule, open=False) %}
 <details class="rule-card"{% if open %} open{% endif %} data-rule>
-  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title" data-rule-title>{{ rule.name or 'New rule' }}</span>{% if rule.mode == 'deny' %}<span class="status-badge status-badge-critical" data-rule-badge>Denying</span>{% else %}<span class="status-badge status-badge-warning" data-rule-badge>Logging</span>{% endif %}<span class="form-group-summary" data-rule-summary>{{ rule.summary }}</span></summary>
+  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title" data-rule-title>{{ rule.name or 'New rule' }}</span>{% if rule.mode == 'deny' %}<span class="status-badge status-badge-unknown" data-rule-badge>Denying</span>{% else %}<span class="status-badge status-badge-warning" data-rule-badge>Logging</span>{% endif %}<span class="form-group-summary" data-rule-summary>{{ rule.summary }}</span></summary>
   <input type="hidden" name="rule_index" value="{{ rule.index }}">
   <div class="form-grid">
     <label><span class="field-title">Name</span><input name="rule_name" value="{{ rule.name }}" placeholder="admin-post"></label>

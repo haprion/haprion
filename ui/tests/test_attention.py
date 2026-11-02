@@ -1426,7 +1426,7 @@ class TheManagersOwnServices(unittest.TestCase):
         }
         (item,) = self.items(horizons=short)
         self.assertEqual((item.subject, item.severity), ("retention", "warning"))
-        self.assertEqual(item.since.date(), NOW.date() - timedelta(days=2))
+        self.assertEqual(item.since.date() if item.since else None, NOW.date() - timedelta(days=2))
         self.assertNotIn(str(NOW.date() - timedelta(days=2)), item.message)
         self.assertIn("journalctl -u haprion-retention.service", item.message)
         #

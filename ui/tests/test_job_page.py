@@ -933,7 +933,7 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
         self,
     ) -> None:
         refusal = certificate_refusal()
-        refusal["error"]["message"] = (  # type: ignore[index]
+        refusal["error"]["message"] = (
             "referenced certificates are not on every node: node-b is missing example-net. "
             "Run haprion-cert-deploy -c alpha first, then deploy again"
         )

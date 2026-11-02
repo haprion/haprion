@@ -66,7 +66,46 @@ be registered to fetch theirs from the manager the same way.
 
 ## Screenshots
 
-Screenshots will be added.
+The pictures are made with invented clusters, names and addresses.
+
+**The dashboard.** Every cluster and node at a glance: which node holds the virtual address, how
+much traffic passes, and what needs attention.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dashboard-dark.png">
+  <img src="docs/images/screenshot-dashboard-light.png" width="900" alt="The dashboard: two clusters with two nodes each, the node holding the virtual address marked as owner, traffic figures per cluster, and a short list of what needs attention.">
+</picture>
+
+**A proxy is a form.** Hostnames, certificate, servers and health check. Haprion writes the HAProxy
+configuration from it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-proxy-dark.png">
+  <img src="docs/images/screenshot-proxy-light.png" width="900" alt="Editing a proxy: name, hostnames, protocol, virtual address and certificate; three servers with round-robin balancing; an HTTP health check, and what each node reports for each server.">
+</picture>
+
+**Certificates.** Issued or imported once, used by every cluster that needs them, with the expiry
+dates in view.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-certificates-dark.png">
+  <img src="docs/images/screenshot-certificates-light.png" width="900" alt="The certificate list: one renewed by certbot and two imported, the clusters using each, when each expires, and one expired certificate marked.">
+</picture>
+
+**The traffic log.** Every request from every node, searchable, with the rule that stopped it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-traffic-log-dark.png">
+  <img src="docs/images/screenshot-traffic-log-light.png" width="900" alt="The traffic log: requests with time, node, client, host and path, status, and the server that answered; a few stopped by the WAF, by dynamic blocking and by an access rule.">
+</picture>
+
+**Every publish is a version.** What changed in the proxy and in the configuration it produced,
+and a way back.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-version-dark.png">
+  <img src="docs/images/screenshot-version-light.png" width="900" alt="One version's changes: the proxy's health check interval shortened, and the HAProxy server line it changed.">
+</picture>
 
 ## Getting started
 

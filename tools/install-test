@@ -1236,14 +1236,24 @@ def run_one(
                 "usermod -a -G haprion operator",
             )
             try:
-                for command in (
-                    f"haprion-list -c {CLUSTER}",
-                    f"haprion-config-status -c {CLUSTER}",
-                ):
+                # What each command must show when it was really read as the
+                # user. The published version may be unreadable here (the
+                # account has no sudo), which is expected and not asserted.
+                readings = {
+                    f"haprion-list -c {CLUSTER}": r"(?m)^\d+\s+\d{4}-",
+                    f"haprion-list -c {CLUSTER} --diff 1": rf"(?m)^{CLUSTER} v1 \(",
+                    f"haprion-config-status -c {CLUSTER}": r"Last saved:\s+\d+\s",
+                }
+                for command, expected in readings.items():
                     code, output = run.on("mgr", f"runuser -u operator -- {command}", check=False)
-                    if code != 0 or "not a usable configuration repository" in output:
+                    if (
+                        code != 0
+                        or "not a usable configuration repository" in output
+                        or not re.search(expected, output)
+                    ):
                         raise Failed(
-                            f"`{command}` as a member of the group exited {code}:\n{output}"
+                            f"`{command}` as a member of the group exited {code} "
+                            f"or did not show what it reads:\n{output}"
                         )
             finally:
                 # The account is the test's, not Haprion's: the removal step counts what is left.

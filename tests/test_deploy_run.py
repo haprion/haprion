@@ -18,7 +18,7 @@ from typing import Any
 
 from haprion import deploy_run, exit_codes
 from haprion.cluster_status import ClusterStatus, NodeStatus, StatusError, parse_status
-from haprion.deploy_plan import CertificateRef, CertificateTarget, ReleaseTarget
+from haprion.deploy_plan import CertificateRef, CertificateTarget, Outcome, ReleaseTarget
 from haprion.deploy_run import CertificatePreflight, DeployReport
 from tests.node_harness import OLD_HASH, TARGET_HASH, FakeCluster, FakeNode, pair
 
@@ -787,7 +787,7 @@ class ThePartialWithoutAReasonNamesTheNodes(unittest.TestCase):
             override_used=False,
             initial_summary={},
             nodes=nodes,
-            outcome=deploy_run.Outcome.PARTIAL,
+            outcome=Outcome.PARTIAL,
         )
         warnings = report.as_envelope("alpha")["warnings"]
         self.assertEqual(warnings[0]["code"], "cluster_not_converged")

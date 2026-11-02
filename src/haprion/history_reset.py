@@ -48,7 +48,7 @@ def chown(path: Path, uid: int, gid: int) -> None:
 
 def _foreground_maintenance() -> dict[str, str]:
     return {
-        **os.environ,
+        **{name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
         "GIT_CONFIG_COUNT": "1",
         "GIT_CONFIG_KEY_0": "maintenance.autoDetach",
         "GIT_CONFIG_VALUE_0": "false",

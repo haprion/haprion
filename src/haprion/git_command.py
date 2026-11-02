@@ -16,6 +16,45 @@ from haprion import exit_codes
 GIT = "/usr/bin/git"
 
 
+def _closed(path: Path) -> bool:
+    """Root owns it and neither the group nor others can write to it."""
+
+    try:
+        status = path.stat()
+    except OSError:
+        return False
+    return status.st_uid == 0 and not status.st_mode & 0o022
+
+
+def _git_directories(repo: Path) -> list[Path] | None:
+    """The git directories a work tree uses, or None if they cannot be told.
+
+    `.git` is a directory, or a file `gitdir: <path>` that points at a linked
+    git directory whose `commondir` names the shared one (the layout the
+    configuration repositories have).
+    """
+
+    dot_git = repo / ".git"
+    if dot_git.is_dir():
+        return [dot_git]
+    try:
+        text = dot_git.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    linked = repo / text.removeprefix("gitdir:").strip()
+    directories = [dot_git, linked]
+    try:
+        common = (linked / "commondir").read_text(encoding="utf-8", errors="replace").strip()
+    except FileNotFoundError:
+        return directories
+    except OSError:
+        return None
+    directories.append(linked / common)
+    return directories
+
+
 def trusted(repo: Path) -> list[str]:
     """Git's trust in a repository root owns, for a caller that is not root.
 
@@ -26,20 +65,40 @@ def trusted(repo: Path) -> list[str]:
     are in root's own configuration, so `haprion-list` and
     `haprion-config-status` said the repository was not usable (26-11-02).
 
-    Trust here is one exact path, given on the command line, and only for a
-    repository root owns: only root can change it, and root can already do
-    anything to the caller, so nothing it holds can turn on the reader. A
-    repository another account owns is never trusted this way, and root
-    itself gets nothing - its trust stays in its own configuration.
+    Trust here is one exact path, given on the command line, and only when
+    the work tree directory and every git directory it uses (the `.git` file,
+    the linked directory it names and that one's common directory, whose
+    configuration git runs) are owned by root and writable by neither group
+    nor others: only root can change them, and root can already do anything
+    to the caller, so nothing they hold can turn on the reader. Anything
+    else is never trusted this way, and root itself gets nothing - its trust
+    stays in its own configuration.
     """
 
     if os.geteuid() == 0:
         return []
-    try:
-        owner = repo.stat().st_uid
-    except OSError:
+    directories = _git_directories(repo)
+    if directories is None or not all(_closed(path) for path in [repo, *directories]):
         return []
-    return ["-c", f"safe.directory={repo}"] if owner == 0 else []
+    return ["-c", f"safe.directory={repo}"]
+
+
+def _environment(env: dict[str, str] | None) -> dict[str, str]:
+    """What git runs with: the caller's `env` if given, else ours without `GIT_*`.
+
+    `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the like redirect what git
+    reads, and a member of the configuration group reads root's repositories
+    with their own shell (26-11-02).
+    """
+
+    if env is not None:
+        return env
+    return {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+
+
+# A personal ignore file hides a new draft file from `git status` for the
+# operator and not for root, so the two would disagree about what is unsent.
+NO_PERSONAL_IGNORE = ["-c", "core.excludesFile=/dev/null"]
 
 
 class GitError(Exception):
@@ -58,11 +117,11 @@ def git(
     allow_failure: bool = False,
 ) -> bytes:
     completed = subprocess.run(  # noqa: S603 - argv is constructed here, never from input
-        [GIT, *trusted(repo), "-C", str(repo), *args],
+        [GIT, *trusted(repo), *NO_PERSONAL_IGNORE, "-C", str(repo), *args],
         input=stdin,
         capture_output=True,
         check=False,
-        env=env,
+        env=_environment(env),
     )
     if completed.returncode != 0 and not allow_failure:
         detail = completed.stderr.decode("utf-8", "replace").strip()
@@ -79,7 +138,8 @@ def git_bounded(repo: Path, *args: str, limit: int) -> bytes | None:
     """
 
     with subprocess.Popen(  # noqa: S603 - argv is constructed here, never from input
-        [GIT, *trusted(repo), "-C", str(repo), *args],
+        [GIT, *trusted(repo), *NO_PERSONAL_IGNORE, "-C", str(repo), *args],
+        env=_environment(None),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

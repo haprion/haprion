@@ -227,8 +227,8 @@ PY
 
 cat <<OUT
 
-Paste this line into Create cluster or Add a node under Settings. It joins this
-node to the manager once, until $(join_key_expiry | sed 's/^\(....\)\(..\)\(..\)\(..\)/\1-\2-\3 \4:/') UTC; keep it to
+Paste this line into the dashboard's Set up your first cluster guide, or into Add a
+node under Settings. It joins this node to the manager once, until $(join_key_expiry | sed 's/^\(....\)\(..\)\(..\)\(..\)/\1-\2-\3 \4:/') UTC; keep it to
 yourself until then.
 
 ${BLOCK}

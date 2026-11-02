@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -316,6 +317,11 @@ def answer(**result: object) -> subprocess.CompletedProcess[str]:
 
 
 class ObjectsCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        patched = mock.patch.object(objects, "_version_of", return_value=None)
+        patched.start()
+        self.addCleanup(patched.stop)
+
     def run_command(
         self, argv: list[str], completed: subprocess.CompletedProcess[str]
     ) -> tuple[int, str, str]:
@@ -417,6 +423,42 @@ class ObjectsCommandTests(unittest.TestCase):
         self.assertEqual(code, 66)
         self.assertEqual(out, "")
         self.assertIn("missing", err)
+
+    def test_the_listing_names_the_version_not_the_git_hash(self) -> None:
+        with mock.patch.object(objects, "_version_of", return_value=7):
+            _, out, _ = self.run_command(["-c", "alpha"], answer(objects=[self.readable()]))
+
+        self.assertIn("Version: 7\n", out)
+        self.assertNotIn(HEAD, out)
+
+    def test_a_cluster_with_nothing_saved_says_so_without_git_words(self) -> None:
+        _, out, _ = self.run_command(["-c", "alpha"], answer(commit=None))
+
+        self.assertIn("Version: none saved yet", out)
+        self.assertNotIn("committed", out)
+
+    def test_show_for_a_name_that_is_not_there_points_to_the_list(self) -> None:
+        _, _, err = self.run_command(
+            ["-c", "alpha", "--show", "missing"], answer(objects=[self.readable()])
+        )
+
+        self.assertIn("haprion-objects -c alpha", err)
+
+    def test_a_refusal_from_the_helper_is_shown_as_it_was_said(self) -> None:
+        refused = json.dumps(
+            {
+                "operation": "objects",
+                "result": None,
+                "error": {"code": "bad_input", "message": "cluster nosuch is not defined"},
+            }
+        )
+
+        code, _, err = self.run_command(
+            ["-c", "nosuch"], subprocess.CompletedProcess([], 64, refused, "")
+        )
+
+        self.assertEqual(code, 64)
+        self.assertEqual(err, "ERROR: bad_input: cluster nosuch is not defined\n")
 
     def test_a_cluster_with_no_objects_says_so_rather_than_printing_a_header(self) -> None:
         code, out, _ = self.run_command(["-c", "alpha"], answer())

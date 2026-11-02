@@ -209,6 +209,19 @@ class InventoryCallerTests(unittest.TestCase):
         self.assertIn("app", shown)
         self.assertIn("managed", shown)
 
+    def test_a_refusal_from_the_helper_is_shown_as_it_was_said(self) -> None:
+        refused = json.dumps(
+            {
+                "operation": "inventory",
+                "result": None,
+                "error": {"code": "bad_input", "message": "cluster nosuch is not defined"},
+            }
+        )
+        payload = subprocess.CompletedProcess(["helper"], 64, refused, "")
+        code, _, err, _ = self.run_caller(["-c", "nosuch"], payload)
+        self.assertEqual(code, 64)
+        self.assertEqual(err, "ERROR: bad_input: cluster nosuch is not defined\n")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,10 +18,12 @@ from typing import Any, TextIO
 
 from haprion import exit_codes
 from haprion.cli import objects_apply
-from haprion.cli.caller import usage, without_answer
+from haprion.cli.caller import config_path, helper_refusal, usage, without_answer
 from haprion.envelope import new_request_id
+from haprion.git_command import GitError
 from haprion.helper_protocol import write_document
 from haprion.proxy_model import ModelError, advanced_placement
+from haprion.version_history import count_versions
 
 OPERATION = "objects"
 HELPER = "/opt/haprion/current/bin/haprion-objects-helper"
@@ -82,7 +84,9 @@ def _parse(argv: list[str]) -> tuple[str, bool, str | None, bool]:
 def _result(document: Mapping[str, Any]) -> Mapping[str, Any]:
     result = document.get("result")
     if document.get("operation") != OPERATION or not isinstance(result, Mapping):
-        raise ValueError("the objects helper returned an invalid result")
+        raise ValueError(
+            helper_refusal(document) or "the objects helper returned an invalid result"
+        )
     return result
 
 
@@ -96,11 +100,29 @@ def _entries(document: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return list(objects)
 
 
+def _version_of(cluster_id: str, commit: str) -> int | None:
+    """The version number of the commit the objects were read at, if this account can count it.
+
+    The helper reports the commit; a person counts versions (26-11-02).
+    """
+
+    try:
+        return count_versions(config_path(cluster_id), commit)
+    except (SystemExit, GitError, OSError, ValueError):
+        return None
+
+
 def _render(document: Mapping[str, Any], writer: TextIO) -> None:
     entries = _entries(document)
-    writer.write(f"Cluster: {document.get('cluster')}\n")
+    cluster_id = str(document.get("cluster"))
+    writer.write(f"Cluster: {cluster_id}\n")
     commit = _result(document).get("commit")
-    writer.write(f"Source:  {'nothing committed yet' if commit is None else commit}\n\n")
+    version = None if commit is None else _version_of(cluster_id, str(commit))
+    if commit is None:
+        writer.write("Version: none saved yet\n")
+    elif version is not None:
+        writer.write(f"Version: {version}\n")
+    writer.write("\n")
     if not entries:
         writer.write("No stored objects.\n")
         return
@@ -131,14 +153,21 @@ def _render(document: Mapping[str, Any], writer: TextIO) -> None:
         )
 
 
+def _not_stored(document: Mapping[str, Any], name: str, errors: TextIO) -> int:
+    errors.write(
+        f"ERROR: this cluster stores no object named {name}; "
+        f"the ones it has are listed by haprion-objects -c {document.get('cluster')}\n"
+    )
+    return exit_codes.NOT_FOUND
+
+
 def _show(document: Mapping[str, Any], name: str, writer: TextIO, errors: TextIO) -> int:
     for entry in _entries(document):
         if entry.get("name") != name:
             continue
         writer.write(str(entry.get("document", "")))
         return 0
-    errors.write(f"ERROR: this cluster stores no object named {name}\n")
-    return exit_codes.NOT_FOUND
+    return _not_stored(document, name, errors)
 
 
 def _advanced(document: Mapping[str, Any], name: str, writer: TextIO, errors: TextIO) -> int:
@@ -167,8 +196,7 @@ def _advanced(document: Mapping[str, Any], name: str, writer: TextIO, errors: Te
             if line.reason and line.fate != "placed":
                 writer.write(f"{'':>15}{line.reason}\n")
         return exit_codes.REFUSED if placement.refused else 0
-    errors.write(f"ERROR: this cluster stores no object named {name}\n")
-    return exit_codes.NOT_FOUND
+    return _not_stored(document, name, errors)
 
 
 def main(

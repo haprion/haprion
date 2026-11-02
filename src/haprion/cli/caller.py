@@ -19,10 +19,10 @@ from __future__ import annotations
 import io
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import NoReturn, TextIO
+from typing import Any, NoReturn, TextIO
 
 from haprion import exit_codes
 from haprion.cli import cluster_config
@@ -73,10 +73,27 @@ def usage(text: str) -> NoReturn:
 
     On stdout, not stderr: that is where the shell commands' `usage` wrote it,
     and an operator who pipes the output into a pager expects to see it there.
+    Asked for with `-h` or `--help` it is not a mistake and exits 0; a
+    mistyped call keeps exiting 64 (26-11-02).
     """
 
     sys.stdout.write(text if text.endswith("\n") else f"{text}\n")
-    raise SystemExit(exit_codes.USAGE)
+    asked = sys.argv[1:2] in (["-h"], ["--help"])
+    raise SystemExit(0 if asked else exit_codes.USAGE)
+
+
+def helper_refusal(document: Mapping[str, Any]) -> str | None:
+    """What a helper's failed answer says, as `code: message`, or None if it did not fail.
+
+    The helper has told the reader in a structured field what is wrong - an
+    unknown cluster, most often - and "invalid result" would send them to look
+    for a bug instead (26-11-02).
+    """
+
+    error = document.get("error")
+    if isinstance(error, Mapping) and error.get("message"):
+        return f"{error.get('code')}: {error.get('message')}"
+    return None
 
 
 def without_answer(

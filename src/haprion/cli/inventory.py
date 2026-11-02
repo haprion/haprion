@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
 from haprion import exit_codes
-from haprion.cli.caller import usage, without_answer
+from haprion.cli.caller import helper_refusal, usage, without_answer
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
 
@@ -51,7 +51,9 @@ def _parse(argv: list[str]) -> tuple[str, bool]:
 def _result(document: Mapping[str, Any]) -> Mapping[str, Any]:
     result = document.get("result")
     if document.get("operation") != OPERATION or not isinstance(result, Mapping):
-        raise ValueError("the inventory helper returned an invalid result")
+        raise ValueError(
+            helper_refusal(document) or "the inventory helper returned an invalid result"
+        )
     return result
 
 

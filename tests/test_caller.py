@@ -70,6 +70,29 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, exit_codes.USAGE)
         self.assertEqual(shown.getvalue(), "Usage:\n  haprion-list -c <cluster>\n")
 
+    def test_help_asked_for_is_not_an_error(self) -> None:
+        for flag in ("-h", "--help"):
+            shown = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", ["haprion-list", flag]),
+                self.assertRaises(SystemExit) as raised,
+                redirect_stdout(shown),
+            ):
+                caller.usage("Usage:\n  haprion-list -c <cluster>\n")
+
+            self.assertEqual(raised.exception.code, 0)
+            self.assertEqual(shown.getvalue(), "Usage:\n  haprion-list -c <cluster>\n")
+
+    def test_a_mistyped_call_still_exits_sixty_four(self) -> None:
+        with (
+            mock.patch.object(sys, "argv", ["haprion-list", "-c"]),
+            self.assertRaises(SystemExit) as raised,
+            redirect_stdout(io.StringIO()),
+        ):
+            caller.usage("Usage:\n")
+
+        self.assertEqual(raised.exception.code, exit_codes.USAGE)
+
     def test_a_usage_string_without_a_final_newline_gets_one(self) -> None:
         shown = io.StringIO()
         with self.assertRaises(SystemExit), redirect_stdout(shown):

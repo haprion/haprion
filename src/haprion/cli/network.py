@@ -132,9 +132,9 @@ def _render(document: Mapping[str, Any], writer: TextIO) -> None:
     #
     origin = result.get("origin")
     where = (
-        "managed/network.yaml in the cluster repository"
+        "the cluster's saved configuration"
         if origin == "repository"
-        else "the engine's cluster configuration (this cluster has no managed/network.yaml)"
+        else "the engine's cluster definition (nothing is saved for the network yet)"
     )
     writer.write(f"\nRead from {where}.\n")
     writer.write(

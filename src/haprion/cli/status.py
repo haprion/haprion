@@ -300,7 +300,10 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
             f"  Keepalived:   {'ACTIVE' if status['keepalived']['active'] else 'INACTIVE'}\n"
         )
         writer.write(f"  KA state:     {keepalived_state(status['keepalived']) or 'UNKNOWN'}\n")
-        writer.write(f"  VIP owner:    {status['vip']['owner']}\n")
+        owner = status["vip"]["owner"]
+        writer.write(
+            f"  VIP owner:    {'UNKNOWN' if owner is None else 'YES' if owner else 'NO'}\n"
+        )
         writer.write(f"  Runtime:      {'OK' if status['stats_ok'] else 'FAILED'}\n")
         running = (status.get("runtime") or {}).get("version") or "unknown"
         note = behind.get(str(node["name"]))

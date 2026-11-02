@@ -36,7 +36,7 @@ def ask(action: str, *, path: str = SOCKET_PATH, **parameters: str | list[str]) 
     }
     try:
         raw = helper_socket.ask(
-            request, path=path, timeout=TIMEOUT_SECONDS, what="the NDES server service"
+            request, path=path, timeout=TIMEOUT_SECONDS, what="the NDES server helper"
         )
     except helper_socket.HelperBusy as error:
         raise NdesServerError("unavailable", str(error)) from error
@@ -53,7 +53,7 @@ def ask(action: str, *, path: str = SOCKET_PATH, **parameters: str | list[str]) 
         document = json.loads(raw)
     except ValueError as error:
         raise NdesServerError(
-            "unavailable", "the NDES server service answered with something that is not JSON"
+            "unavailable", "the NDES server helper answered with something that is not JSON"
         ) from error
     result = document.get("result") if isinstance(document, dict) else None
     if not isinstance(document, dict) or document.get("outcome") != "done":
@@ -61,8 +61,8 @@ def ask(action: str, *, path: str = SOCKET_PATH, **parameters: str | list[str]) 
         code = refusal.get("code") if isinstance(refusal, dict) else None
         message = refusal.get("message") if isinstance(refusal, dict) else None
         raise NdesServerError(
-            str(code or "unavailable"), str(message or "the NDES server service did not say")
+            str(code or "unavailable"), str(message or "the NDES server helper did not say")
         )
     if not isinstance(result, dict):
-        raise NdesServerError("unavailable", "the NDES server service's answer was incomplete")
+        raise NdesServerError("unavailable", "the NDES server helper's answer was incomplete")
     return result

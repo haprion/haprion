@@ -296,7 +296,8 @@ class TheCommandRendersWhatTheHelperSaid(unittest.TestCase):
         self.assertIn("192.0.2.25", out)
         self.assertIn("outbound", out)
         self.assertIn("office", out)
-        self.assertIn("managed/network.yaml", out)
+        self.assertIn("Read from the cluster's saved configuration.", out)
+        self.assertNotIn("network.yaml", out)
         self.assertIn("Node ownership is checked against 192.0.2.20", out)
 
     def test_a_derived_description_says_where_it_came_from(self) -> None:
@@ -306,7 +307,8 @@ class TheCommandRendersWhatTheHelperSaid(unittest.TestCase):
         )
 
         self.assertEqual(status, 0)
-        self.assertIn("no managed/network.yaml", out)
+        self.assertIn("nothing is saved for the network yet", out)
+        self.assertNotIn("network.yaml", out)
 
     def test_empty_tables_say_so_rather_than_printing_a_bare_header(self) -> None:
         status, out, _ = self._run(["-c", "alpha"], self._document(sources=[], groups=[]))

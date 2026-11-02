@@ -647,6 +647,13 @@ class CallerTests(HelperFixture):
         self.assertIn("Published:      8", out)
         self.assertIn("every node runs the published version", out)
 
+    def test_a_node_s_vip_ownership_reads_yes_or_no(self) -> None:
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(self.envelope()))
+        self.assertIn("VIP owner:    YES", out)
+        self.assertIn("VIP owner:    NO", out)
+        self.assertNotIn("VIP owner:    True", out)
+        self.assertNotIn("VIP owner:    False", out)
+
     def test_a_node_whose_status_command_failed_says_why(self) -> None:
         """Review 2026-10-30, E3: not UNREACHABLE, and the node's own words follow."""
 

@@ -1272,13 +1272,14 @@ class TheManagersOwnServices(unittest.TestCase):
         late = NOW - timedelta(days=3)
         (item,) = self.items(maintained_at=late)
         self.assertEqual((item.subject, item.severity, item.since), ("retention", "warning", late))
-        self.assertIn("has not finished since", item.message)
+        self.assertIn("has not finished;", item.message)
+        self.assertIn("journalctl -u haprion-retention.service", item.message)
         short = {
             table: NOW.date() + timedelta(days=ahead - 3)
             for table, ahead in attention.MAINTENANCE_AHEAD.items()
         }
         (only,) = self.items(maintained_at=late, horizons=short)
-        self.assertIn("has not run since", only.message)
+        self.assertIn("has not run;", only.message)
 
     def test_a_poller_that_stopped_writing_is_listed(self) -> None:
         for at in (NOW - timedelta(minutes=6), None):
@@ -1290,6 +1291,7 @@ class TheManagersOwnServices(unittest.TestCase):
                 self.assertIn("(haprion-poller)", item.message)
                 # The manager's cycle, not the clusters: those are read, and judged, one by one.
                 self.assertIn("run its cycle", item.message)
+                self.assertIn("systemctl status haprion-poller", item.message)
                 self.assertNotIn("clusters", item.message)
 
     def test_a_job_waiting_ten_minutes_with_nothing_running_is_the_worker(self) -> None:
@@ -1401,7 +1403,9 @@ class TheManagersOwnServices(unittest.TestCase):
         }
         (item,) = self.items(horizons=short)
         self.assertEqual((item.subject, item.severity), ("retention", "warning"))
-        self.assertIn(f"since {NOW.date() - timedelta(days=2)}", item.message)
+        self.assertEqual(item.since.date(), NOW.date() - timedelta(days=2))
+        self.assertNotIn(str(NOW.date() - timedelta(days=2)), item.message)
+        self.assertIn("journalctl -u haprion-retention.service", item.message)
         #
         # The night's run not yet made today is not late.
         #
@@ -1450,6 +1454,18 @@ class TheDashboardBox(LoginTestCase):
         self.assertIn('<a class="secondary-button" href="/jobs#job-7">Events</a>', drawn)
         self.assertIn("Deploy failed", drawn)
         self.assertNotIn("Needs attention", empty)
+
+    def test_a_manager_row_has_no_button_to_the_page_it_is_on(self) -> None:
+        item = attention.Item("manager", "critical", None, "poller", "has not run", NOW, "/")
+        some = attention.build_attention([item], status_age={}, stale_after_seconds=40, now=NOW)
+        client = self.client()
+        self.sign_in(client)
+
+        with mock.patch("haprion_ui.pages.dashboard.attention_items", return_value=some):
+            drawn = client.get("/").text
+
+        self.assertIn("has not run", drawn)
+        self.assertNotIn('<a class="secondary-button" href="/">', drawn)
 
     def test_a_node_on_an_older_node_package_says_so_in_its_row_and_in_the_box(self) -> None:
         """26-10-29: the demo's service-b, left behind by an upgrade round."""
@@ -1523,7 +1539,7 @@ class AFixWaitingInTheRepository(unittest.TestCase):
             (item.kind, item.severity, item.cluster, item.subject, item.since),
             ("manager", "warning", None, "haprion-cli 0.99.1", at),
         )
-        self.assertEqual(item.message, "waits in the repository; 0.99.0 is installed")
+        self.assertEqual(item.message, "waits in the repository; 0.99.0 is installed; run sudo apt upgrade")
         self.assertEqual(attention.from_packages([]), [])
 
 

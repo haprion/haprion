@@ -4047,7 +4047,8 @@ who did either.
 ### Needs attention, and external monitoring
 
 Under the dashboard's four cards, *Needs attention* lists what is wrong and needs somebody, across every
-cluster, the worst first. For an admin, each row links to where it is fixed. When nothing is wrong, the
+cluster, the worst first. For an admin, each row links to where it is fixed; the manager's own services
+have no page, so their rows name the command to run. When nothing is wrong, the
 box is not shown.
 
 **What is listed:**
@@ -4101,7 +4102,7 @@ box is not shown.
   lines in the last hour is critical.
 - **The manager's own services**, judged by what they leave in the database:
   - the poller has not run its cycle for two poll intervals (at least five minutes), or never has -
-    critical. This says the poller itself is stopped or stuck; each cluster is read on its own, so one
+    critical; `systemctl status haprion-poller` says why. This says the poller itself is stopped or stuck; each cluster is read on its own, so one
     that is not being read shows as old data on its own card and in its own *status last read* line;
   - a job has been queued for ten minutes with none running while writes are on, so the worker is taking
     none - critical. A job no worker holds does not count as running, and nor is the row raised while an

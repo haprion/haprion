@@ -105,6 +105,13 @@ class Item:
         return PAGES[self.kind]
 
     @property
+    def names_a_page(self) -> bool:
+        """Whether the row's link leads anywhere: the manager's own services have none
+        to name, and "/" is the dashboard the row is already on (26-11-02)."""
+
+        return self.link != "/"
+
+    @property
     def needs_writes(self) -> bool:
         """Whether the row's page is one only management writes open.
 
@@ -893,7 +900,8 @@ def from_packages(rows: Sequence[PackageWaiting]) -> list[Item]:
             severity="warning",
             cluster=None,
             subject=f"{row.name} {short_version(row.available)}",
-            message=f"waits in the repository; {short_version(row.installed)} is installed",
+            message=f"waits in the repository; {short_version(row.installed)} is installed;"
+            " run sudo apt upgrade",
             since=row.read_at,
             link="/",
         )
@@ -1049,9 +1057,11 @@ def from_manager(
                 severity="critical",
                 cluster=None,
                 subject="poller",
-                message="the poller (haprion-poller) has not run its cycle since"
+                message="the poller (haprion-poller) has not run its cycle;"
+                " see systemctl status haprion-poller; last cycle"
                 if cluster_list_at
-                else "the poller (haprion-poller) has never run its cycle",
+                else "the poller (haprion-poller) has never run its cycle;"
+                " see systemctl status haprion-poller",
                 since=cluster_list_at,
                 link="/",
             )
@@ -1135,7 +1145,8 @@ def from_manager(
                     severity="critical",
                     cluster=None,
                     subject="retention",
-                    message=f"the nightly maintenance (haprion-retention) has never run: {table} has no partitions",
+                    message=f"the nightly maintenance (haprion-retention) has never run: {table} has no partitions;"
+                    " see journalctl -u haprion-retention.service",
                     since=None,
                     link="/",
                 )
@@ -1149,7 +1160,8 @@ def from_manager(
                     severity="warning",
                     cluster=None,
                     subject="retention",
-                    message=f"the nightly maintenance (haprion-retention) has not run since {last_run}",
+                    message="the nightly maintenance (haprion-retention) has not run;"
+                    " see journalctl -u haprion-retention.service; last run",
                     since=datetime.combine(last_run, datetime.min.time(), UTC),
                     link="/",
                 )
@@ -1171,7 +1183,8 @@ def from_manager(
                 severity="warning",
                 cluster=None,
                 subject="retention",
-                message="the nightly maintenance (haprion-retention) has not finished since",
+                message="the nightly maintenance (haprion-retention) has not finished;"
+                " see journalctl -u haprion-retention.service; last finished",
                 since=maintained_at,
                 link="/",
             )

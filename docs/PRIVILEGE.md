@@ -148,8 +148,11 @@ never hold a transaction open across a CLI command.
   worker reads the lock and the answer and changes neither.
 - Git trusts each repository by an explicit `safe.directory` entry; wildcard trust is never used. Root's
   entries are in root's own configuration. A member of the configuration group reading at the terminal
-  trusts a repository by its exact path on the command line, and only one that root owns: only root can
-  change it, so nothing in it can act against the reader.
+  trusts a repository by its exact path on the command line, and only when the work tree directory and
+  every git directory it uses (the `.git` file, the linked directory it names and that one's common
+  directory) are owned by root and writable by neither group nor others: only root can change them, so
+  nothing in them can act against the reader. Git runs without the caller's `GIT_*` variables and
+  personal ignore file.
 
 ## Helper boundary
 

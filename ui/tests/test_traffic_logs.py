@@ -730,6 +730,27 @@ class TheTrafficLogPage(LoginTestCase):
                 self.assertIn('data-export-destination="—"', page)
                 self.assertIn('<span title="Not forwarded">—</span>', page)
 
+    def test_a_cancelled_request_that_was_let_through_does_not_say_nothing_reached_the_server(
+        self,
+    ) -> None:
+        """26-11-02: `waf-engine/interrupted:log` is passed on uninspected (generate.py)."""
+
+        self.healthy_meta()
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(
+                record(request=2, path="/thumb", status=200, rule="waf-engine/interrupted:log")
+            )
+
+        page = self.page()
+
+        self.assertIn('status-badge-unknown">Cancelled</span>', page)
+        self.assertIn(
+            'title="The client cancelled the request before the WAF had answered; '
+            "it was passed on uninspected, waf-engine/interrupted:log — ",
+            page,
+        )
+        self.assertNotIn("nothing reached the server", page)
+
     def test_the_traffic_page_filters_on_rule_hits_and_keeps_the_filter(self) -> None:
         self.healthy_meta()
         with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:

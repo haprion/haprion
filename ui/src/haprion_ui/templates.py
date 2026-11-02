@@ -212,15 +212,28 @@ RULE_LABELS = {
     ),
 }
 #
+# What the long label says depends on the mode too, where the two differ: a
+# cancelled request in an object that refuses is closed before a byte reaches
+# the server, but in a log-only object that allows engine errors it is passed
+# on, uninspected (generate.py, `_waf_rules`; 26-11-02).
+#
+MODE_LABELS = {
+    ("waf-engine/interrupted", "log"): (
+        "The client cancelled the request before the WAF had answered; it was passed on uninspected"
+    ),
+}
+#
 # A rule that decided nothing is drawn grey, not as a refusal (B434, 26-11-02):
 # a cancelled request read as a WAF fault in red.
 #
 NEUTRAL_RULES = frozenset({"waf-engine/interrupted"})
 
 
-def rule_label(name: str, short: bool = False) -> str:
+def rule_label(name: str, short: bool = False, mode: str = "") -> str:
     """The label for a rule name, or the name itself where it has none."""
 
+    if not short and (name, mode) in MODE_LABELS:
+        return MODE_LABELS[(name, mode)]
     labels = RULE_LABELS.get(name)
     return name if labels is None else labels[1 if short else 0]
 

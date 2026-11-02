@@ -1670,7 +1670,7 @@ class RemovingAnObject(EditorTestCase):
         self.assertIn("Save the removal", page.text)
         self.assertIn("Deploy is a separate step", page.text)
         # Said in the web's own words: Versions, not the terminal's revert or the repository.
-        self.assertIn("from <a href=\"/history\">Versions</a>", page.text)
+        self.assertIn('from <a href="/history">Versions</a>', page.text)
         self.assertNotIn("haprion-revert", page.text)
         self.assertNotIn("repository", page.text)
         self.assertEqual(self.queued, [])

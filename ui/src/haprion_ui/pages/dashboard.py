@@ -19,6 +19,7 @@ from haprion.digits import is_digits
 from haprion.version_history import comment_problem
 
 from haprion_ui import (
+    attention,
     audit,
     auth,
     blocked,
@@ -58,6 +59,7 @@ from haprion_ui.reading import (
     HISTORY_SOURCE,
     NETWORK_SOURCE,
     OBJECTS_SOURCE,
+    REGENERATION_SOURCE,
     SEARCHED_SOURCES,
     SETTINGS_SOURCE,
     STATUS_SOURCE,
@@ -181,6 +183,16 @@ def build_router(config: Config) -> APIRouter:
             else {}
         )
         #
+        # Where publishing again would change what runs: the card offers the
+        # page that shows it, beside the deploy (B437, 26-11-02). The same
+        # reading as the Needs attention row, and for the same people.
+        #
+        regenerated = (
+            attention.regeneration_changes(read_source(request, config, REGENERATION_SOURCE)[1])
+            if config.management_writes and session.role == "admin"
+            else frozenset()
+        )
+        #
         # Not with writes off: every row leads to a setting that cannot be made
         # then, and the list could not be hidden either (review 2026-10-18, U2).
         #
@@ -203,6 +215,7 @@ def build_router(config: Config) -> APIRouter:
                 and config.management_writes
                 and _getting_started_offered_again(request),
                 "pending": pending,
+                "regenerated": regenerated,
                 "traffic": traffic,
                 "username": session.username,
                 "role": session.role,

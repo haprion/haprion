@@ -949,6 +949,18 @@ def regeneration_variant(result: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
+def regeneration_changes(rows: Iterable[Any]) -> frozenset[str]:
+    """The clusters whose reading says publishing again would change what runs (B437)."""
+
+    return frozenset(
+        row.cluster
+        for row in rows
+        if row.outcome == "done"
+        and isinstance(row.result, Mapping)
+        and row.result.get("outcome") == "changed"
+    )
+
+
 def from_regeneration(rows: Iterable[Any]) -> list[Item]:
     """Clusters where publishing again would change what runs, or would be refused (0.99.11).
 

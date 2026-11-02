@@ -141,7 +141,8 @@ so can a newer WAF rule set. The nodes keep running what was published until the
 again. The manager makes each cluster's published version again with the installed release, without
 publishing, and compares the result with what the nodes run. When they differ, *Needs attention* says
 *Publish & deploy to apply the update*, with the cause where one is known, such as *the WAF rule set
-4.25.1 → 4.25.2*. Open the row's **Versions** button: the page lists the causes, the proxies
+4.25.1 → 4.25.2*. The cluster's card on the dashboard then has an **Apply update** button beside
+**Deploy configuration**. Open it or the row's **Versions** button: the page lists the causes, the proxies
 that differ and the files, line by line. **Publish & deploy** there publishes only the regenerated
 configuration, with the country networks the published version carries, and deploys it. Nothing happens until you choose it, so the traffic is reloaded when you
 want it. If versions were saved after the published one, publishing carries them too, and the page says

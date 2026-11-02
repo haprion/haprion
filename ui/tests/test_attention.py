@@ -1549,6 +1549,36 @@ class TheDashboardBox(LoginTestCase):
         self.assertIn('id="cluster-edge-demo"', page)
         self.assertEqual(attention.card_link("edge-demo"), "/#cluster-edge-demo")
 
+    def test_a_card_offers_apply_update_only_where_publishing_again_would_change_things(
+        self,
+    ) -> None:
+        """B437, 26-11-02: the demo's edge-demo has such a reading, and an admin with writes on."""
+
+        button = 'href="/history/edge-demo/regenerated">Apply update</a>'
+        for writes, role, offered in (
+            (True, "admin", True),
+            (False, "admin", False),
+            (True, "reader", False),
+        ):
+            with self.subTest(writes=writes, role=role):
+                client = self.client(
+                    replace(configuration(), demo_fixture=True, management_writes=writes)
+                )
+                self.account = replace(self.account, role=role)
+                self.sign_in(client)
+                self.assertEqual(button in client.get("/").text, offered)
+
+        self.assertEqual(
+            attention.regeneration_changes(
+                [
+                    SimpleNamespace(cluster="a", outcome="done", result={"outcome": "changed"}),
+                    SimpleNamespace(cluster="b", outcome="done", result={"outcome": "unchanged"}),
+                    SimpleNamespace(cluster="c", outcome="failed", result={"outcome": "changed"}),
+                ]
+            ),
+            frozenset({"a"}),
+        )
+
 
 class AFixWaitingInTheRepository(unittest.TestCase):
     """0088, B357: one row per package, the waiting version in the row's own name."""

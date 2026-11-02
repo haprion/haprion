@@ -708,6 +708,28 @@ class TheTrafficLogPage(LoginTestCase):
         # The export says the same as the page: an empty cell, not a 0 (26-11-01).
         self.assertIn('data-export-status=""', everything)
 
+    def test_a_request_no_server_took_shows_a_dash_not_haproxy_s_marker(self) -> None:
+        self.healthy_meta()
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(
+                record(request=1, path="/refused", server="<NOSRV>", rule="waf-engine/x:deny")
+            )
+
+        for path in ("/logs", "/waf"):
+            with self.subTest(path=path):
+                with (
+                    patch("haprion_ui.db.cluster_objects", return_value=[]),
+                    patch("haprion_ui.db.waf_findings", return_value=[]),
+                    patch("haprion_ui.db.waf_verdicts", return_value={}),
+                    patch("haprion_ui.db.waf_request_count", return_value=1),
+                    patch("haprion_ui.db.waf_counted", return_value={}),
+                    patch("haprion.crs.installed_catalog", return_value={}),
+                ):
+                    page = self.page(path=path, query="?view=requests" if path == "/waf" else "")
+                self.assertNotIn("NOSRV", page)
+                self.assertIn('data-export-destination="—"', page)
+                self.assertIn('<span title="Not forwarded">—</span>', page)
+
     def test_the_traffic_page_filters_on_rule_hits_and_keeps_the_filter(self) -> None:
         self.healthy_meta()
         with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:

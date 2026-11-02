@@ -1539,7 +1539,9 @@ class AFixWaitingInTheRepository(unittest.TestCase):
             (item.kind, item.severity, item.cluster, item.subject, item.since),
             ("manager", "warning", None, "haprion-cli 0.99.1", at),
         )
-        self.assertEqual(item.message, "waits in the repository; 0.99.0 is installed; run sudo apt upgrade")
+        self.assertEqual(
+            item.message, "waits in the repository; 0.99.0 is installed; run sudo apt upgrade"
+        )
         self.assertEqual(attention.from_packages([]), [])
 
 

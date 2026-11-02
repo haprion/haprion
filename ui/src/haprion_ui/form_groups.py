@@ -111,9 +111,10 @@ def _access(form: Mapping[str, Any]) -> str:
 def _access_badges(form: Mapping[str, Any]) -> tuple[Badge, ...]:
     """What the access rules do, in the colours the logs use (Fas 21).
 
-    Yellow counts what only looks - a rule or the deny list in `log` - and red
-    what refuses, so a closed group says whether anything on the object is
-    turning visitors away.
+    Yellow counts what only looks - a rule or the deny list in `log` - and grey
+    what refuses: a refusal somebody chose is not an alarm (26-11-02), but a
+    closed group still says whether anything on the object is turning visitors
+    away.
     """
 
     modes = [str(mode) for mode in form.get("rule_mode", ()) or ()]
@@ -126,7 +127,7 @@ def _access_badges(form: Mapping[str, Any]) -> tuple[Badge, ...]:
         Badge(text, kind)
         for text, kind, count in (
             (f"{logging} logging", "warning", logging),
-            (f"{denying} denying", "critical", denying),
+            (f"{denying} denying", "unknown", denying),
         )
         if count
     )

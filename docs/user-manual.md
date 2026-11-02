@@ -1461,8 +1461,8 @@ proxy*), below *Reachable from*, *Rate limit* and *Rate window*
 ([An http or https object, field by field](#an-http-or-https-object-field-by-field)):
 
 - **Denied** (http, https and tcp). *Denied — groups* and *Denied — addresses* name who is refused: groups
-  from the *Network* page, and addresses, ranges or countries, one per line. *Denied — mode* is *log* or
-  *deny*.
+  from the *Network* page, and addresses, ranges or countries, one per line. *Denied — mode* is *log only* or
+  *deny*; it starts as *log only*, so nobody is refused until it is *deny*.
 - **Max request body** (http and https) is the largest body a request may declare, such as `10m`.
 - **Deny rules** (http and https) are tried in order, and any one of them is enough. *Add rule* adds one
   and *Remove rule* drops it. A rule has a *Name*, a *Mode* (*log* or *deny*), and the conditions it names:
@@ -1597,7 +1597,8 @@ and the nodes holding each. An admin ticks them and presses *Unblock*. The clust
 says how many addresses are blocked. An admin's *Operations* row names the objects - three of them, then
 how many more - with a link to each.
 
-To refuse an address for good, put it in the object's *Denied — addresses* ([Access rules](#access-rules)). That is
+To refuse an address for good, put it in the object's *Denied — addresses* and set *Denied — mode* to *deny*
+([Access rules](#access-rules)). That is
 a published change, unlike a block.
 
 The same in the object's YAML:

@@ -156,7 +156,7 @@
         </select>
       </label>
       <label><span class="field-title">Denied — addresses <span class="optional">(optional)</span></span><textarea name="deny_ranges" rows="5" placeholder="203.0.113.0/24">{{ form.deny_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>
-      <label><span class="field-title">Denied — mode</span><select name="deny_mode" class="single-select">{% for mode in ('log', 'deny') %}<option{% if form.deny_mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
+      <label><span class="field-title">Denied — mode</span><select name="deny_mode" class="single-select">{% set chosen_mode = 'deny' if form.protocol == 'tcp' else form.deny_mode %}<option value="log"{{ when('protocol', 'http https') }}{% if chosen_mode == 'log' %} selected{% endif %}>log only</option><option value="deny"{% if chosen_mode == 'deny' %} selected{% endif %}>deny</option></select></label>
       <label{{ when('protocol', 'http https') }}><span class="field-title">Max request body <span class="optional">(optional)</span></span><input name="max_request_body" value="{{ form.max_request_body }}" size="10" placeholder="10m"><small>Declared size; <code>k</code>, <code>m</code>, <code>g</code>.</small></label>
     </div>
     <div class="rule-list"{{ when('protocol', 'http https') }} data-rule-list>

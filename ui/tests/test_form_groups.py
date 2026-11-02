@@ -66,7 +66,7 @@ class TheAccessGroupSaysWhatItsRulesDo(unittest.TestCase):
 
         self.assertEqual(
             [(badge.text, badge.kind) for badge in state.badges],
-            [("2 logging", "warning"), ("1 denying", "critical")],
+            [("2 logging", "warning"), ("1 denying", "unknown")],
         )
 
     def test_an_object_without_rules_shows_no_badge(self) -> None:

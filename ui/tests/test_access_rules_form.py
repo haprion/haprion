@@ -86,6 +86,27 @@ class TheFormWritesTheRules(EditorTestCase):
             ],
         )
 
+    def test_the_denied_mode_says_log_only_and_a_tcp_object_is_offered_only_deny(self) -> None:
+        client = self.editor()
+
+        http = self.submit(client, "/proxies/alpha/shop/edit", action="check")
+        tcp = self.submit(
+            client, "/proxies/alpha/shop/edit", action="check", protocol="tcp", tcp_port="5432"
+        )
+
+        for page in (http.text, tcp.text):
+            select = page.split('name="deny_mode"')[1].split("</select>")[0]
+            self.assertIn('<option value="log"', select)
+            self.assertIn(">log only</option>", select)
+            self.assertIn(">deny</option>", select)
+        http_select = http.text.split('name="deny_mode"')[1].split("</select>")[0]
+        tcp_select = tcp.text.split('name="deny_mode"')[1].split("</select>")[0]
+        self.assertNotRegex(http_select, r'value="log"[^>]*hidden')
+        self.assertRegex(http_select, r'value="log"[^>]*selected')
+        self.assertIn('<option value="deny" selected>', tcp_select)
+        self.assertRegex(tcp_select, r'value="log"[^>]*hidden')
+        self.assertNotRegex(tcp_select, r'value="log"[^>]*selected')
+
     def test_a_rule_the_engine_refuses_is_not_saved(self) -> None:
         client = self.editor()
 

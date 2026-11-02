@@ -1,3 +1,3 @@
 """Haprion's UI-independent management engine."""
 
-__version__ = "0.99.11"
+__version__ = "0.99.12"

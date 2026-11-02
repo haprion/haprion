@@ -586,6 +586,21 @@ class TheErrorCodeReachesThePage(LoginTestCase):
         self.assertNotIn("Reason:", body)
         self.assertNotIn("Diagnostics", body)
 
+    def test_a_partial_deploy_names_the_nodes_that_did_not_answer(self) -> None:
+        result = {
+            "warnings": [{"code": "cluster_not_converged", "message": "not fully reconciled"}],
+            "result": {
+                "nodes": [
+                    {"name": "node-a", "error": None},
+                    {"name": "node-b", "error": {"code": "unreachable", "node": "node-b"}},
+                ]
+            },
+        }
+
+        body = self.page([job(state="partial", outcome="partial", result=result)])
+
+        self.assertIn("— not fully reconciled; not reconciled: node-b", body)
+
     def test_a_partial_deploy_names_its_reason_and_a_warned_deploy_its_warning(self) -> None:
         """Review 26-10-24, 02-03: a partial showed no reason, a warned deploy read clean."""
 
@@ -913,6 +928,22 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
         self.assertIn("Deploy blocked: node-b is missing example-net", newest.follow_up or "")
         self.assertEqual(newest.error_code, "certificates_not_deployed")
         self.assertIsNone(older.follow_up)
+
+    def test_the_web_tells_a_blocked_deploy_to_press_the_button_not_to_run_the_command(
+        self,
+    ) -> None:
+        refusal = certificate_refusal()
+        refusal["error"]["message"] = (  # type: ignore[index]
+            "referenced certificates are not on every node: node-b is missing example-net. "
+            "Run haprion-cert-deploy -c alpha first, then deploy again"
+        )
+        older = replace(blocked_deploy(19), result=refusal)
+
+        overview = jobs.build_job_overview([blocked_deploy(20), older], sentences=True, writes=True)
+
+        said = overview.jobs[1].error_message or ""
+        self.assertIn("press Deploy certificates on the dashboard", said)
+        self.assertNotIn("haprion-cert-deploy", said)
 
     def test_a_finished_certificate_deploy_owes_the_configuration_deploy(self) -> None:
         #

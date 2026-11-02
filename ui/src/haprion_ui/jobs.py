@@ -837,6 +837,28 @@ def warnings_of(job: Job) -> tuple[tuple[str, str], ...]:
     return tuple(found)
 
 
+def unreconciled_nodes(job: Job) -> tuple[str, ...]:
+    """The nodes a partial deploy's answer reports an error for, in the order it lists them.
+
+    Read from the per-node lines (`result.nodes[].error.node`), not from any
+    sentence: the warning says only that the cluster was not fully reconciled,
+    and the person reading it needs to know where to look (26-11-02).
+    """
+
+    if job.state != "partial" or ending_step(job) not in {"deploy", "cert_deploy"}:
+        return ()
+    envelope = job.result if isinstance(job.result, dict) else {}
+    body = envelope.get("result")
+    lines = body.get("nodes") if isinstance(body, dict) else None
+    named: list[str] = []
+    for line in lines if isinstance(lines, list) else ():
+        error = line.get("error") if isinstance(line, dict) else None
+        node = error.get("node") if isinstance(error, dict) else None
+        if isinstance(node, str) and node and node not in named:
+            named.append(node)
+    return tuple(named)
+
+
 def waiting_for(job: Job) -> str | None:
     """What a `partial` job waits on, when every warning it carries is a wait."""
 
@@ -879,6 +901,22 @@ def error_message(job: Job) -> str | None:
         return None
     message = error.get("message")
     return message.strip() if isinstance(message, str) and message.strip() else None
+
+
+def web_error_message(job: Job) -> str | None:
+    """`error_message` as a person at the dashboard should read it (26-11-02).
+
+    The engine's sentence for a deploy blocked by certificates tells the
+    terminal to run `haprion-cert-deploy`; here the button for that is on the
+    dashboard. Chosen by the machine code, never by the text.
+    """
+
+    if error_code(job) == CERTIFICATES_NOT_DEPLOYED:
+        return (
+            "referenced certificates are not on every node; "
+            "press Deploy certificates on the dashboard, then deploy again"
+        )
+    return error_message(job)
 
 
 def diagnostics_of(job: Job) -> str | None:
@@ -1158,6 +1196,9 @@ def _view(
         or (job.state == "done" and ending_step(job) in {"deploy", "cert_deploy", "backup_run"})
         else tuple(entry for entry in warnings_of(job) if entry[0] in WORKER_WARNINGS)
     )
+    spoken = [message for _, message in warned if message]
+    if unreconciled := unreconciled_nodes(job):
+        spoken.append("not reconciled: " + ", ".join(unreconciled))
     return JobView(
         id=job.id,
         operation=named[0] if (named := action_names(job)) else _operation(job.operation),
@@ -1186,12 +1227,10 @@ def _view(
         # Not again under the code when the follow-up line says it.
         #
         error_message=(
-            error_message(job) if sentences and ended_badly and not command_for_all else None
+            web_error_message(job) if sentences and ended_badly and not command_for_all else None
         ),
         warning_codes=", ".join(dict.fromkeys(code for code, _ in warned)),
-        warning_message=(
-            "; ".join(message for _, message in warned if message) or None if sentences else None
-        ),
+        warning_message="; ".join(spoken) or None if sentences else None,
         #
         # Only for a job that ended badly. A successful operation's stderr is
         # progress output, and putting a diagnostics panel under every green

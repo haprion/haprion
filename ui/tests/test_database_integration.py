@@ -2627,6 +2627,20 @@ class ARealDatabase(unittest.TestCase):
         ):
             hits = traffic_logs.read_database(connection, Path(temporary), ("alpha",), waf="hits")
             none = traffic_logs.read_database(connection, Path(temporary), ("alpha",), waf="none")
+            #
+            # Read by its host: another test's 5000 rows can share its second,
+            # and the newest 500 would then leave it out (26-11-02).
+            #
+            cancelled = {
+                waf: traffic_logs.read_database(
+                    connection,
+                    Path(temporary),
+                    ("alpha",),
+                    waf=waf,
+                    substring="cancelled.example.com",
+                )
+                for waf in ("hits", "none")
+            }
             # The Requests tab's figure counts the rows the tab lists.
             since = now - timedelta(days=7)
             counted = db.waf_request_count(connection, clusters=("alpha",), since=since)
@@ -2638,8 +2652,8 @@ class ARealDatabase(unittest.TestCase):
             ("rule.example.com", "block-admin:deny"), [(e.host, e.rule) for e in hits.entries]
         )
         # A cancelled request is no rule hit: on the traffic page, not on the WAF page.
-        self.assertNotIn("cancelled.example.com", [e.host for e in hits.entries])
-        self.assertIn("cancelled.example.com", [e.host for e in none.entries])
+        self.assertEqual([e.host for e in cancelled["hits"].entries], [])
+        self.assertEqual([e.host for e in cancelled["none"].entries], ["cancelled.example.com"])
         #
         # One object's requests (26-10-10): its backend, or its name before any.
         #

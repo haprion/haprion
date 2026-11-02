@@ -11,7 +11,7 @@
 <article class="diff-file">
   <h3><span class="diff-path">{% if file.old_path %}{{ file.old_path }} → {% endif %}{{ file.path }}</span><span class="diff-status">{{ file.status }}</span><span class="diff-added">+{{ file.added }}</span><span class="diff-removed">−{{ file.removed }}</span></h3>
   {% if file.binary %}<p class="table-note">Binary file.</p>
-  {% elif file.left_out %}<p class="table-note">Too large to keep with the version; read it in the cluster repository.</p>
+  {% elif file.left_out %}<p class="table-note">Too large to keep with the version.</p>
   {% else %}<pre class="diff-lines">{% for kind, line in file.lines %}<span class="diff-{{ kind }}">{{ line }}</span>{% endfor %}</pre>{% endif %}
 </article>
 {% endfor %}

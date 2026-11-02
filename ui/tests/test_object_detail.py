@@ -109,7 +109,7 @@ class AStoredObject(unittest.TestCase):
         described = detail(readings=[reading(objects=[entry])])
 
         self.assertEqual(described.stored.description, "The web shop")  # type: ignore[union-attr]
-        self.assertEqual(described.detail, "Stored in the cluster repository")
+        self.assertEqual(described.detail, "Stored in the cluster's configuration")
 
     def test_the_commit_is_shown_short_and_kept_whole(self) -> None:
         view = detail()

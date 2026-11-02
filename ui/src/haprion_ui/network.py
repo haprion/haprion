@@ -517,7 +517,7 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
     head = result.get("head") if isinstance(result.get("head"), str) else None
     editable = result.get("origin") == "repository" and head is not None
     detail = (
-        "Edited here and published to the cluster repository"
+        "Edited here and published with the cluster's configuration"
         if editable
         else "Still described in the engine's configuration, which this interface cannot write"
     )

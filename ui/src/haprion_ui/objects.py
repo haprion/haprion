@@ -446,7 +446,7 @@ def build_object_detail(
     elif stale:
         detail = "The stored proxies need a fresh read"
     else:
-        detail = "Stored in the cluster repository"
+        detail = "Stored in the cluster's configuration"
 
     return ObjectDetail(
         cluster=cluster,

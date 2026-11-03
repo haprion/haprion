@@ -33,6 +33,7 @@ from haprion.cert_receiver import (
     set_key,
     set_secret,
 )
+from haprion.cli.caller import help_asked
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import envelope, failure, new_request_id
 from haprion.helper_protocol import config_error_code, write_document
@@ -188,6 +189,9 @@ def main(
     writer: TextIO = output_stream or sys.stdout
     errors: TextIO = error_stream or sys.stderr
     request_id = new_request_id()
+    if help_asked(argv):
+        writer.write(USAGE)
+        return 0
 
     try:
         arguments = _parse(argv, writer)

@@ -19,6 +19,7 @@ from haprion import exit_codes
 from haprion.backup_retention import RetentionError
 from haprion.backup_retention import read as read_retention
 from haprion.cli import backup_job_helper
+from haprion.cli.caller import help_asked
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     Cluster,
@@ -72,6 +73,9 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
+    if help_asked(argv):
+        writer.write(USAGE)
+        return 0
     try:
         selected, json_mode = _parse(argv)
     except ValueError:

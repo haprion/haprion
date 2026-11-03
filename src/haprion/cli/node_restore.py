@@ -28,6 +28,7 @@ from typing import Any, TextIO
 from haprion import exit_codes, labels, node_restore, restore_fetch
 from haprion.backup_archive import ArchiveError
 from haprion.cli import node_restore_helper
+from haprion.cli.caller import help_asked
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.node_restore import Request, RestoreError
 
@@ -223,7 +224,7 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
             out.write(f"  - {problem}\n")
     else:
         out.write(
-            f"\nNext: haprion-node-restore run --run {summary['run']} --confirm {plan['hostname']}\n"
+            f"\nNext: sudo haprion-node-restore run --run {summary['run']} --confirm {plan['hostname']}\n"
         )
 
 
@@ -268,6 +269,9 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     out = output_stream or sys.stdout
     errors = error_stream or sys.stderr
+    if help_asked(argv):
+        out.write(USAGE)
+        return 0
     if not argv or argv[0] not in {"prepare", "preview", "run", "discard", "status"}:
         errors.write(USAGE)
         return exit_codes.USAGE
@@ -391,7 +395,7 @@ def _step(
                 out.write(
                     f"Run {prepared['run']}\n\nOn {request.target}'s console, as its administrator:\n\n"
                     f"{prepared['paste']}\n\n"
-                    f"Then: haprion-node-restore preview --run {prepared['run']} "
+                    f"Then: sudo haprion-node-restore preview --run {prepared['run']} "
                     "--fingerprint <the SHA256:... it printed>\n"
                 )
             return 0

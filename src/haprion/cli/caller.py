@@ -68,6 +68,12 @@ def config_path(cluster_id: str) -> Path:
     return Path(field(cluster_id, "config_path"))
 
 
+def help_asked(argv: list[str]) -> bool:
+    """`-h` or `--help` anywhere in the call, after a subcommand too (26-11-03)."""
+
+    return any(argument in {"-h", "--help"} for argument in argv)
+
+
 def usage(text: str) -> NoReturn:
     """Print how the command is called, and exit the way the shell one did.
 
@@ -78,8 +84,7 @@ def usage(text: str) -> NoReturn:
     """
 
     sys.stdout.write(text if text.endswith("\n") else f"{text}\n")
-    asked = sys.argv[1:2] in (["-h"], ["--help"])
-    raise SystemExit(0 if asked else exit_codes.USAGE)
+    raise SystemExit(0 if help_asked(sys.argv[1:]) else exit_codes.USAGE)
 
 
 def helper_refusal(document: Mapping[str, Any]) -> str | None:

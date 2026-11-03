@@ -1754,12 +1754,15 @@ def collect(
 
 
 def _entry() -> None:
+    from haprion.cli.caller import help_asked
+
     modes = {"--check-config", "--config", "--replay-database"}
+    text = "usage: haprion-traffic-collector (--check-config|--config|--replay-database) <path>"
+    if help_asked(sys.argv[1:]):
+        print(text)
+        raise SystemExit(0)
     if len(sys.argv) != 3 or sys.argv[1] not in modes:
-        print(
-            "usage: haprion-traffic-collector (--check-config|--config|--replay-database) <path>",
-            file=sys.stderr,
-        )
+        print(text, file=sys.stderr)
         raise SystemExit(exit_codes.USAGE)
     try:
         config = load_config(Path(sys.argv[2]))

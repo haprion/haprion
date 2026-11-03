@@ -140,7 +140,7 @@ select = ["E4", "E7", "E9", "F", "I", "UP", "B", "BLE", "S", "SIM", "EXE", "RUF1
 python_version = "3.13"
 strict = true
 warn_unreachable = true
-files = ["src", "tools", "tests"]
+files = ["src", "tools", "tests", "examples/proxmox-node-rebuild"]
 #
 # The tests import each other as `tests.<module>`, and the package lives under
 # src/. Without both bases a test file is found twice under two names.

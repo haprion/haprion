@@ -1,0 +1,635 @@
+#!/usr/bin/env python3
+"""Rebuild a lost node on a new Proxmox VM with one command: an example.
+
+This is not part of the product. It is one installation's way of putting
+`haprion-node-restore` behind Proxmox, kept here for anyone with the same
+hypervisor to read, adapt, or leave alone. It uses the installed command's
+`--json` answers and nothing else of the product.
+
+What it does, in order (README.md says why):
+
+1. reads its settings and the API token, and checks them against Proxmox;
+2. clones the template into the pool, gives the clone the cluster's bridge and
+   a temporary address with cloud-init, and starts it;
+3. waits for the guest agent and for cloud-init to finish;
+4. `haprion-node-restore prepare`, then runs the line it prints inside the VM
+   through the guest agent, and reads the host key fingerprint from its output
+   - the console's job, done over the hypervisor's channel, not the network;
+5. `preview`, shown as it is; `run` only once the node's name is typed;
+6. switches cloud-init off in the VM, stops it, removes the cloud-init drive,
+   and starts it again on the node's own address.
+
+Usage:
+    proxmox_node_rebuild.py [--settings FILE] check <node> [--test]
+    proxmox_node_rebuild.py [--settings FILE] run <node> [--archive VERSION] [--vmid ID] [--test]
+
+Run as root: `haprion-node-restore` needs it, and so does the token file.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import re
+import socket
+import ssl
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, TextIO
+
+DEFAULT_SETTINGS = Path("/etc/proxmox-node-rebuild/settings.env")
+RESTORE = "haprion-node-restore"
+LIST_BACKUPS = "haprion-list-backups"
+FINGERPRINT = re.compile(r"SHA256:[A-Za-z0-9+/]{43}")
+KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
+#
+# What the token needs on the pool, the template, the storage and the bridge.
+# Read back from Proxmox by `check`, so a missing one is named before a clone.
+# `VM.GuestAgent.Unrestricted` is what `agent/exec` and `exec-status` take
+# since Proxmox VE 9.
+#
+POOL_PRIVILEGES = (
+    "VM.Allocate",
+    "VM.Audit",
+    "VM.Config.Cloudinit",
+    "VM.Config.CPU",
+    "VM.Config.Disk",
+    "VM.Config.Memory",
+    "VM.Config.Network",
+    "VM.PowerMgmt",
+    "VM.GuestAgent.Unrestricted",
+)
+TEMPLATE_PRIVILEGES = ("VM.Clone",)
+STORAGE_PRIVILEGES = ("Datastore.AllocateSpace",)
+AGENT_WAIT = 300.0
+CLOUD_INIT_WAIT = 900.0
+TASK_WAIT = 900.0
+ADDRESS_WAIT = 300.0
+
+
+class Stop(Exception):
+    """Something refused or failed, said in a sentence for the operator."""
+
+
+# --------------------------------------------------------------------------
+# Settings
+# --------------------------------------------------------------------------
+
+
+def read_env(path: Path) -> dict[str, str]:
+    """KEY=value lines, as an answers file has them. Read, never sourced."""
+
+    values: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise Stop(f"{path} could not be read: {exc.strerror}") from None
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep or not KEY.fullmatch(key):
+            raise Stop(f"{path}:{number} is not KEY=value")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def env_name(name: str) -> str:
+    """A node or cluster name as it stands in a key: lb-01 -> LB_01."""
+
+    return re.sub(r"[^A-Z0-9]", "_", name.upper())
+
+
+@dataclass(frozen=True)
+class Target:
+    """Where one rebuild goes, from the settings."""
+
+    node: str
+    cluster: str
+    vmid: int
+    name: str
+    bridge: str
+    gateway: str
+    temporary: ipaddress.IPv4Interface
+    test: ipaddress.IPv4Interface | None
+    test_vip: str | None
+
+
+@dataclass(frozen=True)
+class Settings:
+    hosts: tuple[str, ...]
+    port: int
+    ca_file: str | None
+    token_id: str
+    token_secret: str
+    template: int
+    storage: str
+    pool: str
+    target_node: str | None
+    cores: int | None
+    memory_mb: int | None
+    nameserver: str | None
+    searchdomain: str | None
+    values: Mapping[str, str]
+
+    @classmethod
+    def load(cls, path: Path) -> Settings:
+        values = read_env(path)
+
+        def need(key: str) -> str:
+            if not values.get(key):
+                raise Stop(f"{path} has no {key}")
+            return values[key]
+
+        token = read_env(Path(need("PVE_TOKEN_FILE")))
+        for key in ("PVE_API_TOKEN_ID", "PVE_API_TOKEN_SECRET"):
+            if not token.get(key):
+                raise Stop(f"{values['PVE_TOKEN_FILE']} has no {key}")
+        return cls(
+            hosts=tuple(need("PVE_API_HOSTS").split()),
+            port=_integer(values.get("PVE_API_PORT") or "8006", "PVE_API_PORT"),
+            ca_file=values.get("PVE_CA_FILE") or None,
+            token_id=token["PVE_API_TOKEN_ID"],
+            token_secret=token["PVE_API_TOKEN_SECRET"],
+            template=_integer(need("PVE_TEMPLATE_VMID"), "PVE_TEMPLATE_VMID"),
+            storage=need("PVE_STORAGE"),
+            pool=need("PVE_POOL"),
+            target_node=values.get("PVE_TARGET_NODE") or None,
+            cores=_integer(values["VM_CORES"], "VM_CORES") if values.get("VM_CORES") else None,
+            memory_mb=(
+                _integer(values["VM_MEMORY_MB"], "VM_MEMORY_MB")
+                if values.get("VM_MEMORY_MB")
+                else None
+            ),
+            nameserver=values.get("NAMESERVER") or None,
+            searchdomain=values.get("SEARCHDOMAIN") or None,
+            values=values,
+        )
+
+    def target(self, node: str, *, test: bool, vmid: int | None) -> Target:
+        def need(key: str) -> str:
+            if not self.values.get(key):
+                raise Stop(f"the settings have no {key}")
+            return self.values[key]
+
+        prefix = f"NODE_{env_name(node)}"
+        cluster = need(f"{prefix}_CLUSTER")
+        cprefix = f"CLUSTER_{env_name(cluster)}"
+        temporary = _interface(need(f"{cprefix}_TEMPORARY_ADDRESS"), f"{cprefix}_TEMPORARY_ADDRESS")
+        test_address = None
+        test_vip = None
+        if test:
+            test_address = _interface(need(f"{cprefix}_TEST_ADDRESS"), f"{cprefix}_TEST_ADDRESS")
+            test_vip = str(_interface(need("TEST_VIP"), "TEST_VIP"))
+            chosen = vmid if vmid is not None else _integer(need("TEST_VMID"), "TEST_VMID")
+            name = f"restoretest-{node}"[:63]
+        else:
+            chosen = (
+                vmid if vmid is not None else _integer(need(f"{prefix}_VMID"), f"{prefix}_VMID")
+            )
+            name = node
+        return Target(
+            node=node,
+            cluster=cluster,
+            vmid=chosen,
+            name=name,
+            bridge=need(f"{cprefix}_BRIDGE"),
+            gateway=str(ipaddress.IPv4Address(need(f"{cprefix}_GATEWAY"))),
+            temporary=temporary,
+            test=test_address,
+            test_vip=test_vip,
+        )
+
+
+def _integer(value: str, key: str) -> int:
+    if not value.isdigit():
+        raise Stop(f"{key} is not a number: {value}")
+    return int(value)
+
+
+def _interface(value: str, key: str) -> ipaddress.IPv4Interface:
+    try:
+        interface = ipaddress.IPv4Interface(value)
+    except ValueError:
+        raise Stop(f"{key} is not an address/prefix: {value}") from None
+    if "/" not in value:
+        raise Stop(f"{key} needs its prefix: {value}/24, for example")
+    return interface
+
+
+# --------------------------------------------------------------------------
+# Proxmox
+# --------------------------------------------------------------------------
+
+Call = Callable[[str, str, Mapping[str, Any] | None], Any]
+
+
+class Proxmox:
+    """The API calls this needs, through one function: real, or a test's."""
+
+    def __init__(self, call: Call, *, sleep: Callable[[float], None] = time.sleep) -> None:
+        self.call = call
+        self.sleep = sleep
+
+    def wait_task(self, node: str, upid: str, what: str, *, limit: float = TASK_WAIT) -> None:
+        waited = 0.0
+        path = f"/nodes/{node}/tasks/{urllib.parse.quote(upid, safe='')}/status"
+        while True:
+            status = self.call("GET", path, None)
+            if status.get("status") == "stopped":
+                if status.get("exitstatus") != "OK":
+                    raise Stop(f"{what} failed in Proxmox: {status.get('exitstatus')}")
+                return
+            if waited >= limit:
+                raise Stop(f"{what} did not finish in {int(limit)} s; see the task in Proxmox")
+            self.sleep(2.0)
+            waited += 2.0
+
+    def vms(self) -> list[dict[str, Any]]:
+        return [vm for vm in self.call("GET", "/cluster/resources", {"type": "vm"}) or []]
+
+    def find(self, vmid: int) -> dict[str, Any] | None:
+        return next((vm for vm in self.vms() if vm.get("vmid") == vmid), None)
+
+    def config(self, node: str, vmid: int) -> dict[str, Any]:
+        return dict(self.call("GET", f"/nodes/{node}/qemu/{vmid}/config", None) or {})
+
+    def agent_up(self, node: str, vmid: int, *, limit: float = AGENT_WAIT) -> None:
+        waited = 0.0
+        while True:
+            try:
+                self.call("POST", f"/nodes/{node}/qemu/{vmid}/agent/ping", None)
+                return
+            except Stop:
+                if waited >= limit:
+                    raise Stop(
+                        f"the guest agent in VM {vmid} did not answer in {int(limit)} s; "
+                        "is qemu-guest-agent installed in the template, and the agent "
+                        "option on?"
+                    ) from None
+            self.sleep(5.0)
+            waited += 5.0
+
+    def execute(
+        self, node: str, vmid: int, script: str, *, limit: float = 120.0
+    ) -> tuple[int, str, str]:
+        """`sh` in the guest with the script on stdin: the exit code, stdout and stderr."""
+
+        started = self.call(
+            "POST",
+            f"/nodes/{node}/qemu/{vmid}/agent/exec",
+            {"command": ["/bin/sh"], "input-data": script},
+        )
+        pid = started.get("pid") if isinstance(started, Mapping) else None
+        if not isinstance(pid, int):
+            raise Stop(f"the guest agent started no command: {started!r}")
+        waited = 0.0
+        while True:
+            status = self.call("GET", f"/nodes/{node}/qemu/{vmid}/agent/exec-status", {"pid": pid})
+            if status.get("exited"):
+                return (
+                    int(status.get("exitcode", -1)),
+                    str(status.get("out-data", "")),
+                    str(status.get("err-data", "")),
+                )
+            if waited >= limit:
+                raise Stop(f"the command in VM {vmid} did not finish in {int(limit)} s")
+            self.sleep(2.0)
+            waited += 2.0
+
+
+def api_call(settings: Settings, *, timeout: float = 30.0) -> Call:
+    """A function that calls the first API host that answers."""
+
+    context = ssl.create_default_context(cafile=settings.ca_file)
+    header = f"PVEAPIToken={settings.token_id}={settings.token_secret}"
+
+    def call(method: str, path: str, data: Mapping[str, Any] | None) -> Any:
+        last = ""
+        for host in settings.hosts:
+            url = f"https://{host}:{settings.port}/api2/json{path}"
+            body = None
+            headers = {"Authorization": header}
+            if data is not None and method == "GET":
+                url += "?" + urllib.parse.urlencode(data, doseq=True)
+            elif data is not None:
+                body = json.dumps(data).encode("utf-8")
+                headers["Content-Type"] = "application/json"
+            # https://, to the configured hosts only: no other scheme can be built here.
+            request = urllib.request.Request(url, data=body, headers=headers, method=method)  # noqa: S310
+            try:
+                with urllib.request.urlopen(request, timeout=timeout, context=context) as answer:  # noqa: S310
+                    return json.loads(answer.read().decode("utf-8")).get("data")
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", "replace")[:300]
+                raise Stop(f"Proxmox {method} {path}: {exc.code} {exc.reason} {detail}") from None
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                last = f"{host}: {getattr(exc, 'reason', exc)}"
+        raise Stop(f"no Proxmox API host answered ({last})")
+
+    return call
+
+
+def _missing(granted: Mapping[str, Any], wanted: Sequence[str]) -> list[str]:
+    return [name for name in wanted if not granted.get(name)]
+
+
+# --------------------------------------------------------------------------
+# haprion-node-restore and the backups
+# --------------------------------------------------------------------------
+
+Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
+
+
+def run_command(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(list(argv), check=False, capture_output=True, text=True)  # noqa: S603 - fixed commands
+
+
+def latest_archive(runner: Runner, cluster: str, node: str) -> str:
+    done = runner([LIST_BACKUPS, "-c", cluster, "--node", node, "--json"])
+    try:
+        nodes = json.loads(done.stdout)["result"]["nodes"]
+    except (ValueError, KeyError, TypeError):
+        raise Stop(f"{LIST_BACKUPS} gave no answer: {done.stderr.strip()[-300:]}") from None
+    for entry in nodes:
+        if entry.get("name") == node and entry.get("latest_version"):
+            return str(entry["latest_version"])
+    raise Stop(f"there is no backup of {node} in {cluster}")
+
+
+def answers(address: str, port: int = 22, timeout: float = 2.0) -> bool:
+    try:
+        with socket.create_connection((address, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+# --------------------------------------------------------------------------
+# The steps
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Context:
+    settings: Settings
+    api: Proxmox
+    runner: Runner
+    out: TextIO
+    ask: Callable[[str], str]
+    answering: Callable[[str], bool]
+
+
+def check(context: Context, target: Target) -> str:
+    """Read-only: the token, its privileges, the template, the pool, the VMID. The template's node."""
+
+    api, settings, out = context.api, context.settings, context.out
+    version = api.call("GET", "/version", None)
+    out.write(f"  Proxmox VE {version.get('version')} answers; token {settings.token_id}\n")
+    resources = api.vms()
+    template = next((vm for vm in resources if vm.get("vmid") == settings.template), None)
+    if template is None or not template.get("template"):
+        raise Stop(f"VM {settings.template} is not a template the token can see")
+    out.write(f"  template {settings.template} on {template.get('node')}\n")
+    if any(vm.get("vmid") == target.vmid for vm in resources):
+        raise Stop(f"VMID {target.vmid} is taken; remove that VM in Proxmox first, or give --vmid")
+    out.write(f"  VMID {target.vmid} is free\n")
+    for path, wanted in (
+        (f"/pool/{settings.pool}", POOL_PRIVILEGES),
+        (f"/vms/{settings.template}", TEMPLATE_PRIVILEGES),
+        (f"/storage/{settings.storage}", STORAGE_PRIVILEGES),
+    ):
+        granted = api.call("GET", "/access/permissions", {"path": path}) or {}
+        missing = _missing(granted.get(path, {}), wanted)
+        if missing:
+            raise Stop(f"the token lacks {', '.join(missing)} on {path}")
+    out.write(
+        f"  the token's privileges on the pool, the template and {settings.storage} suffice\n"
+    )
+    return str(settings.target_node or template["node"])
+
+
+def clone(context: Context, target: Target, node: str) -> None:
+    api, settings, out = context.api, context.settings, context.out
+    template = context.api.find(settings.template)
+    source = str(template["node"]) if template else node
+    out.write(f"cloning template {settings.template} to VM {target.vmid} ({target.name})\n")
+    parameters: dict[str, Any] = {
+        "newid": target.vmid,
+        "name": target.name,
+        "pool": settings.pool,
+        "full": 1,
+        "storage": settings.storage,
+    }
+    if node != source:
+        parameters["target"] = node
+    upid = api.call("POST", f"/nodes/{source}/qemu/{settings.template}/clone", parameters)
+    api.wait_task(source, str(upid), "the clone")
+    config = api.config(node, target.vmid)
+    net0 = str(config.get("net0", ""))
+    if not net0:
+        raise Stop(f"VM {target.vmid} has no net0")
+    parts = [part for part in net0.split(",") if not part.startswith("bridge=")]
+    change: dict[str, Any] = {
+        "net0": ",".join([*parts, f"bridge={target.bridge}"]),
+        "ipconfig0": f"ip={target.temporary},gw={target.gateway}",
+    }
+    for key, value in (
+        ("nameserver", settings.nameserver),
+        ("searchdomain", settings.searchdomain),
+        ("cores", settings.cores),
+        ("memory", settings.memory_mb),
+    ):
+        if value is not None:
+            change[key] = value
+    api.call("PUT", f"/nodes/{node}/qemu/{target.vmid}/config", change)
+    out.write(f"  bridge {target.bridge}, temporary address {target.temporary}\n")
+    upid = api.call("POST", f"/nodes/{node}/qemu/{target.vmid}/status/start", {})
+    api.wait_task(node, str(upid), "the start")
+    out.write("  started; waiting for the guest agent\n")
+    api.agent_up(node, target.vmid)
+    code, _, err = api.execute(
+        node,
+        target.vmid,
+        "command -v cloud-init >/dev/null || exit 0\ncloud-init status --wait >/dev/null\n",
+        limit=CLOUD_INIT_WAIT,
+    )
+    # 2 is "done with recoverable errors": the VM is up and reachable.
+    if code not in (0, 2):
+        raise Stop(f"cloud-init in VM {target.vmid} ended with {code}: {err.strip()[-300:]}")
+    out.write("  cloud-init finished\n")
+
+
+def restore(context: Context, target: Target, node: str, archive: str) -> str:
+    """The restore, through the installed command. The node's own address, as its result has it."""
+
+    out = context.out
+    name = target.name if target.test is not None else target.node
+    prepare = [
+        RESTORE,
+        "prepare",
+        "-c",
+        target.cluster,
+        "--node",
+        target.node,
+        "--archive",
+        archive,
+        "--target",
+        str(target.temporary.ip),
+    ]
+    if target.test is not None and target.test_vip is not None:
+        prepare += [
+            "--test",
+            "--test-hostname",
+            target.name,
+            "--test-address",
+            str(target.test),
+            "--test-vip",
+            target.test_vip,
+        ]
+    done = context.runner([*prepare, "--json"])
+    if done.returncode != 0:
+        raise Stop(f"{RESTORE} prepare: {done.stderr.strip()[-500:]}")
+    prepared = json.loads(done.stdout)
+    run = str(prepared["run"])
+    out.write(f"run {run}: the one-time key goes in through the guest agent\n")
+    try:
+        code, stdout, stderr = context.api.execute(node, target.vmid, prepared["paste"] + "\n")
+        found = FINGERPRINT.findall(stdout)
+        if code != 0 or len(found) != 1:
+            raise Stop(
+                f"the line did not run in VM {target.vmid} ({code}): {stderr.strip()[-300:]}"
+            )
+        fingerprint = found[0]
+        out.write(f"  host key {fingerprint}, read through the guest agent\n\n")
+        out.flush()
+        shown = context.runner([RESTORE, "preview", "--run", run, "--fingerprint", fingerprint])
+        out.write(shown.stderr)
+        out.write(shown.stdout)
+        if shown.returncode != 0:
+            raise Stop(f"the preview refused: {shown.stderr.strip()[-500:]}")
+        typed = context.ask(f"\nType {name} to restore it, anything else to stop: ").strip()
+        if typed != name:
+            raise Stop("not confirmed")
+    except Stop:
+        context.runner([RESTORE, "discard", "--run", run])
+        out.write(f"run {run} discarded\n")
+        raise
+    out.write("\n")
+    out.flush()
+    ran = context.runner([RESTORE, "run", "--run", run, "--confirm", name])
+    out.write(ran.stderr)
+    out.write(ran.stdout)
+    if ran.returncode != 0:
+        raise Stop(f"the restore did not finish; {RESTORE} status --run {run} says how it stands")
+    standing = json.loads(context.runner([RESTORE, "status", "--run", run, "--json"]).stdout)
+    address = (standing.get("result") or {}).get("address")
+    if standing.get("outcome") != "done" or not isinstance(address, str):
+        raise Stop(f"the run's result has no address: {standing!r}")
+    return address
+
+
+def cloud_init_off(context: Context, target: Target, node: str, address: str) -> None:
+    """The template's cloud-init would write its own network again: off, and its drive gone."""
+
+    api, out = context.api, context.out
+    code, _, err = api.execute(
+        node, target.vmid, "if [ -d /etc/cloud ]; then touch /etc/cloud/cloud-init.disabled; fi\n"
+    )
+    if code != 0:
+        raise Stop(f"cloud-init could not be switched off in VM {target.vmid}: {err.strip()}")
+    upid = api.call("POST", f"/nodes/{node}/qemu/{target.vmid}/status/shutdown", {"timeout": 120})
+    api.wait_task(node, str(upid), "the shutdown")
+    config = api.config(node, target.vmid)
+    drives = [key for key, value in config.items() if "cloudinit" in str(value)]
+    deleted = [
+        *drives,
+        *[key for key in ("ipconfig0", "nameserver", "searchdomain") if key in config],
+    ]
+    if deleted:
+        api.call("PUT", f"/nodes/{node}/qemu/{target.vmid}/config", {"delete": ",".join(deleted)})
+    upid = api.call("POST", f"/nodes/{node}/qemu/{target.vmid}/status/start", {})
+    api.wait_task(node, str(upid), "the start")
+    out.write(f"cloud-init off, {', '.join(deleted) or 'nothing'} removed, VM started again\n")
+    _wait_for(context, address)
+
+
+def _wait_for(context: Context, address: str) -> None:
+    waited = 0.0
+    while not context.answering(address):
+        if waited >= ADDRESS_WAIT:
+            raise Stop(f"{address} did not answer on port 22 after the restart")
+        context.api.sleep(5.0)
+        waited += 5.0
+    context.out.write(f"{address} answers on port 22\n")
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    out: TextIO | None = None,
+    call: Call | None = None,
+    runner: Runner = run_command,
+    ask: Callable[[str], str] = input,
+    answering: Callable[[str], bool] = answers,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    parser = argparse.ArgumentParser(
+        prog="proxmox-node-rebuild",
+        description="Rebuild a node on a new Proxmox VM with haprion-node-restore (an example).",
+    )
+    parser.add_argument("--settings", type=Path, default=DEFAULT_SETTINGS)
+    steps = parser.add_subparsers(dest="step", required=True)
+    for step in ("check", "run"):
+        one = steps.add_parser(step)
+        one.add_argument("node", help="the node to rebuild, as the cluster names it")
+        one.add_argument("--test", action="store_true", help="the test VM, address and VIP")
+        one.add_argument("--vmid", type=int, help="instead of the settings' VMID")
+        if step == "run":
+            one.add_argument("--archive", help="instead of the node's latest backup")
+    arguments = parser.parse_args(argv)
+    stream = out or sys.stdout
+    try:
+        settings = Settings.load(arguments.settings)
+        target = settings.target(arguments.node, test=arguments.test, vmid=arguments.vmid)
+        context = Context(
+            settings=settings,
+            api=Proxmox(call or api_call(settings), sleep=sleep),
+            runner=runner,
+            out=stream,
+            ask=ask,
+            answering=answering,
+        )
+        stream.write(f"{target.node} ({target.cluster}) to VM {target.vmid}\n")
+        node = check(context, target)
+        archive = getattr(arguments, "archive", None) or latest_archive(
+            runner, target.cluster, target.node
+        )
+        stream.write(f"  backup {archive}\n")
+        if arguments.step == "check":
+            stream.write("check: OK, nothing was changed\n")
+            return 0
+        clone(context, target, node)
+        address = restore(context, target, node, archive)
+        cloud_init_off(context, target, node, address)
+        stream.write(f"done: VM {target.vmid} is {target.name}\n")
+        return 0
+    except Stop as exc:
+        stream.write(f"ERROR: {exc}\n")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

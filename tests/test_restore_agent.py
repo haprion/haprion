@@ -44,6 +44,8 @@ class FakeHost(Host):
         self.made_files: dict[str, str] = {}
         # Whether sshd fails to bind what its configuration names.
         self.sshd_deaf = False
+        # An sshd_config without the distribution's Include of sshd_config.d.
+        self.sshd_reads_no_drop_ins = False
         for name, text in {
             "/etc/passwd": "root:x:0:0:root:/root:/bin/bash\n"
             "syslog:x:104:110::/nonexistent:/usr/sbin/nologin\n"
@@ -84,6 +86,8 @@ class FakeHost(Host):
         """sshd's listen addresses from its drop-ins, as `sshd -T` reads them: every one adds up."""
 
         drop_ins = self.path("/etc/ssh/sshd_config.d")
+        if self.sshd_reads_no_drop_ins:
+            return ["[::]"]
         found = [
             line.split()[1]
             for conf in (sorted(drop_ins.glob("*.conf")) if drop_ins.is_dir() else [])
@@ -561,30 +565,80 @@ class Apply(AgentTest):
             0,
             "ListenAddress 192.0.2.21\n",
         )
-        header = {**APPLY_HEADER, "temporary_address": "192.0.2.120"}
+        header = {**APPLY_HEADER, "temporary_address": "192.0.2.120", "address": "192.0.2.21"}
         result = self.serve(header, payload([*APPLY_FILES, listen]))
         self.assertTrue(result["ok"], result)
         temporary = self.host.path(restore_agent.SSHD_TEMPORARY)
         self.assertIn("ListenAddress 192.0.2.120\n", temporary.read_text())
         self.assertEqual(temporary.stat().st_mode & 0o777, 0o644)
-        self.assertEqual(self.host.sshd_listens(), ["192.0.2.120", "192.0.2.21"])
+        self.assertEqual(set(self.host.sshd_listens()), {"192.0.2.120", "192.0.2.21"})
         self.assertIn(
             {"step": "sshd", "reloaded": True, "temporary_address": "192.0.2.120"},
             result["steps"],
         )
+        # The archive had the product's drop-in: it is not written again.
+        self.assertNotIn("sshd-listen", [step["step"] for step in result["steps"]])
+
+    def test_sshd_answers_on_the_final_address_without_the_archive_s_drop_in(self) -> None:
+        """26-11-03: a node's ListenAddress was in an operator's drop-in, which is not carried.
+
+        The new VM's sshd then listened on the temporary address alone, the manager never
+        reached the final one, and the network change was rolled back. The product's own
+        drop-in puts sshd on the node's address, as 04-node-prepare does on a new node.
+        """
+
+        header = {**APPLY_HEADER, "temporary_address": "192.0.2.120", "address": "192.0.2.21"}
+        result = self.serve(header, payload(APPLY_FILES))
+        self.assertTrue(result["ok"], result)
+        self.assertIn("192.0.2.21", self.host.sshd_listens())
+        listen = self.host.path(restore_agent.SSHD_LISTEN)
+        self.assertIn("ListenAddress 192.0.2.21\n", listen.read_text())
+        self.assertEqual(listen.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(self.host.owners[restore_agent.SSHD_LISTEN], (0, 0))
+        self.assertIn({"step": "sshd-listen", "address": "192.0.2.21"}, result["steps"])
+
+    def test_a_target_s_own_listen_address_gets_no_product_drop_in(self) -> None:
+        """B310: an sshd already on chosen addresses is left as it is; the listen file still names the final one."""
+
+        own = self.host.path("/etc/ssh/sshd_config.d/10-own.conf")
+        own.parent.mkdir(parents=True, exist_ok=True)
+        own.write_text("ListenAddress 192.0.2.50\n")
+        header = {**APPLY_HEADER, "temporary_address": "192.0.2.120", "address": "192.0.2.21"}
+        result = self.serve(header, payload(APPLY_FILES))
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(self.host.path(restore_agent.SSHD_LISTEN).exists())
+        self.assertIn("192.0.2.21", self.host.sshd_listens())
+
+    def test_an_sshd_that_reads_no_drop_ins_stops_the_restore_before_the_network(self) -> None:
+        """Not every target is a cloud image: an sshd_config of its own may include nothing."""
+
+        self.host.sshd_reads_no_drop_ins = True
+        header = {**APPLY_HEADER, "temporary_address": "192.0.2.120", "address": "192.0.2.21"}
+        result = self.serve(header, payload(APPLY_FILES))
+        self.assertFalse(result["ok"])
+        self.assertIn("does not include that directory", result["error"])
+
+    def test_a_temporary_address_without_a_usable_own_address_is_refused(self) -> None:
+        for extra in ({}, {"address": "eth0"}, {"address": "192.0.2.21\nListenAddress 0.0.0.0"}):
+            with self.subTest(extra=extra):
+                header = {**APPLY_HEADER, "temporary_address": "192.0.2.120", **extra}
+                result = self.serve(header, payload(APPLY_FILES))
+                self.assertFalse(result["ok"])
+                self.assertIn("own address", result["error"])
 
     def test_an_unusable_temporary_address_is_refused(self) -> None:
         for value in ("192.0.2.300", "eth0", 5, "192.0.2.1\nListenAddress 0.0.0.0"):
             with self.subTest(value=value):
                 result = self.serve(
-                    {**APPLY_HEADER, "temporary_address": value}, payload(APPLY_FILES)
+                    {**APPLY_HEADER, "temporary_address": value, "address": "192.0.2.21"},
+                    payload(APPLY_FILES),
                 )
                 self.assertFalse(result["ok"])
                 self.assertIn("temporary address", result["error"])
 
     def test_sshd_that_does_not_listen_fails_the_step(self) -> None:
         self.host.sshd_deaf = True
-        header = {**APPLY_HEADER, "temporary_address": "192.0.2.120"}
+        header = {**APPLY_HEADER, "temporary_address": "192.0.2.120", "address": "192.0.2.21"}
         with mock.patch.object(restore_agent, "SSHD_LISTEN_WAIT", 0.0):
             result = self.serve(header, payload(APPLY_FILES))
         self.assertFalse(result["ok"])
@@ -913,6 +967,46 @@ class Finish(AgentTest):
             ],
         )
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "operator key\n")
+
+    def listening(self, *drop_ins: tuple[str, str]) -> dict[str, Any]:
+        for name, text in (
+            (
+                "04-haprion-restore-listen.conf",
+                "ListenAddress 192.0.2.120\nListenAddress 192.0.2.21\n",
+            ),
+            *drop_ins,
+        ):
+            path = self.host.path(f"/etc/ssh/sshd_config.d/{name}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.host.active.update(
+            {f"haprion-restore-rollback-{RUN}.timer": "active", "haproxy": "active"}
+        )
+        return self.serve({**self.header(), "address": "192.0.2.21"}, payload(self.KEYS))
+
+    def test_the_listen_file_goes_where_the_node_s_own_configuration_has_its_address(self) -> None:
+        result = self.listening(("05-haprion-listen.conf", "ListenAddress 192.0.2.21\n"))
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(self.host.path(restore_agent.SSHD_TEMPORARY).exists())
+        self.assertEqual(self.host.sshd_listens(), ["192.0.2.21"])
+        self.assertEqual(result["warnings"], [])
+
+    def test_the_listen_file_stays_with_the_node_s_address_where_nothing_else_has_it(self) -> None:
+        """A target whose own drop-in names another address would lose the manager."""
+
+        result = self.listening(("10-own.conf", "ListenAddress 192.0.2.50\n"))
+        self.assertTrue(result["ok"], result)
+        temporary = self.host.path(restore_agent.SSHD_TEMPORARY).read_text()
+        self.assertIn("ListenAddress 192.0.2.21\n", temporary)
+        self.assertNotIn("192.0.2.120", temporary)
+        self.assertIn({"step": "sshd", "temporary_address": "kept"}, result["steps"])
+        self.assertIn("names 192.0.2.50, not 192.0.2.21", result["warnings"][0])
+
+    def test_an_unusable_own_address_is_refused_in_finish(self) -> None:
+        self.host.active.update({f"haprion-restore-rollback-{RUN}.timer": "active"})
+        result = self.serve({**self.header(), "address": "eth0"}, payload(self.KEYS))
+        self.assertFalse(result["ok"])
+        self.assertIn("own address", result["error"])
 
     def test_the_temporary_listen_address_goes_once_the_network_is_final(self) -> None:
         temporary = self.host.path(restore_agent.SSHD_TEMPORARY)

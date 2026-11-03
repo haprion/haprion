@@ -3352,8 +3352,9 @@ on the VM beforehand.
 
 **What counts as an empty VM.**
 
-- Ubuntu 26.04 or Debian 13, installed from its cloud image. Which of the two the node ran before does
-  not matter: both write their network settings as Netplan, which is what the restore writes.
+- Ubuntu 26.04 or Debian 13 whose network is configured by Netplan, which is what the restore
+  writes. The cloud images of both are. A target configured by ifupdown, or with no Netplan
+  configuration, is refused by the preview. Which of the two the node ran before does not matter.
 - One network interface, with the same name as the node's.
 - A temporary address the management host can reach.
 - An administrator account with `sudo`.
@@ -3493,10 +3494,15 @@ preview saw. So what was approved is what is written.
      a restore that could not be carried out is not started. Keep `EXTRA_BACKUP_PATHS` to
      configuration, not data.
    - then the HAProxy release layout, the services and the host name, and sshd is restarted. The
-     archive's `05-haprion-listen.conf` has sshd listen on the node's own address. Until step 3, a
-     second drop-in, `04-haprion-restore-listen.conf`, keeps it listening on the temporary address as
-     well, so the next session can still reach the VM. The step checks that sshd answers on every
-     address it names.
+     archive's `05-haprion-listen.conf` has sshd listen on the node's own address. When the archive
+     has none - the node's address was in an operator's own drop-in, which is not carried - and the
+     VM's sshd would listen on every address, the restore writes that file itself, as
+     `04-node-prepare` does on a new node. Until step 3, a second drop-in,
+     `04-haprion-restore-listen.conf`, keeps sshd listening on the temporary address and the node's
+     own one, so the next sessions reach the VM on both sides of the network change. The step checks
+     that sshd answers on every address it names, and stops before the network is touched when sshd
+     does not take the node's own address: an `sshd_config` without the `Include` of
+     `sshd_config.d` reads neither drop-in.
    - when the archive shows the node ran the WAF engine, the engine package that the manager's own CLI
      release carries is installed next. It is in no repository, and the node's deploy refuses a release
      with WAF rules without it.
@@ -3512,7 +3518,9 @@ preview saw. So what was approved is what is written.
 3. **On the node's own address, with the archive's host key:**
    - the timer is cancelled;
    - the temporary drop-in is removed and sshd restarted, so sshd listens on the node's own address
-     only;
+     only. Should the VM's own sshd configuration name another address and not the node's, the drop-in
+     stays with the node's address alone, so the management host can still reach it, and the run
+     says so in a warning;
    - HAProxy starts on a placeholder release whose only listener is a root-only unix socket;
    - the node's `haprion-cert-pull` fetches the cluster's CA files and then its certificates, and its
      `haprion-pull-deploy` the published configuration - the same scripts a deploy triggers. If the
@@ -3521,7 +3529,7 @@ preview saw. So what was approved is what is written.
    - keepalived starts as `BACKUP`;
    - **last**, root's `authorized_keys` is replaced by the archive's, which removes the one-time key.
 
-If the node never answers on its own address, the timer returns the VM to its temporary address, and
+If the node never answers on its own address - ssh on port 22 is what is asked - the timer returns the VM to its temporary address, and
 the run reports `failed` with the network rolled back. A session that breaks or times out once writing
 has begun is a `failed` run in that session, never a refusal. A restore takes about a minute; the longest
 part is the package installation.

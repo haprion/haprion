@@ -640,12 +640,12 @@ def _problems(
     elif network.get("ifupdown"):
         problems.append(
             f"ifupdown configures {', '.join(network['ifupdown'])} on the target; a restore writes "
-            "the network as Netplan - restore onto a cloud image of Ubuntu 26.04 or Debian 13"
+            "the network as Netplan - restore onto Ubuntu 26.04 or Debian 13 configured by Netplan"
         )
     elif not network.get("netplan"):
         problems.append(
             "the target has no Netplan configuration; a restore writes the network as Netplan - "
-            "restore onto a cloud image of Ubuntu 26.04 or Debian 13"
+            "restore onto Ubuntu 26.04 or Debian 13 configured by Netplan"
         )
     final = str(plan.address.ip)
     if request.mode == "overwrite":
@@ -1363,6 +1363,8 @@ def _run(
         "keepalived": plan.keepalived,
         # sshd keeps answering where the network session will find the target.
         "temporary_address": (None if request.target == str(plan.address.ip) else request.target),
+        # And where the finish session will (26-11-03).
+        "address": str(plan.address.ip),
         "packages": list(plan.packages),
         "equal_directories": list(plan.equal_directories),
         "overwrite": overwrite,
@@ -1527,7 +1529,7 @@ def _run(
         clock.sleep(min(pause * 2, 6.0))
         reached = _wait_for(final, started + rollback_seconds - 30, answering, pause, clock)
         if not reached:
-            stream.write(f"{final} did not answer; waiting for the rollback timer\n")
+            stream.write(f"{final} did not answer on port 22; waiting for the rollback timer\n")
             clock.sleep(max(0.0, started + rollback_seconds + 20 - clock.now()))
             back = _wait_for(request.target, clock.now() + 60, answering, pause, clock)
             if back and overwrite:
@@ -1541,7 +1543,7 @@ def _run(
                 "failed",
                 rolled_back=back,
                 stage="network",
-                error=f"{final} never answered; the "
+                error=f"{final} never answered on port 22 (ssh); the "
                 + ("node" if overwrite else "network")
                 + " was "
                 + ("rolled back" if back else "NOT confirmed rolled back - go to the console"),
@@ -1614,6 +1616,7 @@ def _finish(
             "keepalived": plan.keepalived,
             "overwrite": plan.mode == "overwrite",
             "network": network,
+            "address": final,
         },
         payload(checked.source, (plan.root_keys,)) if plan.root_keys else b"",
         progress=stream,

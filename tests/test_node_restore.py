@@ -559,7 +559,12 @@ class Run(RestoreTest):
                 run = self.previewed(test=test)
                 self.carry_out(run, confirm="node-test" if test else "node-a")
                 apply = next(c for c in FakeSession.calls if c[1]["op"] == "apply")
+                finish = next(c for c in FakeSession.calls if c[1]["op"] == "finish")
                 self.assertEqual(apply[1]["temporary_address"], "192.0.2.120")
+                # And the address it will be found at (26-11-03): sshd answers there
+                # before the network moves, whatever drop-in the archive had it in.
+                final = "192.0.2.29" if test else "192.0.2.21"
+                self.assertEqual((apply[1]["address"], finish[1]["address"]), (final, final))
 
     def test_a_test_node_keeps_its_own_key_and_is_trusted_with_that_alone(self) -> None:
         run = self.previewed()
@@ -913,7 +918,7 @@ class Overwrite(RestoreTest):
         self.assertEqual((result["outcome"], result["stage"]), ("failed", "network"), result)
         self.assertEqual(FakeSession.calls[-1][1], {"op": "rollback", "run": run})
         self.assertTrue(result["rolled_back"])
-        self.assertIn("node was rolled back", result["error"])
+        self.assertIn("never answered on port 22 (ssh); the node was rolled back", result["error"])
 
 
 class Timed(RestoreTest):
@@ -1287,11 +1292,19 @@ class Cli(unittest.TestCase):
 
     def test_a_disk_error_is_said_as_the_helper_says_it(self) -> None:
         errors = io.StringIO()
-        with mock.patch.object(
-            node_restore, "status", side_effect=OSError(28, "No space left on device")
+        # Its own run root: the sweep after the step reads the directory, and the
+        # machine's own may exist and be root's (26-11-03).
+        with (
+            mock.patch.object(
+                node_restore, "status", side_effect=OSError(28, "No space left on device")
+            ),
+            tempfile.TemporaryDirectory() as root,
         ):
             code = cli.main(
-                ["status", "--run", "r260101-0000aaaa"], error_stream=errors, require_root=False
+                ["status", "--run", "r260101-0000aaaa"],
+                run_root=Path(root),
+                error_stream=errors,
+                require_root=False,
             )
         self.assertEqual(code, 1)
         self.assertIn("the restore could not continue", errors.getvalue())

@@ -80,7 +80,16 @@ ROOT_KEYS = "/root/.ssh/authorized_keys"
 # temporary address as well until finish, which comes in on the final one.
 # It sorts before the product's own drop-in, and ListenAddress adds up.
 #
+# And on the final address too, named here rather than left to the archive:
+# a node whose address sshd took from the operator's own drop-in - which a
+# restore does not carry - would otherwise listen on the temporary address
+# alone, and the network change was never confirmed and rolled back
+# (26-11-03). The archive's sysctl has `ip_nonlocal_bind` on before sshd
+# restarts, so it binds the final address before the node has it.
+#
 SSHD_TEMPORARY = "/etc/ssh/sshd_config.d/04-haprion-restore-listen.conf"
+# The product's own listen drop-in, as install/04-node-prepare names it (B310).
+SSHD_LISTEN = "/etc/ssh/sshd_config.d/05-haprion-listen.conf"
 SSHD_LISTEN_WAIT = 5.0
 #
 # What keepalived's notify script writes on each state it enters. 04-node-prepare
@@ -880,12 +889,10 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
         raise Refused("the hostname is not usable")
     temporary = header.get("temporary_address")
     if temporary is not None:
-        try:
-            if not isinstance(temporary, str):
-                raise ValueError(temporary)
-            ipaddress.IPv4Address(temporary)
-        except ValueError:
-            raise Refused("the temporary address is not usable") from None
+        if not _ipv4(temporary):
+            raise Refused("the temporary address is not usable")
+        if not _ipv4(header.get("address")):
+            raise Refused("the node's own address is not usable")
     if header.get("overwrite"):
         # B183: the node's software is its own.
         if header["keepalived"] != "start":
@@ -1378,20 +1385,117 @@ def _services(host: Host, header: dict[str, Any], report: Report) -> None:
 
     temporary = header.get("temporary_address")
     if temporary:
-        host.path(SSHD_TEMPORARY).parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-        host.path(SSHD_TEMPORARY).write_text(
-            "# Written by a node restore. Removed when the restore finishes.\n"
-            f"ListenAddress {temporary}\n",
-            encoding="utf-8",
-        )
-        host.path(SSHD_TEMPORARY).chmod(0o644)
+        address = header["address"]
+        #
+        # What 04-node-prepare does on a new node (B310), done here because
+        # the restore's own listen file hides it from that step: sshd on
+        # every address would be on the node's own one, and the VIP's port
+        # 22 left free. An archive whose ListenAddress was in an operator's
+        # own drop-in - which a restore does not carry - left a new VM's
+        # sshd on every address, the temporary listen file then the only
+        # one, and the network change unconfirmed (26-11-03).
+        #
+        if _listens_everywhere(host):
+            _ensure_parents(host, SSHD_LISTEN)
+            host.path(SSHD_LISTEN).write_text(
+                "# Installed by a node restore, as install/04-node-prepare does.\n"
+                "# sshd on this node's own address, so the virtual address's ports stay free.\n"
+                f"ListenAddress {address}\n",
+                encoding="utf-8",
+            )
+            host.path(SSHD_LISTEN).chmod(0o644)
+            host.chown(host.path(SSHD_LISTEN), 0, 0)
+            report.step("sshd-listen", address=address)
+        _write_listen(host, temporary, address)
     host.run(["sshd", "-t"])
     _sshd_restart(host)
     _sshd_listening(host)
+    #
+    # Asked of sshd, not assumed from the files: an sshd_config written
+    # without the distribution's `Include` of sshd_config.d reads neither
+    # drop-in, and the network change could never be confirmed. Stopped here,
+    # before the network is touched.
+    #
+    if temporary and header["address"] not in _sshd_addresses(host):
+        raise Failed(
+            f"sshd does not take ListenAddress {header['address']} from "
+            "/etc/ssh/sshd_config.d: its sshd_config does not include that directory"
+        )
     if temporary:
         report.step("sshd", reloaded=True, temporary_address=temporary)
     else:
         report.step("sshd", reloaded=True)
+
+
+def _ipv4(value: object) -> bool:
+    try:
+        ipaddress.IPv4Address(value if isinstance(value, str) else "")
+    except ValueError:
+        return False
+    return True
+
+
+def _write_listen(host: Host, *addresses: str) -> None:
+    lines = "".join(f"ListenAddress {address}\n" for address in dict.fromkeys(addresses))
+    host.path(SSHD_TEMPORARY).parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    host.path(SSHD_TEMPORARY).write_text(
+        f"# Written by a node restore. Removed when the restore finishes.\n{lines}",
+        encoding="utf-8",
+    )
+    host.path(SSHD_TEMPORARY).chmod(0o644)
+
+
+def _sshd_addresses(host: Host) -> list[str]:
+    """The addresses `sshd -T` says it listens on, without the port."""
+
+    return [
+        line.split()[1].rsplit(":", 1)[0]
+        for line in host.run(["sshd", "-T"]).stdout.splitlines()
+        if line.startswith("listenaddress ")
+    ]
+
+
+# How `sshd -T` names listening on every address. Read, never bound.
+EVERY_ADDRESS = frozenset({"0.0.0.0", "[::]"})  # noqa: S104
+
+
+def _listens_everywhere(host: Host) -> bool:
+    return not EVERY_ADDRESS.isdisjoint(_sshd_addresses(host))
+
+
+def _listen_final(host: Host, run: str, address: str | None, report: Report) -> None:
+    """The restore's listen file goes - unless sshd would then not answer on the node's address.
+
+    Read with the file set aside: what the restored configuration alone has
+    sshd listen on. Where that leaves the node's own address out - the
+    target's own drop-in names another - the manager could not reach the node
+    it just restored, so the file stays with that address alone, and says so.
+    """
+
+    aside = host.path(f"{STATE}/{run}/sshd-listen.conf")
+    aside.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    host.path(SSHD_TEMPORARY).replace(aside)
+    try:
+        heard = _sshd_addresses(host)
+    except BaseException:
+        aside.replace(host.path(SSHD_TEMPORARY))
+        raise
+    everywhere = not EVERY_ADDRESS.isdisjoint(heard)
+    if address is not None and not everywhere and address not in heard:
+        _write_listen(host, address)
+        report.warnings.append(
+            f"sshd's own configuration names {', '.join(heard)}, not {address}: "
+            f"{SSHD_TEMPORARY} stays and keeps sshd on {address}. Put the node's address in its "
+            "sshd configuration, then remove that file."
+        )
+        kept = "kept"
+    else:
+        kept = "removed"
+    aside.unlink()
+    host.run(["sshd", "-t"])
+    _sshd_restart(host)
+    _sshd_listening(host)
+    report.step("sshd", temporary_address=kept)
 
 
 def _sshd_restart(host: Host) -> None:
@@ -1618,6 +1722,8 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
         raise Refused("a CA ID is not usable")
     if header["keepalived"] not in {"start", "mask"}:
         raise Refused("keepalived must be started or masked")
+    if header.get("address") is not None and not _ipv4(header["address"]):
+        raise Refused("the node's own address is not usable")
     run = header["run"]
     report = Report()
 
@@ -1632,13 +1738,9 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
         host.run(["systemctl", "stop", timer])
         report.step("rollback-cancelled", timer=timer)
 
-    # The network is final now: sshd keeps only the archive's own address.
+    # The network is final now: sshd keeps only what its own configuration names.
     if host.path(SSHD_TEMPORARY).exists():
-        host.path(SSHD_TEMPORARY).unlink()
-        host.run(["sshd", "-t"])
-        _sshd_restart(host)
-        _sshd_listening(host)
-        report.step("sshd", temporary_address="removed")
+        _listen_final(host, run, header.get("address"), report)
 
     if not header.get("overwrite"):
         _start(host, header, certificates, authorities, report)

@@ -498,6 +498,10 @@ class TheProductsFilesAreTheInstallersOwn(unittest.TestCase):
         written = set(re.findall(r"/etc/(?:sudoers\.d|sysctl\.d|ssh/sshd_config\.d)/[\w.-]+", text))
         own = set().union(*restore_plan.SHARED_DIRECTORIES.values())
         self.assertEqual(written, own)
+        # The agent writes the same drop-in where the restore's own listen file hid sshd.
+        from haprion import restore_agent
+
+        self.assertEqual(restore_agent.SSHD_LISTEN, restore_plan.SSHD_LISTEN)
 
 
 class TheBundlesFilesAreTheEnableScriptsOwn(unittest.TestCase):

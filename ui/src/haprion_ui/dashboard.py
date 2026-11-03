@@ -675,9 +675,16 @@ def _with_shared_counters(
     another does is in no `peer` line: its host name is not its node name, or
     it runs a release from before sharing was turned on. A node that reports a
     peer it is not connected to cannot reach it - the port is closed between
-    them, or the address has changed since the last publish.
+    them, or the address has changed since the last publish. A peer whose node
+    did not answer is left out: that node is already named as unreachable, and
+    the counters not reaching it says nothing more (26-11-03).
     """
 
+    unanswered = {
+        _text(value.get("name"))
+        for value in node_values
+        if isinstance(value, Mapping) and value.get("status_ok") is not True
+    }
     reported = {
         _text(value.get("name")): _mapping(value.get("status")).get("peers")
         for value in node_values
@@ -709,7 +716,9 @@ def _with_shared_counters(
         missing = [
             _text(peer.get("name"))
             for peer in peers
-            if isinstance(peer, Mapping) and peer.get("connected") is not True
+            if isinstance(peer, Mapping)
+            and peer.get("connected") is not True
+            and _text(peer.get("name")) not in unanswered
         ]
         if missing:
             detail[name] = f"Counters not reaching {', '.join(missing)}"

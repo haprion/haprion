@@ -509,6 +509,33 @@ class HealthDerivation(unittest.TestCase):
         self.assertIn("not reaching b", cluster.nodes[0].detail)
         self.assertEqual(cluster.nodes[1].label, "Online")
 
+    def test_a_peer_whose_node_did_not_answer_is_not_named_again(self) -> None:
+        # 26-11-03: a node shut down showed as unreachable and, on its
+        # neighbour, as counters not reaching it - one fault, two warnings.
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        nodes[0]["status"] = {
+            **nodes[0]["status"],
+            "peers": [self.peer(nodes[1]["name"], False)],
+        }
+        nodes[1] = {"name": nodes[1]["name"], "status_ok": False, "status": None}
+        result["nodes"] = nodes
+        cluster = self.dashboard(
+            ClusterStatus(
+                cluster=status.cluster,
+                observed_at=status.observed_at,
+                outcome="done",
+                result=result,
+                warnings=[],
+                error=None,
+                poll_error=None,
+            )
+        ).clusters[0]
+
+        self.assertEqual(cluster.nodes[0].label, "Online")
+        self.assertNotEqual(cluster.nodes[1].tone, "healthy")
+
     def test_right_after_a_reload_the_peers_are_given_time_to_connect(self) -> None:
         settling = self.sharing([self.peer("b", False)], [self.peer("a", False)], uptime=30)
         settled = self.sharing([self.peer("b", False)], [self.peer("a", False)], uptime=600)

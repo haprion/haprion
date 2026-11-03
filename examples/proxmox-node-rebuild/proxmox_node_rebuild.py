@@ -296,8 +296,19 @@ class Proxmox:
         if not isinstance(pid, int):
             raise Stop(f"the guest agent started no command: {started!r}")
         waited = 0.0
+        last = "still running"
         while True:
-            status = self.call("GET", f"/nodes/{node}/qemu/{vmid}/agent/exec-status", {"pid": pid})
+            #
+            # An agent busy with a first boot misses an answer now and then:
+            # "got timeout" (26-11-03). Asked again until the limit, which
+            # then says the last thing it heard.
+            #
+            try:
+                status = self.call(
+                    "GET", f"/nodes/{node}/qemu/{vmid}/agent/exec-status", {"pid": pid}
+                )
+            except Stop as exc:
+                status, last = {}, str(exc)
             if status.get("exited"):
                 return (
                     int(status.get("exitcode", -1)),
@@ -305,9 +316,38 @@ class Proxmox:
                     str(status.get("err-data", "")),
                 )
             if waited >= limit:
-                raise Stop(f"the command in VM {vmid} did not finish in {int(limit)} s")
+                raise Stop(f"the command in VM {vmid} did not finish in {int(limit)} s: {last}")
             self.sleep(2.0)
             waited += 2.0
+
+    def cloud_init_done(self, node: str, vmid: int, *, limit: float = CLOUD_INIT_WAIT) -> None:
+        """Short questions in a loop, not one long `--wait`: an agent restarted on a first boot
+        forgets the commands it started, and a new question still works."""
+
+        waited = 0.0
+        last = ""
+        while True:
+            try:
+                code, out, _ = self.execute(
+                    node,
+                    vmid,
+                    "command -v cloud-init >/dev/null || { echo 'status: absent'; exit 0; }\n"
+                    "cloud-init status\n",
+                    limit=30.0,
+                )
+                found = re.search(r"^status:\s*(\S+)", out, re.MULTILINE)
+                state = found.group(1) if found else f"exit {code}"
+            except Stop as exc:
+                state, last = "", str(exc)
+            if state in ("done", "absent", "disabled"):
+                return
+            if state == "error":
+                raise Stop(f"cloud-init in VM {vmid} reports an error; see its console")
+            last = f"status {state}" if state else last
+            if waited >= limit:
+                raise Stop(f"cloud-init in VM {vmid} did not finish in {int(limit)} s ({last})")
+            self.sleep(5.0)
+            waited += 5.0
 
 
 def api_call(settings: Settings, *, timeout: float = 30.0) -> Call:
@@ -460,15 +500,7 @@ def clone(context: Context, target: Target, node: str) -> None:
     api.wait_task(node, str(upid), "the start")
     out.write("  started; waiting for the guest agent\n")
     api.agent_up(node, target.vmid)
-    code, _, err = api.execute(
-        node,
-        target.vmid,
-        "command -v cloud-init >/dev/null || exit 0\ncloud-init status --wait >/dev/null\n",
-        limit=CLOUD_INIT_WAIT,
-    )
-    # 2 is "done with recoverable errors": the VM is up and reachable.
-    if code not in (0, 2):
-        raise Stop(f"cloud-init in VM {target.vmid} ended with {code}: {err.strip()[-300:]}")
+    api.cloud_init_done(node, target.vmid)
     out.write("  cloud-init finished\n")
 
 

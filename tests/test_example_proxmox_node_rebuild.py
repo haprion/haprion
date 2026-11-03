@@ -69,7 +69,9 @@ class FakeProxmox:
         self.config: dict[str, Any] = {}
         self.scripts: list[str] = []
         self.exec_answers: list[tuple[int, str]] = []
+        self.cloud_init = ["status: done"]
         self.pings_failing = 0
+        self.status_failing = 0
 
     def __call__(self, method: str, path: str, data: Mapping[str, Any] | None) -> Any:
         self.calls.append((method, path, None if data is None else dict(data)))
@@ -112,6 +114,14 @@ class FakeProxmox:
             self.scripts.append(str(data["input-data"]))
             return {"pid": len(self.scripts)}
         if path.endswith("/agent/exec-status"):
+            if self.status_failing:
+                self.status_failing -= 1
+                raise rebuild.Stop("500 VM qga command 'guest-exec-status' failed - got timeout")
+            assert data is not None
+            script = self.scripts[int(data["pid"]) - 1]
+            if "cloud-init status" in script:
+                state = self.cloud_init.pop(0) if len(self.cloud_init) > 1 else self.cloud_init[0]
+                return {"exited": 1, "exitcode": 0, "out-data": state + "\n"}
             code, out = self.exec_answers.pop(0) if self.exec_answers else (0, "")
             return {"exited": 1, "exitcode": code, "out-data": out}
         raise AssertionError(f"unexpected call {method} {path}")
@@ -236,7 +246,7 @@ class Check(ExampleTestCase):
 
 class Run(ExampleTestCase):
     def test_the_whole_rebuild_in_order(self) -> None:
-        self.api.exec_answers = [(0, ""), (0, f"key line\n256 {FINGERPRINT} root@vm (ED25519)\n")]
+        self.api.exec_answers = [(0, f"key line\n256 {FINGERPRINT} root@vm (ED25519)\n")]
         code, out = self.main("run", "lb-01")
         self.assertEqual(code, 0, out)
         self.assertEqual(self.steps(), ["prepare", "preview", "run", "status"])
@@ -254,6 +264,7 @@ class Run(ExampleTestCase):
         self.assertEqual(first_put["net0"], "virtio=02:00:00:00:00:01,firewall=1,bridge=vmbr10")
         self.assertEqual(first_put["ipconfig0"], "ip=192.0.2.29/24,gw=192.0.2.1")
         # The pasted line ran in the guest, and cloud-init was switched off after the run.
+        self.assertIn("cloud-init status", self.api.scripts[0])
         self.assertIn("authorized_keys", self.api.scripts[1])
         self.assertIn("cloud-init.disabled", self.api.scripts[2])
         self.assertNotIn("ide2", self.api.config)
@@ -261,15 +272,33 @@ class Run(ExampleTestCase):
         self.assertEqual(self.answered, ["192.0.2.21"])
         self.assertIn("done: VM 801 is lb-01", out)
 
+    def test_a_busy_first_boot_is_waited_out(self) -> None:
+        """26-11-03: the agent missed an answer while cloud-init ran, and the rebuild stopped."""
+
+        self.api.status_failing = 2
+        self.api.cloud_init = ["status: running", "status: running", "status: done"]
+        self.api.exec_answers = [(0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
+        code, out = self.main("run", "lb-01")
+        self.assertEqual(code, 0, out)
+        cloud_init = [script for script in self.api.scripts if "cloud-init status" in script]
+        self.assertEqual(len(cloud_init), 3)
+
+    def test_cloud_init_in_error_stops_before_the_restore(self) -> None:
+        self.api.cloud_init = ["status: error"]
+        code, out = self.main("run", "lb-01")
+        self.assertEqual(code, 1)
+        self.assertIn("reports an error", out)
+        self.assertEqual(self.steps(), [])
+
     def test_the_agent_is_waited_for(self) -> None:
         self.api.pings_failing = 3
-        self.api.exec_answers = [(0, ""), (0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
+        self.api.exec_answers = [(0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
         code, out = self.main("run", "lb-01")
         self.assertEqual(code, 0, out)
 
     def test_nothing_is_restored_unless_the_name_is_typed(self) -> None:
         self.typed = "yes"
-        self.api.exec_answers = [(0, ""), (0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
+        self.api.exec_answers = [(0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
         code, out = self.main("run", "lb-01")
         self.assertEqual(code, 1)
         self.assertEqual(self.steps(), ["prepare", "preview", "discard"])
@@ -277,20 +306,20 @@ class Run(ExampleTestCase):
 
     def test_a_refused_preview_discards_the_run(self) -> None:
         self.restore.preview_code = 1
-        self.api.exec_answers = [(0, ""), (0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
+        self.api.exec_answers = [(0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
         code, _ = self.main("run", "lb-01")
         self.assertEqual(code, 1)
         self.assertEqual(self.steps(), ["prepare", "preview", "discard"])
 
     def test_a_line_without_one_fingerprint_stops_before_the_preview(self) -> None:
-        self.api.exec_answers = [(0, ""), (0, "sudo: a password is required\n")]
+        self.api.exec_answers = [(0, "sudo: a password is required\n")]
         code, _ = self.main("run", "lb-01")
         self.assertEqual(code, 1)
         self.assertEqual(self.steps(), ["prepare", "discard"])
 
     def test_a_test_rebuild_is_the_product_s_test_mode(self) -> None:
         self.typed = "restoretest-lb-01"
-        self.api.exec_answers = [(0, ""), (0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
+        self.api.exec_answers = [(0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
         code, out = self.main("run", "lb-01", "--test")
         self.assertEqual(code, 0, out)
         prepare = next(argv for argv in self.restore.calls if argv[1:2] == ["prepare"])

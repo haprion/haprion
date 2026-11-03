@@ -178,6 +178,26 @@ class Settings:
             values=values,
         )
 
+    def resolve(self, given: str) -> tuple[str, str]:
+        """A node as typed - its whole name or a short one that fits only it - to its key and cluster.
+
+        `01` finds NODE_LB_01_CLUSTER when no other node ends in 01, as haprion-list-backups --node takes a
+        short name that can only mean one node.
+        """
+
+        wanted = env_name(given)
+        keys = [
+            key[len("NODE_") : -len("_CLUSTER")]
+            for key, value in self.values.items()
+            if key.startswith("NODE_") and key.endswith("_CLUSTER") and value
+        ]
+        found = [key for key in keys if key == wanted or key.endswith("_" + wanted)]
+        if len(found) != 1:
+            known = ", ".join(sorted(keys)) or "none"
+            what = "fits no node" if not found else f"fits {', '.join(sorted(found))}"
+            raise Stop(f"{given} {what} in the settings (NODE_<name>_CLUSTER: {known})")
+        return found[0], self.values[f"NODE_{found[0]}_CLUSTER"]
+
     def target(self, node: str, *, test: bool, vmid: int | None) -> Target:
         def need(key: str) -> str:
             if not self.values.get(key):
@@ -409,6 +429,27 @@ def latest_archive(runner: Runner, cluster: str, node: str) -> str:
     raise Stop(f"there is no backup of {node} in {cluster}")
 
 
+def node_standing(runner: Runner, cluster: str, key: str) -> tuple[str, str]:
+    """The node's name and management host, as the cluster's definition has them."""
+
+    done = runner(["haprion-status", "-c", cluster, "--json"])
+    try:
+        nodes = json.loads(done.stdout)["result"]["nodes"]
+    except (ValueError, KeyError, TypeError):
+        raise Stop(f"haprion-status gave no answer: {done.stderr.strip()[-300:]}") from None
+    for node in nodes:
+        if env_name(str(node.get("name", ""))) == key and node.get("mgmt_host"):
+            return str(node["name"]), str(node["mgmt_host"])
+    raise Stop(f"cluster {cluster} has no node that NODE_{key}_CLUSTER names")
+
+
+def resolve(host: str) -> str:
+    try:
+        return str(socket.getaddrinfo(host, 22, socket.AF_INET, socket.SOCK_STREAM)[0][4][0])
+    except (OSError, IndexError):
+        raise Stop(f"{host} does not resolve; the node's address cannot be checked") from None
+
+
 def answers(address: str, port: int = 22, timeout: float = 2.0) -> bool:
     try:
         with socket.create_connection((address, port), timeout=timeout):
@@ -430,10 +471,23 @@ class Context:
     out: TextIO
     ask: Callable[[str], str]
     answering: Callable[[str], bool]
+    resolving: Callable[[str], str] = resolve
+
+    def alive(self, address: str) -> bool:
+        """ssh on port 22, or an answer to ping: anything that says a machine holds it."""
+
+        if self.answering(address):
+            return True
+        return self.runner(["ping", "-c", "1", "-W", "1", address]).returncode == 0
 
 
-def check(context: Context, target: Target) -> str:
-    """Read-only: the token, its privileges, the template, the pool, the VMID. The template's node."""
+def check(context: Context, target: Target, mgmt_host: str) -> str:
+    """Read-only: nothing of the node may exist, and Proxmox must be ready. The template's node.
+
+    A rebuild goes ahead only where the node is gone: no VM by its name
+    anywhere in Proxmox, nothing at its address, and its VMID free. A test
+    rebuild leaves the node running and asks the same of the test VM.
+    """
 
     api, settings, out = context.api, context.settings, context.out
     version = api.call("GET", "/version", None)
@@ -443,9 +497,22 @@ def check(context: Context, target: Target) -> str:
     if template is None or not template.get("template"):
         raise Stop(f"VM {settings.template} is not a template the token can see")
     out.write(f"  template {settings.template} on {template.get('node')}\n")
+    named = [vm for vm in resources if vm.get("name") == target.name]
+    if named:
+        where = ", ".join(f"{vm.get('vmid')} on {vm.get('node')}" for vm in named)
+        raise Stop(f"a VM named {target.name} exists ({where}); remove it in Proxmox first")
     if any(vm.get("vmid") == target.vmid for vm in resources):
         raise Stop(f"VMID {target.vmid} is taken; remove that VM in Proxmox first, or give --vmid")
-    out.write(f"  VMID {target.vmid} is free\n")
+    out.write(f"  no VM named {target.name}, and VMID {target.vmid} is free\n")
+    if target.test is None:
+        address = context.resolving(mgmt_host)
+        if context.alive(address):
+            raise Stop(f"{target.node} answers at {address}: the node is running")
+        out.write(f"  {target.node} ({address}) does not answer\n")
+    temporary = str(target.temporary.ip)
+    if context.alive(temporary):
+        raise Stop(f"the temporary address {temporary} answers; another machine holds it")
+    out.write(f"  the temporary address {temporary} is free\n")
     for path, wanted in (
         (f"/pool/{settings.pool}", POOL_PRIVILEGES),
         (f"/vms/{settings.template}", TEMPLATE_PRIVILEGES),
@@ -628,6 +695,7 @@ def main(
     runner: Runner = run_command,
     ask: Callable[[str], str] = input,
     answering: Callable[[str], bool] = answers,
+    resolving: Callable[[str], str] = resolve,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     parser = argparse.ArgumentParser(
@@ -638,7 +706,10 @@ def main(
     steps = parser.add_subparsers(dest="step", required=True)
     for step in ("check", "run"):
         one = steps.add_parser(step)
-        one.add_argument("node", help="the node to rebuild, as the cluster names it")
+        one.add_argument(
+            "node",
+            help="the node to rebuild: its name, or a short one that fits only it (01 for lb-01)",
+        )
         one.add_argument("--test", action="store_true", help="the test VM, address and VIP")
         one.add_argument("--vmid", type=int, help="instead of the settings' VMID")
         if step == "run":
@@ -647,7 +718,9 @@ def main(
     stream = out or sys.stdout
     try:
         settings = Settings.load(arguments.settings)
-        target = settings.target(arguments.node, test=arguments.test, vmid=arguments.vmid)
+        key, cluster = settings.resolve(arguments.node)
+        name, mgmt_host = node_standing(runner, cluster, key)
+        target = settings.target(name, test=arguments.test, vmid=arguments.vmid)
         context = Context(
             settings=settings,
             api=Proxmox(call or api_call(settings), sleep=sleep),
@@ -655,9 +728,10 @@ def main(
             out=stream,
             ask=ask,
             answering=answering,
+            resolving=resolving,
         )
         stream.write(f"{target.node} ({target.cluster}) to VM {target.vmid}\n")
-        node = check(context, target)
+        node = check(context, target, mgmt_host)
         archive = getattr(arguments, "archive", None) or latest_archive(
             runner, target.cluster, target.node
         )

@@ -14,9 +14,12 @@ that does. Adapt it, or leave it and restore by hand as the
 
 `proxmox_node_rebuild.py run <node>`:
 
-1. **Checks before it changes anything.** It confirms that the token answers, the template exists, the
-   VMID is free, the token has the privileges listed below, and there is a backup of the node.
-   `check <node>` stops after this step.
+1. **Checks before it changes anything.** A rebuild goes ahead only where the node is gone. It
+   stops if a VM with the node's name exists anywhere in Proxmox, if the VMID is taken, or if
+   anything answers at the node's own address (ssh or ping). The address comes from the cluster's
+   definition, through `haprion-status`. It also stops if the temporary address answers. Then it
+   confirms that the token answers, the template exists, the token has the privileges listed below,
+   and there is a backup of the node. `check <node>` stops after this step.
 2. **Makes the VM.** It clones the template into the pool, sets the cluster's bridge, and gives the
    VM a temporary address and resolver with cloud-init. Then it starts the VM and waits for the guest
    agent and for cloud-init to finish.
@@ -35,7 +38,11 @@ that does. Adapt it, or leave it and restore by hand as the
    and waits for the node's own address on port 22.
 
 `--test` restores to a test VM instead: its own VMID, a test address and a VIP no cluster uses.
-keepalived stays masked on a test VM. It is the product's test mode, with the VM made for you.
+keepalived stays masked on a test VM. It is the product's test mode, with the VM made for you. The
+node keeps running during a test, so only the test VM's name, VMID and address must be free.
+
+A node is named as the cluster names it, or by a short name that fits only one node in the
+settings: `01` for `lb-01` when no other node ends in `01`.
 
 ## What you need
 
@@ -69,15 +76,15 @@ Run it as root on the manager. `haprion-node-restore` needs root, and so does th
 
 ```bash
 sudo ./proxmox_node_rebuild.py check lb-01
-sudo ./proxmox_node_rebuild.py run lb-01 --test
+sudo ./proxmox_node_rebuild.py run 01 --test     # a short name that fits only lb-01
 sudo ./proxmox_node_rebuild.py run lb-01
 ```
 
 ## What it does not do
 
-- It does not remove the lost VM. The new one needs a free VMID, so remove the old VM in Proxmox
-  first, or give `--vmid`. **The old node and the new one must never run at the same time.** The
-  restore refuses if the node's own address already answers.
+- It never replaces anything that exists. A node whose VM is still in Proxmox, even switched off, is
+  not rebuilt: remove the old VM first. **The old node and the new one must never run at the same
+  time.**
 - It does not remove a VM that failed. The VM stays in the pool for you to look at. Remove it
   in Proxmox.
 - It does not check SDN rights before the clone. A missing `PVESDNUser` shows up as the bridge

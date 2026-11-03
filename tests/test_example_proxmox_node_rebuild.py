@@ -47,6 +47,8 @@ CLUSTER_ALPHA_TEMPORARY_ADDRESS=192.0.2.29/24
 CLUSTER_ALPHA_TEST_ADDRESS=192.0.2.30/24
 NODE_LB_01_CLUSTER=alpha
 NODE_LB_01_VMID=801
+NODE_DB_01_CLUSTER=alpha
+NODE_DB_01_VMID=811
 TEST_VMID=899
 TEST_VIP=203.0.113.254/32
 """
@@ -136,14 +138,31 @@ class FakeRestore:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
         self.preview_code = 0
+        self.pinging: set[str] = set()
+        self.restored = False
 
     def __call__(self, argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
         argv = list(argv)
         self.calls.append(argv)
         out, code = "", 0
-        if argv[0] == "haprion-list-backups":
+        if argv[0] == "ping":
+            return subprocess.CompletedProcess(argv, 0 if argv[-1] in self.pinging else 1, "", "")
+        if argv[0] == "haprion-status":
             out = json.dumps(
-                {"result": {"nodes": [{"name": "lb-01", "latest_version": "2026-11-03_21-50-55"}]}}
+                {
+                    "result": {
+                        "nodes": [
+                            {"name": "lb-01", "mgmt_host": "lb-01.example.net"},
+                            {"name": "db-01", "mgmt_host": "db-01.example.net"},
+                        ]
+                    }
+                }
+            )
+            return subprocess.CompletedProcess(argv, 0, out, "")
+        if argv[0] == "haprion-list-backups":
+            asked = argv[argv.index("--node") + 1]
+            out = json.dumps(
+                {"result": {"nodes": [{"name": asked, "latest_version": "2026-11-03_21-50-55"}]}}
             )
         elif argv[1] == "prepare":
             out = json.dumps(
@@ -156,6 +175,7 @@ class FakeRestore:
         elif argv[1] == "preview":
             out, code = "Run r261103-0000aaaa\n  mode new_vm\n", self.preview_code
         elif argv[1] == "run":
+            self.restored = True
             out = "=== restore r261103-0000aaaa: done ===\n"
         elif argv[1] == "status":
             out = json.dumps(
@@ -182,6 +202,8 @@ class ExampleTestCase(unittest.TestCase):
         self.restore = FakeRestore()
         self.typed = "lb-01"
         self.answered: list[str] = []
+        # What answers on port 22 before the restore; the node's own address after it.
+        self.up: set[str] = set()
 
     def main(self, *argv: str) -> tuple[int, str]:
         out = io.StringIO()
@@ -192,13 +214,16 @@ class ExampleTestCase(unittest.TestCase):
             runner=self.restore,
             ask=lambda _prompt: self.typed,
             answering=self.answer,
+            resolving=lambda host: {"lb-01.example.net": "192.0.2.21"}.get(host, "192.0.2.22"),
             sleep=lambda _seconds: None,
         )
         return code, out.getvalue()
 
     def answer(self, address: str) -> bool:
-        self.answered.append(address)
-        return True
+        if self.restore.restored:
+            self.answered.append(address)
+            return True
+        return address in self.up
 
     def steps(self) -> list[str]:
         return [argv[1] for argv in self.restore.calls if argv[0] == "haprion-node-restore"]
@@ -230,7 +255,7 @@ class Check(ExampleTestCase):
         text = self.settings.read_text()
         for broken, said in (
             ("CLUSTER_ALPHA_TEMPORARY_ADDRESS=192.0.2.29\n", "needs its prefix"),
-            ("NODE_LB_01_CLUSTER=\n", "no NODE_LB_01_CLUSTER"),
+            ("NODE_LB_01_CLUSTER=\n", "lb-01 fits no node in the settings"),
             ("this is not a setting\n", "is not KEY=value"),
         ):
             with self.subTest(said=said):
@@ -242,6 +267,51 @@ class Check(ExampleTestCase):
                 code, out = self.main("check", "lb-01")
                 self.assertEqual(code, 1)
                 self.assertIn(said, out)
+
+
+class OnlyWhereTheNodeIsGone(ExampleTestCase):
+    """26-11-03: a rebuild stops if the VM exists or answers, before anything is made."""
+
+    def test_a_vm_by_the_node_s_name_anywhere_stops_it(self) -> None:
+        self.api.vms.append({"vmid": 4711, "node": "pve-b", "template": 0, "name": "lb-01"})
+        code, out = self.main("run", "lb-01")
+        self.assertEqual(code, 1)
+        self.assertIn("a VM named lb-01 exists (4711 on pve-b)", out)
+        self.assertEqual(self.api.changes(), [])
+
+    def test_the_node_answering_stops_it(self) -> None:
+        for answering in ("ssh", "ping"):
+            with self.subTest(answering=answering):
+                self.up, self.restore.pinging = set(), set()
+                (self.up if answering == "ssh" else self.restore.pinging).add("192.0.2.21")
+                code, out = self.main("check", "lb-01")
+                self.assertEqual(code, 1)
+                self.assertIn("lb-01 answers at 192.0.2.21: the node is running", out)
+        self.assertEqual(self.api.changes(), [])
+
+    def test_a_taken_temporary_address_stops_it(self) -> None:
+        self.up = {"192.0.2.29"}
+        code, out = self.main("run", "lb-01")
+        self.assertEqual(code, 1)
+        self.assertIn("the temporary address 192.0.2.29 answers", out)
+        self.assertEqual(self.api.changes(), [])
+
+    def test_a_test_rebuild_leaves_the_running_node_alone(self) -> None:
+        self.up = {"192.0.2.21"}
+        code, out = self.main("check", "lb-01", "--test")
+        self.assertEqual(code, 0, out)
+
+    def test_a_short_name_that_fits_one_node(self) -> None:
+        code, out = self.main("check", "lb-01")
+        self.assertEqual(code, 0, out)
+        for given, said in (("01", "fits DB_01, LB_01"), ("lb-03", "fits no node")):
+            with self.subTest(given=given):
+                code, out = self.main("check", given)
+                self.assertEqual(code, 1)
+                self.assertIn(said, out)
+        code, out = self.main("check", "db-01")
+        self.assertEqual(code, 0, out)
+        self.assertIn("db-01 (alpha) to VM 811", out)
 
 
 class Run(ExampleTestCase):

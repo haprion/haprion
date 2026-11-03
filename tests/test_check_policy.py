@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import unittest
 
-from haprion.check_policy import EffectiveCheck, effective_check, effective_checks
+from haprion.check_policy import EffectiveCheck, effective_check, effective_checks, tls_mismatches
 from haprion.proxy_model import Proxy, load_proxy
 
 DOCUMENT = """schema: 1
@@ -147,6 +147,61 @@ class EveryCheckAnObjectRuns(unittest.TestCase):
 
     def test_one_per_server(self) -> None:
         self.assertEqual(len(effective_checks(proxy())), 1)
+
+
+class WhereTheCheckAndTheTrafficDisagree(unittest.TestCase):
+    """26-11-03: a plain check passed while TLS traffic to the same port failed."""
+
+    def test_a_plain_check_on_a_tls_pool_is_said(self) -> None:
+        said = tls_mismatches(proxy(pool=TLS_POOL, health="      tls: false\n"))
+
+        self.assertEqual(
+            said,
+            [
+                "The health check connects to port 8080 without TLS and the traffic with;"
+                " one of the two will fail"
+            ],
+        )
+
+    def test_a_tls_check_on_a_plain_pool_is_said(self) -> None:
+        for type, health in (
+            ("http", "      tls: true\n"),
+            ("tcp", "      tls: true\n"),
+            ("tcp", '      tls: true\n      send: "PING"\n      expect: "PONG"\n'),
+        ):
+            with self.subTest(type=type, health=health):
+                said = tls_mismatches(proxy(type=type, health=health))
+
+                self.assertEqual(len(said), 1)
+                self.assertIn("with TLS and the traffic without", said[0])
+
+    def test_a_plain_exchange_on_a_tls_pool_is_said(self) -> None:
+        exchange = '      tls: false\n      send: "PING"\n      expect: "PONG"\n'
+
+        self.assertEqual(len(tls_mismatches(proxy(type="tcp", pool=TLS_POOL, health=exchange))), 1)
+
+    def test_agreement_says_nothing(self) -> None:
+        self.assertEqual(tls_mismatches(proxy()), [])
+        self.assertEqual(tls_mismatches(proxy(pool=TLS_POOL)), [])
+        self.assertEqual(tls_mismatches(proxy(health="      tls: false\n")), [])
+        self.assertEqual(tls_mismatches(proxy(pool=TLS_POOL, health="      tls: true\n")), [])
+
+    def test_a_check_port_of_its_own_says_nothing(self) -> None:
+        """Another port is another service; the check owes the traffic nothing there."""
+
+        said = tls_mismatches(proxy(pool=TLS_POOL, health="      tls: false\n      port: 9000\n"))
+
+        self.assertEqual(said, [])
+
+    def test_a_plain_connect_says_nothing(self) -> None:
+        """It speaks neither, so it disagrees with nothing."""
+
+        self.assertEqual(
+            tls_mismatches(proxy(type="tcp", pool=TLS_POOL, health="      tls: false\n")), []
+        )
+
+    def test_a_disabled_check_says_nothing(self) -> None:
+        self.assertEqual(tls_mismatches(proxy(type="disabled", pool=TLS_POOL)), [])
 
 
 if __name__ == "__main__":

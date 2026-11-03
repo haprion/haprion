@@ -57,6 +57,9 @@
 {% for warning in unresolved_servers %}
 <p class="preview-notice notice-warning" data-unresolved><span class="status-orb status-warning" aria-hidden="true"></span>{{ warning }}.</p>
 {% endfor %}
+{% for warning in check_tls_mismatches %}
+<p class="preview-notice notice-warning" data-check-tls><span class="status-orb status-warning" aria-hidden="true"></span>{{ warning }}.</p>
+{% endfor %}
 
 {#
   Posted to the address that is being edited, which is `name` - not `existing`.

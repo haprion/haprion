@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import exit_codes, labels, server_names
+from haprion import check_policy, exit_codes, labels, server_names
 from haprion.cli import arguments, changes_publish
 from haprion.cli.apply_common import (
     PartlyDone,
@@ -302,7 +302,25 @@ def _summary(plan: Plan, *, check: bool, versions: Sequence[Mapping[str, Any]]) 
         "unresolved_servers": list(
             dict.fromkeys(str(name) for v in versions for name in v.get("unresolved_servers") or ())
         ),
+        #
+        # Read from the documents rather than the publish, so `--check` says it
+        # too: the editor's warning (26-11-03), in the same words.
+        #
+        "check_tls_mismatches": _tls_mismatches(plan),
     }
+
+
+def _tls_mismatches(plan: Plan) -> list[str]:
+    said: list[str] = []
+    for name, document in plan.documents.items():
+        if document is None:
+            continue
+        try:
+            proxy = load_proxy(name, document.encode())
+        except ModelError:
+            continue
+        said.extend(f"{name}: {sentence}" for sentence in check_policy.tls_mismatches(proxy))
+    return said
 
 
 def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO) -> None:
@@ -321,6 +339,8 @@ def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO
         writer.write(f"Published version {version['version']} of {cluster}.\n")
     for name in summary["unresolved_servers"]:
         writer.write(f"WARNING: {server_names.warning(name)}\n")
+    for sentence in summary["check_tls_mismatches"]:
+        writer.write(f"WARNING: {sentence}\n")
     if summary["deployment_required"]:
         writer.write(f"Deploy it with: haprion-deploy -c {cluster}\n")
 

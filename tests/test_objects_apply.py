@@ -140,6 +140,31 @@ class ObjectsFromFiles(unittest.TestCase):
             summary = objects_apply._summary(plan, check=False, versions=versions)
             self.assertEqual(summary["deployment_required"], required)
 
+    def test_a_check_and_traffic_that_disagree_about_tls_are_a_warning(self) -> None:
+        """The editor's warning (26-11-03), in the terminal too, and before a publish."""
+
+        mismatch = (
+            document("shop")
+            .replace(
+                "      type: disabled\n", "      type: http\n      path: /\n      tls: false\n"
+            )
+            .replace("    servers:\n", "    tls:\n      verify: none\n    servers:\n")
+        )
+        self.write("shop", mismatch)
+
+        code, out, _ = self.run_cli(Fakes({}), "apply", "-c", "alpha", str(self.root), "--check")
+        _, answer, _ = self.run_cli(
+            Fakes({}), "apply", "-c", "alpha", str(self.root), "--check", "--json"
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "WARNING: shop: The health check connects to port 8080 without TLS and the traffic with",
+            out,
+        )
+        result = assert_contract("haprion-objects-apply", answer)["result"]
+        self.assertEqual(len(result["check_tls_mismatches"]), 1)
+
     def test_the_same_files_again_change_nothing(self) -> None:
         fakes = Fakes({"shop": document("shop")})
         self.write("shop", document("shop"))

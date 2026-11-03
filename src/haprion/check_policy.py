@@ -154,6 +154,45 @@ def effective_check(backend: Backend, server: Server) -> EffectiveCheck:
     )
 
 
+def tls_mismatches(proxy: Proxy) -> list[str]:
+    """The ports where the check and the traffic disagree about TLS, as warnings.
+
+    A check that speaks plaintext to the port the traffic reaches over TLS, or
+    the other way round, cannot have both working: one port speaks one of the
+    two. Measured 2026-11-03, a pool moved from a TLS port to a plain one kept
+    its TLS, the check was switched to plain HTTP and passed, and every request
+    failed behind a server reported up.
+
+    Said, never refused - a server can take both on one port - and only where
+    the check reaches the traffic's port: a check port of its own is a
+    different service. A plain TCP connect speaks neither, so it disagrees with
+    nothing.
+    """
+
+    said: list[str] = []
+    for name in sorted(proxy.backends):
+        backend = proxy.backends[name]
+        health = backend.health
+        if health.type not in ("http", "tcp"):
+            continue
+        check_tls = check_speaks_tls(backend, health)
+        if health.type == "tcp" and health.send is None and not check_tls:
+            continue
+        if check_tls == (backend.tls is not None):
+            continue
+        for server in backend.servers:
+            if health.port is not None and health.port != server.port:
+                continue
+            sentence = (
+                f"The health check connects to port {server.port} "
+                f"{'with' if check_tls else 'without'} TLS and the traffic "
+                f"{'without' if check_tls else 'with'}; one of the two will fail"
+            )
+            if sentence not in said:
+                said.append(sentence)
+    return said
+
+
 def effective_checks(proxy: Proxy) -> tuple[EffectiveCheck, ...]:
     """Every check this object runs, in the order its pools are written.
 

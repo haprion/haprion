@@ -420,8 +420,10 @@ A type somebody chose stays. The types:
   `204` or `200-299`. When empty, any 2xx or 3xx counts. Point the check at the application's health page
   and narrow the range if it has one: a 302 to a login page is also what a broken application answers.
   `https` speaks TLS to the check even on a plain pool, and `http` speaks plain to a pool reached over
-  HTTPS - for a plaintext management port. A check over TLS judges the certificate only where the pool is
-  verified (see [A pool over HTTPS](#a-pool-over-https)).
+  HTTPS - for a plaintext management port. On the traffic's own port the two cannot both work, so the
+  editor warns when they disagree there: *Save* stays in the editor, and `haprion-objects apply` prints it
+  as a `WARNING:` line. A check over TLS judges the certificate only where the pool is verified (see
+  [A pool over HTTPS](#a-pool-over-https)).
 - `tcp` opens a connection, and `tcp, TLS handshake` completes a TLS handshake. *Send* and *Expect* turn
   either into a short exchange: *Send* is written once the connection is up, and the answer must contain
   *Expect*. The two belong together. Each is one short word of at most 64 characters - letters, digits and
@@ -502,7 +504,7 @@ The stored object spells both out under the server (`weight: 50`, `backup: true`
 
 **Host names.** HAProxy on each node resolves a host name, and a name a node cannot resolve stops the
 deploy on that node. The editor and the publish therefore look each name up with the management host's
-resolver. When it gives no address they warn - *app.example.com cannot be resolved from the manager* - but
+resolver. When it gives no address they warn - *app.example.com is not in DNS as the manager sees it* - but
 never refuse, since the nodes may resolve names the manager cannot. After such a warning, *Save* stays in
 the editor so the warning is seen, and `haprion-objects apply` prints it as a `WARNING:` line.
 

@@ -1594,6 +1594,26 @@ class SavingSaysSo(EditorTestCase):
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(answer.headers["location"], "/proxies/alpha/bazaar/edit?saved=1")
 
+    def test_a_check_and_traffic_that_disagree_about_tls_keep_the_save_in_the_editor(
+        self,
+    ) -> None:
+        """26-11-03: a plain check passed and TLS traffic to the same port failed."""
+
+        mismatch = {"health_type": "http", "health_path": "/", "backend_tls": "none"}
+        with mock.patch("haprion.resolve_socket.unresolved", side_effect=lambda hosts: []):
+            answer = self.save("/proxies/alpha/shop/edit", action="save", **mismatch)
+            page = self.save("/proxies/alpha/shop/edit", action="check", **mismatch)
+            clean = self.save(
+                "/proxies/alpha/shop/edit", action="check", **{**mismatch, "health_type": "https"}
+            )
+
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/shop/edit?saved=1")
+        self.assertIn(
+            "The health check connects to port 8080 without TLS and the traffic with", page.text
+        )
+        self.assertIn('class="preview-notice notice-warning" data-check-tls', page.text)
+        self.assertNotIn("data-check-tls", clean.text)
+
     def test_a_server_written_with_two_colons_is_refused_where_it_is_typed(self) -> None:
         """Finding 82: `name::8080` became the host `name:`, was saved, called valid, and
         stopped the deploy on a node."""

@@ -19,6 +19,7 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from haprion import (
+    check_policy,
     crs,
     dnsdist_config,
     proxy_model,
@@ -325,6 +326,21 @@ def unresolved_servers(name: str, document: str) -> list[str]:
     return [server_names.warning(host) for host in missing]
 
 
+def check_tls_mismatches(name: str, document: str) -> list[str]:
+    """Where the check and the traffic disagree about TLS on one port (26-11-03).
+
+    A warning beside finding 72's, and kept in the editor after a save the same
+    way: the check passing is what hid the failing traffic, so the list is the
+    wrong place to find out.
+    """
+
+    try:
+        proxy = load_proxy(name or "editor", document.encode())
+    except proxy_model.ModelError:
+        return []
+    return check_policy.tls_mismatches(proxy)
+
+
 #
 # What the editor says after a save when there is no card to say it (B330).
 #
@@ -457,6 +473,11 @@ def editor_page(
         if result.document and not dns_form
         else []
     )
+    mismatched = (
+        check_tls_mismatches(str(fields.get("name", "") or name), result.document)
+        if result.document and not dns_form
+        else []
+    )
     return TEMPLATES.TemplateResponse(
         request,
         "editor.html",
@@ -512,6 +533,7 @@ def editor_page(
             "syslog_offered": health.syslog_everywhere(status_rows, cluster=cluster),
             "check_protocols": preview_module.CHECK_PROTOCOLS,
             "unresolved_servers": unresolved,
+            "check_tls_mismatches": mismatched,
             "result": result,
             "draft": draft,
             "moved_under": moved_under,
@@ -1148,12 +1170,16 @@ def editor_submit(
     #
     # Unless a server's name does not resolve from the manager (finding 72):
     # then back to the editor, which says so, rather than to a list that does
-    # not - found before the deploy that a node would stop.
+    # not - found before the deploy that a node would stop. So too a check and
+    # traffic that disagree about TLS (26-11-03): the list shows the check up.
     #
     if form.action == "draft" or (
         result.document
         and form.fields().get("protocol") != "dns"
-        and unresolved_servers(object_id, result.document)
+        and (
+            unresolved_servers(object_id, result.document)
+            or check_tls_mismatches(object_id, result.document)
+        )
     ):
         return RedirectResponse(
             proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303

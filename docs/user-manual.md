@@ -14,6 +14,7 @@ names used below, that is a bug in the software, not in this guide.
 - [Configuration and deployment](#configuration-and-deployment)
   - [Words used here](#words-used-here)
   - [An http or https object, field by field](#an-http-or-https-object-field-by-field)
+  - [Coming from Nginx Proxy Manager](#coming-from-nginx-proxy-manager)
   - [A whole subdomain](#a-whole-subdomain)
   - [A pool's servers](#a-pools-servers)
   - [A pool over HTTPS](#a-pool-over-https)
@@ -448,6 +449,21 @@ Rise and fall are 1 to 10. Intervals are written as `500ms`, `5s` or `1m`.
 *Test health check*, in the editor, asks the node holding the object's address to try the check as it
 stands on screen, once, now. *What the nodes report* lists each node's verdict on each server. The rows
 the test tried are marked *tested*, and pointing at *Last check* shows HAProxy's own code.
+
+### Coming from Nginx Proxy Manager
+
+Some switches in Nginx Proxy Manager, or in a firewall's reverse proxy, have no field here. HAProxy and the
+cluster do that work on every http and https object:
+
+- **WebSockets need no switch.** HAProxy recognises the upgrade itself and passes the connection through.
+  An upgraded connection is closed after an hour without traffic, unless the pool is written in advanced
+  configuration.
+- **The `Host` header reaches the servers as the visitor sent it.** There is no setting that replaces it
+  with the server's own name.
+- **`X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` are always written**, from what the
+  connection actually was. *Headers* above says why they cannot be set by hand.
+- **Pages are not rewritten.** Headers can be changed, the content of an answer cannot
+  ([What it does not do](#what-it-does-not-do)).
 
 ### A whole subdomain
 
@@ -5470,6 +5486,10 @@ in the section linked.
   Some scripts and tools (`nc -N`) half-close their HTTP/1 connection once the request is sent. The node
   cannot tell that from a client that left, and a request the engine has not judged is never forwarded, so
   the connection is closed without an answer ([When the client leaves first](#the-waf-engine)).
+- **The content of an answer is not rewritten.** HAProxy changes headers and paths but has no counterpart
+  to nginx's `sub_filter`. An application that writes absolute links into its pages must build them from
+  the `Host` and `X-Forwarded-Proto` headers it receives, or from its own setting for its public address
+  ([Coming from Nginx Proxy Manager](#coming-from-nginx-proxy-manager)).
 
 
 ## Environment reference

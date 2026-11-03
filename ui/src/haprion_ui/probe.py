@@ -62,6 +62,13 @@ MAX_TARGETS = 20
 # resolver tool name it.
 #
 RCODES = {0: "NOERROR", 1: "FORMERR", 2: "SERVFAIL", 3: "NXDOMAIN", 4: "NOTIMP", 5: "REFUSED"}
+#
+# What a 400 to an http check that names no Host header adds (26-11-03). HAProxy
+# sends such a check as HTTP/1.0 with no headers at all, and a backend that
+# insists on a Host answers 400 - which read as a broken server, not as a field
+# left empty. Said only where both hold; the cause is not certain, the fact is.
+#
+NO_HOST_SENT = "no Host header sent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +85,10 @@ class Reached:
     # receiver that is up sends, and is said as what it is.
     #
     udp: bool = False
+    #
+    # An http check that names no Host header, so a 400 can say it was sent none.
+    #
+    hostless: bool = False
 
     @property
     def phrase(self) -> str:
@@ -92,6 +103,8 @@ class Reached:
             return "not refused"
         if self.status is not None and self.dns:
             return f"answered {RCODES.get(self.status, f'code {self.status}')}"
+        if self.status == 400 and self.hostless:
+            return f"answered 400 · {NO_HOST_SENT}"
         if self.status is not None:
             return f"answered {self.status}"
         if self.error:
@@ -461,6 +474,11 @@ def run(
     source, nodes = _read(payload)
     if any(check.type == "http" for check in checks):
         nodes = _judged(nodes, accepted_status(checks))
+    if any(check.type == "http" and not check.host_header for check in checks):
+        nodes = tuple(
+            replace(node, results=tuple(replace(entry, hostless=True) for entry in node.results))
+            for node in nodes
+        )
     if any(check.type == "udp" for check in checks):
         nodes = tuple(
             replace(node, results=tuple(replace(entry, udp=True) for entry in node.results))

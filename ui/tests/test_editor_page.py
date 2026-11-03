@@ -1412,6 +1412,20 @@ class WhichNodeReportsOnThePool(EditorTestCase):
         self.assertEqual(editor_flow._published_servers(stored, ()), ["192.0.2.10:8080"])
         self.assertEqual(editor_flow._published_servers(None, ()), [])
 
+    def test_a_published_http_check_without_a_host_header_is_noticed(self) -> None:
+        """26-11-03: the published check, which the nodes run, and not the form."""
+
+        def view(health: str) -> objects.ObjectView | None:
+            document = SHOP.replace("      type: disabled\n", health)
+            return objects.object_view({"name": "shop", "document": document, "readable": True})
+
+        hostless = view("      type: http\n      path: /\n")
+        named = view("      type: http\n      path: /\n      host: shop.example.com\n")
+        self.assertTrue(editor_flow._published_check_hostless(hostless))
+        self.assertFalse(editor_flow._published_check_hostless(named))
+        self.assertFalse(editor_flow._published_check_hostless(view("      type: tcp\n")))
+        self.assertFalse(editor_flow._published_check_hostless(None))
+
     def test_a_node_without_the_address_is_left_off(self) -> None:
         card = self.card(
             [self.node("node-a", owner=True, up=True), self.node("node-b", owner=False, up=False)],

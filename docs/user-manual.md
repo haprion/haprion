@@ -433,8 +433,9 @@ A type somebody chose stays. The types:
 *Check details* holds three fields:
 
 - *Port* is the server's own port when empty. Set it for a health endpoint on a management port.
-- *Host header* is for a backend that serves several names. Without it, such a backend may answer the check
-  with a 404 or a redirect and look dead.
+- *Host header* is for a backend that serves several names, or one that insists on a Host. Without it, the
+  check is sent as HTTP/1.0 with no headers at all. A backend may then answer with a 404 or a redirect, or
+  with a 400, which the editor shows as *answered 400 · no Host header sent*.
 - *Expected body* is text the answer must contain as well as the status. It is written the same way as
   *Expect*.
 
@@ -449,7 +450,7 @@ A type somebody chose stays. The types:
 Rise and fall are 1 to 10. Intervals are written as `500ms`, `5s` or `1m`.
 
 *Test health check*, in the editor, asks the node holding the object's address to try the check as it
-stands on screen, once, now. *What the nodes report* lists each node's verdict on each server. The rows
+stands on screen, once, now. It sends the same request as HAProxy's check. *What the nodes report* lists each node's verdict on each server. The rows
 the test tried are marked *tested*, and pointing at *Last check* shows HAProxy's own code.
 
 ### Coming from Nginx Proxy Manager

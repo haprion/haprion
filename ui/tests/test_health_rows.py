@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from haprion.cluster_status import ServerHealth
 
@@ -75,6 +76,27 @@ class TheNodesReadingAlone(unittest.TestCase):
             ],
         )
         self.assertFalse(any(row.tested for row in rows))
+
+
+class AMonitorsFourHundred(unittest.TestCase):
+    """26-11-03: a 400 to a published check that sends no Host header says so."""
+
+    def row(self, *, hostless: bool, code: str = "400") -> str:
+        backend = reported(("s1", "DOWN"))
+        member = replace(backend.nodes[0].members[0], check_status="L7STS", check_code=code)
+        backend = replace(
+            backend,
+            nodes=(replace(backend.nodes[0], members=(member,)),),
+            hostless_check=hostless,
+        )
+        return health_rows(backend, None)[0].last
+
+    def test_it_is_said_where_the_published_check_sends_no_host(self) -> None:
+        self.assertEqual(self.row(hostless=True), "answered 400 · no Host header sent · 4 ms")
+
+    def test_it_is_not_said_otherwise(self) -> None:
+        self.assertEqual(self.row(hostless=False), "answered 400 · 4 ms")
+        self.assertEqual(self.row(hostless=True, code="404"), "answered 404 · 4 ms")
 
 
 class TheLamp(unittest.TestCase):

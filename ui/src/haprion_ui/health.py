@@ -120,6 +120,12 @@ class BackendHealth:
     # reading wrote `198.51.100.10:8080` and has never seen `s1`.
     #
     addresses: tuple[str, ...] = ()
+    #
+    # Whether the published check is an http one that names no Host header, so
+    # a member's 400 can say it was sent none (26-11-03). The published one:
+    # the nodes run that, not what the form holds now.
+    #
+    hostless_check: bool = False
 
     def address(self, server: str) -> str:
         """The address behind a runtime server name, where one can be named.
@@ -401,6 +407,7 @@ def backend_health(
     addresses: Iterable[str] = (),
     deployed: Iterable[str] = (),
     held_only: bool = False,
+    hostless_check: bool = False,
 ) -> BackendHealth:
     """The nodes' verdict on one object's backend, from the poller's newest reading.
 
@@ -455,6 +462,7 @@ def backend_health(
         nodes=tuple(nodes),
         observed_at=getattr(reading, "observed_at", None),
         addresses=written,
+        hostless_check=hostless_check,
     )
 
 

@@ -139,6 +139,21 @@ def _published_servers(stored: objects.ObjectView | None, networks: Collection[s
     return str(fields.get("servers", "")).splitlines()
 
 
+def _published_check_hostless(stored: objects.ObjectView | None) -> bool:
+    """Whether the object as published has an http check that names no Host header."""
+
+    if stored is None:
+        return False
+    try:
+        proxy = load_proxy(stored.name, stored.document.encode())
+    except proxy_model.ModelError:
+        return False
+    return any(
+        check.type == "http" and not check.host_header
+        for check in check_policy.effective_checks(proxy)
+    )
+
+
 def editor_state(request: Request, config: Config, cluster: str) -> EditorState:
     clusters, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
     if cluster not in clusters:
@@ -281,6 +296,7 @@ def object_backend(
         addresses=str(fields.get("servers", "")).splitlines(),
         deployed=_published_servers(stored, state.choices.networks),
         held_only=fields.get("protocol") in SENDERS_ADDRESS,
+        hostless_check=_published_check_hostless(stored),
     )
 
 

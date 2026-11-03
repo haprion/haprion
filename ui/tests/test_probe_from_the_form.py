@@ -218,6 +218,18 @@ class WhetherTheVerdictIsTheChecksOwn(unittest.TestCase):
         self.assertEqual(self.report(302).failing, 0)
         self.assertEqual(self.report(404).failing, 1)
 
+    def test_a_400_to_a_check_without_a_host_header_says_none_was_sent(self) -> None:
+        """26-11-03: HAProxy sends such a check no headers, and a backend wanting one says 400."""
+
+        self.assertEqual(
+            self.report(400).nodes[0].results[0].phrase, "answered 400 · no Host header sent"
+        )
+        self.assertEqual(
+            self.report(400, health_host="shop.example.com").nodes[0].results[0].phrase,
+            "answered 400",
+        )
+        self.assertEqual(self.report(404).nodes[0].results[0].phrase, "answered 404")
+
     def test_a_row_with_no_status_keeps_the_reason_it_failed(self) -> None:
         """A handshake that never happened has nothing to judge."""
 

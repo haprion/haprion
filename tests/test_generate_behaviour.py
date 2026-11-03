@@ -3958,3 +3958,136 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
                 settings=ClusterSettings(metrics=Metrics(9520, ("192.0.2.0/24",))),
                 node_addresses=(("node-a", "192.0.2.11"),),
             )
+
+
+HEARD_CHECK = """
+schema: 1
+name: heard
+hostnames: [heard.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: http
+      path: /healthz
+{host}    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+
+def recording_server(port: int) -> tuple[socket.socket, list[bytes]]:
+    """A server that keeps the first bytes of every connection and answers 200."""
+
+    heard: list[bytes] = []
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", port))
+    listener.listen(8)
+
+    def serve() -> None:
+        while True:
+            try:
+                connection, _ = listener.accept()
+            except OSError:
+                return
+            with connection:
+                connection.settimeout(2)
+                data = b""
+                with contextlib.suppress(OSError):
+                    while b"\r\n\r\n" not in data:
+                        chunk = connection.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
+                if data:
+                    heard.append(data)
+                with contextlib.suppress(OSError):
+                    connection.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
+
+    threading.Thread(target=serve, daemon=True).start()
+    return listener, heard
+
+
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
+class TheProbeAsksWhatTheCheckAsks(unittest.TestCase):
+    """*Test health check* sends the bytes HAProxy's check sends (26-11-03).
+
+    It sent HTTP/1.1 with the server's name as Host where HAProxy sends HTTP/1.0
+    and no header at all, so a backend answering 400 to a request without a
+    Host was reported up by the test and down by the nodes. Held against a
+    running HAProxy rather than against the words in the file, because what
+    HAProxy puts on the wire for `http-check send` is the thing in question.
+    """
+
+    def heard(self, host: str | None) -> tuple[bytes, bytes]:
+        from tests.test_health_probe import ask
+
+        web = free_port()
+        listener, heard = recording_server(web)
+        self.addCleanup(listener.close)
+        port = free_port()
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        layer = generate(
+            [
+                load_proxy(
+                    "heard",
+                    HEARD_CHECK.format(
+                        web=web, host=f"      host: {host}\n" if host else ""
+                    ).encode(),
+                )
+            ],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": port},
+        )
+        arguments = write_release(Path(directory.name), layer)
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        process = start_haproxy(binary, arguments, port)
+        try:
+            deadline = time.monotonic() + 10
+            while not heard and time.monotonic() < deadline:
+                time.sleep(0.1)
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+        self.assertTrue(heard, "HAProxy sent no check")
+        checked = heard[0]
+
+        heard.clear()
+        code, _ = ask(
+            {
+                "schema_version": 1,
+                "targets": [
+                    {
+                        "type": "http",
+                        "host": "127.0.0.1",
+                        "port": web,
+                        "path": "/healthz",
+                        "host_header": host or "",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(heard, "the probe sent nothing")
+        return checked, heard[0]
+
+    def test_without_a_host_header_both_send_none(self) -> None:
+        checked, probed = self.heard(None)
+
+        self.assertEqual(probed, checked)
+        self.assertNotIn(b"host:", probed.lower())
+
+    def test_with_a_host_header_both_send_it(self) -> None:
+        checked, probed = self.heard("app.example.com")
+
+        self.assertEqual(probed, checked)
+        self.assertIn(b"host: app.example.com", probed.lower())

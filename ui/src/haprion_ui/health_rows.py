@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from haprion_ui import server_card
 from haprion_ui.health import BackendHealth, check_phrase
-from haprion_ui.probe import ProbeReport
+from haprion_ui.probe import NO_HOST_SENT, ProbeReport
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +55,13 @@ def health_rows(backend: BackendHealth | None, probe: ProbeReport | None) -> lis
                 server = backend.address(member.server) or member.server
                 code = " ".join(part for part in (member.check_status, member.check_code) if part)
                 unchecked = (member.status or "").upper().startswith("NO CHECK")
+                phrase = check_phrase(member.check_status or "", member.check_code or "") or "—"
+                if (
+                    backend.hostless_check
+                    and member.check_status == "L7STS"
+                    and member.check_code == "400"
+                ):
+                    phrase += f" · {NO_HOST_SENT}"
                 rows[(node.node, server)] = HealthRow(
                     node=node.node,
                     server=server,
@@ -66,8 +73,7 @@ def health_rows(backend: BackendHealth | None, probe: ProbeReport | None) -> lis
                     #
                     tone="unknown" if unchecked else server_card.cell(member).tone,
                     state=member.status or "unknown",
-                    last=(check_phrase(member.check_status or "", member.check_code or "") or "—")
-                    + _duration(member.check_duration_ms),
+                    last=phrase + _duration(member.check_duration_ms),
                     code=code,
                 )
     if probe is not None and probe.ran:

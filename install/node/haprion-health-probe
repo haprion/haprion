@@ -440,17 +440,17 @@ def http_status(
     would be a way to read pages through it.
     """
 
-    host = target["host_header"] or (
-        f"[{target['host']}]" if ":" in target["host"] else target["host"]
-    )
-    request = (
-        f"GET {target['path']} HTTP/1.1\r\n"
-        f"Host: {host}\r\n"
-        "User-Agent: haprion-health-probe\r\n"
-        "Connection: close\r\n"
-        "Accept: */*\r\n"
-        "\r\n"
-    )
+    #
+    # The bytes HAProxy's `http-check send meth GET uri ... [hdr Host ...]`
+    # sends, and nothing else: HTTP/1.0, and a Host header only where the
+    # object names one. This sent HTTP/1.1 with the server's name as Host, and
+    # a backend that answers 400 to a request without one was reported up
+    # here and down on the node (26-11-03).
+    #
+    request = f"GET {target['path']} HTTP/1.0\r\n"
+    if target["host_header"]:
+        request += f"host: {target['host_header']}\r\n"
+    request += "\r\n"
     stream.sendall(request.encode("ascii"))
     stream.settimeout(timeout)
 

@@ -29,8 +29,10 @@ that does. Adapt it, or leave it and restore by hand as the
    look at or remove.
 5. **Takes cloud-init away.** The template's cloud-init would write its own network again after a
    change in Proxmox, or ask for an address by DHCP. The example creates
-   `/etc/cloud/cloud-init.disabled` in the VM, shuts the VM down, removes the cloud-init drive and its
-   settings, starts the VM again, and waits for the node's own address on port 22.
+   `/etc/cloud/cloud-init.disabled` in the VM and shuts the VM down. If a clean shutdown has not
+   happened in two minutes, Proxmox stops the VM. A first boot can lose the request while unattended
+   upgrades run. Then the example removes the cloud-init drive and its settings, starts the VM again,
+   and waits for the node's own address on port 22.
 
 `--test` restores to a test VM instead: its own VMID, a test address and a VIP no cluster uses.
 keepalived stays masked on a test VM. It is the product's test mode, with the VM made for you.

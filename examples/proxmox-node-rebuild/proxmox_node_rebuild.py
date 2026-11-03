@@ -578,11 +578,23 @@ def cloud_init_off(context: Context, target: Target, node: str, address: str) ->
 
     api, out = context.api, context.out
     code, _, err = api.execute(
-        node, target.vmid, "if [ -d /etc/cloud ]; then touch /etc/cloud/cloud-init.disabled; fi\n"
+        node,
+        target.vmid,
+        "if [ -d /etc/cloud ]; then touch /etc/cloud/cloud-init.disabled; fi\nsync\n",
     )
     if code != 0:
         raise Stop(f"cloud-init could not be switched off in VM {target.vmid}: {err.strip()}")
-    upid = api.call("POST", f"/nodes/{node}/qemu/{target.vmid}/status/shutdown", {"timeout": 120})
+    #
+    # A clean shutdown, and a stop if it has not happened in two minutes: on a
+    # first boot the request through the agent was lost while unattended
+    # upgrades held their inhibitor (26-11-03), and nothing was queued after it.
+    # The restore is done and synced; a stop loses nothing.
+    #
+    upid = api.call(
+        "POST",
+        f"/nodes/{node}/qemu/{target.vmid}/status/shutdown",
+        {"timeout": 120, "forceStop": 1},
+    )
     api.wait_task(node, str(upid), "the shutdown")
     config = api.config(node, target.vmid)
     drives = [key for key, value in config.items() if "cloudinit" in str(value)]

@@ -267,6 +267,10 @@ class Run(ExampleTestCase):
         self.assertIn("cloud-init status", self.api.scripts[0])
         self.assertIn("authorized_keys", self.api.scripts[1])
         self.assertIn("cloud-init.disabled", self.api.scripts[2])
+        self.assertIn("sync", self.api.scripts[2])
+        # 26-11-03: a clean shutdown was lost on a first boot; Proxmox stops it after two minutes.
+        shutdown = next(data for m, p, data in self.api.calls if p.endswith("/status/shutdown"))
+        self.assertEqual(shutdown, {"timeout": 120, "forceStop": 1})
         self.assertNotIn("ide2", self.api.config)
         self.assertNotIn("ipconfig0", self.api.config)
         self.assertEqual(self.answered, ["192.0.2.21"])

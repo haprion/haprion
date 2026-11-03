@@ -53,9 +53,7 @@ def operator_commands() -> dict[str, str]:
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     scripts = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["scripts"]
     return {
-        name: target
-        for name, target in scripts.items()
-        if not name.endswith(("-helper", "-ask"))
+        name: target for name, target in scripts.items() if not name.endswith(("-helper", "-ask"))
     }
 
 
@@ -78,7 +76,7 @@ class HelpIsAnAnswer(unittest.TestCase):
                 "sys.exit(main())\n"
             )
             with self.subTest(command=name):
-                done = subprocess.run(  # noqa: S603 - the test's own interpreter and program
+                done = subprocess.run(
                     [sys.executable, "-c", program],
                     capture_output=True,
                     text=True,

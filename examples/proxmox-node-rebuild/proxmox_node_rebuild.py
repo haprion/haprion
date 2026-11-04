@@ -10,7 +10,7 @@ What it does, in order (README.md says why):
 
 1. reads its settings and the API token, and checks them against Proxmox;
 2. clones the template into the pool, gives the clone the cluster's bridge and
-   a temporary address with cloud-init, and starts it;
+   a temporary address with cloud-init (no package upgrade), and starts it;
 3. waits for the guest agent and for cloud-init to finish;
 4. `haprion-node-restore prepare`, then runs the line it prints inside the VM
    through the guest agent, and reads the host key fingerprint from its output
@@ -562,6 +562,10 @@ def clone(context: Context, target: Target, node: str) -> None:
     change: dict[str, Any] = {
         "net0": ",".join([*parts, f"bridge={target.bridge}"]),
         "ipconfig0": f"ip={target.temporary},gw={target.gateway}",
+        # Proxmox's default upgrades every package on the first boot: some
+        # 90 s before the restore, and apt busy when the VM is shut down.
+        # The node is updated as the others are, after it runs.
+        "ciupgrade": 0,
     }
     for key, value in (
         ("nameserver", settings.nameserver),

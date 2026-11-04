@@ -22,8 +22,10 @@ that does. Adapt it, or leave it and restore by hand as the
    exists, the token has the privileges listed below, and there is a backup of the node.
    `check <node>` stops after this step.
 2. **Makes the VM.** It clones the template into the pool, sets the cluster's bridge, and gives the
-   VM a temporary address and resolver with cloud-init. Then it starts the VM and waits for the guest
-   agent and for cloud-init to finish.
+   VM a temporary address and resolver with cloud-init. It switches off the package upgrade Proxmox
+   asks cloud-init for by default, which would hold the first boot for a minute or more; the node is
+   updated as the others are, once it runs. Then it starts the VM and waits for the guest agent and
+   for cloud-init to finish.
 3. **Prepares the restore.** It runs `haprion-node-restore prepare`, then runs the line `prepare`
    prints inside the VM, as root, through the guest agent. It reads the host key fingerprint from that
    line's output. This replaces the console step. The fingerprint comes over the hypervisor's

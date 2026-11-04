@@ -347,6 +347,8 @@ class Run(ExampleTestCase):
         first_put = next(data for m, p, data in self.api.calls if m == "PUT")
         self.assertEqual(first_put["net0"], "virtio=02:00:00:00:00:01,firewall=1,bridge=vmbr10")
         self.assertEqual(first_put["ipconfig0"], "ip=192.0.2.29/24,gw=192.0.2.1")
+        # 26-11-04: Proxmox's default package upgrade held the first boot ~90 s.
+        self.assertEqual(first_put["ciupgrade"], 0)
         # The pasted line ran in the guest, and cloud-init was switched off after the run.
         self.assertIn("cloud-init status", self.api.scripts[0])
         self.assertIn("authorized_keys", self.api.scripts[1])

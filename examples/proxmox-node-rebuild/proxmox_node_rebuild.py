@@ -481,6 +481,16 @@ class Context:
         return self.runner(["ping", "-c", "1", "-W", "1", address]).returncode == 0
 
 
+def same_host(vm_name: str, node: str) -> bool:
+    """A VM name that is the node: case aside, and its first label (LB-01.example.net is lb-01).
+
+    26-11-04: Proxmox held a node with a capital first letter, and an exact
+    comparison let the rebuild past it.
+    """
+
+    return vm_name.split(".", 1)[0].casefold() == node.split(".", 1)[0].casefold()
+
+
 def check(context: Context, target: Target, mgmt_host: str) -> str:
     """Read-only: nothing of the node may exist, and Proxmox must be ready. The template's node.
 
@@ -497,10 +507,11 @@ def check(context: Context, target: Target, mgmt_host: str) -> str:
     if template is None or not template.get("template"):
         raise Stop(f"VM {settings.template} is not a template the token can see")
     out.write(f"  template {settings.template} on {template.get('node')}\n")
-    named = [vm for vm in resources if vm.get("name") == target.name]
+    named = [vm for vm in resources if same_host(str(vm.get("name") or ""), target.name)]
     if named:
+        found = named[0].get("name")
         where = ", ".join(f"{vm.get('vmid')} on {vm.get('node')}" for vm in named)
-        raise Stop(f"a VM named {target.name} exists ({where}); remove it in Proxmox first")
+        raise Stop(f"a VM named {found} exists ({where}); remove it in Proxmox first")
     if any(vm.get("vmid") == target.vmid for vm in resources):
         raise Stop(f"VMID {target.vmid} is taken; remove that VM in Proxmox first, or give --vmid")
     out.write(f"  no VM named {target.name}, and VMID {target.vmid} is free\n")

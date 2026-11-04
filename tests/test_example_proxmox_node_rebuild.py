@@ -279,6 +279,22 @@ class OnlyWhereTheNodeIsGone(ExampleTestCase):
         self.assertIn("a VM named lb-01 exists (4711 on pve-b)", out)
         self.assertEqual(self.api.changes(), [])
 
+    def test_the_name_matches_whatever_its_case_or_domain(self) -> None:
+        # 26-11-04: Proxmox held the node as Lb-01; an exact match let it through.
+        for name in ("LB-01", "Lb-01", "lb-01.example.net", "LB-01.Example.Net"):
+            with self.subTest(name=name):
+                self.api.vms[1:] = [{"vmid": 4711, "node": "pve-b", "template": 0, "name": name}]
+                code, out = self.main("run", "lb-01")
+                self.assertEqual(code, 1)
+                self.assertIn(f"a VM named {name} exists (4711 on pve-b)", out)
+                self.assertEqual(self.api.changes(), [])
+
+    def test_a_renamed_vm_is_not_the_node(self) -> None:
+        self.api.vms.append({"vmid": 4711, "node": "pve-b", "template": 0, "name": "lb-01-old"})
+        code, out = self.main("check", "lb-01", "--vmid", "4712")
+        self.assertEqual(code, 0, out)
+        self.assertIn("no VM named lb-01, and VMID 4712 is free", out)
+
     def test_the_node_answering_stops_it(self) -> None:
         for answering in ("ssh", "ping"):
             with self.subTest(answering=answering):

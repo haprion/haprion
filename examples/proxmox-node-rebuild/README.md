@@ -15,11 +15,12 @@ that does. Adapt it, or leave it and restore by hand as the
 `proxmox_node_rebuild.py run <node>`:
 
 1. **Checks before it changes anything.** A rebuild goes ahead only where the node is gone. It
-   stops if a VM with the node's name exists anywhere in Proxmox, if the VMID is taken, or if
-   anything answers at the node's own address (ssh or ping). The address comes from the cluster's
-   definition, through `haprion-status`. It also stops if the temporary address answers. Then it
-   confirms that the token answers, the template exists, the token has the privileges listed below,
-   and there is a backup of the node. `check <node>` stops after this step.
+   stops if a VM with the node's name exists anywhere in Proxmox (`LB-01` and `lb-01.example.net`
+   count as `lb-01`), if the VMID is taken, or if anything answers at the node's own address (ssh
+   or ping). The address comes from the cluster's definition, through `haprion-status`. It also
+   stops if the temporary address answers. Then it confirms that the token answers, the template
+   exists, the token has the privileges listed below, and there is a backup of the node.
+   `check <node>` stops after this step.
 2. **Makes the VM.** It clones the template into the pool, sets the cluster's bridge, and gives the
    VM a temporary address and resolver with cloud-init. Then it starts the VM and waits for the guest
    agent and for cloud-init to finish.

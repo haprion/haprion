@@ -51,7 +51,7 @@ LIST_BACKUPS = "haprion-list-backups"
 FINGERPRINT = re.compile(r"SHA256:[A-Za-z0-9+/]{43}")
 KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 #
-# What the token needs on the pool, the template, the storage and the bridge.
+# What the token needs on the pool, the template and the storage.
 # Read back from Proxmox by `check`, so a missing one is named before a clone.
 # `VM.GuestAgent.Unrestricted` is what `agent/exec` and `exec-status` take
 # since Proxmox VE 9.
@@ -280,6 +280,13 @@ class Proxmox:
     def vms(self) -> list[dict[str, Any]]:
         return [vm for vm in self.call("GET", "/cluster/resources", {"type": "vm"}) or []]
 
+    def host_state(self, host: str) -> str | None:
+        """online or offline, as the cluster has it; None when the token cannot see the host."""
+
+        hosts = self.call("GET", "/cluster/resources", {"type": "node"}) or []
+        state = next((h.get("status") for h in hosts if h.get("node") == host), None)
+        return str(state) if state else None
+
     def find(self, vmid: int) -> dict[str, Any] | None:
         return next((vm for vm in self.vms() if vm.get("vmid") == vmid), None)
 
@@ -505,7 +512,19 @@ def check(context: Context, target: Target, mgmt_host: str) -> str:
     template = next((vm for vm in resources if vm.get("vmid") == settings.template), None)
     if template is None or not template.get("template"):
         raise Stop(f"VM {settings.template} is not a template the token can see")
-    out.write(f"  template {settings.template} on {template.get('node')}\n")
+    host = str(template.get("node"))
+    #
+    # The clone runs on the template's host, whichever host answers the API
+    # (26-11-04). A host the token cannot see is said, not taken as up.
+    #
+    state = api.host_state(host)
+    if state is not None and state != "online":
+        raise Stop(
+            f"the template's host {host} is {state}; move the template to a running host "
+            "(README: If the template's host is down)"
+        )
+    seen = "" if state else " (the token cannot see that host's state)"
+    out.write(f"  template {settings.template} on {host}{seen}\n")
     named = [vm for vm in resources if same_host(str(vm.get("name") or ""), target.name)]
     if named:
         found = named[0].get("name")

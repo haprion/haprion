@@ -74,13 +74,15 @@ class FakeProxmox:
         self.cloud_init = ["status: done"]
         self.pings_failing = 0
         self.status_failing = 0
+        self.hosts: list[dict[str, Any]] = [{"node": "pve-a", "status": "online"}]
 
     def __call__(self, method: str, path: str, data: Mapping[str, Any] | None) -> Any:
         self.calls.append((method, path, None if data is None else dict(data)))
         if path == "/version":
             return {"version": "9.2.21"}
         if path == "/cluster/resources":
-            return self.vms
+            assert data is not None
+            return self.hosts if data["type"] == "node" else self.vms
         if path == "/access/permissions":
             assert data is not None
             wanted = str(data["path"])
@@ -248,6 +250,21 @@ class Check(ExampleTestCase):
         code, out = self.main("check", "lb-01")
         self.assertEqual(code, 1)
         self.assertIn("lacks VM.GuestAgent.Unrestricted on /pool/node-rebuild", out)
+
+    def test_the_template_s_host_down_stops_it_with_the_way_out(self) -> None:
+        # 26-11-04: the clone runs on the template's host, whichever host answers the API.
+        self.api.hosts = [{"node": "pve-a", "status": "offline"}]
+        code, out = self.main("run", "lb-01")
+        self.assertEqual(code, 1)
+        self.assertIn("the template's host pve-a is offline", out)
+        self.assertIn("If the template's host is down", out)
+        self.assertEqual(self.api.changes(), [])
+
+    def test_a_host_the_token_cannot_see_is_said_not_assumed(self) -> None:
+        self.api.hosts = []
+        code, out = self.main("check", "lb-01")
+        self.assertEqual(code, 0, out)
+        self.assertIn("template 9000 on pve-a (the token cannot see that host's state)", out)
 
     def test_settings_are_read_not_guessed(self) -> None:
         text = self.settings.read_text()

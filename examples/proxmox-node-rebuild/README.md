@@ -83,11 +83,26 @@ sudo ./proxmox_node_rebuild.py run 01 --test     # a short name that fits only l
 sudo ./proxmox_node_rebuild.py run lb-01
 ```
 
+## If the template's host is down
+
+The clone runs on the host that holds the template, whichever host answers the API. `check` stops
+when that host is offline. With the template's disk on shared storage, move its configuration to a
+running host, as root on a host that is still in the cluster (the cluster must have quorum to write
+`/etc/pve`), then run again:
+
+```bash
+mv /etc/pve/nodes/<dead-host>/qemu-server/<template-vmid>.conf /etc/pve/nodes/<running-host>/qemu-server/
+```
+
+Do it only when the dead host is really off. With the disk on local storage, make a new template on
+a running host instead.
+
 ## What it does not do
 
 - It never replaces anything that exists. A node whose VM is still in Proxmox, even switched off, is
-  not rebuilt: remove the old VM first. **The old node and the new one must never run at the same
-  time.**
+  not rebuilt: remove the old VM, or rename it and give `--vmid`. A VM counts as the node whatever
+  its case or domain, so rename it with a hyphen (`lb-01-old`), not a dot. **The old node and the new
+  one must never run at the same time.**
 - It does not remove a VM that failed. The VM stays in the pool for you to look at. Remove it
   in Proxmox.
 - It does not check SDN rights before the clone. A missing `PVESDNUser` shows up as the bridge

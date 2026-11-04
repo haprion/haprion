@@ -52,19 +52,22 @@ settings: `01` for `lb-01` when no other node ends in `01`.
 - **Proxmox VE 9.** Running commands through the guest agent needs `VM.GuestAgent.Unrestricted`, a
   privilege Proxmox VE 9 introduced.
 - **A template** with Ubuntu 26.04 or Debian 13 whose network is Netplan, `qemu-guest-agent`
-  installed and enabled, the agent option on in Proxmox, and a cloud-init drive.
+  installed and enabled, the agent option on in Proxmox, and a cloud-init drive. It is found by
+  name (`PVE_TEMPLATE_NAME`, `*` allowed, case aside); when two templates fit, `check` lists them
+  and stops. Keep templates in a pool of their own, so a new one can be cloned with no new right.
 - **A pool, and a token whose rights stop at it.** Run commands in the guest means root in every
   VM the token can reach, so the pool is the boundary. It should hold nothing but rebuilt VMs, and
   only while they are being rebuilt. For example:
 
   ```bash
   pveum pool add node-rebuild
+  pveum pool add templates          # then: pveum pool modify templates --vms <template-vmid>
   pveum role add NodeRebuildVM --privs "Pool.Audit,VM.Allocate,VM.Audit,VM.Config.CDROM,VM.Config.CPU,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.PowerMgmt,VM.GuestAgent.Unrestricted"
   pveum user add rebuild@pve
   pveum user token add rebuild@pve manager
   for who in "--users rebuild@pve" "--tokens rebuild@pve!manager"; do
       pveum acl modify /pool/node-rebuild --roles NodeRebuildVM $who
-      pveum acl modify /vms/9000 --roles PVETemplateUser $who
+      pveum acl modify /pool/templates --roles PVETemplateUser $who
       pveum acl modify /storage/vm-storage --roles PVEDatastoreUser $who
       pveum acl modify / --roles PVEAuditor $who
   done

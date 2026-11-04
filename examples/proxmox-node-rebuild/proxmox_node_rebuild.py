@@ -29,6 +29,7 @@ Run as root: `haprion-node-restore` needs it, and so does the token file.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import ipaddress
 import json
 import re
@@ -134,7 +135,7 @@ class Settings:
     ca_file: str | None
     token_id: str
     token_secret: str
-    template: int
+    template: str
     storage: str
     pool: str
     target_node: str | None
@@ -163,7 +164,7 @@ class Settings:
             ca_file=values.get("PVE_CA_FILE") or None,
             token_id=token["PVE_API_TOKEN_ID"],
             token_secret=token["PVE_API_TOKEN_SECRET"],
-            template=_integer(need("PVE_TEMPLATE_VMID"), "PVE_TEMPLATE_VMID"),
+            template=need("PVE_TEMPLATE_NAME"),
             storage=need("PVE_STORAGE"),
             pool=need("PVE_POOL"),
             target_node=values.get("PVE_TARGET_NODE") or None,
@@ -286,9 +287,6 @@ class Proxmox:
         hosts = self.call("GET", "/cluster/resources", {"type": "node"}) or []
         state = next((h.get("status") for h in hosts if h.get("node") == host), None)
         return str(state) if state else None
-
-    def find(self, vmid: int) -> dict[str, Any] | None:
-        return next((vm for vm in self.vms() if vm.get("vmid") == vmid), None)
 
     def config(self, node: str, vmid: int) -> dict[str, Any]:
         return dict(self.call("GET", f"/nodes/{node}/qemu/{vmid}/config", None) or {})
@@ -497,6 +495,27 @@ def same_host(vm_name: str, node: str) -> bool:
     return vm_name.split(".", 1)[0].casefold() == node.split(".", 1)[0].casefold()
 
 
+def find_template(resources: Sequence[Mapping[str, Any]], pattern: str) -> Mapping[str, Any]:
+    """The one template whose name fits the pattern, case aside (TemplateUbuntu*).
+
+    26-11-04: found by name, so a new template needs no new setting. Two that
+    fit stop it: which one is the right one is not the example's to guess.
+    """
+
+    wanted = pattern.casefold()
+    found = [
+        vm
+        for vm in resources
+        if vm.get("template") and fnmatch.fnmatchcase(str(vm.get("name") or "").casefold(), wanted)
+    ]
+    if not found:
+        raise Stop(f"no template the token can see is named {pattern}")
+    if len(found) > 1:
+        listed = ", ".join(f"{vm.get('vmid')} {vm.get('name')} on {vm.get('node')}" for vm in found)
+        raise Stop(f"{len(found)} templates are named {pattern} ({listed}); keep one")
+    return found[0]
+
+
 def check(context: Context, target: Target, mgmt_host: str) -> str:
     """Read-only: nothing of the node may exist, and Proxmox must be ready. The template's node.
 
@@ -509,9 +528,7 @@ def check(context: Context, target: Target, mgmt_host: str) -> str:
     version = api.call("GET", "/version", None)
     out.write(f"  Proxmox VE {version.get('version')} answers; token {settings.token_id}\n")
     resources = api.vms()
-    template = next((vm for vm in resources if vm.get("vmid") == settings.template), None)
-    if template is None or not template.get("template"):
-        raise Stop(f"VM {settings.template} is not a template the token can see")
+    template = find_template(resources, settings.template)
     host = str(template.get("node"))
     #
     # The clone runs on the template's host, whichever host answers the API
@@ -524,7 +541,7 @@ def check(context: Context, target: Target, mgmt_host: str) -> str:
             "(README: If the template's host is down)"
         )
     seen = "" if state else " (the token cannot see that host's state)"
-    out.write(f"  template {settings.template} on {host}{seen}\n")
+    out.write(f"  template {template.get('vmid')} {template.get('name')} on {host}{seen}\n")
     named = [vm for vm in resources if same_host(str(vm.get("name") or ""), target.name)]
     if named:
         found = named[0].get("name")
@@ -544,7 +561,7 @@ def check(context: Context, target: Target, mgmt_host: str) -> str:
     out.write(f"  the temporary address {temporary} is free\n")
     for path, wanted in (
         (f"/pool/{settings.pool}", POOL_PRIVILEGES),
-        (f"/vms/{settings.template}", TEMPLATE_PRIVILEGES),
+        (f"/vms/{template.get('vmid')}", TEMPLATE_PRIVILEGES),
         (f"/storage/{settings.storage}", STORAGE_PRIVILEGES),
     ):
         granted = api.call("GET", "/access/permissions", {"path": path}) or {}
@@ -559,9 +576,9 @@ def check(context: Context, target: Target, mgmt_host: str) -> str:
 
 def clone(context: Context, target: Target, node: str) -> None:
     api, settings, out = context.api, context.settings, context.out
-    template = context.api.find(settings.template)
-    source = str(template["node"]) if template else node
-    out.write(f"cloning template {settings.template} to VM {target.vmid} ({target.name})\n")
+    template = find_template(api.vms(), settings.template)
+    source = str(template["node"])
+    out.write(f"cloning template {template.get('vmid')} to VM {target.vmid} ({target.name})\n")
     parameters: dict[str, Any] = {
         "newid": target.vmid,
         "name": target.name,
@@ -571,7 +588,7 @@ def clone(context: Context, target: Target, node: str) -> None:
     }
     if node != source:
         parameters["target"] = node
-    upid = api.call("POST", f"/nodes/{source}/qemu/{settings.template}/clone", parameters)
+    upid = api.call("POST", f"/nodes/{source}/qemu/{template.get('vmid')}/clone", parameters)
     api.wait_task(source, str(upid), "the clone")
     config = api.config(node, target.vmid)
     net0 = str(config.get("net0", ""))

@@ -28,9 +28,9 @@ that does. Adapt it, or leave it and restore by hand as the
    prints inside the VM, as root, through the guest agent. It reads the host key fingerprint from that
    line's output. This replaces the console step. The fingerprint comes over the hypervisor's
    channel, not the network, so the trust is the same as reading it on the console.
-4. **Asks before it restores.** It shows `preview` as it is, then asks you to type the node's name. It
-   runs `run` only after that. If you stop here, the run is discarded and the VM is left for you to
-   look at or remove.
+4. **Restores.** It shows `preview` as it is and runs `run` when the preview passes. The checks in
+   step 1 are the confirmation: nothing of the node exists. If the preview refuses, the run is
+   discarded and the VM is left for you to look at or remove.
 5. **Takes cloud-init away.** The template's cloud-init would write its own network again after a
    change in Proxmox, or ask for an address by DHCP. The example creates
    `/etc/cloud/cloud-init.disabled` in the VM and shuts the VM down. If a clean shutdown has not

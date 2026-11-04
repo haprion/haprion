@@ -200,7 +200,6 @@ class ExampleTestCase(unittest.TestCase):
         self.settings.write_text(SETTINGS.format(token=token))
         self.api = FakeProxmox()
         self.restore = FakeRestore()
-        self.typed = "lb-01"
         self.answered: list[str] = []
         # What answers on port 22 before the restore; the node's own address after it.
         self.up: set[str] = set()
@@ -212,7 +211,6 @@ class ExampleTestCase(unittest.TestCase):
             out=out,
             call=self.api,
             runner=self.restore,
-            ask=lambda _prompt: self.typed,
             answering=self.answer,
             resolving=lambda host: {"lb-01.example.net": "192.0.2.21"}.get(host, "192.0.2.22"),
             sleep=lambda _seconds: None,
@@ -386,13 +384,13 @@ class Run(ExampleTestCase):
         code, out = self.main("run", "lb-01")
         self.assertEqual(code, 0, out)
 
-    def test_nothing_is_restored_unless_the_name_is_typed(self) -> None:
-        self.typed = "yes"
+    def test_the_restore_is_confirmed_by_the_checks_not_a_question(self) -> None:
+        # 26-11-04: typing the name added nothing to the checks before the clone.
         self.api.exec_answers = [(0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
         code, out = self.main("run", "lb-01")
-        self.assertEqual(code, 1)
-        self.assertEqual(self.steps(), ["prepare", "preview", "discard"])
-        self.assertIn("not confirmed", out)
+        self.assertEqual(code, 0, out)
+        ran = next(argv for argv in self.restore.calls if argv[1:2] == ["run"])
+        self.assertEqual(ran[ran.index("--confirm") + 1], "lb-01")
 
     def test_a_refused_preview_discards_the_run(self) -> None:
         self.restore.preview_code = 1
@@ -408,7 +406,6 @@ class Run(ExampleTestCase):
         self.assertEqual(self.steps(), ["prepare", "discard"])
 
     def test_a_test_rebuild_is_the_product_s_test_mode(self) -> None:
-        self.typed = "restoretest-lb-01"
         self.api.exec_answers = [(0, f"256 {FINGERPRINT} root@vm (ED25519)\n")]
         code, out = self.main("run", "lb-01", "--test")
         self.assertEqual(code, 0, out)

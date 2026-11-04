@@ -15,7 +15,7 @@ What it does, in order (README.md says why):
 4. `haprion-node-restore prepare`, then runs the line it prints inside the VM
    through the guest agent, and reads the host key fingerprint from its output
    - the console's job, done over the hypervisor's channel, not the network;
-5. `preview`, shown as it is; `run` only once the node's name is typed;
+5. `preview`, shown as it is; `run` once it passes;
 6. switches cloud-init off in the VM, stops it, removes the cloud-init drive,
    and starts it again on the node's own address.
 
@@ -469,7 +469,6 @@ class Context:
     api: Proxmox
     runner: Runner
     out: TextIO
-    ask: Callable[[str], str]
     answering: Callable[[str], bool]
     resolving: Callable[[str], str] = resolve
 
@@ -630,9 +629,6 @@ def restore(context: Context, target: Target, node: str, archive: str) -> str:
         out.write(shown.stdout)
         if shown.returncode != 0:
             raise Stop(f"the preview refused: {shown.stderr.strip()[-500:]}")
-        typed = context.ask(f"\nType {name} to restore it, anything else to stop: ").strip()
-        if typed != name:
-            raise Stop("not confirmed")
     except Stop:
         context.runner([RESTORE, "discard", "--run", run])
         out.write(f"run {run} discarded\n")
@@ -704,7 +700,6 @@ def main(
     out: TextIO | None = None,
     call: Call | None = None,
     runner: Runner = run_command,
-    ask: Callable[[str], str] = input,
     answering: Callable[[str], bool] = answers,
     resolving: Callable[[str], str] = resolve,
     sleep: Callable[[float], None] = time.sleep,
@@ -737,7 +732,6 @@ def main(
             api=Proxmox(call or api_call(settings), sleep=sleep),
             runner=runner,
             out=stream,
-            ask=ask,
             answering=answering,
             resolving=resolving,
         )

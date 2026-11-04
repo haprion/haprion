@@ -408,7 +408,13 @@ def api_call(settings: Settings, *, timeout: float = 30.0) -> Call:
 
 
 def _missing(granted: Mapping[str, Any], wanted: Sequence[str]) -> list[str]:
-    return [name for name in wanted if not granted.get(name)]
+    """What is not granted. A privilege's value is its propagate flag, not whether it is held.
+
+    26-11-04: a right through a pool answers VM.Clone 0, and read as a truth
+    value it looked missing.
+    """
+
+    return [name for name in wanted if name not in granted]
 
 
 # --------------------------------------------------------------------------

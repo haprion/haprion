@@ -784,6 +784,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
     #
     waf_objects_read = waf_objects(request, config) if config.traffic_logs.enabled else []
     _, regeneration_rows = read_source(request, config, REGENERATION_SOURCE)
+    regeneration_rows = list(regeneration_rows)
     with request.app.state.pool.connection() as connection:
         features.read_in(db.feature_switches(connection))
         recent, judged = attention_jobs(connection, clusters)
@@ -846,7 +847,14 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         status_age.setdefault(cluster, None)
     with request.app.state.pool.connection() as connection:
         items, gone = attention.unacknowledged(items, db.attention_acks(connection))
-        gone = attention.held_through_gaps(gone, status_rows, now=now, stale_after=stale_after)
+        gone = attention.held_through_gaps(
+            gone,
+            status_rows,
+            now=now,
+            stale_after=stale_after,
+            certificates_read=certificate_view.registry_state != "unreadable",
+            regeneration_rows=regeneration_rows,
+        )
         if gone:
             db.forget_attention_acks(connection, gone)
             connection.commit()

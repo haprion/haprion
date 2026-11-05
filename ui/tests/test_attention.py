@@ -1835,9 +1835,21 @@ class AcknowledgementsAcrossAGapInReading(unittest.TestCase):
             poll_error=poll_error,
         )
 
-    def forgotten(self, row: Any, key: tuple[str, str, str, str, str] | None = None) -> set[Any]:
+    def forgotten(
+        self,
+        row: Any,
+        key: tuple[str, str, str, str, str] | None = None,
+        *,
+        certificates_read: bool = True,
+        regeneration: Any = (),
+    ) -> set[Any]:
         return attention.held_through_gaps(
-            {key or self.ACK}, [row], now=NOW, stale_after=timedelta(seconds=100)
+            {key or self.ACK},
+            [row],
+            now=NOW,
+            stale_after=timedelta(seconds=100),
+            certificates_read=certificates_read,
+            regeneration_rows=regeneration,
         )
 
     def test_a_whole_fresh_reading_without_the_row_forgets_it(self) -> None:
@@ -1859,9 +1871,23 @@ class AcknowledgementsAcrossAGapInReading(unittest.TestCase):
             {("service", "alpha", "web", "critical", "")},
         )
 
-    def test_a_certificate_row_is_not_about_a_reading(self) -> None:
+    def test_a_certificate_row_is_not_about_a_cluster_reading(self) -> None:
         key = ("certificate", "", "x", "critical", "")
         self.assertEqual(self.forgotten(self.reading(age=500), key), {key})
+
+    def test_a_certificate_keeps_its_acknowledgement_while_the_manager_is_unread(self) -> None:
+        # D11-04: the row is made from the manager's reading; one that failed is no word.
+        key = ("certificate", "", "shop.example.com", "warning", "")
+        self.assertEqual(self.forgotten(self.reading(), key, certificates_read=False), set())
+        self.assertEqual(self.forgotten(self.reading(), key, certificates_read=True), {key})
+
+    def test_a_regeneration_row_keeps_its_acknowledgement_while_its_reading_failed(self) -> None:
+        key = ("regeneration", "alpha", "alpha", "warning", "")
+        failed = SimpleNamespace(cluster="alpha", outcome="failed")
+        done = SimpleNamespace(cluster="alpha", outcome="done")
+        self.assertEqual(self.forgotten(self.reading(), key, regeneration=[failed]), set())
+        self.assertEqual(self.forgotten(self.reading(), key, regeneration=[]), set())
+        self.assertEqual(self.forgotten(self.reading(), key, regeneration=[done]), {key})
 
 
 class WhyAReadingFailed(LoginTestCase):

@@ -1290,19 +1290,32 @@ def held_through_gaps(
     *,
     now: datetime,
     stale_after: timedelta,
+    certificates_read: bool,
+    regeneration_rows: Iterable[Any],
 ) -> set[tuple[str, str, str, str, str]]:
     """Of the acknowledgements whose row is not listed, those it is right to forget.
 
     A row made from a cluster's status reading is not listed while the reading
     is old, failed or missing the node, and then it has not gone - it could not
     be told. Its acknowledgement stays until a whole, fresh reading leaves the
-    row out.
+    row out. The same holds for the certificates, which come from the manager's
+    reading (`certificates_read`: it answered), and for a cluster's
+    regeneration row, which comes from that cluster's own reading (D11-04).
     """
 
     rows = {row.cluster: row for row in status_rows}
+    regenerated = {row.cluster: row for row in regeneration_rows}
     forget: set[tuple[str, str, str, str, str]] = set()
     for key in gone:
         kind, cluster, named = key[:3]
+        if kind == "certificate" and not certificates_read:
+            continue
+        if kind == "regeneration":
+            reading = regenerated.get(cluster)
+            if reading is None or reading.outcome != "done":
+                continue
+            forget.add(key)
+            continue
         row = rows.get(cluster)
         if kind not in READ_PER_CLUSTER | READ_PER_NODE or row is None:
             forget.add(key)

@@ -830,7 +830,6 @@ NODE_ACCOUNTED = {
     "/root/.ssh": "root's; Haprion's keys in it are listed",
     "/root/.ssh/known_hosts": "the manager's line, removed with ssh-keygen -R",
     "/var/lib/cmk-agent/cmk-agent-ctl.toml": "named in advice to the operator, never written (F23)",
-    "/var/lib/haproxy/dev/haprion-traffic": "the held socket's, taken back when rsyslog restarts",
     "/var/lib/haproxy/dev/log": "rsyslog's socket, taken back when rsyslog restarts",
     "/var/log/journal": "journald's directory; the haprion-waf namespace is listed (PATTERNS)",
 }
@@ -897,6 +896,12 @@ class TheRemovalNamesWhatTheStepsWrite(unittest.TestCase):
         )
         listed = [*NODE.FIXED_PATHS, *NODE.PATTERNS]
         self.assertEqual(unaccounted(named_paths(files), listed, NODE_ACCOUNTED), [])
+
+    def test_the_traffic_socket_file_a_stopped_unit_may_leave_is_removed_with_the_node(
+        self,
+    ) -> None:
+        # B447: --remove --yes left it where the unit that held it had been.
+        self.assertIn("/var/lib/haproxy/dev/haprion-traffic", NODE.FIXED_PATHS)
 
     def test_on_the_manager(self) -> None:
         files = [

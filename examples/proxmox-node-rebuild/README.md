@@ -6,8 +6,8 @@ a template, runs the pasted line through the QEMU guest agent, and calls the res
 the same restore, started with one command.
 
 It is an example, not part of the product. Nothing here is packaged or covered by the product's
-promises. It uses only what `haprion-node-restore --json` answers, so it keeps working as long as
-that does. Adapt it, or leave it and restore by hand as the
+promises. It uses only what `haprion-node-restore --json`, `haprion-status --json` and
+`haprion-list-backups --json` answer, so it keeps working as long as those do. Adapt it, or leave it and restore by hand as the
 [manual](../../docs/user-manual.md#restoring-a-node-onto-an-empty-vm) describes.
 
 ## What it does

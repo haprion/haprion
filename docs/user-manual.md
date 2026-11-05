@@ -2124,7 +2124,8 @@ way the page stores it, and applied by the same job.
 
 - The stored values cannot be compared with the file once they are encrypted. So a stored profile is
   left as it is, unless `--replace <id>` asks for it or, for NDES, the endpoint differs. Running the
-  same file twice changes nothing.
+  same file twice changes nothing once every profile is *In effect*. A profile that is not (*Apply
+  failed*, *Not applied*) is applied again as it is stored.
 - A DNS profile keeps its provider. Another provider means another ID.
 - An NDES profile's `endpoint` must be a server confirmed on the manager
   ([Adding an NDES server](#adding-an-ndes-server)); the file is refused otherwise.

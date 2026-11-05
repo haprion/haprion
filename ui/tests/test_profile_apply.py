@@ -11,9 +11,11 @@ import io
 import json
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
-from haprion_ui import profile_apply, tool_answer
+from haprion_ui import db, profile_apply, tool_answer
 from haprion_ui.profile_apply import ApplyError, Change, Plan
 from tests.contract_schema import assert_contract
 
@@ -89,10 +91,6 @@ class TheAnswer(unittest.TestCase):
         self.assertEqual(answer["result"], fixture["result"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AnNdesProfileNeedsAConfirmedServer(unittest.TestCase):
     """B385: the file is refused for an address the form would not offer, before anything is sealed."""
 
@@ -110,6 +108,7 @@ class AnNdesProfileNeedsAConfirmedServer(unittest.TestCase):
                 object(),  # type: ignore[arg-type]
                 replace=(),
                 prune=False,
+                standing={},
                 servers=["https://ca2.example.com/certsrv/mscep/mscep.dll"],
             )
         with self.assertRaises(Exception) as sealed:
@@ -119,6 +118,82 @@ class AnNdesProfileNeedsAConfirmedServer(unittest.TestCase):
                 object(),  # type: ignore[arg-type]
                 replace=(),
                 prune=False,
+                standing={},
                 servers=["https://ca.example.com/certsrv/mscep/mscep.dll"],
             )
         self.assertNotIn("not an NDES server", str(sealed.exception))
+
+
+NOW = datetime(2026, 11, 5, tzinfo=UTC)
+
+
+def stored(profile_id: str, revision: int) -> db.DnsProfile:
+    return db.DnsProfile(
+        profile_id, profile_id, "cloudflare", 1, "key", revision, NOW, "admin", NOW, "admin"
+    )
+
+
+def apply_job(profile_id: str, revision: int, state: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=7,
+        operation="dns_profile_apply",
+        payload={"profile": profile_id, "revision": revision},
+        state=state,
+        result={"error": {"code": "apply_failed", "message": "refused"}}
+        if state == "failed"
+        else {},
+        finished_at=NOW,
+    )
+
+
+class AProfileThatIsNotInEffectIsAppliedAgain(unittest.TestCase):
+    """K02: the page reads the jobs; the same file must not say "nothing to change" over a failed one."""
+
+    def planned(self, jobs: list[SimpleNamespace]) -> Plan:
+        wanted = profile_apply.Wanted(
+            profile_apply.DNS, "cf-main", "cloudflare", {"api_token": "t"}
+        )
+        rows = [stored("cf-main", 2)]
+        return profile_apply.plan(
+            {"dns_profiles": [wanted]},
+            {"dns_profiles": rows},
+            object(),  # type: ignore[arg-type]
+            replace=(),
+            prune=False,
+            servers=[],
+            standing=profile_apply.standing_of({"dns_profiles": rows}, {"dns": jobs}, writes=True),
+        )
+
+    def test_a_failed_apply_is_queued_again_for_the_stored_revision(self) -> None:
+        planned = self.planned([apply_job("cf-main", 2, "failed")])
+
+        self.assertEqual(planned.changes, (Change(profile_apply.DNS, "cf-main", "apply", 2),))
+        self.assertEqual(planned.unchanged, ())
+
+    def test_a_profile_that_never_ran_is_applied(self) -> None:
+        self.assertEqual(self.planned([]).changes[0].action, "apply")
+
+    def test_a_replacement_that_failed_leaves_the_old_revision_in_effect_no_longer(self) -> None:
+        planned = self.planned([apply_job("cf-main", 1, "done")])
+
+        self.assertEqual(planned.changes[0].action, "apply")
+
+    def test_a_profile_in_effect_is_left_alone(self) -> None:
+        planned = self.planned([apply_job("cf-main", 2, "done")])
+
+        self.assertEqual((planned.changes, planned.unchanged), ((), ("dns/cf-main",)))
+
+    def test_the_answer_names_the_apply_and_validates(self) -> None:
+        planned = self.planned([apply_job("cf-main", 2, "failed")])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            tool_answer.done(
+                profile_apply.OPERATION, profile_apply.summary(planned, check=True, applied=[])
+            )
+
+        answer = assert_contract("haprion-profiles-apply", out.getvalue())
+        self.assertEqual(answer["result"]["changes"][0]["action"], "apply")
+
+
+if __name__ == "__main__":
+    unittest.main()

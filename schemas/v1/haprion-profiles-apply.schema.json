@@ -32,7 +32,7 @@
             "properties": {
               "kind": { "$ref": "#/$defs/kind" },
               "profile": { "$ref": "#/$defs/profile" },
-              "action": { "enum": ["create", "replace", "remove"] }
+              "action": { "enum": ["create", "replace", "apply", "remove"] }
             },
             "additionalProperties": false
           }

@@ -8,7 +8,9 @@ same `*_profile_apply` job, which the worker runs through the root helper.
 
 The credentials are sealed and cannot be compared, so a stored profile is
 left as it is unless it must change - an NDES endpoint that differs - or
-`--replace <id>` asks; the same file twice changes nothing. A DNS profile's
+`--replace <id>` asks. The same file twice changes nothing once every profile
+is in effect, as the profiles page reads it from the jobs; one whose apply
+failed, or never ran, is applied again for the revision stored. A DNS profile's
 provider is fixed once stored, as in the interface: another provider is
 another profile. `--prune` removes the stored profiles of a kind the file
 lists and does not name; a kind the file leaves out is left alone.
@@ -81,6 +83,7 @@ class Kind:
     listed: Callable[[Any], list[db.DnsProfile]]
     create: Callable[..., db.DnsProfile]
     replace: Callable[..., db.DnsProfile]
+    status: Callable[..., dns_profile_form.ProfileStatus]
 
 
 DNS = Kind(
@@ -90,6 +93,7 @@ DNS = Kind(
     db.dns_profiles,
     db.create_dns_profile,
     db.replace_dns_profile,
+    dns_profile_form.profile_status,
 )
 NDES = Kind(
     "ndes",
@@ -98,6 +102,7 @@ NDES = Kind(
     db.ndes_profiles,
     db.create_ndes_profile,
     db.replace_ndes_profile,
+    ndes_profile_form.profile_status,
 )
 KINDS = (DNS, NDES)
 BY_SECTION = {kind.section: kind for kind in KINDS}
@@ -116,7 +121,7 @@ class Change:
     kind: Kind
     profile_id: str
     action: str
-    """`create`, `replace` or `remove`."""
+    """`create`, `replace`, `apply` (the stored revision again) or `remove`."""
 
     revision: int
     sealed: dns_profile_form.Sealed | None = field(default=None, repr=False)
@@ -268,6 +273,26 @@ def _endpoint(value: str) -> str:
         return value
 
 
+def standing_of(
+    stored: Mapping[str, Sequence[db.DnsProfile]],
+    jobs: Mapping[str, Sequence[Any]],
+    *,
+    writes: bool,
+) -> dict[str, dict[str, dns_profile_form.ProfileStatus]]:
+    """Each stored profile's state, read from its jobs as the profiles page reads it.
+
+    `jobs` are the apply jobs by kind name, newest first.
+    """
+
+    return {
+        kind.section: {
+            row.id: kind.status(row.id, row.revision, jobs.get(kind.name, ()), writes=writes)
+            for row in stored.get(kind.section, ())
+        }
+        for kind in KINDS
+    }
+
+
 def plan(
     found: Mapping[str, Sequence[Wanted]],
     stored: Mapping[str, Sequence[db.DnsProfile]],
@@ -276,11 +301,16 @@ def plan(
     replace: Sequence[str],
     prune: bool,
     servers: Collection[str],
+    standing: Mapping[str, Mapping[str, dns_profile_form.ProfileStatus]],
 ) -> Plan:
     """What would change, with every new box sealed: a bad entry is refused before any write.
 
     An NDES profile's address must be a server the policy names (B385): one the
     form would not offer is refused here too, not when its job runs.
+
+    A stored profile that is not in effect for its revision - its apply failed,
+    never ran, or a later revision was not applied - is applied again as it is
+    stored: the sealed box is in the row, so no credential is needed (K02).
     """
 
     for wanted in found.get(NDES.section, ()):
@@ -312,6 +342,8 @@ def plan(
                 changes.append(
                     Change(wanted.kind, wanted.profile_id, "replace", row.revision + 1, sealed)
                 )
+            elif not standing[section][wanted.profile_id].usable:
+                changes.append(Change(wanted.kind, wanted.profile_id, "apply", row.revision))
             else:
                 unchanged.append(f"{wanted.kind.name}/{wanted.profile_id}")
         if prune:
@@ -464,6 +496,11 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
             raise ApplyError(f"the profile key cannot be read: {exc}") from exc
         with connect(load_environment()) as connection:
             stored = {kind.section: kind.listed(connection) for kind in KINDS}
+            standing = standing_of(
+                stored,
+                {kind.name: db.profile_jobs(connection, kind.operation) for kind in KINDS},
+                writes=settings.management_writes,
+            )
             connection.commit()
             the_plan = plan(
                 found,
@@ -472,6 +509,7 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
                 replace=args.replace,
                 prune=args.prune,
                 servers=confirmed_servers(),
+                standing=standing,
             )
             if not args.check:
                 actor = actor_name()
@@ -514,7 +552,8 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
         print(f"nothing to change ({labels.counted(len(the_plan.unchanged), 'profile')} as listed)")
     lead = "would" if args.check else "did"
     for change in the_plan.changes:
-        print(f"{lead} {change.action} {change.kind.name} profile {change.profile_id}")
+        again = " again" if change.action == "apply" else ""
+        print(f"{lead} {change.action} {change.kind.name} profile {change.profile_id}{again}")
     return 0
 
 

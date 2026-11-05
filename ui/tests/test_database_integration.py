@@ -10067,6 +10067,25 @@ ndes_profiles:
                 (1,),
             )
 
+    def test_a_profile_whose_apply_failed_is_applied_again_by_the_same_file(self) -> None:
+        """K02: the page says *Apply failed*; the file's second run must not say nothing to change."""
+
+        file = self.write(self.FILE)
+        self.worker_result = "failed"
+        self.apply(file)
+        self.worker_result = "done"
+
+        code, again = self.apply(file)
+        _, third = self.apply(file)
+
+        self.assertEqual(code, 0, again)
+        self.assertEqual(
+            [(c["profile"], c["action"]) for c in again["result"]["changes"]],
+            [("cf-main", "apply"), ("corp-ca", "create")],
+        )
+        self.assertEqual(self.stored(), [("dns", "cf-main", 1), ("ndes", "corp-ca", 1)])
+        self.assertFalse(third["result"]["changed"])
+
     def test_a_run_that_stops_after_a_profile_applied_is_partial(self) -> None:
         """1B-3: the first profile was applied, and the answer was a refusal with no result."""
 

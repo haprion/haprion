@@ -33,6 +33,7 @@ from haprion.cert_issue import IssueError, parse_domain
 
 from haprion_ui import jobs as queue
 from haprion_ui.db import Job
+from haprion_ui.diagnostics import redact
 
 #
 # How long a finished deletion's verdict stays in the cell. A failure from
@@ -384,6 +385,36 @@ def _issue_state_of(
     return _verdict(job, "Request", "The request job failed", placeholder)
 
 
+#
+# What certbot ends its output with whatever went wrong; neither says why.
+#
+_CERTBOT_BOILERPLATE = ("ask for help", "see the logfile", "some challenges have failed")
+_REASON_LIMIT = 240
+
+
+def _certbot_reason(error: Mapping[str, Any]) -> str:
+    """certbot's own sentence from the engine's `certbot_failed` answer, or "".
+
+    The message says only that certbot exited; the output is under
+    `details.diagnostics` (26-11-05, C01). The sentence after `Detail:` when
+    certbot gave one, else its last line that is not its standard closing.
+    Redacted like every diagnostic, and one line.
+    """
+
+    if error.get("code") != "certbot_failed":
+        return ""
+    details = error.get("details")
+    diagnostics = details.get("diagnostics") if isinstance(details, Mapping) else None
+    if not isinstance(diagnostics, str):
+        return ""
+    lines = [line.strip() for line in redact(diagnostics).splitlines() if line.strip()]
+    for line in lines:
+        if line.lower().startswith("detail:"):
+            return " ".join(line[len("detail:") :].split())[:_REASON_LIMIT]
+    kept = [line for line in lines if not line.lower().startswith(_CERTBOT_BOILERPLATE)]
+    return " ".join(kept[-1].split())[:_REASON_LIMIT] if kept else ""
+
+
 def _failure(job: Job, fallback: str) -> str:
     """The helper's own words: the error, or a partial outcome's first warning."""
 
@@ -394,7 +425,10 @@ def _failure(job: Job, fallback: str) -> str:
     if said is None and isinstance(warnings, list) and warnings:
         said = warnings[0] if isinstance(warnings[0], Mapping) else None
     message = said.get("message") if said is not None else None
-    return message if isinstance(message, str) and message else fallback
+    if not isinstance(message, str) or not message:
+        return fallback
+    reason = _certbot_reason(said) if said is not None else ""
+    return f"{message}: {reason}" if reason else message
 
 
 UNANSWERED = (

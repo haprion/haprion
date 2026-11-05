@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -44,6 +46,9 @@ def verdict(identifier: str, state: str, reason: str = "") -> dict[str, Any]:
     if reason:
         row["reason"] = reason
     return {"certificates": [row]}
+
+
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 
 
 class DeletionStates(unittest.TestCase):
@@ -228,7 +233,7 @@ class RequestStates(unittest.TestCase):
     def test_a_failed_request_carries_certbot_s_words_for_an_hour(self) -> None:
         failed = issue_job(
             "failed",
-            result={"error": {"code": "certbot_failed", "message": "DNS problem: NXDOMAIN"}},
+            result={"error": {"code": "already_exists", "message": "DNS problem: NXDOMAIN"}},
         )
         state = self.states(failed)["new.example.com"]
         self.assertEqual(
@@ -243,6 +248,42 @@ class RequestStates(unittest.TestCase):
             finished_at=NOW - timedelta(minutes=61),
         )
         self.assertEqual(self.states(stale), {})
+
+    def test_certbot_s_reason_follows_the_exit_in_the_cell(self) -> None:
+        """26-11-05, C01: the engine's real answer, not a message that already holds the reason."""
+
+        document = json.loads(
+            (FIXTURES / "haprion-cert-issue" / "valid" / "certbot-failed.json").read_text()
+        )
+        for payload_extra in ({}, {"renew": True}):
+            with self.subTest(payload_extra=payload_extra):
+                job = issue_job("failed", result=document)
+                job.payload.update(payload_extra)
+                state = self.states(job)["new.example.com"]
+                self.assertEqual(
+                    state.detail,
+                    "certbot exited 1 after 34s: Error determining zone_id: 6003 Invalid request "
+                    "headers. Confirm that you have supplied valid Cloudflare API credentials.",
+                )
+
+    def test_certbot_s_reason_is_redacted_and_kept_to_one_line(self) -> None:
+        document = json.loads(
+            (FIXTURES / "haprion-cert-issue" / "valid" / "certbot-failed.json").read_text()
+        )
+        document["error"]["details"]["diagnostics"] = (
+            "Requesting a certificate\nDetail: token=abc123 was refused\nSecond line\n"
+            "Ask for help or search for solutions at https://community.letsencrypt.org."
+        )
+        state = self.states(issue_job("failed", result=document))["new.example.com"]
+        self.assertNotIn("abc123", state.detail)
+        self.assertNotIn("\n", state.detail)
+        self.assertTrue(state.detail.startswith("certbot exited 1 after 34s: "))
+
+    def test_a_failure_without_diagnostics_keeps_the_message_alone(self) -> None:
+        state = self.states(
+            issue_job("failed", result={"error": {"code": "already_exists", "message": "ID taken"}})
+        )["new.example.com"]
+        self.assertEqual(state.detail, "ID taken")
 
     def test_a_finished_request_only_fills_the_gap_until_the_poll(self) -> None:
         state = self.states(issue_job("done"))["new.example.com"]

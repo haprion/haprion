@@ -16,6 +16,7 @@ import ast
 import contextlib
 import importlib
 import io
+import tempfile
 import tomllib
 import unittest
 from dataclasses import dataclass, replace
@@ -24,14 +25,17 @@ from subprocess import CompletedProcess
 from typing import Any
 from unittest import mock
 
+from haprion import config as config_module
 from haprion import exit_codes
 from haprion.config import ConfigError
 
 from haprion_ui import api
 from haprion_ui.app import create_app
 from tests.contract_schema import assert_contract
+from tests.product_filesystem import product_directories, write_installation
 from tests.test_login import configuration
 
+REAL_SECURE_YAML = config_module._secure_yaml
 ROOT = Path(__file__).resolve().parents[2]
 VIEWS = ROOT / "ui" / "src" / "haprion_ui" / "pages" / "dashboard.py"
 SCHEMAS = ROOT / "schemas" / "v1"
@@ -98,6 +102,9 @@ REFUSED_CALLS: dict[str, list[str]] = {
     "haprion-api-token revoke": ["revoke", "no-such-token"],
     "haprion-backup-schedule": [*BAD_CLUSTER, "--time", "03:00"],
     "haprion-cert-delete": ["Bad ID!"],
+    "haprion-cert-deploy": [*BAD_CLUSTER],
+    "haprion-cert-renew": ["--ndes-now", "no-such-certificate"],
+    "haprion-cert-request": ["--id", "Bad ID!", "--domain", "Bad Name!"],
     "haprion-cert-import": ["--id", "Bad ID!", "--certificate", "/nonexistent.pem"],
     "haprion-cert-issue": ["--domain", "Bad Name!", "--method", "dns-01"],
     "haprion-cert-issue --renew": ["--domain", "Bad Name!", "--renew"],
@@ -128,7 +135,10 @@ REFUSED_CALLS: dict[str, list[str]] = {
     ],
     "haprion-cluster remove": ["remove", *BAD_CLUSTER],
     "haprion-cluster-settings apply": ["apply", *BAD_CLUSTER, "/nonexistent.yaml"],
+    "haprion-config-status": [*BAD_CLUSTER],
     "haprion-deploy": [*BAD_CLUSTER],
+    "haprion-export": [*BAD_CLUSTER, "/srv/export"],
+    "haprion-history-reset": [*BAD_CLUSTER, "--confirm", "please reset me"],
     "haprion-ndes-server add": ["add", "not an address"],
     "haprion-ndes-server remove": ["remove", "not an address"],
     "haprion-network apply": ["apply", *BAD_CLUSTER, "/nonexistent.yaml"],
@@ -370,6 +380,100 @@ API_PARITY: dict[str, Command | Gap | NotASetting | NoCounterpart] = {
 }
 
 
+#
+# Commands the terminal has and the interface has no button for: what the timers
+# and the playbooks run. They answer in a contract as the others do, so they are
+# held to the same rule (W02, 26-11-05).
+#
+TERMINAL_ONLY: dict[str, Command] = {
+    "haprion-cert-deploy": Command("haprion-cert-deploy", "haprion-cert-deploy"),
+    "haprion-cert-renew": Command("haprion-cert-renew", "haprion-cert-renew"),
+    "haprion-cert-request": Command("haprion-cert-request", "haprion-cert-request"),
+    "haprion-config-status": Command("haprion-config-status", "haprion-config-status"),
+    "haprion-export": Command("haprion-export", "haprion-export"),
+    "haprion-history-reset": Command("haprion-history-reset", "haprion-history-reset"),
+}
+
+#
+# Scripts that are not commands an operator or a playbook runs for an answer. A
+# `*-helper` or `*-ask` is the socket protocol's end of a command listed above
+# and is held by the helper tests; the rest are named here with why.
+#
+HELPER_SUFFIXES = ("-helper", "-ask")
+NOT_COMMANDS: dict[str, str] = {
+    "haprion-cluster-config": "prints one value or the list for a shell script; it has no JSON form",
+    "haprion-poller": "a service the unit runs",
+    "haprion-worker": "a service the unit runs",
+    "haprion-traffic-collector": "a service the timer runs on the nodes",
+}
+
+#
+# The refusals that stop before the command has judged anything it was asked: the
+# caller is not root, or the thing it depends on is not there.
+#
+EARLY_STOPS = frozenset({"not_root", "dependency_unavailable"})
+
+#
+# Commands whose own judgement of the call lies behind something the gate does not
+# run, so their refusal here is still an early stop. A command that starts
+# reaching its own validation must leave this list.
+#
+BEHIND_THE_DATABASE = "the database is asked before the call is judged; there is none here"
+BEHIND_A_HELPER = "the helper behind the socket judges the call; it is tested with the helper"
+BEHIND_SOMETHING: dict[str, str] = {
+    **{
+        f"haprion-api-token {verb}": BEHIND_THE_DATABASE
+        for verb in ("add", "extend", "remove", "revoke")
+    },
+    "haprion-cert-delete": BEHIND_A_HELPER,
+    "haprion-export": BEHIND_THE_DATABASE,
+    "haprion-cert-target": BEHIND_A_HELPER,
+    "haprion-cluster add": BEHIND_A_HELPER,
+    "haprion-cluster remove": BEHIND_A_HELPER,
+    "haprion-node add": BEHIND_A_HELPER,
+    "haprion-node host": BEHIND_A_HELPER,
+    "haprion-node remove": BEHIND_A_HELPER,
+    "haprion-objects remove": BEHIND_A_HELPER,
+    "haprion-probe": BEHIND_A_HELPER,
+    "haprion-server-state": BEHIND_A_HELPER,
+    "haprion-server-state unblock": BEHIND_A_HELPER,
+}
+
+#
+# What a call the installation can answer must answer, though nothing is wrong
+# with it: a step that asks about a run that is gone (W01, 26-11-05).
+#
+GONE = "r260101-0000aaaa"
+
+
+@dataclass(frozen=True)
+class Answer:
+    argv: list[str]
+    code: int
+    outcome: str
+    error: str | None
+    result: dict[str, Any] | None = None
+
+
+ANSWERS: dict[str, Answer] = {
+    "haprion-node-restore status": Answer(
+        ["status", "--run", GONE], 75, "blocked", "restore_refused"
+    ),
+    "haprion-node-restore discard": Answer(
+        ["discard", "--run", GONE], 0, "done", None, {"run": GONE, "removed": False}
+    ),
+    "haprion-node-restore preview": Answer(
+        ["preview", "--run", GONE, "--fingerprint", "SHA256:" + "A" * 43],
+        75,
+        "blocked",
+        "restore_refused",
+    ),
+    "haprion-node-restore run": Answer(
+        ["run", "--run", GONE, "--confirm", "node-a"], 75, "blocked", "restore_refused"
+    ),
+}
+
+
 def _api_writes() -> set[str]:
     """The API's write routes as `METHOD /path` under its prefix, walked into the mounted app.
 
@@ -468,32 +572,49 @@ def _help(line: str) -> str:
     return shown.getvalue()
 
 
-def _invoke(program: str, argv: list[str]) -> tuple[int, str, str]:
+def _invoke(program: str, argv: list[str], scratch: Path | None = None) -> tuple[int, str, str]:
     """The command's `main` in this process: its exit code, stdout and stderr.
 
-    As an ordinary user, with no helper to reach: a program that would run one
-    gets a helper that fails without a word, so what is measured is what the
-    command itself writes.
+    Without `scratch`, as an ordinary user with no helper to reach and no
+    configuration: what is measured is what the command itself writes before it
+    has read anything. With it, as root on an installation with one cluster
+    (`write_installation`), the product's directories below `scratch`, so the
+    command gets as far as judging the call (W02, 26-11-05).
     """
 
     module, _, _ = _entry_points()[program].partition(":")
     out, err = io.StringIO(), io.StringIO()
     code: int
-    with (
-        contextlib.redirect_stdout(out),
-        contextlib.redirect_stderr(err),
-        mock.patch("subprocess.run", return_value=CompletedProcess([], 1, "", "")),
-        mock.patch("sys.stdin", io.StringIO()),
-        mock.patch("os.geteuid", return_value=1000),
-        #
-        # Not this machine's configuration: a call that gets as far as the runtime
-        # policy finds it unreadable, as it is on a host with none.
-        #
-        mock.patch(
-            "haprion.config._secure_yaml",
-            side_effect=ConfigError("no runtime policy here", exit_code=exit_codes.UNAVAILABLE),
-        ),
-    ):
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(contextlib.redirect_stdout(out))
+        stack.enter_context(contextlib.redirect_stderr(err))
+        stack.enter_context(
+            mock.patch("subprocess.run", return_value=CompletedProcess([], 1, "", ""))
+        )
+        stack.enter_context(mock.patch("sys.stdin", io.StringIO()))
+        if scratch is None:
+            stack.enter_context(mock.patch("os.geteuid", return_value=1000))
+            #
+            # Not this machine's configuration: a call that gets as far as the runtime
+            # policy finds it unreadable, as it is on a host with none.
+            #
+            stack.enter_context(
+                mock.patch(
+                    "haprion.config._secure_yaml",
+                    side_effect=ConfigError(
+                        "no runtime policy here", exit_code=exit_codes.UNAVAILABLE
+                    ),
+                )
+            )
+        else:
+            stack.enter_context(mock.patch("os.geteuid", return_value=0))
+            stack.enter_context(product_directories(scratch))
+            stack.enter_context(
+                mock.patch(
+                    "haprion.config._secure_yaml",
+                    side_effect=lambda path, *, require_secure: _read_yaml(path),
+                )
+            )
         try:
             returned = importlib.import_module(module).main(argv)
             code = returned if isinstance(returned, int) else 0
@@ -502,14 +623,37 @@ def _invoke(program: str, argv: list[str]) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
+def _read_yaml(path: Path) -> dict[str, Any]:
+    """The file as `_secure_yaml` reads it, without asking that root owns it."""
+
+    return REAL_SECURE_YAML(path, require_secure=False)
+
+
 def _commands() -> list[Command]:
     """Every command the tables name, once per line."""
 
     seen: dict[str, Command] = {}
-    for entry in (*PARITY.values(), *OPERATIONS.values(), *API_PARITY.values()):
+    for entry in (
+        *PARITY.values(),
+        *OPERATIONS.values(),
+        *API_PARITY.values(),
+        *TERMINAL_ONLY.values(),
+    ):
         if isinstance(entry, Command):
             seen.setdefault(entry.line, entry)
     return [seen[line] for line in sorted(seen)]
+
+
+def _unclassified(points: dict[str, str]) -> list[str]:
+    """The scripts that are neither a command in the tables, a reading program, a helper end nor named."""
+
+    classified = {command.line.split()[0] for command in _commands()}
+    classified |= set(READ_PROGRAMS) | set(NOT_COMMANDS)
+    return sorted(
+        program
+        for program in points
+        if program not in classified and not program.endswith(HELPER_SUFFIXES)
+    )
 
 
 def _programs() -> set[str]:
@@ -566,7 +710,12 @@ class EveryWriteHasItsCommand(unittest.TestCase):
 
         entries = [
             entry
-            for entry in (*PARITY.values(), *OPERATIONS.values(), *API_PARITY.values())
+            for entry in (
+                *PARITY.values(),
+                *OPERATIONS.values(),
+                *API_PARITY.values(),
+                *TERMINAL_ONLY.values(),
+            )
             if isinstance(entry, Command)
         ]
         missing = sorted(
@@ -584,6 +733,7 @@ class EveryWriteHasItsCommand(unittest.TestCase):
     def test_a_refusal_is_the_one_document_the_contract_holds(self) -> None:
         """K01, K07: bad input with `--json` gives stdout that validates against the command's schema.
 
+        As an ordinary user: what a command writes before it has read anything.
         The exit code is the outcome's: a document that says `blocked` exits 75,
         and one that says `failed` exits with something else but 0.
         """
@@ -597,6 +747,66 @@ class EveryWriteHasItsCommand(unittest.TestCase):
                 self.assertNotEqual(code, 0)
                 self.assertFalse(document["ok"])
                 self.assertEqual(document["outcome"], exit_codes.outcome(code), document["error"])
+
+    def test_a_refusal_comes_from_the_commands_own_judgement(self) -> None:
+        """W02: as root on an installation that has a cluster, the call is judged by the command.
+
+        K01 had every step answer `not_root` here while its own code for a run
+        that is gone was wrong. A command that still stops early must say why.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            scratch = Path(raw)
+            write_installation(scratch)
+            for command in _commands():
+                with self.subTest(command.line):
+                    code, out, _ = _invoke(
+                        command.line.split()[0], [*REFUSED_CALLS[command.line], "--json"], scratch
+                    )
+                    document = assert_contract(command.schema, out)
+                    stopped = document["error"]["code"]
+                    self.assertNotEqual(code, 0)
+                    self.assertEqual(document["outcome"], exit_codes.outcome(code), stopped)
+                    if command.line in BEHIND_SOMETHING:
+                        self.assertIn(
+                            stopped, EARLY_STOPS, "it judges the call now: take it off the list"
+                        )
+                    else:
+                        self.assertNotIn(stopped, EARLY_STOPS, document["error"])
+                    if stopped == "dependency_unavailable":
+                        self.assertNotEqual(code, exit_codes.USAGE, "a mistake is bad_input")
+
+    def test_a_call_that_has_an_answer_gets_it(self) -> None:
+        """W01: a run that is gone is `blocked`, and discarding it twice is not an error."""
+
+        schemas = {command.line: command.schema for command in _commands()}
+        with tempfile.TemporaryDirectory() as raw:
+            scratch = Path(raw)
+            write_installation(scratch)
+            for line, answer in ANSWERS.items():
+                with self.subTest(line):
+                    code, out, _ = _invoke(line.split()[0], [*answer.argv, "--json"], scratch)
+                    document = assert_contract(schemas[line], out)
+                    self.assertEqual(
+                        (code, document["outcome"], (document["error"] or {}).get("code")),
+                        (answer.code, answer.outcome, answer.error),
+                    )
+                    if answer.result is not None:
+                        self.assertEqual(document["result"], answer.result)
+
+    def test_every_script_is_classified(self) -> None:
+        """W02: a command added to pyproject.toml without a class fails here."""
+
+        self.assertEqual(_unclassified(_entry_points()), [])
+        self.assertEqual(sorted(set(NOT_COMMANDS) - set(_entry_points())), [])
+        self.assertEqual(sorted(set(BEHIND_SOMETHING) - {c.line for c in _commands()}), [])
+
+    def test_a_new_script_would_not_pass_unclassified(self) -> None:
+        """A check that cannot fail is not a check."""
+
+        points = {**_entry_points(), "haprion-cert-foo": "haprion.cli.cert_foo:main"}
+
+        self.assertEqual(_unclassified(points), ["haprion-cert-foo"])
 
     def test_the_other_commands_a_script_runs_answer_json_too(self) -> None:
         """K12: the contract says every command can; a script needs `unlock` and `revoke` as much as `apply`."""

@@ -161,11 +161,19 @@ def answers(document: object, manager: str, listen: str | None = None) -> tuple[
     return "\n".join(lines) + "\n", cluster
 
 
+def _digits(text: str, limit: int = 18) -> bool:
+    """One to `limit` ASCII digits; `isdigit()` alone passes `²`, which `int()` refuses.
+
+    The engine's `haprion.digits.is_digits`, which a node script cannot import.
+    """
+    return 0 < len(text) <= limit and text.isascii() and text.isdigit()
+
+
 def group_members(group: int) -> dict[int, tuple[int, str]]:
     """The live processes of one process group: pid -> (parent, program name)."""
     members: dict[int, tuple[int, str]] = {}
     for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
+        if not _digits(entry.name):
             continue
         try:
             stat = (entry / "stat").read_text()

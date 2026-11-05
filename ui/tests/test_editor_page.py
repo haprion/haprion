@@ -139,6 +139,7 @@ class EditorTestCase(LoginTestCase):
             ("discard_draft", self._discard_draft),
             ("record_backend_renames", self._record_renames),
             ("draft_publishes", lambda _c, **_kw: []),
+            ("lock_cluster_changes", lambda _c, _cluster: None),
         ):
             patch = mock.patch(f"haprion_ui.db.{target}", side_effect=side_effect)
             patch.start()
@@ -1321,6 +1322,76 @@ class ThePublishedDraftWaitsForTheCache(EditorTestCase):
 
         self.assertEqual(self.discarded, [("alpha", "shop", 1)])
         self.assertIn("192.0.2.12:9090", page)
+
+    def test_a_save_clears_nothing_and_commits_nothing_before_it_writes(self) -> None:
+        """Review 26-11-05, XY01: the API's write holds a lock on its token row to
+        the commit; the rename check beside it must not end that transaction."""
+
+        request = mock.Mock()
+        request.app.state.pool = self.pool
+        connection = mock.Mock()
+        with (
+            mock.patch(
+                "haprion_ui.db.cluster_objects", return_value=[objects_at(LATER, shop=SHOP_9090)]
+            ),
+            mock.patch("haprion_ui.db.cluster_list", return_value=("alpha",)),
+        ):
+            state = editor_flow.editor_state(request, writing_configuration(), "alpha")
+        editor_flow.save_object_change(
+            connection,
+            state,
+            cluster="alpha",
+            object_id="shop",
+            document=SHOP,
+            updated_by="admin",
+            saved_revision=None,
+            draft_revision=None,
+        )
+
+        self.assertEqual(self.discarded, [])
+        connection.commit.assert_not_called()
+        self.assertEqual(len(self.changes), 1)
+
+    def test_a_save_takes_the_cluster_s_lock_before_it_reads_the_saved_rows(self) -> None:
+        """Review 26-11-05, XY02: the check and the write are one step under the lock."""
+
+        request = mock.Mock()
+        request.app.state.pool = self.pool
+        order: list[str] = []
+
+        def reads(_c: object, _cluster: str) -> list[ProxyDraft]:
+            order.append("read")
+            return []
+
+        with (
+            mock.patch(
+                "haprion_ui.db.cluster_objects", return_value=[objects_at(LATER, shop=SHOP_9090)]
+            ),
+            mock.patch("haprion_ui.db.cluster_list", return_value=("alpha",)),
+        ):
+            state = editor_flow.editor_state(request, writing_configuration(), "alpha")
+        with (
+            mock.patch(
+                "haprion_ui.db.lock_cluster_changes",
+                side_effect=lambda _c, cluster: order.append(f"lock {cluster}"),
+            ),
+            mock.patch("haprion_ui.db.cluster_drafts", side_effect=reads),
+            mock.patch(
+                "haprion_ui.db.save_change", side_effect=lambda _c, **_kw: order.append("write")
+            ),
+        ):
+            editor_flow.save_object_change(
+                mock.Mock(),
+                state,
+                cluster="alpha",
+                object_id="shop",
+                document=SHOP,
+                updated_by="admin",
+                saved_revision=None,
+                draft_revision=None,
+            )
+
+        self.assertEqual(order, ["lock alpha", "read", "write"])
 
     def test_a_publish_that_changed_nothing_needs_no_new_commit(self) -> None:
         self.publishes = [self.done(changed=False)]

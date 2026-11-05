@@ -5440,6 +5440,38 @@ class AccountsFromTheWeb(unittest.TestCase):
         self.assertTrue(waited, "the change must wait for the sign-in")
         self.assertEqual(ended, 1)
 
+    def test_the_saved_changes_lock_of_a_cluster_waits_for_the_one_holding_it(self) -> None:
+        """Review 26-11-05, XY02: two saves of one cluster check and write one at a time."""
+
+        import threading
+
+        first = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        second = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        got: list[str] = []
+
+        def take(cluster: str) -> None:
+            db.lock_cluster_changes(second, cluster)
+            got.append(cluster)
+            second.commit()
+
+        try:
+            db.lock_cluster_changes(first, "alpha")
+            same = threading.Thread(target=take, args=("alpha",))
+            same.start()
+            same.join(0.5)
+            self.assertTrue(same.is_alive(), "the second save must wait for the first")
+            first.commit()
+            same.join(5)
+            self.assertEqual(got, ["alpha"])
+            db.lock_cluster_changes(first, "alpha")
+            other = threading.Thread(target=take, args=("beta",))
+            other.start()
+            other.join(5)
+            self.assertEqual(got, ["alpha", "beta"], "another cluster is not held up")
+        finally:
+            first.close()
+            second.close()
+
     def test_two_provider_sign_ins_of_one_account_changing_its_role_do_not_deadlock(self) -> None:
         """Review 26-11-05, AA04: both read the row under a share lock and then
         updated it, each waiting for the other's lock."""

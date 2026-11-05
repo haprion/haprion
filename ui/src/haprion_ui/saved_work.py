@@ -234,6 +234,19 @@ def _discard_shown(connection: Any, cluster: str, row: db.ProxyDraft) -> bool:
     return True
 
 
+def unsettled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> list[db.ProxyDraft]:
+    """This cluster's drafts without the ones already published - and without
+    clearing them, so no write and no commit.
+
+    For a caller inside a transaction it must not end: the API's write holds a
+    lock on its token row to the commit (XY01).
+    """
+
+    drafts = db.cluster_drafts(connection, cluster)
+    published = _shown_rows(connection, cluster, drafts, reading)
+    return [draft for draft in drafts if (draft.object_id, draft.stage) not in published]
+
+
 def settled_work(
     connection: Any, cluster: str, object_id: str, reading: ObjectsReading
 ) -> ObjectWork:

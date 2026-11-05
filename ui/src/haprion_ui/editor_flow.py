@@ -81,8 +81,8 @@ from haprion_ui.saved_work import (
     ObjectWork,
     saved_network_rows,
     settled_draft,
-    settled_drafts,
     settled_work,
+    unsettled_drafts,
 )
 from haprion_ui.templates import TEMPLATES
 
@@ -1247,8 +1247,14 @@ def save_object_change(
     load_written(new_object_id or object_id, document.encode())
     if replaces is not None and not any(view.name == replaces for view in state.stored):
         replaces = None
+    #
+    # The check and the write under one lock, so a second save sees the first
+    # (XY02); and the rows read without clearing any, because clearing commits
+    # and this runs inside the caller's transaction (XY01).
+    #
+    db.lock_cluster_changes(connection, cluster)
     clash = rename_clash(
-        settled_drafts(connection, cluster, state_reading(state)),
+        unsettled_drafts(connection, cluster, state_reading(state)),
         key=object_id,
         target=new_object_id or object_id,
         replaces=replaces,

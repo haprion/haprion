@@ -379,6 +379,21 @@ def rename_draft(
         return row
 
 
+def lock_cluster_changes(connection: Connection[Any], cluster: str) -> None:
+    """Take this cluster's saved-changes lock to the end of the transaction.
+
+    A check against the other saved changes and the write it permits are two
+    steps; two saves that each check before the other has committed both pass.
+    Held from before the check to the commit, the second sees the first (XY02).
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select pg_advisory_xact_lock(hashtext('proxy_draft:' || %(cluster)s))",
+            {"cluster": cluster},
+        )
+
+
 def discard_draft(
     connection: Connection[Any],
     *,

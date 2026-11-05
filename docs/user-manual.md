@@ -3860,7 +3860,9 @@ saved with *Export selected (.csv)*. The file has the row's columns plus *Rule* 
 `logged`), empty when no rule matched; from *WAF logs* it is named `waf-logs-…`.
 
 What a client chooses is cut in the log, not left out of it: a method after 16 characters, a host after 253
-bytes and a path (without its query) after 512 bytes.
+bytes and a path (without its query) after 512 bytes. The path is the one the client asked for, as the
+proxy received it: a route that strips or adds a prefix before the request goes to the server does not
+change what the log shows or what a search finds.
 
 **One object's requests.** An object's page links to its own requests: *Traffic log* and *WAF logs* on
 its *Metrics* card, and a link beside each backend on the cluster's *Metrics* page. They open the page

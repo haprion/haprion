@@ -13,6 +13,7 @@ The gaps are the list Fas 23 empties.
 from __future__ import annotations
 
 import ast
+import asyncio
 import contextlib
 import importlib
 import io
@@ -29,6 +30,7 @@ from typing import Any, NoReturn
 from unittest import mock
 
 import psycopg
+import psycopg_pool
 from haprion import config as config_module
 from haprion import exit_codes
 from haprion.config import ConfigError
@@ -659,16 +661,29 @@ def _no_database(seen: list[str]) -> Any:
     return connect
 
 
+def _no_async_database(seen: list[str]) -> Any:
+    async def connect(*_args: Any, **_kwargs: Any) -> Any:
+        seen.append("database")
+        raise psycopg.OperationalError("no database here")
+
+    return connect
+
+
 def _guards(program: str, seen: list[str], escapes: list[str]) -> list[Any]:
     """What a command run as root must not reach: a database, a socket, another process (Z01).
 
     The database is asked through libpq, which no audit hook sees, so
-    `psycopg.connect` is replaced by one that records the attempt and fails as a
-    host without a database does. A socket and a new process fail the test with
+    `psycopg.connect`, the connection classes' `connect` (which every pool calls)
+    are replaced by ones that record the attempt and fail as a host without a
+    database does. A socket and a new process fail the test with
     the command's name.
     """
 
-    patches = [mock.patch("psycopg.connect", _no_database(seen))]
+    patches = [
+        mock.patch("psycopg.connect", _no_database(seen)),
+        mock.patch.object(psycopg.Connection, "connect", _no_database(seen)),
+        mock.patch.object(psycopg.AsyncConnection, "connect", _no_async_database(seen)),
+    ]
     patches.append(
         mock.patch.object(socket.socket, "connect", _refuse(program, "a socket", escapes))
     )
@@ -807,6 +822,25 @@ def _reaches_exec(_argv: list[str]) -> NoReturn:
 
 def _reaches_a_database(_argv: list[str]) -> int:
     psycopg.connect("dbname=x")
+    return 0
+
+
+def _reaches_a_connection_class(_argv: list[str]) -> int:
+    psycopg.Connection.connect("dbname=x")
+    return 0
+
+
+def _reaches_an_async_connection_class(_argv: list[str]) -> int:
+    asyncio.run(psycopg.AsyncConnection.connect("dbname=x"))
+    return 0
+
+
+def _reaches_a_pool(_argv: list[str]) -> int:
+    pool = psycopg_pool.ConnectionPool("dbname=x", open=False, timeout=2)
+    try:
+        pool.open(wait=True, timeout=2)
+    finally:
+        pool.close()
     return 0
 
 
@@ -1024,6 +1058,30 @@ class EveryWriteHasItsCommand(unittest.TestCase):
             ):
                 _invoke("haprion-fake", [], scratch, seen)
             self.assertEqual(seen, ["database"])
+
+    def test_every_way_to_a_database_is_refused_and_recorded(self) -> None:
+        """N01: the connection classes and the pool reach libpq as `psycopg.connect` does."""
+
+        points = {"haprion-fake": f"{__name__}:main"}
+        with (
+            tempfile.TemporaryDirectory() as raw,
+            mock.patch(f"{__name__}._entry_points", return_value=points),
+        ):
+            scratch = Path(raw)
+            write_installation(scratch)
+            for stand_in in (
+                _reaches_a_connection_class,
+                _reaches_an_async_connection_class,
+                _reaches_a_pool,
+            ):
+                seen: list[str] = []
+                with (
+                    self.subTest(stand_in.__name__),
+                    mock.patch(f"{__name__}._stand_in", stand_in),
+                    contextlib.suppress(Exception),
+                ):
+                    _invoke("haprion-fake", [], scratch, seen)
+                self.assertIn("database", seen, stand_in.__name__)
 
     def test_every_script_is_classified(self) -> None:
         """W02: a command added to pyproject.toml without a class fails here."""

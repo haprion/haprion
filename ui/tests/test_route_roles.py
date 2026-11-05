@@ -255,6 +255,46 @@ class EveryRouteAnswersAsTheRoleAllows(LoginTestCase):
             {path: code for path, code in answered.items() if code != 403}, REFUSED_ITS_OWN_WAY
         )
 
+    def test_with_management_writes_off_an_admin_s_post_changes_nothing_but_the_own_password(
+        self,
+    ) -> None:
+        """Review 26-11-05: the switch is a wall in front of every write, and a
+        route added without it would be the one that writes. Walked with a valid
+        token, so the only thing left to refuse each is the switch."""
+
+        client = self.client(replace(configuration(), clusters=("alpha",), management_writes=False))
+        self.assertEqual(self.sign_in(client).status_code, 303)
+        own = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+
+        answered: dict[str, int] = {}
+        with (
+            mock.patch("haprion_ui.db.queue_job") as queued,
+            mock.patch("haprion_ui.db.dns_profile", return_value=mock.Mock()),
+            mock.patch("haprion_ui.db.ndes_profile", return_value=mock.Mock()),
+        ):
+            for route in routes(client.app.routes, []):
+                if "POST" not in route.methods or route.path in ("/login", "/logout"):
+                    continue
+                data, files = form(route, own)
+                audit_before = len(self.audit)
+                queued.reset_mock()
+                response = client.post(
+                    concrete(route), data=data, files=files or None, follow_redirects=False
+                )
+                self.assertEqual(len(self.audit), audit_before, f"{route.path} wrote an audit row")
+                self.assertFalse(queued.called, f"{route.path} queued a job")
+                answered[route.path] = response.status_code
+
+        self.assertGreater(len(answered), 50)
+        #
+        # Not a management write: a person's own password, which the switch
+        # never covered (it answers the form, here its 400 for a missing field).
+        #
+        self.assertEqual(
+            {path: code for path, code in answered.items() if code != 404},
+            {"/account/password": 400},
+        )
+
     def test_nothing_answers_an_anonymous_visitor_but_the_public_routes(self) -> None:
         client = self.app_client()
 

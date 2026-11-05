@@ -7,9 +7,10 @@ account whose role may not do something is answered with `forbidden_page`.
 * **The client address comes from a header nginx overwrites**, never from one a
   client can contribute to. The site config sets `X-Forwarded-For` to the peer
   address rather than appending to it, so what arrives here is one address that
-  a request cannot lie about. If it is missing or unparseable, the peer address
-  is used and the request is still served - the throttle must not be the reason
-  the interface stops working.
+  a request cannot lie about. If it is missing, the peer address is used; if it
+  does not parse, the address counts as loopback. Either way the request is
+  still served - the throttle must not be the reason the interface stops
+  working.
 * **Every state-changing request carries a CSRF token**, including logout. A
   forced logout is a small attack, but an exception in the rule is how the rule
   stops being checkable.

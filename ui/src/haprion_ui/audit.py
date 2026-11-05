@@ -1,7 +1,7 @@
 """The record as a person reads it: who did what, where, in one sentence (B275).
 
 `audit_event` has been written since the first migration and read by nobody
-in the interface. *Events → Audit* shows it to an admin; *Events → Jobs* takes
+in the interface. *Events → Audit* shows it to an admin and a reader; *Events → Jobs* takes
 the name of whoever queued each job from it; the Servers card says who set a
 drain. Each event is one sentence, built from its action and its detail by
 `ACTIVITY_PHRASES`. An action the table does not know is shown by its own

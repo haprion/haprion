@@ -1326,35 +1326,42 @@ class EditingTheHeadersThatPassThrough(unittest.TestCase):
 
     def test_a_control_character_is_refused_in_a_header_value_and_a_redirect(self) -> None:
         # B450, X05: only CR, LF and NUL were. A tab is refused too, as the generator
-        # holds every modelled value to no control character at all.
+        # holds every modelled value to no control character at all. One check to a
+        # subTest, so the first that fails does not hide the others (XX02).
+        def redirect(location: str) -> bytes:
+            return with_lines(
+                (
+                    "  - path: /\n    backend: web\n",
+                    "  - path: /\n    backend: web\n  - path: /old\n    redirect:\n"
+                    f'      location: "{location}"\n',
+                )
+            )
+
+        def deny(value: str) -> bytes:
+            return with_lines(
+                (
+                    "routes:",
+                    f"deny_rules:\n  - name: a\n    header: {{name: X-A, equals: {value}}}\nroutes:",
+                )
+            )
+
+        load_proxy("shop", self.headers('  request:\n    set:\n      X-Ctl: "ab"'))
+        load_proxy("shop", redirect("https://example.com/x"))
+        load_proxy("shop", deny('"ab"'))
         for character in ("\\x0b", "\\x1b", "\\x7f", "\\t"):
-            with self.subTest(character):
-                value = f'"a{character}b"'
+            value = f'"a{character}b"'
+            with self.subTest(character, field="header value"):
                 with self.assertRaises(ModelError) as raised:
                     load_proxy("shop", self.headers(f"  request:\n    set:\n      X-Ctl: {value}"))
                 self.assertIn("control", str(raised.exception))
-                with self.assertRaises(ModelError):
-                    load_proxy(
-                        "shop",
-                        with_lines(
-                            (
-                                "  - path: /\n    backend: web\n",
-                                "  - path: /old\n    redirect:\n"
-                                f'      location: "https://example.com/{character}x"\n',
-                            )
-                        ),
-                    )
-                with self.assertRaises(ModelError):
-                    load_proxy(
-                        "shop",
-                        with_lines(
-                            (
-                                "routes:",
-                                "deny_rules:\n  - name: a\n    header: "
-                                f"{{name: X-A, equals: {value}}}\nroutes:",
-                            )
-                        ),
-                    )
+            with self.subTest(character, field="redirect"):
+                with self.assertRaises(ModelError) as raised:
+                    load_proxy("shop", redirect(f"https://example.com/{character}x"))
+                self.assertIn("control", str(raised.exception))
+            with self.subTest(character, field="deny rule"):
+                with self.assertRaises(ModelError) as raised:
+                    load_proxy("shop", deny(value))
+                self.assertIn("control", str(raised.exception))
 
     def test_a_value_yaml_read_as_a_boolean_says_so(self) -> None:
         with self.assertRaises(ModelError) as raised:

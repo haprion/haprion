@@ -13,7 +13,7 @@ from typing import Any
 from haprion import address_ranges, cluster_settings
 from haprion.config import ConfigError, check_allow_entries, parse_network
 from haprion.proxy_model import ModelError, load_proxy
-from tests.test_proxy_model import with_lines
+from tests.test_proxy_model import dns, with_lines
 
 ZONED = ("2001:db8::1%x\nglobal", "fe80::1%eth0", "2001:db8::1%a b")
 ZONED_NETWORKS = ("2001:db8::1%x\nglobal/128", "fe80::1%eth0/128", "2001:db8::1%a b/128")
@@ -52,24 +52,33 @@ class TheObjectModel(unittest.TestCase):
         with self.assertRaises(ModelError):
             load_proxy("shop", document)
 
-    def test_a_server_host_and_address(self) -> None:
+    def test_a_server_host(self) -> None:
         for value in ZONED:
             with self.subTest(value=value):
                 self.refused(with_lines(("host: 192.0.2.10", "host: " + _quoted(value))))
-                self.refused(
-                    with_lines(
-                        (
-                            "host: 192.0.2.10",
-                            "host: backend.example.com\n        address: " + _quoted(value),
-                        )
-                    )
+
+    def test_a_dns_server_s_saved_address(self) -> None:
+        # Only a dns object keeps one; an http object refuses the field whatever it holds.
+        def resolver(value: str) -> bytes:
+            return dns(
+                (
+                    b"- host: 192.0.2.53",
+                    f"- host: dns.example.com\n        address: {value}".encode(),
                 )
+            )
+
+        load_proxy("resolver", resolver("192.0.2.53"))
+        for value in ZONED:
+            with self.subTest(value=value), self.assertRaises(ModelError) as raised:
+                load_proxy("resolver", resolver(_quoted(value)))
+            self.assertIn("address", str(raised.exception))
 
     def test_the_three_source_lists(self) -> None:
         for value in (*ZONED, *ZONED_NETWORKS):
-            with self.subTest(value=value):
-                for field in ("allow_from", "deny_from"):
+            for field in ("allow_from", "deny_from"):
+                with self.subTest(value=value, field=field):
                     self.refused(with_lines(("routes:", f"{field}: [{_quoted(value)}]\nroutes:")))
+            with self.subTest(value=value, field="access"):
                 self.refused(
                     with_lines(
                         (
@@ -94,24 +103,22 @@ class TheSettingsAndNetwork(unittest.TestCase):
                     {"log_targets": {"central": {"address": value, "port": 514}}}
                 )
         for value in (*ZONED, *ZONED_NETWORKS):
-            with self.subTest(value=value):
-                with self.assertRaises(ConfigError):
-                    cluster_settings.load_mapping({"metrics": {"port": 9100, "sources": [value]}})
-                with self.assertRaises(ConfigError):
-                    cluster_settings.load_mapping({"not_logged_from": [value]})
+            with self.subTest(value=value, field="metrics sources"), self.assertRaises(ConfigError):
+                cluster_settings.load_mapping({"metrics": {"port": 9100, "sources": [value]}})
+            with self.subTest(value=value, field="not_logged_from"), self.assertRaises(ConfigError):
+                cluster_settings.load_mapping({"not_logged_from": [value]})
 
     def test_a_network_group_a_vip_a_source_and_an_allow_entry(self) -> None:
         for value in ZONED_NETWORKS:
-            with self.subTest(value=value), self.assertRaises(ConfigError):
+            with self.subTest(value=value, field="group"), self.assertRaises(ConfigError):
                 _network({"networks": {"office": [value]}})
-            with self.subTest(value=value), self.assertRaises(ValueError):
+            with self.subTest(value=value, field="allow entry"), self.assertRaises(ValueError):
                 check_allow_entries([value])
         for value in ZONED:
-            with self.subTest(value=value):
-                with self.assertRaises(ConfigError):
-                    _network({"vips": {"edge": {"address": value}}})
-                with self.assertRaises(ConfigError):
-                    _network({"sources": {"out": value}})
+            with self.subTest(value=value, field="vip"), self.assertRaises(ConfigError):
+                _network({"vips": {"edge": {"address": value}}})
+            with self.subTest(value=value, field="source"), self.assertRaises(ConfigError):
+                _network({"sources": {"out": value}})
 
 
 def _network(raw: Any) -> Any:

@@ -129,6 +129,8 @@ certificates:
       - alpha
 """
 
+UI_CONFIG = '[database]\nname = "haprion_ui"\nsocket_directory = "/var/run/postgresql"\n'
+
 ADMIN = "DB_NAME=haprion_ui\nDB_ROLE=haprion_admin\n"
 
 
@@ -141,6 +143,7 @@ def write_installation(scratch: Path) -> None:
 
     files = {
         "etc/haprion/runtime-policy.yaml": POLICY,
+        "etc/haprion/ui.toml": UI_CONFIG,
         "etc/haprion/ui-admin.conf": ADMIN,
         "srv/haprion/config/clusters.yaml": CLUSTERS,
         "srv/haprion/config/certificates.yaml": REGISTRY,

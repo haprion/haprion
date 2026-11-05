@@ -869,6 +869,15 @@ class EveryWriteHasItsCommand(unittest.TestCase):
                     )
                     document = assert_contract(command.schema, out)
                     stopped = document["error"]["code"]
+                    #
+                    # The reason given is the one measured (Z02): the database was asked
+                    # by the commands that say so, and by no other.
+                    #
+                    self.assertEqual(
+                        "database" in seen,
+                        BEHIND_SOMETHING.get(command.line) == BEHIND_THE_DATABASE,
+                        (command.line, document["error"]),
+                    )
                     self.assertNotEqual(code, 0)
                     self.assertEqual(document["outcome"], exit_codes.outcome(code), stopped)
                     if command.line in BEHIND_SOMETHING:

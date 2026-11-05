@@ -19,7 +19,6 @@ its outcome for a week, for ``status``.
 from __future__ import annotations
 
 import io
-import json
 import os
 import sys
 import time
@@ -37,7 +36,7 @@ from haprion.config import (
     load_policy,
     load_runtime_config,
 )
-from haprion.envelope import failure, new_request_id
+from haprion.envelope import envelope, failure, new_request_id
 from haprion.helper_protocol import write_document
 from haprion.node_restore import Request, RestoreError
 
@@ -86,11 +85,6 @@ HELPER_CALL = {
     "discard": node_restore_helper.DISCARD,
     "status": node_restore_helper.STATUS,
 }
-#
-# What a request names as its cluster when the run has none to name (it is gone);
-# the helper needs a well-formed one to read the request, and the answer says null.
-#
-NO_CLUSTER = "none"
 
 
 def _options(argv: list[str], flags: set[str], values: set[str]) -> dict[str, Any]:
@@ -426,6 +420,58 @@ def _refused(
     return write_document(out, document, exit_code)
 
 
+def _without_cluster(
+    step: str,
+    options: dict[str, Any],
+    parameters: dict[str, Any],
+    policy_path: Path,
+    run_root: Path,
+    out: TextIO,
+    errors: TextIO,
+) -> int:
+    """The answer for a run that names no cluster: it is gone, or its request cannot be read.
+
+    The helper looks a cluster up before it reads the run, and there is none to
+    look up; the answer is the one it gives for a run it cannot find.
+    """
+
+    try:
+        node_restore_helper.validate(HELPER_CALL[step], parameters)
+    except node_restore_helper.ParameterProblem as problem:
+        return _refused(
+            step, None, "bad_input", f"parameters: {problem}", exit_codes.USAGE, out, errors
+        )
+    run = str(options["--run"])
+    if step == "discard":
+        try:
+            removed = node_restore.discard(
+                run_root,
+                run,
+                fetch_access=restore_fetch.lazy(lambda: load_policy(policy_path)),
+            )
+        except RestoreError as exc:
+            return _refused(
+                step, None, "restore_refused", str(exc), exit_codes.BLOCKED, out, errors
+            )
+        document = envelope(
+            operation=node_restore_helper.DISCARD,
+            outcome="done",
+            cluster=None,
+            request_id=new_request_id(),
+            result={"run": run, "removed": removed},
+        )
+        return write_document(out, document, 0)
+    return _refused(
+        step,
+        None,
+        "restore_refused",
+        f"there is no restore run {run}, or its request cannot be read",
+        exit_codes.BLOCKED,
+        out,
+        errors,
+    )
+
+
 def _answer(
     step: str,
     options: dict[str, Any],
@@ -443,9 +489,9 @@ def _answer(
         return _refused(
             step, None, "bad_input", "-c is not a cluster ID", exit_codes.USAGE, out, errors
         )
-    request = node_restore_helper.build_request(
-        operation, cluster or NO_CLUSTER, new_request_id(), parameters
-    )
+    if cluster is None:
+        return _without_cluster(step, options, parameters, policy_path, run_root, out, errors)
+    request = node_restore_helper.build_request(operation, cluster, new_request_id(), parameters)
     answered = io.StringIO()
     code = node_restore_helper.answer(
         [],
@@ -459,12 +505,7 @@ def _answer(
         engine=node_restore,
         now=time.time,
     )
-    text = answered.getvalue()
-    if cluster is None and text:
-        document = json.loads(text)
-        document["cluster"] = None
-        return write_document(out, document, code)
-    out.write(text)
+    out.write(answered.getvalue())
     return code
 
 

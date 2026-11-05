@@ -29,7 +29,7 @@ from haprion import (
 )
 from haprion.cli import node_restore as cli
 from haprion.cli import node_restore_helper
-from haprion.config import Node
+from haprion.config import Node, RuntimeConfig
 from haprion.node_restore import Clock, Request, RestoreError
 from haprion.restore_plan import Target, TestProfile
 from tests.contract_schema import assert_contract
@@ -1298,7 +1298,7 @@ class TheTerminalAnswersInTheEnvelope(Timed):
     ) -> tuple[int, str]:
         out = io.StringIO()
         policy = SimpleNamespace(backup_root=self.backups, publish_root=PUBLISH_ROOT)
-        runtime = SimpleNamespace(cluster=lambda _name: CLUSTER)
+        runtime = RuntimeConfig(schema_version=1, clusters={"alpha": CLUSTER})  # type: ignore[dict-item]
         real_preview, real_run = node_restore.preview, node_restore.run
         ticks = iter(range(10_000))
         with (
@@ -1350,6 +1350,43 @@ class TheTerminalAnswersInTheEnvelope(Timed):
             (code, document["outcome"], document["error"]["code"], document["cluster"]),
             (75, "blocked", "restore_refused", None),
         )
+
+    def test_a_run_that_is_gone_is_refused_by_every_step(self) -> None:
+        gone = "r260101-0000aaaa"
+        steps = {
+            "preview": ("preview", "--run", gone, "--fingerprint", FINGERPRINT, "--json"),
+            "run": ("run", "--run", gone, "--confirm", "node-test", "--json"),
+        }
+        for step, argv in steps.items():
+            with self.subTest(step):
+                code, text = self.terminal(*argv)
+                name = "haprion-node-restore" if step == "run" else f"haprion-node-restore-{step}"
+                document = assert_contract(name, text)
+                self.assertEqual(
+                    (code, document["outcome"], document["error"]["code"], document["cluster"]),
+                    (75, "blocked", "restore_refused", None),
+                )
+
+    def test_a_run_id_that_is_not_one_is_bad_input_for_every_step(self) -> None:
+        for step in ("status", "discard"):
+            with self.subTest(step):
+                code, text = self.terminal(step, "--run", "bad run", "--json")
+                document = assert_contract(f"haprion-node-restore-{step}", text)
+                self.assertEqual((code, document["error"]["code"]), (64, "bad_input"))
+
+    def test_a_run_whose_request_cannot_be_read_is_blocked_or_discarded(self) -> None:
+        run = self.prepare()
+        (self.root / run / "request.json").write_text("{")
+        code, text = self.terminal("status", "--run", run, "--json")
+        document = assert_contract("haprion-node-restore-status", text)
+        self.assertEqual(
+            (code, document["outcome"], document["error"]["code"], document["cluster"]),
+            (75, "blocked", "restore_refused", None),
+        )
+        code, text = self.terminal("discard", "--run", run, "--json")
+        document = assert_contract("haprion-node-restore-discard", text)
+        self.assertEqual((code, document["result"]), (0, {"run": run, "removed": True}))
+        self.assertFalse((self.root / run).exists())
 
     def test_a_standing_is_the_envelope_with_the_standing_in_it(self) -> None:
         run = self.previewed()

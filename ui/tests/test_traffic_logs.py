@@ -593,6 +593,44 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("2026-09-08", page)
         self.assertIn("removed before they were imported", page)
 
+    def test_only_the_recent_days_of_a_hole_are_in_the_log_warning(self) -> None:
+        """Review 2026-11-05, U06: one unreadable record is normal, and a count kept for the
+        14 days of the window would keep the page warning for as long."""
+
+        (self.root / "alpha--node-a.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt": NOW.isoformat(),
+                    "last_success": NOW.isoformat(),
+                    "outcome": "ok",
+                    "gaps": {
+                        (NOW - timedelta(days=5)).date().isoformat(): {"skipped": 7, "lost": 0},
+                        (NOW - timedelta(days=4)).date().isoformat(): {"skipped": 0, "lost": 99},
+                        (NOW - timedelta(days=1)).date().isoformat(): {"skipped": 2, "lost": 0},
+                    },
+                }
+            )
+        )
+        page = self.page(now=NOW)
+        self.assertIn("2 records could not be imported", page)
+        self.assertNotIn(str((NOW - timedelta(days=5)).date()), page)
+        self.assertNotIn("removed before they were imported", page)
+        (self.root / "alpha--node-a.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt": NOW.isoformat(),
+                    "last_success": NOW.isoformat(),
+                    "outcome": "ok",
+                    "gaps": {
+                        (NOW - timedelta(days=5)).date().isoformat(): {"skipped": 7, "lost": 0},
+                    },
+                }
+            )
+        )
+        self.assertNotIn("could not be imported", self.page(now=NOW))
+
     def test_a_journal_that_could_not_be_collected_is_in_the_log_warning(self) -> None:
         (self.root / "alpha--node-a.meta.json").write_text(
             json.dumps(

@@ -99,7 +99,7 @@ def log_freshness_warnings(reading: traffic_logs.Reading, now: datetime) -> tupl
             node.attempt_seconds(now=now),
             node.waf_stale_seconds(now=now),
         )
-        for node in reading.nodes
+        for node in (item.with_recent_gaps(now=now) for item in reading.nodes)
     )
     return tuple(
         item

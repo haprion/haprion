@@ -17,7 +17,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -169,6 +169,17 @@ class Freshness:
     # as long as the day is (review 2026-11-05, T06).
     #
     gaps: tuple[tuple[str, int, int], ...] = ()
+
+    def with_recent_gaps(self, *, now: datetime) -> Freshness:
+        """This node with only the gaps of the last `RECENT_GAP_DAYS` days.
+
+        The collector keeps a day's count for the 14 days of its window; an
+        unreadable record or two is normal, and a warning for as long as the
+        count is kept would not be believed (review 2026-11-05, U06).
+        """
+
+        first = (now.astimezone(UTC).date() - timedelta(days=RECENT_GAP_DAYS - 1)).isoformat()
+        return replace(self, gaps=tuple(gap for gap in self.gaps if gap[0] >= first))
 
     def skipped_records(self) -> int:
         return sum(skipped for _day, skipped, _lost in self.gaps)
@@ -666,6 +677,7 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
     )
 
 
+RECENT_GAP_DAYS = 2
 _GAP_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 

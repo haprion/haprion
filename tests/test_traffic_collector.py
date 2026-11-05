@@ -1163,6 +1163,41 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(run({("alpha", "node-a", today): 3}), {today: {"skipped": 5, "lost": 0}})
         self.assertEqual(run({}), {today: {"skipped": 5, "lost": 0}})
 
+    def test_a_day_rebuilt_from_zero_does_not_count_its_skipped_records_twice(self) -> None:
+        """Review 2026-11-05, U06: the rebuilt part is read again, unreadable records and all."""
+
+        today = NOW.date()
+        node_file = {"data": b"".join(traffic_line(f"/{n}") for n in range(3))}
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            if wanted != today:
+                return self.response(wanted, offset, b"")
+            data = node_file["data"]
+            if offset > len(data):
+                return Response(len(data), offset, 0, False, True, 0, b"")
+            return self.response(wanted, offset, data[offset:])
+
+        def run() -> dict[str, Any]:
+            def ingest(_config: CollectorConfig, **held: Any) -> tuple[int, int, dict[Any, str]]:
+                held["counts"][("alpha", "node-a", today.isoformat())] = 2
+                return 0, 0, {}
+
+            with (
+                patch("haprion.traffic_collector._ingest_database", ingest),
+                patch("haprion.traffic_collector._mirror_window", return_value=RETENTION_DAYS),
+                redirect_stderr(StringIO()),
+            ):
+                collect(self.config, now=NOW, fetch=fetch, fetch_waf_page=no_waf)
+            gaps: dict[str, Any] = json.loads(
+                (self.mirror / "alpha--node-a.meta.json").read_bytes()
+            )["gaps"]
+            return gaps
+
+        self.assertEqual(run(), {today.isoformat(): {"skipped": 2, "lost": 0}})
+        # The node's file is replaced by a shorter one: the part is rebuilt and read again.
+        node_file["data"] = traffic_line("/replaced")
+        self.assertEqual(run(), {today.isoformat(): {"skipped": 2, "lost": 0}})
+
     def test_a_rebuilt_day_is_imported_from_its_beginning(self) -> None:
         """Review 2026-10-30, E3: a node file replaced the same day by a longer
         one rebuilt the part from zero, but the import position stayed, so the

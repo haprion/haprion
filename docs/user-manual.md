@@ -8583,7 +8583,8 @@ A record the database cannot hold is skipped and counted in the run's output, an
 past it: text that is not valid UTF-8 (a lone surrogate), a NUL, a name past its length, a request
 number beyond a 64-bit integer. A method, host or path past its length is cut, not skipped. The records skipped, and the days the
 manager's copy removed before they were imported, are kept per node and day for as long as the day is, and
-the log warning says how many. A day file that fails to import stops that node's import only; the
+the log warning says how many for today and yesterday. A day rebuilt from its node is counted again from
+its start, not added to what was counted before. A day file that fails to import stops that node's import only; the
 nodes after it are imported as usual, and the failed node shows `database` in the log warning and
 under Needs attention instead of `ok`. Root or the `haproxy` account on a node can still write such a
 line, so one node's log is not trusted beyond that node.

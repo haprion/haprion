@@ -392,6 +392,27 @@ def _forget_checkpoint(config: CollectorConfig, part: Path) -> None:
         checkpoint.unlink()
 
 
+def _forget_skipped(config: CollectorConfig, target: NodeTarget, day: date) -> None:
+    """Drop the records counted as skipped for a day whose part is to be read again.
+
+    The import reads the rebuilt part from its first byte and counts what it
+    steps over once more; the earlier count was of the same records (review
+    2026-11-05, U06). What was removed before it was imported stays counted.
+    """
+
+    earlier = _previous(_meta_path(config, target)).get("gaps")
+    key = day.isoformat()
+    if not isinstance(earlier, dict) or not isinstance(earlier.get(key), dict):
+        return
+    gaps = {
+        name: dict(entry) if isinstance(entry, dict) else entry for name, entry in earlier.items()
+    }
+    gaps[key]["skipped"] = 0
+    if not gaps[key].get("lost"):
+        del gaps[key]
+    _amend_meta(config, target, gaps=gaps or None)
+
+
 def _update_day(
     config: CollectorConfig,
     target: NodeTarget,
@@ -415,6 +436,7 @@ def _update_day(
         #
         _replace(path, b"", 0o600)
         _forget_checkpoint(config, path)
+        _forget_skipped(config, target, wanted)
         return False, response.size
     _append(path, response.payload)
     if closed and not response.eof and not response.payload and response.size > _safe_size(path):

@@ -87,6 +87,29 @@ MAX_CANDIDATE_BYTES = 4 * 1024 * 1024
 MAX_CANDIDATE_FILES = 512
 MAX_FILE_BYTES = 1024 * 1024
 
+
+@dataclass(frozen=True, slots=True)
+class Limits:
+    """How many files and bytes a candidate may hold."""
+
+    files: int
+    total_bytes: int
+
+
+#
+# Two caps for two origins. A candidate that arrives as JSON comes from outside
+# the privilege boundary and is held to the small one. The publishing helpers
+# derive their candidate from a commit they read themselves, so the cap there
+# protects nothing but the sandbox, and has to hold the scale the product is
+# built for: 10 000 objects (B222), each one file of its own and some of them a
+# map or a certificate list besides, plus the layers. The generator writes about
+# 1 KiB to 12 KiB of configuration an object; 128 MiB is that at the top for
+# 10 000 objects. A cluster past this gets a refusal that names the limit
+# (B443, review 26-11-05, D01).
+#
+INGRESS_LIMITS = Limits(files=MAX_CANDIDATE_FILES, total_bytes=MAX_CANDIDATE_BYTES)
+DERIVED_LIMITS = Limits(files=32_768, total_bytes=128 * 1024 * 1024)
+
 #
 # Both privileged helpers validate, and both must validate the same way: the
 # same certificate, the same run root, the same sandbox. The environment is
@@ -208,7 +231,9 @@ def _allowed_path(raw: str) -> str:
     )
 
 
-def candidate_from_files(files: Mapping[str, bytes]) -> Candidate:
+def candidate_from_files(
+    files: Mapping[str, bytes], *, limits: Limits = INGRESS_LIMITS
+) -> Candidate:
     """The same candidate, built from bytes that never were JSON.
 
     The publishing helper derives the node artifact itself, on root's side of
@@ -222,8 +247,11 @@ def candidate_from_files(files: Mapping[str, bytes]) -> Candidate:
         raise HelperProtocolError(
             "candidate must contain at least one file", exit_code=exit_codes.REFUSED
         )
-    if len(files) > MAX_CANDIDATE_FILES:
-        raise HelperProtocolError("candidate contains too many files", exit_code=exit_codes.REFUSED)
+    if len(files) > limits.files:
+        raise HelperProtocolError(
+            f"candidate contains too many files ({len(files)}; the limit is {limits.files})",
+            exit_code=exit_codes.REFUSED,
+        )
 
     checked: dict[str, bytes] = {}
     total = 0
@@ -240,9 +268,10 @@ def candidate_from_files(files: Mapping[str, bytes]) -> Candidate:
                 "candidate contains an oversized file", exit_code=exit_codes.REFUSED
             )
         total += len(content)
-        if total > MAX_CANDIDATE_BYTES:
+        if total > limits.total_bytes:
             raise HelperProtocolError(
-                "candidate exceeds the total size limit", exit_code=exit_codes.REFUSED
+                f"candidate exceeds the total size limit ({limits.total_bytes} bytes)",
+                exit_code=exit_codes.REFUSED,
             )
         checked[path] = content
         path_bytes = path.encode()

@@ -25,6 +25,7 @@ from typing import Any, BinaryIO, TextIO
 
 from haprion import advanced, exit_codes, release_checks
 from haprion.candidate_validation import (
+    DERIVED_LIMITS,
     VALIDATION_CERTIFICATE,
     SandboxValidator,
     candidate_from_files,
@@ -359,7 +360,7 @@ def _publish(
         )
         prepare_run_root(run_root, require_secure=require_secure)
         validation = validate_candidate(
-            candidate_from_files(artifact),
+            candidate_from_files(artifact, limits=DERIVED_LIMITS),
             run_root=run_root,
             certificate_ids=cluster.certificate_ids,
             authority_ids=cluster.authority_ids,

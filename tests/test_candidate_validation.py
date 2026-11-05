@@ -12,6 +12,9 @@ from unittest import mock
 
 from haprion import candidate_validation
 from haprion.candidate_validation import (
+    DERIVED_LIMITS,
+    Limits,
+    candidate_from_files,
     materialize_candidate,
     parse_candidate,
     sandbox_command,
@@ -466,3 +469,27 @@ class AValidatorOlderThanTheConfiguration(unittest.TestCase):
         self.assertEqual(
             (int(found.group(1)), int(found.group(2))), candidate_validation.REQUIRED_BRANCH
         )
+
+
+class CandidateLimitTests(unittest.TestCase):
+    """A request is capped hard; a candidate the helper derived is capped for the product's scale."""
+
+    FILES = {"haproxy.cfg": b"global\n", **{f"conf.d/{n:04d}-x.cfg": b"x\n" for n in range(600)}}
+
+    def test_a_request_over_the_ingress_limit_is_refused(self) -> None:
+        with self.assertRaises(HelperProtocolError) as raised:
+            candidate_from_files(self.FILES)
+        self.assertIn("too many files", str(raised.exception))
+
+    def test_a_derived_candidate_holds_the_decided_scale(self) -> None:
+        many = {f"conf.d/{n:05d}-x.cfg": b"x\n" for n in range(10_000)}
+        candidate = candidate_from_files(
+            {"haproxy.cfg": b"global\n", **many}, limits=DERIVED_LIMITS
+        )
+        self.assertEqual(len(candidate.files), 10_001)
+
+    def test_a_derived_candidate_has_a_limit_too(self) -> None:
+        with self.assertRaises(HelperProtocolError):
+            candidate_from_files(
+                self.FILES, limits=Limits(files=100, total_bytes=DERIVED_LIMITS.total_bytes)
+            )

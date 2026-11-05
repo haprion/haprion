@@ -39,6 +39,7 @@ from typing import Any, BinaryIO, Protocol, TextIO
 from haprion import exit_codes, release_checks
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
+    DERIVED_LIMITS,
     MAX_CANDIDATE_BYTES,
     MAX_CANDIDATE_FILES,
     MAX_FILE_BYTES,
@@ -484,7 +485,7 @@ def _publish(
     def sandboxed(tree_files: Mapping[str, bytes]) -> int | None:
         """HAProxy's own check of these files in the sandbox; the refusal, or None."""
 
-        candidate = candidate_from_files(build_node_artifact(tree_files))
+        candidate = candidate_from_files(build_node_artifact(tree_files), limits=DERIVED_LIMITS)
         certificate = read_validation_certificate(
             cluster.validation_certs / VALIDATION_CERTIFICATE,
             require_secure=require_secure,
@@ -601,7 +602,7 @@ def _publish(
     published_files = read_tree_files(repo, snapshot.tree)
     artifact = build_node_artifact(published_files)
     index = build_release_index(published_files)
-    candidate = candidate_from_files(artifact)
+    candidate = candidate_from_files(artifact, limits=DERIVED_LIMITS)
 
     #
     # Before the sandbox, where HAProxy would refuse the same release in words

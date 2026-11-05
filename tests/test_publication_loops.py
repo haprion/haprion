@@ -18,9 +18,10 @@ from typing import Any
 from unittest import mock
 
 from haprion import exit_codes, tls_policy
+from haprion.candidate_validation import Limits
 from haprion.helper_protocol import HelperProtocolError
 from tests.contract_schema import assert_contract
-from tests.test_changes_publish_objects import ObjectsPublishFixture
+from tests.test_changes_publish_objects import ObjectsPublishFixture, proxy
 from tests.test_publish_helper import HAPROXY_CFG, PublishFixture, git
 from tests.test_revert import RevertFixture
 
@@ -95,6 +96,45 @@ class LoopTests(RevertFixture, ObjectsPublishFixture):
         for loop, document in answers.items():
             with self.subTest(loop):
                 self.assertEqual(code_of(document), "bad_input")
+
+    def test_a_derived_candidate_over_its_limit_is_a_refusal_in_every_loop(self) -> None:
+        """The cap that applies to a candidate the helper derived, reached for real."""
+
+        tiny = Limits(files=1, total_bytes=1024)
+        with (
+            mock.patch("haprion.cli.publish_helper.DERIVED_LIMITS", tiny),
+            mock.patch("haprion.cli.managed_helper.DERIVED_LIMITS", tiny),
+            mock.patch("haprion.cli.revert_helper.DERIVED_LIMITS", tiny),
+        ):
+            answers = self.each_loop(lambda raw: None)
+
+        for loop, document in answers.items():
+            with self.subTest(loop):
+                self.assertEqual(code_of(document), "bad_input")
+                self.assertIn("too many files", document["error"]["message"])
+
+    def test_a_cluster_of_five_hundred_objects_publishes(self) -> None:
+        """The JSON ingress caps a request at 512 files; a derived candidate is not a request."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            for index in range(520):
+                (self.repo / "managed/proxies").mkdir(parents=True, exist_ok=True)
+                (self.repo / f"managed/proxies/site-{index}.yaml").write_text(
+                    proxy(f"site-{index}", f"site{index}.example.com").replace("web", f"web{index}")
+                )
+            git(self.repo, "add", "-A")
+            git(self.repo, "commit", "-qm", "many objects by hand")
+
+            request = ObjectsPublishFixture.request(
+                self, objects={"extra": proxy("extra", "extra.example.com").replace("web", "webx")}
+            )
+            code, document, _err = self.publish_objects(policy, request)
+
+            self.assertEqual((code, document["outcome"]), (0, "done"))
+            released = [path for path in self.publish_path.rglob("*.cfg") if path.is_file()]
+            self.assertGreater(len(released), 512)
 
     def test_a_stale_core_stops_a_publish_and_only_warns_a_revert(self) -> None:
         """Going back to a release that was good must not depend on a file being current."""

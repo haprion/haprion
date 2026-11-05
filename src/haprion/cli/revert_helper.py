@@ -44,6 +44,7 @@ from typing import Any, BinaryIO, Protocol, TextIO
 from haprion import crs, exit_codes, geo, held_ports, node_publish, release_checks
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
+    DERIVED_LIMITS,
     VALIDATION_CERTIFICATE,
     SandboxValidator,
     candidate_from_files,
@@ -505,7 +506,7 @@ def _revert(
         )
         prepare_run_root(run_root, require_secure=require_secure)
         result = validate_candidate(
-            candidate_from_files(artifact),
+            candidate_from_files(artifact, limits=DERIVED_LIMITS),
             run_root=run_root,
             certificate_ids=cluster.certificate_ids,
             authority_ids=cluster.authority_ids,

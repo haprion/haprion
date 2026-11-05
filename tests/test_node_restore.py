@@ -1374,7 +1374,7 @@ class TheTerminalAnswersInTheEnvelope(Timed):
 
         run = self.prepare()
         stored = node_restore.read_json(self.root / run / "request.json")
-        (self.root / run / "request.json").write_text(json.dumps({**stored, "cluster": "ghost"}))
+        (self.root / run / "request.json").write_text(json.dumps({**stored, "cluster": "gamma"}))
         steps = {
             "status": ("status", "--run", run, "--json"),
             "preview": ("preview", "--run", run, "--fingerprint", FINGERPRINT, "--json"),

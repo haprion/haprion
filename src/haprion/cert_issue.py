@@ -605,6 +605,7 @@ def add_to_registry(
     lock_path: Path = DEFAULT_LOCK_PATH,
     store: Path = IMPORT_STORE,
     request_root: Path | None = None,
+    certbot: str = CERTBOT,
 ) -> str | None:
     """Add the entry through the one writer the registry has.
 
@@ -646,8 +647,9 @@ def add_to_registry(
                 f"certbot issued {request.certificate_id!r}, and another certificate took "
                 "that name while it ran; nothing was written over it. The "
                 "issued lineage is not registered: remove it with "
-                f"'sudo certbot delete --cert-name {request.certificate_id}', then issue under "
-                "another name.",
+                f"'sudo {certbot} delete --cert-name {request.certificate_id}'. A certificate "
+                "for this domain can be issued once the entry that holds the ID is removed "
+                "or renamed.",
                 exit_code=exit_codes.after_a_change(exc.exit_code),
             ) from exc
         raise IssueError(
@@ -822,6 +824,7 @@ def issue(
         lock_path=lock_path,
         store=store,
         request_root=request_root,
+        certbot=certbot_binary(policy),
     )
     #
     # Re-read rather than patched in memory: the publisher must see exactly

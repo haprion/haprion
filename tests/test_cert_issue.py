@@ -660,6 +660,9 @@ class WhenCertbotSucceeds(IssueFixture):
             {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
         self.registry_path.chmod(0o640)
+        document = yaml.safe_load(policy_path.read_text())
+        document["acme"]["certbot"] = "/opt/example-certbot/venv/bin/certbot"
+        policy_path.write_text(yaml.safe_dump(document))
         imported = {"source": {"kind": "import"}, "clusters": ["alpha"]}
 
         registry_path = self.registry_path
@@ -690,9 +693,13 @@ class WhenCertbotSucceeds(IssueFixture):
         self.assertEqual(document["outcome"], "failed", err)
         self.assertEqual(document["error"]["code"], "already_exists")
         # Review 26-10-25, 1-04: not "register it by hand", which would write over it.
+        # 26-11-05, C06: the installation's certbot, and advice that can be followed - the
+        # ID is the domain, so "another name" is not an option.
         self.assertIn(
-            "sudo certbot delete --cert-name www.example.com", document["error"]["message"]
+            "sudo /opt/example-certbot/venv/bin/certbot delete --cert-name www.example.com",
+            document["error"]["message"],
         )
+        self.assertNotIn("another name", document["error"]["message"])
         self.assertNotIn("by hand", document["error"]["message"])
         self.assertEqual(code, exit_codes.FAILED)
         registry = yaml.safe_load(self.registry_path.read_text())

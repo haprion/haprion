@@ -150,7 +150,8 @@ where 0.99.11 to 0.99.13 left it, and refuse an older one before they change the
 are on its [GitHub release](https://github.com/haprion/haprion/releases/tag/v0.99.13).
 
 If `sudo apt upgrade` already refused such an installation, install the 0.99.13 packages from the repository
-(`apt list -a haprion-ui` shows their versions), then upgrade again. `sudo dpkg --configure -a` is not needed:
+(`apt list -a haprion-ui` shows their versions) or, for an installation made from files, with `sudo dpkg -i` on the
+files of the GitHub release, then upgrade again. `sudo dpkg --configure -a` is not needed:
 
 ```bash
 sudo apt install --allow-downgrades haprion-cli=<version> haprion-ui=<version>

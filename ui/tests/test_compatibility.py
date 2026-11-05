@@ -423,8 +423,9 @@ class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
                 self.assertIn(
                     "sudo apt install --allow-downgrades haprion-cli=<version> "
                     "haprion-ui=<version>, the 0.99.13 versions that apt list -a haprion-ui "
-                    "shows, and then sudo apt upgrade again; sudo dpkg --configure -a is not "
-                    "needed",
+                    "shows (for packages installed from a file: sudo dpkg -i on the files of "
+                    "its GitHub release), and then upgrade again; sudo dpkg --configure -a is "
+                    "not needed",
                     said,
                 )
         outside = compatibility.before_baseline(requirements, "0114")

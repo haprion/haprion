@@ -327,8 +327,9 @@ def before_baseline(
             f"{revision} is from before this release's baseline {baseline}. Haprion {carrier[1]} "
             f"migrates the database to {baseline}: sudo apt install --allow-downgrades "
             "haprion-cli=<version> haprion-ui=<version>, the "
-            f"{carrier[1]} versions that apt list -a haprion-ui shows, and then sudo apt "
-            "upgrade again; sudo dpkg --configure -a is not needed"
+            f"{carrier[1]} versions that apt list -a haprion-ui shows (for packages installed "
+            f"from a file: sudo dpkg -i on the files of its GitHub release), and then upgrade "
+            "again; sudo dpkg --configure -a is not needed"
         )
     if carrier is not None and revision >= carrier[0]:
         return (

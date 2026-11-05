@@ -49,5 +49,48 @@ class TheGuardBehindTheFields(unittest.TestCase):
             run(proxy, networks={"office": ["192.0.2.0/24\nglobal"]})
 
 
+class AdvancedConfigAgreesWithTheModel(unittest.TestCase):
+    """Review 26-11-05, XX01: the model keeps a tab in advanced config and the guard refused it.
+
+    A refusal at publish stopped every object of the cluster for one pasted tab.
+    """
+
+    def advanced(self, text: str) -> Proxy:
+        return load_proxy("shop", MINIMAL + f"advanced: {text}\n".encode())
+
+    def test_a_tab_between_words_or_inside_a_quoted_value_is_written(self) -> None:
+        for text in (
+            '"http-request\\tset-header X-A b\\n"',
+            '"http-request set-header X-A \\"a\\tb\\"\\n"',
+            '"# a note\\there\\nhttp-request set-header X-A b\\n"',
+        ):
+            with self.subTest(text=text):
+                out = generate([self.advanced(text)], vips=VIPS, default_vip="main")
+
+                self.assertIn("X-A", "".join(out.configuration.values()))
+
+    def test_a_refusal_names_the_object_and_the_field_and_not_the_input(self) -> None:
+        proxy = self.advanced('"http-request set-header X-A b\\n"')
+        placement = dataclasses.replace(
+            proxy.advanced.placement,  # type: ignore[union-attr]
+            lines=tuple(
+                dataclasses.replace(line, text=line.text.replace("b", "b\x0bc"))
+                for line in proxy.advanced.placement.lines  # type: ignore[union-attr]
+            ),
+        )
+        proxy = dataclasses.replace(
+            proxy,
+            advanced=dataclasses.replace(proxy.advanced, placement=placement),  # type: ignore[type-var]
+        )
+
+        with self.assertRaises(GeneratorError) as caught:
+            run(proxy)
+
+        message = str(caught.exception)
+        self.assertTrue(message.startswith("shop.advanced holds a control character"), message)
+        self.assertNotIn("input[", message)
+        self.assertNotIn("placement", message)
+
+
 if __name__ == "__main__":
     unittest.main()

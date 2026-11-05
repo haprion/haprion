@@ -456,9 +456,10 @@ def generate(
     # generator is handed is looked at here, once, so a field added later with
     # the same gap is stopped too.
     #
+    for proxy in proxies:
+        _refuse_control_characters(proxy, proxy.name)
     _refuse_control_characters(
         (
-            proxies,
             vips,
             networks,
             sources,
@@ -1757,6 +1758,53 @@ def _value_lines(start: str, values: Sequence[str]) -> list[str]:
 
 
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
+#
+# What the model keeps in an object's advanced config: a tab is a separator in
+# HAProxy's grammar, and a pasted line has it between words as often as not.
+#
+_CONTROL_CHARACTER_BUT_TAB = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+
+
+def _control_character(
+    value: object, where: str, pattern: re.Pattern[str] = _CONTROL_CHARACTER
+) -> tuple[str, str, str] | None:
+    """The first text in `value` that holds a control character: where, which, and the text."""
+
+    if isinstance(value, str):
+        found = pattern.search(value)
+        if found:
+            return where, found.group().encode("unicode_escape").decode(), value
+    elif isinstance(value, Advanced):
+        #
+        # The pasted text is lines by nature. It is read word by word by
+        # `advanced.py`, which refuses raw control characters inside a line;
+        # what is written is its placed lines, held to the same rule here -
+        # the model's own, which keeps a tab. The way in is said as the field
+        # and not as the placement's internals.
+        #
+        inner = _control_character(value.placement, where, _CONTROL_CHARACTER_BUT_TAB)
+        if inner is not None:
+            return where, inner[1], inner[2]
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for member in dataclasses.fields(value):
+            found_in = _control_character(
+                getattr(value, member.name), f"{where}.{member.name}", pattern
+            )
+            if found_in is not None:
+                return found_in
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            found_in = _control_character(key, f"{where} key", pattern) or _control_character(
+                item, f"{where}[{key!r}]", pattern
+            )
+            if found_in is not None:
+                return found_in
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for index, item in enumerate(value):
+            found_in = _control_character(item, f"{where}[{index}]", pattern)
+            if found_in is not None:
+                return found_in
+    return None
 
 
 def _refuse_control_characters(value: object, where: str) -> None:
@@ -1764,32 +1812,16 @@ def _refuse_control_characters(value: object, where: str) -> None:
 
     Walks whatever the generator was given - dataclasses, mappings, lists - and
     names the path to the first value that does, so a refusal says where.
+    Advanced config is the exception to the tab, as the model is.
     """
 
-    if isinstance(value, str):
-        found = _CONTROL_CHARACTER.search(value)
-        if found:
-            raise GeneratorError(
-                f"{where} holds a control character ({found.group().encode('unicode_escape').decode()}) "
-                f"in {value[:40]!r}; refusing to write it into configuration"
-            )
-    elif isinstance(value, Advanced):
-        #
-        # The pasted text is lines by nature. It is read word by word by
-        # `advanced.py`, which refuses raw control characters inside a line;
-        # what is written is its placed lines, held to the same rule here.
-        #
-        _refuse_control_characters(value.placement, f"{where}.placement")
-    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
-        for member in dataclasses.fields(value):
-            _refuse_control_characters(getattr(value, member.name), f"{where}.{member.name}")
-    elif isinstance(value, Mapping):
-        for key, item in value.items():
-            _refuse_control_characters(key, f"{where} key")
-            _refuse_control_characters(item, f"{where}[{key!r}]")
-    elif isinstance(value, (list, tuple, set, frozenset)):
-        for index, item in enumerate(value):
-            _refuse_control_characters(item, f"{where}[{index}]")
+    found = _control_character(value, where)
+    if found is not None:
+        path, character, text = found
+        raise GeneratorError(
+            f"{path} holds a control character ({character}) in {text[:40]!r}; "
+            "refusing to write it into configuration"
+        )
 
 
 def _refuse_long_lines(files: Mapping[str, str]) -> None:

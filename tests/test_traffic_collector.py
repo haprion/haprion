@@ -998,19 +998,44 @@ class TrafficCollectorTests(unittest.TestCase):
                 {("alpha", "node-a")},
             )
 
-    def test_the_nodes_are_compared_with_each_other_whatever_the_staging_volume(self) -> None:
+    def three_nodes_today(self, sizes: tuple[int, int, int]) -> CollectorConfig:
         node_b = NodeTarget("alpha", "node-b", "node-b.example.com")
         node_c = NodeTarget("alpha", "node-c", "node-c.example.com")
         today = NOW.date().isoformat()
-        for node, size in (("node-a", 400), ("node-b", 300), ("node-c", 100)):
+        for node, size in zip(("node-a", "node-b", "node-c"), sizes, strict=True):
             (self.staging / f"alpha--{node}--{today}.jsonl").write_bytes(b"x" * size)
-        configured = dataclasses.replace(self.config, nodes=(self.target, node_b, node_c))
+        return dataclasses.replace(self.config, nodes=(self.target, node_b, node_c))
+
+    def test_the_nodes_are_compared_with_each_other_whatever_the_staging_volume(self) -> None:
+        configured = self.three_nodes_today((800, 100, 100))
         self.hold_mark()
-        # 800 staged over three nodes: 267 each; the first two are over it.
+        # 1000 staged over three nodes: 333 each; only the first is more than half as much
+        # again.
         with self.space(capacity=10, free=1):
             self.assertEqual(
                 traffic_collector._database_held_nodes(configured, now=NOW),
-                {("alpha", "node-a"), ("alpha", "node-b")},
+                {("alpha", "node-a")},
+            )
+
+    def test_nodes_of_nearly_equal_parts_are_all_held(self) -> None:
+        """B472, R04: the largest of near-equal parts is over the mean, and not a flood."""
+
+        configured = self.three_nodes_today((100, 99, 98))
+        self.hold_mark()
+        with self.space(capacity=10, free=1):
+            self.assertEqual(
+                traffic_collector._database_held_nodes(configured, now=NOW),
+                {("alpha", "node-a"), ("alpha", "node-b"), ("alpha", "node-c")},
+            )
+
+    def test_a_part_under_half_as_much_again_as_the_share_is_not_held_alone(self) -> None:
+        configured = self.three_nodes_today((400, 300, 100))
+        self.hold_mark()
+        # 267 each; 400 is 1.5 times it, not more.
+        with self.space(capacity=10, free=1):
+            self.assertEqual(
+                traffic_collector._database_held_nodes(configured, now=NOW),
+                {("alpha", "node-a"), ("alpha", "node-b"), ("alpha", "node-c")},
             )
 
     def test_the_only_node_is_held(self) -> None:

@@ -173,7 +173,10 @@ class ReadTests(unittest.TestCase):
         with self.assertRaises(CertificateError) as raised:
             read_reference(self.root, "example-net")
 
-        self.assertIn("referenced by the cluster", str(raised.exception))
+        self.assertIn(
+            "is registered for the cluster but is not in its distribution directory",
+            str(raised.exception),
+        )
 
     def test_an_implausibly_large_file_is_refused_unread(self) -> None:
         (self.root / "example-net.pem").write_bytes(b"x" * (1024 * 1024 + 1))

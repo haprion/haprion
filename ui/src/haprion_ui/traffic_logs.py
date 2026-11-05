@@ -62,6 +62,8 @@ class Entry:
     """HAProxy's two letters for how the session ended (0106); `--` normally."""
     event: builtins.bytes = b""
     """The row's own identity (its 32-byte `event_id`): the last tie-break in the order (0111)."""
+    inserted_at: datetime | None = None
+    """When the row reached the database (0117): after `at`, by minutes, or by hours from a node that was behind."""
 
     @property
     def ended(self) -> str:
@@ -750,6 +752,7 @@ def read_database(
     waf: str = "",
     owned: tuple[Sequence[str], Sequence[str]] | None = None,
     before: tuple[datetime, int, str, bytes] | None = None,
+    inserted_after: datetime | None = None,
 ) -> Reading:
     """Read indexed rows while retaining the collector's per-node freshness files.
 
@@ -765,6 +768,10 @@ def read_database(
     and own identity - and the rows read are those after it in the order shown, so a page
     that follows another neither repeats a row nor drops one that shares the
     time (26-11-01).
+
+    `inserted_after` narrows to the rows stored after that time, whatever time
+    they carry: the way to follow the log without missing a row a node
+    delivered late (T08).
     """
 
     wanted = (cluster,) if cluster else clusters
@@ -828,6 +835,9 @@ def read_database(
     if to_at is not None:
         conditions.append(sql.SQL("occurred_at <= %s"))
         parameters.append(to_at)
+    if inserted_after is not None:
+        conditions.append(sql.SQL("inserted_at > %s"))
+        parameters.append(inserted_after)
     if before is not None:
         conditions.append(
             sql.SQL("(occurred_at, request_number, node, event_id) < (%s, %s, %s, %s)")
@@ -838,7 +848,7 @@ def read_database(
         select cluster, node, occurred_at as at, request_number as request,
                client, method, host, path, frontend, backend, server, status,
                request_time, queue_time, connect_time, response_time, total_time, bytes,
-               rule, termination, event_id as event
+               rule, termination, event_id as event, inserted_at
           from traffic_log_read
          where {}
          order by occurred_at desc, request_number desc, node desc, event_id desc

@@ -7,16 +7,17 @@
   "required": ["enabled", "from", "to", "requests", "truncated", "next", "limit", "nodes"],
   "properties": {
     "enabled": { "type": "boolean", "description": "Value. False where this installation keeps no traffic log; the list is then empty." },
-    "from": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. The start of the window read, itself included: as asked, or an hour before to." },
+    "from": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. The start of the window read, itself included: as asked, or an hour before to; where inserted_after is given and from is not, the start of time (1970-01-01), as the requests it is after may be any age." },
     "to": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. The end of the window read, itself included: as asked, or now." },
     "requests": {
       "type": "array",
       "description": "The requests in the window, newest first.",
       "items": {
         "type": "object",
-        "required": ["time", "node", "request_number", "client", "method", "host", "path", "frontend", "backend", "server", "status", "request_time", "queue_time", "connect_time", "response_time", "total_time", "bytes", "rule", "rule_name", "rule_action", "termination", "ended"],
+        "required": ["time", "inserted_at", "node", "request_number", "client", "method", "host", "path", "frontend", "backend", "server", "status", "request_time", "queue_time", "connect_time", "response_time", "total_time", "bytes", "rule", "rule_name", "rule_action", "termination", "ended"],
         "properties": {
           "time": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. When the request was accepted." },
+          "inserted_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the request reached the manager's database: a minute or so after time, hours after it from a node that was behind. Give it as inserted_after to read what arrived since. Null only for a row read without it." },
           "node": { "type": "string", "description": "Value. The node that served it." },
           "request_number": { "type": "integer", "description": "Value. The node's own counter for the request." },
           "client": { "type": "string", "description": "Value. The client's address." },

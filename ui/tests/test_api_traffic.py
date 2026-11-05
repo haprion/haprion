@@ -21,6 +21,7 @@ from tests.test_editor_page import OBJECTS
 from tests.test_login import configuration
 
 SEEN = datetime(2026, 10, 31, 11, 59, 30, tzinfo=UTC)
+STORED = datetime(2026, 10, 31, 12, 0, 45, tzinfo=UTC)
 
 
 def entry(**changes: Any) -> Entry:
@@ -43,6 +44,7 @@ def entry(**changes: Any) -> Entry:
         "response_time": 30,
         "total_time": 33,
         "bytes": 512,
+        "inserted_at": STORED,
     }
     values.update(changes)
     values.setdefault("event", bytes([values["request"] % 256]) * 32)
@@ -52,6 +54,7 @@ def entry(**changes: Any) -> Entry:
 NODE = Freshness("alpha", "node-a", SEEN, SEEN, "ok", current_complete=True)
 EXPECTED_ROW = {
     "time": "2026-10-31T11:59:30+00:00",
+    "inserted_at": "2026-10-31T12:00:45+00:00",
     "node": "node-a",
     "request_number": 7,
     "client": "192.0.2.5",
@@ -279,6 +282,32 @@ class TheTrafficRoute(ApiTestCase):
         self.assertEqual(
             self.read.call_args.kwargs["from_at"], datetime(2026, 10, 31, 9, tzinfo=UTC)
         )
+
+    def test_a_read_from_a_storing_time_asks_for_it_and_reaches_back_for_late_rows(self) -> None:
+        """T08: a row a node delivers hours late has an old `time`; it is found by `inserted_after`."""
+
+        result = self.get("?inserted_after=2026-10-31T11:58:00Z").json()["result"]
+        asked = self.read.call_args.kwargs
+        self.assertEqual(asked["inserted_after"], datetime(2026, 10, 31, 11, 58, tzinfo=UTC))
+        # No hour-long window: the late row's own time may be any day the log keeps.
+        self.assertEqual(result["from"], "1970-01-01T00:00:00+00:00")
+        self.assertEqual(asked["from_at"], datetime(1970, 1, 1, tzinfo=UTC))
+        self.assertEqual(result["requests"][0]["inserted_at"], "2026-10-31T12:00:45+00:00")
+
+    def test_a_storing_time_and_a_window_together_keep_the_window(self) -> None:
+        result = self.get("?inserted_after=2026-10-31T11:58:00Z&from=2026-10-30T00:00:00Z").json()[
+            "result"
+        ]
+        self.assertEqual(result["from"], "2026-10-30T00:00:00+00:00")
+
+    def test_without_a_storing_time_no_row_is_held_to_one(self) -> None:
+        self.get()
+        self.assertIsNone(self.read.call_args.kwargs["inserted_after"])
+
+    def test_a_storing_time_the_log_cannot_hold_is_refused(self) -> None:
+        response = self.get("?inserted_after=1969-12-31T00:00:00Z")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("inserted_after", response.json()["error"]["message"])
 
     def test_a_window_wider_than_the_retention_is_read_not_refused(self) -> None:
         self.assertEqual(self.get("?from=2020-01-01T00:00:00Z").status_code, 200)

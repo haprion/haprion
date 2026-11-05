@@ -112,6 +112,7 @@ def _request(entry: traffic_logs.Entry) -> dict[str, Any]:
     name, _, mode = entry.rule.partition(":")
     return {
         "time": moment(entry.at),
+        "inserted_at": moment(entry.inserted_at) if entry.inserted_at is not None else None,
         "node": entry.node,
         "request_number": entry.request,
         "client": entry.client,
@@ -161,19 +162,20 @@ def traffic_list(
     q: Annotated[str | None, Query(max_length=200)] = None,
     from_: Annotated[datetime | None, Query(alias="from")] = None,
     to: datetime | None = None,
+    inserted_after: datetime | None = None,
     waf: Literal["hits", "none"] | None = None,
     object_: Annotated[str | None, Query(alias="object", pattern=rf"^{NAME_BODY}$")] = None,
     before: Annotated[str | None, Query(max_length=300)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     caller: Caller = Depends(needs("read")),  # noqa: B008
 ) -> JSONResponse:
-    """Newest first. `from` and `to` are ISO 8601 (UTC where no offset is given); the window read is in the result."""
+    """Newest first. `from`, `to` and `inserted_after` are ISO 8601 (UTC where no offset is given); the window read is in the result."""
 
     in_scope(caller, cluster, object_)
     known_cluster(request, cluster)
     config = request.app.state.config
-    from_at, to_at = _utc(from_), _utc(to)
-    for name, at in (("from", from_at), ("to", to_at)):
+    from_at, to_at, stored_after = _utc(from_), _utc(to), _utc(inserted_after)
+    for name, at in (("from", from_at), ("to", to_at), ("inserted_after", stored_after)):
         if at is not None and not EARLIEST <= at < LATEST:
             raise Refusal(400, "bad_input", f"{name} is not a time the log can hold.")
     if from_at is not None and to_at is not None and from_at > to_at:
@@ -189,7 +191,14 @@ def traffic_list(
     # A page that follows another stays in the window the first one was cut
     # from, so the rows are each listed once however much later it is asked.
     #
-    from_shown = from_at or (_utc(held[0]) if held else None) or to_shown - DEFAULT_WINDOW
+    # A read by the time rows were stored has no hour to stay in: the rows it
+    # is after carry the time of a node that was behind.
+    #
+    from_shown = (
+        from_at
+        or (_utc(held[0]) if held else None)
+        or (EARLIEST if stored_after else to_shown - DEFAULT_WINDOW)
+    )
     reading = traffic_logs.Reading((), (), 0, False)
     if config.traffic_logs.enabled:
         _, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
@@ -226,6 +235,7 @@ def traffic_list(
                 waf=waf or "",
                 owned=owned,
                 before=after,
+                inserted_after=stored_after,
             )
         if reading.filter_error is not None:
             raise Refusal(400, "bad_input", reading.filter_error)

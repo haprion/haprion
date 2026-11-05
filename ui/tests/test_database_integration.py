@@ -2439,7 +2439,7 @@ class ARealDatabase(unittest.TestCase):
     def test_the_web_reads_the_traffic_log_through_a_view_and_holds_nothing_on_the_table(
         self,
     ) -> None:
-        """The view shows every column but the insert time; `event_id` since 0111 (0083; the baseline, B369)."""
+        """The view shows every column, the insert time last (0083, 0117; the baseline, B369)."""
 
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -2464,9 +2464,54 @@ class ARealDatabase(unittest.TestCase):
             )
             indexed = _first(cursor)
             connection.rollback()
-        self.assertEqual(shown, sorted(set(columns) - {"inserted_at"}))
+        self.assertEqual(shown, sorted(columns))
         self.assertEqual(granted, 0)
         self.assertEqual(indexed, f"traffic_log_{datetime.now(UTC):%Y%m%d}_cluster")
+
+    def test_a_read_can_be_asked_for_the_rows_stored_after_a_time(self) -> None:
+        """T08: a row a node delivers hours late has an old `time` and a new `inserted_at`."""
+
+        now = datetime.now(UTC).replace(microsecond=0)
+        occurred = now - timedelta(hours=2)
+        with self.connect() as connection:
+            connection.execute("select traffic_log_partition(%s::date)", (occurred.date(),))
+            for number, (event, stored) in enumerate(
+                ((b"o" * 32, now - timedelta(hours=1)), (b"l" * 32, now)), start=1
+            ):
+                connection.execute(
+                    "insert into traffic_log (event_id, cluster, node, occurred_at, "
+                    "request_number, client, method, host, path, frontend, backend, server, "
+                    "status, request_time, queue_time, connect_time, response_time, "
+                    "total_time, bytes, inserted_at) values (%s, 'late-test', 'node-a', %s, %s, "
+                    "'192.0.2.10', 'GET', 'late.example.com', '/', 'f', 'b', 's', 200, "
+                    "0, 0, 0, 0, 0, 0, %s)",
+                    (event, occurred, number, stored),
+                )
+            connection.commit()
+
+        def forget() -> None:
+            with self.connect() as connection:
+                connection.execute("delete from traffic_log where cluster = 'late-test'")
+                connection.commit()
+
+        self.addCleanup(forget)
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+        ):
+            everything = traffic_logs.read_database(
+                connection, Path(temporary), ("late-test",), from_at=occurred
+            )
+            late = traffic_logs.read_database(
+                connection,
+                Path(temporary),
+                ("late-test",),
+                from_at=occurred,
+                inserted_after=now - timedelta(minutes=30),
+            )
+        self.assertEqual([entry.request for entry in everything.entries], [2, 1])
+        self.assertEqual([entry.request for entry in late.entries], [2])
+        self.assertEqual(late.entries[0].inserted_at, now)
 
     def test_the_planner_sees_the_search_index_statistics_for_the_web(self) -> None:
         """Through the view, the web's estimate of a search is the owner's (0083, D1).

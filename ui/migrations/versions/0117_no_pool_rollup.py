@@ -1,4 +1,5 @@
-"""The hourly pool rollup and its boundary are taken away: nothing reads them (B451).
+"""The hourly pool rollup and its boundary are taken away: nothing reads them (B451); the
+traffic log view shows when a row was stored (B451, T08).
 
 `haprion-retention` copied one reading per pool member and hour into
 `metric_backend_hour` every night and kept it for a year, with
@@ -9,6 +10,12 @@ week from the raw samples. The rollup also held the raw pool samples back from
 retention until it had gone past them. Taken away: the table and its monthly
 partitions, the boundary table, and `metric_month_partition`, which only made
 the rollup's partitions.
+
+`traffic_log_read` gains `inserted_at`, the time a row reached the database, as
+its last column. A request carries the time its node accepted it, and a node
+that was behind delivers it hours later; a client that follows the traffic API
+by `time` never sees such a row. The API gives the insert time and reads from
+it (`inserted_after`).
 
 Haprion 0.99.13's web, poller and worker never touch these tables. The only
 code of its that did is `haprion-retention` and `03-verify`, which the
@@ -33,11 +40,22 @@ ROLLBACK_SAFE = True
 ROLLBACK_SAFE_BECAUSE = (
     "it takes away tables nothing in 0.99.13's web, poller or worker reads or writes; its "
     "retention and 03-verify, the only code that did, are installed with the package and "
-    "stay as the package wrote them over a rollback"
+    "stay as the package wrote them over a rollback; the view gets one column at its end, "
+    "which 0.99.13 does not select"
 )
+
+VIEW = """
+create or replace view traffic_log_read as
+select cluster, node, occurred_at, request_number, client, method, host, path, frontend,
+       backend, server, status, request_time, queue_time, connect_time, response_time,
+       total_time, bytes, rule, waf_rules, waf_score, waf_id, termination, event_id,
+       inserted_at
+  from traffic_log
+"""
 
 
 def upgrade() -> None:
     op.execute("drop table metric_backend_hour")
     op.execute("drop table metric_rollup_state")
     op.execute("drop function metric_month_partition(text, date)")
+    op.execute(VIEW)

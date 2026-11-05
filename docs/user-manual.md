@@ -4588,11 +4588,12 @@ curl -sS -G https://mgr.example.com/api/v1/clusters/alpha/traffic \
 A request has the time its node accepted it (`time`), and reaches the database a minute or so later: hours
 later from a node that was behind after a flood or an outage (`nodes[].catching_up` says so). A client that
 polls with `from` set to the end of its last call therefore never sees a request that arrives after its time
-has passed. Such a client reads from a margin back instead (several minutes, and the time since the last call
-when a node is catching up), and drops what it has seen: a request is the same one by its `time`, `node` and
-`request_number`. A client that must have every request reads the syslog stream from an external receiver
-([Sending the traffic log elsewhere](#sending-the-traffic-log-elsewhere-and-metrics)), not the
-API.
+has passed. Each request also says when it reached the database (`inserted_at`), and `inserted_after` asks
+for the requests that arrived after a time, whatever time they carry. Such a client keeps the largest
+`inserted_at` it has read, and asks for `inserted_after` a few seconds before it on the next call, so a request
+stored in the same moment is not missed; it drops what it has already seen, a request being the same one by
+its `time`, `node` and `request_number`. Without `from`, a call with `inserted_after` reads back to the
+oldest request the log keeps; give `from` to narrow it.
 
 ```bash
 # How a job went
@@ -4663,7 +4664,7 @@ What a token can read:
 | `/clusters/{cluster}/objects/{name}/history` | The cluster's versions, published or not (`limit`) |
 | `/clusters/{cluster}/objects/{name}/blocks` | The addresses blocked on the object now, with `block_for` (how long a block lasts; null where the object has no dynamic blocking), the time left and `reason` (`requests`, `errors`, `connections`, `manual` for an address placed through the API, or null where the block does not say). A *Block* token reads this too, for the proxies it may block on |
 | `/certificates` | The certificates, when they end and where they are (`limit`). `registry` says what the list is: `read` (the registry), `unreadable` (the registry could not be read, or not yet: the list is what the clusters say they serve, `stale` is true and an empty list says nothing) or `none` (the installation declares no registry: the clusters' own lists). |
-| `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `status`, `q`, `object`, `waf`, `limit`, `before`). `waf=hits` keeps the requests a rule decided - an access rule, dynamic blocking or the WAF - and `waf=none` the rest; a request its client cancelled while the WAF was checking it is under `none`. `q` is the page's search: text in the host, the path and the backend, a client address or network, or part of a destination. Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read. Both ends are included. When `truncated` is true, `next` is where the next page begins: pass it as `before`, with the same other parameters, and each request is listed once even where several share a time. The place also holds the window the first page was read from, so a later page stays in it when the call named no `from` |
+| `/clusters/{cluster}/traffic` | The traffic log (`from`, `to`, `inserted_after`, `status`, `q`, `object`, `waf`, `limit`, `before`). `waf=hits` keeps the requests a rule decided - an access rule, dynamic blocking or the WAF - and `waf=none` the rest; a request its client cancelled while the WAF was checking it is under `none`. `q` is the page's search: text in the host, the path and the backend, a client address or network, or part of a destination. Without `from` it reads the hour before `to`, or before now; the answer says the `from` and `to` it read. Both ends are included. When `truncated` is true, `next` is where the next page begins: pass it as `before`, with the same other parameters, and each request is listed once even where several share a time. The place also holds the window the first page was read from, so a later page stays in it when the call named no `from` |
 | `/clusters/{cluster}/waf/findings`, `…/waf/exceptions` | What the WAF found, and what its exceptions let through, over the last `days` days (in the answer). The newest findings are given, and `truncated` says when older ones were left out. The exceptions and findings include what an admin has drafted and not yet published (`in_draft`) |
 | `/jobs`, `/jobs/{job_id}` | Jobs and how they went (`cluster`, `state`, `limit`); a `cluster` that does not exist and has no jobs is a 404 |
 
@@ -8233,8 +8234,8 @@ the migration when either is too old.
 **The schema starts at a baseline.** One migration, `0115`, makes the whole schema. It holds what
 Haprion 0.99.0 to 0.99.13 built one migration at a time and keeps the last one's number, so a
 database 0.99.13 left is on it already. An update from there runs `0116`, which takes from the worker
-one privilege it never used, and `0117`, which takes away the hourly pool rollup nothing read (a dump is
-taken first, as for any migration). A
+one privilege it never used, and `0117`, which takes away the hourly pool rollup nothing read and gives the traffic log's
+view the time each request was stored (a dump is taken first, as for any migration). A
 database from before is not migrated: the check refuses it before anything runs. One from 0.99.0 to
 0.99.10 is updated to 0.99.13 first ([Updating](install.md#updating)); one from before 0.99 is
 installed afresh ([Removing](install.md#removing)). A schema is never taken

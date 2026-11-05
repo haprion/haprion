@@ -146,6 +146,15 @@ MEMORY_MAX = "256M"
 #
 WAF_MEMORY_BASE_MB = 128
 WAF_MEMORY_PER_APPLICATION_MB = 6
+#
+# The `haproxy -c` check's memory is linear in the candidate's size (B475): 64 MB
+# and 40 MB for each MiB of candidate, under the same floor and ceiling. Measured
+# 26-11-05 with haproxy 3.4.7: 1.7 MiB 76 MB, 17.8 MiB 512 MB, 34 MiB 969 MB at
+# peak; the formula gives 256, 776 and 1424 MB. The flat MEMORY_MAX killed 10 000
+# light objects at about 275 MB.
+#
+HAPROXY_MEMORY_BASE_MB = 64
+HAPROXY_MEMORY_PER_MIB_MB = 40
 TASKS_MAX = 32
 WAF_GOMAXPROCS = 2
 DIAGNOSTICS_BYTES = 16384
@@ -413,16 +422,37 @@ def peer_arguments(configuration: Path) -> list[str]:
     return []
 
 
+def _bounded_memory(wanted_mb: int, physical_bytes: int | None) -> str:
+    """`wanted_mb`, never less than MEMORY_MAX and never more than half the manager's memory."""
+
+    floor = int(MEMORY_MAX.removesuffix("M"))
+    if physical_bytes is None:
+        physical_bytes = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    ceiling = max(floor, physical_bytes // (2 * 1024 * 1024))
+    return f"{min(max(wanted_mb, floor), ceiling)}M"
+
+
 def waf_memory_max(coraza: str, physical_bytes: int | None = None) -> str:
     """The WAF check's memory, from the applications its configuration lists."""
 
     applications = coraza.count("\n  - name: ")
     wanted = WAF_MEMORY_BASE_MB + WAF_MEMORY_PER_APPLICATION_MB * applications
-    floor = int(MEMORY_MAX.removesuffix("M"))
-    if physical_bytes is None:
-        physical_bytes = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-    ceiling = max(floor, physical_bytes // (2 * 1024 * 1024))
-    return f"{min(max(wanted, floor), ceiling)}M"
+    return _bounded_memory(wanted, physical_bytes)
+
+
+def haproxy_memory_max(candidate_bytes: int, physical_bytes: int | None = None) -> str:
+    """The `haproxy -c` check's memory, from the size of the candidate it parses (B475)."""
+
+    wanted = HAPROXY_MEMORY_BASE_MB + HAPROXY_MEMORY_PER_MIB_MB * -(-candidate_bytes // 1024**2)
+    return _bounded_memory(wanted, physical_bytes)
+
+
+def _candidate_bytes(candidate_root: Path) -> int:
+    return sum(
+        path.stat().st_size
+        for path in candidate_root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    )
 
 
 def sandbox_command(
@@ -648,7 +678,13 @@ def validate_in_sandbox(
     reason = too_old(version())
     if reason is not None:
         return ValidationResult(False, reason)
-    result = _sandboxed(sandbox_command(candidate_root, request_id))
+    result = _sandboxed(
+        sandbox_command(
+            candidate_root,
+            request_id,
+            memory_max=haproxy_memory_max(_candidate_bytes(candidate_root)),
+        )
+    )
     if result.valid and (candidate_root / WAF_TARGET / "coraza.yaml").exists():
         result = _then(result, _waf_engine(candidate_root, request_id))
     if result.valid and (candidate_root / DNS_TARGET / "dnsdist.conf").exists():

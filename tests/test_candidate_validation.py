@@ -227,6 +227,45 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
         self.assertEqual(candidate_validation.waf_memory_max(listing(1000), 2 * 1024**3), "1024M")
         self.assertEqual(candidate_validation.waf_memory_max(listing(1000), 256 * 1024**2), "256M")
 
+    def test_the_haproxy_check_s_memory_follows_the_candidate_s_size(self) -> None:
+        """B475: 10 000 objects were killed at 256M; memory is linear in the candidate's size."""
+
+        plenty = 64 * 1024**3
+        mib = 1024**2
+        memory = candidate_validation.haproxy_memory_max
+        #
+        # Measured 26-11-05 (haproxy 3.4.7): candidate MiB -> MB at peak. Each
+        # limit leaves at least a third as much again.
+        #
+        for size, measured in ((1.7, 76), (17.8, 512), (34.0, 969)):
+            with self.subTest(size):
+                limit = int(memory(int(size * mib), plenty).rstrip("M"))
+                self.assertGreaterEqual(limit, measured * 4 // 3)
+        self.assertEqual(memory(int(1.7 * mib), plenty), "256M")
+        self.assertEqual(memory(0, plenty), "256M")
+        self.assertEqual(memory(34 * mib, plenty), "1424M")
+        self.assertEqual(memory(128 * mib, plenty), "5184M")
+        self.assertEqual(memory(128 * mib, 2 * 1024**3), "1024M")
+        self.assertEqual(memory(128 * mib, 256 * mib), "256M")
+
+    def test_the_haproxy_check_is_given_that_memory(self) -> None:
+        calls: list[list[str]] = []
+
+        def ran(command: list[str]) -> tuple[int, str]:
+            calls.append(command)
+            return 0, ""
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "haproxy.cfg").write_bytes(b"#" * (10 * 1024**2))
+            with (
+                mock.patch.object(candidate_validation, "_run_unit", ran),
+                mock.patch("haprion.candidate_validation.os.sysconf", lambda _name: 1024**2),
+            ):
+                candidate_validation.validate_in_sandbox(root, "1111", version=lambda: "3.4.7")
+        [command] = calls
+        self.assertIn("MemoryMax=464M", command)
+
     def test_the_engine_check_is_given_that_memory(self) -> None:
         calls: list[list[str]] = []
 

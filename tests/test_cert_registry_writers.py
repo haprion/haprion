@@ -25,14 +25,17 @@ SOURCE = Path(__file__).resolve().parents[1] / "src" / "haprion"
 # tree and not in the text: `certificates[<id>] = ...`, the same through any
 # other name the mapping was given (`entries = document["certificates"]`),
 # `document["certificates"][<id>] = ...`, `.update(...)`, `.setdefault(...)`,
+# `.pop(...)`, `.clear()`, `.__setitem__(...)`, `del ...[<id>]`, `|=`,
 # and a mapping built by hand or rebuilt with `{**certificates, ...}`. The value
 # must be the builder's, except where it is a copy of an entry already on file
 # with one key changed; those sites are named below, by function, and tested
-# further down. A new site is a new writer and fails here until it is built with
+# further down. Not followed: a dict comprehension, an entry passed as a
+# parameter and an alias made in a nested function (it takes data-flow analysis;
+# the per-writer tests are the protection there). A new site is a new writer and fails here until it is built with
 # `written_entry` or named (26-11-05, XX07).
 #
 KEY = "certificates"
-WRITING_METHODS = {"update", "setdefault"}
+WRITING_METHODS = {"update", "setdefault", "pop", "clear", "__setitem__"}
 COPIES = {
     # The loader building its read-only view of an entry, not writing one.
     ("config.py", "load_registry", "certificates[certificate_id]"),
@@ -44,6 +47,7 @@ COPIES = {
     ("cluster_definition.py", "_registry_with", "entry['clusters']"),
     ("cluster_definition.py", "_registry_without", "certificates[certificate]"),
     ("cluster_definition.py", "_registry_without", "entry['clusters']"),
+    ("cluster_definition.py", "_registry_without", "entry.pop()"),
 }
 
 
@@ -134,6 +138,19 @@ def _write(node: ast.AST, names: set[str]) -> tuple[str, ast.AST | None] | None:
                 and (value.keys or any(key is None for key in value.keys))
             ):
                 return ast.unparse(target), value
+    if isinstance(node, ast.Delete):
+        for target in node.targets:
+            if isinstance(target, ast.Subscript) and (
+                _names_registry(target.value, names) or _is_key(target.slice)
+            ):
+                return "del " + ast.unparse(target).replace('"', "'"), None
+    if (
+        isinstance(node, ast.AugAssign)
+        and isinstance(node.op, ast.BitOr)
+        and isinstance(node.target, ast.Name)
+        and node.target.id in names
+    ):
+        return f"{node.target.id} |=", node.value
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
@@ -217,6 +234,21 @@ class TheWritersOfTheEntry(unittest.TestCase):
                 "def f(certificates, cid):\n    return {**certificates, cid: {'clusters': []}}\n"
             ),
             "rebuilt": "def f(cid):\n    certificates = {cid: {'clusters': []}}\n",
+            "del": "def f(certificates, cid):\n    del certificates[cid]\n",
+            "del of a key": (
+                "def f(document, cid):\n"
+                "    entry = document['certificates'][cid]\n"
+                "    del entry['clusters']\n"
+            ),
+            "pop": "def f(certificates, cid):\n    certificates.pop(cid)\n",
+            "pop on an entry": (
+                "def f(document, cid):\n"
+                "    entry = document['certificates'][cid]\n"
+                "    entry.pop('clusters')\n"
+            ),
+            "clear": "def f(document):\n    document['certificates'].clear()\n",
+            "in-place union": "def f(certificates, new):\n    certificates |= new\n",
+            "__setitem__": "def f(certificates):\n    certificates.__setitem__('a', {})\n",
         }
         for form, source in planted.items():
             with self.subTest(form=form):

@@ -287,13 +287,27 @@ def installed_entry_points(document: Mapping[str, Any]) -> set[str]:
 CHAIN_CARRIERS = {"0115": ("0100", "0.99.13")}
 
 
-def before_baseline(requirements: Requirements, revision: str) -> str | None:
-    """Why a database at `revision` cannot be taken to this release at all, or None (B369)."""
+def before_baseline(
+    requirements: Requirements, revision: str, *, restore: bool = False
+) -> str | None:
+    """Why a database at `revision` cannot be taken to this release at all, or None (B369).
+
+    `restore`: the revision is a dump's, not the database's. The way is then the
+    other way round: the carrier release is installed, the dump read back with
+    it, and the update run again (B441).
+    """
 
     baseline = requirements.database_baseline
     if baseline is None or not is_digits(revision) or revision >= baseline:
         return None
     carrier = CHAIN_CARRIERS.get(baseline)
+    if carrier is not None and revision >= carrier[0] and restore:
+        return (
+            f"{revision} is from before this release's baseline {baseline}. Install the "
+            f"haprion-ui package of Haprion {carrier[1]} (apt install --allow-downgrades "
+            f"haprion-ui=<its version>, or the file from its GitHub release), restore the dump "
+            f"with it, which migrates it to {baseline}, and then update again"
+        )
     if carrier is not None and revision >= carrier[0]:
         return (
             f"{revision} is from before this release's baseline {baseline}. Upgrade to "

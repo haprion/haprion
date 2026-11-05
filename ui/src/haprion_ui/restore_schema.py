@@ -43,7 +43,7 @@ def plan(root: Path, packaged: str, revision: str) -> tuple[str, str]:
     if revision == head:
         return "same", head
     dump = f"the dump is at schema {revision} and {packaged} at {head}"
-    refusal = before_baseline(release, revision)
+    refusal = before_baseline(release, revision, restore=True)
     if refusal is not None:
         raise CompatibilityError(f"{dump}: {refusal}")
     #

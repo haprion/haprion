@@ -398,6 +398,11 @@ class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
                     self.fail(f"a database at {revision} was not refused")
                 self.assertIn("Upgrade to Haprion 0.99.13 first", said)
                 self.assertNotIn("afresh", said)
+        restored = compatibility.before_baseline(requirements, "0114", restore=True)
+        if restored is None:
+            self.fail("a dump at 0114 was not refused")
+        self.assertIn("Install the haprion-ui package of Haprion 0.99.13", restored)
+        self.assertNotIn("Upgrade to", restored)
         self.assertIsNone(compatibility.before_baseline(requirements, "0115"))
         self.assertIsNone(
             compatibility.before_baseline(replace(requirements, database_baseline=None), "0091")
@@ -748,7 +753,10 @@ class RestoreSchemaCommandTests(unittest.TestCase):
                 with self.subTest(revision=revision):
                     code, said = self.ask(root, revision)
                     self.assertEqual(code, 1)
-                    self.assertIn("Upgrade to Haprion 0.99.13 first", said)
+                    self.assertIn("Install the haprion-ui package of Haprion 0.99.13", said)
+                    self.assertIn("restore the dump with it", said)
+                    self.assertIn("then update again", said)
+                    self.assertNotIn("Upgrade to", said)
 
     def test_a_number_between_two_revisions_as_text_is_not_a_revision(self) -> None:
         """Review 26-10-30, R5: 01020 sorts between 0100 and 0103; no migration takes it."""

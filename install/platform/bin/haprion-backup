@@ -897,7 +897,11 @@ do_restore() {
         fi
     done
     connections="$(psql_scratch -d postgres -c \
-        "select count(*) from pg_stat_activity where datname = '${DB_NAME}'")"
+        "select count(*) from pg_stat_activity where datname = '${DB_NAME}'")" || {
+        start_units "${now[@]}"
+        remember_stopped "${before[@]}"
+        die "the open connections to ${DB_NAME} could not be counted; nothing was restored${before[*]:+, and ${before[*]} stay stopped}"
+    }
     if [[ "$connections" != 0 ]]; then
         #
         # Only what this run stopped: the database is untouched since, and what

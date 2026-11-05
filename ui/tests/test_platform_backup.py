@@ -653,8 +653,12 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 'record() { echo "$*" >> "$CALLS"; }\n'
                 f'systemctl() {{ case "$1" in is-active) [[ " {active} " == *" $3 "* ]] ;;'
                 ' show) echo _haprion-collector ;; *) record "systemctl $*" ;; esac; }\n'
-                f"psql_scratch() {{ echo {connections}; }}\n"
-                f'sudo() {{ record "$* <$(cat)"; {"true" if restored else "false"}; }}\n'
+                + (
+                    "psql_scratch() { return 1; }\n"
+                    if connections == "FAIL"
+                    else f"psql_scratch() {{ echo {connections}; }}\n"
+                )
+                + f'sudo() {{ record "$* <$(cat)"; {"true" if restored else "false"}; }}\n'
                 # The dump's alembic_version, as `pg_restore --data-only` writes it.
                 'pg_restore() { [[ " $* " != *" --table=alembic_version "* ]]'
                 " || printf 'COPY public.alembic_version (version_num) FROM stdin;\\n0101\\n\\\\.\\n'; }\n"
@@ -952,6 +956,17 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         function_text = function("schema_plan", SCRIPT.read_text())
         self.assertIn("sudo haprion-backup after-restore", function_text)
         self.assertIn("sudo dpkg --configure -a", function_text)
+
+    def test_connections_that_cannot_be_counted_say_so_and_start_what_this_run_stopped(
+        self,
+    ) -> None:
+        """Review 2026-11-05 R12: set -e left psql's own line and the services stopped."""
+
+        done, said = self.restore(active=self.ACTIVE, connections="FAIL")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("could not be counted; nothing was restored", done.stderr)
+        self.assertIn("systemctl start haprion-worker.service", said)
+        self.assertFalse(any("pg_restore" in line for line in said))
 
     def test_a_dump_that_does_not_exist_is_refused_by_its_own_path(self) -> None:
         done, said = self.restore(active=self.ACTIVE, spelled="{here}/none.dump")

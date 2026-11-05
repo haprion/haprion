@@ -171,15 +171,20 @@ class Freshness:
     gaps: tuple[tuple[str, int, int], ...] = ()
 
     def with_recent_gaps(self, *, now: datetime) -> Freshness:
-        """This node with only the gaps of the last `RECENT_GAP_DAYS` days.
+        """This node with the skipped records of the last `RECENT_GAP_DAYS` days only.
 
         The collector keeps a day's count for the 14 days of its window; an
         unreadable record or two is normal, and a warning for as long as the
-        count is kept would not be believed (review 2026-11-05, U06).
+        count is kept would not be believed (review 2026-11-05, U06). The bytes
+        the budget removed before they were imported are a hole in the log for as
+        long as the day is kept, and stay (Y05).
         """
 
         first = (now.astimezone(UTC).date() - timedelta(days=RECENT_GAP_DAYS - 1)).isoformat()
-        return replace(self, gaps=tuple(gap for gap in self.gaps if gap[0] >= first))
+        gaps = tuple(
+            (day, skipped if day >= first else 0, lost) for day, skipped, lost in self.gaps
+        )
+        return replace(self, gaps=tuple(gap for gap in gaps if gap[1] or gap[2]))
 
     def skipped_records(self) -> int:
         return sum(skipped for _day, skipped, _lost in self.gaps)

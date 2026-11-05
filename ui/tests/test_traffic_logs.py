@@ -597,7 +597,8 @@ class TheTrafficLogPage(LoginTestCase):
 
     def test_only_the_recent_days_of_a_hole_are_in_the_log_warning(self) -> None:
         """Review 2026-11-05, U06: one unreadable record is normal, and a count kept for the
-        14 days of the window would keep the page warning for as long."""
+        14 days of the window would keep the page warning for as long. Y05: that holds for the
+        skipped records, not for the bytes removed before they were imported."""
 
         (self.root / "alpha--node-a.meta.json").write_text(
             json.dumps(
@@ -617,7 +618,11 @@ class TheTrafficLogPage(LoginTestCase):
         page = self.page(now=NOW)
         self.assertIn("2 records could not be imported", page)
         self.assertNotIn(str((NOW - timedelta(days=5)).date()), page)
-        self.assertNotIn("removed before they were imported", page)
+        # Y05: what the budget removed is a hole for as long as the day is kept.
+        self.assertIn(
+            f"records of {(NOW - timedelta(days=4)).date()} were removed before they were imported",
+            page,
+        )
         (self.root / "alpha--node-a.meta.json").write_text(
             json.dumps(
                 {

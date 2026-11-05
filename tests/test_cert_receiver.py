@@ -299,6 +299,21 @@ class AddingAReceiver(ReceiverFixture):
         self.assertEqual(self.registered(), {})
         self.assertFalse(self.runner.calls)
 
+    def test_a_receiver_root_the_forced_command_cannot_carry_is_named_as_such(self) -> None:
+        """No --path was given, so the message must not talk about one (26-11-05, EE03)."""
+
+        policy, _ = self.loaded()
+        blank = dataclasses.replace(policy, receiver_root=self.root / "with blank")
+        with (
+            mock.patch.object(self, "loaded", return_value=(blank, None)),
+            self.assertRaises(cert_receiver.ReceiverError) as raised,
+        ):
+            self.add()
+        self.assertEqual(raised.exception.code, "bad_input")
+        self.assertIn("receiver_root", str(raised.exception))
+        self.assertNotIn("--path", str(raised.exception))
+        self.assertIn("may hold only", str(raised.exception))
+
     def test_a_directory_outside_receiver_root_is_refused_as_the_web_could_not_write_it(
         self,
     ) -> None:

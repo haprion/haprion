@@ -1022,9 +1022,18 @@ def _add(
     if not directory.is_absolute():
         raise ReceiverError("bad_input", "--path must be absolute")
     if not RECEIVER_PATH.fullmatch(str(directory)) or ".." in directory.parts:
+        #
+        # Without --path the directory is receiver_root/<id>: the root is what
+        # to change, so say so (26-11-05, EE03).
+        #
+        what = (
+            f"--path {str(directory)!r}"
+            if path is not None
+            else f"receiver_root {str(policy.receiver_root)!r}"
+        )
         raise ReceiverError(
             "bad_input",
-            f"--path {str(directory)!r} may hold only letters, digits and . _ - / (no blanks, "
+            f"{what} may hold only letters, digits and . _ - / (no blanks, "
             "quotes or '..'): sshd and nginx read it unquoted",
         )
     root = policy.receiver_root

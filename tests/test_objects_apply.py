@@ -205,6 +205,19 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertIn("-        port: 8080", out)
         self.assertIn("+        port: 9090", out)
 
+    def test_a_name_nobody_may_use_is_refused_with_the_reason(self) -> None:
+        """The API and the helper say which character; the terminal said only that it was not a name."""
+
+        fakes = Fakes({})
+        (self.root / "Shop.yaml").write_text(document("shop"))
+
+        code, _, err = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root))
+        removal, _, said = self.run_cli(fakes, "remove", "-c", "alpha", "Shop")
+
+        self.assertEqual((code, removal), (65, 65))
+        self.assertIn("not a usable object name - capital letters are not allowed", err)
+        self.assertIn("not a usable object name - capital letters are not allowed", said)
+
     def test_check_refuses_what_the_publish_refuses(self) -> None:
         """K05: it said *Would add* for an object the publish then refused."""
 

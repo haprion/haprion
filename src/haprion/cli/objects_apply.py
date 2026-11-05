@@ -49,6 +49,7 @@ from haprion.proxy_model import (
     ModelError,
     load_proxy,
     load_written,
+    name_refusal,
 )
 
 OPERATION = "objects_apply"
@@ -123,7 +124,10 @@ def read_files(targets: Sequence[str]) -> dict[str, str]:
     for path in files:
         name = path.stem
         if not NAME.fullmatch(name):
-            raise Refused("invalid_name", f"{path}: {name} is not an object name; use {NAME_RULE}")
+            raise Refused(
+                "invalid_name",
+                f"{path}: {name} is not a usable object name - {name_refusal(name)}; use {NAME_RULE}",
+            )
         if name in origin:
             raise Refused("duplicate", f"{path}: {name} is also {origin[name]}")
         try:
@@ -207,7 +211,10 @@ def plan_apply(wanted: Mapping[str, str], current: Mapping[str, str], *, prune: 
 def plan_remove(names: Sequence[str], current: Mapping[str, str]) -> Plan:
     for name in names:
         if not NAME.fullmatch(name):
-            raise Refused("invalid_name", f"{name} is not an object name; use {NAME_RULE}")
+            raise Refused(
+                "invalid_name",
+                f"{name} is not a usable object name - {name_refusal(name)}; use {NAME_RULE}",
+            )
     removed = tuple(sorted({name for name in names if name in current}))
     return Plan(
         added=(),

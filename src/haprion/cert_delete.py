@@ -53,7 +53,9 @@ A certificate is refused, before any of its layers is touched, when:
 A refused certificate stops nothing else in the batch; it is reported on its
 row and the others go through. Drafts are the interface's to check: they live
 in its database, which this module cannot see, and the confirmation page and
-the worker both refuse a draft-referenced certificate before it is queued.
+the API refuse a draft-referenced certificate before it is queued. The worker
+cannot read drafts (its role has no grant on them, by design), so a draft made
+while the job waits in the queue is not seen again before it runs.
 
 What is not deleted
 -------------------

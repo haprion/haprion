@@ -242,6 +242,20 @@ class TheLookup(unittest.TestCase):
         ):
             dnsdist_config.lookup("ns1.example.com")
 
+    def test_an_address_with_a_zone_is_unresolved_and_not_a_crash(self) -> None:
+        # Review 26-11-05, XX03: a link-local address from /etc/hosts carries its interface,
+        # and `plain_address` refused it with a ValueError nothing caught.
+        for answered in (("fe80::1%eth0",), ("198.51.100.53", "fe80::1%eth0")):
+            with (
+                self.subTest(answered),
+                mock.patch(
+                    "socket.getaddrinfo",
+                    return_value=[(0, 0, 0, "", (address, 0)) for address in answered],
+                ),
+                self.assertRaisesRegex(dnsdist_config.Unresolved, "link-local address with a zone"),
+            ):
+                dnsdist_config.lookup("ns1.example.com")
+
 
 class PrometheusReadsDnsdist(unittest.TestCase):
     """B253: with the cluster's exporter, dnsdist's statistics are served to its sources too."""

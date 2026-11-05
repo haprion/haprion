@@ -14,11 +14,11 @@ a node's reload would stop HAProxy there.
 
 from __future__ import annotations
 
-import ipaddress
 import socket
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from haprion import address_ranges
 from haprion.config import Cluster, ConfigError
 
 Lookup = Callable[..., Sequence[tuple[Any, ...]]]
@@ -41,7 +41,19 @@ def addresses(cluster: Cluster, lookup: Lookup = socket.getaddrinfo) -> tuple[tu
                 f"cannot look up {node.mgmt_host} for node {node.name}, whose own address "
                 f"the metrics exporter, shared counters and keepalived need: {exc}"
             ) from exc
-        unique = sorted({str(ipaddress.ip_address(answer[4][0])) for answer in answers})
+        #
+        # Through the one reader that refuses a zone, as every address that is
+        # written into a file is (B450): a link-local address with its interface
+        # would otherwise go into keepalived and the peers as it stands.
+        #
+        try:
+            unique = sorted({str(address_ranges.plain_address(answer[4][0])) for answer in answers})
+        except ValueError as exc:
+            raise ConfigError(
+                f"{node.mgmt_host} for node {node.name} gives a link-local address with a zone "
+                "or something that is not an address; the metrics exporter, shared counters and "
+                "keepalived need a plain one"
+            ) from exc
         if len(unique) != 1:
             shown = ", ".join(unique) if unique else "no address"
             raise ConfigError(

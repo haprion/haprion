@@ -66,6 +66,26 @@ class EachNodeHasOneAddress(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "exactly one address"):
             peers.addresses(CLUSTER, lookup)  # type: ignore[arg-type]
 
+    def test_an_address_with_a_zone_is_refused_by_node(self) -> None:
+        # Review 26-11-05, XX03: it would have gone into keepalived and the peers as written.
+        lookup = self.lookup(
+            {
+                "node-a.example.com": answer("fe80::1%eth0"),
+                "192.0.2.2": answer("192.0.2.2"),
+            }
+        )
+        with self.assertRaisesRegex(ConfigError, "node-a.example.com for node node-a.*zone"):
+            peers.addresses(CLUSTER, lookup)  # type: ignore[arg-type]
+
+    def test_an_address_is_written_in_its_plain_form(self) -> None:
+        lookup = self.lookup(
+            {
+                "node-a.example.com": answer("2001:DB8::1"),
+                "192.0.2.2": answer("192.0.2.2"),
+            }
+        )
+        self.assertEqual(peers.addresses(CLUSTER, lookup)[0], ("node-a", "2001:db8::1"))  # type: ignore[arg-type]
+
 
 if __name__ == "__main__":
     unittest.main()

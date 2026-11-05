@@ -136,6 +136,16 @@ def lookup(host: str) -> str:
     except (socket.gaierror, UnicodeError) as exc:
         raise Unresolved(f"{host} does not resolve on the manager ({exc})") from exc
     addresses = sorted({str(entry[4][0]) for entry in found})
+    #
+    # A link-local address from the hosts file carries its interface, and means
+    # nothing at the node that would use it. Said as a name that does not give
+    # an address, not left to the helper as an error nobody expected (XX03).
+    #
+    if zoned := [address for address in addresses if "%" in address]:
+        raise Unresolved(
+            f"{host} gives a link-local address with a zone ({', '.join(zoned)}); "
+            "write the address dnsdist should use"
+        )
     for version in (4, 6):
         family = [
             address

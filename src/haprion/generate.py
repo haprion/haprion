@@ -2573,9 +2573,11 @@ CONTROL_CHARACTER = r"%(0[0-9a-f]|1[0-9a-f]|7f)"
 # resolve them however often it is applied (`/././…` always leaves one), and
 # converter arguments cannot hold the groups that could; an ACL pattern can.
 # Browsers resolve them before sending, so a request that still has one was
-# written by hand.
+# written by hand. A backslash is refused the same way (B450, X03): IIS and
+# Windows read it as a slash, so `/admin\x` is `/admin/x` to them, and a browser
+# never sends one. Written twice because the configuration reads `\\` as one.
 #
-DOT_SEGMENT = r"(^|/)\.\.?(/|$)"
+DOT_SEGMENT = r"(^|/)\.\.?(/|$)|\\\\"
 
 
 def _access_path_rules(proxy: Proxy, host: str) -> list[str]:

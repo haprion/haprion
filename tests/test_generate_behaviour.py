@@ -2755,7 +2755,18 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
                 self.assertEqual(
                     self.ask(target, method="POST", body=b"x"), (403, "admin-post:deny")
                 )
-        for target in ("/./admin", "/x/../admin", "/%2e%2e/admin", "/admin/.", "/%2E/admin"):
+        # B450, X03: IIS and Windows read a backslash as a slash.
+        for target in (
+            "/./admin",
+            "/x/../admin",
+            "/%2e%2e/admin",
+            "/admin/.",
+            "/%2E/admin",
+            "/admin\\x",
+            "/admin%5Cx",
+            "/admin%5cx",
+            "/%5Cadmin",
+        ):
             with self.subTest(target):
                 self.assertEqual(self.ask(target), (400, "path-dots:deny"))
         for target in ("/app//x", "/.well-known/x", "/a..b/c", "/a%20b"):
@@ -3340,7 +3351,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         """B335: `/upload/../admin` would carry a body inspected in part to `/admin`."""
 
         padded = b"pad=" + b"a" * 20_000
-        for target in ("/upload/./x", "/upload/%2e/x"):
+        for target in ("/upload/./x", "/upload/%2e/x", "/upload\\x", "/upload%5Cx"):
             with self.subTest(target):
                 self.assertEqual(
                     self.ask(target, name="blocks", body=padded)[:2], (413, "waf-body:deny")

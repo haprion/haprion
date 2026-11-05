@@ -1534,8 +1534,8 @@ receives the path exactly as it was sent.
 
 Two kinds of path are answered 400 on an object with a refusing path rule:
 
-- a path with a `.` or `..` segment once decoded - `/./admin`, `/x/../admin`, `/%2e%2e/admin` - recorded
-  `path-dots:deny`;
+- a path with a `.` or `..` segment once decoded - `/./admin`, `/x/../admin`, `/%2e%2e/admin` - or with a
+  backslash, which IIS and Windows read as a slash - `/admin\x`, `/admin%5Cx` - recorded `path-dots:deny`;
 - a path with a control character - `%00`, a line break - recorded `path-chars:deny`.
 
 When the object's path rules only look, these are recorded with `:log` instead. Browsers send neither.

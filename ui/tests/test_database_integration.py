@@ -10496,7 +10496,9 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                     "/var/lib/haprion", str(self.directory / "lib")
                 )
                 for line in re.findall(
-                    r"^RESTORE_(?:STOPPED|STATE|TOKENS|MARKER|REPLACED)=.*\n", source, re.M
+                    r"^RESTORE_(?:STOPPED|STATE|TOKENS_FRESH_SECONDS|TOKENS|MARKER|REPLACED)=.*\n",
+                    source,
+                    re.M,
                 )
             )
             + f"PLATFORM_STEPS={self.directory / 'steps'}\n"
@@ -10524,7 +10526,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                     "start_units",
                 )
             )
-            + 'do_restore "$1"\n'
+            + 'do_restore "$@"\n'
         )
         return subprocess.run(  # noqa: S603 - fixed program
             ["/bin/bash", "-c", program, "bash", str(dump)],

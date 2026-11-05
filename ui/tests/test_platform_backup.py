@@ -669,6 +669,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         state: Path | None = None,
         reads: tuple[str, ...] = ("aa bb",),
         spelled: str = "{dump}",
+        options: tuple[str, ...] = (),
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         """One run; `remembered` and `state` are what the runs before it left.
 
@@ -743,7 +744,11 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 + f'RESTORE_STOPPED="{remembered or here / "restore-stopped"}"\n'
                 + f'RESTORE_STATE="{state or here / "state"}"\n'
                 + "".join(
-                    re.findall(r"^RESTORE_(?:TOKENS|MARKER|REPLACED)=.*\n", source, re.MULTILINE)
+                    re.findall(
+                        r"^RESTORE_(?:TOKENS_FRESH_SECONDS|TOKENS|MARKER|REPLACED)=.*\n",
+                        source,
+                        re.MULTILINE,
+                    )
                 )
                 + f'PLATFORM_STEPS="{steps}"\nCOLLECTOR_CONFIG="{config}"\n'
                 f'RETENTION_COMMAND="{retention}"\nRETENTION_TIMER="{timer}"\n'
@@ -763,10 +768,17 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                         "start_units",
                     )
                 )
-                + 'do_restore "$1"\n'
+                + 'do_restore "$@"\n'
             )
             done = subprocess.run(  # noqa: S603 - fixed program
-                ["/bin/bash", "-c", program, "bash", spelled.format(dump=dump, here=here)],
+                [
+                    "/bin/bash",
+                    "-c",
+                    program,
+                    "bash",
+                    *options,
+                    spelled.format(dump=dump, here=here),
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -1029,6 +1041,49 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         self.assertIn("systemctl start haprion-worker.service", said)
         self.assertFalse(any("pg_restore" in line for line in said))
 
+    def test_the_line_about_the_recorded_tokens_says_when_they_were_recorded(self) -> None:
+        """Review 2026-11-05 R05: the set was used without a word about how old it was."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw) / "state"
+            self.restore(active=self.ACTIVE, restored=False, state=state)
+            done, _ = self.restore(active="", state=state)
+            self.assertRegex(
+                done.stdout,
+                r"using the API tokens recorded by the restore that did not finish, "
+                r"at \d\d-\d\d-\d\d \d\d:\d\d:\d\d",
+            )
+
+    def test_a_set_from_long_ago_is_not_used_without_a_choice(self) -> None:
+        """Review 2026-11-05 R05: a token revoked since would come back, one made since be revoked."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw) / "state"
+            self.restore(active=self.ACTIVE, restored=False, state=state)
+            then = time.time() - 3 * 86400
+            os.utime(state / "tokens", (then, then))
+            done, said = self.restore(active="", state=state)
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(said, ["plan 0101"])
+            self.assertIn("more than a day ago", done.stderr)
+            self.assertIn("sudo haprion-backup after-restore", done.stderr)
+            self.assertIn("--read-tokens-again", done.stderr)
+            self.assertTrue((state / "tokens").exists())
+
+    def test_reading_the_tokens_again_forgets_the_old_set_and_reads_the_database(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw) / "state"
+            self.restore(active=self.ACTIVE, restored=False, state=state)
+            then = time.time() - 3 * 86400
+            os.utime(state / "tokens", (then, then))
+            done, said = self.restore(
+                active="", state=state, options=("--read-tokens-again",), reads=("cc",)
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(said.count("token-hashes"), 2)
+            self.assertEqual(self.kept, "1:cc")
+            self.assertNotIn("using the API tokens recorded", done.stdout)
+
     def test_a_dump_that_does_not_exist_is_refused_by_its_own_path(self) -> None:
         done, said = self.restore(active=self.ACTIVE, spelled="{here}/none.dump")
         self.assertEqual(done.returncode, 1)
@@ -1224,9 +1279,9 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
 
     def test_the_command_is_offered(self) -> None:
         source = SCRIPT.read_text()
-        self.assertIn("#     haprion-backup restore <dump>", source)
+        self.assertIn("#     haprion-backup restore [--read-tokens-again] <dump>", source)
         self.assertIn(
-            'restore)        hold_release_lock_for_restore; take_lock; do_restore "$1" ;;', source
+            'restore)        hold_release_lock_for_restore; take_lock; do_restore "$@" ;;', source
         )
 
     def test_what_a_restore_stopped_is_kept_where_only_root_writes_and_a_boot_empties(
@@ -1300,7 +1355,13 @@ class HoldingAfterARestore(unittest.TestCase):
             "set -Eeuo pipefail\n"
             f'RESTORE_STOPPED="{remembered or "/nonexistent/restore-stopped"}"\n'
             f'RESTORE_STATE="{state or "/nonexistent"}"\n'
-            + "".join(re.findall(r"^RESTORE_(?:TOKENS|MARKER|REPLACED)=.*\n", source, re.MULTILINE))
+            + "".join(
+                re.findall(
+                    r"^RESTORE_(?:TOKENS_FRESH_SECONDS|TOKENS|MARKER|REPLACED)=.*\n",
+                    source,
+                    re.MULTILINE,
+                )
+            )
             + 'log() { echo "$*"; }\n'
             'die() { echo "ERROR: $*" >&2; exit 1; }\n'
             f"systemctl() {{ [[ $1 == is-active ]] && {'true' if active else 'false'}; }}\n"

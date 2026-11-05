@@ -7,7 +7,7 @@
 #     haprion-backup verify-restore
 #     haprion-backup list
 #     haprion-backup after-restore
-#     haprion-backup restore <dump>
+#     haprion-backup restore [--read-tokens-again] <dump>
 #
 # A dump nobody has restored is a belief, not a backup. `dump` therefore reads
 # every dump back with `pg_restore --list` before keeping it, and
@@ -78,7 +78,7 @@ shift || true
 if [[ "$command" == dump-before-migration ]]; then
     [[ $# -eq 2 ]] || usage
 elif [[ "$command" == restore ]]; then
-    [[ $# -eq 1 ]] || usage
+    [[ $# -eq 1 || ( $# -eq 2 && "$1" == --read-tokens-again ) ]] || usage
 else
     [[ $# -eq 0 ]] || usage
 fi
@@ -672,7 +672,7 @@ hold_api_tokens() {
 #
 after_restore_by_hand() {
     if restore_set_is_kept; then
-        log "comparing with the API tokens recorded before the restore that did not finish"
+        log "comparing with the API tokens recorded before the restore that did not finish, at $(date -d "@$(stat -c %Y "$RESTORE_TOKENS")" '+%y-%m-%d %H:%M:%S')"
         do_after_restore "$(<"$RESTORE_TOKENS")"
     else
         do_after_restore
@@ -743,6 +743,9 @@ RESTORE_TOKENS="${RESTORE_STATE}/tokens"
 RESTORE_MARKER="${RESTORE_STATE}/restoring"
 # The dump of the database the first run replaced (review 2026-11-05, R01).
 RESTORE_REPLACED="${RESTORE_STATE}/replaced"
+# A recorded set older than this is not used without a choice (review 2026-11-05,
+# R05): the tokens revoked or made since would be the wrong ones.
+RESTORE_TOKENS_FRESH_SECONDS=86400
 
 # Replaces an earlier run's set, and its marker first: a set without one is
 # not used.
@@ -839,6 +842,11 @@ restore_stopped() {
 }
 
 do_restore() {
+    local -i reread=0
+    if [[ "${1:-}" == --read-tokens-again ]]; then
+        reread=1
+        shift
+    fi
     local dump="$1" unit connections collector revision plan verdict head release tokens replaced
     local -i reused=0
     local -a before=() stopped=() now=()
@@ -880,10 +888,23 @@ do_restore() {
     # failure costs nothing - and again once everything is stopped, which is
     # the set at the moment of the swap.
     #
+    local -i recorded=0 age=0
+    if (( reread )); then
+        forget_restore_tokens
+        log "reading the API tokens from the database again, not from a restore that did not finish"
+    fi
     if restore_set_is_kept; then
+        recorded="$(stat -c %Y "$RESTORE_TOKENS")"
+        age=$(( $(date +%s) - recorded ))
+        if (( age > RESTORE_TOKENS_FRESH_SECONDS )); then
+            die "a restore that did not finish recorded its API tokens at $(date -d "@${recorded}" '+%y-%m-%d %H:%M:%S'), more than a day ago; nothing was stopped or restored.
+  The database may have been used since, and a token revoked or made after that would be treated wrongly. Choose:
+    sudo haprion-backup after-restore            compare with that set once, hold the jobs, and forget it
+    sudo haprion-backup restore --read-tokens-again <dump>    forget it and read the database as it is now"
+        fi
         reused=1
         tokens="$(<"$RESTORE_TOKENS")"
-        log "using the API tokens recorded by the restore that did not finish"
+        log "using the API tokens recorded by the restore that did not finish, at $(date -d "@${recorded}" '+%y-%m-%d %H:%M:%S')"
     else
         active_token_hashes >/dev/null \
             || die "the active API tokens could not be read; nothing was stopped or restored"
@@ -1149,7 +1170,7 @@ case "$command" in
     dump)           take_lock; run_recorded dump do_dump ;;
     dump-before-migration) take_lock; do_dump_before_migration "$@" ;;
     after-restore)  hold_release_lock_for_restore; after_restore_by_hand ;;
-    restore)        hold_release_lock_for_restore; take_lock; do_restore "$1" ;;
+    restore)        hold_release_lock_for_restore; take_lock; do_restore "$@" ;;
     verify-restore) take_lock; run_recorded restore-check do_verify_restore ;;
     list)           do_list ;;
     *) usage ;;

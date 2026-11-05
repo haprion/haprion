@@ -3269,7 +3269,7 @@ update ([Updating](install.md#updating)).
 
 If the restore fails after the stop, for example on a damaged dump, a failed migration or a full disk,
 the services stay stopped and the command says what failed. Correct it and run the same command again,
-with this dump or another: once a restore finishes, it starts what the failed run stopped. After a
+with this dump or another: once a restore finishes, it starts what the failed run stopped. The API tokens active before the first run are recorded, with the time, and the run again uses that set; a set more than a day old is not used without a choice: `sudo haprion-backup after-restore` compares with it once and forgets it, and `sudo haprion-backup restore --read-tokens-again <dump>` forgets it and reads the database as it is now. After a
 failed privilege check, a service can be started by hand instead once the restored jobs are held with
 `sudo haprion-backup after-restore`, which also lets the update, a rollback and a setup go on (it refuses while a restore runs). After a failed migration, do not: the schema is still the dump's,
 behind the code, so correct the cause and run the restore again. A reboot in between starts the services

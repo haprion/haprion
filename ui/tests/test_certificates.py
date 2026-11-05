@@ -241,6 +241,21 @@ class ExpiryTests(unittest.TestCase):
         self.assertEqual(tone(3, 1), "healthy")
         self.assertEqual(tone(1, 1), "warning")
 
+    def test_the_last_half_day_before_expiry_is_critical_for_a_short_renewal_window(self) -> None:
+        """26-11-05, XX05: `renew_days` of 6 or less had no critical band before expiry."""
+
+        def tone(hours_left: int, renew_days: int) -> str:
+            row = registered(kind="import")
+            row["not_after"] = _stamp(NOW + timedelta(hours=hours_left))
+            row["source"]["ndes_profile"] = "corp"
+            row["ndes_renew_days"] = renew_days
+            return registry_of(overview(with_registry(reading(), row))).certificates[0].tone
+
+        for renew_days in (1, 3, 6):
+            with self.subTest(renew_days=renew_days):
+                self.assertEqual(tone(18, renew_days), "warning")
+                self.assertEqual(tone(6, renew_days), "critical")
+
     def test_an_imported_certificate_without_a_profile_still_warns_at_a_month(self) -> None:
         row = registered(kind="import", days_left=27)
         self.assertEqual(

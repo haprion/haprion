@@ -72,6 +72,8 @@ NDES_DEFAULT_RENEW_DAYS = 30
 #
 OLDER_COPY_CRITICAL_AFTER = timedelta(days=7)
 NDES_RENEWAL_SLACK = timedelta(days=5)
+# The critical band a short renewal window keeps before expiry (26-11-05, XX05).
+NDES_LAST_HOURS = timedelta(hours=12)
 
 
 @dataclass(frozen=True, slots=True)
@@ -487,10 +489,11 @@ def _expiry_state(
         # Late, not merely due: the warning sits `NDES_RENEWAL_SLACK` below the
         # renewal day but never under a day, and the critical window is a day
         # shorter still, so a small `renew_days` neither starts critical nor
-        # skips its warning (26-11-05, CC01).
+        # skips its warning (26-11-05, CC01); the last half day is critical even
+        # when the window leaves no whole day for it.
         #
         warn_after = max(timedelta(days=ndes_renew_days) - NDES_RENEWAL_SLACK, timedelta(days=1))
-        critical_after = min(CRITICAL_WINDOW, warn_after - timedelta(days=1))
+        critical_after = min(CRITICAL_WINDOW, max(warn_after - timedelta(days=1), NDES_LAST_HOURS))
     if left <= critical_after:
         return date, _remaining(expires_at, now), "critical"
     if left <= warn_after:

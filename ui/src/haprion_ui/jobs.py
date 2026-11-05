@@ -822,6 +822,7 @@ def ran(job: Job) -> bool:
 # (`profile_row_changed`).
 #
 WORKER_WARNINGS = frozenset({"answer_kept", "profile_row_changed"})
+WARNED_WHEN_DONE = frozenset({"deploy", "cert_deploy", "backup_run", "revert"})
 
 
 def warnings_of(job: Job) -> tuple[tuple[str, str], ...]:
@@ -1184,8 +1185,9 @@ def _view(
     ended_badly = job.state in ATTENTION
     #
     # Every warning of a partial run; of a completed one only a deploy's, whose
-    # warnings are each about the cluster (deploy_run), and a backup's, whose one
-    # is that the old archives could not be pruned. Other helpers' warnings
+    # warnings are each about the cluster (deploy_run), a backup's, whose one
+    # is that the old archives could not be pruned, and a revert's, which is not
+    # refused for the core's checks and so says them here (B443). Other helpers' warnings
     # on success are not measured, and a note under every green row would bury
     # the ones that mean something, as the diagnostics comment below says. What
     # the worker says of the job itself is shown whatever the step (review
@@ -1193,8 +1195,7 @@ def _view(
     #
     warned = (
         warnings_of(job)
-        if job.state == "partial"
-        or (job.state == "done" and ending_step(job) in {"deploy", "cert_deploy", "backup_run"})
+        if job.state == "partial" or (job.state == "done" and ending_step(job) in WARNED_WHEN_DONE)
         else tuple(entry for entry in warnings_of(job) if entry[0] in WORKER_WARNINGS)
     )
     spoken = [message for _, message in warned if message]

@@ -644,6 +644,18 @@ class TheErrorCodeReachesThePage(LoginTestCase):
         body = self.page([job(state="done", outcome="done", result=said, operation="backup_run")])
         self.assertIn("Warning:</span> <code>backup_retention_failed</code>", body)
 
+    def test_a_revert_shows_the_warnings_of_the_core_s_checks(self) -> None:
+        """A revert is not refused for them (B443, D02), so the page is where they are said."""
+
+        for code in ("stick_counters_short", "traffic_log_unreachable", "tls_defaults_stale"):
+            with self.subTest(code=code):
+                said = {"warnings": [{"code": code, "message": "the core is behind"}]}
+                body = self.page(
+                    [job(state="done", outcome="done", result=said, operation="revert")]
+                )
+                self.assertIn(f"Warning:</span> <code>{code}</code>", body)
+                self.assertIn("— the core is behind", body)
+
     def test_what_the_worker_says_about_the_job_is_shown_whatever_its_step(self) -> None:
         """Review 26-10-29, B3 and O08: written by the worker and stored, and never drawn."""
 

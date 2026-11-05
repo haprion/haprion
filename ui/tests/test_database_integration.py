@@ -10496,7 +10496,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                     "/var/lib/haprion", str(self.directory / "lib")
                 )
                 for line in re.findall(
-                    r"^RESTORE_(?:STOPPED|STATE|TOKENS|MARKER)=.*\n", source, re.M
+                    r"^RESTORE_(?:STOPPED|STATE|TOKENS|MARKER|REPLACED)=.*\n", source, re.M
                 )
             )
             + f"PLATFORM_STEPS={self.directory / 'steps'}\n"

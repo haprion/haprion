@@ -362,6 +362,8 @@ class ADumpBeforeAMigration(unittest.TestCase):
             f"psql_scratch() {{ echo {1 if exists else 0}; }}\n"
             f"DUMP_DIR={self.dumps}\nDB_NAME=haprion\nDB_ROLE=r\nDISK_WARN_PERCENT=101\n"
             "BEFORE_RESTORE_KEPT=3\n"
+            f"RESTORE_STATE={self.root}/state\n"
+            'RESTORE_REPLACED="${RESTORE_STATE}/replaced"\n'
             + function("write_dump", source)
             + function("keep_newest", source)
             + function("dump_before_restore", source)
@@ -422,6 +424,50 @@ class ADumpBeforeAMigration(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(chosen.read_text(), "older")
 
+    def test_the_dump_being_restored_is_kept_however_its_path_is_spelled(self) -> None:
+        """Review 2026-11-05 R02: relative, `//` and a symlinked directory all name the same file."""
+
+        (self.root / "alias").symlink_to(self.dumps)
+        spellings = (
+            "dumps/before-restore/{name}",
+            "{dumps}//before-restore//{name}",
+            "{root}/alias/before-restore/{name}",
+        )
+        for spelling in spellings:
+            with self.subTest(spelling=spelling):
+                directory = self.dumps / "before-restore"
+                directory.mkdir(parents=True, exist_ok=True)
+                for old in directory.iterdir():
+                    old.unlink()
+                for day in (21, 22, 23):
+                    made = directory / f"haprion-202610{day}-100000.dump"
+                    made.write_text("older")
+                    os.utime(made, (1_790_000_000 + day, 1_790_000_000 + day))
+                name = "haprion-20261021-100000.dump"
+                chosen = spelling.format(name=name, dumps=self.dumps, root=self.root)
+                done = self.before_restore(True, chosen=chosen)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertTrue((directory / name).exists(), done.stdout)
+
+    def test_the_dump_taken_is_named_by_the_one_that_replaces_it_and_recorded(self) -> None:
+        """Review 2026-11-05 R01: the last line must name the database that was replaced."""
+
+        self.dumps.mkdir()
+        done = self.before_restore(True, chosen="/x/haprion-20261021.dump")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        made = [path.name for path in (self.dumps / "before-restore").iterdir()]
+        self.assertEqual(len(made), 1)
+        self.assertRegex(made[0], r"^haprion-\d{8}-\d{6}-before-haprion-20261021\.dump$")
+        recorded = (self.root / "state" / "replaced").read_text().strip()
+        self.assertEqual(recorded, str(self.dumps / "before-restore" / made[0]))
+
+    def test_no_database_leaves_no_record_of_one(self) -> None:
+        self.dumps.mkdir()
+        (self.root / "state").mkdir()
+        (self.root / "state" / "replaced").write_text("stale\n")
+        self.before_restore(False)
+        self.assertFalse((self.root / "state" / "replaced").exists())
+
     def test_no_database_means_nothing_to_dump(self) -> None:
         self.dumps.mkdir()
         done = self.before_restore(False)
@@ -434,6 +480,71 @@ class ADumpBeforeAMigration(unittest.TestCase):
         self.assertIn("takes two schema revisions", done.stderr)
 
 
+class TheListShowsEveryDumpWithItsPath(unittest.TestCase):
+    """Review 2026-11-05 R08: the ones a restore or a migration leaves were not shown."""
+
+    def test_three_groups_and_a_path_that_can_be_pasted_into_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dumps = Path(raw) / "dumps"
+            for relative in (
+                "haprion-20261101.dump",
+                "before-restore/haprion-20261102-100000-before-haprion-20261101.dump",
+                "before-migration/haprion-0080-to-0081-20261103-100000.dump",
+            ):
+                (dumps / relative).parent.mkdir(parents=True, exist_ok=True)
+                (dumps / relative).write_text("dump")
+            source = SCRIPT.read_text()
+            program = (
+                "set -Eeuo pipefail\n"
+                'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+                f"DUMP_DIR={dumps}\nDB_NAME=haprion\n"
+                + function("list_group", source)
+                + function("do_list", source)
+                + "do_list\n"
+            )
+            done = subprocess.run(  # noqa: S603 - fixed program
+                ["/bin/bash", "-c", program],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={"PATH": "/usr/bin:/bin"},
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            lines = done.stdout.splitlines()
+            self.assertEqual(
+                [line for line in lines if not line.startswith(("2", " "))],
+                ["Daily dumps", "Before a restore", "Before a migration"],
+            )
+            for relative in (
+                "haprion-20261101.dump",
+                "before-restore/haprion-20261102-100000-before-haprion-20261101.dump",
+                "before-migration/haprion-0080-to-0081-20261103-100000.dump",
+            ):
+                self.assertTrue(
+                    any(line.endswith(f"  {dumps}/{relative}") for line in lines), done.stdout
+                )
+
+    def test_a_missing_directory_is_said(self) -> None:
+        source = SCRIPT.read_text()
+        program = (
+            "set -Eeuo pipefail\n"
+            'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+            "DUMP_DIR=/nonexistent\nDB_NAME=haprion\n"
+            + function("list_group", source)
+            + function("do_list", source)
+            + "do_list\n"
+        )
+        done = subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PATH": "/usr/bin:/bin"},
+        )
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("no dump directory", done.stderr)
+
+
 class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
     """B376 (R2 26-10-27, F21): `haprion-backup restore <dump>`, with the machine stubbed.
 
@@ -442,6 +553,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
     """
 
     kept: str | None = None
+    chosen: str | None = None
 
     def restore(
         self,
@@ -457,6 +569,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         dumped: bool = True,
         state: Path | None = None,
         reads: tuple[str, ...] = ("aa bb",),
+        spelled: str = "{dump}",
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         """One run; `remembered` and `state` are what the runs before it left.
 
@@ -517,13 +630,18 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 'revoke_revived_tokens() { record "revoke-early $*"; }\n'
                 'install() { mkdir -p "${@: -1}"; }\n'
                 + token_reads(reads)
-                + f'dump_before_restore() {{ record "dump-before-restore"; {"true" if dumped else "false"}; }}\n'
+                + 'dump_before_restore() { record "dump-before-restore"; echo "$1" > "$CALLS.chosen";'
+                ' mkdir -p "$RESTORE_STATE";'
+                ' echo "$DUMP_DIR/before-restore/haprion-20261101-100000-before-stub.dump"'
+                ' > "$RESTORE_REPLACED"; ' + f"{'true' if dumped else 'false'}; }}\n"
                 "DB_NAME=haprion\nDUMP_DIR=/dumps\n"
                 + re.search(r"^counted\(\) .*\n", source, re.MULTILINE).group(0)  # type: ignore[union-attr]
                 + units.group(0)
                 + f'RESTORE_STOPPED="{remembered or here / "restore-stopped"}"\n'
                 + f'RESTORE_STATE="{state or here / "state"}"\n'
-                + "".join(re.findall(r"^RESTORE_(?:TOKENS|MARKER)=.*\n", source, re.MULTILINE))
+                + "".join(
+                    re.findall(r"^RESTORE_(?:TOKENS|MARKER|REPLACED)=.*\n", source, re.MULTILINE)
+                )
                 + f'PLATFORM_STEPS="{steps}"\nCOLLECTOR_CONFIG="{config}"\n'
                 f'RETENTION_COMMAND="{retention}"\nRETENTION_TIMER="{timer}"\n'
                 f'COLLECTOR_COMMAND="{collector}"\n'
@@ -545,12 +663,14 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 + 'do_restore "$1"\n'
             )
             done = subprocess.run(  # noqa: S603 - fixed program
-                ["/bin/bash", "-c", program, "bash", str(dump)],
+                ["/bin/bash", "-c", program, "bash", spelled.format(dump=dump, here=here)],
                 capture_output=True,
                 text=True,
                 check=False,
                 env={**os.environ, "CALLS": str(calls)},
             )
+            chosen = Path(f"{calls}.chosen")
+            self.chosen = chosen.read_text().strip() if chosen.exists() else None
             said = calls.read_text().splitlines() if calls.exists() else []
             kept = Path(f"{calls}.kept")
             self.kept = kept.read_text().strip() if kept.exists() else None
@@ -739,7 +859,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw) / "state"
             self.restore(active=self.ACTIVE, restored=False, state=state)
-            done, _ = self.restore(active="", state=state, dumped=False)
+            done, _ = self.restore(active="", state=state, connections="1")
             self.assertEqual(done.returncode, 1)
             self.assertEqual((state / "tokens").read_text(), "aa,bb\n")
             self.assertTrue((state / "restoring").exists())
@@ -751,9 +871,48 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         self.assertFalse(any("pg_restore" in line for line in said))
         self.assertIn("systemctl start haprion-worker.service", said)
 
-    def test_the_last_sentence_says_where_the_replaced_database_is(self) -> None:
+    def test_the_last_sentence_names_the_dump_of_the_replaced_database(self) -> None:
         done, _ = self.restore(active=self.ACTIVE)
-        self.assertIn("kept in /dumps/before-restore/", done.stdout)
+        self.assertIn(
+            "kept in /dumps/before-restore/haprion-20261101-100000-before-stub.dump", done.stdout
+        )
+
+    def test_a_run_again_does_not_dump_what_the_first_run_left_and_names_the_first_dump(
+        self,
+    ) -> None:
+        """Review 2026-11-05 R01: the database a run again finds is the dump's or half made."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw) / "state"
+            first, said = self.restore(active=self.ACTIVE, restored=False, state=state)
+            self.assertEqual(first.returncode, 1)
+            self.assertEqual(said.count("dump-before-restore"), 1)
+            done, said = self.restore(active="", state=state)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertNotIn("dump-before-restore", said)
+            self.assertIn(
+                "kept in /dumps/before-restore/haprion-20261101-100000-before-stub.dump",
+                done.stdout,
+            )
+            self.assertEqual(list(state.iterdir()), [])
+
+    def test_a_dump_given_by_a_relative_or_doubled_path_is_the_one_read(self) -> None:
+        """Review 2026-11-05 R02: the gallery step compares what it is given with what it finds."""
+
+        for spelled in ("{here}//./haprion-20261027.dump", "{here}/steps/../haprion-20261027.dump"):
+            with self.subTest(spelled=spelled):
+                done, _ = self.restore(active=self.ACTIVE, spelled=spelled)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                chosen = self.chosen or ""
+                self.assertEqual(Path(chosen).name, "haprion-20261027.dump")
+                self.assertNotIn("//", chosen)
+                self.assertNotIn("..", chosen)
+
+    def test_a_dump_that_does_not_exist_is_refused_by_its_own_path(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, spelled="{here}/none.dump")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("cannot read the dump", done.stderr)
+        self.assertEqual(said, [])
 
     def test_an_older_dump_is_migrated_before_its_privileges_are_proved(self) -> None:
         """Review 26-10-29, A1: a dump from before 0102 stopped on 03-verify, services down."""
@@ -1020,7 +1179,7 @@ class HoldingAfterARestore(unittest.TestCase):
             "set -Eeuo pipefail\n"
             f'RESTORE_STOPPED="{remembered or "/nonexistent/restore-stopped"}"\n'
             f'RESTORE_STATE="{state or "/nonexistent"}"\n'
-            + "".join(re.findall(r"^RESTORE_(?:TOKENS|MARKER)=.*\n", source, re.MULTILINE))
+            + "".join(re.findall(r"^RESTORE_(?:TOKENS|MARKER|REPLACED)=.*\n", source, re.MULTILINE))
             + 'log() { echo "$*"; }\n'
             'die() { echo "ERROR: $*" >&2; exit 1; }\n'
             f"systemctl() {{ [[ $1 == is-active ]] && {'true' if active else 'false'}; }}\n"

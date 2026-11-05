@@ -298,7 +298,11 @@ keep_newest() {
             | sort -rn | cut -d' ' -f2-
     )
     for index in "${!dumps[@]}"; do
-        if [[ "$index" -ge "$count" && "${directory}/${dumps[$index]}" != "$spare" ]]; then
+        #
+        # The same file, not the same spelling of its path: relative, with a
+        # doubled slash, through a symlink or the bind mount of the data directory.
+        #
+        if [[ "$index" -ge "$count" && ! "${directory}/${dumps[$index]}" -ef "$spare" ]]; then
             rm -f -- "${directory}/${dumps[$index]}"
             log "  removed  ${dumps[$index]}"
         fi
@@ -316,7 +320,8 @@ keep_newest() {
 BEFORE_RESTORE_KEPT=3
 
 dump_before_restore() {
-    local chosen="${1:-}" directory="${DUMP_DIR}/before-restore" target
+    local chosen="${1:-}" directory="${DUMP_DIR}/before-restore" target label
+    rm -f -- "$RESTORE_REPLACED"
     [[ "$(psql_scratch -d postgres -c \
         "select 1 from pg_database where datname = '${DB_NAME}'")" == 1 ]] || {
         log "  ${DB_NAME} does not exist; nothing to dump"
@@ -324,13 +329,27 @@ dump_before_restore() {
     }
     install -d -o root -g root -m 700 "$DUMP_DIR" "$directory" \
         || die "cannot create ${directory}"
-    target="${directory}/${DB_NAME}-$(date +%Y%m%d-%H%M%S).dump"
+    #
+    # Named by the dump that replaces it, so the list says which restore it was
+    # taken for (review 2026-11-05, R01).
+    #
+    label="$(basename -- "${chosen:-restore}" .dump | tr -c 'A-Za-z0-9._\n-' _ | cut -c1-80)"
+    target="${directory}/${DB_NAME}-$(date +%Y%m%d-%H%M%S)-before-${label}.dump"
     write_dump "$target"
     #
     # The dump being restored may be one of these, the oldest, and is read
     # after this: it is never the one removed.
     #
     keep_newest "$directory" "$BEFORE_RESTORE_KEPT" "$chosen"
+    #
+    # Which dump holds the database this restore replaced, for the last line and
+    # for a run again, which does not dump the half-made database over it.
+    #
+    install -d -o root -g root -m 700 "$RESTORE_STATE"
+    { ( umask 077 && printf '%s\n' "$target" >"${RESTORE_REPLACED}.partial" ); } \
+        || die "cannot record ${target} as the dump of the replaced database"
+    mv -f -- "${RESTORE_REPLACED}.partial" "$RESTORE_REPLACED" \
+        || die "cannot record ${target} as the dump of the replaced database"
 }
 
 #
@@ -716,12 +735,14 @@ RESTORE_STOPPED=/run/haprion/restore-stopped
 RESTORE_STATE=/var/lib/haprion/database-restore
 RESTORE_TOKENS="${RESTORE_STATE}/tokens"
 RESTORE_MARKER="${RESTORE_STATE}/restoring"
+# The dump of the database the first run replaced (review 2026-11-05, R01).
+RESTORE_REPLACED="${RESTORE_STATE}/replaced"
 
 # Replaces an earlier run's set, and its marker first: a set without one is
 # not used.
 save_restore_tokens() {
     install -d -o root -g root -m 700 -- "$RESTORE_STATE"
-    rm -f -- "$RESTORE_MARKER"
+    rm -f -- "$RESTORE_MARKER" "$RESTORE_REPLACED"
     ( umask 077 && printf '%s\n' "$1" >"${RESTORE_TOKENS}.partial" )
     mv -f -- "${RESTORE_TOKENS}.partial" "$RESTORE_TOKENS"
 }
@@ -729,7 +750,7 @@ save_restore_tokens() {
 # The marker goes first, so a run stopped between the two leaves a set that is
 # not used rather than a marker without one.
 forget_restore_tokens() {
-    rm -f -- "$RESTORE_MARKER" "$RESTORE_TOKENS"
+    rm -f -- "$RESTORE_MARKER" "$RESTORE_TOKENS" "$RESTORE_REPLACED"
 }
 
 restore_set_is_kept() {
@@ -812,9 +833,14 @@ restore_stopped() {
 }
 
 do_restore() {
-    local dump="$1" unit connections collector revision plan verdict head release tokens
+    local dump="$1" unit connections collector revision plan verdict head release tokens replaced
     local -i reused=0
     local -a before=() stopped=() now=()
+    #
+    # The file itself, whatever way its path was spelled (review 2026-11-05,
+    # R02): relative, with a doubled slash, through a symlink.
+    #
+    dump="$(realpath -e -- "$dump")" || die "cannot read the dump ${dump}"
     [[ -f "$dump" && -r "$dump" ]] || die "cannot read the dump ${dump}"
     pg_restore --list "$dump" >/dev/null 2>&1 || die "${dump} is not a dump pg_restore can read"
     [[ -x "${PLATFORM_STEPS}/03-verify" ]] || die "${PLATFORM_STEPS}/03-verify is missing"
@@ -892,8 +918,14 @@ do_restore() {
     fi
 
     step_log "Dumping what is about to be replaced"
-    if ! ( dump_before_restore "$dump" ); then
-        (( reused )) || forget_restore_tokens
+    if (( reused )); then
+        #
+        # The database now is the dump's or a half-made one, and the first run
+        # dumped the one that was replaced (review 2026-11-05, R01).
+        #
+        log "  skipped  a run before this one already dumped the database it replaces"
+    elif ! ( dump_before_restore "$dump" ); then
+        forget_restore_tokens
         start_units "${now[@]}"
         remember_stopped "${before[@]}"
         die "the database could not be dumped before it is replaced; nothing was restored${before[*]:+, and ${before[*]} stay stopped}"
@@ -951,6 +983,8 @@ do_restore() {
     step_log "Starting what was stopped"
     start_units "${stopped[@]}"
     remember_stopped
+    replaced=""
+    [[ ! -s "$RESTORE_REPLACED" ]] || replaced="$(<"$RESTORE_REPLACED")"
     forget_restore_tokens
 
     collector="$(systemctl show -p User --value haprion-traffic-collector.service 2>/dev/null || true)"
@@ -961,7 +995,13 @@ do_restore() {
     fi
     echo
     log "restored from $(basename "$dump"); waiting jobs are held for an admin on Jobs"
-    log "the database it replaced is kept in ${DUMP_DIR}/before-restore/"
+    if [[ -n "$replaced" ]]; then
+        log "the database it replaced is kept in ${replaced}"
+    elif (( reused )); then
+        log "the database it replaced is kept in ${DUMP_DIR}/before-restore/; see: sudo haprion-backup list"
+    else
+        log "there was no database to replace, so none was dumped"
+    fi
 }
 
 start_units() {
@@ -1041,16 +1081,33 @@ run_recorded() {
     return "$status"
 }
 
+#
+# Every dump with the path `restore` takes (review 2026-11-05, R08). The ones a
+# restore and a migration leave are root's alone, in directories of their own.
+#
+list_group() {
+    local title="$1" directory="$2" lines
+    [[ -d "$directory" ]] || return 0
+    lines="$(find "$directory" -maxdepth 1 -type f -name "${DB_NAME}-*.dump" \
+        -printf '%TY-%Tm-%Td %TH:%TM  %10s  %p\n' | sort -r)"
+    [[ -n "$lines" ]] || return 0
+    echo "$title"
+    echo "$lines"
+}
+
+do_list() {
+    [[ -d "$DUMP_DIR" ]] || die "no dump directory: ${DUMP_DIR}"
+    list_group "Daily dumps" "$DUMP_DIR"
+    list_group "Before a restore" "${DUMP_DIR}/before-restore"
+    list_group "Before a migration" "${DUMP_DIR}/before-migration"
+}
+
 case "$command" in
     dump)           take_lock; run_recorded dump do_dump ;;
     dump-before-migration) take_lock; do_dump_before_migration "$@" ;;
     after-restore)  hold_release_lock_for_restore; after_restore_by_hand ;;
     restore)        hold_release_lock_for_restore; take_lock; do_restore "$1" ;;
     verify-restore) take_lock; run_recorded restore-check do_verify_restore ;;
-    list)
-        [[ -d "$DUMP_DIR" ]] || die "no dump directory: ${DUMP_DIR}"
-        find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" \
-            -printf '%TY-%Tm-%Td %TH:%TM  %10s  %f\n' | sort -r
-        ;;
+    list)           do_list ;;
     *) usage ;;
 esac

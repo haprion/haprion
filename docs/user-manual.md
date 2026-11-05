@@ -3246,7 +3246,7 @@ were waiting run. The clock is behind as well. Restart the manager straight afte
 worker then holds what was waiting, and the clock is set. Take snapshots for restoring without memory.
 
 **Restoring only the database** from one of its dumps is one command. `haprion-backup list` shows the
-dumps; give the one to restore:
+dumps in three groups - daily, before a restore and before a migration - each with the path to give:
 
 ```bash
 sudo haprion-backup restore /var/lib/haprion-ui/dumps/<dump>
@@ -3256,7 +3256,9 @@ It stops everything that writes the database - the web and its socket, the worke
 traffic collector and the timers - and refuses while a connection to the database remains. It then
 dumps the database it is about to replace to `before-restore/` under the dump directory, so a wrong
 dump chosen can be undone; the newest three are kept, and the daily dumps' retention neither counts
-nor removes them. The last line of the command names the directory. If that dump cannot be made,
+nor removes them. Each is named by the dump that replaced it, and the last line of the command names the
+one that holds the database this restore replaced. A run again after a failure does not dump a second
+time: the database is the dump's or half made by then. If that dump cannot be made,
 nothing is restored and what was stopped is started again. The command then
 makes the database again from the dump, checks its privileges with `03-verify`, holds the waiting jobs
 and ends the sessions (`after-restore`), starts what it stopped, and replays the traffic log (below).

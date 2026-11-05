@@ -90,15 +90,22 @@ UPLOADED_FILE = File(default=None)
 
 
 def log_freshness_warnings(reading: traffic_logs.Reading, now: datetime) -> tuple[Any, ...]:
-    """(node, seconds since success, seconds since attempt) for each node the log warning names."""
+    """(node, seconds since success, since attempt, since the journal was last collected) per node named."""
 
     freshness = tuple(
-        (node, node.stale_seconds(now=now), node.attempt_seconds(now=now)) for node in reading.nodes
+        (
+            node,
+            node.stale_seconds(now=now),
+            node.attempt_seconds(now=now),
+            node.waf_stale_seconds(now=now),
+        )
+        for node in reading.nodes
     )
     return tuple(
         item
         for item in freshness
         if item[0].latest_attempt_failed()
+        or item[0].waf_failed()
         or item[0].catching_up()
         or item[1] is None
         or item[1] > 300

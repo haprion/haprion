@@ -32,6 +32,7 @@ from haprion.traffic_collector import (
     ProtocolError,
     Response,
     SSHError,
+    WafPage,
     _database_row,
     _entry,
     _failure_outcome,
@@ -1513,7 +1514,7 @@ class WafJournalCollectorTests(unittest.TestCase):
         connection.commit.side_effect = psycopg.OperationalError("gone")
         code, errors, _ = self.collect_with(lambda _t, _c: waf_response(engine_line()), connection)
         self.assertEqual(code, 1)
-        self.assertIn("waf: WAF import failed: gone", errors)
+        self.assertIn("alpha/node-a: WAF import failed: gone", errors)
         self.assertFalse(self.cursor_file.exists())
 
     def test_a_match_outside_the_partitions_is_passed_and_said(self) -> None:
@@ -1580,6 +1581,69 @@ class WafJournalCollectorTests(unittest.TestCase):
         self.assertIn("alpha/node-a: waf: SSH request failed with exit 65", errors)
         meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
         self.assertEqual(meta["outcome"], "ok")
+        #
+        # But the node's own metadata says it, for the log page and the
+        # attention list to read (review 2026-11-05, T03): an empty *Findings*
+        # tab reads as "no attacks" and the next step is to turn a rule to block.
+        #
+        self.assertEqual(meta["waf_outcome"], "ssh")
+        self.assertIsNone(meta["waf_last_success"])
+
+    def test_a_journal_read_to_its_end_is_marked_ok_with_its_time(self) -> None:
+        code, _errors, _ = self.collect_with(lambda _t, _c: waf_response(engine_line(), "x"))
+        self.assertEqual(code, 0)
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
+        self.assertEqual(meta["waf_outcome"], "ok")
+        self.assertEqual(meta["waf_last_success"], NOW.isoformat())
+
+    def test_a_later_traffic_run_keeps_the_last_word_on_the_journal(self) -> None:
+        def broken(_target: NodeTarget, _cursor: str) -> bytes:
+            raise SSHError("SSH request failed with exit 65")
+
+        self.collect_with(broken)
+        collect_node(
+            self.config,
+            self.target,
+            now=NOW + timedelta(minutes=1),
+            fetch=lambda _t, _d, offset: Response(offset, offset, 0, True, False, 0, b""),
+        )
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
+        self.assertEqual(meta["waf_outcome"], "ssh")
+
+    def test_a_database_refusal_for_one_node_does_not_stop_the_nodes_after_it(self) -> None:
+        """Review 2026-11-05, T03: the first node's failing COPY ended the WAF
+        import for every node after it, and none of them moved its cursor."""
+
+        node_b = NodeTarget("alpha", "node-b", "node-b.example.com")
+        configured = dataclasses.replace(self.config, nodes=(self.target, node_b))
+        pages = []
+        for target in configured.nodes:
+            row = _waf_row("alpha", target.node, WAF_AT, journal_cursor(1), engine_line())
+            assert row is not None
+            pages.append((target, WafPage(journal_cursor(1), False, (row,), 0)))
+        connection: Any = _Connection(refuse_nodes=("node-a",))
+        with (
+            patch("haprion.traffic_collector._database_days", return_value=frozenset()),
+            patch("haprion.traffic_collector._database_window", return_value=None),
+        ):
+            skipped, expired, failed = traffic_collector._ingest_waf_pages(
+                configured, connection, pages
+            )
+        self.assertEqual((skipped, expired), (0, 0))
+        self.assertEqual(list(failed), [self.target])
+        self.assertIn("WAF import failed", failed[self.target])
+        self.assertEqual([row[2] for row in connection.rows], ["node-b"])
+        self.assertFalse(self.cursor_file.exists())
+        self.assertTrue((self.staging / ".alpha--node-b.waf-cursor").exists())
+
+    def test_a_node_whose_waf_import_failed_says_so_on_its_metadata(self) -> None:
+        refused = {self.target: "WAF import failed: refused"}
+        with patch("haprion.traffic_collector._ingest_waf", return_value=(0, 0, refused)):
+            code, errors, _ = self.collect_with(lambda _t, _c: waf_response(engine_line(), "x"))
+        self.assertEqual(code, 1)
+        self.assertIn("alpha/node-a: WAF import failed: refused", errors)
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
+        self.assertEqual(meta["waf_outcome"], "database")
 
     def test_the_request_names_the_cursor_and_any_exit_but_zero_fails(self) -> None:
         with (

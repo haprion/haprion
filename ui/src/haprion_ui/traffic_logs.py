@@ -148,6 +148,21 @@ class Freshness:
     # T02).
     #
     budget_reason: str | None = None
+    #
+    # How the WAF journal's last read ended, apart from the traffic log's
+    # (review 2026-11-05, T03): `ok`, or what went wrong. `None` from a
+    # collector older than the field.
+    #
+    waf_outcome: str | None = None
+    waf_last_success: datetime | None = None
+
+    def waf_failed(self) -> bool:
+        return self.waf_outcome is not None and self.waf_outcome != "ok"
+
+    def waf_stale_seconds(self, *, now: datetime) -> float | None:
+        if self.waf_last_success is None:
+            return None
+        return max(0.0, (now - self.waf_last_success).total_seconds())
 
     def being_joined(self, *, now: datetime) -> bool:
         return (
@@ -599,6 +614,7 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
     pending = value.get("pending_days")
     behind = value.get("behind_runs")
     reason = value.get("budget_reason")
+    waf = value.get("waf_outcome")
     return Freshness(
         cluster=cluster,
         node=node,
@@ -613,6 +629,10 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
         behind_runs=behind if type(behind) is int and 0 <= behind <= 2**31 else None,
         first_attempt=_stamp(value.get("first_attempt")),
         budget_reason=reason if reason in {"share", "volume"} else None,
+        waf_outcome=waf
+        if isinstance(waf, str) and re.fullmatch(r"[a-z]{1,16}", waf) is not None
+        else None,
+        waf_last_success=_stamp(value.get("waf_last_success")),
     )
 
 

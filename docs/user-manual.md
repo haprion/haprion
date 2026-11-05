@@ -8523,11 +8523,16 @@ each record has a fixed identity. Once `[traffic_logs]` is enabled in `ui.toml`,
 reads indexed database rows; the mirror metadata still reports how fresh the collection is.
 
 A record the database cannot hold is skipped and counted in the run's output, and the import goes on
-past it: text that is not valid UTF-8 (a lone surrogate), a NUL, a field past its length, a request
-number beyond a 64-bit integer. A day file that fails to import stops that node's import only; the
+past it: text that is not valid UTF-8 (a lone surrogate), a NUL, a name past its length, a request
+number beyond a 64-bit integer. A method, host or path past its length is cut, not skipped. A day file that fails to import stops that node's import only; the
 nodes after it are imported as usual, and the failed node shows `database` in the log warning and
 under Needs attention instead of `ok`. Root or the `haproxy` account on a node can still write such a
 line, so one node's log is not trusted beyond that node.
+
+The WAF engine's journal is read apart from the traffic log, and its result is kept apart: a node whose
+journal cannot be read, or whose matches the database refused, stays current in the traffic log and shows
+*WAF findings not collected* in the log warning and under Needs attention. The *Findings* tab says the list
+is incomplete. The nodes after it are imported as usual.
 
 Successful contact does not mean the log is caught up. The log warning shows whether today's file
 is incomplete, the bytes remaining at the last read, and older days still pending. The remaining

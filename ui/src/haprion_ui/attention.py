@@ -712,6 +712,7 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
         if node.being_joined(now=now):
             continue
         stale = node.stale_seconds(now=now)
+        message = ""
         if node.latest_attempt_failed() and node.outcome == "budget":
             message = (
                 "log collection paused: this node's logs are most of the manager's copy"
@@ -731,19 +732,35 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
                 if node.pending_days
                 else f" for {node.behind_runs} runs"
             )
-        else:
-            continue
-        items.append(
-            Item(
-                kind="logs",
-                severity="warning",
-                cluster=node.cluster,
-                subject=node.node,
-                message=message,
-                since=node.last_success,
-                link="/logs",
+        if message:
+            items.append(
+                Item(
+                    kind="logs",
+                    severity="warning",
+                    cluster=node.cluster,
+                    subject=node.node,
+                    message=message,
+                    since=node.last_success,
+                    link="/logs",
+                )
             )
-        )
+        #
+        # The WAF journal is read apart from the traffic log, and a node whose
+        # traffic is current can still have no findings collected: an empty
+        # *Findings* list reads as no attacks (review 2026-11-05, T03).
+        #
+        if node.waf_failed():
+            items.append(
+                Item(
+                    kind="logs",
+                    severity="warning",
+                    cluster=node.cluster,
+                    subject=node.node,
+                    message=f"WAF findings not collected ({node.waf_outcome})",
+                    since=node.waf_last_success,
+                    link="/waf",
+                )
+            )
     return items
 
 

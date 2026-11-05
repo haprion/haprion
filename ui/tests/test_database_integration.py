@@ -30,7 +30,6 @@ from haprion.traffic_collector import (
     CollectorConfig,
     NodeTarget,
     _database_days,
-    _database_reason,
     _database_window,
     _ingest_part,
     _ingest_waf_pages,
@@ -3141,9 +3140,13 @@ class ARealDatabase(unittest.TestCase):
             )
             page = _parse_waf_response(raw, target)
             with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
-                self.assertEqual(_ingest_waf_pages(config, connection, [(target, page)]), (0, 0))
+                self.assertEqual(
+                    _ingest_waf_pages(config, connection, [(target, page)]), (0, 0, {})
+                )
                 (root / ".alpha--node-a.waf-cursor").unlink()
-                self.assertEqual(_ingest_waf_pages(config, connection, [(target, page)]), (0, 0))
+                self.assertEqual(
+                    _ingest_waf_pages(config, connection, [(target, page)]), (0, 0, {})
+                )
             self.assertEqual((root / ".alpha--node-a.waf-cursor").read_text(), "s=ab;i=2;b=cd\n")
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -3192,12 +3195,9 @@ class ARealDatabase(unittest.TestCase):
                 "/run/postgresql",
             )
             page = _parse_waf_response(raw, target)
-            with (
-                self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection,
-                self.assertRaises(psycopg.Error) as refused,
-            ):
-                _ingest_waf_pages(config, connection, [(target, page)])
-        reason = _database_reason(refused.exception)
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
+                _, _, refused = _ingest_waf_pages(config, connection, [(target, page)])
+        reason = refused[target]
         self.assertIn("waf_match_cluster_shape", reason)
         self.assertIn("(23514)", reason)
         self.assertNotIn("secret-looking-value", reason)

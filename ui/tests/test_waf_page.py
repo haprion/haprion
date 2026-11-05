@@ -14,7 +14,7 @@ from haprion.crs import Rule
 
 from haprion_ui import waf
 from haprion_ui.db import ProxyDraft, WafCounted, WafFinding, WafFindings
-from tests.test_editor_page import OBJECTS, SHOP, EditorTestCase
+from tests.test_editor_page import OBJECTS, SHOP, EditorTestCase, writing_configuration
 
 SEEN = datetime(2026, 10, 2, 14, 30, tzinfo=UTC)
 LOGGING = SHOP + "waf:\n  mode: log\n"
@@ -339,6 +339,37 @@ class ThePage(EditorTestCase):
         self.assertIn("Findings <b>1</b>", text)
         self.assertIn("Exceptions <b>0</b>", text)
         self.assertIn("Requests <b>1297</b>", text)
+
+    def test_findings_say_so_when_a_node_s_journal_was_not_collected(self) -> None:
+        """Review 2026-11-05, T03: an empty or short *Findings* list reads as
+        "no attacks", and the next step is to turn a rule to block."""
+
+        from haprion_ui import traffic_logs
+
+        node = traffic_logs.Freshness(
+            "alpha", "node-a", SEEN, SEEN, "ok", waf_outcome="ssh", waf_last_success=None
+        )
+        reading = traffic_logs.Reading((), (node,), 0, False)
+        configured = writing_configuration()
+        configured = replace(
+            configured, traffic_logs=replace(configured.traffic_logs, enabled=True)
+        )
+        client = self.client(configured)
+        self.sign_in(client)
+        with mock.patch("haprion_ui.traffic_logs.read_freshness", return_value=reading):
+            findings = client.get("/waf").text
+            exceptions = client.get("/waf?view=exceptions").text
+        self.assertIn("WAF findings from node-a are not collected (ssh)", findings)
+        self.assertIn("incomplete", findings)
+        self.assertNotIn("not collected", exceptions)
+        clean = traffic_logs.Reading(
+            (),
+            (traffic_logs.Freshness("alpha", "node-a", SEEN, SEEN, "ok", waf_outcome="ok"),),
+            0,
+            False,
+        )
+        with mock.patch("haprion_ui.traffic_logs.read_freshness", return_value=clean):
+            self.assertNotIn("not collected", client.get("/waf").text)
 
     def test_a_rule_that_logs_no_data_shows_a_dash_rather_than_an_empty_box(self) -> None:
         # CRS's empty-header rules (920310, 920330) write no log data (26-10-11).

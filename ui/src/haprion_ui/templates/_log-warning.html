@@ -11,9 +11,11 @@
       <div class="log-warning-popover">
         <strong>Log collection needs attention</strong>
         {% if reading.unavailable %}<p>One or more mirrors changed or could not be read. Reload to read the current files.</p>{% endif %}
-        {% for node, stale, attempted in freshness_warnings %}
+        {% for node, stale, attempted, waf_stale in freshness_warnings %}
+        {% set traffic_issue = node.latest_attempt_failed() or stale is none or node.catching_up() or stale > 300 %}
         <p><b>{{ node.cluster }} / {{ node.node }}</b><span>
-          {%- if stale is not none and node.latest_attempt_failed() -%}
+          {%- if not traffic_issue -%}
+          {%- elif stale is not none and node.latest_attempt_failed() -%}
             last try {{ attempted | round | int }} s ago —
             {%- if node.outcome == 'budget' %} paused: {{ "this node's logs are most of the manager's copy until midnight UTC" if node.budget_reason == 'share' else "the manager's copy is over its space budget" }}
             {%- else %} failed ({{ node.outcome }})
@@ -36,6 +38,15 @@
             last mirrored {{ (stale / 60) | round | int }} min ago
           {%- else -%}
             last mirrored {{ (stale / 3600) | round(1) }} h ago
+          {%- endif -%}
+          {%- if node.waf_failed() -%}
+            {{ '; ' if traffic_issue }}WAF findings not collected ({{ node.waf_outcome }})
+            {%- if waf_stale is not none %}, last collected
+              {%- if waf_stale < 90 %} {{ waf_stale | round | int }} s ago
+              {%- elif waf_stale < 5400 %} {{ (waf_stale / 60) | round | int }} min ago
+              {%- else %} {{ (waf_stale / 3600) | round(1) }} h ago
+              {%- endif -%}
+            {%- endif -%}
           {%- endif -%}
         </span></p>
         {% else %}

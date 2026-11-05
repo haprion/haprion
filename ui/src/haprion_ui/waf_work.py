@@ -34,6 +34,7 @@ from haprion_ui import (
     auth,
     db,
     objects,
+    traffic_logs,
     waf,
 )
 from haprion_ui import editor as editor_module
@@ -205,6 +206,19 @@ def waf_work_page(request: Request, config: Config, view: str, problem: str = ""
     chosen = (selected,) if selected in clusters else tuple(clusters)
     overview = waf_overview(request, config, chosen)
     days, findings, exceptions = overview.days, overview.findings, overview.exceptions
+    #
+    # The nodes whose journal the collector could not read: their findings are
+    # missing here, and an empty list reads as no attacks (review 2026-11-05, T03).
+    #
+    uncollected = (
+        [
+            node
+            for node in traffic_logs.read_freshness(config.traffic_logs.directory, chosen).nodes
+            if node.waf_failed()
+        ]
+        if config.traffic_logs.enabled
+        else []
+    )
     return TEMPLATES.TemplateResponse(
         request,
         "waf.html",
@@ -221,6 +235,7 @@ def waf_work_page(request: Request, config: Config, view: str, problem: str = ""
             "findings": findings,
             "tab_counts": overview.tab_counts(),
             "findings_truncated": overview.truncated,
+            "uncollected": uncollected,
             "exceptions": exceptions,
             "where": waf.where,
             "saved": request.query_params.get("saved", "")[:40],

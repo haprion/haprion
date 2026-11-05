@@ -604,6 +604,27 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
             ],
         )
 
+    def test_a_journal_that_could_not_be_collected_is_listed_beside_the_traffic_log(self) -> None:
+        """Review 2026-11-05, T03: the traffic log is current for that node, and
+        *Findings* is empty - which reads as no attacks."""
+
+        items = attention.from_traffic_logs(
+            (
+                self.freshness(waf_outcome="ssh"),
+                self.freshness(node="node-b", waf_outcome="ok"),
+                self.freshness(node="node-c", outcome="ssh", waf_outcome="ssh"),
+            ),
+            now=self.NOW,
+        )
+        self.assertEqual(
+            [(item.subject, item.message, item.link) for item in items],
+            [
+                ("node-a", "WAF findings not collected (ssh)", "/waf"),
+                ("node-c", "log collection failed (ssh)", "/logs"),
+                ("node-c", "WAF findings not collected (ssh)", "/waf"),
+            ],
+        )
+
     def test_a_node_being_joined_is_not_listed_until_the_join_has_had_its_time(self) -> None:
         from haprion_ui.traffic_logs import JOINING_SECONDS
 

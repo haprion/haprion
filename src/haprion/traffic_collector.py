@@ -524,27 +524,58 @@ def _write_meta(
     else:
         behind = 0
     stamp = attempted.isoformat()
-    first = _previous(path).get("first_attempt")
-    content = json.dumps(
-        {
-            "schema_version": 1,
-            "cluster": target.cluster,
-            "node": target.node,
-            "first_attempt": first if isinstance(first, str) else stamp,
-            "last_attempt": stamp,
-            "last_success": stamp if success else previous,
-            "outcome": outcome,
-            "current_day": attempted.astimezone(UTC).date().isoformat(),
-            "current_complete": current_complete,
-            "remaining_bytes": remaining_bytes,
-            "pending_days": pending_days,
-            "behind_runs": behind,
-            "budget_reason": budget_reason,
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    _replace(path, content + b"\n")
+    earlier = _previous(path)
+    first = earlier.get("first_attempt")
+    document: dict[str, Any] = {
+        "schema_version": 1,
+        "cluster": target.cluster,
+        "node": target.node,
+        "first_attempt": first if isinstance(first, str) else stamp,
+        "last_attempt": stamp,
+        "last_success": stamp if success else previous,
+        "outcome": outcome,
+        "current_day": attempted.astimezone(UTC).date().isoformat(),
+        "current_complete": current_complete,
+        "remaining_bytes": remaining_bytes,
+        "pending_days": pending_days,
+        "behind_runs": behind,
+        "budget_reason": budget_reason,
+        #
+        # What the WAF journal's last read said (`_write_waf_outcome`), carried
+        # over: it is written after this file, once the run has stored what the
+        # journal gave.
+        #
+        "waf_outcome": earlier.get("waf_outcome"),
+        "waf_last_success": earlier.get("waf_last_success"),
+    }
+    _replace(path, _meta_document(document))
+
+
+def _meta_document(document: dict[str, Any]) -> bytes:
+    return json.dumps(document, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
+
+
+def _write_waf_outcome(
+    config: CollectorConfig, target: NodeTarget, *, attempted: datetime, outcome: str
+) -> None:
+    """Say how the WAF journal's read ended, beside the traffic log's outcome.
+
+    Its own, because the traffic log is current for a node whose journal
+    cannot be read, and the WAF page's *Findings* tab is empty for it - which
+    reads as "no attacks", and the next step is to turn a rule to block
+    (review 2026-11-05, T03).
+    """
+
+    path = _meta_path(config, target)
+    document = _previous(path)
+    if not document:
+        return
+    document["waf_outcome"] = outcome
+    if outcome == "ok":
+        document["waf_last_success"] = attempted.isoformat()
+    else:
+        document.setdefault("waf_last_success", None)
+    _replace(path, _meta_document(document))
 
 
 def _failure_outcome(exc: CollectorError | OSError) -> str:
@@ -1536,8 +1567,12 @@ from stdin
 
 def _ingest_waf(
     config: CollectorConfig, pages: list[tuple[NodeTarget, WafPage]]
-) -> tuple[int, int]:
-    """Store each node's page, then move its cursor; answer what was skipped: matches, expired."""
+) -> tuple[int, int, dict[NodeTarget, str]]:
+    """Store each node's page, then move its cursor.
+
+    Answers what was skipped (matches), what expired, and the nodes the database
+    refused; those are the nodes whose cursor did not move.
+    """
 
     #
     # Most minutes bring nothing: no WAF on the cluster, or no request matched.
@@ -1552,7 +1587,7 @@ def _ingest_waf(
         or page.cursor not in ("", _waf_cursor(config, target))
     ]
     if not pages:
-        return 0, 0
+        return 0, 0, {}
     try:
         with psycopg.connect(
             f"dbname={config.database} host={config.database_socket}", autocommit=False
@@ -1566,39 +1601,61 @@ def _ingest_waf_pages(
     config: CollectorConfig,
     connection: psycopg.Connection[Any],
     pages: list[tuple[NodeTarget, WafPage]],
-) -> tuple[int, int]:
+) -> tuple[int, int, dict[NodeTarget, str]]:
+    """One transaction per node, as the traffic log has: a refusal for one node
+    is that node's, and the nodes after it are stored and move their cursors
+    (review 2026-11-05, T03)."""
+
     skipped = 0
     expired = 0
+    failed: dict[NodeTarget, str] = {}
     _database_days(connection, "waf_match")
     window = _database_window(connection, "waf_match")
     for target, page in pages:
-        path = _waf_cursor_path(config, target)
-        skipped += page.skipped
-        if page.reset:
-            #
-            # The node no longer knows the position: its journal was rotated
-            # past it or replaced. Read it again from the start.
-            #
-            if path.exists() or path.is_symlink():
-                _regular(path, maximum=1024)
-                path.unlink()
-            continue
+        try:
+            expired += _ingest_waf_page(config, connection, target, page, window)
+            skipped += page.skipped
+        except psycopg.Error as exc:
+            failed[target] = f"WAF import failed: {_database_reason(exc)}"
+            with contextlib.suppress(psycopg.Error):
+                connection.rollback()
+    return skipped, expired, failed
+
+
+def _ingest_waf_page(
+    config: CollectorConfig,
+    connection: psycopg.Connection[Any],
+    target: NodeTarget,
+    page: WafPage,
+    window: tuple[datetime, datetime] | None,
+) -> int:
+    """Store one node's page and move its cursor; answer how many matches fall outside the days held."""
+
+    path = _waf_cursor_path(config, target)
+    if page.reset:
         #
-        # Never offered to a day without a partition: PostgreSQL refuses the
-        # whole batch for one such row (see `_database_days`). A match that
-        # falls outside is passed by the cursor all the same - unlike a staged
-        # traffic day, nothing here could hold it until its day exists.
+        # The node no longer knows the position: its journal was rotated
+        # past it or replaced. Read it again from the start.
         #
-        rows = [row for row in page.rows if _within_window(row, window)]
-        expired += len(page.rows) - len(rows)
-        if rows:
-            with connection.cursor() as cursor, cursor.copy(_WAF_COPY) as copy:
-                for row in rows:
-                    copy.write_row(row)
-            connection.commit()
-        if page.cursor and page.cursor != _waf_cursor(config, target):
-            _replace(path, f"{page.cursor}\n".encode(), 0o600)
-    return skipped, expired
+        if path.exists() or path.is_symlink():
+            _regular(path, maximum=1024)
+            path.unlink()
+        return 0
+    #
+    # Never offered to a day without a partition: PostgreSQL refuses the
+    # whole batch for one such row (see `_database_days`). A match that
+    # falls outside is passed by the cursor all the same - unlike a staged
+    # traffic day, nothing here could hold it until its day exists.
+    #
+    rows = [row for row in page.rows if _within_window(row, window)]
+    if rows:
+        with connection.cursor() as cursor, cursor.copy(_WAF_COPY) as copy:
+            for row in rows:
+                copy.write_row(row)
+        connection.commit()
+    if page.cursor and page.cursor != _waf_cursor(config, target):
+        _replace(path, f"{page.cursor}\n".encode(), 0o600)
+    return len(page.rows) - len(rows)
 
 
 @contextlib.contextmanager
@@ -1656,6 +1713,7 @@ class _NodeRun:
     problem: str | None
     waf: WafPage | None = None
     waf_problem: str | None = None
+    waf_outcome: str = "ok"
 
 
 def collect(
@@ -1712,7 +1770,7 @@ def collect(
             try:
                 return _NodeRun(problem, waf=fetch_waf(config, target, selected_waf))
             except (CollectorError, OSError) as exc:
-                return _NodeRun(problem, waf_problem=str(exc))
+                return _NodeRun(problem, waf_problem=str(exc), waf_outcome=_failure_outcome(exc))
 
         #
         # The nodes at once (Fas 16 punkt 1). Each node's staging parts, mirror
@@ -1780,8 +1838,12 @@ def collect(
                     success=False,
                 )
             failures += 1
+        imported: dict[NodeTarget, str] = {}
         try:
-            skipped, expired = _ingest_waf(config, pages)
+            skipped, expired, imported = _ingest_waf(config, pages)
+            for target, reason in imported.items():
+                print(f"{target.cluster}/{target.node}: {reason}", file=sys.stderr)
+                failures += 1
             if skipped:
                 print(f"waf: skipped {skipped} unusable match(es)", file=sys.stderr)
             if expired:
@@ -1791,7 +1853,13 @@ def collect(
                 )
         except (CollectorError, OSError) as exc:
             print(f"waf: {exc}", file=sys.stderr)
+            imported = {target: str(exc) for target, _ in pages}
             failures += 1
+        for target, run in zip(config.nodes, runs, strict=True):
+            waf_outcome = run.waf_outcome
+            if run.waf_problem is None and target in imported:
+                waf_outcome = "database"
+            _write_waf_outcome(config, target, attempted=attempted, outcome=waf_outcome)
         _retire(config, now=attempted, window=window)
         _retire_staging(config, now=attempted, window=window)
         return 1 if failures else 0

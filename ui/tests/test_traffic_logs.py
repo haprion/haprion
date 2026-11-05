@@ -390,6 +390,18 @@ class TrafficLogReadingTests(unittest.TestCase):
             (node.current_complete, node.remaining_bytes, node.pending_days), (None,) * 3
         )
 
+    def test_the_waf_outcome_is_read_and_a_value_that_is_not_one_is_unknown(self) -> None:
+        self.meta("alpha", "node-a", waf_outcome="protocol", waf_last_success=NOW.isoformat())
+        node = read_freshness(self.root, ("alpha",)).nodes[0]
+        self.assertTrue(node.waf_failed())
+        self.assertEqual((node.waf_outcome, node.waf_last_success), ("protocol", NOW))
+        self.meta("alpha", "node-a", waf_outcome="ok")
+        self.assertFalse(read_freshness(self.root, ("alpha",)).nodes[0].waf_failed())
+        self.meta("alpha", "node-a", waf_outcome=7)
+        self.assertFalse(read_freshness(self.root, ("alpha",)).nodes[0].waf_failed())
+        self.meta("alpha", "node-a")
+        self.assertFalse(read_freshness(self.root, ("alpha",)).nodes[0].waf_failed())
+
     def test_unreadable_metadata_never_stops_the_page(self) -> None:
         (self.root / "alpha--node-a.meta.json").write_bytes(b"{ not json")
 
@@ -486,6 +498,23 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("paused", page)
         self.assertIn("this node&#39;s logs are most of the manager&#39;s copy", page)
         self.assertNotIn("failed (budget)", page)
+
+    def test_a_journal_that_could_not_be_collected_is_in_the_log_warning(self) -> None:
+        (self.root / "alpha--node-a.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt": NOW.isoformat(),
+                    "last_success": NOW.isoformat(),
+                    "outcome": "ok",
+                    "waf_outcome": "ssh",
+                    "waf_last_success": (NOW - timedelta(hours=2)).isoformat(),
+                }
+            )
+        )
+        page = self.page(now=NOW)
+        self.assertIn("WAF findings not collected (ssh)", page)
+        self.assertIn("last collected 2.0 h ago", page)
 
     def test_the_warning_is_drawn_alone_for_the_page_to_ask_again(self) -> None:
         #

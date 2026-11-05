@@ -18,6 +18,7 @@
 {% from "_waf-finding.html" import finding_what %}
 
 {% if view == 'findings' %}
+{% if uncollected %}<p class="preview-notice"><span class="status-orb status-warning" aria-hidden="true"></span><strong>WAF findings from {{ uncollected | map(attribute='node') | join(', ') }} are not collected ({{ uncollected | map(attribute='waf_outcome') | unique | join(', ') }}).</strong> This list is incomplete until the node answers again.</p>{% endif %}
 {% for card in findings %}
 <section class="cluster-card finding-card {{ card.cluster | cluster_accent }}">
   <header class="cluster-header">

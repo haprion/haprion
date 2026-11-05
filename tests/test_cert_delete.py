@@ -463,6 +463,30 @@ class WhatIsLeftAndSaid(DeleteFixture):
         self.assertEqual(report.incomplete, ("one.example", "two.example"))
         self.assertEqual(report.outcomes[0].nodes[0].state, "unreachable")
 
+    def test_a_node_that_did_not_answer_is_not_asked_again_by_the_rest_of_the_batch(self) -> None:
+        """Each question to a dead node costs its connect timeout, with the certificate lock held."""
+
+        policy_path = self.prepared(
+            {
+                f"{name}.example": {"source": {"kind": "acme"}, "clusters": ["alpha"]}
+                for name in ("one", "two", "three")
+            }
+        )
+        self.node_answers["node-a.example.com"] = (255, "connection timed out")
+        report = self.run_delete(policy_path, "one.example", "two.example", "three.example")
+
+        self.assertEqual(report.incomplete, ("one.example", "two.example", "three.example"))
+        self.assertEqual(
+            [call for call in self.node_calls if call[0] == "node-a.example.com"],
+            [("node-a.example.com", "one.example")],
+        )
+        for outcome in report.outcomes:
+            self.assertEqual(
+                {copy.node: copy.state for copy in outcome.nodes},
+                {"node-a": "unreachable", "node-b": "removed"},
+            )
+        self.assertIn("not asked again", report.outcomes[2].nodes[0].detail)
+
     def test_a_certbot_failure_keeps_everything_so_the_cluster_still_deploys(self) -> None:
         policy_path = self.prepared(
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}

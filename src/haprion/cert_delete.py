@@ -561,9 +561,16 @@ def remove_node_copies(
     ask: NodeRemover,
     *,
     verb: str = NODE_VERB,
+    unreachable: set[str] | None = None,
 ) -> tuple[NodeCopy, ...]:
-    """Layer four, node by node. A refusal is a kept copy, reported and asked again next run."""
+    """Layer four, node by node. A refusal is a kept copy, reported and asked again next run.
 
+    `unreachable` is shared by a batch: a node that did not answer is not asked
+    again by the certificates after it. Each question to a dead node costs its
+    connect timeout, and the certificate lock is held for all of them.
+    """
+
+    gone = unreachable if unreachable is not None else set()
     copies: list[NodeCopy] = []
     for cluster in clusters:
         for node in cluster.nodes:
@@ -574,6 +581,16 @@ def remove_node_copies(
                     )
                 )
                 continue
+            if node.mgmt_host in gone:
+                copies.append(
+                    NodeCopy(
+                        cluster.cluster_id,
+                        node.name,
+                        "unreachable",
+                        "did not answer earlier in this run; not asked again",
+                    )
+                )
+                continue
             code, output = ask(identity, node.mgmt_host, verb, certificate_id)
             if code == 0:
                 had_copy = NODE_REMOVED_LINE.format(certificate_id=certificate_id) in output
@@ -581,6 +598,7 @@ def remove_node_copies(
                     NodeCopy(cluster.cluster_id, node.name, "removed" if had_copy else "absent")
                 )
             elif code == 255:
+                gone.add(node.mgmt_host)
                 copies.append(NodeCopy(cluster.cluster_id, node.name, "unreachable", output[-300:]))
             else:
                 copies.append(NodeCopy(cluster.cluster_id, node.name, "kept", output[-300:]))
@@ -701,6 +719,7 @@ def _delete_locked(
     guards = guards_reader(runtime, certificate_ids)
 
     outcomes: list[CertificateOutcome] = []
+    unreachable: set[str] = set()
     for certificate_id in certificate_ids:
         reason = refusal(certificate_id, runtime, guards)
         if reason is not None:
@@ -720,6 +739,7 @@ def _delete_locked(
                     certbot=certbot,
                     lineage_remover=lineage_remover,
                     node_remover=node_remover,
+                    unreachable=unreachable,
                 )
             )
             continue
@@ -797,6 +817,7 @@ def _delete_locked(
             policy.cert_deploy_identity,
             node_remover,
             verb=AUTHORITY_NODE_VERB if entry.source.kind == AUTHORITY else NODE_VERB,
+            unreachable=unreachable,
         )
         outcomes.append(_outcome(certificate_id, tuple(layers), nodes))
         #
@@ -835,6 +856,7 @@ def _sweep(
     certbot: str,
     lineage_remover: LineageRemover,
     node_remover: NodeRemover,
+    unreachable: set[str],
 ) -> CertificateOutcome:
     """A certificate the registry no longer names: what is left of it, by name.
 
@@ -887,6 +909,7 @@ def _sweep(
         certificate_id,
         policy.cert_deploy_identity,
         node_remover,
+        unreachable=unreachable,
     )
     nothing_left = all(layer.state == "absent" for layer in layers) and all(
         copy.state == "absent" for copy in nodes

@@ -645,6 +645,7 @@ def _remove(
     except DeleteError as exc:
         raise RetargetError(exc.code, str(exc), exit_code=exc.exit_code) from exc
     outcomes: list[CertificateOutcome] = []
+    unreachable: set[str] = set()
     for certificate_id in certificate_ids:
         runtime = _load(policy, require_secure)
         found = _entry_or_refusal(certificate_id, runtime)
@@ -699,6 +700,7 @@ def _remove(
             policy.cert_deploy_identity,
             node_remover,
             verb=AUTHORITY_NODE_VERB if authority else NODE_VERB,
+            unreachable=unreachable,
         )
         complete = all(layer.state != "failed" for layer in layers) and all(
             copy.state in {"removed", "absent"} for copy in nodes

@@ -573,6 +573,19 @@ class RegistryListingTests(unittest.TestCase):
                 store=root / "import",
                 request_root=requests,
             )
+            gone = cert_inventory.registry_result(
+                registry,
+                certificate_root=root / "certdist",
+                renewed=frozenset(),
+                now=datetime.now(UTC),
+                live=root / "live",
+                store=root / "import",
+                request_root=requests,
+                clusters=frozenset({"alpha"}),
+            )
+            # 26-11-05, C08: "beta" has been removed since the request was made.
+            waiting = {entry["id"]: entry for entry in gone["certificates"]}["waiting.example"]
+            self.assertEqual(waiting["targets"]["clusters"], [])
             by_id = {entry["id"]: entry for entry in result["certificates"]}
             self.assertEqual(set(by_id), {"other", "waiting.example"})
             row = by_id["waiting.example"]
@@ -1072,6 +1085,7 @@ class HelperTests(unittest.TestCase):
                     return _cluster(("example.com",))
 
                 registry = None
+                clusters = {"alpha": object()}
 
             with (
                 mock.patch.object(cert_list_helper, "load_policy", lambda *a, **k: Policy()),

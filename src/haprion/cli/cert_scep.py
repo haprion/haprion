@@ -109,6 +109,7 @@ def enroll(
                 )
             domains = [str(name) for name in recorded]
             profile_id = profile_id or recorded_profile
+        from_request = False
         if resume and not clusters and not receivers:
             #
             # The targets too: kept beside the request rather than in the
@@ -116,6 +117,7 @@ def enroll(
             #
             clusters, receivers = request_targets(policy.ndes.state_root, certificate_id)
             formats = request_formats(policy.ndes.state_root, certificate_id)
+            from_request = True
         if resume:
             interface = interface or request_is_interface(policy.ndes.state_root, certificate_id)
             exportable = exportable or request_is_exportable(policy.ndes.state_root, certificate_id)
@@ -153,6 +155,16 @@ def enroll(
                     exit_codes.REFUSED if exc.code == "bad_input" else exit_codes.CONFIG,
                 ) from exc
         runtime = load_runtime_config(policy, require_secure=require_secure)
+        if from_request:
+            #
+            # A request may wait for days; a cluster or receiver removed since is
+            # not a target any more, as an import of a signed request treats it
+            # (26-11-05, C08).
+            #
+            clusters = [name for name in clusters if name in runtime.clusters]
+            known = runtime.registry.receivers if runtime.registry is not None else {}
+            receivers = [name for name in receivers if name in known]
+            formats = {k: v for k, v in (formats or {}).items() if k in receivers}
         if any(name not in runtime.clusters for name in clusters):
             raise ScepRefusal("bad_input", "unknown target cluster", exit_codes.REFUSED)
         if runtime.registry is None or any(

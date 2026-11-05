@@ -231,6 +231,25 @@ class WhatARequestIs(RequestFixture):
         self.assertIsNone(row["distribution"])
         self.assertNotIn(KEY_MARK, json.dumps(listing))
 
+    def test_a_cluster_that_has_gone_is_not_listed_as_a_target(self) -> None:
+        """26-11-05, C08: the upload sends the row's targets back, and a gone one would be refused."""
+
+        self.request(receivers=["lb-01"])
+        _policy, runtime = self.loaded()
+
+        listing = registry_result(
+            runtime.registry,
+            certificate_root=self.dist,
+            renewed=frozenset(),
+            now=datetime.now(UTC),
+            live=self.live,
+            store=self.store,
+            clusters=frozenset({"beta"}),
+        )
+        row = {r["id"]: r for r in listing["certificates"]}["shop.example.net"]
+        self.assertEqual(row["targets"]["clusters"], [])
+        self.assertEqual([r["id"] for r in row["targets"]["receivers"]], ["lb-01"])
+
     def test_a_directory_without_a_record_is_not_pending(self) -> None:
         self.request()
         (self.store / "shop.example.net" / RECORD).unlink()

@@ -250,6 +250,29 @@ class HelperBoundary(ScepFixture):
         # The request is over: its directory goes with it.
         self.assertFalse(directory.exists())
 
+    def test_a_resume_drops_a_cluster_that_has_gone_since_the_request(self) -> None:
+        """26-11-05, C08: a removed cluster is not a target any more, and not a refusal."""
+
+        self.pending("web.example.com")
+        write_targets(
+            self.ndes_policy.state_root,
+            "web.example.com",
+            clusters=("alpha", "removed"),
+            receivers=("lb-01", "removed-receiver"),
+        )
+        directory = request_directory(self.ndes_policy.state_root, "web.example.com")
+        issued = ndes.Enrollment("issued", directory, self.material())
+        with (
+            mock.patch.object(ndes, "enroll") as engine,
+            mock.patch.object(ndes, "validate_certificate"),
+        ):
+            engine.return_value.__enter__.return_value = issued
+            code, doc, errors = self.helper({"id": "web.example.com", "resume": True})
+
+        self.assertEqual(code, 0, errors)
+        entry = self.registered()["web.example.com"]
+        self.assertEqual((entry["clusters"], entry["receivers"]), (["alpha"], ["lb-01"]))
+
     def test_an_exportable_request_keeps_its_mark_through_the_wait(self) -> None:
         """B255: decided at the request, registered with it when the CA answers."""
 

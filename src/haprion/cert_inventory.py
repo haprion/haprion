@@ -32,7 +32,7 @@ import hashlib
 import json
 import re
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -545,6 +545,7 @@ def registry_result(
     request_root: Path | None = None,
     manager: str | None = None,
     interface_served: Mapping[str, Any] | None = None,
+    clusters: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """Every certificate the manager holds, measured at its source.
 
@@ -557,7 +558,16 @@ def registry_result(
     Measured at the source rather than at a target because the source is what a
     renewal writes first. A target that has not been published yet would
     otherwise report the previous certificate's expiry, or none at all.
+
+    `clusters` is the clusters that exist. A request the CA or a signer is
+    still holding keeps the clusters it was made with, and one removed since
+    is not a target any more: it is left out of the row, so the page does not
+    send it back with the answer (26-11-05, C08). None leaves the lists as
+    they are.
     """
+
+    def existing(named: Sequence[str]) -> list[str]:
+        return [name for name in named if clusters is None or name in clusters]
 
     entries: list[dict[str, Any]] = []
     for entry in registry.certificates.values():
@@ -716,7 +726,7 @@ def registry_result(
                     "measured_at": None,
                     **_unmeasured(now),
                     "targets": {
-                        "clusters": list(pending.clusters),
+                        "clusters": existing(pending.clusters),
                         "receivers": [
                             _receiver_row(
                                 registry.receivers[receiver_id],
@@ -755,7 +765,7 @@ def registry_result(
                 "measured_at": None,
                 **_unmeasured(now),
                 "targets": {
-                    "clusters": list(csr.clusters),
+                    "clusters": existing(csr.clusters),
                     "receivers": [
                         _receiver_row(
                             registry.receivers[receiver_id],
@@ -951,6 +961,7 @@ def manager_result(
     manager: str | None = None,
     interface_served: Mapping[str, Any] | None = None,
     ndes_configured: bool | None = None,
+    clusters: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """What the manager holds, asked of the manager rather than of a cluster.
 
@@ -984,5 +995,6 @@ def manager_result(
             request_root=request_root,
             manager=manager,
             interface_served=interface_served,
+            clusters=clusters,
         )
     return result

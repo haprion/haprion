@@ -562,10 +562,12 @@ traffic_budget() {
 }
 
 #
-# The mark is made as root in the collector's directory, which the collector
-# owns: it is written under another name and moved over the old one, a rename
-# that replaces whatever stands there - a link too - and follows none. The
-# collector accepts a mark only if root owns it.
+# The mark is placed in the collector's directory, which the collector owns. It
+# is written beside that directory, in its parent, which root owns and the
+# collector cannot write to, so nothing is written through a link the collector
+# put in the file's place; then it is moved over the old mark, a rename on the
+# same filesystem that replaces whatever stands there - a link too - and follows
+# none. The collector accepts a mark only if root owns it.
 #
 database_budget_mark() {
     local mark="${STAGING_DIRECTORY}/${DATABASE_BUDGET_MARK}" temporary
@@ -574,7 +576,7 @@ database_budget_mark() {
         rm -f -- "$mark" || warn "  cannot remove ${mark}"
         return 0
     fi
-    temporary="$(mktemp -p "$STAGING_DIRECTORY" "${DATABASE_BUDGET_MARK}.XXXXXX")" \
+    temporary="$(mktemp -p "$(dirname -- "$STAGING_DIRECTORY")" "${DATABASE_BUDGET_MARK}.XXXXXX")" \
         || { warn "  cannot make ${mark}"; return 0; }
     if ! { printf 'over\n' > "$temporary" && mv -fT -- "$temporary" "$mark"; }; then
         rm -f -- "$temporary"

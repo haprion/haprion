@@ -173,13 +173,29 @@ exec /bin/mv "$@"
 """
 
 
+# What a collector that owns the staging directory can do between `mktemp` and the write:
+# take the file away and put a link in its place. It cannot do it anywhere else.
+SWAPPING_MKTEMP_STUB = """#!/bin/sh
+made="$(/usr/bin/mktemp "$@")" || exit 1
+case "$made" in
+    "$STAGING"/*) rm -f "$made"; ln -s "$PRECIOUS" "$made" ;;
+esac
+echo "$made"
+"""
+
+
 class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
     """Review 2026-11-05, T05: the budget drops finished days only, so one day's flood
     stays over the volume's share until midnight. It says so to the collector, which
     stops importing into the day; PostgreSQL does not meet the volume's end first."""
 
     def run_budget(
-        self, held: int, *arguments: str, marker: str | None = None, link: bool = False
+        self,
+        held: int,
+        *arguments: str,
+        marker: str | None = None,
+        link: bool = False,
+        swap: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], Path]:
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
@@ -200,6 +216,10 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
         if link:
             (root / "elsewhere").write_text("untouched\n")
             mark.symlink_to(root / "elsewhere")
+        if swap:
+            (root / "mktemp").write_text(SWAPPING_MKTEMP_STUB)
+            (root / "mktemp").chmod(0o755)
+            (root / "precious").write_text("precious\n")
         script = root / "haprion-retention"
         text = SCRIPT.read_text()
         for old, new in (
@@ -219,6 +239,8 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
                 "RECORD": str(root / "record"),
                 "DATA_DIRECTORY": str(root),
                 "HELD": str(held),
+                "STAGING": str(staging),
+                "PRECIOUS": str(root / "precious"),
             },
             check=False,
             timeout=60,
@@ -246,6 +268,18 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
         self.assertEqual(len(moves), 1, moves)
         self.assertTrue(moves[0].startswith("-fT -- "), moves)
         self.assertTrue(moves[0].endswith(f" {mark}"), moves)
+
+    def test_a_link_put_in_the_temporary_files_place_is_not_written_through(self) -> None:
+        """Review 2026-11-05, Y02: the temporary file is made where the collector cannot
+        reach it, so a link it swaps in between the two calls is never opened."""
+
+        done, mark = self.run_budget(400_000, swap=True)
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual((mark.parent.parent / "precious").read_text(), "precious\n")
+        self.assertEqual(mark.read_text(), "over\n")
+        self.assertFalse(mark.is_symlink())
+        self.assertEqual(sorted(path.name for path in mark.parent.iterdir()), [mark.name])
 
     def test_a_link_in_the_marks_place_is_replaced_not_followed(self) -> None:
         done, mark = self.run_budget(400_000, link=True)

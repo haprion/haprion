@@ -468,7 +468,8 @@ def queue_job(
 ) -> Job:
     """Ask for an operation. Say nothing about what happened.
 
-    Four columns now, which is exactly what the web role holds `insert` on. The
+    Five columns: the four every job has and, for the API, the request's
+    digest (0110) - exactly what the web role holds `insert` on. The
     state, the request ID and the creation time are still not passed and could
     not be: they come from column defaults, so the row that comes back states
     what the database decided rather than what this process asked for.

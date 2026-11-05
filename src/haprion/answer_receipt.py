@@ -11,8 +11,9 @@ read as silent.
 So the helper keeps a receipt, one file per request under ROOT:
 
 - made, locked, as soon as the request has been read and before anything is
-  done, and renamed into place already locked, so no reader sees it unlocked
-  before it is finished;
+  done, and linked into place already locked, so no reader sees it unlocked
+  before it is finished. Linked, never renamed: a rename would replace the
+  receipt of a request asked before, and the link refuses (`AskedBefore`);
 - the answer and the exit code written into it when the helper ends, and the
   lock let go;
 - read by recovery under a shared lock it does not wait for. A lock it cannot
@@ -340,7 +341,7 @@ def _prune(directory: Path, now: float) -> None:
                 continue
             if staged:
                 #
-                # A helper that died between making its receipt and renaming
+                # A helper that died between making its receipt and linking
                 # it into place; nothing reads these.
                 #
                 os.unlink(entry.path)

@@ -3430,6 +3430,9 @@ sudo haprion-node-restore discard --run <run>
 sudo haprion-node-restore status --run <run>
 ```
 
+Every step takes `--json`: the answer is the document the interface's helper gives, with its exit code
+(`blocked`, 75, for a run that is gone or a plan with problems).
+
 **The same three steps from the interface.** An administrator with management writes has *Restore*
 on each archive row of the Node backups page. The form takes the temporary address and the mode: the
 node itself, or a test with its own host name, address and VIP. The run's own page,

@@ -97,6 +97,7 @@ __all__ = [
     "RUN",
     "STATUS",
     "ParameterProblem",
+    "answer",
     "build_request",
     "fingerprint_in",
     "main",
@@ -235,7 +236,7 @@ def main(
     now: Any = time.time,
 ) -> int:
     try:
-        return _answer(
+        return answer(
             argv,
             policy_path=policy_path,
             run_root=run_root,
@@ -265,7 +266,7 @@ def main(
                 (error_stream or sys.stderr).write(f"WARNING: sweeping expired runs: {exc}\n")
 
 
-def _answer(
+def answer(
     argv: list[str] | None,
     *,
     policy_path: Path,
@@ -278,6 +279,12 @@ def _answer(
     engine: Any,
     now: Any,
 ) -> int:
+    """Answer one request: the helper's whole step, with the receipt left to `main`.
+
+    The terminal's ``--json`` calls this too, so one step has one implementation
+    and one set of codes for the socket and for a prompt.
+    """
+
     argv = sys.argv[1:] if argv is None else argv
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr

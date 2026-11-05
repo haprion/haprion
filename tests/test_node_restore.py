@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import io
 import ipaddress
-import json
 import os
 import shutil
 import tarfile
@@ -29,9 +28,11 @@ from haprion import (
     waf_engine_package,
 )
 from haprion.cli import node_restore as cli
+from haprion.cli import node_restore_helper
 from haprion.config import Node
 from haprion.node_restore import Clock, Request, RestoreError
 from haprion.restore_plan import Target, TestProfile
+from tests.contract_schema import assert_contract
 from tests.restore_fixture import FILES, NODE_CONF, build
 
 VERSION = "2026-01-01_04-00-00"
@@ -1260,11 +1261,6 @@ class Status(Timed):
     def test_the_command_line_reads_the_same_standing(self) -> None:
         run = self.previewed()
         self.carry_out(run)
-        out = io.StringIO()
-        code = cli.main(["status", "--run", run, "--json"], run_root=self.root,
-                        output_stream=out, require_root=False)  # fmt: skip
-        self.assertEqual(code, 0)
-        self.assertEqual(json.loads(out.getvalue()), node_restore.status(self.root, run))
         text = io.StringIO()
         cli.main(["status", "--run", run], run_root=self.root, output_stream=text,
                  require_root=False)  # fmt: skip
@@ -1282,16 +1278,144 @@ class Status(Timed):
         self.assertEqual(code, 0)
         return out.getvalue()
 
-    def test_discard_with_json_answers_json(self) -> None:
-        # B447 N05: --help promises one JSON document from any step.
-        run = self.prepare()
-        self.assertEqual(json.loads(self.discarded(run, "--json")), {"run": run, "removed": True})
-        self.assertEqual(json.loads(self.discarded(run, "--json")), {"run": run, "removed": False})
-
     def test_discard_without_json_stays_text(self) -> None:
         run = self.prepare()
         self.assertEqual(self.discarded(run), f"run {run} removed\n")
         self.assertEqual(self.discarded(run), f"there is no run {run}; nothing to remove\n")
+
+
+class TheTerminalAnswersInTheEnvelope(Timed):
+    """K01: `--json` is the helper's own answer, so a script reads what the page reads."""
+
+    def previewed(self) -> str:
+        run = self.prepare()
+        self.preview(run)
+        FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
+        return run
+
+    def terminal(
+        self, *argv: str, root: bool = False, problems: list[str] | None = None
+    ) -> tuple[int, str]:
+        out = io.StringIO()
+        policy = SimpleNamespace(backup_root=self.backups, publish_root=PUBLISH_ROOT)
+        runtime = SimpleNamespace(cluster=lambda _name: CLUSTER)
+        real_preview, real_run = node_restore.preview, node_restore.run
+        ticks = iter(range(10_000))
+        with (
+            mock.patch.object(node_restore_helper, "load_policy", return_value=policy),
+            mock.patch.object(node_restore_helper, "load_runtime_config", return_value=runtime),
+            mock.patch.object(cli, "load_policy", return_value=policy),
+            mock.patch.object(
+                node_restore,
+                "preview",
+                side_effect=lambda *a, **k: {
+                    **real_preview(
+                        *a,
+                        **{
+                            **k,
+                            "scan": lambda _: TARGET_KEY,
+                            "fingerprint_of": lambda key: FINGERPRINT,
+                            "answering": self.answering,
+                            "session_for": FakeSession,
+                            "package_of": lambda: self.package,
+                        },
+                    ),
+                    **({"problems": problems} if problems else {}),
+                },
+            ),
+            mock.patch.object(
+                node_restore,
+                "run",
+                side_effect=lambda *a, **k: real_run(
+                    *a,
+                    **{
+                        **k,
+                        "answering": self.answering,
+                        "clock": Clock(now=lambda: float(next(ticks)), sleep=lambda _: None),
+                        "session_for": FakeSession,
+                        "package_of": lambda: self.package,
+                        "lock_root": self.root / "locks",
+                        "fetch_access": self.fetching.access,
+                    },
+                ),
+            ),
+        ):
+            code = cli.main(list(argv), run_root=self.root, output_stream=out, require_root=root)
+        return code, out.getvalue()
+
+    def test_a_run_that_is_gone_is_blocked_as_the_helper_blocks_it(self) -> None:
+        code, text = self.terminal("status", "--run", "r260101-0000aaaa", "--json")
+        document = assert_contract("haprion-node-restore-status", text)
+        self.assertEqual(
+            (code, document["outcome"], document["error"]["code"], document["cluster"]),
+            (75, "blocked", "restore_refused", None),
+        )
+
+    def test_a_standing_is_the_envelope_with_the_standing_in_it(self) -> None:
+        run = self.previewed()
+        self.carry_out(run)
+        code, text = self.terminal("status", "--run", run, "--json")
+        document = assert_contract("haprion-node-restore-status", text)
+        self.assertEqual((code, document["outcome"], document["cluster"]), (0, "done", "alpha"))
+        self.assertEqual(document["result"], node_restore.status(self.root, run))
+
+    def test_discard_answers_in_the_envelope(self) -> None:
+        run = self.prepare()
+        code, text = self.terminal("discard", "--run", run, "--json")
+        document = assert_contract("haprion-node-restore-discard", text)
+        self.assertEqual((code, document["result"]), (0, {"run": run, "removed": True}))
+        code, text = self.terminal("discard", "--run", run, "--json")
+        document = assert_contract("haprion-node-restore-discard", text)
+        self.assertEqual((code, document["result"]), (0, {"run": run, "removed": False}))
+        self.assertIsNone(document["cluster"])
+
+    def test_a_preview_with_problems_is_blocked_not_failed(self) -> None:
+        run = self.prepare()
+        code, text = self.terminal(
+            "preview", "--run", run, "--fingerprint", FINGERPRINT, "--json",
+            problems=["the target is not what was prepared"],
+        )  # fmt: skip
+        document = assert_contract("haprion-node-restore-preview", text)
+        self.assertEqual(
+            (code, document["outcome"], document["error"]["code"]),
+            (75, "blocked", "restore_blocked"),
+        )
+
+    def test_a_preview_and_a_run_answer_in_the_envelope(self) -> None:
+        run = self.prepare()
+        code, text = self.terminal("preview", "--run", run, "--fingerprint", FINGERPRINT, "--json")
+        document = assert_contract("haprion-node-restore-preview", text)
+        self.assertEqual((code, document["outcome"]), (0, "done"))
+        code, text = self.terminal("run", "--run", run, "--confirm", "node-test", "--json")
+        document = assert_contract("haprion-node-restore", text)
+        self.assertEqual((code, document["outcome"], document["cluster"]), (0, "done", "alpha"))
+
+    def test_a_parameter_the_helper_refuses_is_refused_in_the_envelope(self) -> None:
+        code, text = self.terminal(
+            "prepare", "-c", "alpha", "--node", "node-a", "--archive", VERSION,
+            "--target", "192.0.2.120", "--test", "--test-hostname", "node-test",
+            "--test-address", "192.0.2.29", "--test-vip", "198.51.100.254/32", "--json",
+        )  # fmt: skip
+        document = assert_contract("haprion-node-restore-prepare", text)
+        self.assertEqual((code, document["error"]["code"]), (64, "bad_input"))
+        self.assertIn("address/prefix", document["error"]["message"])
+
+    def test_a_cluster_that_is_not_an_id_gives_no_cluster_in_the_answer(self) -> None:
+        code, text = self.terminal(
+            "prepare", "-c", "Bad Cluster", "--node", "node-a", "--archive", VERSION,
+            "--target", "192.0.2.120", "--json",
+        )  # fmt: skip
+        document = assert_contract("haprion-node-restore-prepare", text)
+        self.assertEqual(
+            (code, document["cluster"], document["error"]["code"]), (64, None, "bad_input")
+        )
+
+    def test_a_caller_who_is_not_root_gets_a_document(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("running as root")
+        code, text = self.terminal("status", "--run", "r260101-0000aaaa", "--json", root=True)
+        document = assert_contract("haprion-node-restore-status", text)
+        self.assertEqual((code, document["error"]["code"]), (77, "not_root"))
 
 
 class TheNeighbourCheckIsForAnyNumberOfNodes(unittest.TestCase):

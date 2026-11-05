@@ -657,7 +657,7 @@ def restore(context: Context, target: Target, node: str, archive: str) -> str:
     done = context.runner([*prepare, "--json"])
     if done.returncode != 0:
         raise Stop(f"{RESTORE} prepare: {done.stderr.strip()[-500:]}")
-    prepared = json.loads(done.stdout)
+    prepared = json.loads(done.stdout)["result"]
     run = str(prepared["run"])
     out.write(f"run {run}: the one-time key goes in through the guest agent\n")
     try:
@@ -686,7 +686,8 @@ def restore(context: Context, target: Target, node: str, archive: str) -> str:
     out.write(ran.stdout)
     if ran.returncode != 0:
         raise Stop(f"the restore did not finish; {RESTORE} status --run {run} says how it stands")
-    standing = json.loads(context.runner([RESTORE, "status", "--run", run, "--json"]).stdout)
+    answer = json.loads(context.runner([RESTORE, "status", "--run", run, "--json"]).stdout)
+    standing = answer.get("result") or {}
     address = (standing.get("result") or {}).get("address")
     if standing.get("outcome") != "done" or not isinstance(address, str):
         raise Stop(f"the run's result has no address: {standing!r}")

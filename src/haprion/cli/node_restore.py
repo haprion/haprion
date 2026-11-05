@@ -18,6 +18,7 @@ its outcome for a week, for ``status``.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -29,7 +30,15 @@ from haprion import exit_codes, labels, node_restore, restore_fetch
 from haprion.backup_archive import ArchiveError
 from haprion.cli import node_restore_helper
 from haprion.cli.caller import help_asked
-from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
+from haprion.config import (
+    CLUSTER_ID,
+    DEFAULT_POLICY_PATH,
+    ConfigError,
+    load_policy,
+    load_runtime_config,
+)
+from haprion.envelope import failure, new_request_id
+from haprion.helper_protocol import write_document
 from haprion.node_restore import Request, RestoreError
 
 USAGE = """\
@@ -65,8 +74,23 @@ Usage:
   removed, and prepare starts again. A run that began writing keeps its
   outcome for a week, for status; its one-time key goes at the hour.
 
-  Add --json to any step for one JSON document instead of text.
+  Add --json to any step for one JSON document instead of text: the document
+  the interface's helper answers with, and the same exit code (a run that is
+  gone or a plan with problems is blocked, 75).
 """
+
+HELPER_CALL = {
+    "prepare": node_restore_helper.PREPARE,
+    "preview": node_restore_helper.PREVIEW,
+    "run": node_restore_helper.RUN,
+    "discard": node_restore_helper.DISCARD,
+    "status": node_restore_helper.STATUS,
+}
+#
+# What a request names as its cluster when the run has none to name (it is gone);
+# the helper needs a well-formed one to read the request, and the answer says null.
+#
+NO_CLUSTER = "none"
 
 
 def _options(argv: list[str], flags: set[str], values: set[str]) -> dict[str, Any]:
@@ -276,6 +300,7 @@ def main(
         errors.write(USAGE)
         return exit_codes.USAGE
     step, rest = argv[0], argv[1:]
+    options: dict[str, Any] = {}
     try:
         if step == "prepare":
             options = _options(
@@ -313,19 +338,41 @@ def main(
         run_id = node_restore.new_run_id() if step == "prepare" else options["--run"]
         parameters = _parameters(step, options, run_id)
     except node_restore_helper.ParameterProblem as problem:
+        if "--json" in options:
+            return _refused(
+                step,
+                _cluster_of(step, options, run_root),
+                "bad_input",
+                f"parameters: {problem}",
+                exit_codes.USAGE,
+                out,
+                errors,
+            )
         errors.write(f"ERROR: {problem}\n\n{USAGE}")
         return exit_codes.USAGE
     except ValueError:
         errors.write(USAGE)
         return exit_codes.USAGE
 
+    as_json = "--json" in options
     if require_root and os.geteuid() != 0:
+        if as_json:
+            return _refused(
+                step,
+                _cluster_of(step, options, run_root),
+                "not_root",
+                "haprion-node-restore must run as root; run it with sudo",
+                exit_codes.NOT_ROOT,
+                out,
+                errors,
+            )
         errors.write("ERROR: haprion-node-restore must run as root; run it with sudo\n")
         return exit_codes.NOT_ROOT
 
-    as_json = "--json" in options
     try:
-        return _step(step, options, parameters, run_id, policy_path, run_root, out, errors, as_json)
+        if as_json:
+            return _answer(step, options, parameters, policy_path, run_root, out, errors)
+        return _step(step, options, parameters, run_id, policy_path, run_root, out, errors)
     finally:
         #
         # After the step, not before: a run that has just expired is refused by
@@ -338,6 +385,89 @@ def main(
         )
 
 
+def _stored_cluster(run_root: Path, run_id: str) -> str | None:
+    """The cluster a run was prepared for, or None when the run is gone or unreadable."""
+
+    try:
+        directory = node_restore.run_directory(run_root, run_id)
+        return Request.from_dict(node_restore.read_json(directory / "request.json")).cluster
+    except (RestoreError, OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _cluster_of(step: str, options: dict[str, Any], run_root: Path) -> str | None:
+    """The cluster an answer names: the one asked for, if it is one; or the run's own."""
+
+    if step == "prepare":
+        asked = options.get("-c")
+        return asked if isinstance(asked, str) and CLUSTER_ID.fullmatch(asked) else None
+    run = options.get("--run")
+    return _stored_cluster(run_root, run) if isinstance(run, str) else None
+
+
+def _refused(
+    step: str,
+    cluster: str | None,
+    code: str,
+    message: str,
+    exit_code: int,
+    out: TextIO,
+    errors: TextIO,
+) -> int:
+    errors.write(f"ERROR: [{code}] {message}\n")
+    document = failure(
+        operation=HELPER_CALL[step],
+        cluster=cluster,
+        request_id=new_request_id(),
+        code=code,
+        message=message,
+        exit_code=exit_code,
+    )
+    return write_document(out, document, exit_code)
+
+
+def _answer(
+    step: str,
+    options: dict[str, Any],
+    parameters: dict[str, Any],
+    policy_path: Path,
+    run_root: Path,
+    out: TextIO,
+    errors: TextIO,
+) -> int:
+    """`--json`: the helper's own answer to the same request, not a second account of it."""
+
+    operation = HELPER_CALL[step]
+    cluster = _cluster_of(step, options, run_root)
+    if step == "prepare" and cluster is None:
+        return _refused(
+            step, None, "bad_input", "-c is not a cluster ID", exit_codes.USAGE, out, errors
+        )
+    request = node_restore_helper.build_request(
+        operation, cluster or NO_CLUSTER, new_request_id(), parameters
+    )
+    answered = io.StringIO()
+    code = node_restore_helper.answer(
+        [],
+        policy_path=policy_path,
+        run_root=run_root,
+        input_stream=io.BytesIO(request.encode()),
+        output_stream=answered,
+        error_stream=errors,
+        require_secure=True,
+        require_root=False,
+        engine=node_restore,
+        now=time.time,
+    )
+    text = answered.getvalue()
+    if cluster is None and text:
+        document = json.loads(text)
+        document["cluster"] = None
+        return write_document(out, document, code)
+    out.write(text)
+    return code
+
+
 def _step(
     step: str,
     options: dict[str, Any],
@@ -347,7 +477,6 @@ def _step(
     run_root: Path,
     out: TextIO,
     errors: TextIO,
-    as_json: bool,
 ) -> int:
     try:
         if step == "discard":
@@ -356,21 +485,15 @@ def _step(
                 options["--run"],
                 fetch_access=restore_fetch.lazy(lambda: load_policy(policy_path)),
             )
-            if as_json:
-                out.write(json.dumps({"run": options["--run"], "removed": removed}) + "\n")
-            else:
-                out.write(
-                    f"run {options['--run']} removed\n"
-                    if removed
-                    else f"there is no run {options['--run']}; nothing to remove\n"
-                )
+            out.write(
+                f"run {options['--run']} removed\n"
+                if removed
+                else f"there is no run {options['--run']}; nothing to remove\n"
+            )
             return 0
         if step == "status":
             standing = node_restore.status(run_root, options["--run"])
-            if as_json:
-                out.write(json.dumps(standing) + "\n")
-            else:
-                _text_status(standing, out)
+            _text_status(standing, out)
             return 0
         policy = load_policy(policy_path)
         runtime = load_runtime_config(policy)
@@ -392,15 +515,12 @@ def _step(
                 policy.backup_root, node_restore.node_of(cluster, request.node), request.archive
             )
             prepared = node_restore.prepare(run_root, request)
-            if as_json:
-                out.write(json.dumps(prepared) + "\n")
-            else:
-                out.write(
-                    f"Run {prepared['run']}\n\nOn {request.target}'s console, as its administrator:\n\n"
-                    f"{prepared['paste']}\n\n"
-                    f"Then: sudo haprion-node-restore preview --run {prepared['run']} "
-                    "--fingerprint <the SHA256:... it printed>\n"
-                )
+            out.write(
+                f"Run {prepared['run']}\n\nOn {request.target}'s console, as its administrator:\n\n"
+                f"{prepared['paste']}\n\n"
+                f"Then: sudo haprion-node-restore preview --run {prepared['run']} "
+                "--fingerprint <the SHA256:... it printed>\n"
+            )
             return 0
         directory = node_restore.run_directory(run_root, options["--run"])
         request = Request.from_dict(node_restore.read_json(directory / "request.json"))
@@ -421,10 +541,7 @@ def _step(
                 progress=errors,
                 checks=checks,
             )
-            if as_json:
-                out.write(json.dumps(summary) + "\n")
-            else:
-                _text_preview(summary, out)
+            _text_preview(summary, out)
             return 1 if summary["problems"] else 0
         result = node_restore.run(
             run_root,
@@ -439,10 +556,7 @@ def _step(
             break_traffic=bool(parameters.get("break_traffic")),
             fetch_access=restore_fetch.for_policy(policy),
         )
-        if as_json:
-            out.write(json.dumps(result) + "\n")
-        else:
-            _text_result(result, out)
+        _text_result(result, out)
         return 0 if result["outcome"] == "done" else 1
     except ConfigError as exc:
         errors.write(f"ERROR: {exc}\n")

@@ -15,14 +15,18 @@ from __future__ import annotations
 import ast
 import asyncio
 import contextlib
+import ctypes
 import importlib
 import io
+import multiprocessing
 import os
 import socket
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -39,7 +43,7 @@ from haprion_ui import api
 from haprion_ui import config as ui_config
 from haprion_ui.app import create_app
 from tests.contract_schema import assert_contract
-from tests.product_filesystem import product_directories, write_installation
+from tests.product_filesystem import PRODUCT_ROOTS, product_directories, write_installation
 from tests.test_login import configuration
 
 REAL_SECURE_YAML = config_module._secure_yaml
@@ -645,14 +649,6 @@ def _help(line: str) -> str:
     return shown.getvalue()
 
 
-def _refuse(program: str, what: str, escapes: list[str]) -> Any:
-    def refused(*_args: Any, **_kwargs: Any) -> Any:
-        escapes.append(f"{program} reached {what}")
-        raise OSError(f"{what} is not here")
-
-    return refused
-
-
 def _no_database(seen: list[str]) -> Any:
     def connect(*_args: Any, **_kwargs: Any) -> Any:
         seen.append("database")
@@ -669,39 +665,149 @@ def _no_async_database(seen: list[str]) -> Any:
     return connect
 
 
-def _guards(program: str, seen: list[str], escapes: list[str]) -> list[Any]:
-    """What a command run as root must not reach: a database, a socket, another process (Z01).
+#
+# What the audit hook refuses, by the name of the event (N02, 26-11-05). Python
+# raises one event for each family: `os.exec` for every `execv*`, `os.spawn` for
+# every `spawn*`.
+#
+REFUSED_EVENTS = frozenset(
+    {
+        "subprocess.Popen",
+        "os.system",
+        "os.exec",
+        "os.spawn",
+        "os.posix_spawn",
+        "os.fork",
+        "os.forkpty",
+        "ctypes.dlopen",
+        "socket.connect",
+        "socket.sendto",
+        "socket.getaddrinfo",
+    }
+)
+#
+# The one foreign library a command loads on purpose: libcrypt, which hashes a
+# password and reaches nothing. `dlopen(None)` is the process itself, whose
+# libc can do anything, and every other name is refused.
+#
+ALLOWED_LIBRARIES = ("libcrypt.so",)
+WRITING = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+TEMPORARY_ROOT = os.path.realpath(tempfile.gettempdir())
+
+
+@dataclass
+class Watch:
+    """The command the hook is watching, where it may write, and what it caught."""
+
+    program: str
+    scratch: Path | None
+    escapes: list[str]
+
+
+WATCHING: Watch | None = None
+HOOKED = False
+
+
+def _opens_outside(watch: Watch, path: Any, mode: Any, flags: Any) -> bool:
+    """Whether an `open` is one the command may not make.
+
+    The rule, since Python itself opens files while it imports: a read is free,
+    except of a path under a product directory, which the fixture would have
+    moved below the scratch directory, so one that arrives here unmoved is the
+    machine's own. A write is refused unless it is below the scratch directory
+    or the temporary one, `/dev/null`, or a byte-code cache (an import may write
+    one beside its source).
+    """
+
+    if isinstance(path, int) or path is None:
+        return False
+    try:
+        text = os.path.abspath(os.fsdecode(path))
+    except (TypeError, ValueError):
+        return False
+    if any(text == root or text.startswith(root + "/") for root in PRODUCT_ROOTS):
+        return True
+    writes = (
+        bool(flags & WRITING)
+        if isinstance(flags, int) and flags >= 0
+        else any(letter in str(mode) for letter in "wax+")
+    )
+    if not writes:
+        return False
+    allowed = [TEMPORARY_ROOT]
+    if watch.scratch is not None:
+        allowed.append(os.path.realpath(watch.scratch))
+    return not (
+        text == os.devnull
+        or "/__pycache__/" in text
+        or any(text == root or text.startswith(root + "/") for root in allowed)
+    )
+
+
+def _audit(event: str, args: tuple[Any, ...]) -> None:
+    watch = WATCHING
+    if watch is None:
+        return
+    if event == "open":
+        refused = _opens_outside(watch, *args)
+    elif event == "ctypes.dlopen":
+        refused = not (isinstance(args[0], str) and args[0].startswith(ALLOWED_LIBRARIES))
+    else:
+        refused = event in REFUSED_EVENTS
+    if refused:
+        message = f"{watch.program} reached {event}"
+        watch.escapes.append(message)
+        raise OSError(message)
+
+
+@contextlib.contextmanager
+def _watching(watch: Watch) -> Iterator[None]:
+    """Run the block with the audit hook refusing what it must not do.
+
+    A hook cannot be removed, so it is installed once and does nothing while
+    `WATCHING` is empty; the flag is what turns it on for the length of one
+    command.
+    """
+
+    global WATCHING, HOOKED
+    if not HOOKED:
+        sys.addaudithook(_audit)
+        HOOKED = True
+    WATCHING = watch
+
+    def fork_exec(*_args: Any, **_kwargs: Any) -> Any:
+        message = f"{watch.program} reached _posixsubprocess.fork_exec"
+        watch.escapes.append(message)
+        raise OSError(message)
+
+    try:
+        #
+        # The one route to a new process Python raises no event for:
+        # `multiprocessing` starts its children straight through this function.
+        #
+        with mock.patch("_posixsubprocess.fork_exec", fork_exec):
+            yield
+    finally:
+        WATCHING = None
+
+
+def _guards(program: str, seen: list[str], escapes: list[str], scratch: Path | None) -> list[Any]:
+    """What a command run in the gate must not reach: a database, a socket, another process (Z01, N02).
 
     The database is asked through libpq, which no audit hook sees, so
     `psycopg.connect`, the connection classes' `connect` (which every pool calls)
     are replaced by ones that record the attempt and fail as a host without a
-    database does. A socket and a new process fail the test with
-    the command's name.
+    database does. Everything else is the audit hook's: a socket, a name lookup,
+    a new process by any route, a foreign library and a file outside the
+    scratch directory fail the test with the command's name and the event.
     """
 
-    patches = [
+    return [
         mock.patch("psycopg.connect", _no_database(seen)),
         mock.patch.object(psycopg.Connection, "connect", _no_database(seen)),
         mock.patch.object(psycopg.AsyncConnection, "connect", _no_async_database(seen)),
+        _watching(Watch(program, scratch, escapes)),
     ]
-    patches.append(
-        mock.patch.object(socket.socket, "connect", _refuse(program, "a socket", escapes))
-    )
-    patches.append(
-        mock.patch.object(socket.socket, "connect_ex", _refuse(program, "a socket", escapes))
-    )
-    patches.append(
-        mock.patch.object(subprocess.Popen, "__init__", _refuse(program, "a process", escapes))
-    )
-    for name in (
-        "system",
-        "posix_spawn",
-        "posix_spawnp",
-        *(n for n in dir(os) if n.startswith("exec")),
-    ):
-        if hasattr(os, name):
-            patches.append(mock.patch.object(os, name, _refuse(program, f"os.{name}", escapes)))
-    return patches
 
 
 def _invoke(
@@ -762,7 +868,7 @@ def _invoke(
                     ),
                 )
             )
-        for guard in _guards(program, seen if seen is not None else [], escapes):
+        for guard in _guards(program, seen if seen is not None else [], escapes, scratch):
             stack.enter_context(guard)
         try:
             returned = importlib.import_module(module).main(argv)
@@ -841,6 +947,50 @@ def _reaches_a_pool(_argv: list[str]) -> int:
         pool.open(wait=True, timeout=2)
     finally:
         pool.close()
+    return 0
+
+
+def _reaches_spawn(_argv: list[str]) -> int:
+    os.spawnl(os.P_WAIT, "/bin/true", "true")  # noqa: S606
+    return 0
+
+
+def _reaches_fork(_argv: list[str]) -> int:
+    pid = os.fork()
+    if pid == 0:
+        os._exit(0)
+    os.waitpid(pid, 0)
+    return 0
+
+
+def _reaches_ctypes(_argv: list[str]) -> int:
+    ctypes.CDLL(None)
+    return 0
+
+
+def _reaches_udp(_argv: list[str]) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(b"x", ("192.0.2.1", 9))
+    return 0
+
+
+def _reaches_a_name_lookup(_argv: list[str]) -> int:
+    socket.getaddrinfo("name.invalid", 80)
+    return 0
+
+
+def _reaches_multiprocessing(_argv: list[str]) -> int:
+    multiprocessing.get_context("spawn").Process(target=int).start()
+    return 0
+
+
+def _writes_beside_the_scratch_directory(_argv: list[str]) -> int:
+    Path("/var/tmp/haprion-parity-gate-probe").write_text("x", encoding="utf-8")  # noqa: S108
+    return 0
+
+
+def _reads_the_machines_policy(_argv: list[str]) -> int:
+    io.FileIO("/etc/haprion/runtime-policy.yaml")
     return 0
 
 
@@ -1058,6 +1208,64 @@ class EveryWriteHasItsCommand(unittest.TestCase):
             ):
                 _invoke("haprion-fake", [], scratch, seen)
             self.assertEqual(seen, ["database"])
+
+    def test_the_audit_hook_names_the_command_and_the_event(self) -> None:
+        """N02: one hook sees what the patches by name missed; it says which event and whose."""
+
+        points = {"haprion-fake": f"{__name__}:main"}
+        planted = (
+            (_reaches_spawn, "os.fork"),
+            (_reaches_fork, "os.fork"),
+            (_reaches_ctypes, "ctypes.dlopen"),
+            (_reaches_udp, "socket.sendto"),
+            (_reaches_a_name_lookup, "socket.getaddrinfo"),
+            (_reaches_multiprocessing, "_posixsubprocess.fork_exec"),
+            (_writes_beside_the_scratch_directory, "open"),
+            (_reads_the_machines_policy, "open"),
+        )
+        with (
+            tempfile.TemporaryDirectory() as raw,
+            mock.patch(f"{__name__}._entry_points", return_value=points),
+        ):
+            scratch = Path(raw)
+            write_installation(scratch)
+            for stand_in, event in planted:
+                with (
+                    self.subTest(stand_in.__name__),
+                    mock.patch(f"{__name__}._stand_in", stand_in),
+                    self.assertRaisesRegex(AssertionError, f"haprion-fake reached {event}"),
+                ):
+                    _invoke("haprion-fake", [], scratch)
+
+    def test_the_audit_hook_is_silent_outside_a_command(self) -> None:
+        """N02: a hook cannot be removed, so it must do nothing when no command is running."""
+
+        points = {"haprion-fake": f"{__name__}:main"}
+        with (
+            mock.patch(f"{__name__}._entry_points", return_value=points),
+            mock.patch(f"{__name__}._stand_in", lambda _argv: 0),
+        ):
+            _invoke("haprion-fake", [])
+        self.assertEqual(subprocess.run(["true"], check=False).returncode, 0)  # noqa: S607
+
+    def test_a_command_may_write_in_the_scratch_directory_and_read_python(self) -> None:
+        """N02: the rule lets the fixture's own paths and Python's imports through."""
+
+        def writes_in_scratch(_argv: list[str]) -> int:
+            Path("/etc/haprion/probe.txt").write_text("x", encoding="utf-8")
+            importlib.import_module("csv")
+            return 0
+
+        points = {"haprion-fake": f"{__name__}:main"}
+        with (
+            tempfile.TemporaryDirectory() as raw,
+            mock.patch(f"{__name__}._entry_points", return_value=points),
+            mock.patch(f"{__name__}._stand_in", writes_in_scratch),
+        ):
+            scratch = Path(raw)
+            write_installation(scratch)
+            self.assertEqual(_invoke("haprion-fake", [], scratch)[0], 0)
+            self.assertTrue((scratch / "etc/haprion/probe.txt").is_file())
 
     def test_the_guards_hold_for_an_ordinary_user_too(self) -> None:
         """N03: the branch without a scratch directory is guarded as the root one is."""

@@ -496,8 +496,7 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
         wanted = account_apply.read_file(Path(args.file))
         ended = 0
         with connect(environment) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("select pg_advisory_xact_lock(hashtext('app_user_keep_an_admin'))")
+            db.lock_accounts(connection)
             the_plan = account_apply.plan(
                 wanted, account_apply.stored_accounts(connection), prune=args.prune
             )

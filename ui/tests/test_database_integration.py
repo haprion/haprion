@@ -5605,6 +5605,68 @@ class AccountsFromTheWeb(unittest.TestCase):
             second.close()
         self.assertEqual(failures, [])
 
+    def test_a_provider_sign_in_and_an_apply_of_one_account_do_not_deadlock(self) -> None:
+        """Review 26-11-05, V01: the sign-in held the row and then wanted the guard's lock;
+        `haprion-user apply` held the lock and then wanted the row."""
+
+        import threading
+
+        from haprion_ui import account_apply
+
+        self.web(
+            "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
+            "values ('dora', 'admin', 'oidc', 'https://id.example/', 's1')"
+        )
+        sign_in_connection = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        apply_connection = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        failures: list[BaseException] = []
+        holding = threading.Event()
+
+        def sign_in() -> None:
+            try:
+                account = db.account_by_oidc(
+                    sign_in_connection, issuer="https://id.example/", subject="s1", share_lock=True
+                )
+                if account is None:
+                    self.fail("no account")
+                holding.set()
+                time.sleep(0.5)
+                db.set_role(sign_in_connection, user_id=account.id, role="reader")
+                sign_in_connection.commit()
+            except psycopg.Error as exc:
+                sign_in_connection.rollback()
+                failures.append(exc)
+
+        def apply() -> None:
+            try:
+                holding.wait(5)
+                db.lock_accounts(apply_connection)
+                the_plan = account_apply.plan(
+                    [account_apply.Wanted("dora", "reader", disabled=True)],
+                    account_apply.stored_accounts(apply_connection),
+                    prune=False,
+                )
+                account_apply.write(apply_connection, the_plan, actor="tester")
+                apply_connection.commit()
+            except psycopg.Error as exc:
+                apply_connection.rollback()
+                failures.append(exc)
+
+        try:
+            threads = [threading.Thread(target=sign_in), threading.Thread(target=apply)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(15)
+                self.assertFalse(thread.is_alive())
+        finally:
+            sign_in_connection.close()
+            apply_connection.close()
+        self.assertEqual(failures, [])
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select role, disabled from app_user where username = 'dora'")
+            self.assertEqual(cursor.fetchone(), ("reader", True))
+
     def locked_from(self, connection: Any, name: str, address: str, limit: int = 10) -> bool:
         return db.login_locked(
             connection,

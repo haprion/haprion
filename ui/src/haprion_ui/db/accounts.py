@@ -452,6 +452,20 @@ def _guarded_update(connection: Connection[Any], statement: str, values: dict[st
         raise
 
 
+def lock_accounts(connection: Connection[Any]) -> None:
+    """Every account row, then the last-admin guard's lock, to the end of the transaction.
+
+    Any change of an admin takes its row and then, in the trigger, the guard's
+    lock. A caller that took the guard's lock first and the rows after met such
+    a change halfway, each holding what the other waited for (V01). This takes
+    them in the order the changes do.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute("select id from app_user order by id for no key update")
+        cursor.execute("select pg_advisory_xact_lock(hashtext('app_user_keep_an_admin'))")
+
+
 def set_role(connection: Connection[Any], *, user_id: int, role: str) -> None:
     _guarded_update(
         connection,

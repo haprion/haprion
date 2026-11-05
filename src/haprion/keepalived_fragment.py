@@ -55,6 +55,7 @@ def render(
     sources: Mapping[str, str],
     *,
     prefix: int | None = None,
+    owner: str | None = None,
     interface: str | None = None,
 ) -> str:
     """Every address this cluster's nodes carry, one per line.
@@ -79,7 +80,18 @@ def render(
     # the nodes already use is what makes moving the list into this file a
     # change of where it is written and not a change to the network.
     #
-    suffix = f"/{prefix}" if prefix is not None else ""
+    # The prefix is the cluster's, and it describes the network its own VIP
+    # sits on, so it goes on the addresses of that family only. An address of
+    # the other family is written bare: a /24 on an IPv6 address, or a /64 on
+    # an IPv4 one, would be another address than the one the cluster serves.
+    #
+    if prefix is not None and owner is None:
+        raise ValueError("a prefix needs the address whose family it describes")
+    wide = owner is not None and ":" in owner
+
+    def suffix(address: str) -> str:
+        return f"/{prefix}" if prefix is not None and (":" in address) == wide else ""
+
     device = f" dev {interface}" if interface else ""
 
     lines: list[str] = []
@@ -89,7 +101,7 @@ def render(
         if address in seen:
             return
         seen.add(address)
-        lines.append(f"    {address}{suffix}{device}  # {note}")
+        lines.append(f"    {address}{suffix(address)}{device}  # {note}")
 
     for name in sorted(vips):
         add(vips[name].address, f"vip {name}")

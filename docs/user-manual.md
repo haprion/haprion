@@ -6154,6 +6154,9 @@ stands in the nodes' `virtual_ipaddress` block today. A line reading `<address>/
 - No particular interface name is required - the field exists because names differ between installations.
 - If the nodes name no interface, leave `address_interface` out, so keepalived keeps using the
   `vrrp_instance`'s own interface.
+- `address_prefix` describes the network of the cluster's own VIP, so it is written on the addresses of
+  that VIP's family only (IPv4 or IPv6), and it may not be longer than that family allows. An address of
+  the other family is written bare.
 - Without `address_prefix`, an address is written bare, which keepalived reads as `/32` on the
   `vrrp_instance`'s own interface. **A bare address is not the same address.** A `/32` carries no subnet
   route and is not chosen as a source address on the segment. So a cluster whose nodes use a prefix must

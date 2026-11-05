@@ -93,9 +93,55 @@ class TheAddressList(unittest.TestCase):
         # moving the list into this file would have changed the network while
         # claiming to change only where the list is written.
         #
-        text = render(vips(public=("192.0.2.20", "192.0.2.25")), {}, prefix=24, interface="eth0")
+        text = render(
+            vips(public=("192.0.2.20", "192.0.2.25")),
+            {},
+            prefix=24,
+            owner="192.0.2.20",
+            interface="eth0",
+        )
 
         self.assertEqual(self.addresses(text), ["192.0.2.20/24 dev eth0", "192.0.2.25/24 dev eth0"])
+
+    def test_the_prefix_is_written_on_the_addresses_of_its_own_family_only(self) -> None:
+        # Review 26-11-05, XX08: a /24 on an IPv6 address, or a /64 on an IPv4 one, is
+        # not the address the cluster serves. The other family's addresses are
+        # written bare; what a node does with them is measured on a node.
+        entries = vips(v4=("192.0.2.20", "192.0.2.25"), v6=("2001:db8::10", "2001:db8::11"))
+        sources = {"egress": "2001:db8::35"}
+
+        for owner, prefix, expected in (
+            (
+                "192.0.2.20",
+                24,
+                [
+                    "192.0.2.20/24 dev eth0",
+                    "192.0.2.25/24 dev eth0",
+                    "2001:db8::10 dev eth0",
+                    "2001:db8::11 dev eth0",
+                    "2001:db8::35 dev eth0",
+                ],
+            ),
+            (
+                "2001:db8::10",
+                64,
+                [
+                    "192.0.2.20 dev eth0",
+                    "192.0.2.25 dev eth0",
+                    "2001:db8::10/64 dev eth0",
+                    "2001:db8::11/64 dev eth0",
+                    "2001:db8::35/64 dev eth0",
+                ],
+            ),
+        ):
+            with self.subTest(owner=owner):
+                text = render(entries, sources, prefix=prefix, owner=owner, interface="eth0")
+
+                self.assertEqual(sorted(self.addresses(text)), sorted(expected))
+
+    def test_a_prefix_needs_the_address_whose_family_it_describes(self) -> None:
+        with self.assertRaises(ValueError):
+            render(vips(public=("192.0.2.20", None)), {}, prefix=24)
 
     def test_a_cluster_that_states_neither_gets_what_keepalived_defaults_to(self) -> None:
         # A bare address, which is right for a cluster written that way and

@@ -65,6 +65,24 @@ class ConfigTests(unittest.TestCase):
         ):
             pass
 
+    def test_the_address_prefix_has_to_fit_the_family_of_the_cluster_vip(self) -> None:
+        # Review 26-11-05, XX08: a /64 on an IPv4 VIP is refused by keepalived on the node,
+        # after the publish was reported done.
+        def too_long(data: dict[str, Any]) -> None:
+            data["clusters"]["alpha"]["address_prefix"] = 64
+
+        with (
+            self.assertRaisesRegex(ConfigError, "address_prefix must fit the vip"),
+            self.temporary_runtime(too_long),
+        ):
+            pass
+
+        def fits(data: dict[str, Any]) -> None:
+            data["clusters"]["alpha"]["address_prefix"] = 24
+
+        with self.temporary_runtime(fits) as runtime:
+            self.assertEqual(runtime.cluster("alpha").address_prefix, 24)
+
     def write_config(self, directory: Path, mutate: Mutate | None = None) -> Path:
         clusters = yaml.safe_load((BASE / "examples" / "clusters.yaml").read_text())
         if mutate is not None:

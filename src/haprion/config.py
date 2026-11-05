@@ -1753,6 +1753,13 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
         _served_address(vip, f"{location}.vip")
         vips, default_vip = _vips(raw, vip, location)
         address_prefix, address_interface = _address_form(raw, location)
+        #
+        # The prefix describes the family of the cluster's own VIP. One longer
+        # than that family's addresses is refused by keepalived on the node,
+        # after the publish was reported done (review 26-11-05, XX08).
+        #
+        if address_prefix is not None and address_prefix > (128 if ":" in vip else 32):
+            raise ConfigError(f"{location}.address_prefix must fit the vip's address family")
         resolvers = raw.get("resolvers")
         if resolvers is not None and (
             not isinstance(resolvers, str) or not NAME.fullmatch(resolvers)

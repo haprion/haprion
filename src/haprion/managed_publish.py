@@ -299,6 +299,7 @@ def managed_files(
         network.vips,
         network.sources,
         prefix=cluster.address_prefix,
+        owner=cluster.vip,
         interface=cluster.address_interface,
     ).encode("utf-8")
     #

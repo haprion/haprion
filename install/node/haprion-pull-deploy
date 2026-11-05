@@ -65,6 +65,18 @@ mark_incomplete() {
     : > "$INCOMPLETE"
 }
 
+#
+# Whether the marker was there before this run wrote it. A run that puts the old
+# release back whole has nothing more to remember than it did when it began: the
+# marker is taken away if this run laid it down, and stays if an earlier run's
+# failure had.
+#
+HAD_INCOMPLETE=0
+
+settle_incomplete() {
+    (( HAD_INCOMPLETE )) || rm -f "$INCOMPLETE"
+}
+
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
@@ -1060,6 +1072,7 @@ NEW_LINK="${HAPROXY_DIR}/current.new"
 # before the reload loses it, and HAProxy then starts from the new release with
 # the keepalived step never run.
 #
+if [[ -e "$INCOMPLETE" ]]; then HAD_INCOMPLETE=1; fi
 mark_incomplete
 mark_pending "$RELEASE"
 rm -f "$NEW_LINK"
@@ -1081,6 +1094,7 @@ then
     ln -s "$OLD_RELEASE" "$NEW_LINK"
     mv -Tf "$NEW_LINK" "$CURRENT"
     settle_pending
+    settle_incomplete
 
     exit 1
 fi
@@ -1107,7 +1121,11 @@ if ! sync_waf_engine "$WAF_CHANGED"; then
     mv -Tf "$NEW_LINK" "$CURRENT"
     settle_pending
 
-    sync_waf_engine 1 || log "ERROR: the WAF engine could not be returned to the previous rules either."
+    if sync_waf_engine 1; then
+        settle_incomplete
+    else
+        log "ERROR: the WAF engine could not be returned to the previous rules either."
+    fi
 
     exit 1
 fi
@@ -1124,8 +1142,10 @@ if ! sync_dns_listener "$OLD_RELEASE"; then
     mv -Tf "$NEW_LINK" "$CURRENT"
     settle_pending
 
-    sync_waf_engine 1 || log "ERROR: the WAF engine could not be returned to the previous rules either."
-    sync_dns_listener "$RELEASE" || log "ERROR: dnsdist could not be returned to the previous listener either."
+    restored=1
+    sync_waf_engine 1 || { restored=0; log "ERROR: the WAF engine could not be returned to the previous rules either."; }
+    sync_dns_listener "$RELEASE" || { restored=0; log "ERROR: dnsdist could not be returned to the previous listener either."; }
+    (( ! restored )) || settle_incomplete
 
     exit 1
 fi
@@ -1206,12 +1226,15 @@ else
     mv -Tf "$NEW_LINK" "$CURRENT"
 
     # Try to bring HAProxy back to the known-good config
+    restored=0
     if "$SERVER_STATE" reload; then
         RUNNING="$OLD_RELEASE"
+        restored=1
     fi
     settle_pending
-    sync_waf_engine 1 || true
-    sync_dns_listener "$RELEASE" || true
+    sync_waf_engine 1 || restored=0
+    sync_dns_listener "$RELEASE" || restored=0
+    (( ! restored )) || settle_incomplete
 
     exit 1
 fi

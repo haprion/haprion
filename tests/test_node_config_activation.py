@@ -51,6 +51,7 @@ echo check >> "$RECORD"
 [ -e "${FAIL_CHECK:-/nonexistent}" ] && exit 1
 count=$(grep -c '^check$' "$RECORD")
 [ "$count" = "${KILL_AT_CHECK:-0}" ] && kill -KILL "$PPID"
+[ "$count" = "${FAIL_AT_CHECK:-0}" ] && exit 1
 exit 0
 """
 
@@ -157,6 +158,7 @@ class Node(unittest.TestCase):
         fail_reload: bool = False,
         fail_check: bool = False,
         fail_start: bool = False,
+        fail_at_check: int = 0,
     ) -> tuple[int, str]:
         self.record.unlink(missing_ok=True)
         flag = self.root / "flag"
@@ -169,6 +171,7 @@ class Node(unittest.TestCase):
             "RECORD": str(self.record),
             "UNITS": str(self.tree.units),
             "KILL_AT_CHECK": str(kill_at_check),
+            "FAIL_AT_CHECK": str(fail_at_check),
             "FAIL_RELOAD": str(self.root / "fail-reload") if fail_reload else "/nonexistent",
             "TMPDIR": str(self.root),
         }
@@ -365,6 +368,105 @@ class AStepAfterTheReloadThatFailsIsRemembered(Node):
         self.pending.unlink()  # a reboot empties /run; HAProxy then starts from `current`
 
         self.assertIs(self.read_release()["complete"], False)
+
+
+class ARolledBackReleaseLeavesTheMarkerAsItWas(Node):
+    """Review 26-11-05, area 4: a release put back whole left `incomplete` behind it.
+
+    The marker goes down before the link moves, so that a run stopped half-way
+    is not called complete. A run that puts the old release back and finishes
+    that has nothing left to remember; one that found the marker already there
+    (an earlier run failed after its reload) keeps it.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        #
+        # `systemctl disable` of a unit named in `$FAILS` fails once, or every
+        # time when `$FAILS` says `always`: the engine and dnsdist are the two
+        # steps before the reload that can refuse the new release.
+        #
+        real = self.bin / "systemctl-real"
+        (self.bin / "systemctl").rename(real)
+        wrapper = self.bin / "systemctl"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f'if [ "$1" = disable ] && [ -e "{self.root}/fails" ] && '
+            f'grep -q "$(echo "$*" | cut -d. -f1 | rev | cut -d" " -f1 | rev)" "{self.root}/fails"; then\n'
+            f'    if [ "$(cat "{self.root}/fails" | cut -d" " -f2)" = always ] || '
+            f'[ ! -e "{self.root}/failed-once" ]; then touch "{self.root}/failed-once"; exit 1; fi\n'
+            "fi\n"
+            f'if [ "$1" = reload ] && [ -e "{self.root}/reload-fails-once" ]; then\n'
+            f'    rm -f "{self.root}/reload-fails-once"; exit 1\n'
+            "fi\n"
+            f'exec "{real}" "$@"\n'
+        )
+        wrapper.chmod(0o755)
+
+    def fail_disable_of(self, unit: str, how: str = "once") -> None:
+        (self.root / "fails").write_text(f"{unit} {how}\n")
+        (self.tree.units / f"{unit}.enabled").touch()
+
+    def test_a_validation_after_the_switch_that_fails_leaves_no_marker(self) -> None:
+        code, output = self.deploy(fail_at_check=2)
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("Rolling back", output)
+        self.assertFalse(self.incomplete.exists())
+
+    def test_a_reload_that_fails_once_leaves_no_marker(self) -> None:
+        (self.root / "reload-fails-once").touch()
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("Rolling back", output)
+        self.assertFalse(self.incomplete.exists())
+
+    def test_a_reload_that_fails_again_on_the_old_release_keeps_the_marker(self) -> None:
+        code, output = self.deploy(fail_reload=True)
+
+        self.assertEqual(code, 1, output)
+        self.assertTrue(self.incomplete.exists())
+
+    def test_an_engine_that_refuses_the_release_leaves_no_marker_once_it_is_put_back(self) -> None:
+        self.fail_disable_of("coraza-spoa")
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("the WAF engine did not take the new rules", output)
+        self.assertFalse(self.incomplete.exists())
+
+    def test_dnsdist_that_refuses_the_release_leaves_no_marker_once_it_is_put_back(self) -> None:
+        self.fail_disable_of("dnsdist")
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("dnsdist did not take the new dns listener", output)
+        self.assertFalse(self.incomplete.exists())
+
+    def test_a_release_that_could_not_be_put_back_whole_keeps_the_marker(self) -> None:
+        self.fail_disable_of("coraza-spoa", "always")
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("could not be returned to the previous rules either", output)
+        self.assertTrue(self.incomplete.exists())
+
+    def test_a_marker_an_earlier_run_left_is_still_there_after_a_rollback(self) -> None:
+        for how in ({"fail_at_check": 2}, {"fail_reload": True}):
+            with self.subTest(how=how):
+                self.incomplete.parent.mkdir(exist_ok=True)
+                self.incomplete.touch()
+
+                code, output = self.deploy(**how)
+
+                self.assertEqual(code, 1, output)
+                self.assertTrue(self.incomplete.exists())
+                self.incomplete.unlink()
 
 
 class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):

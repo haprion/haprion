@@ -392,6 +392,16 @@ def _forget_checkpoint(config: CollectorConfig, part: Path) -> None:
         checkpoint.unlink()
 
 
+def _staged(config: CollectorConfig, target: NodeTarget, key: str) -> bool:
+    """Whether staging holds a part for the day a `gaps` key names (a link counts: it is not read)."""
+
+    try:
+        part = _part(config, target, date.fromisoformat(key))
+    except ValueError:
+        return False
+    return os.path.lexists(part)
+
+
 def _forget_skipped(
     config: CollectorConfig, target: NodeTarget, days: Collection[date] | None = None
 ) -> None:
@@ -399,14 +409,20 @@ def _forget_skipped(
 
     The import reads the part from its first byte and counts what it steps over
     once more; the earlier count was of the same records (review 2026-11-05,
-    U06). `days` is every day when none is given: a replay of the database reads
-    them all again (Y04). What was removed before it was imported stays counted.
+    U06). `days` is every day with a staged part when none is given: a replay of
+    the database reads those again (Y04). The counts are kept longer than staging
+    keeps the parts, and a day without a part is not read again, so its count
+    stays (B472). What was removed before it was imported stays counted.
     """
 
     earlier = _previous(_meta_path(config, target)).get("gaps")
     if not isinstance(earlier, dict):
         return
-    keys = list(earlier) if days is None else [day.isoformat() for day in days]
+    keys = (
+        [day.isoformat() for day in days]
+        if days is not None
+        else [key for key in earlier if _staged(config, target, key)]
+    )
     gaps = {
         name: dict(entry) if isinstance(entry, dict) else entry for name, entry in earlier.items()
     }

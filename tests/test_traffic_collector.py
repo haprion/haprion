@@ -1532,6 +1532,8 @@ class TrafficCollectorTests(unittest.TestCase):
                 fetch=lambda _t, wanted, offset: self.response(wanted, offset, b""),
                 fetch_waf_page=no_waf,
             )
+        for day in (today, yesterday):
+            (self.staging / f"alpha--node-a--{day}.jsonl").write_bytes(b"")
         traffic_collector._amend_meta(
             self.config,
             self.target,
@@ -1544,6 +1546,31 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(
             json.loads(meta.read_bytes())["gaps"], {yesterday: {"skipped": 0, "lost": 7}}
         )
+
+    def test_a_replay_keeps_the_skipped_count_of_a_day_it_cannot_read_again(self) -> None:
+        """B472, R05: the meta keeps the counts for longer than staging keeps the parts, and a
+        day without a part is not read again, so nothing counts it a second time."""
+
+        staged = NOW.date().isoformat()
+        gone = (NOW.date() - timedelta(days=10)).isoformat()
+        with patch("haprion.traffic_collector._ingest_database", lambda *_a, **_k: (0, 0, {})):
+            collect(
+                self.config,
+                now=NOW,
+                fetch=lambda _t, wanted, offset: self.response(wanted, offset, b""),
+                fetch_waf_page=no_waf,
+            )
+        (self.staging / f"alpha--node-a--{staged}.jsonl").write_bytes(b"")
+        traffic_collector._amend_meta(
+            self.config,
+            self.target,
+            gaps={staged: {"skipped": 2, "lost": 0}, gone: {"skipped": 5, "lost": 1}},
+        )
+        meta = self.mirror / "alpha--node-a.meta.json"
+
+        forget_database_positions(self.config)
+
+        self.assertEqual(json.loads(meta.read_bytes())["gaps"], {gone: {"skipped": 5, "lost": 1}})
 
     def test_a_replay_refuses_a_position_that_is_not_a_plain_file(self) -> None:
         (self.staging / ".x.jsonl.database-offset").symlink_to(self.staging / "elsewhere")

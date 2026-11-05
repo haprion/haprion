@@ -76,6 +76,41 @@ class ThreeReadersOneReading(unittest.TestCase):
         for finding in counters.values():
             self.assertIn(finding.detail, text)
 
+    def test_a_stopped_engine_is_stopped_in_the_command_exactly_when_it_is_a_finding(self) -> None:
+        """V06: the command had its own rule, and a release that could not be read made them differ."""
+
+        base = broken_reading()
+        for published in (True, False, None):
+            for key, summary_key, code, label in (
+                ("waf_engine", "waf_published", cluster_status.WAF_ENGINE_STOPPED, "WAF engine:"),
+                (
+                    "dns_listener",
+                    "dns_published",
+                    cluster_status.DNS_LISTENER_STOPPED,
+                    "DNS listener:",
+                ),
+            ):
+                for engine in (
+                    {"version": "1.0-1", "active": False},
+                    {"version": "1.0-1", "active": True},
+                ):
+                    with self.subTest(published=published, key=key, engine=engine):
+                        result = dict(base.result)
+                        node = dict(result["nodes"][0])
+                        node["status"] = {**node["status"], key: engine}
+                        summary = {k: v for k, v in result["summary"].items() if k != summary_key}
+                        if published is not None:
+                            summary[summary_key] = published
+                        result["nodes"] = [node]
+                        result["summary"] = summary
+                        stopped = code in {
+                            finding.code for finding in cluster_status.node_findings(node, summary)
+                        }
+                        out = io.StringIO()
+                        status._render({"cluster": "alpha", "result": result, "warnings": []}, out)
+                        line = next(x for x in out.getvalue().splitlines() if label in x)
+                        self.assertEqual("STOPPED" in line, stopped, line)
+
 
 if __name__ == "__main__":
     unittest.main()

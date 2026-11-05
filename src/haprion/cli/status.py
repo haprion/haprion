@@ -27,12 +27,15 @@ from typing import Any, TextIO
 from haprion import haproxy_versions, log_forwarding, node_package, node_resources
 from haprion.cli.caller import usage, without_answer
 from haprion.cluster_status import (
+    DNS_LISTENER_STOPPED,
+    WAF_ENGINE_STOPPED,
     StatusError,
     ahead_of,
     ahead_words,
     counter_findings,
     forwarding_current,
     keepalived_state,
+    node_findings,
     parse_status,
     release_complete,
     traffic_stream_problem,
@@ -236,11 +239,12 @@ def _node_package_line(installation: object, carried: object) -> str | None:
     return f"{shown}  {said}" if shown else said
 
 
-def _waf_engine_line(engine: object, published: object) -> str | None:
-    """The node's WAF engine, read against whether the release has rules (review 2026-10-04 F3).
+def _engine_line(engine: object, stopped: bool) -> str | None:
+    """The node's WAF engine or dnsdist; stopped is whatever `node_findings` says it is.
 
-    Stopped is only a fault where the published release carries rules; on a
-    cluster without them the engine is meant to be off, and says so.
+    Stopped is only a fault where the published release carries what the
+    engine serves; elsewhere it is meant to be off, and says so (review
+    2026-10-04 F3, B249). The rule is the one the interface reads (V06).
     """
 
     if not isinstance(engine, dict):
@@ -250,15 +254,9 @@ def _waf_engine_line(engine: object, published: object) -> str | None:
         return "not installed"
     if engine.get("active") is True:
         return f"ACTIVE ({version})"
-    if published is False:
-        return f"not in use ({version})"
-    return f"STOPPED ({version})"
-
-
-def _dns_listener_line(listener: object, published: object) -> str | None:
-    """The node's dnsdist, read against whether the release has a dns listener (B249)."""
-
-    return _waf_engine_line(listener, published)
+    if stopped:
+        return f"STOPPED ({version})"
+    return f"not in use ({version})"
 
 
 def _render(envelope: dict[str, Any], writer: TextIO) -> None:
@@ -326,10 +324,11 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         if isinstance(resources, dict):
             writer.write(f"  Memory:       {node_resources.memory_line(resources)}\n")
             writer.write(f"  Load:         {node_resources.load_line(resources)}\n")
-        engine = _waf_engine_line(status.get("waf_engine"), summary.get("waf_published"))
+        found = {finding.code for finding in node_findings(node, summary)}
+        engine = _engine_line(status.get("waf_engine"), WAF_ENGINE_STOPPED in found)
         if engine is not None:
             writer.write(f"  WAF engine:   {engine}\n")
-        listener = _dns_listener_line(status.get("dns_listener"), summary.get("dns_published"))
+        listener = _engine_line(status.get("dns_listener"), DNS_LISTENER_STOPPED in found)
         if listener is not None:
             writer.write(f"  DNS listener: {listener}\n")
         counters = shared.get(str(node["name"]))

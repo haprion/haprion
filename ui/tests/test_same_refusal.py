@@ -28,11 +28,11 @@ from tests.test_editor_page import SHOP
 ROOT = Path(__file__).resolve().parents[2]
 CHANGES_PUBLISH = ROOT / "src" / "haprion" / "cli" / "changes_publish.py"
 #
-# Every refusal the publishing helper makes, and who judges it. The terminal and
-# the web both send their documents to this helper, so what it refuses is refused
-# alike; what this list holds is that no refusal is added without being named
-# here, where it is decided whether the page and the API also judge it first
-# (W02, 26-11-05).
+# The codes of the `Refusal(...)` calls in changes_publish.py, and who judges
+# each. The terminal and the web both send their documents to this helper, so
+# what it refuses is refused alike. This list only makes a new code a decision:
+# it does not run the helper, and says nothing about the rules under a code
+# (W02, Z06, 26-11-05).
 #
 PUBLISH_REFUSALS: dict[str, str] = {
     "changes_invalid": "an object, or the package as a whole: RULES above are what the terminal,"
@@ -103,7 +103,7 @@ class ADocumentThatBreaksARuleIsRefusedByBoth(ChangesTestCase):
 
 
 def _helper_refusals() -> dict[str, str]:
-    """Each `Refusal("code", ...)` the helper raises, with the exit code it names."""
+    """The literal code of each `Refusal("code", ...)` written in the file, with the exit code it names (the last, if a code is written twice)."""
 
     found: dict[str, str] = {}
     for node in ast.walk(ast.parse(CHANGES_PUBLISH.read_text(encoding="utf-8"))):
@@ -119,6 +119,16 @@ def _helper_refusals() -> dict[str, str]:
 
 
 class EveryRefusalOfThePublishIsNamed(unittest.TestCase):
+    """A count of the `Refusal` codes written in changes_publish.py; the helper is not run.
+
+    It fails when a code is added or one is given another exit class, so that
+    someone decides where the new one is judged. It does not show that the
+    terminal, the page and the API refuse the same documents the same way under
+    a code that is already there: that is `RULES` above, four documents picked
+    by hand. A `Refusal` whose code is not a literal, or that another module
+    raises, is not counted.
+    """
+
     def test_the_helper_refuses_only_what_is_named_here(self) -> None:
         refusals = _helper_refusals()
 

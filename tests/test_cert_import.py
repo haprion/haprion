@@ -189,6 +189,7 @@ class ImportFixture(Fixture):
             material=material,
             clusters=targets.get("clusters", ()),
             receivers=targets.get("receivers", ()),
+            ndes_profile=targets.get("ndes_profile"),
             policy=policy,
             runtime=runtime,
             deployer=self.deploy,
@@ -460,6 +461,18 @@ class WhatAnImportIs(ImportFixture):
 
         self.assertEqual(self.registered()["shop.example"]["clusters"], ["alpha"])
         self.assertEqual(self.registered()["shop.example"]["receivers"], ["lb-01"])
+
+    def test_an_import_over_an_ndes_certificate_keeps_its_profile(self) -> None:
+        """The scheduled NDES renewal does not end silently when a file is imported (26-11-05, C03)."""
+
+        self.run_import("shop.example", self.material(), clusters=["alpha"], ndes_profile="corp")
+        self.assertEqual(self.registered()["shop.example"]["source"]["ndes_profile"], "corp")
+
+        self.run_import("shop.example", self.material())
+
+        self.assertEqual(
+            self.registered()["shop.example"]["source"], {"kind": "import", "ndes_profile": "corp"}
+        )
 
     def test_a_receiver_only_import_publishes_the_pair(self) -> None:
         self.run_import("pve.example", self.material(), receivers=["lb-01"])

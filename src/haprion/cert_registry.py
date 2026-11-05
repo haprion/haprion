@@ -33,6 +33,7 @@ an operation.
 from __future__ import annotations
 
 import contextlib
+import copy
 import os
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
@@ -425,6 +426,42 @@ def receiver_elements(
     return elements
 
 
+def written_entry(
+    existing: Mapping[str, Any] | None,
+    *,
+    source: Mapping[str, Any] | None = None,
+    clusters: Sequence[str] | None = None,
+    receivers: Sequence[Any] | None = None,
+    interface: bool = False,
+    exportable: bool = False,
+) -> dict[str, Any]:
+    """The registry entry a writer stores: the one on file with only what it names changed.
+
+    Every writer of an entry goes through here (26-11-05, C03/C07). The entry
+    starts as a copy of the raw one on file, so a key this writer does not own
+    (a source's NDES profile, a mark, a key the reader gains tomorrow) is still
+    there afterwards. `source` holds only the source keys the caller sets;
+    `clusters` and `receivers` replace the target lists (the receivers as the
+    registry's elements, an empty list leaves the key out) and None keeps what
+    is on file; `interface` and `exportable` only ever set their mark.
+    """
+
+    entry: dict[str, Any] = copy.deepcopy(dict(existing)) if existing else {}
+    entry["source"] = {**(entry.get("source") or {}), **(source or {})}
+    for key, targets in (("clusters", clusters), ("receivers", receivers)):
+        if targets is None:
+            continue
+        if targets:
+            entry[key] = list(targets)
+        else:
+            entry.pop(key, None)
+    if interface:
+        entry["interface"] = True
+    if exportable:
+        entry["exportable"] = True
+    return {"source": entry.pop("source"), **entry}
+
+
 def set_targets(
     path: Path,
     *,
@@ -519,15 +556,14 @@ def set_targets(
         for receiver_id in after_receivers
     }
 
-    updated: dict[str, Any] = {"source": entry["source"]}
-    if after_clusters:
-        updated["clusters"] = list(after_clusters)
-    if after_receivers:
-        updated["receivers"] = receiver_elements(
+    certificates[certificate_id] = written_entry(
+        entry,
+        clusters=list(after_clusters),
+        receivers=receiver_elements(
             after_receivers,
             {k: v for k, v in after_formats.items() if v is not None},
-        )
-    certificates[certificate_id] = updated
+        ),
+    )
 
     before = set(before_clusters) | set(before_receivers)
     after = set(after_clusters) | set(after_receivers)

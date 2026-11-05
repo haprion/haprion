@@ -721,16 +721,16 @@ def _add_entry(
             f"certificate {request.certificate_id!r} was registered while certbot ran.",
             exit_code=exit_codes.BLOCKED,
         )
-    entry: dict[str, Any] = {"source": {"kind": "acme"}}
+    source: dict[str, Any] = {"kind": "acme"}
     if request.dns_profile is not None:
-        entry["source"]["dns_profile"] = request.dns_profile
-    if request.clusters:
-        entry["clusters"] = list(request.clusters)
-    if request.receivers:
-        entry["receivers"] = cert_registry.receiver_elements(request.receivers, request.formats)
-    if request.exportable:
-        entry["exportable"] = True
-    certificates[request.certificate_id] = entry
+        source["dns_profile"] = request.dns_profile
+    certificates[request.certificate_id] = cert_registry.written_entry(
+        None,
+        source=source,
+        clusters=request.clusters,
+        receivers=cert_registry.receiver_elements(request.receivers, request.formats),
+        exportable=request.exportable,
+    )
     displaced = (
         cert_registry.claim_interface(certificates, request.certificate_id)
         if request.interface

@@ -2498,7 +2498,7 @@ them changed names what changed, and is refused. The certificate's row then says
 A row keeps *Resume enrollment* and *Abandon request…* for as long as the CA holds a request for its ID,
 whatever its label. While a job runs on the row, *Resume enrollment* waits for it to end. A **Renewal failed** row may hold one because the CA did not answer in time; a resume
 then finishes it, or says what changed. A file imported over an NDES certificate does not end its request
-either: the row shows it as **Renewal pending** until it is resumed or abandoned.
+either: the row shows it as **Renewal pending** until it is resumed or abandoned. The import keeps the certificate's NDES profile, so the scheduled renewal goes on.
 
 **Scheduled renewal.** `haprion-certbot-renew.timer` runs `haprion-cert-renew` twice a day. After
 certbot's renewals, it makes an NDES pass. It renews every registered certificate whose source names an

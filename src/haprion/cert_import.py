@@ -711,9 +711,9 @@ def _register_entry(
     document = cert_registry.read_document(path)
     certificates = dict(document.get("certificates") or {})
     existing = certificates.get(certificate_id)
-    entry: dict[str, Any] = {"source": {"kind": "import"}}
+    source: dict[str, Any] = {"kind": "import"}
     if ndes_profile is not None:
-        entry["source"]["ndes_profile"] = ndes_profile
+        source["ndes_profile"] = ndes_profile
     kept_clusters: list[str] = []
     kept_receivers: tuple[str, ...] = ()
     kept_formats: dict[str, str] = {}
@@ -751,13 +751,19 @@ def _register_entry(
     # on this request, and a receiver kept from before keeps its own.
     #
     all_formats = {**kept_formats, **(formats or {})}
-    if all_clusters:
-        entry["clusters"] = all_clusters
-    if all_receivers:
-        entry["receivers"] = cert_registry.receiver_elements(all_receivers, all_formats)
-    if exportable:
-        entry["exportable"] = True
-    certificates[certificate_id] = entry
+    #
+    # Built from the entry on file: a source's NDES profile the caller did not
+    # name stays, so an import over an NDES certificate does not end its
+    # scheduled renewal (26-11-05, C03). The NDES certificate keeps being
+    # renewed from the CA; an imported file is a replacement, not a change of source.
+    #
+    certificates[certificate_id] = cert_registry.written_entry(
+        existing if isinstance(existing, dict) else None,
+        source=source,
+        clusters=all_clusters,
+        receivers=cert_registry.receiver_elements(all_receivers, all_formats),
+        exportable=exportable,
+    )
     displaced = cert_registry.claim_interface(certificates, certificate_id) if interface else None
     cert_registry.write(
         path,
@@ -1204,11 +1210,12 @@ def _register_authority(
                         "an ID of its own.",
                     )
                 kept = [str(item) for item in existing.get("clusters") or ()]
-            entry: dict[str, Any] = {"source": {"kind": AUTHORITY}}
             every = kept + [c for c in clusters if c not in kept]
-            if every:
-                entry["clusters"] = every
-            certificates[certificate_id] = entry
+            certificates[certificate_id] = cert_registry.written_entry(
+                existing if isinstance(existing, dict) else None,
+                source={"kind": AUTHORITY},
+                clusters=every,
+            )
             cert_registry.write(
                 path,
                 document=document,

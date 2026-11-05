@@ -372,6 +372,60 @@ class WhatRetargetingDoes(RegistryFixture):
         )
 
 
+class TheEntryEveryWriterBuilds(unittest.TestCase):
+    """One function builds the entry, and a key the writer does not own survives it (C03, C07)."""
+
+    EVERYTHING: dict[str, Any] = {
+        "source": {"kind": "import", "ndes_profile": "corp", "dns_profile": "dns", "lineage": "x"},
+        "clusters": ["alpha"],
+        "receivers": ["lb-01"],
+        "interface": True,
+        "exportable": True,
+        "future_key": {"kept": 1},
+    }
+
+    def test_what_the_writer_does_not_name_is_kept(self) -> None:
+        entry = cert_registry.written_entry(self.EVERYTHING)
+
+        self.assertEqual(entry, self.EVERYTHING)
+        self.assertIsNot(entry, self.EVERYTHING)
+
+    def test_a_source_names_only_what_it_changes(self) -> None:
+        entry = cert_registry.written_entry(self.EVERYTHING, source={"kind": "import"})
+
+        self.assertEqual(entry["source"], self.EVERYTHING["source"])
+        replaced = cert_registry.written_entry(self.EVERYTHING, source={"ndes_profile": "other"})
+        self.assertEqual(replaced["source"]["ndes_profile"], "other")
+        self.assertEqual(replaced["source"]["dns_profile"], "dns")
+
+    def test_targets_are_replaced_and_an_empty_set_leaves_the_key_out(self) -> None:
+        entry = cert_registry.written_entry(self.EVERYTHING, clusters=["beta"], receivers=[])
+
+        self.assertEqual(entry["clusters"], ["beta"])
+        self.assertNotIn("receivers", entry)
+        self.assertEqual(entry["future_key"], {"kept": 1})
+
+    def test_a_new_entry_has_only_what_was_named(self) -> None:
+        entry = cert_registry.written_entry(
+            None, source={"kind": "acme"}, clusters=["alpha"], exportable=True
+        )
+
+        self.assertEqual(
+            entry, {"source": {"kind": "acme"}, "clusters": ["alpha"], "exportable": True}
+        )
+
+    def test_the_retarget_keeps_what_it_does_not_own(self) -> None:
+        # set_targets refuses an interface or exportable entry, so the keys that matter
+        # to it are the source's and any key the reader gains later.
+        entry = cert_registry.written_entry(
+            {"source": {"kind": "import", "ndes_profile": "corp"}, "future_key": 1},
+            clusters=["alpha"],
+        )
+
+        self.assertEqual(entry["source"]["ndes_profile"], "corp")
+        self.assertEqual(entry["future_key"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
 

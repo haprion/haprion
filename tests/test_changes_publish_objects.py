@@ -249,6 +249,31 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertEqual(self.check_objects(Path(temporary)), [])
             self.assertIs(after, not_handled)
 
+    def test_the_handler_is_taken_off_when_none_was_installed_from_python(self) -> None:
+        """N06: `signal.signal` answers None for a handler Python did not install; TERM must not stay caught."""
+
+        real_signal, real_getsignal = signal.signal, signal.getsignal
+
+        def forgetful(number: int, handler: Any) -> Any:
+            real_signal(number, handler)
+            return None
+
+        saved = real_signal(signal.SIGTERM, signal.SIG_DFL)
+        try:
+            with (
+                tempfile.TemporaryDirectory() as temporary,
+                mock.patch.object(tempfile, "tempdir", temporary),
+                mock.patch.object(signal, "getsignal", return_value=None),
+                mock.patch.object(signal, "signal", forgetful),
+                managed_helper._check_objects(True),
+            ):
+                self.assertIs(real_getsignal(signal.SIGTERM), managed_helper._terminated)
+            after = real_getsignal(signal.SIGTERM)
+        finally:
+            real_signal(signal.SIGTERM, saved)
+
+        self.assertEqual(after, signal.SIG_DFL)
+
     def test_the_next_check_removes_a_directory_a_killed_one_left(self) -> None:
         """Z03: KILL cannot be caught; an hour-old directory is removed, a fresh one is another check's."""
 

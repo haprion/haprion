@@ -360,16 +360,21 @@ def _check_objects(check: bool) -> Iterator[Path | None]:
         yield None
         return
     _sweep_stale_check_objects()
-    scratch = Path(tempfile.mkdtemp(prefix=CHECK_OBJECTS))
-    previous = None
-    if threading.current_thread() is threading.main_thread():
-        previous = signal.signal(signal.SIGTERM, _terminated)
+    scratch: Path | None = None
+    on_main_thread = threading.current_thread() is threading.main_thread()
+    if on_main_thread:
+        # `None` is what a handler Python did not install is reported as; the default is what it is then.
+        installed = signal.getsignal(signal.SIGTERM)
+        previous = signal.SIG_DFL if installed is None else installed
+        signal.signal(signal.SIGTERM, _terminated)
     try:
+        scratch = Path(tempfile.mkdtemp(prefix=CHECK_OBJECTS))
         yield scratch
     finally:
-        if previous is not None:
+        if on_main_thread:
             signal.signal(signal.SIGTERM, previous)
-        shutil.rmtree(scratch, ignore_errors=True)
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _publish(

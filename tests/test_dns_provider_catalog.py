@@ -75,7 +75,7 @@ class CatalogueContractTests(unittest.TestCase):
 
         offered = {provider.package for provider in catalog.providers}
         excluded = {item.package for item in catalog.not_offered}
-        self.assertEqual(len(catalog.providers), 80)
+        self.assertEqual(len(catalog.providers), 79)
         self.assertEqual(direct - {"certbot"}, offered | excluded)
         self.assertTrue(offered <= locked)
 

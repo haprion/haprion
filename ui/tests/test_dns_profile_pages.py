@@ -522,7 +522,7 @@ class SavingAProfile(ProfileRouteTestCase):
         self.assertNotIn('<select name="provider"', page)
 
         response = self.post(
-            client, "/dns-profiles/cf-main/replace", provider_id="hetzner", profile_id="other"
+            client, "/dns-profiles/cf-main/replace", provider_id="hetzner-cloud", profile_id="other"
         )
         self.assertEqual(response.status_code, 303)
         self.assertEqual(self.created, [])

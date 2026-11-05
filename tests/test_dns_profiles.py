@@ -82,7 +82,7 @@ class SealingTests(unittest.TestCase):
         cases: list[tuple[str, dict[str, Any], str]] = [
             ("another key", dict(key=other_private), "not sealed against key"),
             ("another profile", dict(profile_id="cf-other"), "another profile"),
-            ("another provider", dict(provider_id="hetzner"), "another provider"),
+            ("another provider", dict(provider_id="hetzner-cloud"), "another provider"),
         ]
         for label, override, expected in cases:
             with self.subTest(label=label):

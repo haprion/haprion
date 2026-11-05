@@ -4808,7 +4808,7 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
                 connection.cursor() as cursor,
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),
             ):
-                cursor.execute("update dns_provider_profile set provider_id = 'hetzner'")
+                cursor.execute("update dns_provider_profile set provider_id = 'hetzner-cloud'")
             connection.rollback()
             with (
                 connection.cursor() as cursor,

@@ -857,23 +857,6 @@ providers:
     required: true
     secret: true
     key: dns_he_ddns_password
-- id: hetzner
-  name: Hetzner DNS
-  tier: community
-  package: certbot-dns-hetzner
-  plugin: dns-hetzner
-  adapter: ini
-  delivery: flag:credentials
-  documentation: https://pypi.org/project/certbot-dns-hetzner/
-  propagation_seconds: 60
-  verification: loaded
-  fields:
-  - id: api_token
-    label: API token
-    kind: text
-    required: true
-    secret: true
-    key: dns_hetzner_api_token
 - id: hetzner-cloud
   name: Hetzner Cloud DNS
   tier: community

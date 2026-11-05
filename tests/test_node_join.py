@@ -446,6 +446,29 @@ class TheJoin(unittest.TestCase):
         self.assertFalse(Path(f"/proc/{child}").exists(), "the step's child is still running")
         self.assertTrue((self.join_dir / "join_key").exists())
 
+    def test_a_package_run_in_the_step_is_waited_out_not_killed(self) -> None:
+        # B452 NN03: a dpkg killed in the middle leaves packages half-configured.
+        done = self.root / "dpkg.done"
+        pids = self.root / "child.pid"
+        tool = self.root / "dpkg"
+        tool.write_text(f"#!/bin/sh\nsleep 2\ntouch {done}\n")
+        tool.chmod(0o755)
+        self.step.write_text(f"#!/bin/sh\nsleep 60 &\necho $! > {pids}\n{tool} &\nwait\n")
+        self.step.chmod(0o755)
+        stdin = io.TextIOWrapper(io.BytesIO(json.dumps(document()).encode()))
+        with (
+            mock.patch.object(JOIN, "TIMEOUT", 1),
+            mock.patch.object(JOIN, "GRACE", 1),
+            mock.patch.object(JOIN.sys, "stdin", stdin),
+            mock.patch.object(JOIN.sys, "stdout", io.TextIOWrapper(io.BytesIO())),
+            mock.patch.object(JOIN.sys, "stderr", io.StringIO()),
+        ):
+            code = JOIN.main()
+        self.assertEqual(code, 75)
+        self.assertTrue(done.exists(), "the package tool was ended before it finished")
+        child = int(pids.read_text())
+        self.assertFalse(Path(f"/proc/{child}").exists(), "the step's other child is still running")
+
 
 if __name__ == "__main__":
     unittest.main()

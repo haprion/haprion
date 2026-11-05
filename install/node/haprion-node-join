@@ -33,6 +33,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 INSTALL = Path(os.environ.get("HAPRION_NODE_INSTALL", "/usr/share/haprion-node/install"))
@@ -45,6 +46,10 @@ MAX_DOCUMENT = 64 * 1024
 TIMEOUT = 840
 # How long step 4's process group has to end after SIGTERM before it is killed.
 GRACE = 10
+# How long an apt or dpkg run that the step started is waited for, in seconds,
+# once the rest has ended. They are never killed.
+PACKAGE_WAIT = 300
+PACKAGE_TOOLS = frozenset({"apt", "apt-get", "aptitude", "dpkg"})
 
 # The engine's patterns (config.py), held to them by a test.
 CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
@@ -156,16 +161,61 @@ def answers(document: object, manager: str, listen: str | None = None) -> tuple[
     return "\n".join(lines) + "\n", cluster
 
 
+def group_members(group: int) -> dict[int, tuple[int, str]]:
+    """The live processes of one process group: pid -> (parent, program name)."""
+    members: dict[int, tuple[int, str]] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text()
+        except OSError:
+            continue
+        # The name sits in parentheses and may hold spaces or parentheses itself.
+        name = stat[stat.index("(") + 1 : stat.rindex(")")]
+        fields = stat[stat.rindex(")") + 2 :].split()
+        if int(fields[2]) == group and fields[0] != "Z":
+            members[int(entry.name)] = (int(fields[1]), name)
+    return members
+
+
+def package_work(members: dict[int, tuple[int, str]]) -> set[int]:
+    """Package tools in the group and everything they started: maintainer scripts too."""
+    work = {pid for pid, (_, name) in members.items() if name in PACKAGE_TOOLS}
+    grew = True
+    while grew:
+        grew = False
+        for pid, (parent, _) in members.items():
+            if parent in work and pid not in work:
+                work.add(pid)
+                grew = True
+    return work
+
+
+def signal_all(pids: set[int], number: int) -> None:
+    for pid in pids:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, number)
+
+
 def end_group(step: subprocess.Popen[bytes]) -> None:
-    """Step 4 and every process it started, asked to stop and then made to."""
-    try:
-        os.killpg(step.pid, signal.SIGTERM)
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            step.wait(timeout=GRACE)
-        os.killpg(step.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    """Step 4 and what it started, asked to stop and then made to.
+
+    Not apt or dpkg, nor what they run: killed in the middle they leave
+    packages half-configured. Those are waited for, for a while; if they are
+    still running then, they are left to finish, and the lock they hold makes
+    the next attempt wait for them.
+    """
+    others = set(group_members(step.pid)) - package_work(group_members(step.pid))
+    signal_all(others, signal.SIGTERM)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        step.wait(timeout=GRACE)
+    members = group_members(step.pid)
+    signal_all(set(members) - package_work(members), signal.SIGKILL)
     step.wait()
+    deadline = time.monotonic() + PACKAGE_WAIT
+    while package_work(group_members(step.pid)) and time.monotonic() < deadline:
+        time.sleep(1)
 
 
 def main() -> int:
@@ -198,7 +248,8 @@ def main() -> int:
         #
         # Its own session, so that the limit ends everything step 4 started: an
         # apt-get waiting on the lock outlived bash and ran beside the retry
-        # (B447, N04). SIGTERM first, so that the step's own cleanup can run.
+        # (B447, N04). SIGTERM first, so that the step's own cleanup can run; apt and
+        # dpkg are never killed (B452, NN03).
         #
         step = subprocess.Popen(  # noqa: S603 - step 4 of this package, with checked answers
             [str(INSTALL / "04-node-prepare"), str(answers_file), cluster],
@@ -219,6 +270,12 @@ def main() -> int:
             f"haprion-node-join: preparing this node stopped (exit {code}); {LOG} has all of it",
             file=sys.stderr,
         )
+        if code == 124:
+            print(
+                "haprion-node-join: if a package was left half-configured, finish it with: "
+                "dpkg --configure -a",
+                file=sys.stderr,
+            )
         return 75
     #
     # Joined: the mark says so for good (the key goes next, and a new one may

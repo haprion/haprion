@@ -24,6 +24,7 @@ created.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import uuid
@@ -89,8 +90,21 @@ def _run_helper(request: bytes) -> tuple[int, str, str]:
     )
 
 
+#
+# What reads as a flag: `-m`, `--check`. A bare `-` or a number such as `-5` is
+# still a word of a comment.
+#
+FLAG = re.compile(r"^--?[A-Za-z]")
+
+
 def _parse(argv: list[str]) -> tuple[str, str, bool]:
-    """(cluster, comment, --json); `--json` stands right after the cluster or last."""
+    """(cluster, comment, --json); `--json` stands right after the cluster or last.
+
+    A word that looks like a flag is refused, not folded into the comment: with
+    `--check` or `--expect` a person is asking the regeneration a question, and
+    publishing the draft with that word as its comment answered nothing and
+    recorded a version. After `--` every word is the comment.
+    """
 
     if len(argv) < 3 or argv[0] not in ("-c", "--cluster"):
         usage(USAGE)
@@ -98,8 +112,18 @@ def _parse(argv: list[str]) -> tuple[str, str, bool]:
     json_mode = False
     if rest[0] == "--json":
         json_mode, rest = True, rest[1:]
-    elif rest[-1] == "--json":
+    elif rest[-1] == "--json" and "--" not in rest:
         json_mode, rest = True, rest[:-1]
+    at = rest.index("--") if "--" in rest else len(rest)
+    for word in rest[:at]:
+        if FLAG.match(word):
+            sys.stderr.write(
+                f"ERROR: {word} is not an option of a plain publish. --check, --expect, -m and "
+                "--allow-certificate-mismatch go with --regenerate; a comment that starts with "
+                "'-' goes after --\n"
+            )
+            usage(USAGE)
+    rest = rest[:at] + rest[at + 1 :]
     comment = " ".join(rest).strip()
     if not comment:
         usage(USAGE)

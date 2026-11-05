@@ -14,7 +14,7 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
@@ -266,6 +266,45 @@ class RefusalTests(CallerFixture):
                 publish.main(argv, stream_out=io.StringIO())
             self.assertEqual(caught.exception.code, 64)
             self.assertIn("haprion-publish -c <cluster>", shown.getvalue())
+
+    def test_a_flag_is_not_a_comment(self) -> None:
+        """`--check` on a plain publish used to publish the draft with the comment "--check"."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            for tail in (
+                ["--check"],
+                ["--allow-certificate-mismatch"],
+                ["--expect", "abc"],
+                ["-m", "hello"],
+                ["Added serverxyz", "--check"],
+            ):
+                with self.subTest(tail=tail):
+                    shown, complaint = io.StringIO(), io.StringIO()
+                    with (
+                        self.assertRaises(SystemExit) as caught,
+                        redirect_stdout(shown),
+                        redirect_stderr(complaint),
+                    ):
+                        self.run_caller(policy_path, "-c", "alpha", *tail)
+                    self.assertEqual(caught.exception.code, 64)
+                    self.assertEqual(self.requests, [])
+                    self.assertIn("haprion-publish -c <cluster>", shown.getvalue())
+                    self.assertIn("goes after --", complaint.getvalue())
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+    def test_after_double_dash_everything_is_the_comment(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+
+            code, _output = self.run_caller(policy_path, "-c", "alpha", "--", "-x", "fix")
+
+            self.assertEqual(code, 0)
+            self.assertEqual(self.requests[0]["parameters"]["comment"], "-x fix")
 
     def test_json_is_one_document_on_stdout_and_the_progress_on_stderr(self) -> None:
         """Review 26-10-30, E12 (B409): haprion-publish had no --json."""

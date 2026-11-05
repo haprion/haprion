@@ -470,11 +470,19 @@ def _expiry_state(
     left = expires_at - now
     if left <= timedelta(0):
         return date, "Expired", "critical"
-    if left <= CRITICAL_WINDOW:
-        return date, _remaining(expires_at, now), "critical"
     warn_after = ACME_WARNING if lifecycle == "acme" else STATIC_WARNING
+    critical_after = CRITICAL_WINDOW
     if ndes_renew_days is not None:
-        warn_after = timedelta(days=ndes_renew_days) - NDES_RENEWAL_SLACK
+        #
+        # Late, not merely due: the warning sits `NDES_RENEWAL_SLACK` below the
+        # renewal day but never under a day, and the critical window is a day
+        # shorter still, so a small `renew_days` neither starts critical nor
+        # skips its warning (26-11-05, CC01).
+        #
+        warn_after = max(timedelta(days=ndes_renew_days) - NDES_RENEWAL_SLACK, timedelta(days=1))
+        critical_after = min(CRITICAL_WINDOW, warn_after - timedelta(days=1))
+    if left <= critical_after:
+        return date, _remaining(expires_at, now), "critical"
     if left <= warn_after:
         return date, _remaining(expires_at, now), "warning"
     return date, _remaining(expires_at, now), "healthy"

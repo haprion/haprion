@@ -209,9 +209,35 @@ class ExpiryTests(unittest.TestCase):
         self.assertEqual(tone(20, 30), "warning")
         # A shorter window follows its own policy; a certificate renewed at 10 days is fine at 8.
         self.assertEqual(tone(8, 10), "healthy")
-        self.assertEqual(tone(6, 10), "critical")
+        self.assertEqual(tone(6, 10), "healthy")
+        self.assertEqual(tone(5, 10), "warning")
+        self.assertEqual(tone(3, 10), "critical")
         # A listing without the number reads as the default.
         self.assertEqual(tone(27, None), "healthy")
+
+    def test_a_short_renewal_window_keeps_a_warning_and_is_not_critical_before_it_is_due(
+        self,
+    ) -> None:
+        """26-11-05, CC01: `renew_days` of 1-7 was critical from the start or never warned."""
+
+        def tone(days_left: int, renew_days: int) -> str:
+            row = registered(kind="import", days_left=days_left)
+            row["source"]["ndes_profile"] = "corp"
+            row["ndes_renew_days"] = renew_days
+            return registry_of(overview(with_registry(reading(), row))).certificates[0].tone
+
+        # Due at 7 days left: healthy until then, a warning one day late, critical after two.
+        self.assertEqual(tone(10, 7), "healthy")
+        self.assertEqual(tone(7, 7), "healthy")
+        self.assertEqual(tone(2, 7), "warning")
+        self.assertEqual(tone(1, 7), "critical")
+        # Due at 3 days left.
+        self.assertEqual(tone(5, 3), "healthy")
+        self.assertEqual(tone(3, 3), "healthy")
+        self.assertEqual(tone(1, 3), "warning")
+        # Due at 1 day left: a warning until it expires, and expired is critical.
+        self.assertEqual(tone(3, 1), "healthy")
+        self.assertEqual(tone(1, 1), "warning")
 
     def test_an_imported_certificate_without_a_profile_still_warns_at_a_month(self) -> None:
         row = registered(kind="import", days_left=27)

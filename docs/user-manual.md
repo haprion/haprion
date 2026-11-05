@@ -5796,8 +5796,10 @@ global
 ```
 
 **A publish is refused while either is missing or wrong**, and the refusal prints the exact line to write
-and the `sudoedit` command for the file. A **revert** is never refused for this: going back to a release
-that was good before must not depend on a file being current.
+and the `sudoedit` command for the file. A **revert** is not refused for this: going back to a release
+that was good before must not depend on a file being current. It makes the same checks on the release it
+restores, and says each problem as a warning in its answer, so a stale core is not discovered on a node. The
+same holds for the stick counters and the traffic log's chroot and user, which a publish also refuses for.
 
 - **`default-path config`.** Without it, HAProxy resolves the relative path to a certificate list against
   whatever directory it was started from. The manager's own validation would still pass, and the node

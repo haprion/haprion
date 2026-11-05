@@ -133,9 +133,11 @@ version, or *Discard the changes* (*Discard the draft* for a draft) to drop it. 
 other objects does not hold anything back.
 
 **Going back.** *Publish this version* on an older version makes its configuration the newest version
-again. The cluster keeps the nodes it has now. Their keepalived settings, shared counters and exporter
-addresses are made again for today's nodes, so a node added since stays in service. The version's WAF
-rule set and country networks come back as it ran them, not as installed today.
+again, as a new version with the next number; the nodes change when it is deployed. A published version
+is never removed: the one you went back from stays in the list, with who published it. The cluster keeps
+the nodes it has now. Their keepalived settings, shared counters and exporter addresses are made again
+for today's nodes, so a node added since stays in service. The version's WAF rule set and country
+networks come back as it ran them, not as installed today.
 
 **After an upgrade of Haprion.** A newer release can generate other configuration from the same objects, and
 so can a newer WAF rule set. The nodes keep running what was published until the cluster is published
@@ -5449,6 +5451,9 @@ in the section linked.
   new version changed is read under *Versions* before it is deployed
   ([Configuration and deployment](#configuration-and-deployment)). *Publish & deploy* on the dashboard
   does both at once, without that look.
+- **A published version is not deleted or withdrawn.** The list of versions is the record of who changed
+  what. To undo a publish, publish the version before it again
+  ([Configuration and deployment](#configuration-and-deployment)).
 - **A restore that includes the host's memory is not recognised.** The manager cannot tell a snapshot
   put back with its memory from a pause, so jobs that were waiting run without being held. Restart the
   manager after such a restore

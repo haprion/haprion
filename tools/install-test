@@ -1063,6 +1063,53 @@ class Run:
             self.on(role, "cat /var/log/haprion-node/*.log", check=False)
 
 
+#
+# One entry of `pg_dump --schema-only`: its header names it and says its kind.
+# A day's or a month's partition, and what belongs to it, carries the date in
+# its name.
+#
+DUMP_ENTRY = re.compile(
+    r"^-- Name: (?P<name>.*?); Type: (?P<kind>.*?); Schema: .*?; Owner: .*$", re.M
+)
+DATED = re.compile(r"_\d{6}(?:\d{2})?(?:_[a-z_]+)?\b")
+
+
+def schema_entries(dump: str) -> dict[str, str]:
+    """`{"<kind>: <name>": statement}` for every entry but the dated partitions (B436).
+
+    pg_dump's frame is left out with the comment lines and its random
+    `\\restrict` token, so two dumps of one schema are equal.
+    """
+
+    marks = list(DUMP_ENTRY.finditer(dump))
+    found = {}
+    for index, mark in enumerate(marks):
+        if DATED.search(mark["name"]):
+            continue
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(dump)
+        body = "\n".join(
+            line
+            for line in dump[mark.end() : end].splitlines()
+            if line.strip() and not line.startswith("--") and not line.startswith("\\")
+        )
+        found[f"{mark['kind']}: {mark['name']}"] = body
+    return found
+
+
+def schema_difference(updated: dict[str, str], new: dict[str, str]) -> list[str]:
+    """What one schema has and the other has not, or has otherwise, one line per entry."""
+
+    said = []
+    for key in sorted(set(updated) | set(new)):
+        if key not in new:
+            said.append(f"  only after the update: {key}")
+        elif key not in updated:
+            said.append(f"  only in a new installation: {key}")
+        elif updated[key] != new[key]:
+            said.append(f"  not the same: {key}")
+    return said
+
+
 def package(directory: Path, pattern: str) -> Path:
     found = sorted(directory.glob(pattern))
     if len(found) != 1:
@@ -1865,6 +1912,59 @@ def run_upgrade(
             the_web_answers(f"the rollback to {to}")
             compatible(f"the rollback to {to}")
 
+    def the_schema_is_a_new_installations() -> str:
+        """The schema the update leaves is the one a new installation gets (B436).
+
+        A baseline replaces the migrations before it and keeps the last one's
+        number, so an update from the release before runs none of them: the
+        database keeps the schema they made. What says the baseline makes the
+        same is this. A database of its own on the same server is migrated from
+        nothing by this release, and the two are dumped and compared, entry by
+        entry: tables, indexes, constraints, functions, triggers, grants. The
+        day partitions are left out, which the retention makes ahead on its
+        own clock, and so are the owners: the migration role may reach only the
+        installation's own database, so the second is migrated as postgres.
+        """
+
+        release = packaged_release()
+        _, made = run.on("mgr", "mktemp -d")
+        bundle = f"{made.strip()}/migration"
+        url = "postgresql+psycopg://postgres@/schema_check?host=/var/run/postgresql"
+        as_postgres = "runuser -u postgres -- "
+        run.on(
+            "mgr",
+            f"cp -a /opt/haprion-ui/releases/{shlex.quote(release)}/migration {bundle}"
+            f" && chmod -R a+rX {made.strip()}",
+        )
+        run.on("mgr", as_postgres + "psql -qtAX -c 'create database schema_check'")
+        try:
+            run.on("mgr", as_postgres + "psql -d schema_check -qtAX -c 'create extension pg_trgm'")
+            python = (
+                f"$(readlink -f /opt/haprion-ui/releases/{shlex.quote(release)}/venv/bin/python)"
+            )
+            run.on(
+                "mgr",
+                f"cd {bundle} && {as_postgres}env PYTHONPATH={bundle}/lib"
+                f" HAPRION_UI_DATABASE_URL='{url}' {python} -B -m alembic -c alembic.ini"
+                " upgrade head",
+            )
+            _, upgraded = run.on("mgr", as_postgres + "pg_dump --schema-only --no-owner -d haprion")
+            _, new = run.on("mgr", as_postgres + "pg_dump --schema-only --no-owner -d schema_check")
+        finally:
+            run.on(
+                "mgr",
+                as_postgres + "psql -qtAX -c 'drop database if exists schema_check'"
+                f"; rm -rf {made.strip()}",
+                check=False,
+            )
+        different = schema_difference(schema_entries(upgraded), schema_entries(new))
+        if different:
+            raise Failed(
+                "the updated database's schema is not a new installation's:\n"
+                + "\n".join(different[:40])
+            )
+        return f"{len(schema_entries(new))} schema entries, the same after the update as new"
+
     try:
         image = step("an empty server image", run.image)
         step("a manager and two nodes booted", lambda: run.start(image))
@@ -1896,6 +1996,11 @@ def run_upgrade(
             )
         step("the manager serves, deploys, and the object answers", the_manager_serves_after_it)
         step(f"haprion-rollback to {before}'s interface and forward again", rolled_back_and_forward)
+        said = step(
+            "the updated database's schema is a new installation's",
+            the_schema_is_a_new_installations,
+        )
+        print(f"      {said}")
     except Failed as failure:
         print("FAILED")
         print()

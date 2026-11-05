@@ -353,6 +353,63 @@ class TheTree(unittest.TestCase):
         loader.exec_module(module)
         return module
 
+    DUMP = (
+        "--\n-- PostgreSQL database dump\n--\n\\restrict {mark}\n\n"
+        "--\n-- Name: job; Type: TABLE; Schema: public; Owner: {owner}\n--\n\n"
+        "CREATE TABLE public.job (\n    id bigint NOT NULL\n);\n\n"
+        "--\n-- Name: traffic_log_{day}; Type: TABLE; Schema: public; Owner: {owner}\n--\n\n"
+        "CREATE TABLE public.traffic_log_{day} (\n    id bigint\n);\n\n"
+        "--\n-- Name: COLUMN job.id; Type: ACL; Schema: public; Owner: {owner}\n--\n\n"
+        "GRANT SELECT(id) ON TABLE public.job TO {grantee};\n\n"
+        "\\unrestrict {mark}\n"
+    )
+
+    def dump(self, **changes: str) -> str:
+        values = {
+            "mark": "abc",
+            "owner": "haprion_migrate",
+            "day": "20261105",
+            "grantee": "app_web",
+        }
+        return self.DUMP.format(**{**values, **changes})
+
+    def test_two_dumps_of_one_schema_are_the_same_whoever_owns_it_and_whatever_day(self) -> None:
+        """B436: the update's schema against a new installation's, owners and partitions aside."""
+
+        tool = self.install_test()
+        updated = tool.schema_entries(self.dump())
+        new = tool.schema_entries(self.dump(mark="xyz", owner="postgres", day="20261112"))
+
+        self.assertEqual(sorted(updated), ["ACL: COLUMN job.id", "TABLE: job"])
+        self.assertEqual(tool.schema_difference(updated, new), [])
+
+    def test_a_grant_or_a_table_that_differs_is_named(self) -> None:
+        tool = self.install_test()
+        updated = tool.schema_entries(self.dump())
+        other = tool.schema_entries(self.dump(grantee="app_worker"))
+        fewer = {key: value for key, value in updated.items() if key != "TABLE: job"}
+
+        self.assertEqual(
+            tool.schema_difference(updated, other), ["  not the same: ACL: COLUMN job.id"]
+        )
+        self.assertEqual(
+            tool.schema_difference(updated, fewer), ["  only after the update: TABLE: job"]
+        )
+        self.assertEqual(
+            tool.schema_difference(fewer, updated), ["  only in a new installation: TABLE: job"]
+        )
+
+    def test_the_update_test_compares_the_schema_last(self) -> None:
+        """B436: after the rollback and forward again, on the release the update left."""
+
+        text = (BASE / "tools/install-test").read_text()
+        start = text.index("def run_upgrade(")
+        body = text[start : text.index("\ndef main(", start)]
+        self.assertLess(
+            body.index("rolled_back_and_forward)"),
+            body.index("the_schema_is_a_new_installations,"),
+        )
+
     def test_the_failed_update_is_said_as_what_it_runs(self) -> None:
         """Review 26-10-29, AA05: "after its migration", over two releases with none between.
 

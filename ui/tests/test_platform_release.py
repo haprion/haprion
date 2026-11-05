@@ -692,7 +692,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertIn(
             "<root>/dumps/before-migration/haprion-0100-to-0101-20261026-162200.dump", said
         )
-        self.assertIn("then: sudo dpkg --configure -a", said)
+        self.assertIn("then, unless they say otherwise: sudo dpkg --configure -a", said)
         self.assertIn("then run the update again", self.where_it_stands(dpkg=False))
 
     def test_an_unproved_release_left_running_is_said_with_the_way_to_keep_it(self) -> None:
@@ -700,7 +700,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         on every run, and nothing said how to go on from the unproved one instead."""
 
         for dpkg, then in (
-            (True, "then: sudo dpkg --configure -a"),
+            (True, "then, unless they say otherwise: sudo dpkg --configure -a"),
             (False, "then run the update again."),
         ):
             with self.subTest(dpkg=dpkg):

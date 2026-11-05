@@ -335,7 +335,7 @@ where_it_stands() {
                  "To keep ${running} instead, and go on from it, remove ${marker}."
         fi
         if [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]]; then
-            echo "Correct what the lines above name, then: sudo dpkg --configure -a"
+            echo "Correct what the lines above name, then, unless they say otherwise: sudo dpkg --configure -a"
         else
             echo "Correct what the lines above name, then run the update again."
         fi

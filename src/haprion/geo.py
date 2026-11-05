@@ -23,6 +23,7 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from haprion import address_ranges
 from haprion.config import ConfigError
 
 DEFAULT_DATABASE = Path("/var/lib/location/database.db")
@@ -156,8 +157,19 @@ def tree_reader(
             found = STAMP.match(header)
             if found is None or not header.endswith(f" {country}"):
                 return fallback(countries)
+            lines = tuple(line for line in body.split("\n") if line)
+            #
+            # The repository is writable by the application, and these lines go
+            # on into the map file as they stand: each is a network as written,
+            # or the file is damaged like any other (XX04).
+            #
+            try:
+                for line in lines:
+                    address_ranges.plain_network(line, strict=True)
+            except ValueError:
+                return fallback(countries)
             stamps.add(found.group(1))
-            networks[country] = tuple(line for line in body.split("\n") if line)
+            networks[country] = lines
         if len(stamps) > 1:
             return fallback(countries)
         return Countries(stamp=stamps.pop() if stamps else "", networks=networks)

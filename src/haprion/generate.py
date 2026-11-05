@@ -472,6 +472,7 @@ def generate(
             certificates,
             authorities,
             resolvers,
+            countries,
         ),
         "the input",
     )

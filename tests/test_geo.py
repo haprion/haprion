@@ -135,6 +135,18 @@ class AVersion_sOwnCountries(unittest.TestCase):
         self.assertEqual(countries.stamp, "2026-10-25")
         self.assertEqual(self.asked, {"SE", "DK"})
 
+    def test_a_file_with_a_line_that_is_not_a_network_is_not_taken(self) -> None:
+        # Review 26-11-05, XX04: the repository is writable by the application, and these
+        # lines went on into the map file unchanged.
+        header = b"# IPFire Location 2026-01-02 (CC BY-SA 4.0) SE\n"
+        for body in (b"not-a-network\r\n", b"192.0.2.0/24\n192.0.2.7/24\n", b"192.0.2.0/24 x\n"):
+            with self.subTest(body):
+                files = {"managed/maps/geo-se.lst": header + body}
+
+                countries = geo.tree_reader(files, self.today)({"SE"})
+
+                self.assertEqual(countries.stamp, "2026-10-25")
+
     def test_a_file_for_another_country_is_not_taken(self) -> None:
         files = {"managed/maps/geo-se.lst": self.FILES["managed/maps/geo-no.lst"]}
 

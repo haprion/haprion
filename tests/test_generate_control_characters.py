@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import unittest
 
+from haprion import geo
 from haprion.config import Vip
 from haprion.generate import GeneratorError, generate
 from haprion.proxy_model import Proxy, load_proxy
@@ -47,6 +48,20 @@ class TheGuardBehindTheFields(unittest.TestCase):
             run(proxy, trusted_proxies=["192.0.2.0/24\nglobal"])
         with self.assertRaises(GeneratorError):
             run(proxy, networks={"office": ["192.0.2.0/24\nglobal"]})
+
+    def test_the_country_networks_are_held_to_it_too(self) -> None:
+        # Review 26-11-05, XX04: a country's lines are written into a map file as they stand.
+        proxy = load_proxy(
+            "shop",
+            MINIMAL
+            + b"deny_rules:\n  - name: a\n    mode: deny\n    path: /se\n    source: [country:se]\n",
+        )
+        countries = geo.Countries(stamp="2026-10-25", networks={"SE": ("192.0.2.0/24\nglobal",)})
+
+        with self.assertRaises(GeneratorError) as caught:
+            run(proxy, countries=countries)
+
+        self.assertIn("control character", str(caught.exception))
 
 
 class AdvancedConfigAgreesWithTheModel(unittest.TestCase):

@@ -431,10 +431,34 @@ class FlagsInAnyOrderTests(StatusFixture):
         self.assertEqual(code, 0)
         self.assertNotIn("Usage", shown)
 
-    def test_json_and_diff_together_are_still_a_mistake(self) -> None:
+    def test_json_and_diff_together_are_a_mistake_answered_as_a_document(self) -> None:
+        """Z11: as `haprion-cert-renew --json` answers a call it cannot take."""
+
+        out, err = io.StringIO(), io.StringIO()
+        code = config_status.main(
+            ["-c", "alpha", "--json", "--diff"], stream_out=out, stream_err=err
+        )
+
+        answer = assert_contract("haprion-config-status", out.getvalue())
+        self.assertEqual(
+            (code, answer["error"]["code"], answer["cluster"]), (64, "bad_input", "alpha")
+        )
+        self.assertIn("--diff", err.getvalue())
+
+    def test_json_without_a_cluster_is_a_document_too(self) -> None:
+        out = io.StringIO()
+        code = config_status.main(["--json"], stream_out=out, stream_err=io.StringIO())
+
+        answer = assert_contract("haprion-config-status", out.getvalue())
+        self.assertEqual(
+            (code, answer["error"]["code"], answer["cluster"]), (64, "bad_input", None)
+        )
+
+    def test_a_flag_it_does_not_know_is_still_usage_on_stderr_alone(self) -> None:
+        out = io.StringIO()
         with self.assertRaises(SystemExit) as raised, redirect_stderr(io.StringIO()):
-            config_status.main(["-c", "alpha", "--json", "--diff"], stream_out=io.StringIO())
-        self.assertEqual(raised.exception.code, 64)
+            config_status.main(["-c", "alpha", "--json", "--nope"], stream_out=out)
+        self.assertEqual((raised.exception.code, out.getvalue()), (64, ""))
 
     def test_a_cluster_that_cannot_be_looked_up_is_a_document(self) -> None:
         def unknown(_cluster: str) -> Path:

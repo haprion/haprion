@@ -126,10 +126,13 @@ def ask_regeneration(cluster_id: str) -> Mapping[str, Any] | None:
     return result if isinstance(result, dict) and "outcome" in result else None
 
 
-def _parse(argv: list[str]) -> tuple[str, bool, bool]:
-    """The cluster, whether the regeneration's diff is asked for, and whether the answer is JSON.
+def _parse(argv: list[str]) -> tuple[str | None, bool, bool, str | None]:
+    """The cluster, whether the diff is asked for, whether the answer is JSON, and what is wrong with the call.
 
-    The flags come in any order, as they do for every other command.
+    The flags come in any order, as they do for every other command. A word it
+    does not know is usage on stderr, as everywhere (K08); a call made only of
+    flags it knows that cannot be taken, with `--json`, is a mistake the caller
+    gets as a document, as `haprion-cert-renew` answers one (Z11).
     """
 
     cluster: str | None = None
@@ -148,9 +151,14 @@ def _parse(argv: list[str]) -> tuple[str, bool, bool]:
             index += 1
         else:
             usage(USAGE)
-    if cluster is None or (diff and as_json):
+    problem: str | None = None
+    if cluster is None:
+        problem = "-c names the cluster to read"
+    elif diff and as_json:
+        problem = "--diff is the text form; --json cannot be combined with it"
+    if problem is not None and not as_json:
         usage(USAGE)
-    return str(cluster), diff, as_json
+    return cluster, diff, as_json, problem
 
 
 def _regeneration(result: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -248,7 +256,23 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
-    cluster_id, show_diff, as_json = _parse(argv)
+    asked, show_diff, as_json, problem = _parse(argv)
+    if problem is not None:
+        errors.write(f"ERROR: {problem}\n")
+        write_document(
+            writer,
+            failure(
+                operation=ANSWERS_AS,
+                cluster=asked,
+                request_id=new_request_id(),
+                code="bad_input",
+                message=problem,
+                exit_code=exit_codes.USAGE,
+            ),
+            exit_codes.USAGE,
+        )
+        return exit_codes.USAGE
+    cluster_id = str(asked)
 
     def stopped(code: str, message: str, exit_code: int, *, said: str | None = None) -> int:
         errors.write(f"{message if said is None else said}\n")

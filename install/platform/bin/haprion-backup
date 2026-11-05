@@ -182,6 +182,7 @@ schema_plan() {
     python="${UI_PLATFORM_ROOT}/releases/${packaged}/venv/bin/python"
     if [[ ! "$packaged" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ || ! -x "$python" ]]; then
         echo "the release this package installed (${UI_PAYLOAD}) is not on disk; reinstall the haprion-ui package" >&2
+        echo "  If an upgrade of it stopped on this restore: sudo haprion-backup after-restore, then sudo dpkg --configure -a" >&2
         return 1
     fi
     "$python" -I -m "$(release_module "$python").restore_schema" \

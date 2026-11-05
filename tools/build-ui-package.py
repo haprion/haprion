@@ -220,6 +220,31 @@ UPDATE_MARKER = f"{UPDATE_STATE}/update"
 # aside, so that "reinstall the package", which that script says, does what it
 # says. One that runs is said so and left alone (review 26-10-30, U5).
 #
+RESTORE_STOPPED = "/run/haprion/restore-stopped"
+RELEASE_LOCK = "/run/haprion/ui-release.lock"
+#
+# Before dpkg unpacks anything (review 2026-11-05, R11): a restore that runs
+# reads the steps and PAYLOAD this package replaces, and ran the new 03-verify
+# against the old schema with the services down. Refused while one runs - it
+# holds the release lock - or stopped the services and did not finish. The lock
+# file is only looked at, never made: `flock` creates a missing one.
+#
+PREINST = f"""\
+#!/bin/sh
+set -e
+if [ "$1" = upgrade ]; then
+    if [ -e {RELEASE_LOCK} ] && ! flock -n {RELEASE_LOCK} true; then
+        echo "haprion-ui: an update, a rollback, a setup of the UI release or a restore is running; nothing was changed." >&2
+        echo "haprion-ui: when it is done, upgrade again" >&2
+        exit 1
+    fi
+    if [ -e {RESTORE_STOPPED} ]; then
+        echo "haprion-ui: a restore stopped the services and did not finish; nothing was changed." >&2
+        echo "haprion-ui: run it again first: sudo haprion-backup restore <dump>, then upgrade again" >&2
+        exit 1
+    fi
+fi
+"""
 POSTINST = f"""\
 #!/bin/sh
 set -e
@@ -421,6 +446,7 @@ def assemble(
         source = tree / f"install/platform/bin/haprion-{command}"
         write(root, f"usr/sbin/haprion-{command}", source.read_bytes(), 0o755)
     write(root, "usr/sbin/haprion-setup", SETUP_COMMAND.encode(), 0o755)
+    write(root, "DEBIAN/preinst", PREINST.encode(), 0o755)
     write(root, "DEBIAN/postinst", POSTINST.encode(), 0o755)
     write(root, "DEBIAN/postrm", POSTRM.encode(), 0o755)
 

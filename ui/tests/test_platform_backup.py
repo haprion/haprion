@@ -946,6 +946,13 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 self.assertNotIn("//", chosen)
                 self.assertNotIn("..", chosen)
 
+    def test_a_release_not_on_disk_names_the_way_out_of_a_stopped_upgrade(self) -> None:
+        """Review 2026-11-05 R11: after-restore, then dpkg, was in no message."""
+
+        function_text = function("schema_plan", SCRIPT.read_text())
+        self.assertIn("sudo haprion-backup after-restore", function_text)
+        self.assertIn("sudo dpkg --configure -a", function_text)
+
     def test_a_dump_that_does_not_exist_is_refused_by_its_own_path(self) -> None:
         done, said = self.restore(active=self.ACTIVE, spelled="{here}/none.dump")
         self.assertEqual(done.returncode, 1)

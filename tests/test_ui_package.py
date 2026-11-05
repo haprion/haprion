@@ -6,10 +6,12 @@ import importlib.machinery
 import importlib.util
 import os
 import re
+import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -152,6 +154,9 @@ class TheTree(unittest.TestCase):
                 (root / "usr/share/doc/haprion-ui/BUILD").read_text(),
             )
             postinst = (root / "DEBIAN/postinst").read_text()
+            preinst = root / "DEBIAN/preinst"
+            self.assertEqual(preinst.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(preinst.read_text(), TOOL.PREINST)
             # An installed release is never unpacked over; a new one is
             # checked against its digest, unpacked beside and moved in whole.
             self.assertIn('if [ ! -d "$release" ]; then', postinst)
@@ -259,6 +264,60 @@ class TheTree(unittest.TestCase):
                 for part in self.PARTS
             ]
         return done, parts
+
+    def preinst(self, *, stopped: bool = False, held: bool = False, action: str = "upgrade") -> Any:
+        """The package's preinst run for real, the restore's two files moved into a directory."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            here = Path(raw)
+            script = TOOL.PREINST.replace(TOOL.RESTORE_STOPPED, f"{here}/stopped").replace(
+                TOOL.RELEASE_LOCK, f"{here}/lock"
+            )
+            if stopped:
+                (here / "stopped").write_text("haprion-web.service\n")
+            holder = None
+            if held:
+                (here / "lock").write_text("")
+                holder = subprocess.Popen(  # fixed program
+                    ["/usr/bin/flock", str(here / "lock"), "/usr/bin/sleep", "5"],
+                    start_new_session=True,
+                )
+                time.sleep(0.3)
+            try:
+                return subprocess.run(  # fixed interpreter, the package's own script
+                    ["/bin/sh", "-c", script, "preinst", action],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            finally:
+                if holder is not None:
+                    os.killpg(holder.pid, signal.SIGKILL)
+                    holder.wait()
+
+    def test_an_upgrade_in_the_middle_of_a_restore_is_refused_before_anything_is_unpacked(
+        self,
+    ) -> None:
+        """Review 2026-11-05, R11: dpkg unpacked the new steps under a restore that ran the old."""
+
+        self.assertEqual(self.preinst().returncode, 0)
+        for stopped, held in ((True, False), (False, True)):
+            with self.subTest(stopped=stopped, held=held):
+                done = self.preinst(stopped=stopped, held=held)
+                self.assertEqual(done.returncode, 1, done.stderr)
+                self.assertIn("nothing was changed", done.stderr)
+        stopped = self.preinst(stopped=True)
+        self.assertIn("sudo haprion-backup restore <dump>", stopped.stderr)
+        self.assertIn("then upgrade again", stopped.stderr)
+        self.assertIn("a restore is running", self.preinst(held=True).stderr)
+
+    def test_a_first_installation_is_not_asked(self) -> None:
+        self.assertEqual(self.preinst(stopped=True, action="install").returncode, 0)
+
+    def test_the_preinst_names_the_files_lib_sh_does(self) -> None:
+        lib = (BASE / "install/lib.sh").read_text()
+        self.assertIn(f"\nRESTORE_STOPPED={TOOL.RESTORE_STOPPED}\n", lib)
+        self.assertIn(f"\nRELEASE_LOCK={TOOL.RELEASE_LOCK}\n", lib)
 
     def test_an_update_under_way_is_run_again_with_its_release_current(self) -> None:
         """Review 26-10-29, A02: `dpkg --configure -a` after a failed restore said "already current"."""

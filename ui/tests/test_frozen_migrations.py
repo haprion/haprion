@@ -7,6 +7,15 @@ request (26-10-03 19:44). The rule is that a change is a new migration. This
 holds it: `migrations/frozen.sha256` lists each migration that has shipped,
 in `sha256sum` form, and every migration but the newest must be listed - the
 newest may still change until a release carries it or the next one is added.
+
+That second half was kept by hand and was missed: 0115 went out in three
+releases without a line (review 26-11-05, G04). The release tags are the
+record of what has shipped, so `RunMigrationsStayAsTheyRan` also reads them:
+a migration file in any `v*` tag must be listed, the newest included.
+
+Needs the tags. CI's checkout is shallow and without them (`actions/checkout`
+with no `fetch-depth`); there that test is skipped, with the reason shown, and
+it runs wherever the tags are - the maintainer's gate before a release.
 """
 
 from __future__ import annotations
@@ -35,6 +44,36 @@ def frozen() -> dict[str, str]:
     return listed
 
 
+def shipped(root: Path) -> set[str] | None:
+    """`versions/<file>` of every migration in any `v*` tag, or None where there are no tags."""
+
+    def git(*arguments: str) -> str:
+        done = subprocess.run(  # noqa: S603 - git, fixed arguments
+            ["git", "-C", str(root), *arguments],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return done.stdout if done.returncode == 0 else ""
+
+    tags = git("tag", "--list", "v*").split()
+    if not tags:
+        return None
+    found: set[str] = set()
+    for tag in tags:
+        prefix = "ui/migrations/"
+        for name in git("ls-tree", "-r", "--name-only", tag, "--", f"{prefix}versions/").split():
+            if re.fullmatch(r"[0-9]{4}_[a-z0-9_]+\.py", name.rsplit("/", 1)[-1]):
+                found.add(name.removeprefix(prefix))
+    return found
+
+
+def unfrozen(released: set[str], present: set[str], listed: set[str]) -> list[str]:
+    """The migrations in the tree that a release carried and `frozen.sha256` does not list."""
+
+    return sorted((released & present) - listed)
+
+
 class RunMigrationsStayAsTheyRan(unittest.TestCase):
     def test_a_frozen_migration_is_unchanged(self) -> None:
         for path, digest in frozen().items():
@@ -55,6 +94,29 @@ class RunMigrationsStayAsTheyRan(unittest.TestCase):
             sorted(set(present[:-1]) - set(frozen())),
             [],
             "add these to migrations/frozen.sha256 - an older migration than the newest has shipped",
+        )
+
+    def test_every_migration_a_release_carried_is_frozen(self) -> None:
+        released = shipped(MIGRATIONS.parents[1])
+        if released is None:
+            self.skipTest(
+                "no v* tags in this clone (a shallow checkout): the release freeze is not read"
+            )
+        present = {f"versions/{file.name}" for file in (MIGRATIONS / "versions").glob("[0-9]*.py")}
+        self.assertEqual(
+            unfrozen(released, present, set(frozen())),
+            [],
+            "add these to migrations/frozen.sha256 - a release has carried them",
+        )
+
+    def test_a_migration_in_a_release_and_not_listed_is_named(self) -> None:
+        self.assertEqual(
+            unfrozen(
+                {"versions/0114_a.py", "versions/0115_a.py"},
+                {"versions/0115_a.py", "versions/0116_b.py"},
+                {"versions/0114_a.py"},
+            ),
+            ["versions/0115_a.py"],
         )
 
 

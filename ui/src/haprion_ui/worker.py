@@ -281,7 +281,9 @@ def _with_warning(result: dict[str, Any] | None, code: str, message: str) -> dic
     return ended
 
 
-def _record_backend_renames(connection: Any, job: db.ClaimedJob) -> None:
+def _record_backend_renames(
+    connection: Any, job: db.ClaimedJob, *, keep_recorded: bool = False
+) -> None:
     """Write down what a done publish renamed (B253), if it renamed anything."""
 
     renames = job.payload.get("backend_renames")
@@ -291,7 +293,39 @@ def _record_backend_renames(connection: Any, job: db.ClaimedJob) -> None:
             cluster=job.cluster,
             renamed=dict(renames.get("renamed") or {}),
             introduced=list(renames.get("introduced") or ()),
+            **({"keep_recorded": True} if keep_recorded else {}),
         )
+
+
+def _record_renames_before_deploy(
+    connection: Any,
+    connect: Callable[[], AbstractContextManager[Any]] | None,
+    job: db.ClaimedJob,
+) -> bool:
+    """Write and commit the renames of a publish that a deploy follows; say whether they are written.
+
+    On a fresh connection when the job's own is dropped, as `_Lease.ours` and
+    `_finish_on` do. A database that does not answer is logged and the deploy
+    runs all the same: the renames are then written with the job's end.
+    """
+
+    try:
+        if connect is not None and _broken(connection):
+            with connect() as fresh:
+                _record_backend_renames(fresh, job)
+                fresh.commit()
+        else:
+            _record_backend_renames(connection, job)
+            connection.commit()
+    except psycopg.OperationalError as exc:
+        logger.warning(
+            "job %s: the publish's renames could not be written yet (%s); they are written"
+            " with its end",
+            job.id,
+            exc,
+        )
+        return False
+    return True
 
 
 def _finish(
@@ -304,6 +338,7 @@ def _finish(
     result: dict[str, Any] | None,
     stderr_excerpt: str | None,
     worker: str,
+    renames_recorded: bool = False,
 ) -> bool:
     """Write how a job ended, and record it, in one transaction.
 
@@ -384,14 +419,16 @@ def _finish(
     # history and never a wrong one.
     #
     #
-    # A publish with a deploy after it has recorded them already, when the
-    # publish committed (`_conclude`): the page folds the old card into the new
-    # one from then, not from when the last node has installed.
+    # A publish with a deploy after it records them when the publish
+    # committed (`_conclude`): the page folds the old card into the new one
+    # from then, not from when the last node has installed. When that write
+    # could not be made (`renames_recorded` is False) it is made here, and a
+    # pair already recorded is kept as it is.
     #
     answer = jobs.publish_answer(result)
     published = state == "done" or (answer is not None and answer.get("outcome") == "done")
-    if published and job.payload.get("deploy") is not True:
-        _record_backend_renames(connection, job)
+    if published and not renames_recorded:
+        _record_backend_renames(connection, job, keep_recorded=job.payload.get("deploy") is True)
 
     db.record_audit_event(
         connection,
@@ -922,6 +959,7 @@ def _conclude(
 
     exit_code = completed.exit_code
     stderr = completed.stderr
+    renames_recorded = False
     if job.held_decision == "discard":
         #
         # Adopted on its helper's kept answer after an admin's Discard (review
@@ -936,8 +974,7 @@ def _conclude(
     elif (
         state == "done" and job.operation == "changes_publish" and job.payload.get("deploy") is True
     ):
-        _record_backend_renames(connection, job)
-        connection.commit()
+        renames_recorded = _record_renames_before_deploy(connection, connect, job)
         deployed = _deploy_after(job, cast(dict[str, Any], result), lease.ours, stopping)
         if deployed is None:
             return
@@ -975,6 +1012,7 @@ def _conclude(
         result=result,
         stderr_excerpt=diagnostics.safe_excerpt(stderr) or None,
         worker=worker,
+        renames_recorded=renames_recorded,
     )
 
 

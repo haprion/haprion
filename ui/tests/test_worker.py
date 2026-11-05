@@ -1665,6 +1665,73 @@ class PublishAndDeploy(WorkerTestCase):
         self.assertEqual(seen, [1])
         record.assert_called_once()
 
+    def test_a_dropped_connection_under_the_publish_still_deploys_and_ends_on_a_fresh_one(
+        self,
+    ) -> None:
+        """The renames are written on a fresh connection (or with the end) and the deploy runs."""
+
+        renames = {"renamed": {"web": "shop-front"}, "introduced": ["shop-front"]}
+        job = claimed(
+            operation="changes_publish", payload={**self.PAYLOAD, "backend_renames": renames}
+        )
+        fresh = mock.MagicMock()
+        own = self.connection
+        own.broken = False
+        own.commit.side_effect = lambda: (
+            (_ for _ in ()).throw(psycopg.OperationalError("the connection is lost"))
+            if own.broken
+            else None
+        )
+
+        answers = [self.published(job), self.deployed()]
+        calls: list[Any] = []
+
+        def run(argv: Any, *, still_ours: Any, **kwargs: Any) -> execution.Completed:
+            calls.append(argv)
+            still_ours()
+            own.broken = True  # the job's own connection dropped during the publish
+            produced = answers.pop(0)
+            return cast(
+                execution.Completed,
+                produced(json.loads(kwargs["request"])) if callable(produced) else produced,
+            )
+
+        with (
+            mock.patch.object(execution, "run", side_effect=run),
+            mock.patch.object(db, "renew_lease", return_value=True),
+            mock.patch.object(db, "record_backend_renames") as record,
+        ):
+            worker.run_one_job(own, job, worker=WORKER, connect=lambda: nullcontext(fresh))
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.finished[0]["state"], "done")
+        # The one commit on the job's own connection was the lease's, before it dropped.
+        self.assertEqual(own.commit.call_count, 1)
+        fresh.commit.assert_called()
+        self.assertTrue(record.called)
+        self.assertTrue(all(call.args[0] is fresh for call in record.call_args_list))
+
+    def test_renames_that_could_not_be_written_before_the_deploy_are_written_with_the_end(
+        self,
+    ) -> None:
+        renames = {"renamed": {"web": "shop-front"}, "introduced": ["shop-front"]}
+        job = claimed(
+            operation="changes_publish", payload={**self.PAYLOAD, "backend_renames": renames}
+        )
+        tries: list[dict[str, Any]] = []
+
+        def record(_c: object, **fields: Any) -> None:
+            tries.append(fields)
+            if len(tries) == 1:
+                raise psycopg.OperationalError("the database system is starting up")
+
+        with mock.patch.object(db, "record_backend_renames", side_effect=record):
+            calls = self.run_job(job, [self.published(job), self.deployed()])
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.finished[0]["state"], "done")
+        self.assertEqual([t.get("keep_recorded", False) for t in tries], [False, True])
+
     def test_a_refused_deploy_after_it_is_said_as_the_job_s_own_refusal_is(self) -> None:
         """Review 26-10-24, 07-05: an invalid result document, with the reason in the log only."""
 

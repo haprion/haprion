@@ -974,6 +974,53 @@ class TrafficCollectorTests(unittest.TestCase):
         os.utime(mark, (stamp, stamp))
         return mark
 
+    def two_nodes_today(self, big: int, small: int) -> CollectorConfig:
+        node_b = NodeTarget("alpha", "node-b", "node-b.example.com")
+        today = NOW.date().isoformat()
+        (self.staging / f"alpha--node-a--{today}.jsonl").write_bytes(b"x" * big)
+        (self.staging / f"alpha--node-b--{today}.jsonl").write_bytes(b"x" * small)
+        return dataclasses.replace(self.config, nodes=(self.target, node_b))
+
+    def test_only_the_nodes_over_their_share_are_held_for_the_database_budget(self) -> None:
+        """Review 2026-11-05, U02: one node's flood must not stop every other node's import."""
+
+        configured = self.two_nodes_today(big=500, small=10)
+        # A quarter of 1600 is 400, shared by two nodes: 200 each.
+        with self.space(capacity=1600, free=1000):
+            self.assertEqual(traffic_collector._database_held_nodes(configured, now=NOW), set())
+            self.hold_mark()
+            self.assertEqual(
+                traffic_collector._database_held_nodes(configured, now=NOW),
+                {("alpha", "node-a")},
+            )
+
+    def test_every_node_is_held_when_none_of_them_stands_out(self) -> None:
+        configured = self.two_nodes_today(big=100, small=100)
+        self.hold_mark()
+        with self.space(capacity=1600, free=1000):
+            self.assertEqual(
+                traffic_collector._database_held_nodes(configured, now=NOW),
+                {("alpha", "node-a"), ("alpha", "node-b")},
+            )
+
+    def test_a_held_node_is_the_only_one_not_imported_into(self) -> None:
+        configured = self.two_nodes_today(big=500, small=10)
+        for node in ("node-a", "node-b"):
+            (self.staging / f"alpha--{node}--{NOW.date().isoformat()}.jsonl").write_bytes(
+                traffic_line(f"/{node}")
+            )
+        connection: Any = _Connection()
+        with (
+            patch("haprion.traffic_collector.psycopg.connect", return_value=connection),
+            patch(
+                "haprion.traffic_collector._database_days",
+                return_value=frozenset({f"{NOW:%Y%m%d}"}),
+            ),
+            patch("haprion.traffic_collector._database_window", return_value=None),
+        ):
+            REAL_INGEST(configured, hold_day=NOW.date(), hold_nodes={("alpha", "node-a")})
+        self.assertEqual([row[8] for row in connection.rows], ["/node-b"])
+
     def test_a_day_held_for_the_database_budget_is_not_imported_into(self) -> None:
         """Review 2026-11-05, T05: today's partitions alone are over their share. The
         part stays in staging, and the finished days are imported as before."""
@@ -990,7 +1037,7 @@ class TrafficCollectorTests(unittest.TestCase):
             patch("haprion.traffic_collector._database_days", return_value=days),
             patch("haprion.traffic_collector._database_window", return_value=None),
         ):
-            REAL_INGEST(self.config, hold_day=today)
+            REAL_INGEST(self.config, hold_day=today, hold_nodes={("alpha", "node-a")})
         self.assertEqual([row[8] for row in connection.rows], [f"/{yesterday}"])
         with (
             patch("haprion.traffic_collector.psycopg.connect", return_value=connection),

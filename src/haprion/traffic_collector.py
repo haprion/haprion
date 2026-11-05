@@ -667,6 +667,34 @@ def _database_budget_held(config: CollectorConfig, *, now: datetime) -> bool:
     )
 
 
+def _database_held_nodes(config: CollectorConfig, *, now: datetime) -> set[tuple[str, str]]:
+    """The nodes whose part of today must not be imported while the mark stands.
+
+    The mark says the database is full of today's rows, not whose. Holding every
+    node let one node's flood stop the import of all the others, in every
+    cluster (review 2026-11-05, U02). The nodes held are the ones whose own part
+    of today is over its share (`_over_share`); where none stands out, all are.
+    """
+
+    if not _database_budget_held(config, now=now):
+        return set()
+    everyone = {(target.cluster, target.node) for target in config.nodes}
+    try:
+        space = os.statvfs(config.staging)
+    except OSError:
+        return everyone
+    today = now.astimezone(UTC).date()
+    held_by: dict[tuple[str, str], int] = {}
+    for target in config.nodes:
+        try:
+            size = _safe_size(_part(config, target, today))
+        except (CollectorError, OSError):
+            continue
+        held_by[(target.cluster, target.node)] = size
+    over = _over_share(config, space.f_blocks * space.f_frsize, held_by)
+    return over or everyone
+
+
 def _failure_outcome(exc: CollectorError | OSError) -> str:
     if isinstance(exc, ClockSkew):
         return "clock"
@@ -933,9 +961,17 @@ def _staging_budget(
     everyone = {(target.cluster, target.node): "volume" for target in config.nodes}
     if held <= capacity * SPACE_SHARE or not config.nodes:
         return everyone
-    share = capacity * SPACE_SHARE / len(config.nodes)
-    over = {key: "share" for key in everyone if held_by.get(key, 0) > share}
+    over = {key: "share" for key in _over_share(config, capacity, held_by) if key in everyone}
     return over or everyone
+
+
+def _over_share(
+    config: CollectorConfig, capacity: int, held_by: dict[tuple[str, str], int]
+) -> set[tuple[str, str]]:
+    """The nodes whose own bytes are more than their share of the budget: the budget divided by the nodes."""
+
+    share = capacity * SPACE_SHARE / max(len(config.nodes), 1)
+    return {key for key, size in held_by.items() if size > share}
 
 
 def _database_checkpoint(config: CollectorConfig, part: Path) -> Path:
@@ -1384,11 +1420,13 @@ def _ingest_database(
     config: CollectorConfig,
     *,
     hold_day: date | None = None,
+    hold_nodes: set[tuple[str, str]] | frozenset[tuple[str, str]] = frozenset(),
     counts: dict[tuple[str, str, str], int] | None = None,
 ) -> tuple[int, int, dict[NodeTarget, str]]:
     """Import every staging part, and answer what it skipped: records, parts, failed nodes.
 
-    The part of `hold_day` is left where it is, to be imported when there is room.
+    The part of `hold_day` of each node in `hold_nodes` is left where it is, to be
+    imported when the mark goes or the day is over.
     `counts` is told how many records each node's day stepped over (T06).
 
     A part that cannot be imported stops its own node and no other: the nodes
@@ -1410,7 +1448,11 @@ def _ingest_database(
                 prefix = f"{target.cluster}--{target.node}--"
                 for part in sorted(config.staging.glob(f"{prefix}*.jsonl")):
                     day = part.name[len(prefix) : -len(".jsonl")]
-                    if hold_day is not None and day == hold_day.isoformat():
+                    if (
+                        hold_day is not None
+                        and day == hold_day.isoformat()
+                        and (target.cluster, target.node) in hold_nodes
+                    ):
                         continue
                     if day.replace("-", "") not in days:
                         #
@@ -1941,17 +1983,18 @@ def collect(
                 continue
             print(f"{target.cluster}/{target.node}: {run.problem}{note}", file=sys.stderr)
             failures += not joining
-        held_import = _database_budget_held(config, now=attempted)
-        if held_import:
+        held_nodes = _database_held_nodes(config, now=attempted)
+        for cluster, node in sorted(held_nodes):
             print(
-                "database: today's partitions are over their space budget; "
-                "today's logs are not imported until midnight UTC",
+                f"{cluster}/{node}: database: today's partitions are over their space budget; "
+                "today's log is not imported until the budget allows or midnight UTC",
                 file=sys.stderr,
             )
         try:
             skipped, expired, failed = _ingest_database(
                 config,
-                hold_day=attempted.astimezone(UTC).date() if held_import else None,
+                hold_day=attempted.astimezone(UTC).date() if held_nodes else None,
+                hold_nodes=held_nodes,
                 counts=skipped_by,
             )
             for target, reason in failed.items():
@@ -2008,7 +2051,7 @@ def collect(
             if run.waf_problem is None and target in imported:
                 waf_outcome = "database"
             _write_waf_outcome(config, target, attempted=attempted, outcome=waf_outcome)
-            _amend_meta(config, target, import_paused=held_import)
+            _amend_meta(config, target, import_paused=(target.cluster, target.node) in held_nodes)
             _record_gaps(
                 config, target, window=window, now=attempted, skipped=skipped_by, lost=lost_by
             )

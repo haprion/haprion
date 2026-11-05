@@ -928,6 +928,7 @@ def _node_state(
     on, total = 0, 0
     wrong = False
     since: datetime | None = None
+    missing_since: datetime | None = None
     for nodes, cluster_since in carriages:
         if nodes is None:
             continue
@@ -935,6 +936,12 @@ def _node_state(
             wrong = True
             if cluster_since is not None and (since is None or cluster_since < since):
                 since = cluster_since
+        if (
+            nodes.holders.get(identifier, 0) < nodes.reporting
+            and cluster_since is not None
+            and (missing_since is None or cluster_since < missing_since)
+        ):
+            missing_since = cluster_since
         on += nodes.holders.get(identifier, 0)
         total += nodes.reporting
     if total == 0:
@@ -951,10 +958,24 @@ def _node_state(
             "Different certificate bytes reported",
             "warning",
         )
+    #
+    # The same week as for other bytes: a certificate that has stood
+    # unplaced that long is not on its way (26-11-05, XX02).
+    #
+    overdue = (
+        missing_since is not None
+        and now is not None
+        and now - missing_since > OLDER_COPY_CRITICAL_AFTER
+    )
     if on == 0:
+        if overdue:
+            return "Not on the nodes", "Still not on any node after a week", "critical"
         return "Not on the nodes", "Published, but no node carries it yet", "warning"
     if on < total:
-        return f"On {on} of {total} nodes", "A node is behind on this certificate", "warning"
+        label = f"On {on} of {total} nodes"
+        if overdue:
+            return label, "A node is still behind after a week", "critical"
+        return label, "A node is behind on this certificate", "warning"
     label = f"On all {total} nodes" if total > 1 else "On the node"
     return label, "Every reporting node carries this certificate", "healthy"
 

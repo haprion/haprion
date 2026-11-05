@@ -31,7 +31,7 @@ from haprion.cert_issue import (
 )
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer, PublishError, publish
 from haprion.cli import arguments, cert_scep
-from haprion.cli.cert_publish import default_deployer, print_summary
+from haprion.cli.cert_publish import ClusterDeployer, default_deployer, print_summary
 from haprion.config import (
     CERTIFICATE_ID,
     DEFAULT_POLICY_PATH,
@@ -270,6 +270,7 @@ def redistribute(
         return True
     if runtime.registry is None:
         return False
+    rollout = deployer or default_deployer(errors)
     try:
         report = publish(
             runtime,
@@ -277,7 +278,7 @@ def redistribute(
             live=live,
             store=store,
             lock_path=lock_path,
-            deployer=deployer or default_deployer(errors),
+            deployer=rollout,
             installer=installer,
         )
     except PublishError as exc:
@@ -286,20 +287,27 @@ def redistribute(
     if report.changed_clusters or report.deployments or report.failed or report.warnings:
         print_summary(report, errors)
     #
-    # A deploy that stopped on the cluster's lock or a safety check changed
+    # A deploy that found another deploy holding the cluster's lock changed
     # nothing, and the mark stands, so the next pass tries again: said, but not
-    # a failure of the timer (26-11-05, EE04). A rollout that went wrong is.
+    # a failure of the timer (26-11-05, EE04). Told by the result document's
+    # error code and not by exit 75, which also stands for "no node answered",
+    # split brain and an unknown VIP - those stay failures however often they
+    # repeat (XX02). A rollout that went wrong is a failure too.
     #
-    for deployment in report.deployments:
-        if deployment.exit_code == exit_codes.BLOCKED:
-            print(
-                f"WARNING: deploy {deployment.cluster}: blocked, nothing was changed; "
-                "the next pass tries again",
-                file=errors,
-            )
+    overlapped = rollout.overlapped if isinstance(rollout, ClusterDeployer) else set()
+    waiting = [
+        d.cluster
+        for d in report.deployments
+        if d.exit_code == exit_codes.BLOCKED and d.cluster in overlapped
+    ]
+    for cluster_id in waiting:
+        print(
+            f"WARNING: deploy {cluster_id}: another operation holds the cluster, nothing was "
+            "changed; the next pass tries again",
+            file=errors,
+        )
     return bool(report.failed) or any(
-        deployment.exit_code not in (exit_codes.OK, exit_codes.BLOCKED)
-        for deployment in report.deployments
+        d.exit_code != exit_codes.OK and d.cluster not in waiting for d in report.deployments
     )
 
 

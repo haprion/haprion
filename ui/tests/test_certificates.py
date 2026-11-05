@@ -721,6 +721,27 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
 
         self.assertEqual(registry_of(view).certificates[0].state_tone, "warning")
 
+    def test_a_certificate_that_never_reaches_the_nodes_is_critical_after_a_week(self) -> None:
+        """26-11-05, XX02: Not on the nodes and On x of y nodes follow the same rule."""
+
+        def row(days: int, carried: bool, nodes: int) -> tuple[str, str]:
+            at = _stamp(NOW - timedelta(days=days))
+            entry = registered(
+                fingerprint="a" * 64,
+                renewed_days_ago=days,
+                distribution={"published_at": at, "current": True, "clusters": {"alpha": at}},
+            )
+            held = [node(("example.com", "a" * 64)) if carried else node() for _ in range(1)]
+            held += [node() for _ in range(nodes - 1)]
+            view = overview(with_registry(reading(), entry), status=(status(*held),))
+            found = registry_of(view).certificates[0]
+            return found.state_label, found.state_tone
+
+        self.assertEqual(row(3, False, 1), ("Not on the nodes", "warning"))
+        self.assertEqual(row(9, False, 1), ("Not on the nodes", "critical"))
+        self.assertEqual(row(3, True, 2), ("On 1 of 2 nodes", "warning"))
+        self.assertEqual(row(9, True, 2), ("On 1 of 2 nodes", "critical"))
+
     def test_only_the_cluster_holding_the_older_copy_is_named_for_deploy(self) -> None:
         entry = registered(fingerprint="a" * 64, clusters=("alpha", "beta"))
         view = overview(

@@ -17,6 +17,7 @@ hook asks for; an operator checking what a run *would* change leaves it off.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -41,6 +42,8 @@ from haprion.helper_protocol import config_error_code, write_document
 
 OPERATION = "cert_publish"
 CERT_DEPLOY = "haprion-cert-deploy"
+# The error code of a deploy that found another operation holding the cluster's lock.
+OPERATION_LOCKED = "operation_locked"
 
 USAGE = (
     "Usage:\n"
@@ -89,28 +92,55 @@ def _usage(writer: TextIO) -> int:
     return exit_codes.USAGE
 
 
-def default_deployer(errors: TextIO) -> Deployer:
+class ClusterDeployer:
     """`haprion-cert-deploy -c <cluster>`, from the same bin directory as this command.
 
     Beside this executable rather than on PATH: the hook runs from certbot's
     environment, whose PATH is not the operator's, and "the release this
     command came from" is the only release it makes sense to deploy with.
+
+    Asks for the result document, so a caller can tell a deploy that stopped
+    because another operation holds the cluster's lock from every other stop
+    that also exits `BLOCKED`: by the error code, not the exit code. The clusters
+    whose last deploy stopped that way are in `overlapped`.
     """
 
-    command = Path(sys.argv[0]).resolve().parent / CERT_DEPLOY
+    def __init__(self, errors: TextIO) -> None:
+        self.errors = errors
+        self.overlapped: set[str] = set()
+        self.command = Path(sys.argv[0]).resolve().parent / CERT_DEPLOY
 
-    def deploy(cluster_id: str) -> int:
-        errors.write(f"=== deploying {cluster_id} ===\n")
-        errors.flush()
+    def ask(self, cluster_id: str) -> tuple[int, str]:
+        """The exit code and the result document's error code ("" when it has none)."""
+
         completed = subprocess.run(  # noqa: S603 - fixed path, cluster ID from the registry
-            [str(command), "-c", cluster_id],
-            stdout=errors,
-            stderr=errors,
+            [str(self.command), "-c", cluster_id, "--json"],
+            stdout=subprocess.PIPE,
+            stderr=self.errors,
             check=False,
+            text=True,
         )
-        return completed.returncode
+        try:
+            document = json.loads(completed.stdout)
+        except ValueError:
+            return completed.returncode, ""
+        error = document.get("error") if isinstance(document, dict) else None
+        code = error.get("code") if isinstance(error, dict) else None
+        return completed.returncode, code if isinstance(code, str) else ""
 
-    return deploy
+    def __call__(self, cluster_id: str) -> int:
+        self.errors.write(f"=== deploying {cluster_id} ===\n")
+        self.errors.flush()
+        code, error = self.ask(cluster_id)
+        if error == OPERATION_LOCKED:
+            self.overlapped.add(cluster_id)
+        else:
+            self.overlapped.discard(cluster_id)
+        return code
+
+
+def default_deployer(errors: TextIO) -> ClusterDeployer:
+    return ClusterDeployer(errors)
 
 
 def print_summary(report: Report, writer: TextIO) -> None:

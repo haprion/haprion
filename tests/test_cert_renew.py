@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
+import subprocess
 import unittest
 from dataclasses import replace
 from typing import Any
@@ -13,6 +15,7 @@ import yaml
 
 from haprion import cert_issue, dns_profiles, dns_provider_catalog, exit_codes
 from haprion.cli import cert_renew
+from haprion.cli.cert_publish import ClusterDeployer
 from haprion.config import ConfigError, load_policy, load_runtime_config
 from haprion.dns_profile_keys import generate, render_private_key
 from tests.contract_schema import assert_contract
@@ -240,18 +243,53 @@ class TheDistributionIsRedone(Fixture):
         self.assertTrue(self.redo(3, errors))
         self.assertIn("deploy alpha: exit 3", errors.getvalue())
 
-    def test_a_deploy_that_was_blocked_is_not_a_failure_of_the_timer(self) -> None:
-        """A deploy holding the cluster lock stopped this one before it changed anything (EE04)."""
+    def redo_asking(self, code: int, error: str, errors: io.StringIO | None = None) -> bool:
+        """The pass with the real deployer, its question to `haprion-cert-deploy` answered."""
+
+        outer = self
+        sink = errors or io.StringIO()
+
+        class Asked(ClusterDeployer):
+            def ask(self, cluster_id: str) -> tuple[int, str]:
+                outer.deployed.append(cluster_id)
+                return code, error
+
+        return cert_renew.redistribute(
+            self.policy,
+            errors=sink,
+            require_secure=False,
+            live=self.live,
+            store=self.store,
+            lock_path=self.lock,
+            deployer=Asked(sink),
+            installer=None,
+        )
+
+    def test_a_deploy_that_met_another_deploy_is_not_a_failure_of_the_timer(self) -> None:
+        """Only the cluster lock is a wait: the error code says so (26-11-05, EE04, XX02)."""
 
         self.run_publish(self.policy_path, deployer=lambda _cluster_id: exit_codes.BLOCKED)
         errors = io.StringIO()
 
-        self.assertFalse(self.redo(exit_codes.BLOCKED, errors))
-        self.assertIn("deploy alpha: blocked", errors.getvalue())
-        self.assertIn("WARNING", errors.getvalue())
+        self.assertFalse(self.redo_asking(exit_codes.BLOCKED, "operation_locked", errors))
+        self.assertIn("WARNING: deploy alpha", errors.getvalue())
 
         self.assertFalse(self.redo(0), "the mark stood, so the next pass rolls it out")
         self.assertEqual(self.deployed, ["alpha", "alpha"])
+
+    def test_a_deploy_blocked_for_any_other_reason_keeps_the_timer_red(self) -> None:
+        for error in ("", "node_status_unavailable", "split_brain"):
+            with self.subTest(error=error):
+                self.run_publish(self.policy_path, deployer=lambda _cluster_id: exit_codes.BLOCKED)
+                errors = io.StringIO()
+
+                self.assertTrue(self.redo_asking(exit_codes.BLOCKED, error, errors))
+                self.assertIn("deploy alpha: exit 75", errors.getvalue())
+
+    def test_a_plain_deployer_that_answers_blocked_is_not_taken_for_a_wait(self) -> None:
+        self.run_publish(self.policy_path, deployer=lambda _cluster_id: exit_codes.BLOCKED)
+
+        self.assertTrue(self.redo(exit_codes.BLOCKED))
 
     def test_the_registry_is_read_again_after_certbot(self) -> None:
         """Remove from... run while certbot worked is not undone (26-11-05, EE01)."""
@@ -426,6 +464,33 @@ class TheAnswerIsADocumentWhenAsked(Fixture):
 
         answer = assert_contract("haprion-cert-renew", out.getvalue())
         self.assertEqual((code, answer["outcome"]), (66, "failed"))
+
+
+class TheDeployerReadsTheResultDocument(unittest.TestCase):
+    def deploy(self, stdout: str, code: int) -> tuple[ClusterDeployer, int]:
+        deployer = ClusterDeployer(io.StringIO())
+        done = subprocess.CompletedProcess([], code, stdout=stdout)
+        with mock.patch.object(subprocess, "run", return_value=done) as run:
+            result = deployer("alpha")
+        self.assertEqual(run.call_args.args[0][1:], ["-c", "alpha", "--json"])
+        return deployer, result
+
+    def test_the_lock_is_told_by_the_error_code(self) -> None:
+        document = json.dumps({"error": {"code": "operation_locked", "message": "busy"}})
+
+        deployer, code = self.deploy(document, exit_codes.BLOCKED)
+
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual(deployer.overlapped, {"alpha"})
+
+    def test_another_blocked_deploy_and_an_unreadable_answer_are_not_the_lock(self) -> None:
+        other = json.dumps({"error": {"code": "split_brain", "message": "x"}})
+        for stdout in (other, "not json", json.dumps({"error": None}), "[]"):
+            with self.subTest(stdout=stdout):
+                deployer, code = self.deploy(stdout, exit_codes.BLOCKED)
+
+                self.assertEqual(code, exit_codes.BLOCKED)
+                self.assertEqual(deployer.overlapped, set())
 
 
 if __name__ == "__main__":

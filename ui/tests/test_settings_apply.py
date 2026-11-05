@@ -17,6 +17,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from cryptography import x509
@@ -158,9 +159,11 @@ class TheIdentity(unittest.TestCase):
                 oidc_web, "read_public_key", return_value=mock.Mock(key_id="0123456789abcdef")
             ),
             mock.patch.object(oidc, "seal_client_secret", return_value=b"sealed-again"),
+            mock.patch.object(db, "save_oidc_provider", return_value=0),
+            mock.patch.object(db, "record_audit_event"),
         ):
             answer = settings_apply.apply_oidc(
-                object(),
+                mock.Mock(),
                 {"ca_pem": pem, "client_secret": "the secret"},
                 actor="admin",
                 check=True,
@@ -198,6 +201,78 @@ class TheSessionsItEnded(unittest.TestCase):
 
         assert answer is not None  # noqa: S101 - the file turns it off
         self.assertEqual(answer["sessions_ended"], 3)
+
+
+class TheCheckAsksWhatTheRunAsks(unittest.TestCase):
+    """K06: `--check` for the provider ran neither the database's guard nor Verify."""
+
+    def check(
+        self,
+        wanted: dict[str, object],
+        *,
+        stored: db.OidcProvider | None = None,
+        verify: Any = None,
+        enabling: Any = None,
+    ) -> tuple[dict[str, Any] | None, Any]:
+        connection = mock.Mock()
+        with (
+            mock.patch.object(db, "oidc_provider", return_value=stored or stored_provider()),
+            mock.patch.object(db, "set_oidc_enabled", **(enabling or {"return_value": 0})),
+            mock.patch.object(db, "record_audit_event"),
+            mock.patch.object(db, "record_oidc_verified", return_value=True),
+        ):
+            answer = settings_apply.apply_oidc(
+                connection,
+                wanted,
+                actor="admin",
+                check=True,
+                public_key=None,
+                replace_secret=False,
+                piped_secret=None,
+                verify=verify,
+            )
+        return answer, connection
+
+    def test_the_guard_that_refuses_turning_it_on_refuses_in_a_check_too(self) -> None:
+        refusing = {"side_effect": db.ProviderRefused("Mark an active admin as break-glass first")}
+        stored = replace(stored_provider(), verified_revision=3)
+
+        with self.assertRaisesRegex(settings_apply.ApplyError, "break-glass first"):
+            self.check(
+                {"enabled": True, "interface_url": "https://mgr.example.com"},
+                stored=stored,
+                enabling=refusing,
+            )
+
+    def test_verify_is_asked_and_its_refusal_is_the_checks(self) -> None:
+        asked: list[db.OidcProvider] = []
+
+        def verify(
+            provider: db.OidcProvider, _redirect: str
+        ) -> tuple[bool, list[dict[str, Any]], str]:
+            asked.append(provider)
+            return False, [{"name": "discovery", "ok": False, "message": "no answer"}], ""
+
+        stored = replace(stored_provider(), verified_revision=0)
+        with self.assertRaisesRegex(settings_apply.ApplyError, "did not pass Verify"):
+            self.check(
+                {"enabled": True, "interface_url": "https://mgr.example.com"},
+                stored=stored,
+                verify=verify,
+            )
+        self.assertEqual(len(asked), 1)
+
+    def test_a_check_that_passes_keeps_nothing(self) -> None:
+        stored = replace(stored_provider(), verified_revision=3)
+
+        answer, connection = self.check(
+            {"enabled": True, "interface_url": "https://mgr.example.com"}, stored=stored
+        )
+
+        assert answer is not None  # noqa: S101 - the file turns it on
+        self.assertIs(answer["enabled"], True)
+        connection.commit.assert_not_called()
+        connection.rollback.assert_called()
 
 
 class TheColoursSwitch(unittest.TestCase):

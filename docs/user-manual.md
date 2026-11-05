@@ -1207,7 +1207,7 @@ code and the same refusals, and is audited with `via: cli`.
 
 - Each of the three sections is optional. A section the file leaves out is left alone.
 - Only what differs from what is stored is written, so the same file twice changes nothing.
-- `--check` says what would change and keeps nothing.
+- `--check` says what would change and keeps nothing. It runs the refusals of the run - the switches' and the database's guard on turning sign-in on - and asks the provider to Verify the settings, as the run does.
 - `show --json` prints what is set, never the client secret.
 
 ```yaml

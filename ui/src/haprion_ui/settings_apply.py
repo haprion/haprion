@@ -415,8 +415,17 @@ def apply_oidc(
         "sealing": sealing,
         "sessions_ended": 0,
     }
-    if check or (not fields and turn is None):
-        return answer if (fields or turn is not None or sealing) else None
+    if not fields and turn is None:
+        return answer if sealing else None
+
+    #
+    # A check runs what the run runs - the database's guards, Verify - in the
+    # transaction, and keeps none of it (K06): nothing commits, and the
+    # transaction ends rolled back.
+    #
+    def commit() -> None:
+        if not check:
+            connection.commit()
 
     committed = False
     try:
@@ -457,8 +466,8 @@ def apply_oidc(
                     "via": "cli",
                 },
             )
-            connection.commit()
-            committed = True
+            commit()
+            committed = not check
         if turn is True:
             stored = db.oidc_provider(connection) or current
             if not stored.verified:
@@ -475,8 +484,8 @@ def apply_oidc(
                         "via": "cli",
                     },
                 )
-                connection.commit()
-                committed = True
+                commit()
+                committed = not check
                 if not recorded:
                     raise ApplyError(
                         "oidc: the settings did not pass Verify, so sign-in through the provider "
@@ -486,12 +495,16 @@ def apply_oidc(
             answer["sessions_ended"] += _set_enabled(
                 connection, True, actor=actor, issuer=stored.issuer
             )
-        connection.commit()
-        committed = True
+        commit()
+        committed = not check
     except ApplyError as error:
+        if check:
+            connection.rollback()
         if committed:
             raise SavedThenStopped(error, answer) from error
         raise
+    if check:
+        connection.rollback()
     return answer
 
 

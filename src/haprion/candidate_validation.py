@@ -94,6 +94,7 @@ class Limits:
 
     files: int
     total_bytes: int
+    file_bytes: int = MAX_FILE_BYTES
 
 
 #
@@ -101,14 +102,24 @@ class Limits:
 # the privilege boundary and is held to the small one. The publishing helpers
 # derive their candidate from a commit they read themselves, so the cap there
 # protects nothing but the sandbox, and has to hold the scale the product is
-# built for: 10 000 objects (B222), each one file of its own and some of them a
-# map or a certificate list besides, plus the layers. The generator writes about
-# 1 KiB to 12 KiB of configuration an object; 128 MiB is that at the top for
-# 10 000 objects. A cluster past this gets a refusal that names the limit
-# (B443, review 26-11-05, D01).
+# built for: 10 000 objects (B222).
+#
+# Measured 26-11-05 with the product's own generator (`managed_files` and
+# `build_node_artifact`), 10 000 objects, one file each plus the frontends file:
+#   minimal object (one route, one server):      10 004 files, 6.6 MiB total,
+#       about 0.7 KiB an object, frontends file 1.4 MiB
+#   heavier object (two hostnames, three routes, rate limit, two backends, three
+#       servers):                                10 004 files, 33.7 MiB total,
+#       about 3.5 KiB an object, frontends file 10.2 MiB (about 1 KiB an object)
+# The frontends file is one file whatever the number of objects, so the per-file
+# cap had to rise too: at 1 MiB it refused 10 000 objects of either kind. The
+# caps are about three times the heavier measurement: 32 768 files (3.3x),
+# 128 MiB total (3.8x), 32 MiB for one file (3.1x). `haproxy -c` accepted the
+# heavier 10 000-object candidate in 20 s. A cluster past a cap gets a refusal
+# that names it (B443, review 26-11-05, D01).
 #
 INGRESS_LIMITS = Limits(files=MAX_CANDIDATE_FILES, total_bytes=MAX_CANDIDATE_BYTES)
-DERIVED_LIMITS = Limits(files=32_768, total_bytes=128 * 1024 * 1024)
+DERIVED_LIMITS = Limits(files=32_768, total_bytes=128 * 1024 * 1024, file_bytes=32 * 1024 * 1024)
 
 #
 # Both privileged helpers validate, and both must validate the same way: the
@@ -263,9 +274,10 @@ def candidate_from_files(
             raise HelperProtocolError(
                 "candidate files may not contain NUL", exit_code=exit_codes.REFUSED
             )
-        if len(content) > MAX_FILE_BYTES:
+        if len(content) > limits.file_bytes:
             raise HelperProtocolError(
-                "candidate contains an oversized file", exit_code=exit_codes.REFUSED
+                f"candidate contains an oversized file (the limit is {limits.file_bytes} bytes)",
+                exit_code=exit_codes.REFUSED,
             )
         total += len(content)
         if total > limits.total_bytes:

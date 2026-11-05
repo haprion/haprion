@@ -488,6 +488,45 @@ class CandidateLimitTests(unittest.TestCase):
         )
         self.assertEqual(len(candidate.files), 10_001)
 
+    def test_a_derived_candidate_holds_a_frontends_file_of_ten_thousand_objects(self) -> None:
+        """Measured 26-11-05: the one frontends file grows with the objects (about 1 KiB each)."""
+
+        big = {"haproxy.cfg": b"global\n", "conf.d/1000-frontends.cfg": b"#" * (11 * 1024 * 1024)}
+        with self.assertRaises(HelperProtocolError):
+            candidate_from_files(big)
+        self.assertEqual(len(candidate_from_files(big, limits=DERIVED_LIMITS).files), 2)
+
+    def test_ten_thousand_generated_objects_pass_the_candidate_path(self) -> None:
+        """The generator's own output at the decided scale (B222), not files made to fit."""
+
+        from haprion.managed_publish import managed_files
+        from haprion.release_layout import build_node_artifact
+        from tests.test_managed_publish import NETWORK, cluster
+
+        template = (
+            "schema: 1\nname: s{i}\nhostnames: [s{i}.example.com, www-s{i}.example.com]\n"
+            "listen:\n  protocol: http\nrate_limit:\n  window: 10s\n  max_requests: 100\n"
+            "routes:\n- path: /\n  backend: web{i}\n- path: /api\n  backend: api{i}\n"
+            "  strip_prefix: /api\n  add_prefix: /v2\n- path: /health\n  match: exact\n"
+            "  backend: web{i}\nbackends:\n  web{i}:\n    balance: roundrobin\n"
+            "    health:\n      type: disabled\n    servers:\n    - host: 198.51.100.10\n"
+            "      port: 8080\n    - host: 198.51.100.11\n      port: 8080\n  api{i}:\n"
+            "    balance: roundrobin\n    health:\n      type: tcp\n    servers:\n"
+            "    - host: 198.51.100.20\n      port: 9000\n"
+        )
+        base = {
+            "core/haproxy.cfg": b"global\n",
+            "manual/reservations.yaml": b"{}\n",
+            "managed/network.yaml": NETWORK,
+        }
+        objects = {f"s{i}": template.format(i=i).encode() for i in range(10_000)}
+        managed = managed_files(base, network_document=NETWORK, cluster=cluster(), objects=objects)
+        artifact = build_node_artifact({**base, **managed})
+
+        candidate = candidate_from_files(artifact, limits=DERIVED_LIMITS)
+
+        self.assertEqual(len(candidate.files), 10_004)
+
     def test_a_derived_candidate_has_a_limit_too(self) -> None:
         with self.assertRaises(HelperProtocolError):
             candidate_from_files(

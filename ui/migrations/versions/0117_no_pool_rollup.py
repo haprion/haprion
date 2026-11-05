@@ -23,9 +23,10 @@ is a fraction of a btree's size. The index is made with `autosummarize`: a range
 is summarized when it is full, not when a vacuum sees it, and the last fifth of a
 day that is finished is never vacuumed (B469). `traffic_log_partition()` makes it
 for the days made from now on, and this makes it for the days that exist, as 0111
-did for the client index. The build holds a day's writes for as long as it takes, a second
-or so; the collector re-reads from its checkpoint, so a write waiting for it is
-only late.
+did for the client index. The loop runs in the migration's one transaction, so
+the builds hold every day's writes until the migration commits, a few seconds at
+a million rows and more with more; the collector re-reads from its checkpoint,
+so a write waiting for it is only late.
 
 `node_event_state` gains `since`, the time its row was last written (B455). A node
 that has not answered is `joining` only for the join timeout and two poller
@@ -57,7 +58,8 @@ ROLLBACK_SAFE_BECAUSE = (
     "it takes away tables nothing in 0.99.13's web, poller or worker reads or writes; its "
     "retention and 03-verify, the only code that did, are installed with the package and "
     "stay as the package wrote them over a rollback; the view gets one column at its end, "
-    "which 0.99.13 does not select; the partition function makes one more index, which nothing in 0.99.13 names or needs; node_event_state gets a column with a default, which "
+    "which 0.99.13 does not select; the partition function makes one more index, which "
+    "nothing in 0.99.13 names or needs; node_event_state gets a column with a default, which "
     "0.99.13's insert does not name and its conflict update leaves alone"
 )
 

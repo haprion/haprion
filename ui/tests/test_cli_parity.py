@@ -402,9 +402,58 @@ TERMINAL_ONLY: dict[str, Command] = {
 #
 # Scripts that are not commands an operator or a playbook runs for an answer. A
 # `*-helper` or `*-ask` is the socket protocol's end of a command listed above
-# and is held by the helper tests; the rest are named here with why.
+# and is held by the helper tests; each is named in HELPER_ENDS, so one added
+# without a decision here fails (Z04); the rest are named here with why.
 #
 HELPER_SUFFIXES = ("-helper", "-ask")
+HELPER_ENDS = frozenset(
+    {
+        "haprion-backup-job-ask",
+        "haprion-backup-job-helper",
+        "haprion-block-api-helper",
+        "haprion-cert-delete-helper",
+        "haprion-cert-deploy-helper",
+        "haprion-cert-export-helper",
+        "haprion-cert-import-helper",
+        "haprion-cert-issue-helper",
+        "haprion-cert-list-helper",
+        "haprion-cert-publish-helper",
+        "haprion-cert-receiver-ask",
+        "haprion-cert-receiver-helper",
+        "haprion-cert-request-helper",
+        "haprion-cert-scep-helper",
+        "haprion-cert-target-helper",
+        "haprion-changes-publish-helper",
+        "haprion-cluster-list-helper",
+        "haprion-cluster-settings-helper",
+        "haprion-deploy-helper",
+        "haprion-dns-profile-apply-helper",
+        "haprion-history-reset-helper",
+        "haprion-inventory-helper",
+        "haprion-list-backups-helper",
+        "haprion-list-helper",
+        "haprion-ndes-profile-apply-helper",
+        "haprion-ndes-server-helper",
+        "haprion-network-helper",
+        "haprion-node-ask",
+        "haprion-node-helper",
+        "haprion-node-restore-ask",
+        "haprion-node-restore-helper",
+        "haprion-objects-helper",
+        "haprion-oidc-helper",
+        "haprion-probe-helper",
+        "haprion-publish-helper",
+        "haprion-published-release-helper",
+        "haprion-readings-helper",
+        "haprion-regeneration-helper",
+        "haprion-resolve-helper",
+        "haprion-revert-helper",
+        "haprion-server-state-helper",
+        "haprion-status-helper",
+        "haprion-tls-helper",
+        "haprion-validate-candidate-helper",
+    }
+)
 NOT_COMMANDS: dict[str, str] = {
     "haprion-cluster-config": "prints one value or the list for a shell script; it has no JSON form",
     "haprion-poller": "a service the unit runs",
@@ -750,9 +799,7 @@ def _unclassified(points: dict[str, str]) -> list[str]:
     classified = {command.line.split()[0] for command in _commands()}
     classified |= set(READ_PROGRAMS) | set(NOT_COMMANDS)
     return sorted(
-        program
-        for program in points
-        if program not in classified and not program.endswith(HELPER_SUFFIXES)
+        program for program in points if program not in classified and program not in HELPER_ENDS
     )
 
 
@@ -943,6 +990,18 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         self.assertEqual(_unclassified(_entry_points()), [])
         self.assertEqual(sorted(set(NOT_COMMANDS) - set(_entry_points())), [])
         self.assertEqual(sorted(set(BEHIND_SOMETHING) - {c.line for c in _commands()}), [])
+
+    def test_the_helper_ends_are_the_scripts_named_so(self) -> None:
+        """Z04: the exemption is a list a person extends, not a suffix a new script gets free."""
+
+        suffixed = {name for name in _entry_points() if name.endswith(HELPER_SUFFIXES)}
+
+        self.assertEqual(sorted(suffixed ^ HELPER_ENDS), [])
+
+    def test_a_new_helper_end_would_not_pass_unclassified(self) -> None:
+        points = {**_entry_points(), "haprion-cert-foo-helper": "haprion.cli.cert_foo_helper:main"}
+
+        self.assertEqual(_unclassified(points), ["haprion-cert-foo-helper"])
 
     def test_a_new_script_would_not_pass_unclassified(self) -> None:
         """A check that cannot fail is not a check."""

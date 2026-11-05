@@ -182,12 +182,68 @@ class PublishingTheRegeneration(unittest.TestCase):
     def test_nothing_to_publish_is_said_and_is_not_a_failure(self) -> None:
         answer = json.loads(json.dumps(PUBLISHED))
         answer["result"]["changed"] = False
+        answer["result"]["already_current"] = True
         terminal = Terminal(answer=answer)
 
         code = terminal("-c", "alpha", "--regenerate")
 
         self.assertEqual(code, 0)
         self.assertIn("nothing was published", terminal.out.getvalue())
+
+    def test_a_release_the_run_installed_is_not_nothing(self) -> None:
+        """Version 42 was saved and never installed; the regeneration changed nothing, 42 went out."""
+
+        answer = json.loads(json.dumps(PUBLISHED))
+        answer["result"]["changed"] = False
+        answer["result"]["already_current"] = False
+        answer["result"]["version"] = 42
+        terminal = Terminal(answer=answer)
+
+        code = terminal("-c", "alpha", "--regenerate")
+
+        shown = terminal.out.getvalue()
+        self.assertEqual(code, 0)
+        self.assertNotIn("nothing was published", shown)
+        self.assertIn("version 42 was not the published release and now is", shown)
+        self.assertIn("haprion-deploy -c alpha", shown)
+
+    def test_check_says_when_the_head_is_ahead_of_the_published_version(self) -> None:
+        terminal = Terminal()
+
+        with mock.patch.object(publish_regenerate, "count_versions", return_value=5):
+            code = terminal("-c", "alpha", "--regenerate", "--check")
+
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "Publishing also carries the 2 versions saved after the published one.",
+            terminal.out.getvalue(),
+        )
+
+    def test_check_is_quiet_about_versions_when_the_head_is_the_published_one(self) -> None:
+        terminal = Terminal()
+
+        with mock.patch.object(publish_regenerate, "count_versions", return_value=3):
+            terminal("-c", "alpha", "--regenerate", "--check")
+
+        self.assertNotIn("saved after", terminal.out.getvalue())
+
+    def test_check_with_json_names_the_regeneration_when_the_reading_fails(self) -> None:
+        terminal = Terminal(reading=None)
+
+        code = terminal("-c", "alpha", "--regenerate", "--check", "--json")
+
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
+        document = json.loads(terminal.out.getvalue())
+        self.assertEqual(document["operation"], "regeneration")
+        assert_contract("haprion-regeneration", terminal.out.getvalue())
+
+    def test_check_says_a_refusal_on_stderr(self) -> None:
+        terminal = Terminal(reading=None)
+
+        terminal("-c", "alpha", "--regenerate", "--check")
+
+        self.assertEqual(terminal.out.getvalue(), "")
+        self.assertIn("could not be read", terminal.err.getvalue())
 
     def test_json_is_the_helper_s_document(self) -> None:
         terminal = Terminal()

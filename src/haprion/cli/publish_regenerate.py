@@ -40,9 +40,14 @@ from haprion.regeneration import diff_from_dict
 from haprion.repo_health import describe_problem, is_repo_root
 from haprion.repo_snapshot import PublishError, resolve_head
 from haprion.version_diff import render
+from haprion.version_history import count_versions
 
 ANSWER = changes_publish.OPERATION
 COMMENT = "Regenerated with the installed version."
+#
+# What `--check --json` answers under, whether the reading succeeds or not.
+#
+CHECK_ANSWER = "regeneration"
 
 type ConfigPath = Callable[[str], Path]
 type ReadRegeneration = Callable[[str], Mapping[str, Any] | None]
@@ -60,12 +65,30 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _versions_ahead(repo: Path, reading: Mapping[str, Any]) -> int:
+    """How many versions are saved after the published one; 0 when that cannot be told.
+
+    A publish is made on the newest version, so it carries these too, and the
+    reading compares the published one only (the page says the same).
+    """
+
+    published = reading.get("published_version")
+    if not isinstance(published, int):
+        return 0
+    try:
+        return max(0, count_versions(repo) - published)
+    except (GitError, PublishError):
+        return 0
+
+
 def _check(
     cluster: str,
     reading: Mapping[str, Any] | None,
     *,
+    ahead: int,
     json_mode: bool,
     writer: TextIO,
+    errors: TextIO,
 ) -> int:
     """What a publish would change, in the words `haprion-config-status` uses."""
 
@@ -76,13 +99,14 @@ def _check(
             Refused("dependency_unavailable", str(message), exit_codes.UNAVAILABLE),
             json_mode=json_mode,
             writer=writer,
-            errors=writer,
+            errors=errors,
+            operation=CHECK_ANSWER,
         )
     if json_mode:
         write_document(
             writer,
             make_envelope(
-                operation="regeneration", outcome="done", cluster=cluster, result=dict(reading)
+                operation=CHECK_ANSWER, outcome="done", cluster=cluster, result=dict(reading)
             ),
             0,
         )
@@ -94,16 +118,31 @@ def _check(
         writer.write(line)
         if reading.get("diff"):
             writer.write("\n" + render(diff_from_dict(reading["diff"])))
+    if ahead:
+        #
+        # The page says it too: the reading is of the published version, and
+        # the publish is made on the newest.
+        #
+        writer.write(
+            f"Publishing also carries the {ahead} version{'' if ahead == 1 else 's'} "
+            "saved after the published one.\n"
+        )
     if reading.get("fingerprint"):
         writer.write(f"Fingerprint: {reading['fingerprint']}\n")
     return 0
 
 
 def _refuse(
-    cluster: str, refused: Refused, *, json_mode: bool, writer: TextIO, errors: TextIO
+    cluster: str,
+    refused: Refused,
+    *,
+    json_mode: bool,
+    writer: TextIO,
+    errors: TextIO,
+    operation: str = ANSWER,
 ) -> int:
     if json_mode:
-        write_document(writer, envelope(ANSWER, cluster, None, refused), refused.exit_code)
+        write_document(writer, envelope(operation, cluster, None, refused), refused.exit_code)
     else:
         errors.write(refused.report())
     return refused.exit_code
@@ -126,7 +165,17 @@ def main(
     if args.check and args.expect:
         _parser().error("--check publishes nothing, so there is nothing to expect")
 
-    repo = looked_up(config_path, cluster, operation=ANSWER, json_mode=json_mode, writer=writer)
+    #
+    # `--check --json` is the regeneration document on every path, a refusal
+    # included; without `--check` the document is the publish's.
+    #
+    repo = looked_up(
+        config_path,
+        cluster,
+        operation=CHECK_ANSWER if args.check else ANSWER,
+        json_mode=json_mode,
+        writer=writer,
+    )
     try:
         if not is_repo_root(repo):
             raise Refused(
@@ -135,7 +184,14 @@ def main(
         if args.check or args.expect:
             reading = read_regeneration(cluster)
             if args.check:
-                return _check(cluster, reading, json_mode=json_mode, writer=writer)
+                return _check(
+                    cluster,
+                    reading,
+                    ahead=_versions_ahead(repo, reading) if reading else 0,
+                    json_mode=json_mode,
+                    writer=writer,
+                    errors=errors,
+                )
             if reading is None or reading.get("outcome") == status.UNREADABLE_OUTCOME:
                 raise Refused(
                     "dependency_unavailable",
@@ -151,7 +207,14 @@ def main(
                 )
         _, head = resolve_head(repo)
     except Refused as refused:
-        return _refuse(cluster, refused, json_mode=json_mode, writer=writer, errors=errors)
+        return _refuse(
+            cluster,
+            refused,
+            json_mode=json_mode,
+            writer=writer,
+            errors=errors,
+            operation=CHECK_ANSWER if args.check else ANSWER,
+        )
     except (GitError, PublishError) as exc:
         return _refuse(
             cluster,
@@ -159,6 +222,7 @@ def main(
             json_mode=json_mode,
             writer=writer,
             errors=errors,
+            operation=CHECK_ANSWER if args.check else ANSWER,
         )
 
     request = changes_publish.build_request(
@@ -194,9 +258,21 @@ def main(
     except Refused as refused:
         return _refuse(cluster, refused, json_mode=False, writer=writer, errors=errors)
     if not result.get("changed"):
+        if result.get("already_current"):
+            writer.write(
+                f"Publishing again would not change what {cluster} runs; nothing was published.\n"
+            )
+            return 0
+        #
+        # The regeneration changed nothing, but the newest version was saved and
+        # never installed, and now is: the nodes are behind a release nobody
+        # named (as a plain publish says, `publish.py`).
+        #
         writer.write(
-            f"Publishing again would not change what {cluster} runs; nothing was published.\n"
+            f"The regeneration changed nothing; version {result['version']} was not the "
+            "published release and now is.\n"
         )
+        writer.write(f"Deploy it with: haprion-deploy -c {cluster}\n")
         return 0
     writer.write(f"Published version {result['version']} of {cluster}.\n")
     if result.get("deployment_required"):

@@ -587,7 +587,10 @@ def registry_names(
 
     def named(certificate_id: str, cluster_id: str) -> bool:
         # One wait per run: once the lock has not come free in time, the nodes
-        # after are not made to wait for it again (26-11-05, Q03).
+        # after are not made to wait for it again (26-11-05, Q03). That holds
+        # for the certificates after this one as well, on purpose: the cost is
+        # a row that says "run it again", never a lost copy. Do not turn it
+        # into a wait per certificate.
         nonlocal gave_up
         if gave_up:
             raise LockError("operation_locked", busy)

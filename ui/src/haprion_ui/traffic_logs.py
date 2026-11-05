@@ -290,7 +290,7 @@ def _tokens(query: str) -> tuple[_Token, ...]:
             position += 1
             if not phrase:
                 raise SearchSyntaxError("A quoted search phrase cannot be empty.")
-            result.append(_Token("term", "".join(phrase).casefold()))
+            result.append(_Token("term", "".join(phrase).lower()))
         else:
             end = position
             while end < len(query) and not query[end].isspace() and query[end] not in "()":
@@ -301,7 +301,12 @@ def _tokens(query: str) -> tuple[_Token, ...]:
                 kind = cast(Literal["and", "or", "not"], operator)
                 result.append(_Token(kind))
             else:
-                result.append(_Token("term", operator))
+                #
+                # `lower`, as the database's `ilike` folds the text it searches:
+                # `casefold` would make `Straße` into `strasse`, which that text
+                # does not hold.
+                #
+                result.append(_Token("term", word.lower()))
             position = end
         if len(result) > MAX_SEARCH_TOKENS:
             raise SearchSyntaxError("The search expression has too many parts.")

@@ -136,6 +136,17 @@ class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
         statement = traffic_logs._search_sql(expression, parameters, destinations)
         return statement.as_string(None), parameters
 
+    def test_a_term_is_lowered_once_and_finds_the_text_it_was_written_as(self) -> None:
+        """Review 2026-11-05: `casefold` turned `Straße` into `strasse`, and
+        `ilike` lowers the text it searches to `straße`, which holds no `strasse`."""
+
+        for term in ("Straße", '"Straße"'):
+            with self.subTest(term=term):
+                statement, parameters = self.built(term)
+                self.assertIn("ilike", statement)
+                self.assertEqual(parameters[0], "%straße%")
+        self.assertEqual(self.built("API AND NOT Health")[1], ["%api%", "%health%"])
+
     def test_an_address_is_the_client_in_either_form_and_still_text(self) -> None:
         for term in ("192.0.2.5", "::ffff:192.0.2.5"):
             with self.subTest(term=term):

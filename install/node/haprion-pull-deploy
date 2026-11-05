@@ -253,7 +253,7 @@ stage_keepalived_conf() {
     rendered="$(cat "$published")"
     if [[ "$rendered" == *"$KEEPALIVED_INTERFACE_FROM_NODE"* ]]; then
         own="$(awk '$1 == "unicast_src_ip" { print $2; exit }' "$published")"
-        interface="$(ip -o -4 addr show | awk -v own="$own" '{ split($4, a, "/"); if (a[1] == own) { print $2; exit } }')"
+        interface="$(ip -o addr show | awk -v own="$own" '{ split($4, a, "/"); if (a[1] == own) { print $2; exit } }')"
         if [[ -z "$interface" ]]; then
             log "ERROR: keepalived: no interface carries this node's address ${own:-(none named)}."
             return 1

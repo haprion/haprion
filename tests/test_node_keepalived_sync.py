@@ -422,8 +422,14 @@ class TheProductsKeepalivedConf(Step):
         (bin_dir / "hostname").chmod(0o755)
         (bin_dir / "ip").write_text(
             "#!/bin/sh\n"
-            "echo '1: lo    inet 127.0.0.1/8 scope host lo'\n"
-            "echo '2: ens18    inet 192.0.2.11/24 brd 192.0.2.255 scope global ens18'\n"
+            # As the real one answers: `-4` lists IPv4 only, `-6` IPv6 only, neither both.
+            'case "$*" in *-4*) family=4;; *-6*) family=6;; *) family=;; esac\n'
+            '[ "$family" = 6 ] || {\n'
+            "  echo '1: lo    inet 127.0.0.1/8 scope host lo'\n"
+            "  echo '2: ens18    inet 192.0.2.11/24 brd 192.0.2.255 scope global ens18'\n"
+            "}\n"
+            '[ "$family" = 4 ] || '
+            "echo '3: ens19    inet6 2001:db8::11/64 scope global'\n"
         )
         (bin_dir / "ip").chmod(0o755)
         (bin_dir / "systemctl").write_text(
@@ -500,6 +506,16 @@ class TheProductsKeepalivedConf(Step):
         self.assertEqual(code, 1)
         self.assertFalse(self.conf.exists())
         self.assertIn("no interface carries this node's address 192.0.2.99", output)
+
+    def test_a_node_whose_address_is_ipv6_finds_its_interface(self) -> None:
+        # Review 26-11-05, XX09: `ip -o -4` listed no IPv6 address, so the step failed on
+        # every deploy with "no interface carries this node's address".
+        self.node_file.write_text(self.node_file.read_text().replace("192.0.2.11", "2001:db8::11"))
+
+        code, output = self.run_step("sync_keepalived", ACTIVE_EXIT="3")
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("interface ens19\n", self.conf.read_text())
 
     def rename_host(self) -> None:
         (self.root / "bin" / "hostname").write_text("#!/bin/sh\necho node-z\n")

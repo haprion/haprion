@@ -10501,7 +10501,8 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                     re.M,
                 )
             )
-            + f"PLATFORM_STEPS={self.directory / 'steps'}\n"
+            + "DRAIN_COMMAND=/bin/true\nDRAIN_SECONDS=900\nWORKER_UNIT=haprion-worker.service\n"
+            f"PLATFORM_STEPS={self.directory / 'steps'}\n"
             f"COLLECTOR_CONFIG={self.directory / 'none'}\nCOLLECTOR_COMMAND=/bin/false\n"
             f"RETENTION_COMMAND=/bin/false\nRETENTION_TIMER={self.directory / 'none'}\n"
             + "".join(
@@ -10522,6 +10523,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                     "restore_set_is_kept",
                     "mark_restoring",
                     "restore_stopped",
+                    "resume_claims",
                     "do_restore",
                     "start_units",
                 )

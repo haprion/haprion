@@ -3252,7 +3252,7 @@ dumps in groups - daily, any other, before a restore and before a migration - ea
 sudo haprion-backup restore /var/lib/haprion-ui/dumps/<dump>
 ```
 
-It stops everything that writes the database - the web and its socket, the worker, the poller, the
+It first pauses the worker's claims and waits for a running job to finish, as an update does (up to 15 minutes; a job that outlasts the wait stops the command before anything is stopped). It then stops everything that writes the database - the web and its socket, the worker, the poller, the
 traffic collector and the timers - and refuses while a connection to the database remains. It then
 dumps the database it is about to replace to `before-restore/` under the dump directory, so a wrong
 dump chosen can be undone; the newest three are kept, and the daily dumps' retention neither counts

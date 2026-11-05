@@ -670,6 +670,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         reads: tuple[str, ...] = ("aa bb",),
         spelled: str = "{dump}",
         options: tuple[str, ...] = (),
+        drain: int = 0,
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         """One run; `remembered` and `state` are what the runs before it left.
 
@@ -708,8 +709,17 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
             collector.write_text("#!/bin/sh\n")
             collector.chmod(0o755)
             calls = here / "calls"
+            drained = here / "haprion-drain"
+            drained.write_text(
+                '#!/bin/sh\necho "drain $*" >> "$CALLS"\n'
+                f'[ "$1" != pause ] || exit {drain}\nexit 0\n'
+            )
+            drained.chmod(0o755)
             program = (
                 "set -Eeuo pipefail\n"
+                f'DRAIN_COMMAND="{drained}"\n'
+                + "".join(re.findall(r"^(?:DRAIN_SECONDS|WORKER_UNIT)=.*\n", source, re.MULTILINE))
+                + "\n"
                 'log() { echo "$*"; }; warn() { echo "WARNING: $*" >&2; }; step_log() { :; }\n'
                 'die() { echo "ERROR: $*" >&2; exit 1; }\n'
                 'record() { echo "$*" >> "$CALLS"; }\n'
@@ -764,6 +774,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                         "restore_set_is_kept",
                         "mark_restoring",
                         "restore_stopped",
+                        "resume_claims",
                         "do_restore",
                         "start_units",
                     )
@@ -801,6 +812,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
             [
                 "plan 0101",
                 "token-hashes",
+                "drain pause --wait 900",
                 "systemctl stop haprion-traffic-collector.timer",
                 "systemctl stop haprion-web.socket",
                 "systemctl stop haprion-worker.service",
@@ -1083,6 +1095,48 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
             self.assertEqual(said.count("token-hashes"), 2)
             self.assertEqual(self.kept, "1:cc")
             self.assertNotIn("using the API tokens recorded", done.stdout)
+
+    def test_running_jobs_are_waited_for_before_anything_is_stopped(self) -> None:
+        """Review 2026-11-05 R09: a deploy running at the stop was lost with the worker."""
+
+        done, said = self.restore(active=self.ACTIVE)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertLess(
+            said.index("drain pause --wait 900"), said.index("systemctl stop haprion-web.socket")
+        )
+        self.assertNotIn("drain resume", said)
+
+    def test_a_job_that_will_not_finish_stops_the_restore_before_anything_is_stopped(self) -> None:
+        done, said = self.restore(active=self.ACTIVE, drain=75)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("a job is still running after 900 s", done.stderr)
+        self.assertEqual(said, ["plan 0101", "token-hashes", "drain pause --wait 900"])
+
+    def test_claims_that_cannot_be_paused_do_not_stop_a_restore_that_may_be_the_way_out(
+        self,
+    ) -> None:
+        """The database may be what is broken; the restore is then the point."""
+
+        done, said = self.restore(active=self.ACTIVE, drain=1)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("could not be paused", done.stderr)
+        self.assertIn("drain pause --wait 900", said)
+
+    def test_no_worker_running_means_nothing_to_wait_for(self) -> None:
+        done, said = self.restore(active="haprion-web.socket")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertFalse(any(line.startswith("drain") for line in said))
+
+    def test_a_restore_that_gives_up_before_the_swap_lifts_the_pause(self) -> None:
+        for failure in ({"connections": "1"}, {"connections": "FAIL"}, {"dumped": False}):
+            with self.subTest(**failure):
+                done, said = self.restore(active=self.ACTIVE, **failure)
+                self.assertEqual(done.returncode, 1)
+                self.assertIn("drain resume", said)
+                first_start = next(i for i, x in enumerate(said) if x.startswith("systemctl start"))
+                self.assertLess(said.index("drain resume"), first_start)
+        done, said = self.restore(active=self.ACTIVE, restored=False)
+        self.assertNotIn("drain resume", said)
 
     def test_a_dump_that_does_not_exist_is_refused_by_its_own_path(self) -> None:
         done, said = self.restore(active=self.ACTIVE, spelled="{here}/none.dump")

@@ -709,6 +709,14 @@ RESTORE_UNITS=(
     haprion-poller.service
 )
 PLATFORM_STEPS="${HAPRION_PLATFORM_STEPS:-/usr/share/haprion-ui/install/platform}"
+#
+# A job that runs when the worker stops is lost with it (review 2026-11-05, R09):
+# its row exists only in the database this replaces. Waited for, as an update
+# does, before anything stops.
+#
+DRAIN_COMMAND=/usr/sbin/haprion-drain
+DRAIN_SECONDS=900
+WORKER_UNIT=haprion-worker.service
 COLLECTOR_CONFIG=/etc/haprion/traffic-collector.json
 COLLECTOR_COMMAND=/opt/haprion/current/bin/haprion-traffic-collector
 RETENTION_COMMAND=/usr/sbin/haprion-retention
@@ -841,6 +849,13 @@ restore_stopped() {
   Correct what ${names} names and run this again; it starts them once a restore finishes.${hold}"
 }
 
+# The pause on the worker's claims, lifted again when the restore gives up before
+# the database is replaced. Replaced with the database otherwise.
+resume_claims() {
+    (( paused )) || return 0
+    "$DRAIN_COMMAND" resume || warn "the worker's claims could not be resumed; run: sudo haprion-drain resume"
+}
+
 do_restore() {
     local -i reread=0
     if [[ "${1:-}" == --read-tokens-again ]]; then
@@ -848,7 +863,7 @@ do_restore() {
         shift
     fi
     local dump="$1" unit connections collector revision plan verdict head release tokens replaced
-    local -i reused=0
+    local -i reused=0 paused=0 drained=0
     local -a before=() stopped=() now=()
     #
     # The file itself, whatever way its path was spelled (review 2026-11-05,
@@ -909,6 +924,15 @@ do_restore() {
         active_token_hashes >/dev/null \
             || die "the active API tokens could not be read; nothing was stopped or restored"
     fi
+    if systemctl is-active --quiet "$WORKER_UNIT"; then
+        step_log "Waiting for running jobs"
+        "$DRAIN_COMMAND" pause --wait "$DRAIN_SECONDS" && drained=0 || drained=$?
+        case "$drained" in
+            0) paused=1 ;;
+            75) die "a job is still running after ${DRAIN_SECONDS} s (above); nothing was stopped or restored. Run this again when it is done" ;;
+            *) warn "the worker's claims could not be paused (exit ${drained}); the restore goes on, and a job that runs now is lost with the worker" ;;
+        esac
+    fi
     step_log "Stopping what writes the database"
     for unit in "${RESTORE_UNITS[@]}"; do
         if systemctl is-active --quiet "$unit"; then
@@ -924,6 +948,7 @@ do_restore() {
     done
     connections="$(psql_scratch -d postgres -c \
         "select count(*) from pg_stat_activity where datname = '${DB_NAME}'")" || {
+        resume_claims
         start_units "${now[@]}"
         remember_stopped "${before[@]}"
         die "the open connections to ${DB_NAME} could not be counted; nothing was restored${before[*]:+, and ${before[*]} stay stopped}"
@@ -933,6 +958,7 @@ do_restore() {
         # Only what this run stopped: the database is untouched since, and what
         # a failed restore before it stopped stays stopped on what that left.
         #
+        resume_claims
         start_units "${now[@]}"
         remember_stopped "${before[@]}"
         die "$(counted "$connections" connection) to ${DB_NAME} still open; nothing was restored${before[*]:+, and ${before[*]} stay stopped}.
@@ -941,6 +967,7 @@ do_restore() {
 
     if (( ! reused )); then
         tokens="$(active_token_hashes | paste -sd, -)" || {
+            resume_claims
             start_units "${now[@]}"
             remember_stopped "${before[@]}"
             die "the active API tokens could not be read; nothing was restored${before[*]:+, and ${before[*]} stay stopped}"
@@ -957,6 +984,7 @@ do_restore() {
         log "  skipped  a run before this one already dumped the database it replaces"
     elif ! ( dump_before_restore "$dump" ); then
         forget_restore_tokens
+        resume_claims
         start_units "${now[@]}"
         remember_stopped "${before[@]}"
         die "the database could not be dumped before it is replaced; nothing was restored${before[*]:+, and ${before[*]} stay stopped}"

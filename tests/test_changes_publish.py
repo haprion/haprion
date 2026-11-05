@@ -364,7 +364,22 @@ class ChangesPublishTests(ObjectsPublishFixture):
 
             self.assertEqual(document["error"]["code"], "changes_invalid")
             self.assertEqual(code, exit_codes.REFUSED)
-            self.assertIn("--regenerate --allow-certificate-mismatch", document["error"]["message"])
+            message = document["error"]["message"]
+            self.assertIn("--regenerate --allow-certificate-mismatch", message)
+            #
+            # Read in a terminal as well as on the page: the command, with the
+            # reason the page cannot send it in brackets, and no instruction to
+            # "run it in a terminal" for a reader who already is in one.
+            #
+            self.assertTrue(
+                message.endswith(
+                    " Run haprion-publish -c alpha --regenerate --allow-certificate-mismatch"
+                    " (the interface does not send the override),"
+                    " or install a certificate that covers the name."
+                ),
+                message,
+            )
+            self.assertNotIn("in a terminal", message)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
     def test_the_flag_is_a_real_boolean(self) -> None:

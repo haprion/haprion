@@ -10,7 +10,11 @@
       {
         "id": "cf-main",
         "provider": "cloudflare",
-        "revision": 2
+        "revision": 2,
+        "status": {
+          "label": "In effect",
+          "usable": true
+        }
       }
     ],
     "ndes": [
@@ -18,7 +22,11 @@
         "id": "corp-ca",
         "provider": "ndes",
         "revision": 1,
-        "endpoint": "https://ndes.example.com/certsrv/mscep/"
+        "endpoint": "https://ndes.example.com/certsrv/mscep/",
+        "status": {
+          "label": "Apply failed",
+          "usable": false
+        }
       }
     ]
   },

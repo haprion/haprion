@@ -136,12 +136,57 @@ class TheProfilesList(AsRoot):
                 listed=lambda _c: [row("corp-ca", "ndes", endpoint="https://ndes.example.com/")],
             ),
         )
-        with mock.patch.object(profile_apply, "KINDS", kinds):
+        with self.settled(kinds):
             code, out, _ = run(profile_apply.main, ["list", "--json"])
 
         self.assertEqual(code, 0)
         answer = assert_contract("haprion-profiles-list", out)
         self.assertEqual(answer["result"]["ndes"][0]["endpoint"], "https://ndes.example.com/")
+
+    def settled(self, kinds: Any) -> contextlib.ExitStack:
+        """The kinds, and a database that has these apply jobs (none) and this configuration."""
+
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(profile_apply, "KINDS", kinds))
+        stack.enter_context(mock.patch.object(db, "profile_jobs", return_value=[]))
+        stack.enter_context(
+            mock.patch.object(config, "load", return_value=SimpleNamespace(management_writes=True))
+        )
+        return stack
+
+    def test_each_profile_says_whether_it_is_in_effect(self) -> None:
+        """B462, K02: the list says what the profiles page does, and `apply` acts on."""
+
+        def row(identifier: str, revision: int) -> Any:
+            return SimpleNamespace(id=identifier, provider_id="cloudflare", revision=revision)
+
+        def status(identifier: str, _revision: int, _jobs: Any, *, writes: bool = False) -> Any:
+            ready = identifier == "cf-main"
+            return SimpleNamespace(label="In effect" if ready else "Apply failed", usable=ready)
+
+        kinds = (
+            dataclasses.replace(
+                profile_apply.DNS,
+                listed=lambda _c: [row("cf-main", 2), row("cf-old", 1)],
+                status=status,
+            ),
+            dataclasses.replace(profile_apply.NDES, listed=lambda _c: [], status=status),
+        )
+        with self.settled(kinds):
+            code, out, _ = run(profile_apply.main, ["list", "--json"])
+            _, text, _ = run(profile_apply.main, ["list"])
+
+        self.assertEqual(code, 0)
+        listed = assert_contract("haprion-profiles-list", out)["result"]["dns"]
+        self.assertEqual(
+            [(entry["id"], entry["status"]) for entry in listed],
+            [
+                ("cf-main", {"label": "In effect", "usable": True}),
+                ("cf-old", {"label": "Apply failed", "usable": False}),
+            ],
+        )
+        self.assertIn("In effect", text)
+        self.assertIn("Apply failed", text)
 
     def test_a_refusal_is_a_document_too(self) -> None:
         with mock.patch("os.geteuid", return_value=1000):
@@ -150,13 +195,13 @@ class TheProfilesList(AsRoot):
         self.assertEqual(code, exit_codes.NOT_ROOT)
         self.assertEqual(assert_contract("haprion-profiles-list", out)["error"]["code"], "not_root")
 
-    def test_the_text_listing_is_unchanged(self) -> None:
+    def test_the_text_listing_is_not_json(self) -> None:
         row: Any = SimpleNamespace(id="cf-main", provider_id="cloudflare", revision=2)
         kinds = (
             dataclasses.replace(profile_apply.DNS, listed=lambda _c: [row]),
             dataclasses.replace(profile_apply.NDES, listed=lambda _c: []),
         )
-        with mock.patch.object(profile_apply, "KINDS", kinds):
+        with self.settled(kinds):
             code, out, _ = run(profile_apply.main, ["list"])
 
         self.assertEqual(code, 0)

@@ -2160,6 +2160,8 @@ way the page stores it, and applied by the same job.
   is refused with `operation_locked` while another certificate job is running. `--check` does not look
   for one, so it can say "would apply" for a run that is then refused for that reason.
 - The file carries credentials. It is refused unless only its owner may read it (mode `0600`).
+- `list` shows each stored profile with its status, the label the profiles page shows (*In effect*,
+  *Apply failed* and so on). One that is not in effect is applied again by the next `apply`.
 
 ```yaml
 dns_profiles:

@@ -18,12 +18,22 @@
   "$defs": {
     "profile": {
       "type": "object",
-      "required": ["id", "provider", "revision"],
+      "required": ["id", "provider", "revision", "status"],
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 64 },
         "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
         "revision": { "type": "integer", "minimum": 1 },
-        "endpoint": { "type": "string", "minLength": 1, "maxLength": 2048 }
+        "endpoint": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "status": {
+          "description": "Whether the stored revision is in effect, as the profiles page says it: the label, and whether the newest apply job for this revision is done. A profile that is not usable is applied again by the next `apply`.",
+          "type": "object",
+          "required": ["label", "usable"],
+          "properties": {
+            "label": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "usable": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

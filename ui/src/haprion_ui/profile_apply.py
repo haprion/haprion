@@ -617,28 +617,52 @@ def command_remove(args: argparse.Namespace, *, sleep: Callable[[float], None] =
 
 
 def command_list(args: argparse.Namespace) -> int:
+    try:
+        settings = config.load()
+    except config.ConfigError as exc:
+        return tool_answer.refusal(
+            args, LIST_OPERATION, "dependency_unavailable", str(exc), exc.exit_code
+        )
     with connect(load_environment()) as connection:
         rows = {kind.name: kind.listed(connection) for kind in KINDS}
-    shown = {
-        name: [
+        jobs = {kind.name: db.profile_jobs(connection, kind.operation) for kind in KINDS}
+    shown: dict[str, list[dict[str, Any]]] = {
+        kind.name: [
             {
                 "id": row.id,
                 "provider": row.provider_id,
                 "revision": row.revision,
-                **({"endpoint": row.endpoint} if name == "ndes" else {}),
+                **({"endpoint": row.endpoint} if kind.name == "ndes" else {}),
+                #
+                # The state `apply` acts on and the profiles page shows: a profile
+                # that is not in effect is applied again by the next `apply`.
+                #
+                "status": _standing(
+                    kind.status(
+                        row.id,
+                        row.revision,
+                        jobs.get(kind.name, ()),
+                        writes=settings.management_writes,
+                    )
+                ),
             }
-            for row in listed
+            for row in rows[kind.name]
         ]
-        for name, listed in rows.items()
+        for kind in KINDS
     }
     if args.json:
         return tool_answer.done(LIST_OPERATION, shown)
     for name, listed in shown.items():
         for entry in listed:
             print(
-                f"{name:<5} {entry['id']:<33} {entry['provider']:<16} revision {entry['revision']}"
+                f"{name:<5} {entry['id']:<33} {entry['provider']:<16} "
+                f"revision {entry['revision']:<4} {entry['status']['label']}"
             )
     return 0
+
+
+def _standing(status: dns_profile_form.ProfileStatus) -> dict[str, Any]:
+    return {"label": status.label, "usable": status.usable}
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -589,11 +589,12 @@ def parse_ipvs_stats(text: str) -> list[dict[str, Any]]:
                 "receivers": [],
             }
             services.append(current)
-        elif fields[0] == "->" and current is not None:
-            if len(current["receivers"]) < MAX_IPVS_ROWS:
-                current["receivers"].append(
-                    {"address": address, "port": port, "packets": packets, "bytes": data}
-                )
+        elif (
+            fields[0] == "->" and current is not None and len(current["receivers"]) < MAX_IPVS_ROWS
+        ):
+            current["receivers"].append(
+                {"address": address, "port": port, "packets": packets, "bytes": data}
+            )
     return services
 
 

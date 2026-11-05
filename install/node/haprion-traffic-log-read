@@ -24,7 +24,7 @@ from typing import BinaryIO
 LOG_ROOT = Path("/var/log/haprion")
 REQUEST = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2}) ([0-9]{1,12})$")
 MAX_SEND = 8 * 1024 * 1024
-# HAProxy's target is capped at 2048. Allow one complete record beyond the
+# HAProxy's target is capped at 8192. Allow one complete record beyond the
 # transfer window so a response never ends in the middle of JSON.
 MAX_RECORD = 16 * 1024
 RETENTION_DAYS = 14

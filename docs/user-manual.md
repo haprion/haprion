@@ -1417,8 +1417,8 @@ Write each as a plain number; `size` also takes `k`, `m` or `g`.
 - **HAProxy's statistics page.** Every `stats` keyword, and `use-service prometheus-exporter`. The page
   shows every object's servers and addresses, and `stats admin` lets an anonymous visitor put another
   object's server in maintenance. The cluster has its own metrics.
-- **The generator's variables.** `txn.rule`, `txn.traffic_host`, `txn.client`, `txn.access_path`,
-  `txn.hsts` and `txn.waf_body` carry what the traffic log records and the HSTS header the frontend
+- **The generator's variables.** `txn.rule`, `txn.traffic_method`, `txn.traffic_host`, `txn.traffic_path`, `txn.client`,
+  `txn.access_path`, `txn.hsts` and `txn.waf_body` carry what the traffic log records and the HSTS header the frontend
   writes. The pool runs after the frontend, so a value set there would win. The text may read them;
   `set-var`, `set-var-fmt`, `unset-var` and `do-resolve` on them are refused.
 - **Files.** A file HAProxy is told to serve - `errorfile`, and `file`, `lf-file` or `errorfile` in a
@@ -3831,6 +3831,9 @@ node closed the connection; the export leaves that cell empty. When the WAF matc
 the rule: red when the rule refused the request, amber when it only logged it. Rows can be ticked and
 saved with *Export selected (.csv)*. The file has the row's columns plus *Rule* and *Mode* (`denied` or
 `logged`), empty when no rule matched; from *WAF logs* it is named `waf-logs-…`.
+
+What a client chooses is cut in the log, not left out of it: a method after 16 characters, a host after 253
+bytes and a path (without its query) after 512 bytes.
 
 **One object's requests.** An object's page links to its own requests: *Traffic log* and *WAF logs* on
 its *Metrics* card, and a link beside each backend on the cluster's *Metrics* page. They open the page

@@ -812,6 +812,25 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(_ingest_part(self.config, connection, self.target, part), 2)
         self.assertEqual([row[8] for row in connection.rows], ["/ok"])
 
+    def test_a_field_longer_than_its_column_is_cut_not_refused(self) -> None:
+        """Review 2026-11-05, T01: a request the client chose the method of
+        (`SELECTUNIONALLFROMXX`) was logged by HAProxy as a whole record and
+        refused here, so the one request an attacker picks the shape of was the
+        one the traffic log never showed. The requester's fields are cut."""
+
+        part = self.staging / "alpha--node-a--2026-09-08.jsonl"
+        part.write_bytes(
+            traffic_line("/" + "p" * 9000, method="SELECTUNIONALLFROMXX", host="h" * 300)
+            + traffic_line("/ok")
+        )
+        connection: Any = _Connection()
+        self.assertEqual(_ingest_part(self.config, connection, self.target, part), 0)
+        first = connection.rows[0]
+        self.assertEqual(first[6], "SELECTUNIONALLFR")
+        self.assertEqual(first[7], "h" * 253)
+        self.assertEqual(len(first[8]), 8192)
+        self.assertEqual([row[8] for row in connection.rows][1:], ["/ok"])
+
     def test_a_part_the_database_refuses_stops_only_its_own_node(self) -> None:
         """Review 2026-10-30, E1: the first node's failing COPY ended the
         import for every node after it, and its page still said `ok`."""

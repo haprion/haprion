@@ -151,8 +151,12 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
         self.assertIn(f"log-profile {TRAFFIC_LOG_PROFILE}", enabled)
         self.assertIn(f"on close format {HTTP_TRAFFIC_LOG_FORMAT}", enabled)
         self.assertIn("option httplog", enabled)
-        self.assertIn("%(path)HPO ", enabled)
-        self.assertNotIn("%(path)HP ", enabled)
+        #
+        # The path without its query (what `%HPO` was), cut in the frontend.
+        #
+        self.assertIn("%(path)[var(txn.traffic_path)] ", enabled)
+        self.assertIn("http-request set-var(txn.traffic_path) path,bytes(0,", enabled)
+        self.assertNotIn("pathq", enabled)
         self.assertNotIn("capture request header", enabled)
 
     def test_the_extra_log_target_speaks_the_format_rsyslog_can_tag(self) -> None:

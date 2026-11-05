@@ -802,7 +802,7 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
             raise CollectorError(f"traffic record {name} is invalid")
         return item
 
-    def text(name: str, maximum: int) -> str:
+    def text(name: str, maximum: int, *, cut: bool = False) -> str:
         item = value.get(name)
         #
         # A NUL is legal JSON and illegal in a PostgreSQL text column; letting
@@ -811,6 +811,14 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
         # So is a lone surrogate: JSON can spell one (`\ud800`), `json.loads`
         # hands it on, and COPY cannot encode it as UTF-8.
         #
+        # What the requester chose is cut to its column (`cut`), not refused: a
+        # record HAProxy wrote whole is a request that happened, and refusing
+        # it left out exactly the one whose method an attacker picked
+        # (review 2026-11-05, T01). A name the configuration gave is not cut:
+        # a longer one is no name this installation wrote.
+        #
+        if cut and isinstance(item, str):
+            item = item[:maximum]
         if not isinstance(item, str) or len(item) > maximum or "\0" in item:
             raise CollectorError(f"traffic record {name} is invalid")
         try:
@@ -843,9 +851,9 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
         datetime.fromtimestamp(stamp, UTC),
         request,
         text("client", 64),
-        text("method", 16),
-        text("host", 253),
-        text("path", 8192),
+        text("method", 16, cut=True),
+        text("host", 253, cut=True),
+        text("path", 8192, cut=True),
         text("frontend", 128),
         text("backend", 128),
         text("server", 128),

@@ -267,6 +267,25 @@ RETRIES = 3
 # is a useful ordering key on its own.
 TRAFFIC_LOG_PROFILE = f"{PREFIX}-traffic-json"
 #
+# What a client chooses is cut in the frontend before the record is written, as
+# bytes: the method and the path of the request line, and the Host header. The
+# record then has a largest size, and `TRAFFIC_LOG_LENGTH` is the room for it
+# (a test builds that record from the format below). The collector cuts the
+# same fields at its columns; a record HAProxy had cut in the middle of its JSON
+# was one it could not read, and the request was missing from the traffic log
+# (review 2026-11-05, T01). A request line HAProxy accepts has no control
+# character in it, and a path or host in HTTP/2 can still carry a byte that is
+# no UTF-8, which the JSON encoder writes as six bytes (measured 2026-11-05).
+#
+TRAFFIC_METHOD_BYTES = 16
+TRAFFIC_HOST_BYTES = 253
+TRAFFIC_PATH_BYTES = 512
+#
+# HAProxy's `len` for the line, and rsyslog's default `maxMessageSize`, which
+# is the same 8192, takes no more.
+#
+TRAFFIC_LOG_LENGTH = 8192
+#
 # The structured stream goes to a socket of its own, held by the node's traffic
 # socket unit and writable by the haproxy account alone. The node's rsyslog
 # marks what arrives there as HAProxy's, and only a marked line is forwarded or
@@ -275,8 +294,9 @@ TRAFFIC_LOG_PROFILE = f"{PREFIX}-traffic-json"
 # a HAProxy chrooted in /var/lib/haproxy finds too (`traffic_stream`).
 #
 HTTP_TRAFFIC_LOG_FORMAT = (
-    '"%{+json}o %(schema)[int(1)] %(at)Ts %(request)rt %(client)ci %(method)HM '
-    "%(host)[var(txn.traffic_host)] %(path)HPO %(frontend)f %(backend)b "
+    '"%{+json}o %(schema)[int(1)] %(at)Ts %(request)rt %(client)ci '
+    "%(method)[var(txn.traffic_method)] "
+    "%(host)[var(txn.traffic_host)] %(path)[var(txn.traffic_path)] %(frontend)f %(backend)b "
     "%(server)s %(status)ST %(request_time)TR %(queue_time)Tw "
     "%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B "
     #
@@ -1972,13 +1992,18 @@ def _frontend_file(
             #
             *(
                 (
-                    f"    log {TRAFFIC_LOG_SOCKET} len 2048 format local profile {TRAFFIC_LOG_PROFILE} local2",
+                    f"    log {TRAFFIC_LOG_SOCKET} len {TRAFFIC_LOG_LENGTH} format local profile {TRAFFIC_LOG_PROFILE} local2",
                 )
                 if structured
                 else ()
             ),
             *(
-                ("    http-request set-var(txn.traffic_host) req.hdr(host),cut_crlf,bytes(0,253)",)
+                (
+                    f"    http-request set-var(txn.traffic_method) method,bytes(0,{TRAFFIC_METHOD_BYTES})",
+                    "    http-request set-var(txn.traffic_host) "
+                    f"req.hdr(host),cut_crlf,bytes(0,{TRAFFIC_HOST_BYTES})",
+                    f"    http-request set-var(txn.traffic_path) path,bytes(0,{TRAFFIC_PATH_BYTES})",
+                )
                 if structured
                 else ()
             ),

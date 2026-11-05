@@ -1253,6 +1253,8 @@ GENERATED_VARIABLES = frozenset(
         "txn.hsts",
         "txn.rule",
         "txn.traffic_host",
+        "txn.traffic_method",
+        "txn.traffic_path",
         "txn.waf_body",
     }
 )

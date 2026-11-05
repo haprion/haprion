@@ -21,6 +21,7 @@ import unittest
 from pathlib import Path, PurePath
 from types import ModuleType
 from typing import Any
+from unittest import mock
 
 from haprion import accounts, node_package
 
@@ -494,6 +495,27 @@ class TheSshBlockingOfAnEarlierReleaseIsRetired(unittest.TestCase):
         # The rule and the keys went before it: it can reach nothing.
         self.assertFalse(self.machine.path("/etc/sudoers.d/haprion-block").exists())
         self.assertFalse(self.machine.path("/etc/haprion/block-clients").exists())
+
+    def test_a_rule_that_cannot_be_removed_is_said_so_and_not_said_removed(self) -> None:
+        """Review 26-11-05, G06: every rule file was counted removed, whatever became of it."""
+
+        stuck = self.machine.path("/etc/sudoers.d/haprion-block")
+        unlink = Path.unlink
+
+        def refuse_one(path: Path, missing_ok: bool = False) -> None:
+            if path == stuck:
+                raise PermissionError(13, "Permission denied", str(path))
+            unlink(path, missing_ok=missing_ok)
+
+        with mock.patch.object(Path, "unlink", refuse_one):
+            code, said = self.retire()
+
+        self.assertEqual(code, 1, said)
+        self.assertTrue(stuck.exists())
+        self.assertIn(f"could not remove {stuck}", said)
+        self.assertNotIn(f"removed  {stuck}\n", said)
+        # The rule beside it went, and is said to have.
+        self.assertIn("removed  " + str(stuck) + ".replaced-20261031-101010", said)
 
     def test_a_command_that_cannot_start_leaves_no_key_and_is_named(self) -> None:
         """A missing binary or a refused fork raises; the keys go before any command runs."""

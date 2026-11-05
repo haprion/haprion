@@ -201,8 +201,11 @@ def retire_block_clients(host: Host) -> tuple[list[str], list[str]]:
     removed: list[str] = []
     failed: list[str] = []
     rules = with_copies(host, RETIRED_SUDOERS)
-    failed += remove(rules)
-    removed += [str(path) for path in rules]
+    for rule in rules:
+        stuck = remove([rule])
+        failed += stuck
+        if not stuck:
+            removed.append(str(rule))
     home = host.path(RETIRED_HOME)
     if home.exists() or home.is_symlink():
         before = len(failed)

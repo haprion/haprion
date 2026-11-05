@@ -751,6 +751,45 @@ class Overwrite(RestoreTest):
         FakeSession.trusted = {}
         return run
 
+    def test_previews_in_one_run_take_one_backup(self) -> None:
+        """Review 2026-11-05 R04: each preview backed up the whole cluster and pruned its archives."""
+
+        taken: list[int] = []
+
+        def backup() -> str | None:
+            taken.append(1)
+            return self.backup_error
+
+        self.checks = node_restore.OverwriteChecks(
+            backup=backup, standing=lambda _name: self.standing
+        )
+        run = self.prepare_overwrite()
+        first = self.preview_overwrite(run)
+        second = self.preview_overwrite(run)
+        self.assertEqual(len(taken), 1)
+        self.assertEqual(first["overwrite"]["backup"], "done")
+        self.assertEqual(second["overwrite"]["backup"], "done")
+        # A second run takes its own.
+        self.preview_overwrite(self.prepare_overwrite())
+        self.assertEqual(len(taken), 2)
+
+    def test_a_backup_that_failed_is_tried_again_by_the_next_preview(self) -> None:
+        taken: list[int] = []
+
+        def backup() -> str | None:
+            taken.append(1)
+            return self.backup_error
+
+        self.checks = node_restore.OverwriteChecks(
+            backup=backup, standing=lambda _name: self.standing
+        )
+        self.backup_error = "node-b: node_export_failed"
+        run = self.prepare_overwrite()
+        self.assertEqual(self.preview_overwrite(run)["overwrite"]["backup"], "failed")
+        self.backup_error = None
+        self.assertEqual(self.preview_overwrite(run)["overwrite"]["backup"], "done")
+        self.assertEqual(len(taken), 2)
+
     def test_a_node_equal_to_its_archive_is_shown_so_and_takes_a_backup(self) -> None:
         summary = self.preview_overwrite(self.prepare_overwrite())
         self.assertEqual(summary["problems"], [])

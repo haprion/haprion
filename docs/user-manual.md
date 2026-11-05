@@ -3598,7 +3598,7 @@ itself; any other means an empty VM in its place, with the rules above. The past
 are the same. Over the node itself, this differs:
 
 - The node must be reached at the address its archive gives it.
-- The preview takes a state backup of the cluster and checks the pair: whether this node holds the VIP,
+- The first preview of a run takes a state backup of the cluster (a preview run again takes none, so it prunes no archive) and checks the pair: whether this node holds the VIP,
   and whether its neighbour is healthy (answering, with HAProxy and keepalived active). It lists every
   file whose contents differ from the node's, how many are already equal, what goes to quarantine, and
   whether the network differs.

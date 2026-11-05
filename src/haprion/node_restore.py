@@ -1001,7 +1001,9 @@ def _preview(
     }
     summary["renumbered"] = renumbered(checked.source, checked.inspected)
     if request.mode == "overwrite" and checks is not None:
-        summary["overwrite"] = _overwrite_standing(request, checks, progress)
+        summary["overwrite"] = _overwrite_standing(
+            request, checks, progress, kept=_earlier_backup(directory)
+        )
     if checked.package is not None:
         summary["node_package"] = {
             "version": checked.package.version,
@@ -1087,15 +1089,35 @@ def _key(line: bytes) -> str:
     return " ".join(line.decode("utf-8", "replace").split()[:2])
 
 
+def _earlier_backup(directory: Path) -> bool:
+    """Whether an earlier preview of this run took its state backup, and it was done."""
+
+    if not (directory / "preview.json").exists():
+        return False
+    try:
+        before = read_json(directory / "preview.json").get("overwrite", {})
+        return bool(before.get("backup") == "done")
+    except (RestoreError, AttributeError):
+        return False
+
+
 def _overwrite_standing(
-    request: Request, checks: OverwriteChecks, progress: TextIO | None
+    request: Request, checks: OverwriteChecks, progress: TextIO | None, *, kept: bool = False
 ) -> dict[str, Any]:
     """The backup and the pair, as the preview shows them. Not bound by the digest:
-    both change on their own, and the run reads the pair again."""
+    both change on their own, and the run reads the pair again.
+
+    One backup a run (review 2026-11-05, R04): each one backs up every node of the
+    cluster and prunes the oldest archives, so a preview run again and again
+    emptied the archives the operator might pick. A backup that failed is tried again."""
 
     stream = progress or sys.stderr
-    stream.write(f"state backup of {request.cluster}\n")
-    backup_error = checks.backup()
+    if kept:
+        stream.write(f"state backup of {request.cluster}: taken by the earlier preview\n")
+        backup_error = None
+    else:
+        stream.write(f"state backup of {request.cluster}\n")
+        backup_error = checks.backup()
     standing = checks.standing(request.node)
     return {
         "backup": "done" if backup_error is None else "failed",

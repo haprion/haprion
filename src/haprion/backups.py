@@ -158,7 +158,29 @@ def backup_list_result(
 
     if not root.is_dir():
         raise BackupError(f"the backup root {root} is not a directory")
-    readings = tuple(node_backups(root, node, limit=limit) for node in nodes)
+    return _listing(tuple(node_backups(root, node, limit=limit) for node in nodes), limit)
+
+
+def unreadable_backup_result(
+    nodes: Iterable[Node], *, limit: int | None
+) -> tuple[dict[str, Any], tuple[NodeBackups, ...]]:
+    """The listing of a backup volume that cannot be read: every node unavailable.
+
+    A listing, not a refusal (review 2026-11-05, R10): the rest of what the
+    helper reads - the database jobs among it - is true all the same, and a
+    refusal left the interface showing an older row's.
+    """
+
+    readings = tuple(
+        NodeBackups(node.name, False, None, 0, 0, (), "backup_metadata_unavailable")
+        for node in nodes
+    )
+    return _listing(readings, limit)
+
+
+def _listing(
+    readings: tuple[NodeBackups, ...], limit: int | None
+) -> tuple[dict[str, Any], tuple[NodeBackups, ...]]:
     return {
         "limit": limit,
         "nodes": [

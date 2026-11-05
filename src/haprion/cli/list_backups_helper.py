@@ -21,7 +21,7 @@ from typing import Any, BinaryIO, TextIO
 from haprion import backup_retention, exit_codes
 from haprion.backup_schedule import ScheduleError, database_jobs, schedule_result
 from haprion.backup_schedule_write import timer_unit
-from haprion.backups import BackupError, backup_list_result
+from haprion.backups import BackupError, backup_list_result, unreadable_backup_result
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     NAME,
@@ -182,7 +182,14 @@ def main(
         )
 
     try:
-        result, readings = backup_list_result(policy.backup_root, nodes, limit=limit)
+        try:
+            result, readings = backup_list_result(policy.backup_root, nodes, limit=limit)
+        except BackupError:
+            #
+            # A volume that cannot be read is every node unavailable, and the
+            # rest of the listing is true all the same (review 2026-11-05, R10).
+            #
+            result, readings = unreadable_backup_result(nodes, limit=limit)
         #
         # Read here rather than by the caller, and reported with the listing
         # rather than on its own: "these archives exist" and "something is still

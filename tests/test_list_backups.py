@@ -283,6 +283,37 @@ class HelperTests(unittest.TestCase):
         self.assertIsNone(document["error"])
         _validator().validate(document)
 
+    def test_a_backup_volume_that_cannot_be_read_still_carries_the_database_jobs(self) -> None:
+        """Review 2026-11-05 R10: the dump's failure was shown from an older row, or not at all."""
+
+        jobs = {
+            "dump": {
+                "unit": "haprion-backup.service",
+                "last_result": "exit-code",
+                "last_run": None,
+            },
+            "restore_check": None,
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(list_backups_helper, "database_jobs", return_value=jobs),
+        ):
+            volume = Path(directory) / "not-a-directory"
+            volume.write_text("")
+            document, code = self._run(volume, {"limit": 10})
+
+        self.assertEqual(code, exit_codes.PARTIAL)
+        self.assertEqual(document["outcome"], "partial")
+        self.assertEqual(document["result"]["database"], jobs)
+        self.assertEqual(
+            [(node["name"], node["available"]) for node in document["result"]["nodes"]],
+            [("node-a", False), ("node-b", False)],
+        )
+        self.assertEqual(
+            {warning["code"] for warning in document["warnings"]}, {"backup_metadata_unavailable"}
+        )
+        _validator().validate(document)
+
     def test_a_policy_without_a_backup_root_fails_rather_than_guessing(self) -> None:
         document, code = self._run(None, {"limit": 10})
 

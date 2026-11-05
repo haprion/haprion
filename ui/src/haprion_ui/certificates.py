@@ -56,6 +56,15 @@ ACME_WARNING = timedelta(days=25)
 #
 CRITICAL_WINDOW = timedelta(days=7)
 
+#
+# An NDES certificate is renewed by the timer (`ndes.renew_days`, 30 by
+# default). Like certbot's, its warning sits below the renewal day, or every
+# NDES certificate would be flagged on the very day the timer renews it and
+# stay flagged until the next run (26-11-05, C04).
+#
+NDES_DEFAULT_RENEW_DAYS = 30
+NDES_RENEWAL_SLACK = timedelta(days=5)
+
 
 @dataclass(frozen=True, slots=True)
 class CertificateClusterView:
@@ -447,7 +456,11 @@ def _remaining(expires_at: datetime, now: datetime) -> str:
 
 
 def _expiry_state(
-    expires_at: datetime | None, *, lifecycle: str, now: datetime
+    expires_at: datetime | None,
+    *,
+    lifecycle: str,
+    now: datetime,
+    ndes_renew_days: int | None = None,
 ) -> tuple[str, str, Tone]:
     """The expiry column: the date, the phrase beside it, and the tone."""
 
@@ -460,6 +473,8 @@ def _expiry_state(
     if left <= CRITICAL_WINDOW:
         return date, _remaining(expires_at, now), "critical"
     warn_after = ACME_WARNING if lifecycle == "acme" else STATIC_WARNING
+    if ndes_renew_days is not None:
+        warn_after = timedelta(days=ndes_renew_days) - NDES_RENEWAL_SLACK
     if left <= warn_after:
         return date, _remaining(expires_at, now), "warning"
     return date, _remaining(expires_at, now), "healthy"
@@ -1266,7 +1281,19 @@ def _registry_certificate(
 
     expires_at = _expiry(entry.get("not_after")) if readable else None
     if readable:
-        expires, expiry_label, tone = _expiry_state(expires_at, lifecycle=lifecycle, now=now)
+        renew_days = entry.get("ndes_renew_days")
+        expires, expiry_label, tone = _expiry_state(
+            expires_at,
+            lifecycle=lifecycle,
+            now=now,
+            ndes_renew_days=(
+                renew_days
+                if isinstance(renew_days, int) and not isinstance(renew_days, bool)
+                else NDES_DEFAULT_RENEW_DAYS
+            )
+            if isinstance(source.get("ndes_profile"), str)
+            else None,
+        )
     else:
         #
         # Schema v1 fills the measured fields of an unreadable entry with inert

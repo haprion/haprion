@@ -191,6 +191,12 @@
           },
           "additionalProperties": false
         },
+        "ndes_renew_days": {
+          "description": "Additive (2026-11-05): the runtime policy's ndes.renew_days, on a row whose source names an NDES profile. The scheduled renewal runs when fewer days than this are left, so the interface warns below it.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        },
         "renewal": {
           "description": "Additive (2026-09-15): what the scheduled NDES renewal last did to this certificate. Absent where it has not tried.",
           "type": "object",

@@ -193,6 +193,32 @@ class ExpiryTests(unittest.TestCase):
         static = overview(reading(certificates=[certificate(days_left=27, lifecycle="static")]))
         self.assertEqual(static.clusters[0].certificates[0].tone, "warning")
 
+    def test_an_ndes_certificate_warns_below_the_day_the_timer_renews_it(self) -> None:
+        """26-11-05, C04: not on the very day the scheduled renewal is due."""
+
+        def tone(days_left: int, renew_days: int | None) -> str:
+            row = registered(kind="import", days_left=days_left)
+            row["source"]["ndes_profile"] = "corp"
+            if renew_days is not None:
+                row["ndes_renew_days"] = renew_days
+            registry = registry_of(overview(with_registry(reading(), row)))
+            return registry.certificates[0].tone
+
+        self.assertEqual(tone(27, 30), "healthy")
+        self.assertEqual(tone(24, 30), "warning")
+        self.assertEqual(tone(20, 30), "warning")
+        # A shorter window follows its own policy; a certificate renewed at 10 days is fine at 8.
+        self.assertEqual(tone(8, 10), "healthy")
+        self.assertEqual(tone(6, 10), "critical")
+        # A listing without the number reads as the default.
+        self.assertEqual(tone(27, None), "healthy")
+
+    def test_an_imported_certificate_without_a_profile_still_warns_at_a_month(self) -> None:
+        row = registered(kind="import", days_left=27)
+        self.assertEqual(
+            registry_of(overview(with_registry(reading(), row))).certificates[0].tone, "warning"
+        )
+
     def test_the_last_week_is_critical_whatever_renews_it(self) -> None:
         for lifecycle in ("acme", "static"):
             with self.subTest(lifecycle=lifecycle):

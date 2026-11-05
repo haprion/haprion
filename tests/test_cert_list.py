@@ -353,6 +353,36 @@ class RegistryListingTests(unittest.TestCase):
             store=root / "import",
         )
 
+    def test_an_ndes_certificate_carries_the_renewal_window_of_its_policy(self) -> None:
+        """26-11-05, C04: the page warns below the day the timer renews it."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = config.RegisteredCertificate(
+                certificate_id="corp.example",
+                source=config.CertificateSource(
+                    kind="import", lineage=None, ndes_profile="certserver1"
+                ),
+                clusters=(),
+                receivers=(),
+            )
+            plain = self._entry("plain.example", kind="import")
+            registry = self._registry(
+                root, certificates={"corp.example": entry, "plain.example": plain}
+            )
+            result = cert_inventory.registry_result(
+                registry,
+                certificate_root=root / "certdist",
+                renewed=frozenset(),
+                now=datetime.now(UTC),
+                live=root / "live",
+                store=root / "import",
+                ndes_renew_days=21,
+            )
+            rows = {row["id"]: row for row in result["certificates"]}
+            self.assertEqual(rows["corp.example"]["ndes_renew_days"], 21)
+            self.assertNotIn("ndes_renew_days", rows["plain.example"])
+
     def test_a_receiver_only_certificate_is_measured_at_its_source(self) -> None:
         #
         # The case the per-cluster listing cannot answer at all: nothing for
@@ -1066,7 +1096,11 @@ class HelperTests(unittest.TestCase):
             class Policy:
                 certificate_root = root if with_root else None
                 # The ndes block, as far as the listing reads it.
-                ndes = types.SimpleNamespace(state_root=root / "requests") if with_ndes else None
+                ndes = (
+                    types.SimpleNamespace(state_root=root / "requests", renew_days=30)
+                    if with_ndes
+                    else None
+                )
 
                 def certificate_directory(self, cluster_id: str) -> Path | None:
                     # No registry: one flat directory every cluster reads.

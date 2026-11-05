@@ -546,6 +546,7 @@ def registry_result(
     manager: str | None = None,
     interface_served: Mapping[str, Any] | None = None,
     clusters: Collection[str] | None = None,
+    ndes_renew_days: int | None = None,
 ) -> dict[str, Any]:
     """Every certificate the manager holds, measured at its source.
 
@@ -564,6 +565,10 @@ def registry_result(
     is not a target any more: it is left out of the row, so the page does not
     send it back with the answer (26-11-05, C08). None leaves the lists as
     they are.
+
+    `ndes_renew_days` is the policy's renewal window; an NDES certificate's row
+    carries it, so the page warns below the day the timer renews and not on it
+    (26-11-05, C04).
     """
 
     def existing(named: Sequence[str]) -> list[str]:
@@ -574,6 +579,11 @@ def registry_result(
         row: dict[str, Any] = {
             "id": entry.certificate_id,
             "source": _source(entry),
+            **(
+                {"ndes_renew_days": ndes_renew_days}
+                if entry.source.ndes_profile is not None and ndes_renew_days is not None
+                else {}
+            ),
             #
             # Additive (B188): only on the entry that is the interface's, so
             # every other row reads exactly as it did.
@@ -962,6 +972,7 @@ def manager_result(
     interface_served: Mapping[str, Any] | None = None,
     ndes_configured: bool | None = None,
     clusters: Collection[str] | None = None,
+    ndes_renew_days: int | None = None,
 ) -> dict[str, Any]:
     """What the manager holds, asked of the manager rather than of a cluster.
 
@@ -996,5 +1007,6 @@ def manager_result(
             manager=manager,
             interface_served=interface_served,
             clusters=clusters,
+            ndes_renew_days=ndes_renew_days,
         )
     return result

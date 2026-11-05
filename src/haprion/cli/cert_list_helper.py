@@ -115,6 +115,7 @@ def main(
                 interface_served=ui_interface.served_description(),
                 ndes_configured=ndes_policy is not None,
                 clusters=frozenset(runtime.clusters),
+                ndes_renew_days=ndes_policy.renew_days if ndes_policy is not None else None,
             )
         else:
             result = cert_list_result(

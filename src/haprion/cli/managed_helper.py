@@ -139,6 +139,8 @@ class Change:
     apply: Callable[[Mapping[str, bytes]], Mapping[str, bytes]]
     named: Mapping[str, Any] = field(default_factory=dict)
     on_retry: Callable[[], Mapping[str, Any]] | None = None
+    check: bool = False
+    """Ask everything and write nothing: the answer says whether it would publish (K05)."""
 
 
 class Refuse:
@@ -258,6 +260,50 @@ def _result(
         "already_current": already_current,
         **named,
     }
+
+
+def _checked(
+    words: Words,
+    request: HelperRequest,
+    repo: Path,
+    head: str,
+    change: Change,
+    named: Mapping[str, Any],
+    *,
+    changed: bool,
+    output: TextIO,
+) -> int:
+    """The answer to a `check`: what the publish would do, with nothing done.
+
+    The version and hash are the head the change was checked against; no
+    version or release exists for it, and the result says so.
+    """
+
+    return write_document(
+        output,
+        envelope(
+            operation=words.operation,
+            outcome="done",
+            cluster=request.cluster,
+            request_id=request.request_id,
+            result={
+                **_result(
+                    cluster=request.cluster,
+                    changed=changed,
+                    version=count_versions(repo, head),
+                    commit=head,
+                    published_at=None,
+                    comment=change.comment,
+                    release="not installed: checked only",
+                    already_current=False,
+                    named=named,
+                ),
+                "deployment_required": False,
+                "checked_only": True,
+            },
+        ),
+        0,
+    )
 
 
 def _publish(
@@ -417,6 +463,8 @@ def _publish(
         problem = stale()
         if problem is not None:
             return refuse(problem.code, problem.message, exit_codes.BLOCKED)
+        if change.check:
+            return _checked(words, request, repo, head, change, named, changed=False, output=output)
         metadata = ReleaseMetadata(
             cluster=request.cluster,
             version=count_versions(repo, head),
@@ -431,6 +479,8 @@ def _publish(
         problem = stale()
         if problem is not None:
             return refuse(problem.code, problem.message, exit_codes.BLOCKED)
+        if change.check:
+            return _checked(words, request, repo, head, change, named, changed=True, output=output)
 
         commit = commit_and_swap(
             repo,

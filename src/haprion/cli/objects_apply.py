@@ -238,12 +238,16 @@ def publish(
     comment: str,
     allow_certificate_mismatch: bool,
     run_publish: RunPublish,
+    check: bool = False,
 ) -> list[dict[str, Any]]:
     """One version for the plan, or one per batch of what the helper takes at once.
 
     Each batch is fenced on the version the one before it made, so a change
     somebody else published in between stops the run where it is rather than
     being overwritten. Returns what each publish answered.
+
+    With `check` each batch is asked the whole publish and none is written, so
+    each is checked against the version they all start from (K05).
     """
 
     names = list(plan.documents)
@@ -261,6 +265,7 @@ def publish(
             comment=(comment or _comment(plan)) + suffix,
             objects={name: plan.documents[name] for name in batch},
             allow_certificate_mismatch=allow_certificate_mismatch,
+            check=check,
         )
         try:
             result = answer_of(run_publish(request), changes_publish.OPERATION, changes=True)
@@ -281,7 +286,13 @@ def publish(
     return answers
 
 
-def _summary(plan: Plan, *, check: bool, versions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _summary(
+    plan: Plan,
+    *,
+    check: bool,
+    versions: Sequence[Mapping[str, Any]],
+    checked: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
     changed = (not plan.empty) and (check or any(v.get("changed") for v in versions))
     return {
         "changed": changed,
@@ -296,11 +307,14 @@ def _summary(plan: Plan, *, check: bool, versions: Sequence[Mapping[str, Any]]) 
         ],
         "deployment_required": any(v.get("deployment_required") for v in versions),
         #
-        # As each publish reported them (finding 72); a check publishes nothing
-        # and so looks nothing up.
+        # As each publish reported them (finding 72), and each check.
         #
         "unresolved_servers": list(
-            dict.fromkeys(str(name) for v in versions for name in v.get("unresolved_servers") or ())
+            dict.fromkeys(
+                str(name)
+                for v in (*versions, *checked)
+                for name in v.get("unresolved_servers") or ()
+            )
         ),
         #
         # Read from the documents rather than the publish, so `--check` says it
@@ -372,17 +386,23 @@ def main(
             else plan_remove(args.targets, current)
         )
         versions: list[dict[str, Any]] = []
-        if not plan.empty and not args.check:
+        checked: list[dict[str, Any]] = []
+        if not plan.empty:
             if head is None:
                 raise Refused("no_head", f"{cluster} has nothing committed to publish against")
-            versions = publish(
+            answers = publish(
                 cluster,
                 plan,
                 head,
                 comment=args.comment,
                 allow_certificate_mismatch=bool(getattr(args, "allow_certificate_mismatch", False)),
                 run_publish=run_publish,
+                check=args.check,
             )
+            if args.check:
+                checked = answers
+            else:
+                versions = answers
     except PartlyDone as stopped:
         summary = _summary(plan, check=False, versions=stopped.done)
         errors.write(stopped.report())
@@ -398,7 +418,7 @@ def main(
         else:
             errors.write(refused.report())
         return refused.exit_code
-    summary = _summary(plan, check=args.check, versions=versions)
+    summary = _summary(plan, check=args.check, versions=versions, checked=checked)
     if args.json:
         write_document(writer, envelope(OPERATION, cluster, summary, None), 0)
     else:

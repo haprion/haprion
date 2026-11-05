@@ -98,11 +98,14 @@ class TheSettingsFromAFile(unittest.TestCase):
         answer = assert_contract("haprion-cluster-settings-apply", out)
         self.assertTrue(answer["result"]["deployment_required"])
 
-    def test_check_publishes_nothing(self) -> None:
+    def test_check_asks_the_publish_to_write_nothing(self) -> None:
         code, out, published = self.run_apply(SAME.replace("8405", "8406"), "--check")
 
-        self.assertEqual((code, published), (0, []))
+        self.assertEqual(code, 0)
+        (asked,) = published
+        self.assertTrue(asked["parameters"]["check"])
         self.assertIn("Would change", out)
+        self.assertNotIn("Published version", out)
 
     def test_a_wrong_file_is_named_before_anything_is_asked(self) -> None:
         code, out, published = self.run_apply("metrics: {port: x}\n", "--json")

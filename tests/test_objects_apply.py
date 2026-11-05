@@ -70,6 +70,22 @@ class Fakes:
                 "error": {"code": "expected_target_changed", "message": "moved"},
             }
             return subprocess.CompletedProcess([], 75, json.dumps(answer), "")
+        if parameters.get("check"):
+            #
+            # Asked everything and written nothing: the head and the objects stay.
+            #
+            answer = {
+                "operation": changes_publish.OPERATION,
+                "result": {
+                    "changed": True,
+                    "deployment_required": False,
+                    "checked_only": True,
+                    "version": 10,
+                    "hash": self.head,
+                },
+                "error": None,
+            }
+            return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
         for name, text in parameters["objects"].items():
             if text is None:
                 self.stored.pop(name)
@@ -174,16 +190,35 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual((code, fakes.published), (0, []))
         self.assertEqual(json.loads(out)["result"]["changed"], False)
 
-    def test_check_shows_the_difference_and_publishes_nothing(self) -> None:
+    def test_check_shows_the_difference_and_asks_the_publish_to_write_nothing(self) -> None:
         fakes = Fakes({"shop": document("shop")})
         self.write("shop", document("shop", port=9090))
 
         code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--check")
 
-        self.assertEqual((code, fakes.published), (0, []))
+        self.assertEqual(code, 0)
+        (asked,) = fakes.published
+        self.assertTrue(asked["parameters"]["check"])
+        self.assertEqual(fakes.stored, {"shop": document("shop")})
+        self.assertNotIn("Published version", out)
         self.assertIn("Would change shop", out)
         self.assertIn("-        port: 8080", out)
         self.assertIn("+        port: 9090", out)
+
+    def test_check_refuses_what_the_publish_refuses(self) -> None:
+        """K05: it said *Would add* for an object the publish then refused."""
+
+        fakes = Fakes({})
+        fakes.refuse = {
+            "code": "changes_invalid",
+            "message": "shop takes a port another object has",
+        }
+        self.write("shop", document("shop"))
+
+        code, _, err = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--check")
+
+        self.assertEqual(code, 65)
+        self.assertIn("another object has", err)
 
     def test_an_object_no_file_names_stays_unless_pruned(self) -> None:
         stored = {"shop": document("shop"), "old": document("old")}

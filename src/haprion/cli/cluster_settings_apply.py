@@ -98,15 +98,20 @@ def main(
         fields = document_result(wanted)
         changed = fields != stored_fields(reading, fields)
         versions: list[Mapping[str, Any]] = []
-        if changed and not args.check:
+        if changed:
+            #
+            # A check asks the publish everything and writes nothing (K05).
+            #
             request = changes_publish.build_request(
                 cluster,
                 new_request_id(),
                 expected_head=head,
                 comment=args.comment or COMMENT,
                 settings=dump_document(wanted).decode("utf-8"),
+                check=args.check,
             )
-            versions = [answer_of(run_publish(request), changes_publish.OPERATION, changes=True)]
+            answered = answer_of(run_publish(request), changes_publish.OPERATION, changes=True)
+            versions = [] if args.check else [answered]
     except Refused as refused:
         if args.json:
             write_document(writer, envelope(OPERATION, cluster, None, refused), refused.exit_code)

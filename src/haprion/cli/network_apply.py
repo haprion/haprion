@@ -125,7 +125,10 @@ def main(
         except ConfigError as exc:
             raise Refused("network_invalid", str(exc)) from exc
         versions: list[Mapping[str, Any]] = []
-        if changed and not args.check:
+        if changed:
+            #
+            # A check asks the publish everything and writes nothing (K05).
+            #
             request = changes_publish.build_request(
                 cluster,
                 new_request_id(),
@@ -133,8 +136,10 @@ def main(
                 comment=args.comment or COMMENT,
                 network=wanted,
                 allow_certificate_mismatch=args.allow_certificate_mismatch,
+                check=args.check,
             )
-            versions = [answer_of(run_publish(request), changes_publish.OPERATION, changes=True)]
+            answered = answer_of(run_publish(request), changes_publish.OPERATION, changes=True)
+            versions = [] if args.check else [answered]
     except Refused as refused:
         if args.json:
             write_document(writer, envelope(OPERATION, cluster, None, refused), refused.exit_code)

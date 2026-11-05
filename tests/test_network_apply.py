@@ -120,6 +120,7 @@ class TheNetworkFromAFile(NetworkPublishFixture):
 
             self.assertEqual(code, 0)
             self.assertIn("Would change managed/network.yaml", out)
+            self.assertNotIn("Published version", out)
             self.assertIn("+  - 198.51.100.0/25", out)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
 

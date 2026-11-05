@@ -77,6 +77,7 @@ PARAMETERS = frozenset(
         "allow_certificate_mismatch",
         "requested_by",
         "regenerate",
+        "check",
     }
 )
 #
@@ -116,6 +117,7 @@ def build_request(
     allow_certificate_mismatch: bool = False,
     requested_by: str | None = None,
     regenerate: bool = False,
+    check: bool = False,
 ) -> str:
     """Build the exact bounded request the UI worker sends to this helper.
 
@@ -126,6 +128,11 @@ def build_request(
 
     `regenerate` publishes the generated layer made again with the installed
     product, with nothing else changed: the one request that carries no part.
+
+    `check` asks every question the publish asks - the managed layer, the nodes'
+    ports and features, the sandbox - and stops before a version or a release is
+    written: what `--check` of the terminal's apply commands says is what the
+    publish would say (K05).
     """
 
     parameters: dict[str, object] = {
@@ -143,6 +150,8 @@ def build_request(
         parameters["requested_by"] = requested_by
     if regenerate:
         parameters["regenerate"] = True
+    if check:
+        parameters["check"] = True
     return json.dumps(
         {
             "schema_version": 1,
@@ -224,6 +233,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
     network = _document(parameters, "network", limit=MAX_NETWORK_BYTES)
     settings = _document(parameters, "settings", limit=cluster_settings.MAX_BYTES)
     regenerate = flag(parameters, "regenerate")
+    check = flag(parameters, "check")
     if not objects and network is None and settings is None and not regenerate:
         raise HelperProtocolError(
             "a publish carries at least one of parameters.objects, network or settings, "
@@ -398,6 +408,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             #
             named=named,
             on_retry=on_retry,
+            check=check,
         )
 
     return change

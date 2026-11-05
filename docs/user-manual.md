@@ -233,7 +233,9 @@ the object `shop`.
 - An object that no file names is left alone, unless `--prune` is given.
 - A directory with no object files changes nothing. With `--prune` it is refused, since it would remove
   every object.
-- `--check` shows the difference and publishes nothing.
+- `--check` shows the difference and publishes nothing. It asks the publish everything the publish asks - the
+  other objects, the certificates, the ports and features of the nodes, HAProxy's own check - and refuses
+  what the publish would refuse.
 - `--json` answers with `changed`.
 - Deploying stays a step of its own.
 
@@ -6344,7 +6346,7 @@ way the *Network* page saves it:
   as `document`.)
 - Where they differ, it publishes one version, against the version it read. Where they do not, it
   publishes nothing.
-- `--check` shows the difference without publishing.
+- `--check` shows the difference without publishing, and refuses what the publish would refuse.
 - A cluster still answering from `clusters.yaml` has no description to change, and is refused.
 
 ```bash

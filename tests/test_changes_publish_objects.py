@@ -175,6 +175,51 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             )
             self.assertEqual(git(self.repo, "status", "--porcelain"), "")
 
+    def test_a_check_goes_through_the_publish_and_leaves_nothing_behind(self) -> None:
+        """K05: what `--check` says it would publish is what the publish asks, up to the commit."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            code, document, err = self.publish_objects(policy, self.request(check=True))
+
+            self.assertEqual((code, err), (0, ""))
+            assert_contract("haprion-changes-publish", json.dumps(document))
+            self.assertEqual(
+                (document["result"]["changed"], document["result"]["checked_only"]), (True, True)
+            )
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+            self.assertFalse((self.repo / "managed/proxies/shop.yaml").exists())
+            self.assertFalse(self.publish_path.exists())
+
+    def test_a_check_refuses_what_the_publish_refuses(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed(shop=proxy("shop", "shop.example.com"))
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            code, document, _err = self.publish_objects(
+                policy,
+                self.request(objects={"mirror": proxy("mirror", "shop.example.com")}, check=True),
+            )
+
+            self.assertEqual(code, 65)
+            self.assertEqual(document["error"]["code"], "changes_invalid")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+    def test_a_check_of_an_invalid_candidate_is_refused_as_the_sandbox_refuses_it(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+
+            code, document, _err = self.publish_objects(
+                policy, self.request(check=True), valid=False
+            )
+
+            self.assertEqual((code, document["error"]["code"]), (65, "candidate_invalid"))
+
     def test_the_version_names_who_asked_and_which_account_ran_it(self) -> None:
         #
         # B207: the person the interface's worker names, and the account sudo

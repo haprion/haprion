@@ -596,7 +596,7 @@ class AHelperThatDoesNotAnswerIsStopped(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "terminated"
-            script = f"trap 'echo x > {marker}; exit 0' TERM; read line; sleep 30 & wait"
+            script = f"trap 'echo x > {marker}; kill $!; exit 0' TERM; read line; sleep 30 & wait"
             started = time.monotonic()
             with self.assertRaises(subprocess.TimeoutExpired):
                 helper_protocol.run_bounded_helper(

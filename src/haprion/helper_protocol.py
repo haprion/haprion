@@ -773,7 +773,8 @@ def run_bounded_helper(
 
     Raises `subprocess.TimeoutExpired` when it has not answered within
     `timeout` seconds, after SIGTERM and, if that is not heeded, SIGKILL.
-    Nothing outlives the call.
+    The signals reach the process started here - sudo, which relays SIGTERM
+    to the helper; a process the helper started is the helper's to end.
     """
 
     with subprocess.Popen(  # noqa: S603 - fixed helper path, no caller argv

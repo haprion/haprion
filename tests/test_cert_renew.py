@@ -273,21 +273,45 @@ class TheDistributionIsRedone(Fixture):
             ):
                 self.run_main(*argv).assert_not_called()
 
-    def test_a_dry_run_of_a_named_lineage_says_it_would_renew_and_asks_no_one(self) -> None:
+    def dry_run_of(self, certificate_id: str, *, lineage: bool = True) -> tuple[int, str]:
         errors = io.StringIO()
+        renewal = self.root / "renewal"
+        renewal.mkdir(exist_ok=True)
+        if lineage:
+            (renewal / "keeper.example.conf").write_text("[renewalparams]\n")
         with (
             mock.patch.object(cert_issue, "renew") as renew,
             mock.patch("os.geteuid", return_value=0),
             mock.patch.object(cert_renew, "load_policy", return_value=self.policy),
             mock.patch.object(cert_renew, "load_runtime_config", return_value=self.runtime),
+            mock.patch.object(cert_renew, "RENEWAL_DIRECTORY", renewal),
             mock.patch.object(cert_renew, "renew_ndes", return_value=False),
             contextlib.redirect_stderr(errors),
         ):
-            code = cert_renew.main(["--acme-now", "keeper.example", "--dry-run"])
-
+            code = cert_renew.main(["--acme-now", certificate_id, "--dry-run"])
         renew.assert_not_called()
+        return code, errors.getvalue()
+
+    def test_a_dry_run_of_a_named_lineage_says_it_would_renew_and_asks_no_one(self) -> None:
+        code, said = self.dry_run_of("keeper.example")
+
         self.assertEqual(code, 0)
-        self.assertIn("would renew keeper.example (forced)", errors.getvalue())
+        self.assertIn("would renew keeper.example (forced)", said)
+
+    def test_a_dry_run_of_a_certificate_that_is_not_there_is_refused_as_the_run_is(self) -> None:
+        """K09: it said it would renew `typo.example`, and the run refused the same name."""
+
+        code, said = self.dry_run_of("typo.example")
+
+        self.assertEqual(code, 1)
+        self.assertIn("[not_registered] typo.example", said)
+        self.assertNotIn("would renew", said)
+
+    def test_a_dry_run_of_a_certificate_certbot_has_no_lineage_for_is_refused(self) -> None:
+        code, said = self.dry_run_of("keeper.example", lineage=False)
+
+        self.assertEqual(code, 1)
+        self.assertIn("[no_lineage] keeper.example", said)
 
 
 class TheAnswerIsADocumentWhenAsked(Fixture):

@@ -387,7 +387,20 @@ def main(argv: list[str] | None = None) -> int:
     #
     for certificate_id in args.acme_now:
         if args.dry_run:
-            # Like --ndes-now: say what would happen, ask nobody (26-11-05, C02).
+            #
+            # Like --ndes-now: say what would happen, ask nobody (26-11-05, C02);
+            # and look the certificate up as the run does, so a name the run
+            # would refuse is not promised (K09).
+            #
+            try:
+                cert_issue.renewal_target(
+                    certificate_id, policy, runtime, renewal_directory=RENEWAL_DIRECTORY
+                )
+            except cert_issue.IssueError as exc:
+                print(f"ERROR: [{exc.code}] {certificate_id}: {exc}", file=sys.stderr)
+                failed = True
+                where.append(f"acme {certificate_id}")
+                continue
             print(f"acme: would renew {certificate_id} (forced)", file=sys.stderr)
             continue
         try:

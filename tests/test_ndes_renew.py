@@ -359,6 +359,39 @@ class WhatAnAttemptLeaves(RenewFixture):
         self.assertIsNone(ndes_state.renewal_record(root, "web.example.com"))
 
 
+class ANamedCertificateThatIsNotThere(RenewFixture):
+    """K09: `--ndes-now typo` did nothing and exited 0."""
+
+    def test_it_is_a_problem_the_pass_reports(self) -> None:
+        due, problems = self.candidates(
+            now=self.not_after - timedelta(days=200), only=("typo.example.com",)
+        )
+
+        self.assertEqual(due, [])
+        self.assertEqual(
+            [(p.certificate_id, p.outcome, p.message) for p in problems],
+            [("typo.example.com", "skipped", "not registered")],
+        )
+
+    def test_the_pass_fails_for_it_with_or_without_a_dry_run(self) -> None:
+        for dry_run in (False, True):
+            errors = io.StringIO()
+            with self.subTest(dry_run=dry_run):
+                failed = cert_renew.renew_ndes(
+                    self.policy,
+                    self.runtime,
+                    only=("typo.example.com",),
+                    dry_run=dry_run,
+                    now=self.not_after - timedelta(days=1),
+                    errors=errors,
+                    policy_path=self.policy_path,
+                    live=self.live,
+                    store=self.store,
+                )
+                self.assertTrue(failed)
+                self.assertIn("ERROR: typo.example.com: not registered", errors.getvalue())
+
+
 class ThePassInCertRenew(RenewFixture):
     def test_the_pass_renews_what_is_due_through_the_scep_engine(self) -> None:
         asked: list[dict[str, Any]] = []

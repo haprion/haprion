@@ -74,6 +74,7 @@ from haprion.config import (
     RECEIVER_ID,
     ConfigError,
     PathPolicy,
+    RegisteredCertificate,
     RuntimeConfig,
     load_runtime_config,
 )
@@ -876,6 +877,46 @@ def issue(
     )
 
 
+def renewal_target(
+    certificate_id: str,
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    *,
+    renewal_directory: Path | None = None,
+) -> tuple[RegisteredCertificate, str, Path]:
+    """The registry entry, lineage and renewal file of a certificate that can be renewed by certbot.
+
+    One look-up for the forced renewal and for the dry run that says it would
+    (K09), so the dry run cannot promise what the run then refuses.
+    """
+
+    if not CERTIFICATE_ID.fullmatch(certificate_id):
+        raise IssueError("bad_input", f"invalid certificate ID: {certificate_id!r}")
+    registry = runtime.registry
+    if registry is None or policy.certificate_registry is None or policy.certificate_root is None:
+        raise IssueError(
+            "dependency_unavailable",
+            "no certificate registry is configured",
+            exit_code=exit_codes.CONFIG,
+        )
+    entry = registry.certificates.get(certificate_id)
+    if entry is None:
+        raise IssueError("not_registered", f"certificate {certificate_id!r} is not in the registry")
+    if entry.source.kind != "acme":
+        raise IssueError(
+            "not_acme",
+            f"certificate {certificate_id!r} is not certbot's ({entry.source.kind!r}); "
+            "renew it where its material comes from (an NDES certificate: haprion-cert-scep)",
+        )
+    lineage = entry.source.lineage or certificate_id
+    conf = (renewal_directory or RENEWAL_DIRECTORY) / f"{lineage}.conf"
+    if not conf.is_file():
+        raise IssueError(
+            "no_lineage", f"certbot has no renewal configuration for lineage {lineage!r}"
+        )
+    return entry, lineage, conf
+
+
 def renew(
     *,
     certificate_id: str,
@@ -901,30 +942,10 @@ def renew(
     """
 
     started = time.monotonic()
-    if not CERTIFICATE_ID.fullmatch(certificate_id):
-        raise IssueError("bad_input", f"invalid certificate ID: {certificate_id!r}")
-    registry = runtime.registry
-    if registry is None or policy.certificate_registry is None or policy.certificate_root is None:
-        raise IssueError(
-            "dependency_unavailable",
-            "no certificate registry is configured",
-            exit_code=exit_codes.CONFIG,
-        )
-    entry = registry.certificates.get(certificate_id)
-    if entry is None:
-        raise IssueError("not_registered", f"certificate {certificate_id!r} is not in the registry")
-    if entry.source.kind != "acme":
-        raise IssueError(
-            "not_acme",
-            f"certificate {certificate_id!r} is not certbot's ({entry.source.kind!r}); "
-            "renew it where its material comes from (an NDES certificate: haprion-cert-scep)",
-        )
-    lineage = entry.source.lineage or certificate_id
-    conf = (renewal_directory or RENEWAL_DIRECTORY) / f"{lineage}.conf"
-    if not conf.is_file():
-        raise IssueError(
-            "no_lineage", f"certbot has no renewal configuration for lineage {lineage!r}"
-        )
+    entry, lineage, conf = renewal_target(
+        certificate_id, policy, runtime, renewal_directory=renewal_directory
+    )
+    assert policy.certificate_root is not None  # noqa: S101 - renewal_target checked it
     measured = measure_registered(
         entry, certificate_root=policy.certificate_root, live=live, store=store
     )

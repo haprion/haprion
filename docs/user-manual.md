@@ -2561,7 +2561,8 @@ rollout makes the run end with an error. The named renewals below and `--dry-run
   shortened per request, or to rotate a key.
 - `--acme-now <id>` does the same for a certbot lineage, forced. It skips certbot's normal renewal of
   the other lineages, but the NDES pass still runs as usual.
-- `--dry-run` says which certificates would renew.
+- `--dry-run` says which certificates would renew. A name that is not in the registry, or not the kind
+  the option renews, is refused with or without it, and the command exits 1.
 
 The interface's *Renew…* renews the same way as `--acme-now` or `--ndes-now`, depending on the source.
 Its outcome is its job's. While the CA holds a request for an NDES certificate, *Renew…* points to the

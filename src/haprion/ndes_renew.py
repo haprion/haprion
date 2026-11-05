@@ -95,10 +95,10 @@ def candidates(
     names would have to come from that material.
     """
 
+    wanted = set(only)
     registry = runtime.registry
     if registry is None or policy.certificate_root is None:
-        return [], []
-    wanted = set(only)
+        return [], [Outcome(name, "skipped", "not registered") for name in sorted(wanted)]
     due: list[Candidate] = []
     problems: list[Outcome] = []
     for entry in registry.certificates.values():
@@ -141,6 +141,14 @@ def candidates(
                 fingerprint,
             )
         )
+    #
+    # A name that is not in the registry is a mistake, not a certificate that
+    # needed nothing: naming one renews it, so it must exist (K09).
+    #
+    problems.extend(
+        Outcome(name, "skipped", "not registered")
+        for name in sorted(wanted - set(registry.certificates))
+    )
     return due, problems
 
 

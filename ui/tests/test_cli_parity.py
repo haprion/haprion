@@ -16,20 +16,25 @@ import ast
 import contextlib
 import importlib
 import io
+import os
+import socket
+import subprocess
 import tempfile
 import tomllib
 import unittest
 from dataclasses import dataclass, replace
 from pathlib import Path
 from subprocess import CompletedProcess
-from typing import Any
+from typing import Any, NoReturn
 from unittest import mock
 
+import psycopg
 from haprion import config as config_module
 from haprion import exit_codes
 from haprion.config import ConfigError
 
 from haprion_ui import api
+from haprion_ui import config as ui_config
 from haprion_ui.app import create_app
 from tests.contract_schema import assert_contract
 from tests.product_filesystem import product_directories, write_installation
@@ -562,19 +567,71 @@ def _help(line: str) -> str:
     return shown.getvalue()
 
 
-def _invoke(program: str, argv: list[str], scratch: Path | None = None) -> tuple[int, str, str]:
+def _refuse(program: str, what: str, escapes: list[str]) -> Any:
+    def refused(*_args: Any, **_kwargs: Any) -> Any:
+        escapes.append(f"{program} reached {what}")
+        raise OSError(f"{what} is not here")
+
+    return refused
+
+
+def _no_database(seen: list[str]) -> Any:
+    def connect(*_args: Any, **_kwargs: Any) -> Any:
+        seen.append("database")
+        raise psycopg.OperationalError("no database here")
+
+    return connect
+
+
+def _guards(program: str, seen: list[str], escapes: list[str]) -> list[Any]:
+    """What a command run as root must not reach: a database, a socket, another process (Z01).
+
+    The database is asked through libpq, which no audit hook sees, so
+    `psycopg.connect` is replaced by one that records the attempt and fails as a
+    host without a database does. A socket and a new process fail the test with
+    the command's name.
+    """
+
+    patches = [mock.patch("psycopg.connect", _no_database(seen))]
+    patches.append(
+        mock.patch.object(socket.socket, "connect", _refuse(program, "a socket", escapes))
+    )
+    patches.append(
+        mock.patch.object(socket.socket, "connect_ex", _refuse(program, "a socket", escapes))
+    )
+    patches.append(
+        mock.patch.object(subprocess.Popen, "__init__", _refuse(program, "a process", escapes))
+    )
+    for name in (
+        "system",
+        "posix_spawn",
+        "posix_spawnp",
+        *(n for n in dir(os) if n.startswith("exec")),
+    ):
+        if hasattr(os, name):
+            patches.append(mock.patch.object(os, name, _refuse(program, f"os.{name}", escapes)))
+    return patches
+
+
+def _invoke(
+    program: str, argv: list[str], scratch: Path | None = None, seen: list[str] | None = None
+) -> tuple[int, str, str]:
     """The command's `main` in this process: its exit code, stdout and stderr.
 
     Without `scratch`, as an ordinary user with no helper to reach and no
     configuration: what is measured is what the command itself writes before it
     has read anything. With it, as root on an installation with one cluster
     (`write_installation`), the product's directories below `scratch`, so the
-    command gets as far as judging the call (W02, 26-11-05).
+    command gets as far as judging the call (W02, 26-11-05). There it also
+    cannot leave the scratch directory: a database, a socket or a new process
+    fails the test with the command's name, and a database attempt is added to
+    `seen` (Z01, 26-11-05).
     """
 
     module, _, _ = _entry_points()[program].partition(":")
     out, err = io.StringIO(), io.StringIO()
     code: int
+    escapes: list[str] = []
     with contextlib.ExitStack() as stack:
         stack.enter_context(contextlib.redirect_stdout(out))
         stack.enter_context(contextlib.redirect_stderr(err))
@@ -605,11 +662,28 @@ def _invoke(program: str, argv: list[str], scratch: Path | None = None) -> tuple
                     side_effect=lambda path, *, require_secure: _read_yaml(path),
                 )
             )
+            real_load = ui_config.load
+            stack.enter_context(
+                mock.patch(
+                    "haprion_ui.config.load",
+                    side_effect=lambda path=ui_config.DEFAULT_CONFIG_PATH, *, require_secure=True: (
+                        real_load(path, require_secure=False)
+                    ),
+                )
+            )
+            for guard in _guards(program, seen if seen is not None else [], escapes):
+                stack.enter_context(guard)
         try:
             returned = importlib.import_module(module).main(argv)
             code = returned if isinstance(returned, int) else 0
         except SystemExit as stopped:
             code = stopped.code if isinstance(stopped.code, int) else 0
+        except Exception as error:
+            if escapes:
+                raise AssertionError("; ".join(escapes)) from error
+            raise
+    if escapes:
+        raise AssertionError("; ".join(escapes))
     return code, out.getvalue(), err.getvalue()
 
 
@@ -632,6 +706,42 @@ def _commands() -> list[Command]:
         if isinstance(entry, Command):
             seen.setdefault(entry.line, entry)
     return [seen[line] for line in sorted(seen)]
+
+
+def _reaches_a_socket(_argv: list[str]) -> int:
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.connect("/run/haprion/none.sock")
+    return 0
+
+
+def _reaches_a_network(_argv: list[str]) -> int:
+    with socket.socket(socket.AF_INET) as sock:
+        sock.connect(("192.0.2.1", 5432))
+    return 0
+
+
+def _reaches_a_process(_argv: list[str]) -> int:
+    subprocess.Popen(["true"])  # noqa: S607
+    return 0
+
+
+def _reaches_exec(_argv: list[str]) -> NoReturn:
+    os.execv("/bin/true", ["true"])  # noqa: S606
+
+
+def _reaches_a_database(_argv: list[str]) -> int:
+    psycopg.connect("dbname=x")
+    return 0
+
+
+def _stand_in(argv: list[str]) -> int:
+    raise AssertionError("replaced by each test")
+
+
+def main(argv: list[str]) -> int:
+    """The `main` a stand-in command is run through."""
+
+    return _stand_in(argv)
 
 
 def _unclassified(points: dict[str, str]) -> list[str]:
@@ -750,8 +860,12 @@ class EveryWriteHasItsCommand(unittest.TestCase):
             write_installation(scratch)
             for command in _commands():
                 with self.subTest(command.line):
+                    seen: list[str] = []
                     code, out, _ = _invoke(
-                        command.line.split()[0], [*REFUSED_CALLS[command.line], "--json"], scratch
+                        command.line.split()[0],
+                        [*REFUSED_CALLS[command.line], "--json"],
+                        scratch,
+                        seen,
                     )
                     document = assert_contract(command.schema, out)
                     stopped = document["error"]["code"]
@@ -783,6 +897,36 @@ class EveryWriteHasItsCommand(unittest.TestCase):
                     )
                     if answer.result is not None:
                         self.assertEqual(document["result"], answer.result)
+
+    def test_a_command_that_leaves_the_scratch_directory_fails_with_its_name(self) -> None:
+        """Z01: a socket, a process or an exec fails the test; a database is refused and recorded."""
+
+        points = {"haprion-fake": f"{__name__}:main"}
+        with (
+            tempfile.TemporaryDirectory() as raw,
+            mock.patch(f"{__name__}._entry_points", return_value=points),
+        ):
+            scratch = Path(raw)
+            write_installation(scratch)
+            for stand_in in (
+                _reaches_a_socket,
+                _reaches_a_network,
+                _reaches_a_process,
+                _reaches_exec,
+            ):
+                with (
+                    self.subTest(stand_in.__name__),
+                    mock.patch(f"{__name__}._stand_in", stand_in),
+                    self.assertRaisesRegex(AssertionError, "haprion-fake reached"),
+                ):
+                    _invoke("haprion-fake", [], scratch)
+            seen: list[str] = []
+            with (
+                mock.patch(f"{__name__}._stand_in", _reaches_a_database),
+                self.assertRaises(psycopg.OperationalError),
+            ):
+                _invoke("haprion-fake", [], scratch, seen)
+            self.assertEqual(seen, ["database"])
 
     def test_every_script_is_classified(self) -> None:
         """W02: a command added to pyproject.toml without a class fails here."""

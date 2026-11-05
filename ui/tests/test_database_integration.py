@@ -7445,6 +7445,14 @@ class TheSearchIndex(unittest.TestCase):
             ("api", "Backend 198.51.100.11:8080", "/proxies/si-a/api"),
         )
 
+    def test_a_word_is_found_as_typed_whatever_the_databases_locale(self) -> None:
+        """Y06: the database folds both sides, as the traffic log's `ilike` does; Python's
+        `lower()` on the query alone found nothing in a locale that folds ASCII only."""
+
+        self.write("si-a", "objects", self.objects("si-a", "Été"))
+
+        self.assertEqual(self.search("Été").total, 1)
+
     def test_the_objects_that_name_a_server_in_one_cluster(self) -> None:
         """26-10-18: the object page's *Also in*, read by the web role from the same rows."""
 

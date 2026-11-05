@@ -941,13 +941,13 @@ def search(
             "  from (select kind, title, href, label, value, "
             "               case when kind = 'certificate' then '' else cluster end as shown_cluster "
             "          from search_entry "
-            "         where lower(value) like %(pattern)s "
+            "         where lower(value) like lower(%(pattern)s) "
             "           and (cluster is null or cluster = any(%(clusters)s))) hits "
             " group by kind, shown_cluster, title, href "
             " order by array_position(%(kinds)s::text[], kind), shown_cluster, lower(title) "
             " limit %(limit)s offset %(offset)s",
             {
-                "pattern": like_pattern(query.lower()),
+                "pattern": like_pattern(query),
                 "clusters": list(clusters),
                 "kinds": kinds,
                 "limit": search_index.PAGE_SIZE,

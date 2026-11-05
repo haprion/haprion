@@ -395,7 +395,8 @@ class _Parser:
 def like_pattern(query: str) -> str:
     """A substring pattern that matches the text and nothing it could mean to LIKE.
 
-    Not folded: the caller's `ilike` folds it, or the caller folds both sides.
+    Not folded: the caller's `ilike` folds it, or the caller folds both sides in the
+    database (`lower(value) like lower(pattern)`, which the trigram index answers).
     """
 
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

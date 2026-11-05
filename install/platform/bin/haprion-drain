@@ -116,22 +116,12 @@ resume() {
 gate_present="$(psql_as -c "select to_regclass('public.job_claim_gate') is not null")" \
     || die "cannot read the database ${DB_NAME}"
 
-if [[ "$gate_present" != "t" ]]; then
-    #
-    # A schema from before 0060, when a release rolls back across it or a
-    # bridge activates. There is nothing to pause, so this does what the
-    # release did before: refuses while a restore or a backup runs.
-    #
-    [[ "$command" == "resume" ]] && exit 0
-    busy="$(psql_as -c "
-        select string_agg(operation || ' (job ' || id || ')', ', ' order by id)
-          from job
-         where state = 'running' and lease_until > statement_timestamp()
-           and (operation like 'node_restore%' or operation = 'backup_run')")"
-    [[ -z "$busy" ]] || die "wait for ${busy} to finish; the worker is about to restart" 75
-    warn "this schema has no claim pause; nothing is held while the worker restarts"
-    exit 0
-fi
+#
+# Every schema this release accepts has the claim pause (`check-compatibility`
+# refuses one from before the baseline); a database without it is not one to
+# drain.
+#
+[[ "$gate_present" == "t" ]] || die "the database ${DB_NAME} has no claim pause (job_claim_gate)"
 
 if [[ "$command" == "resume" ]]; then
     resume

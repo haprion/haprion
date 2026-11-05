@@ -419,7 +419,6 @@ def _finish(
     # failed to install leaves the card starting afresh, which is the loss of a
     # history and never a wrong one.
     #
-    #
     # A publish with a deploy after it records them when the publish
     # committed (`_conclude`): the page folds the old card into the new one
     # from then, not from when the last node has installed. When that write
@@ -845,6 +844,10 @@ def run_one_job(
     # recovery before its end was written is not run on its second (review
     # 26-10-29, Q03); one taken in time and requeued since was judged on
     # evidence and runs.
+    #
+    #
+    # `claim_job` and `adopt_expired` always set `started_at`; the fallback is
+    # for the type (`ClaimedJob.started_at` is optional) and never runs.
     #
     first_taken = job.started_at or datetime.now(UTC)
     waited = (first_taken - job.created_at).total_seconds()

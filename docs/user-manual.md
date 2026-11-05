@@ -7710,6 +7710,7 @@ sudo haprion-node-prepare
 It runs the step again with the answers the node was prepared with, read back from
 `/etc/haprion/node.conf`. The manager's keys are bound again to the manager's addresses as they are now;
 the keys themselves, the manager's host key and the traffic log's route are left as they are. It works the same for a node joined from the interface and one prepared by hand.
+If a deploy is running on the node it waits for it, up to ten minutes, and says so.
 The installation from the manager, below, also runs the step, with a state backup on each side.
 
 ##### Build and verify the package

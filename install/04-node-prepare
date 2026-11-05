@@ -70,6 +70,27 @@ WAF_JOURNAL_NAMESPACE="haprion-waf"
 # shellcheck source=node-installation.sh
 source ./node-installation.sh
 
+#
+# A deploy restarts rsyslog and the services around it, as this step does when
+# it holds HAProxy's log socket; if its restart lands between this step's stop
+# and start, rsyslog creates the socket itself and systemd cannot bind over it
+# (B447, N03). So this step takes the deploy's lock, waiting for a deploy that
+# is running - and a deploy started meanwhile is refused as it is when two
+# deploys meet. The descriptor stays open until the step ends.
+#
+DEPLOY_LOCK="/run/haprion-deploy.lock"
+DEPLOY_LOCK_WAIT=600
+
+wait_for_deploy() {
+    exec 9>"$DEPLOY_LOCK"
+    if ! flock -n 9; then
+        log "waiting for a running deploy to end (at most ${DEPLOY_LOCK_WAIT} s)"
+        flock -w "$DEPLOY_LOCK_WAIT" 9 \
+            || die "a deploy has held ${DEPLOY_LOCK} for ${DEPLOY_LOCK_WAIT} s; run this again when it has ended"
+    fi
+}
+wait_for_deploy
+
 step "Service accounts"
 apply_sysusers sysusers/haprion-node.conf
 

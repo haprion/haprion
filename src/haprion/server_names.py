@@ -18,10 +18,10 @@ and the address is stored beside the name (B261), and an address is written.
 
 from __future__ import annotations
 
-import ipaddress
 import socket
 from collections.abc import Callable, Iterable
 
+from haprion import address_ranges
 from haprion.proxy_model import Proxy
 
 #
@@ -51,7 +51,7 @@ def resolves(host: str) -> bool:
 
 def _is_address(host: str) -> bool:
     try:
-        ipaddress.ip_address(host.strip("[]"))
+        address_ranges.plain_address(host.strip("[]"))
     except ValueError:
         return False
     return True

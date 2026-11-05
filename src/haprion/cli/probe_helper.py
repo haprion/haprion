@@ -23,13 +23,12 @@ whoever holds the key.
 
 from __future__ import annotations
 
-import ipaddress
 import os
 import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import dnsdist_config, exit_codes
+from haprion import address_ranges, dnsdist_config, exit_codes
 from haprion.certificates import CERTIFICATE_OPENING, authority_path
 from haprion.config import (
     CERTIFICATE_ID,
@@ -108,7 +107,7 @@ def _is_address(host: str) -> bool:
     """An address as the node's probe reads one: no brackets, no name."""
 
     try:
-        ipaddress.ip_address(host)
+        address_ranges.plain_address(host)
     except ValueError:
         return False
     return True

@@ -44,6 +44,7 @@ from typing import Any
 import yaml
 
 from haprion import (
+    address_ranges,
     atomic_file,
     backups,
     cert_registry,
@@ -255,7 +256,7 @@ def check_name(
             "cluster_invalid", f"the display name must be 1-{MAX_DISPLAY_NAME} printable characters"
         )
     try:
-        address = ipaddress.ip_address(vip)
+        address = address_ranges.plain_address(vip)
     except ValueError:
         raise EnrollmentError("cluster_invalid", "the VIP must be an IP address") from None
     #

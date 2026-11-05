@@ -534,7 +534,7 @@ def receiver_id_names_a_host(receiver_id: str) -> bool:
     if HOSTNAME.fullmatch(receiver_id):
         return True
     try:
-        ipaddress.ip_address(receiver_id)
+        address_ranges.plain_address(receiver_id)
     except ValueError:
         return False
     return True
@@ -760,7 +760,7 @@ def _address(value: Any, location: str) -> str:
     if not isinstance(value, str):
         raise ConfigError(f"{location} must be an IP address")
     try:
-        return str(ipaddress.ip_address(value))
+        return str(address_ranges.plain_address(value))
     except ValueError as exc:
         raise ConfigError(f"{location} must be an IP address") from exc
 
@@ -799,7 +799,7 @@ def _served_address(value: Any, location: str) -> str:
     """An address the cluster serves on or leaves from, in its one spelling."""
 
     address = _address(value, location)
-    problem = served_address_problem(ipaddress.ip_address(address))
+    problem = served_address_problem(address_ranges.plain_address(address))
     if problem:
         raise ConfigError(f"{location} {address} {problem}")
     return address
@@ -968,7 +968,7 @@ def _networks(raw: Mapping[str, Any], location: str) -> Mapping[str, tuple[str, 
             if address_ranges.refused(item):
                 raise ConfigError(f"{where} contains {item}: {address_ranges.HOST_BITS}")
             try:
-                network = ipaddress.ip_network(item, strict=False)
+                network = address_ranges.plain_network(item, strict=False)
             except ValueError as exc:
                 raise ConfigError(f"{where} contains an invalid CIDR: {item}") from exc
             if network.prefixlen == 0:
@@ -1157,7 +1157,7 @@ def _host(value: str, location: str) -> str:
     if len(value) > 253 or any(character.isspace() for character in value):
         raise ConfigError(f"{location} is not a valid management host")
     try:
-        ipaddress.ip_address(value)
+        address_ranges.plain_address(value)
         return value
     except ValueError:
         labels = value.rstrip(".").split(".")
@@ -1636,7 +1636,7 @@ def check_allow_entries(entries: Sequence[str]) -> tuple[str, ...]:
         if address_ranges.has_host_bits(item):
             raise ValueError(f"[{index}] {item!r}: {address_ranges.HOST_BITS}")
         try:
-            ipaddress.ip_network(item, strict=True)
+            address_ranges.plain_network(item, strict=True)
         except ValueError:
             raise ValueError(f"[{index}] is not an address or network: {item!r}") from None
         checked.append(item)
@@ -1747,7 +1747,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
         )
         vip = _required_string(raw, "vip", location)
         try:
-            ipaddress.ip_address(vip)
+            address_ranges.plain_address(vip)
         except ValueError as exc:
             raise ConfigError(f"{location}.vip must be an IP address") from exc
         _served_address(vip, f"{location}.vip")
@@ -1811,7 +1811,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             if not isinstance(item, str):
                 raise ConfigError(f"{location}.trusted_proxy_cidrs contains a non-string")
             try:
-                network = ipaddress.ip_network(item, strict=False)
+                network = address_ranges.plain_network(item, strict=False)
             except ValueError as exc:
                 raise ConfigError(
                     f"{location}.trusted_proxy_cidrs contains an invalid CIDR"

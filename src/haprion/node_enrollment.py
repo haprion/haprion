@@ -42,7 +42,6 @@ import base64
 import binascii
 import hashlib
 import hmac
-import ipaddress
 import json
 import os
 import pwd
@@ -56,7 +55,7 @@ from typing import Any
 
 import yaml
 
-from haprion import backups, change_journal, exit_codes, safe_yaml
+from haprion import address_ranges, backups, change_journal, exit_codes, safe_yaml
 from haprion.cert_receiver import resolve_forward
 from haprion.change_journal import FileChange as Change
 from haprion.change_journal import Record
@@ -445,7 +444,7 @@ def pull_sources(host: str, forward: Callable[[str], tuple[str, ...]]) -> tuple[
     """
 
     try:
-        ipaddress.ip_address(host)
+        address_ranges.plain_address(host)
     except ValueError:
         pass
     else:

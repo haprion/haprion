@@ -21,7 +21,6 @@ does. Both are worse than being told.
 
 from __future__ import annotations
 
-import ipaddress
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -1299,7 +1298,7 @@ def _is_address(host: str) -> bool:
     """Whether this names a machine by address rather than by name."""
 
     try:
-        ipaddress.ip_address(host.strip("[]"))
+        address_ranges.plain_address(host.strip("[]"))
     except ValueError:
         return False
     return True
@@ -1325,7 +1324,7 @@ def _server(value: Any, location: str) -> Server:
     # (code review 2026-10-30 again, R10).
     #
     if _is_address(host):
-        host = str(ipaddress.ip_address(host.strip("[]")))
+        host = str(address_ranges.plain_address(host.strip("[]")))
     port = data.get("port")
     #
     # A bool is an int in Python, and `port: true` would otherwise be port 1.
@@ -1344,7 +1343,7 @@ def _server(value: Any, location: str) -> Server:
             raise ModelError(f"{location}.address must be an IP address")
         if _is_address(host):
             raise ModelError(f"{location}.address belongs beside a name, not an address")
-        address = str(ipaddress.ip_address(address.strip("[]")))
+        address = str(address_ranges.plain_address(address.strip("[]")))
     weight = data.get("weight")
     if weight is not None and (
         not isinstance(weight, int)
@@ -2675,7 +2674,7 @@ def is_range(entry: str) -> bool:
     """
 
     try:
-        ipaddress.ip_network(entry, strict=False)
+        address_ranges.plain_network(entry, strict=False)
     except ValueError:
         return False
     return True
@@ -2711,7 +2710,7 @@ def _sources(value: Any, location: str, verb: str) -> tuple[str, ...]:
         if is_range(entry):
             if address_ranges.refused(entry):
                 raise ModelError(f"{location} contains {entry}: {address_ranges.HOST_BITS}")
-            network = ipaddress.ip_network(entry, strict=False)
+            network = address_ranges.plain_network(entry, strict=False)
             if network.prefixlen == 0:
                 #
                 # A range that means everywhere is an allowlist that allows

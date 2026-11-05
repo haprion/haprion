@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import ctypes
 import grp
-import ipaddress
 import os
 import pwd
 import re
@@ -48,7 +47,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import atomic_file, cert_registry, exit_codes, ui_interface
+from haprion import address_ranges, atomic_file, cert_registry, exit_codes, ui_interface
 from haprion.cert_lock import DEFAULT_LOCK_PATH
 from haprion.cert_publish import PublishError
 from haprion.config import (
@@ -335,7 +334,7 @@ def from_patterns(receiver_id: str, tools: Tools) -> tuple[str, ...]:
     """
 
     try:
-        ipaddress.ip_address(receiver_id)
+        address_ranges.plain_address(receiver_id)
     except ValueError:
         pass
     else:

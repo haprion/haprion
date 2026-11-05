@@ -12,7 +12,6 @@ written to the audit record, the log or a redirect.
 
 from __future__ import annotations
 
-import ipaddress
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -87,7 +86,7 @@ def normalised_sources(sources: Iterable[str]) -> tuple[str, ...]:
 
     kept: dict[str, None] = {}
     for source in sources:
-        kept[str(ipaddress.ip_network(source, strict=False))] = None
+        kept[str(address_ranges.plain_network(source, strict=False))] = None
     return tuple(kept)
 
 

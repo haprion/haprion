@@ -29,14 +29,14 @@ meaning without being regenerated.
 
 from __future__ import annotations
 
-import ipaddress
+import dataclasses
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from haprion import address_ranges, crs, dnsdist_config, geo, ipvs_config, rsyslog_forward
 from haprion import advanced as advanced_config
-from haprion import crs, dnsdist_config, geo, ipvs_config, rsyslog_forward
 from haprion.certificates import AUTHORITY_DIRECTORY
 from haprion.check_policy import check_speaks_tls
 from haprion.cluster_settings import NOTHING as NO_SETTINGS
@@ -54,6 +54,7 @@ from haprion.proxy_model import (
     OUTSIDE_HAPROXY,
     OWN_PORT,
     URL_PLACEHOLDER,
+    Advanced,
     Backend,
     Health,
     Hsts,
@@ -449,6 +450,30 @@ def generate(
     would be parsed as configuration and fail the deploy.
     """
 
+    #
+    # Behind every field's own validation (B450, X01): the files are lines, so
+    # a value holding a line break is more configuration. Every value the
+    # generator is handed is looked at here, once, so a field added later with
+    # the same gap is stopped too.
+    #
+    _refuse_control_characters(
+        (
+            proxies,
+            vips,
+            networks,
+            sources,
+            unknown_host,
+            trusted_proxies,
+            abuse_protection,
+            ports,
+            settings,
+            node_addresses,
+            certificates,
+            authorities,
+            resolvers,
+        ),
+        "the input",
+    )
     ordered = sorted(proxies, key=lambda proxy: proxy.name)
     _refuse_duplicate_names(ordered)
     _refuse_shared_hostnames(ordered)
@@ -1729,6 +1754,42 @@ def _value_lines(start: str, values: Sequence[str]) -> list[str]:
         f"{start} {' '.join(values[at : at + VALUES_PER_LINE])}"
         for at in range(0, len(values), VALUES_PER_LINE)
     ]
+
+
+_CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _refuse_control_characters(value: object, where: str) -> None:
+    """No text in the model holds a control character: no line break, tab or NUL.
+
+    Walks whatever the generator was given - dataclasses, mappings, lists - and
+    names the path to the first value that does, so a refusal says where.
+    """
+
+    if isinstance(value, str):
+        found = _CONTROL_CHARACTER.search(value)
+        if found:
+            raise GeneratorError(
+                f"{where} holds a control character ({found.group().encode('unicode_escape').decode()}) "
+                f"in {value[:40]!r}; refusing to write it into configuration"
+            )
+    elif isinstance(value, Advanced):
+        #
+        # The pasted text is lines by nature. It is read word by word by
+        # `advanced.py`, which refuses raw control characters inside a line;
+        # what is written is its placed lines, held to the same rule here.
+        #
+        _refuse_control_characters(value.placement, f"{where}.placement")
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for member in dataclasses.fields(value):
+            _refuse_control_characters(getattr(value, member.name), f"{where}.{member.name}")
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            _refuse_control_characters(key, f"{where} key")
+            _refuse_control_characters(item, f"{where}[{key!r}]")
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for index, item in enumerate(value):
+            _refuse_control_characters(item, f"{where}[{index}]")
 
 
 def _refuse_long_lines(files: Mapping[str, str]) -> None:
@@ -3640,7 +3701,7 @@ def _server_address(server: Server, resolvers: str | None) -> str:
     if resolvers is None:
         return ""
     try:
-        ipaddress.ip_address(server.host)
+        address_ranges.plain_address(server.host)
     except ValueError:
         return f" resolvers {resolvers} init-addr last,libc,none"
     return ""

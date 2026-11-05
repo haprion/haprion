@@ -53,11 +53,11 @@ person typed reaches the file as text.
 
 from __future__ import annotations
 
-import ipaddress
 import socket
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from haprion import address_ranges
 from haprion.config import Vip
 from haprion.proxy_model import (
     HOSTNAME,
@@ -116,7 +116,7 @@ type Lookup = Callable[[str], str]
 
 def is_address(host: str) -> bool:
     try:
-        ipaddress.ip_address(host.strip("[]"))
+        address_ranges.plain_address(host.strip("[]"))
     except ValueError:
         return False
     return True
@@ -138,7 +138,9 @@ def lookup(host: str) -> str:
     addresses = sorted({str(entry[4][0]) for entry in found})
     for version in (4, 6):
         family = [
-            address for address in addresses if ipaddress.ip_address(address).version == version
+            address
+            for address in addresses
+            if address_ranges.plain_address(address).version == version
         ]
         if len(family) == 1:
             return family[0]
@@ -203,12 +205,12 @@ def _quote(value: str) -> str:
 
 
 def _endpoint(address: str, port: int) -> str:
-    parsed = ipaddress.ip_address(address.strip("[]"))
+    parsed = address_ranges.plain_address(address.strip("[]"))
     return f"[{parsed}]:{port}" if parsed.version == 6 else f"{parsed}:{port}"
 
 
 def _host_mask(address: str) -> str:
-    parsed = ipaddress.ip_address(address.strip("[]"))
+    parsed = address_ranges.plain_address(address.strip("[]"))
     return f"{parsed}/{parsed.max_prefixlen}"
 
 
@@ -254,7 +256,7 @@ def _servers(proxy: Proxy, pool: Backend, source: str | None) -> list[str]:
             "useClientSubnet=true",
         ]
         if source is not None:
-            fields.append(f"source={_quote(str(ipaddress.ip_address(source)))}")
+            fields.append(f"source={_quote(str(address_ranges.plain_address(source)))}")
         fields.append(_check(pool.health))
         line = f"newServer({{{', '.join(fields)}}})"
         #
@@ -310,7 +312,7 @@ def _webserver(scrapers: Sequence[str], nodes: Sequence[str]) -> list[str]:
 
     allowed = [
         "127.0.0.1/32",
-        *(str(ipaddress.ip_network(entry, strict=False)) for entry in scrapers),
+        *(str(address_ranges.plain_network(entry, strict=False)) for entry in scrapers),
     ]
     listen = ["127.0.0.1", *(nodes if scrapers else ())]
     return [

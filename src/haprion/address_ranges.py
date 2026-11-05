@@ -16,6 +16,7 @@ enter (`writing()`); a read anywhere else is left as it was.
 from __future__ import annotations
 
 import ipaddress
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -39,17 +40,49 @@ def writing() -> Iterator[None]:
         _WRITING.reset(token)
 
 
+#
+# Python's `ipaddress` takes an IPv6 address with a zone ID after `%`, and the
+# zone may hold nearly anything: a space, `#`, a line break (measured on 3.13:
+# `ip_address("fe80::1%eth0\nglobal")` is an address). Written into a
+# configuration file, such a value is more lines. Nothing here has a use for a
+# zone, so an address is read through these two and nothing else is one.
+#
+_PLAIN = re.compile(r"[0-9A-Fa-f:./]+")
+
+
+def _plain_text(value: str) -> str:
+    if not isinstance(value, str) or not _PLAIN.fullmatch(value):
+        raise ValueError(
+            f"{value!r} is not a plain address: digits, letters a-f, ':', '.' and '/' only"
+        )
+    return value
+
+
+def plain_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """`ipaddress.ip_address`, refusing anything but the bare address: no zone ID, no spaces."""
+
+    return ipaddress.ip_address(_plain_text(value))
+
+
+def plain_network(
+    value: str, *, strict: bool = True
+) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+    """`ipaddress.ip_network`, refusing anything but the bare address or range."""
+
+    return ipaddress.ip_network(_plain_text(value), strict=strict)
+
+
 def has_host_bits(entry: str) -> bool:
     """Whether `entry` is a range whose host bits are not zero, as `192.0.2.1/24` is."""
 
     try:
-        ipaddress.ip_network(entry, strict=True)
+        plain_network(entry, strict=True)
     except ValueError:
         pass
     else:
         return False
     try:
-        ipaddress.ip_network(entry, strict=False)
+        plain_network(entry, strict=False)
     except ValueError:
         return False
     return True
@@ -67,7 +100,7 @@ def mapped_ipv4(entry: str) -> str | None:
     """The IPv4 form of an IPv4-mapped address or network, or None for anything else."""
 
     try:
-        network = ipaddress.ip_network(entry, strict=False)
+        network = plain_network(entry, strict=False)
     except ValueError:
         return None
     if not isinstance(network, ipaddress.IPv6Network) or not network.subnet_of(_MAPPED):

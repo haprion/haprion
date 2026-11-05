@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import sys
 from pathlib import Path
 
-from haprion import exit_codes
+from haprion import address_ranges, exit_codes
 from haprion.cli import arguments
 from haprion.cluster_definition import seed_files
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
@@ -88,7 +87,7 @@ def _seed(
     for address in (vip, source):
         if address:
             try:
-                ipaddress.ip_address(address)
+                address_ranges.plain_address(address)
             except ValueError:
                 parser.error(f"not an IP address: {address}")
     if not directory.is_dir() or any(directory.iterdir()):

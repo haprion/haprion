@@ -35,6 +35,7 @@ import ipaddress
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from haprion import address_ranges
 from haprion.config import Vip
 from haprion.proxy_model import Backend, Health, Proxy, duration_ms
 
@@ -83,7 +84,7 @@ class IpvsLayer:
 
 
 def _address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
-    return ipaddress.ip_address(value.strip("[]"))
+    return address_ranges.plain_address(value.strip("[]"))
 
 
 def _seconds(value: str) -> str:

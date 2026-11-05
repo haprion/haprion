@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import ipaddress
 import json
 import re
 import uuid
@@ -27,7 +26,7 @@ from importlib.resources import files
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from haprion import safe_yaml
+from haprion import address_ranges, safe_yaml
 
 PROVIDER_ID = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 FIELD_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -363,7 +362,7 @@ def _validate(field: CredentialField, value: str) -> None:
     location = f"field {field.id}"
     if field.validation == "ip_address":
         try:
-            ipaddress.ip_address(value)
+            address_ranges.plain_address(value)
         except ValueError:
             raise ProviderCatalogError(f"{location} must be an IPv4 or IPv6 address") from None
     elif field.validation == "base64":

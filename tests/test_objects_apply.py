@@ -254,6 +254,23 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertIn("host bits must be zero", err)
         self.assertEqual(fakes.published, [])
 
+    def test_an_address_with_a_zone_id_is_refused_before_anything_is_published(self) -> None:
+        """B450, X01: a zone ID may hold a line break, and a line break is more configuration."""
+
+        for value in ("2001:db8::1%x\\nglobal", "fe80::1%eth0", "2001:db8::1%a b"):
+            with self.subTest(value=value):
+                fakes = Fakes({})
+                self.write(
+                    "shop",
+                    document("shop").replace("host: 192.0.2.10", f'host: "{value}"'),
+                )
+
+                code, _, err = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root))
+
+                self.assertEqual(code, 65)
+                self.assertIn("host", err)
+                self.assertEqual(fakes.published, [])
+
     def test_more_than_one_publish_takes_is_batched_and_each_batch_fenced(self) -> None:
         count = changes_publish.MAX_OBJECTS + 6
         fakes = Fakes({})

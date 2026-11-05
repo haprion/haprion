@@ -102,7 +102,7 @@ def days_problem(days: int) -> str:
 def sources_problem(sources: Iterable[str]) -> str:
     for source in sources:
         try:
-            ipaddress.ip_network(source, strict=False)
+            address_ranges.plain_network(source, strict=False)
         except ValueError:
             return f"{source!r} is not an address or a network"
         if (written := address_ranges.mapped_ipv4(source)) is not None:

@@ -13,7 +13,6 @@ new listens.
 
 from __future__ import annotations
 
-import ipaddress
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -134,7 +133,7 @@ def _address(raw: Any, where: str) -> str:
     if not isinstance(raw, str):
         raise ConfigError(f"{where} must be an IP address")
     try:
-        return str(ipaddress.ip_address(raw))
+        return str(address_ranges.plain_address(raw))
     except ValueError as exc:
         raise ConfigError(f"{where} must be an IP address, not a name: {raw!r}") from exc
 
@@ -145,7 +144,7 @@ def _source(raw: Any, where: str) -> str:
     if address_ranges.has_host_bits(raw):
         raise ConfigError(f"{where} contains {raw}: {address_ranges.HOST_BITS}")
     try:
-        return str(ipaddress.ip_network(raw, strict=True))
+        return str(address_ranges.plain_network(raw, strict=True))
     except ValueError as exc:
         raise ConfigError(f"{where} is not an address or a network: {raw!r}") from exc
 

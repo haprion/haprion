@@ -19,7 +19,6 @@ this application growing one.
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -260,7 +259,7 @@ def access_list(text: str) -> tuple[str, ...]:
                 f"Line {index} is an IPv4 address written as IPv6; write it as {written}."
             )
         try:
-            network = ipaddress.ip_network(entry, strict=True)
+            network = address_ranges.plain_network(entry, strict=True)
         except ValueError:
             raise ValueError(
                 f"Line {index} is not an address or a network (such as 192.0.2.10 or "

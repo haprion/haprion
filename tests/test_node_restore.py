@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import ipaddress
+import json
 import os
 import shutil
 import tarfile
@@ -1305,6 +1306,7 @@ class TheTerminalAnswersInTheEnvelope(Timed):
             mock.patch.object(node_restore_helper, "load_policy", return_value=policy),
             mock.patch.object(node_restore_helper, "load_runtime_config", return_value=runtime),
             mock.patch.object(cli, "load_policy", return_value=policy),
+            mock.patch.object(cli, "load_runtime_config", return_value=runtime),
             mock.patch.object(
                 node_restore,
                 "preview",
@@ -1366,6 +1368,31 @@ class TheTerminalAnswersInTheEnvelope(Timed):
                     (code, document["outcome"], document["error"]["code"], document["cluster"]),
                     (75, "blocked", "restore_refused", None),
                 )
+
+    def test_a_run_whose_cluster_was_removed_is_answered_like_one_that_is_gone(self) -> None:
+        """Z05: the helper looks the cluster up first; the terminal says what it would for W01."""
+
+        run = self.prepare()
+        stored = node_restore.read_json(self.root / run / "request.json")
+        (self.root / run / "request.json").write_text(json.dumps({**stored, "cluster": "ghost"}))
+        steps = {
+            "status": ("status", "--run", run, "--json"),
+            "preview": ("preview", "--run", run, "--fingerprint", FINGERPRINT, "--json"),
+            "run": ("run", "--run", run, "--confirm", "node-test", "--json"),
+        }
+        for step, argv in steps.items():
+            with self.subTest(step):
+                code, text = self.terminal(*argv)
+                name = "haprion-node-restore" if step == "run" else f"haprion-node-restore-{step}"
+                document = assert_contract(name, text)
+                self.assertEqual(
+                    (code, document["outcome"], document["error"]["code"], document["cluster"]),
+                    (75, "blocked", "restore_refused", None),
+                )
+        code, text = self.terminal("discard", "--run", run, "--json")
+        document = assert_contract("haprion-node-restore-discard", text)
+        self.assertEqual((code, document["result"]), (0, {"run": run, "removed": True}))
+        self.assertFalse((self.root / run).exists())
 
     def test_a_run_id_that_is_not_one_is_bad_input_for_every_step(self) -> None:
         for step in ("status", "discard"):

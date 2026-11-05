@@ -399,6 +399,20 @@ def _cluster_of(step: str, options: dict[str, Any], run_root: Path) -> str | Non
     return _stored_cluster(run_root, run) if isinstance(run, str) else None
 
 
+def _configured(cluster: str, policy_path: Path) -> bool:
+    """Whether the cluster a run was prepared for is still in the configuration.
+
+    The helper looks the cluster up before it reads the run, so a run whose
+    cluster has since been removed is, to it, a run it cannot answer for (Z05).
+    A configuration that cannot be read is the helper's to report.
+    """
+
+    try:
+        return cluster in load_runtime_config(load_policy(policy_path)).clusters
+    except (ConfigError, OSError):
+        return True
+
+
 def _refused(
     step: str,
     cluster: str | None,
@@ -429,7 +443,7 @@ def _without_cluster(
     out: TextIO,
     errors: TextIO,
 ) -> int:
-    """The answer for a run that names no cluster: it is gone, or its request cannot be read.
+    """The answer for a run that names no cluster: it is gone, its request cannot be read, or its cluster was removed.
 
     The helper looks a cluster up before it reads the run, and there is none to
     look up; the answer is the one it gives for a run it cannot find.
@@ -465,7 +479,7 @@ def _without_cluster(
         step,
         None,
         "restore_refused",
-        f"there is no restore run {run}, or its request cannot be read",
+        f"there is no restore run {run}, its request cannot be read, or its cluster is no longer configured",
         exit_codes.BLOCKED,
         out,
         errors,
@@ -485,6 +499,8 @@ def _answer(
 
     operation = HELPER_CALL[step]
     cluster = _cluster_of(step, options, run_root)
+    if step != "prepare" and cluster is not None and not _configured(cluster, policy_path):
+        cluster = None
     if step == "prepare" and cluster is None:
         return _refused(
             step, None, "bad_input", "-c is not a cluster ID", exit_codes.USAGE, out, errors

@@ -426,6 +426,29 @@ class TheEntryEveryWriterBuilds(unittest.TestCase):
         self.assertEqual(entry["future_key"], 1)
 
 
+class EverySetTargetsEntryIsBuiltByWrittenEntry(RegistryFixture):
+    """C07: the retarget writes its entry through the shared builder, keeping what it does not own."""
+
+    def test_the_retarget_builds_the_entry_with_written_entry(self) -> None:
+        policy_path, registry = self.prepared(
+            {
+                "example.com": {
+                    "source": {"kind": "import", "ndes_profile": "corp"},
+                    "clusters": ["alpha"],
+                }
+            }
+        )
+        with mock.patch.object(
+            cert_registry, "written_entry", wraps=cert_registry.written_entry
+        ) as built:
+            self.retarget(policy_path, registry, "example.com", clusters=["alpha", "beta"])
+
+        built.assert_called_once()
+        written = yaml.safe_load(registry.read_text())["certificates"]["example.com"]
+        self.assertEqual(written["source"], {"kind": "import", "ndes_profile": "corp"})
+        self.assertEqual(written["clusters"], ["alpha", "beta"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

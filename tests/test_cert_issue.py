@@ -525,6 +525,33 @@ class WhenCertbotFails(IssueFixture):
 
 
 class WhenCertbotSucceeds(IssueFixture):
+    def test_the_new_entry_is_built_with_written_entry(self) -> None:
+        """C07: the issuer is a writer of the registry entry like the importer."""
+
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        with mock.patch.object(
+            cert_registry, "written_entry", wraps=cert_registry.written_entry
+        ) as built:
+            code, _out, err, _deployed = self.run_issue(
+                policy_path,
+                "--domain",
+                "*.example.com",
+                "--method",
+                "dns-01",
+                "--cluster",
+                "alpha",
+            )
+
+        self.assertEqual(code, 0, err)
+        built.assert_called_once()
+        self.assertIsNone(built.call_args.args[0])
+        entry = yaml.safe_load(self.registry_path.read_text())["certificates"]["example.com"]
+        self.assertEqual(entry["source"]["kind"], "acme")
+        self.assertEqual(entry["clusters"], ["alpha"])
+
     def test_registry_publish_and_rollout_in_that_order(self) -> None:
         issue(self.live / "example.net", "example.net")
         policy_path = self.policy_with_acme(

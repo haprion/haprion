@@ -18,7 +18,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import atomic_file, cert_import, cert_pending, exit_codes
+from haprion import atomic_file, cert_import, cert_pending, cert_registry, exit_codes
 from haprion.cert_import import (
     ImportError_,
     Material,
@@ -474,6 +474,22 @@ class WhatAnImportIs(ImportFixture):
             self.registered()["shop.example"]["source"], {"kind": "import", "ndes_profile": "corp"}
         )
 
+    def test_the_import_builds_its_entry_with_written_entry(self) -> None:
+        """C07: both the first import and a re-import over the entry on file."""
+
+        with mock.patch.object(
+            cert_registry,
+            "written_entry",
+            wraps=cert_registry.written_entry,
+        ) as built:
+            self.run_import("shop.example", self.material(), clusters=["alpha"])
+            self.assertEqual(built.call_count, 1)
+            self.assertIsNone(built.call_args.args[0])
+
+            self.run_import("shop.example", self.material(), receivers=["lb-01"])
+            self.assertEqual(built.call_count, 2)
+            self.assertEqual(built.call_args.args[0]["clusters"], ["alpha"])
+
     def test_a_receiver_only_import_publishes_the_pair(self) -> None:
         self.run_import("pve.example", self.material(), receivers=["lb-01"])
         self.assertTrue((self.receiver_dir / "pve.example" / FULLCHAIN).exists())
@@ -716,6 +732,21 @@ class AnAuthorityIsImportedWithoutAKey(ImportFixture):
             lock_path=self.lock,
             require_secure=False,
         )
+
+    def test_the_authority_builds_its_entry_with_written_entry(self) -> None:
+        """C07."""
+
+        blocks = self.blocks(self.pki.root)
+        with mock.patch.object(
+            cert_registry,
+            "written_entry",
+            wraps=cert_registry.written_entry,
+        ) as built:
+            self.run_authority("corp-root", blocks, clusters=["alpha"])
+            self.run_authority("corp-root", blocks, clusters=["beta"])
+
+        self.assertEqual(built.call_count, 2)
+        self.assertEqual(self.registered()["corp-root"]["clusters"], ["alpha", "beta"])
 
     def test_a_root_and_its_intermediate_land_in_the_clusters_ca_directory(self) -> None:
         result = self.run_authority(

@@ -1930,7 +1930,9 @@ receiver it also shows the day its copy was written, and *(older version)* when 
 `haprion-cert-publish --certificate <id> --deploy` does below. If a cluster's nodes hold an older copy,
 the button is *Deploy to nodes* instead, and it rolls that cluster out again. When several clusters are
 behind, there is one *Deploy* button per cluster, each with the cluster's name. Both buttons are an
-admin's, on an installation with `management_writes` on.
+admin's, on an installation with `management_writes` on. The timer rolls such a cluster out again at
+every run, so *Nodes hold an older copy* that stands for more than seven days after the certificate's
+*Valid from* date turns critical and shows in *Needs attention*: the rollout is failing, not waiting.
 
 **How it works.** `haprion-cert-publish` is the one path from a certificate's source to every place it
 is read. It runs as root. It takes no file, directory or account on its command line: the registry

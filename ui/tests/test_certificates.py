@@ -39,6 +39,7 @@ def certificate(
     valid: bool = True,
     fingerprint: str | None = None,
     validation_error: str | None = None,
+    renewed_days_ago: int = 1,
 ) -> dict[str, object]:
     not_after = NOW + timedelta(days=days_left)
     return {
@@ -46,7 +47,7 @@ def certificate(
         "fingerprint_sha256": fingerprint or ("c" * 64),
         "common_name": "*.example.com",
         "sans": ["*.example.com", "example.com"],
-        "not_before": (not_after - timedelta(days=90)).isoformat().replace("+00:00", "Z"),
+        "not_before": (NOW - timedelta(days=renewed_days_ago)).isoformat().replace("+00:00", "Z"),
         "not_after": not_after.isoformat().replace("+00:00", "Z"),
         "issuer": "Example Test CA",
         "lifecycle": lifecycle,
@@ -103,6 +104,7 @@ def registered(
     days_left: int = 60,
     fingerprint: str | None = None,
     sans: list[str] | None = None,
+    renewed_days_ago: int = 1,
 ) -> dict[str, Any]:
     not_after = NOW + timedelta(days=days_left)
     if distribution is None and clusters:
@@ -117,7 +119,7 @@ def registered(
         "fingerprint_sha256": (fingerprint or "c" * 64) if readable else None,
         "common_name": "*.example.com",
         "sans": ["*.example.com", "example.com"] if sans is None else sans,
-        "not_before": _stamp(not_after - timedelta(days=90)),
+        "not_before": _stamp(NOW - timedelta(days=renewed_days_ago)),
         "not_after": _stamp(not_after),
         "issuer": "Example Test CA",
         "lifecycle": "acme" if kind == "acme" else "static",
@@ -639,6 +641,36 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
         self.assertLessEqual(len(row.state_detail.split()), 6)
         self.assertEqual(row.state_tone, "warning")
         self.assertEqual(row.older_copy_clusters, ("alpha",))
+
+    def test_an_older_copy_a_week_after_the_renewal_is_critical_and_not_before(self) -> None:
+        """26-11-05, E02: counted from the source certificate's not_before; no expiry is guessed."""
+
+        def rows(days: int) -> tuple[tuple[str, str], tuple[str, str]]:
+            entry = registered(fingerprint="a" * 64, renewed_days_ago=days)
+            listed = certificate(fingerprint="a" * 64, renewed_days_ago=days)
+            view = overview(
+                with_registry(reading(certificates=[listed]), entry),
+                status=(status(node(("example.com", "b" * 64))),),
+            )
+            registry_row = registry_of(view).certificates[0]
+            cluster_row = view.clusters[0].certificates[0]
+            return (
+                (registry_row.state_label, registry_row.state_tone),
+                (cluster_row.state_label, cluster_row.state_tone),
+            )
+
+        for days, tone in ((0, "warning"), (7, "warning"), (8, "critical"), (40, "critical")):
+            with self.subTest(days=days):
+                self.assertEqual(rows(days), (("Nodes hold an older copy", tone),) * 2)
+
+        entry = registered(fingerprint="a" * 64, renewed_days_ago=10)
+        view = overview(
+            with_registry(reading(), entry),
+            status=(status(node(("example.com", "b" * 64))),),
+        )
+        self.assertEqual(
+            registry_of(view).certificates[0].state_detail, "Still different 10 days after renewal"
+        )
 
     def test_only_the_cluster_holding_the_older_copy_is_named_for_deploy(self) -> None:
         entry = registered(fingerprint="a" * 64, clusters=("alpha", "beta"))

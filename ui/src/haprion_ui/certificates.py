@@ -63,6 +63,14 @@ CRITICAL_WINDOW = timedelta(days=7)
 # stay flagged until the next run (26-11-05, C04).
 #
 NDES_DEFAULT_RENEW_DAYS = 30
+
+#
+# Nodes that still hold other bytes than the manager's this long after the
+# source certificate began (the renewal day) are a failure and not a wait: the
+# daily distribution pass has had a week to put it right. The manager does not
+# know the expiry of the nodes' copy, so none is guessed (26-11-05, E02).
+#
+OLDER_COPY_CRITICAL_AFTER = timedelta(days=7)
 NDES_RENEWAL_SLACK = timedelta(days=5)
 
 
@@ -129,6 +137,8 @@ class CertificateView:
     # status, so the state here is this cluster's and not every cluster's.
     #
     valid_from: str = "—"
+    # The same moment, for the time a node has held an older copy.
+    began_at: datetime | None = None
     targets: tuple[TargetView, ...] = ()
     state_label: str = "Unknown"
     state_detail: str = ""
@@ -551,6 +561,7 @@ def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
         expiry_label=expiry_label,
         tone=tone,
         valid_from=_date(entry.get("not_before")),
+        began_at=_expiry(entry.get("not_before")),
         wildcard=any(name.startswith("*.") for name in _sans(entry.get("sans"))),
         expires_at=_expiry(entry.get("not_after")),
     )
@@ -789,7 +800,7 @@ def _cluster_view(
         for entry in entries:
             certificate = _certificate_view(entry, now=now)
             if certificate is not None:
-                parsed.append(_placed(certificate, reading.cluster, targets, carriage))
+                parsed.append(_placed(certificate, reading.cluster, targets, carriage, now))
     certificates = tuple(sorted(parsed, key=_order))
     stale = now - reading.observed_at > stale_after
     label, tone, detail = _state(reading, stale=stale, certificates=certificates)
@@ -817,6 +828,7 @@ def _placed(
     cluster: str,
     targets: Mapping[str, tuple[TargetView, ...]] | None,
     carriage: NodeCarriage | None,
+    now: datetime,
 ) -> CertificateView:
     """One cluster's row with the registry's columns filled in.
 
@@ -845,6 +857,8 @@ def _placed(
             certificate.fingerprint,
             [carriage] if carriage else [],
             chain=certificate.chain,
+            since=certificate.began_at,
+            now=now,
         )
     return replace(
         certificate, targets=placed, state_label=label, state_detail=detail, state_tone=tone
@@ -876,6 +890,8 @@ def _node_state(
     carriages: Iterable[NodeCarriage | None],
     *,
     chain: str = "",
+    since: datetime | None = None,
+    now: datetime | None = None,
 ) -> tuple[str, str, Tone]:
     """What the given clusters' nodes report carrying, said without overreaching.
 
@@ -896,6 +912,12 @@ def _node_state(
     if total == 0:
         return "Published", "No node has reported yet, so deployment is unknown", "unknown"
     if wrong:
+        if since is not None and now is not None and now - since > OLDER_COPY_CRITICAL_AFTER:
+            return (
+                "Nodes hold an older copy",
+                f"Still different {(now - since).days} days after renewal",
+                "critical",
+            )
         return (
             "Nodes hold an older copy",
             "Different certificate bytes reported",
@@ -1050,6 +1072,7 @@ def _registry_state(
     carriage: Mapping[str, NodeCarriage],
     taken_out: Mapping[str, TakenOut] | None = None,
     chain: str = "",
+    now: datetime,
 ) -> tuple[str, str, Tone]:
     """What is true about this certificate's copies, said without overreaching.
 
@@ -1154,6 +1177,8 @@ def _registry_state(
             fingerprint,
             (carriage.get(cluster) for cluster in clusters),
             chain=chain,
+            since=_expiry(entry.get("not_before")),
+            now=now,
         )
         #
         # The receivers are judged even when the certificate goes to a
@@ -1317,6 +1342,7 @@ def _registry_certificate(
         carriage=carriage,
         taken_out=taken_out,
         chain=chain,
+        now=now,
     )
     cluster_targets = tuple(target.name for target in targets if target.kind == "cluster")
     cluster_states = tuple(
@@ -1332,6 +1358,7 @@ def _registry_certificate(
                 carriage=carriage,
                 taken_out=taken_out,
                 chain=chain,
+                now=now,
             )
         )
     )

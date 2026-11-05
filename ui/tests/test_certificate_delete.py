@@ -139,13 +139,10 @@ class TheRegistryViewOffersTheBoxes(DeleteRouteTestCase):
 
 class DeployingAnOlderCopy(DeleteRouteTestCase, BadgeReading):
     def stale_reading(self) -> Any:
-        return with_registry(
-            certificate_reading(),
-            registered(
-                fingerprint="a" * 64,
-                clusters=("alpha", "beta"),
-            ),
-        )
+        row = registered(fingerprint="a" * 64, clusters=("alpha", "beta"))
+        # The page reads the clock: renewed yesterday, so the old copy is a wait, not yet a failure.
+        row["not_before"] = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        return with_registry(certificate_reading(), row)
 
     def stale_statuses(self) -> list[Any]:
         return [

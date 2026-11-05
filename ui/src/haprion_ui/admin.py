@@ -193,7 +193,7 @@ def _user_id(connection: psycopg.Connection[tuple[Any, ...]], username: str) -> 
 
 
 def command_add(environment: Environment, args: argparse.Namespace) -> int:
-    problem = users.name_problem(args.username)
+    problem = users.name_problem(args.username, creating=True)
     if problem is not None:
         raise AdminError(problem)
     password = read_new_password(piped=args.password_stdin)

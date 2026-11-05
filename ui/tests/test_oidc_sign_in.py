@@ -306,6 +306,15 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.assertEqual(response.status_code, 401)
         self.assertIn("The provider did not sign you in: User denied", response.text)
 
+    def test_a_name_the_users_page_could_not_open_never_becomes_an_account(self) -> None:
+        # Review 26-11-05, A04.
+        self.exchanged["username"] = "corp/jane"
+        client = self.client()
+        response = self.back(client, self.go(client))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.created, [])
+        self.assertEqual(self.audit_details[-1][1]["reason"], "unfit_name")
+
     def test_neither_group_is_a_refusal(self) -> None:
         self.exchanged["groups"] = ["somebody-else"]
         client = self.client()

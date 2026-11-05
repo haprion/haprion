@@ -6152,6 +6152,19 @@ class TheAccountToolAgainstARealDatabase(AccountToolHarness):
         asked.assert_not_called()
         self.assertIsNone(self.account("ada\u00a0admin"))
 
+    def test_add_refuses_a_name_the_users_page_could_not_open(self) -> None:
+        # Review 26-11-05, A04: the same rule as the page's form.
+        for name in ("ops/team", ".."):
+            with (
+                self.subTest(name=name),
+                mock.patch.object(self.admin, "read_new_password") as asked,
+            ):
+                code, output = self.run_tool("add", name, "--role", "admin")
+            self.assertNotEqual(code, 0)
+            self.assertIn("no slash", output)
+            asked.assert_not_called()
+            self.assertIsNone(self.account(name))
+
     def test_delete_says_what_without_yes_and_does_it_with(self) -> None:
         self.add("alice")
         self.add("bob", role="reader")

@@ -212,6 +212,8 @@ def plan(wanted: Sequence[Wanted], current: Sequence[Stored], *, prune: bool) ->
         if row is None:
             if account.password is None:
                 raise ApplyError(f"{account.username} is new and needs a password")
+            if problem := users.name_problem(account.username, creating=True):
+                raise ApplyError(f"{account.username}: {problem}")
             created.append(account)
             continue
         provider = row.source != "local"

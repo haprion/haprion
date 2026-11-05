@@ -119,6 +119,20 @@ class ThePlan(unittest.TestCase):
             f"the password must be at least {auth.MINIMUM_PASSWORD_LENGTH} characters",
         )
 
+    def test_a_new_account_the_users_page_could_not_open_is_refused_an_existing_one_stays(
+        self,
+    ) -> None:
+        # Review 26-11-05, A04: the rule is for creating; an account made
+        # before it, and so in an export, is still applied.
+        with self.assertRaisesRegex(ApplyError, "no slash"):
+            account_apply.plan(
+                [Wanted("ops/team", "reader", password="long enough pw")], [], prune=False
+            )
+        kept = account_apply.plan(
+            [Wanted("ops/team", "reader")], [stored("ops/team", "reader")], prune=False
+        )
+        self.assertTrue(kept.empty)
+
     def test_a_new_account_needs_a_password(self) -> None:
         with self.assertRaises(ApplyError):
             account_apply.plan([Wanted("new", "reader")], [], prune=False)

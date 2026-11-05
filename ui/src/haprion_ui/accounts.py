@@ -337,7 +337,7 @@ def oidc_account_refusal(
                     "other_issuer",
                 )
             return f"An account named {username} already exists here.", "name_taken"
-        if users.name_problem(username) is not None:
+        if users.name_problem(username, creating=True) is not None:
             #
             # A version records the name as who published it (B207); one that
             # cannot stand there never becomes an account (review 2026-09-29 F1).

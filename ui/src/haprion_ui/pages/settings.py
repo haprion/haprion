@@ -1176,8 +1176,8 @@ def build_router(config: Config) -> APIRouter:
         form = {"username": username, "role": role}
         if not username:
             problem = "Name the account."
-        elif users.name_problem(username) is not None:
-            problem = users.NAME_PROBLEM
+        elif users.name_problem(username, creating=True) is not None:
+            problem = users.NEW_NAME_PROBLEM
         elif role not in users.ROLES:
             problem = "Choose a role."
         else:

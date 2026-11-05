@@ -27,19 +27,35 @@ NAME_PROBLEM = (
 )
 
 
-def name_problem(username: str) -> str | None:
+#
+# What an account made today may not be called, over NAME_PROBLEM: the page of
+# an account is `/settings/users/{name}`, which a slash cannot reach, and a
+# name of dots is resolved away by the browser before the request goes (review
+# 26-11-05, A04). One rule for the tool, `apply`, the form and a first sign-in
+# through the provider; an account made before it keeps its name.
+#
+NEW_NAME_PROBLEM = (
+    "An account name is at most 64 characters, with no line breaks, invisible characters "
+    "or spaces at either end, no slash, and not only dots."
+)
+
+
+def name_problem(username: str, *, creating: bool = False) -> str | None:
     """Why a name cannot be an account here, or None (2026-09-29).
 
     A version records the name as who published it (B207), so an account is
     only made under a name that can stand there - checked where the account is
     made, rather than on its first publish, where a refusal could only say that
-    the publish could not be built.
+    the publish could not be built. `creating` adds what the account's page
+    needs; an existing account is read without it.
     """
 
     try:
         trailer_name(username)
     except UnfitName:
-        return NAME_PROBLEM
+        return NEW_NAME_PROBLEM if creating else NAME_PROBLEM
+    if creating and ("/" in username or set(username) == {"."}):
+        return NEW_NAME_PROBLEM
     return None
 
 

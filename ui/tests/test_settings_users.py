@@ -376,6 +376,25 @@ class SettingsUsers(LoginTestCase):
         self.assertNotIn("create", [name for name, _ in self.calls])
         self.assertNotIn("account_created", self.audit)
 
+    def test_a_name_the_users_page_could_not_open_is_refused(self) -> None:
+        # Review 26-11-05, A04: `/settings/users/{name}` does not match a
+        # slash, and a name of dots is gone before the request leaves the
+        # browser. The account would be listed and its page a Not found.
+        client = self.admin()
+        for username in ("ops/team", "/", "a/", ".", "..", "..."):
+            with self.subTest(username=username):
+                response = self.post(
+                    client,
+                    "/settings/new-user",
+                    username=username,
+                    role="admin",
+                    new_password=NEW,
+                    repeat_password=NEW,
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("no slash", response.text)
+        self.assertNotIn("create", [name for name, _ in self.calls])
+
     def test_a_taken_name_is_refused_and_the_form_keeps_what_was_typed(self) -> None:
         client = self.admin()
         with mock.patch("haprion_ui.db.create_account", return_value=False):

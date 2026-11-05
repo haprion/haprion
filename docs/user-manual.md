@@ -855,8 +855,10 @@ because that would put it in the shell history and the process list. For automat
 `add` and `reset` reads it as one line from a pipe instead.
 
 An account name is at most 64 characters, with no line breaks, no invisible characters and no spaces at
-either end. A version records the name as who published it, so the tool, the *Users* form and a first
-sign-in through the provider all refuse a name that could not stand there.
+either end, no slash, and not only dots. A version records the name as who published it, and each account
+has a page under *Settings -> Users* that a slash or a name of dots cannot reach, so the tool, `apply`, the
+*Users* form and a first sign-in through the provider all refuse a name that could not stand there.
+An account that already has such a name keeps it and signs in; manage it with `haprion-user`.
 
 **The break-glass path.** The same tool is the way back in when the only administrator is locked out,
 forgotten or gone. An account it creates is a **break-glass** account unless `--no-break-glass` is given.

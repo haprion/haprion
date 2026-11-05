@@ -42,11 +42,13 @@ class CertbotProjectTests(unittest.TestCase):
         project = tomllib.loads(PROJECT.read_text())
         dependencies = project["project"]["dependencies"]
 
-        self.assertIn("certbot-dns-azure-modern==2.8.0", dependencies)
-        self.assertFalse(
-            any(item.startswith("certbot-dns-azure==") for item in dependencies),
-            "the two distributions install the same module and may not coexist",
+        names = {re.split(r"[<>=~!\[ ;]", item, maxsplit=1)[0] for item in dependencies}
+        self.assertIn("certbot-dns-azure-modern", names)
+        self.assertNotIn(
+            "certbot-dns-azure", names, "the two distributions install the same module"
         )
+        locked = {package["name"] for package in tomllib.loads(LOCK.read_text())["package"]}
+        self.assertNotIn("certbot-dns-azure", locked)
 
     def test_the_retired_google_domains_plugin_is_not_offered(self) -> None:
         project = tomllib.loads(PROJECT.read_text())

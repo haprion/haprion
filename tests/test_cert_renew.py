@@ -402,6 +402,52 @@ class TheDistributionIsRedone(Fixture):
         self.assertIn("[no_lineage] keeper.example", said)
 
 
+class TheNdesPassReadsTheRegistryAfterCertbot(Fixture):
+    """Remove from... run while certbot worked is not undone by the NDES pass (26-11-05, XX03)."""
+
+    def test_the_pass_gets_the_registry_as_it_is_then(self) -> None:
+        issue(self.live / "keeper.example", "keeper.example")
+        policy = load_policy(self.write_config(self.keeper()), require_secure=False)
+        before = load_runtime_config(policy, require_secure=False)
+        after = replace(before, clusters={})
+
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(cert_renew, "load_policy", return_value=policy),
+            mock.patch.object(cert_renew, "load_runtime_config", side_effect=[before, after]),
+            mock.patch.object(cert_renew, "RENEWAL_DIRECTORY", self.root / "absent"),
+            mock.patch.object(cert_renew, "renew_ndes", return_value=False) as ndes,
+            mock.patch.object(cert_renew, "redistribute", return_value=False),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            cert_renew.main([])
+
+        self.assertIs(ndes.call_args.args[1], after)
+
+    def test_a_registry_that_cannot_be_read_then_fails_the_pass(self) -> None:
+        issue(self.live / "keeper.example", "keeper.example")
+        policy = load_policy(self.write_config(self.keeper()), require_secure=False)
+        before = load_runtime_config(policy, require_secure=False)
+        errors = io.StringIO()
+
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(cert_renew, "load_policy", return_value=policy),
+            mock.patch.object(
+                cert_renew, "load_runtime_config", side_effect=[before, ConfigError("broken")]
+            ),
+            mock.patch.object(cert_renew, "RENEWAL_DIRECTORY", self.root / "absent"),
+            mock.patch.object(cert_renew, "renew_ndes", return_value=False) as ndes,
+            mock.patch.object(cert_renew, "redistribute", return_value=False),
+            contextlib.redirect_stderr(errors),
+        ):
+            code = cert_renew.main([])
+
+        ndes.assert_not_called()
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR: ndes pass: broken", errors.getvalue())
+
+
 class TheAnswerIsADocumentWhenAsked(Fixture):
     """K12: the timer's command answers `--json` in a contract, like the rest."""
 

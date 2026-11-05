@@ -474,9 +474,23 @@ def main(argv: list[str] | None = None) -> int:
     # After certbot, not instead of it: a failure in one pass does not spare
     # the other, and the exit code says whether either had one.
     #
-    ndes_failed = renew_ndes(
-        policy, runtime, only=tuple(args.ndes_now), dry_run=args.dry_run, policy_path=args.policy
-    )
+    # The registry is read again: certbot may have worked for minutes, and a *Remove
+    # from...* made meanwhile must not be put back by a renewal's old targets
+    # (26-11-05, XX03).
+    #
+    try:
+        runtime = load_runtime_config(policy)
+    except ConfigError as exc:
+        print(f"ERROR: ndes pass: {exc}", file=sys.stderr)
+        ndes_failed = True
+    else:
+        ndes_failed = renew_ndes(
+            policy,
+            runtime,
+            only=tuple(args.ndes_now),
+            dry_run=args.dry_run,
+            policy_path=args.policy,
+        )
     #
     # Last, and only for the ordinary run: a dry run publishes nothing, and the
     # named renewals publish and roll out what they renewed themselves.

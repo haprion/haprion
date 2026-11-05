@@ -713,10 +713,10 @@ def _invoke(
     configuration: what is measured is what the command itself writes before it
     has read anything. With it, as root on an installation with one cluster
     (`write_installation`), the product's directories below `scratch`, so the
-    command gets as far as judging the call (W02, 26-11-05). There it also
-    cannot leave the scratch directory: a database, a socket or a new process
-    fails the test with the command's name, and a database attempt is added to
-    `seen` (Z01, 26-11-05).
+    command gets as far as judging the call (W02, 26-11-05). Either way it
+    cannot leave the process: a database, a socket or a new process fails the
+    test with the command's name, and a database attempt is added to `seen`
+    (Z01, 26-11-05; N03, 26-11-05).
     """
 
     module, _, _ = _entry_points()[program].partition(":")
@@ -762,8 +762,8 @@ def _invoke(
                     ),
                 )
             )
-            for guard in _guards(program, seen if seen is not None else [], escapes):
-                stack.enter_context(guard)
+        for guard in _guards(program, seen if seen is not None else [], escapes):
+            stack.enter_context(guard)
         try:
             returned = importlib.import_module(module).main(argv)
             code = returned if isinstance(returned, int) else 0
@@ -1057,6 +1057,26 @@ class EveryWriteHasItsCommand(unittest.TestCase):
                 self.assertRaises(psycopg.OperationalError),
             ):
                 _invoke("haprion-fake", [], scratch, seen)
+            self.assertEqual(seen, ["database"])
+
+    def test_the_guards_hold_for_an_ordinary_user_too(self) -> None:
+        """N03: the branch without a scratch directory is guarded as the root one is."""
+
+        points = {"haprion-fake": f"{__name__}:main"}
+        with mock.patch(f"{__name__}._entry_points", return_value=points):
+            for stand_in in (_reaches_a_network, _reaches_a_process, _reaches_exec):
+                with (
+                    self.subTest(stand_in.__name__),
+                    mock.patch(f"{__name__}._stand_in", stand_in),
+                    self.assertRaisesRegex(AssertionError, "haprion-fake reached"),
+                ):
+                    _invoke("haprion-fake", [])
+            seen: list[str] = []
+            with (
+                mock.patch(f"{__name__}._stand_in", _reaches_a_database),
+                self.assertRaises(psycopg.OperationalError),
+            ):
+                _invoke("haprion-fake", [], None, seen)
             self.assertEqual(seen, ["database"])
 
     def test_every_way_to_a_database_is_refused_and_recorded(self) -> None:

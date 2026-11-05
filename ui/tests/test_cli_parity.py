@@ -474,55 +474,45 @@ ANSWERS: dict[str, Answer] = {
 }
 
 
-def _api_writes() -> set[str]:
-    """The API's write routes as `METHOD /path` under its prefix, walked into the mounted app.
+def _write_routes(routes: Any, prefix: str = "") -> set[tuple[str, str, str]]:
+    """Every route that writes, as (mount prefix, method, path) - in routers, and in mounted apps.
 
-    The pages are routers among routers; the API is an application mounted
-    beside them, which a walk of `app.routes` stops at (K03, 26-11-05).
+    The pages are routers among routers; the API, and anything else mounted
+    beside them, is an application a walk of `app.routes` stops at (K03, W03,
+    26-11-05). The prefix is where it is mounted, the path is within it.
     """
 
-    app = create_app(replace(configuration(), management_writes=True))
-    found: set[str] = set()
-
-    def walk(routes: Any, prefix: str) -> None:
-        for route in routes:
-            router = getattr(route, "original_router", None)
-            if router is not None:
-                walk(router.routes, prefix)
-                continue
-            inner = getattr(route, "app", None)
-            if inner is not None and hasattr(inner, "routes") and not hasattr(route, "methods"):
-                walk(inner.routes, prefix + str(getattr(route, "path", "")))
-                continue
-            if prefix != api.PREFIX:
-                continue
-            for method in sorted((getattr(route, "methods", None) or set()) & WRITES):
-                found.add(f"{method} {route.path}")
-
-    walk(app.routes, "")
+    found: set[tuple[str, str, str]] = set()
+    for route in routes:
+        router = getattr(route, "original_router", None)
+        if router is not None:
+            found |= _write_routes(router.routes, prefix)
+            continue
+        inner = getattr(route, "app", None)
+        if inner is not None and hasattr(inner, "routes") and not hasattr(route, "methods"):
+            found |= _write_routes(inner.routes, prefix + str(getattr(route, "path", "")))
+            continue
+        for method in sorted((getattr(route, "methods", None) or set()) & WRITES):
+            found.add((prefix, method, str(getattr(route, "path", ""))))
     return found
 
 
-def _posted_routes() -> set[str]:
-    app = create_app(replace(configuration(), management_writes=True))
-    found: set[str] = set()
+def _app() -> Any:
+    return create_app(replace(configuration(), management_writes=True))
 
-    #
-    # Routers in routers: the pages are one per area under one that carries
-    # the feature switches (K1, 26-10-21).
-    #
-    def walk(routes: Any) -> None:
-        for route in routes:
-            inner = getattr(route, "original_router", None)
-            if inner is not None:
-                walk(inner.routes)
-                continue
-            methods = getattr(route, "methods", None) or set()
-            if methods & WRITES:
-                found.add(str(getattr(route, "path", "")))
 
-    walk(app.routes)
-    return found
+def _api_writes(app: Any = None) -> set[str]:
+    """The API's write routes as `METHOD /path` under its prefix."""
+
+    walked = _write_routes((app or _app()).routes)
+    return {f"{method} {path}" for prefix, method, path in walked if prefix == api.PREFIX}
+
+
+def _posted_routes(app: Any = None) -> set[str]:
+    """Every other write: the pages' paths, and the full path of anything mounted elsewhere."""
+
+    walked = _write_routes((app or _app()).routes)
+    return {f"{prefix}{path}" for prefix, _, path in walked if prefix != api.PREFIX}
 
 
 def _queued_operations() -> set[str]:
@@ -676,7 +666,7 @@ class EveryWriteHasItsCommand(unittest.TestCase):
     def test_every_api_write_is_listed_once(self) -> None:
         writes = _api_writes()
 
-        self.assertGreaterEqual(len(writes), 14, "the walk no longer reaches the mounted API")
+        self.assertEqual(len(writes), len(API_PARITY), "the walk no longer reaches the mounted API")
         self.assertEqual(sorted(writes - set(API_PARITY)), [], "an API write with no counterpart")
         self.assertEqual(sorted(set(API_PARITY) - writes), [], "listed here, but no such route")
 
@@ -841,6 +831,19 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         self.assertEqual(
             sorted(program for program, (code, _, _) in said.items() if code != 64), []
         )
+
+    def test_a_write_on_another_mount_is_seen(self) -> None:
+        """W03: a second application mounted beside the pages is not exempt."""
+
+        from fastapi import FastAPI
+
+        other = FastAPI()
+        other.add_api_route("/danger", lambda: None, methods=["POST"])
+        app = _app()
+        app.mount("/v2", other)
+
+        self.assertIn("/v2/danger", _posted_routes(app) - set(PARITY))
+        self.assertEqual(_api_writes(app), _api_writes())
 
     def test_the_check_would_notice_a_new_route(self) -> None:
         """A check that cannot fail is not a check."""

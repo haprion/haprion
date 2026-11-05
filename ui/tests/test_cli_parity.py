@@ -999,8 +999,10 @@ def _writes_beside_the_scratch_directory(_argv: list[str]) -> int:
     return 0
 
 
-def _reads_the_machines_policy(_argv: list[str]) -> int:
-    io.FileIO("/etc/haprion/runtime-policy.yaml")
+def _reads_the_machines_state(_argv: list[str]) -> int:
+    # Not /etc/haprion: the test runner refuses that root on its own, before
+    # this hook is asked.
+    io.FileIO("/var/lib/haprion/state.json")
     return 0
 
 
@@ -1252,7 +1254,7 @@ class EveryWriteHasItsCommand(unittest.TestCase):
             (_reaches_a_name_lookup, "socket.getaddrinfo"),
             (_reaches_multiprocessing, "_posixsubprocess.fork_exec"),
             (_writes_beside_the_scratch_directory, "open"),
-            (_reads_the_machines_policy, "open"),
+            (_reads_the_machines_state, "open"),
         )
         with (
             tempfile.TemporaryDirectory() as raw,

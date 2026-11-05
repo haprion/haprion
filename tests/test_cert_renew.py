@@ -272,6 +272,22 @@ class TheDistributionIsRedone(Fixture):
             ):
                 self.run_main(*argv).assert_not_called()
 
+    def test_a_dry_run_of_a_named_lineage_says_it_would_renew_and_asks_no_one(self) -> None:
+        errors = io.StringIO()
+        with (
+            mock.patch.object(cert_issue, "renew") as renew,
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(cert_renew, "load_policy", return_value=self.policy),
+            mock.patch.object(cert_renew, "load_runtime_config", return_value=self.runtime),
+            mock.patch.object(cert_renew, "renew_ndes", return_value=False),
+            contextlib.redirect_stderr(errors),
+        ):
+            code = cert_renew.main(["--acme-now", "keeper.example", "--dry-run"])
+
+        renew.assert_not_called()
+        self.assertEqual(code, 0)
+        self.assertIn("would renew keeper.example (forced)", errors.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

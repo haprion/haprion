@@ -353,6 +353,10 @@ def main(argv: list[str] | None = None) -> int:
     # `--force-renewal`, through the engine the interface's button uses.
     #
     for certificate_id in args.acme_now:
+        if args.dry_run:
+            # Like --ndes-now: say what would happen, ask nobody (26-11-05, C02).
+            print(f"acme: would renew {certificate_id} (forced)", file=sys.stderr)
+            continue
         try:
             result = cert_issue.renew(
                 certificate_id=certificate_id,

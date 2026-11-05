@@ -88,6 +88,18 @@ class ReadingACluster(LoginTestCase):
 
     def setUp(self) -> None:
         super().setUp()
+        #
+        # The page asks for its cards' readings on two threads, each with a
+        # connection of its own, and `FakePool` fails a test whose connections
+        # were out at once - the guard against a handler that holds one while
+        # its readers run. Whether two readers overlap is the scheduler's:
+        # alone they rarely do, under the gate's load they sometimes did
+        # (the DNS pools, whose readings take longest). One reader keeps that
+        # guard as it is and makes the peak what the page decides.
+        #
+        readers = mock.patch("haprion_ui.reading.TRAFFIC_READERS", 1)
+        readers.start()
+        self.addCleanup(readers.stop)
         for name, value in (
             ("read_cluster_frontends", lambda *_a, **_k: self.frontends),
             (

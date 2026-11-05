@@ -1,14 +1,12 @@
 # Installing the web platform
 
-Numbered steps and the release commands beside them, all on the management host. They are
-separate from the five CLI steps one directory up, and deliberately so: the CLI is the authoritative engine
-and installs and runs without any of this. A management host that only ever uses
-the command line never needs the platform at all.
+Numbered steps and the release commands beside them, all on the management host. They install the web
+interface on top of the management CLI, which the `haprion-ui` package brings with it.
 
 They come with the `haprion-ui` package, under
 `/usr/share/haprion-ui/install/platform/`, and the package unpacks its release
 under `/opt/haprion-ui/releases/<release-id>` (the id is printed when it is
-installed). Run them after the CLI installation, with the same answers file or
+installed). Run them after the manager's own steps (`../01-manager-prepare` to `../03-manager-keys`), with the same answers file or
 none - every step then uses the defaults in `../defaults.sh`. `haprion-setup`
 one directory up runs the whole sequence in order:
 
@@ -195,9 +193,8 @@ always comes from a named delivery.
 
 **The schema starts at a baseline**, `0115`, one migration that makes all of
 it, numbered as the last of the migrations it holds. A database from before it
-is refused by `check-compatibility` rather than migrated: one from 0.99.0 to
-0.99.10 is updated to 0.99.13 first, and one from before 0.99 is made afresh.
-No migration has a
+is refused by `check-compatibility` rather than migrated ([Updating](../../docs/install.md#updating)
+names the release to update to first). No migration has a
 downgrade, and `./migrate downgrade` is refused: a schema only goes forward.
 
 **Alembic travels with the release, outside the services' environment.** It is

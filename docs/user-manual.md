@@ -2925,7 +2925,7 @@ envelope instead (`schemas/v1/haprion-cluster-node`); `haprion-cluster` takes it
 
 A node prepared by hand with `04-node-prepare` prints a block that names its cluster
 (`haproxy-node-v1:`) instead. It is added the same way, without a join
-([install/README.md, step 4](../install/README.md#step-4--each-node)).
+([A node prepared by hand](install.md#a-node-prepared-by-hand)).
 
 **The manager checks the node answers.** After writing, the manager asks the node for its status as
 the status identity, with strict host key checking. The node reports its own host name and cluster. So

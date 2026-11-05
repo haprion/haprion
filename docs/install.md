@@ -145,13 +145,11 @@ A new HAProxy is the exception. The manager checks each configuration with its o
 so the manager must not be the newer of the two. When `apt list --upgradable` on the manager shows `haproxy`, update
 the nodes first and the manager last ([Keeping HAProxy current](user-manual.md#keeping-haproxy-current)).
 
-An installation on Haprion 0.99.10 or older is updated to 0.99.13 first. Later releases begin their database schema
-where 0.99.11 to 0.99.13 left it, and refuse an older one before they change the database. The packages of 0.99.13
-are on its [GitHub release](https://github.com/haprion/haprion/releases/tag/v0.99.13).
-
-If `sudo apt upgrade` already refused such an installation, install the 0.99.13 packages from the repository
-(`apt list -a haprion-ui` shows their versions) or, for an installation made from files, with `sudo dpkg -i` on the
-files of the GitHub release, then upgrade again. `sudo dpkg --configure -a` is not needed:
+An installation on Haprion 0.99.10 or older is updated to 0.99.13 first: later releases refuse an older database
+schema before they change anything. If `sudo apt upgrade` already refused it, install the 0.99.13 packages from the
+repository (`apt list -a haprion-ui` shows their versions) or, for an installation made from files, with
+`sudo dpkg -i` on the files of the [GitHub release](https://github.com/haprion/haprion/releases/tag/v0.99.13), then
+upgrade again. `sudo dpkg --configure -a` is not needed:
 
 ```bash
 sudo apt install --allow-downgrades haprion-cli=<version> haprion-ui=<version>
@@ -224,6 +222,9 @@ sudo apt install haprion-ui
 sudo haprion-setup [--answers answers.env]
 ```
 
+`--release <release-id>` names the web interface's release to activate. Without it the setup uses the release that
+is active, or the one the package unpacked. When several are unpacked and none is active, it asks you to name one.
+
 `haprion-ui` brings the CLI, certbot, the WAF engine and its rules with it. You need no source tree on the manager.
 
 `haprion-setup` first checks what it can before it changes anything: the distribution, the commands it needs, a
@@ -266,8 +267,8 @@ stops working.
 A node that was prepared but never joined, with its key used up or expired, says so and asks for
 `--again`. The node's name is its host name, which must be lowercase letters, digits and hyphens,
 starting with a letter; otherwise `haprion-node-key` says to rename the host first.
-What the block contains, and how to prepare a node without the web interface, is in
-[install/README.md](../install/README.md#step-4--each-node).
+How a node joins is under [How a node joins](#how-a-node-joins), and preparing one without the web interface under
+[A node prepared by hand](#a-node-prepared-by-hand).
 
 A node accepts the manager's keys only from the manager's address. If the manager moves to another address, run
 `sudo haprion-node-prepare --manager <new name or address>` on each node.
@@ -463,15 +464,101 @@ sudo ./03-manager-keys answers.env | tee keys.txt
 
 The answers file is optional in every step. Steps 14, 15 and 17 take `-` in its place when a source tree follows.
 
-Nodes added in the web interface need nothing from step 3's output: the manager hands the keys over when the node
-joins ([install/README.md](../install/README.md#step-4--each-node)). Step 3's lines are for a node prepared by hand.
-Keep private keys on the machine that made them.
+- `01-manager-prepare` creates the configuration group, the directory trees, and one Git repository per cluster
+  named in the answers file, with the standard layout committed. It writes no configuration and contacts no node.
+- `02-manager-config` renders `clusters.yaml` and `runtime-policy.yaml` from the answers (an empty cluster file
+  when no cluster is named), creates the empty certificate registry the policy names, and creates the
+  validation-only certificate. The files are rendered, not edited by hand, so that what the code reads and what
+  you reviewed cannot drift apart. When `BACKUP_ROOT` is set, it also installs the `haprion-state-backup@.service`
+  template that the backup timer and *Back up now* start. It installs the editing policy too: `sudoedit` rules that
+  let the accounts in `CONFIG_EDITORS` edit `core/haproxy.cfg` and `manual/reservations.yaml` without a root
+  shell, checked by `visudo` before anything is written. With `CONFIG_EDITORS` empty, the step says it skipped
+  that.
+- `03-manager-keys` creates the manager's key pairs. Keep the private keys on the machine that made them.
 
-Check the manager installation as your own user, from the same directory:
+Nodes added in the web interface need nothing from step 3's output: the manager hands the keys over when the node
+joins ([how a node joins](#how-a-node-joins)). Step 3's lines are for a [node prepared by hand](#a-node-prepared-by-hand).
+
+### How a node joins
+
+The node's block holds a one-time key, valid for 24 hours. The manager connects with it once, as `_haprion-join`,
+whose only command is `haprion-node-join`. The manager hands over its keys, the node's host key, the cluster and the
+VIP. The node runs `04-node-prepare` with them: it installs the packages HAProxy and the rest need, the release
+layout, the sudo rules and `node.conf`, and puts sshd on the address the manager came in on. Then the key is
+removed, and the manager asks the node for its status.
+
+Keep the block to yourself until it is used: whoever holds it can join the node to a manager. A node that names who
+may log in (`AllowUsers`, `AllowGroups`) must let `_haprion-join` in. The package warns when it does not.
+
+### Clusters named in the answers file
+
+Clusters are normally created in the web interface. An installation can name them up front instead, in the answers
+file; `02-manager-config` reads the lines once, when it first writes the cluster file:
+
+- `CLUSTERS`: the cluster IDs, lowercase, as you will type them after `-c`.
+- `NODES_<cluster>`: the nodes, as `name:management-hostname` pairs.
+- `VIP_<cluster>`: the virtual address keepalived moves between the nodes.
+- `NODE_PATH_<cluster>`: the subdirectory the cluster's nodes fetch from; the cluster's ID when left out.
+- `CERTIFICATE_IDS_<cluster>` and `DEFAULT_CERTIFICATE_<cluster>`: the certificates the cluster references, and
+  the default one.
+
+[install/answers.example.env](../install/answers.example.env) shows each line with an example.
+
+### A node prepared by hand
+
+A node can be prepared without the web interface and without a join. Put `MANAGER_HOST` (the manager's name as the
+node reaches it), the paths of the two fetch keys, and the lines `03-manager-keys` printed in the node's answers
+file. That is one line per key, `DEPLOY_PUBKEY=...`, `STATUS_PUBKEY=...` and so on, and `MANAGER_HOST_KEY=...`.
+Then run, on the node:
+
+```bash
+sudo /usr/share/haprion-node/install/04-node-prepare answers.env alpha
+```
+
+The step writes each key with `restrict` and its own forced command, and the manager's host key into root's
+`known_hosts`. It prints a block that names the cluster (`haproxy-node-v1:`). Add it the same way as a block from
+a joined node. Drain, maintenance and ready also need the admin socket line in the cluster's `core/haproxy.cfg`; a
+cluster made in the web interface has it.
+
+### Keepalived written by hand
+
+For a cluster created in the web interface, the deploy writes each node's `keepalived.conf`
+([keepalived on the nodes](user-manual.md#keepalived-on-the-nodes)). When a person writes it, it has to meet
+[the keepalived baseline](user-manual.md#haproxy-and-keepalived-baseline):
+
+- both nodes bind the virtual address;
+- both keepalived instances are `BACKUP` with `nopreempt`;
+- the `notify_` lines tell the manager who owns the address.
+
+A mistake in these does not fail loudly. It makes deploys quietly unsafe. Start from
+[`install/examples/keepalived.conf.example`](../install/examples/keepalived.conf.example). `04-node-prepare` checks
+all three and says which one is missing.
+
+### Check the installation
+
+On the manager, as your own user, from the same directory:
 
 ```bash
 ./05-verify answers.env
 ```
+
+It changes nothing. It checks file ownership and modes, that the manager's keys exist, that each cluster resolves,
+and, the check that matters, that every node answers a status request through its own key and forced command. The
+keys belong to root, so it asks for your sudo password once. Without a terminal to ask on, it reports those checks
+as `SKIP`.
+
+Every step can be run again. A failed installation continues when you fix what the step named and run it again.
+Each item reports `ok`, `fixed`, `created` or `written`, so a second run shows what was already right.
+
+### Then prove it
+
+`05-verify` passing means the installation answers. It does not mean it works. Prove two more things, in this
+order, on a cluster that carries no traffic if you have one:
+
+1. Run `haprion-deploy -c alpha` with the nodes already current. It should skip both nodes and change nothing. A
+   run that correctly does nothing tests the ordering logic for real.
+2. Publish a harmless change and deploy it. Confirm the node that does not own the VIP is deployed first, the
+   owner last, and that the VIP does not move.
 
 An installation without the web interface is now complete.
 

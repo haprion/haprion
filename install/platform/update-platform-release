@@ -10,7 +10,7 @@
 #
 # The CLI and node package remain independent installations. This flow checks
 # them before it changes the database; it never installs either one. The first
-# platform installation still uses the numbered steps in README.md.
+# platform installation still uses the numbered steps in docs/install.md.
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -352,9 +352,9 @@ step "Checking prerequisites and rollback-safe schema transition"
 #
 ./check-compatibility --release "$release_id" --before-migration --rollback-to "$previous_id"
 #
-# This package no longer names PostgreSQL as a dependency (26-10-17); the
-# server it brought is marked as installed by hand before apt can count it
-# as unneeded. On a running cluster this changes nothing else.
+# The package does not depend on PostgreSQL, so the server is marked as
+# installed by hand before apt can count it as unneeded. On a running cluster
+# this changes nothing else.
 #
 ./ensure-postgresql
 

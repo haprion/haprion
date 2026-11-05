@@ -26,9 +26,9 @@ need_root
 # raised here when it is taken.
 #
 # A host whose PostgreSQL already runs a cluster of 16 or newer keeps it, from
-# whatever source. Its server package is marked as installed by hand: the UI
-# package named PostgreSQL as a dependency before, and without that mark
-# `apt autoremove` would offer to take the database server away.
+# whatever source. Its server package is marked as installed by hand, since the
+# UI package does not depend on it and `apt autoremove` would otherwise offer
+# to take the database server away.
 #
 PG_MAJOR=18
 PG_OLDEST=16

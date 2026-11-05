@@ -89,6 +89,23 @@ class EachNodeHasOneAddress(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "node-a.example.com for node node-a.*global"):
             peers.addresses(CLUSTER, lookup)  # type: ignore[arg-type]
 
+    def test_the_refusal_names_the_address_whatever_way_it_is_written(self) -> None:
+        # V05: an IPv4 link-local address written as IPv6 is not "an IPv6 address".
+        for written, shown in (
+            ("fe80::1", r"fe80::1"),
+            ("::ffff:a9fe:101", r"::ffff:169\.254\.1\.1"),
+        ):
+            with self.subTest(written=written):
+                lookup = self.lookup(
+                    {"node-a.example.com": answer(written), "192.0.2.2": answer("192.0.2.2")}
+                )
+                with self.assertRaises(ConfigError) as caught:
+                    peers.addresses(CLUSTER, lookup)  # type: ignore[arg-type]
+                self.assertRegex(
+                    str(caught.exception), rf"gives the link-local address {shown}; .*global"
+                )
+                self.assertNotIn("IPv6", str(caught.exception))
+
     def test_an_address_is_written_in_its_plain_form(self) -> None:
         lookup = self.lookup(
             {

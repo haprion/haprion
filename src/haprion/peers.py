@@ -60,14 +60,13 @@ def addresses(cluster: Cluster, lookup: Lookup = socket.getaddrinfo) -> tuple[tu
         # interface, and the first interface that carries it is not always the
         # one the node means (XY03).
         #
-        if any(
-            ipaddress.ip_address(address).is_link_local and ":" in address for address in unique
-        ):
-            raise ConfigError(
-                f"{node.mgmt_host} for node {node.name} gives a link-local IPv6 address; the "
-                "metrics exporter, shared counters and keepalived need a global one - write a "
-                "global address"
-            )
+        for address in unique:
+            if ipaddress.ip_address(address).is_link_local and ":" in address:
+                raise ConfigError(
+                    f"{node.mgmt_host} for node {node.name} gives the link-local address "
+                    f"{address}; the metrics exporter, shared counters and keepalived need a "
+                    "global one - write a global address"
+                )
         if len(unique) != 1:
             shown = ", ".join(unique) if unique else "no address"
             raise ConfigError(

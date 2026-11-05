@@ -286,6 +286,13 @@ class ChangingTheObject(unittest.TestCase):
         with self.assertRaises(ValueError):
             waf.with_exception("shop", SHOP, {"rule": 942100})
 
+    def test_a_rule_that_does_not_detect_cannot_be_allowed_from_the_dialog(self) -> None:
+        # B450, X02: a hand-written rule= in the URL took any six-digit ID.
+        for rule in (901130, 901140, 949110, 959100, 980170):
+            with self.subTest(rule), self.assertRaises(ValueError) as caught:
+                waf.exception_for("object", rule=rule, field="", paths=[], by="admin", at="")
+            self.assertIn("turn the engine off", str(caught.exception))
+
     def test_a_choice_needs_what_it_names(self) -> None:
         for scope, field, paths in (("field", "", []), ("paths", "", []), ("nowhere", "", ["/a"])):
             with self.subTest(scope=scope), self.assertRaises(ValueError):

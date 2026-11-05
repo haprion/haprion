@@ -811,6 +811,20 @@ class TheWafEngineOnAnObject(unittest.TestCase):
             with self.subTest(exception):
                 self.assertIn(word, self.refused(f"waf: {{exceptions: [{exception}]}}"))
 
+    def test_only_the_detecting_rule_files_can_be_allowed(self) -> None:
+        # B450, X02: an exception for 901130 or 901140 let SQLi, XSS and LFI through
+        # with 200 and no finding at all.
+        for rule in (901130, 901140, 901450, 900000, 900510, 910100, 945000, 949110, 957000):
+            with self.subTest(rule), self.assertRaises(ModelError) as caught:
+                self.load(f"waf: {{exceptions: [{{rule: {rule}}}]}}")
+            self.assertIn("turn the engine off", str(caught.exception))
+        for rule in (959100, 960000, 980170, 999999):
+            with self.subTest(rule), self.assertRaises(ModelError):
+                self.load(f"waf: {{exceptions: [{{rule: {rule}}}]}}")
+        for rule in (911100, 920350, 944999, 950100, 956999):
+            with self.subTest(rule):
+                self.load(f"waf: {{exceptions: [{{rule: {rule}}}]}}")
+
     def test_the_same_rule_on_the_same_scope_twice_is_refused(self) -> None:
         self.assertIn(
             "twice",

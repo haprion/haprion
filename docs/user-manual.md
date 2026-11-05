@@ -1758,8 +1758,9 @@ catches more attacks, and also raises more false alarms.
   every path. Without either, it is off on the whole object.
 - A field name with characters other than letters, digits and `_ . - [ ]` cannot be named. Except the path
   instead.
-- The rules that decide and report rather than detect (CRS 949xxx, 959xxx, 980xxx) cannot be excepted:
-  that would turn the engine off.
+- Only the rules that detect can be excepted: CRS 911xxx to 944xxx for requests and 950xxx to 956xxx for
+  responses. The rules around them (setup in 901xxx, the decisions in 949xxx and 959xxx, the report in
+  980xxx) cannot be: that would turn the engine off.
 - `exclude_rules` is not accepted; it is refused with a message that says to use `exceptions`.
 
 *Allow*, on *WAF logs*, makes an exception and takes an optional *Reason*. The exceptions list shows the

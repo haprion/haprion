@@ -23,6 +23,7 @@ from haprion.proxy_model import (
     dump_document,
     load_proxy,
     read_document,
+    waf_rule_refusal,
 )
 
 from haprion_ui import objects
@@ -786,6 +787,9 @@ def exception_for(
 ) -> dict[str, Any]:
     """The exception a choice in the Allow dialog makes, with why where somebody said."""
 
+    refusal = waf_rule_refusal(rule)
+    if refusal:
+        raise ValueError(f"Rule {refusal}")
     if scope not in SCOPES or (scope.startswith("field") and not field):
         raise ValueError("choose where to let it through")
     chosen = sorted(set(paths))

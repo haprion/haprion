@@ -2959,17 +2959,20 @@ def _body_size(value: Any, location: str) -> int | None:
 WAF_MODES = ("log", "block", "off")
 WAF_ENGINE_ERRORS = ("allow", "deny")
 #
-# The CRS rule ranges an object may turn off: the attack rules the engine
-# reports (91xxxx-95xxxx), and the scoring and protocol rules around them.
-# Below 900000 are Coraza's own and the installation's; turning those off is
-# not a false alarm being taken away.
+# The CRS rule files an exception may name: the ones that detect, 911xxx to
+# 944xxx for requests and 950xxx to 956xxx for responses. A whitelist (B450,
+# X02): the files around them are the engine's own machinery - 901 sets the
+# variables the rest count on (an exception for 901130 or 901140 let SQL
+# injection, XSS and file inclusion through with 200 and no finding), 900000
+# and 900510 are the installation's, and 949, 959 and 980 decide and report.
+# Letting one of those through is not taking a false alarm away.
 #
+WAF_DETECTING_FILES = (*range(911, 945), *range(950, 957))
 WAF_RULE_IDS = range(900000, 1000000)
 #
 # The rule files that decide and report rather than detect: 949 refuses a
 # request whose score crossed the threshold, 959 the same for responses, 980
-# reports. Letting one of them through is not taking a false alarm away; it is
-# turning the engine off where it applies.
+# reports. Neither a finding to allow; the traffic record carries them.
 #
 WAF_DECIDING_RULES = (949, 959, 980)
 MAX_WAF_EXCEPTIONS = 200
@@ -3031,17 +3034,26 @@ def _waf_path(value: Any, location: str) -> str:
     return value
 
 
+def waf_rule_refusal(rule: int) -> str:
+    """Why an exception may not name this rule, or an empty string when it may."""
+
+    if rule // 1000 in WAF_DETECTING_FILES:
+        return ""
+    return (
+        f"{rule} does not detect an attack, so it cannot be allowed: only rules 911xxx to 944xxx "
+        "and 950xxx to 956xxx can; letting it through would turn the engine off"
+    )
+
+
 def _waf_exception(value: Any, location: str) -> WafException:
     data = _mapping(value, location)
     _only_keys(data, {"rule", "field", "paths", "by", "at", "reason"}, location)
     rule = data.get("rule")
     if isinstance(rule, bool) or not isinstance(rule, int) or rule not in WAF_RULE_IDS:
         raise ModelError(f"{location}.rule must be a CRS rule ID, 900000 to 999999")
-    if rule // 1000 in WAF_DECIDING_RULES:
-        raise ModelError(
-            f"{location}.rule {rule} decides or reports rather than detects; "
-            "letting it through would turn the engine off"
-        )
+    refusal = waf_rule_refusal(rule)
+    if refusal:
+        raise ModelError(f"{location}.rule {refusal}")
     field = data.get("field", "")
     if not isinstance(field, str) or (field and not waf_field(field)):
         raise ModelError(

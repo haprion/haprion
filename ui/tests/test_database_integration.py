@@ -7382,6 +7382,18 @@ class AnUnchangedObjectsListing(unittest.TestCase):
         with psycopg.connect(poller) as connection:
             db.record_cluster_objects(connection, cluster="fp-a", outcome="done", result=listing)
             connection.commit()
+            #
+            # D11-03: a listing whose search rows were never written (or whose
+            # write failed) is not "unchanged"; it is read again.
+            #
+            self.assertIsNone(db.objects_fingerprint(connection, "fp-a"))
+            db.replace_search_entries(
+                connection,
+                cluster="fp-a",
+                source="objects",
+                entries=search_index.entries_for("objects", "fp-a", listing) or [],
+            )
+            connection.commit()
             self.assertEqual(db.objects_fingerprint(connection, "fp-a"), "f" * 64)
             self.assertIsNone(db.objects_fingerprint(connection, "fp-none"))
             before = next(r for r in db.cluster_objects(connection) if r.cluster == "fp-a")

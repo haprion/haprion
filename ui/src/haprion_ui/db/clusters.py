@@ -1143,12 +1143,22 @@ def record_cluster_objects(
 
 
 def objects_fingerprint(connection: Connection[Any], cluster: str) -> str | None:
-    """The fingerprint of the objects listing the poller holds, if it holds one."""
+    """The fingerprint of the objects listing the poller holds, if it holds one.
+
+    None also when the listing has objects and the search holds none of them:
+    an `unchanged` answer only confirms the listing, so rows whose write failed
+    would otherwise stay missing until the objects change (D11-03).
+    """
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select result ->> 'fingerprint' from cluster_objects "
-            " where cluster = %(cluster)s and outcome = 'done'",
+            "select result ->> 'fingerprint' from cluster_objects o "
+            " where o.cluster = %(cluster)s and o.outcome = 'done' "
+            "   and (coalesce(jsonb_array_length("
+            "            case when jsonb_typeof(o.result -> 'objects') = 'array' "
+            "                 then o.result -> 'objects' end), 0) = 0 "
+            "        or exists (select 1 from search_entry s "
+            "                    where s.cluster = o.cluster and s.source = 'objects'))",
             {"cluster": cluster},
         )
         row = cursor.fetchone()

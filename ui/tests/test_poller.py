@@ -878,6 +878,33 @@ class TheSearchIndexIsKeptBesideTheReadings(unittest.TestCase):
         self.assertEqual([(w["cluster"], w["source"]) for w in written], [("alpha", "objects")])
         self.assertEqual({e.value for e in written[0]["entries"]}, {"shop", "shop.example.com"})
 
+    def test_a_cluster_list_that_was_not_read_prunes_nothing(self) -> None:
+        # D11-03: the fallback may be ui.toml's empty list, and pruning against
+        # it removed every cluster's rows.
+        with (
+            unittest.mock.patch("haprion_ui.db.prune_search_entries") as prune,
+            unittest.mock.patch("haprion_ui.db.replace_search_entries"),
+        ):
+            poller.index_cluster_list(self.Pool(), (), listed=False)
+            self.assertEqual(prune.call_count, 0)
+            poller.index_cluster_list(self.Pool(), ("alpha",), listed=True)
+            self.assertEqual(prune.call_count, 1)
+
+    def test_the_cluster_list_at_start_falls_back_on_the_stored_one(self) -> None:
+        with unittest.mock.patch("haprion_ui.db.cluster_list", return_value=("alpha", "beta")):
+            self.assertEqual(
+                poller.clusters_at_start(self.Pool(), None, ("configured",)), ("alpha", "beta")
+            )
+            self.assertEqual(poller.clusters_at_start(self.Pool(), ("gamma",), ()), ("gamma",))
+        with unittest.mock.patch("haprion_ui.db.cluster_list", return_value=None):
+            self.assertEqual(
+                poller.clusters_at_start(self.Pool(), None, ("configured",)), ("configured",)
+            )
+        with unittest.mock.patch("haprion_ui.db.cluster_list", side_effect=RuntimeError("down")):
+            self.assertEqual(
+                poller.clusters_at_start(self.Pool(), None, ("configured",)), ("configured",)
+            )
+
     def test_a_failed_reading_leaves_the_last_rows_alone(self) -> None:
         self.assertEqual(self.index("objects", {"outcome": "failed", "result": {}}), [])
         self.assertEqual(self.index("objects", {"outcome": "unavailable", "result": {}}), [])

@@ -653,12 +653,17 @@ def _index(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any
         logger.warning("cluster %s %s: search not updated: %s", cluster, source.operation, exc)
 
 
-def index_cluster_list(pool: Any, clusters: tuple[str, ...]) -> None:
-    """The clusters themselves in the search, and nothing left of removed ones."""
+def index_cluster_list(pool: Any, clusters: tuple[str, ...], *, listed: bool = True) -> None:
+    """The clusters themselves in the search, and nothing left of removed ones.
+
+    Removed ones are pruned only against a list read this cycle: the fallback
+    may be an empty one, and pruning against it emptied the search (D11-03).
+    """
 
     try:
         with pool.connection() as connection:
-            db.prune_search_entries(connection, clusters)
+            if listed:
+                db.prune_search_entries(connection, clusters)
             for cluster in clusters:
                 db.replace_search_entries(
                     connection,
@@ -669,6 +674,27 @@ def index_cluster_list(pool: Any, clusters: tuple[str, ...]) -> None:
             connection.commit()
     except Exception as exc:  # noqa: BLE001 - as above
         logger.warning("the search's cluster list was not updated: %s", exc)
+
+
+def clusters_at_start(
+    pool: Any, listed: tuple[str, ...] | None, configured: tuple[str, ...]
+) -> tuple[str, ...]:
+    """The clusters to begin with: the list read, else the one stored, else the configured one.
+
+    The stored list is the last one the poller read from the cluster file; the
+    configured one is what the installation shipped with, an empty list as a
+    rule (D11-03).
+    """
+
+    if listed is not None:
+        return listed
+    try:
+        with pool.connection() as connection:
+            stored = db.cluster_list(connection)
+    except Exception as exc:  # noqa: BLE001 - the configured list is the last resort
+        logger.warning("the stored cluster list could not be read: %s", exc)
+        return configured
+    return stored if stored is not None else configured
 
 
 def read_cluster_list(
@@ -1193,10 +1219,10 @@ def main(argv: list[str] | None = None) -> int:
     #
     installed = importlib.metadata.version("haprion-ui")
     listed_at_start = read_cluster_list()
-    known = listed_at_start if listed_at_start is not None else config.clusters
 
     pool = db.pool(config.database, min_size=1, max_size=4)
     pool.open(wait=True, timeout=10)
+    known = clusters_at_start(pool, listed_at_start, config.clusters)
     #
     # Its own connection, held for the process's life, for the same reason the
     # worker's listener has one: the pool exists for short queries, and lending
@@ -1282,7 +1308,7 @@ def main(argv: list[str] | None = None) -> int:
                         else:
                             db.touch_cluster_list(connection, known)
                         connection.commit()
-                    index_cluster_list(pool, known)
+                    index_cluster_list(pool, known, listed=listed is not None)
                     #
                     # The clusters are read by their own threads, each at its
                     # own pace; this loop is the manager's cycle, one interval,

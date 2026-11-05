@@ -294,6 +294,11 @@ class Run:
         self.prefix = f"haprion-it-{distribution.name.replace('.', '')}"
         self.network = self.prefix
         self.step = 0
+        #
+        # Extra `podman run` arguments per machine: the opt-in scenarios hold
+        # the machines to the sizes docs/install.md gives. Empty for a release run.
+        #
+        self.limits: dict[str, tuple[str, ...]] = {}
 
     # --- the machines -------------------------------------------------------
 
@@ -371,6 +376,7 @@ class Run:
                 self.address(role),
                 "--privileged",
                 "--systemd=always",
+                *self.limits.get(role, ()),
                 image,
             )
         for role in ("mgr", *NODES):
@@ -1731,6 +1737,382 @@ def run_one(
 
 
 #
+# Opt-in scenarios (B481): what no release run proves and a release run should
+# not grow by. `--scenario scale|readdress|faults` installs the release as
+# run_one does, then does only that. Sizes are the product's own: the manager
+# 2 vCPU and 4 GiB (docs/install.md, "Manager"), a node 1 vCPU and 1 GiB.
+#
+MANAGER_SIZE = ("--cpus", "2", "--memory", "4g")
+NODE_SIZE = ("--cpus", "1", "--memory", "1g")
+#
+# The objects of the scale scenario: the template of
+# test_ten_thousand_generated_objects_pass_the_candidate_path (B475), with the
+# backends pointing at the test's own backend and the health checks off - ten
+# thousand TCP checks every two seconds would measure the checks, not the
+# configuration. Written on the manager, one file each, as `haprion-objects
+# apply` reads them.
+#
+SCALE_OBJECTS = 10_000
+SCALE_GENERATE = """\
+import pathlib, sys
+backend, count = sys.argv[1], int(sys.argv[2])
+template = (
+    "schema: 1\\nname: s{i}\\nhostnames: [s{i}.example.com, www-s{i}.example.com]\\n"
+    "listen:\\n  protocol: http\\nrate_limit:\\n  window: 10s\\n  max_requests: 100\\n"
+    "routes:\\n- path: /\\n  backend: web{i}\\n- path: /api\\n  backend: api{i}\\n"
+    "  strip_prefix: /api\\n  add_prefix: /v2\\n- path: /health\\n  match: exact\\n"
+    "  backend: web{i}\\nbackends:\\n  web{i}:\\n    balance: roundrobin\\n"
+    "    health:\\n      type: disabled\\n    servers:\\n    - host: " + backend + "\\n"
+    "      port: 9080\\n    - host: " + backend + "\\n      port: 9080\\n  api{i}:\\n"
+    "    balance: roundrobin\\n    health:\\n      type: disabled\\n    servers:\\n"
+    "    - host: " + backend + "\\n      port: 9080\\n"
+)
+root = pathlib.Path("/root/install/scale")
+root.mkdir(parents=True, exist_ok=True)
+for i in range(count):
+    (root / f"s{i}.yaml").write_text(template.format(i=i))
+"""
+#
+# Reads the machine's memory while a step runs, as its control group has it:
+# `memory.current` (with the page cache, which the kernel gives back) and the
+# part it does not give back, anonymous memory plus the kernel's own. The
+# group's `memory.peak` cannot be reset from inside a container, so a step's
+# peak is sampled.
+#
+SAMPLER = """\
+import os, time
+top = [0, 0]
+def kib(text, key):
+    for line in text.splitlines():
+        name, _, value = line.partition(" ")
+        if name == key:
+            return int(value)
+    return 0
+while not os.path.exists("/run/itest-peak.stop"):
+    now = int(open("/sys/fs/cgroup/memory.current").read())
+    stat = open("/sys/fs/cgroup/memory.stat").read()
+    held = kib(stat, "anon") + kib(stat, "kernel") + kib(stat, "shmem")
+    top = [max(top[0], now), max(top[1], held)]
+    time.sleep(0.05)
+open("/run/itest-peak.out", "w").write(f"{top[0]} {top[1]}")
+"""
+
+
+@dataclass
+class Measured:
+    """One step of a scenario: its wall time and, per machine, the peaks."""
+
+    title: str
+    seconds: float
+    peaks: dict[str, tuple[int, int]]
+
+
+def mib(value: int) -> str:
+    return f"{value / 1048576:.0f}"
+
+
+class Scenario:
+    """The installation a scenario starts from, and the tools it shares."""
+
+    def __init__(self, run: Run, step: Callable[[str, Callable[[], Any]], Any]) -> None:
+        self.run = run
+        self.step = step
+        self.measurements: list[Measured] = []
+        self.previous: Path | None = None
+
+    def bring_up(self, manager_files: list[Path], node_files: list[Path], *, sized: bool) -> None:
+        """A manager and two nodes, installed, joined, an object deployed to both."""
+
+        run = self.run
+        if sized:
+            run.limits = {"mgr": MANAGER_SIZE, **{node: NODE_SIZE for node in NODES}}
+        image = self.step("an empty server image", run.image)
+        self.step("a manager and two nodes booted", lambda: run.start(image))
+        self.step(
+            "the manager: packages, haprion-setup", lambda: run.install_manager(manager_files)
+        )
+        blocks = [
+            self.step(
+                f"{role}: the package, and the block it printed",
+                functools.partial(run.prepare_node, role, node_files),
+            )
+            for role in NODES
+        ]
+        self.step("the cluster with its first node", lambda: run.create_cluster(blocks[0]))
+        self.step("the first deploy rolls out version 1", run.first_deploy_is_version_one)
+        self.step(f"{NODES[1]} added", lambda: run.add_node(NODES[1], blocks[1]))
+
+        def serving() -> None:
+            run.publish()
+            output = run.deploy()
+            if "RESULT: OK" not in output:
+                raise Failed(f"the deploy of the first object did not succeed:\n{output}")
+            run.wait_for_one_holder()
+            run.answers_on_the_vip()
+
+        self.step("an object published and deployed to both nodes", serving)
+
+    def sampling(self, roles: tuple[str, ...]) -> None:
+        for role in roles:
+            self.run.on(role, "rm -f /run/itest-peak.stop /run/itest-peak.out")
+            self.run.on(role, "cat > /root/itest-sampler.py", stdin=SAMPLER)
+            self.run.podman(
+                "exec", "-d", self.run.container(role), "python3", "-I", "/root/itest-sampler.py"
+            )
+
+    def sampled(self, roles: tuple[str, ...]) -> dict[str, tuple[int, int]]:
+        peaks = {}
+        for role in roles:
+            self.run.on(role, "touch /run/itest-peak.stop")
+            _, found = self.run.on(
+                role,
+                "for _ in $(seq 50); do test -s /run/itest-peak.out && break; sleep 0.2; done; "
+                "cat /run/itest-peak.out",
+            )
+            current, held = (int(part) for part in found.split())
+            peaks[role] = (current, held)
+        return peaks
+
+    def measure(
+        self, title: str, roles: tuple[str, ...], action: Callable[[], T]
+    ) -> tuple[T, Measured]:
+        """`action`, with the wall time it took and each machine's peak memory while it ran."""
+
+        self.sampling(roles)
+        started = time.monotonic()
+        try:
+            result = action()
+        finally:
+            seconds = time.monotonic() - started
+            peaks = self.sampled(roles)
+        measured = Measured(title, seconds, peaks)
+        self.measurements.append(measured)
+        said = ", ".join(f"{role} {mib(held)} MiB" for role, (_, held) in peaks.items())
+        print(f"\n      {title}: {seconds:.1f} s; peak {said}", end=" ... ")
+        return result, measured
+
+    def table(self) -> str:
+        roles = [
+            role for role in ("mgr", *NODES) if any(role in m.peaks for m in self.measurements)
+        ]
+        header = f"  {'step':<48} {'seconds':>8}" + "".join(
+            f" {role + ' MiB':>14}" for role in roles
+        )
+        lines = [header, "  " + "-" * (len(header) - 2)]
+        for one in self.measurements:
+            cells = "".join(
+                f" {mib(one.peaks[role][1]) + ' (' + mib(one.peaks[role][0]) + ')':>14}"
+                if role in one.peaks
+                else f" {'':>14}"
+                for role in roles
+            )
+            lines.append(f"  {one.title:<48} {one.seconds:>8.1f}{cells}")
+        lines.append("  Memory: anonymous + kernel + shared (memory.current with the page cache).")
+        return "\n".join(lines)
+
+
+def scale_steps(scenario: Scenario) -> None:
+    """10 000 objects applied, published, deployed to both nodes and answering on the VIP (B481)."""
+
+    run = scenario.run
+    step = scenario.step
+    roles = ("mgr", *NODES)
+
+    def generated() -> None:
+        run.on(
+            "mgr", "python3 -I - " + f"{run.address('mgr')} {SCALE_OBJECTS}", stdin=SCALE_GENERATE
+        )
+        _, found = run.on("mgr", "ls /root/install/scale | wc -l")
+        if int(found) != SCALE_OBJECTS:
+            raise Failed(f"{found.strip()} object files, not {SCALE_OBJECTS}")
+
+    step(f"{SCALE_OBJECTS} object files written on the manager", generated)
+
+    def checked() -> None:
+        scenario.measure(
+            "apply --check",
+            ("mgr",),
+            lambda: run.on(
+                "mgr", f"haprion-objects apply -c {CLUSTER} /root/install/scale --check"
+            ),
+        )
+
+    step("haprion-objects apply --check: the difference, refused or passed", checked)
+
+    def applied() -> None:
+        scenario.measure(
+            "apply (batches of 64, each a version)",
+            ("mgr",),
+            lambda: run.on(
+                "mgr", f"haprion-objects apply -c {CLUSTER} /root/install/scale -m 'scale test'"
+            ),
+        )
+
+    step("haprion-objects apply: the objects published", applied)
+
+    def again() -> None:
+        _, said = run.on("mgr", f"haprion-objects apply -c {CLUSTER} /root/install/scale --json")
+        if '"changed": false' not in said.replace('":false', '": false'):
+            raise Failed(f"applying the same files again changed something:\n{said[-2000:]}")
+
+    step("the same files applied again change nothing", again)
+
+    def publish_job() -> None:
+        header = run.api_token("scale-write", "--level write", f"--cluster {CLUSTER}")
+        _, shown = run.on("mgr", f"haprion-objects -c {CLUSTER} --show s5000")
+        document = shown.rstrip("\n") + "\ndescription: changed through the API\n"
+        until = time.monotonic() + 180
+        while True:
+            status, answer, _ = run.api(
+                header, "PUT", f"/clusters/{CLUSTER}/objects/s5000", document
+            )
+            if status == 200 or time.monotonic() > until or status not in (404, 409):
+                break
+            time.sleep(5)
+        if status != 200:
+            raise Failed(f"saving s5000 through the API answered {status}:\n{answer}")
+
+        def publish() -> dict[str, Any]:
+            job = run.api_write(
+                header, "POST", f"/clusters/{CLUSTER}/publish", '{"comment": "scale"}', 300
+            )
+            return run.api_job(header, job, 900)
+
+        finished, _ = scenario.measure(
+            "publish job through the API (full candidate)", ("mgr",), publish
+        )
+        moments = [
+            datetime.fromisoformat(finished[field])
+            for field in ("queued_at", "started_at", "finished_at")
+        ]
+        print(
+            f"(queued {(moments[1] - moments[0]).total_seconds():.1f} s, "
+            f"ran {(moments[2] - moments[1]).total_seconds():.1f} s)",
+            end=" ",
+        )
+        run.on("mgr", "haprion-api-token revoke scale-write && rm -f /root/api-scale-write.*")
+
+    step(
+        "one change saved and published as a job: the sandbox checks of the whole candidate",
+        publish_job,
+    )
+
+    def deployed() -> None:
+        output, _ = scenario.measure("haprion-deploy to both nodes", roles, run.deploy)
+        order = re.findall(r"^=== Deploy: (\S+) ===$", output, re.MULTILINE)
+        if order != list(NODES) or "RESULT: OK" not in output:
+            raise Failed(f"the deploy did not end OK on both nodes:\n{output[-3000:]}")
+        _, status = run.on("mgr", f"haprion-status -c {CLUSTER}", check=False)
+        print(f"\n{status}", end="")
+
+    step("haprion-deploy rolls the published version out to both nodes", deployed)
+
+    def reloaded() -> None:
+        for role in NODES:
+            _, count = run.on(
+                role, "grep -c '^frontend ' /etc/haproxy/conf.d/*frontends.cfg || true"
+            )
+            _, size = run.on(role, "du -sh --apparent-size /etc/haproxy/ | cut -f1")
+            print(
+                f"\n      {role}: frontends {count.strip()}, configuration {size.strip()}", end=" "
+            )
+            (_, said), _ = scenario.measure(
+                f"systemctl reload haproxy on {role}",
+                (role,),
+                functools.partial(
+                    run.on,
+                    role,
+                    "systemctl reload haproxy && systemctl is-active haproxy "
+                    "&& ps -o rss= -C haproxy | sort -n | tail -1 | sed 's/^/haproxy rss KiB: /'",
+                ),
+            )
+            print(f"({' '.join(said.split())})", end=" ")
+            _, state = run.on(role, "systemctl is-active haproxy keepalived")
+            if state.split() != ["active", "active"]:
+                raise Failed(f"{role} after the reload:\n{state}")
+
+    step("HAProxy reloads on each node with the whole configuration", reloaded)
+
+    def answering() -> None:
+        sample = list(range(0, SCALE_OBJECTS, SCALE_OBJECTS // 20))[:19] + [SCALE_OBJECTS - 1]
+        wrong = []
+        for i in sample:
+            _, body = run.on(
+                "mgr",
+                f"curl -sS --max-time 5 -H 'Host: s{i}.example.com' http://{run.address('vip')}/",
+                check=False,
+            )
+            if BACKEND_BODY not in body:
+                wrong.append(f"s{i}: {body.strip()[:80]!r}")
+        if wrong:
+            raise Failed("objects that did not answer on the virtual address:\n" + "\n".join(wrong))
+        print(f"({len(sample)} objects over the range)", end=" ")
+
+    step("20 objects spread over the range answer on the virtual address", answering)
+
+    def converged() -> None:
+        output = run.deploy()
+        if output.count("already runs this version; nothing to do") != len(NODES):
+            raise Failed(f"a second deploy did not skip the current nodes:\n{output[-3000:]}")
+
+    step("a second deploy changes nothing", converged)
+
+
+SCENARIOS: dict[str, Callable[[Scenario], None]] = {"scale": scale_steps}
+
+
+def run_scenario(
+    name: str,
+    distribution: Distribution,
+    packages: Path,
+    previous: Path | None,
+    logs: Path,
+    keep: bool,
+) -> bool:
+    """One opt-in scenario on a fresh installation of these packages (B481)."""
+
+    manager_files, node_files = release_files(packages, distribution)
+    logs.mkdir(parents=True, exist_ok=True)
+    run = Run(distribution, logs)
+    steps: list[str] = []
+
+    def step(title: str, action: Callable[[], T]) -> T:
+        run.step += 1
+        print(f"  [{distribution.name} {name} {run.step:2d}] {title} ... ", end="", flush=True)
+        started = time.monotonic()
+        result = action()
+        print(f"ok ({time.monotonic() - started:.0f} s)")
+        steps.append(title)
+        return result
+
+    scenario = Scenario(run, step)
+    scenario.previous = previous
+    try:
+        scenario.bring_up(manager_files, node_files, sized=name == "scale")
+        SCENARIOS[name](scenario)
+    except Failed as failure:
+        print("FAILED")
+        print()
+        print(str(failure))
+        if scenario.measurements:
+            print("\n" + scenario.table())
+        run.save_logs()
+        print(f"\n  The whole output of every machine is in {logs}")
+        if keep:
+            print(f"  The machines are left running: podman exec -it {run.container('mgr')} bash")
+        else:
+            run.remove()
+        return False
+    run.save_logs()
+    if not keep:
+        run.remove()
+    if scenario.measurements:
+        print("\n" + scenario.table() + "\n")
+    print(f"  [{distribution.name} {name}] passed: {len(steps)} steps")
+    return True
+
+
+#
 # Where the update's marker is while it is under way (update-platform-release),
 # the drop-in that makes the web refuse every release but one, and the one that
 # makes it refuse them all.
@@ -2080,6 +2462,11 @@ def main() -> int:
     parser.add_argument("--distribution", choices=[*DISTRIBUTIONS, "all"], default="all")
     parser.add_argument("--logs", type=Path)
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument(
+        "--scenario",
+        choices=sorted(SCENARIOS),
+        help="instead of the release run: one opt-in scenario (B481), with --packages",
+    )
     #
     # A release's files are tested as an update as well, or it is said that
     # they are not: the chain is written per release, and an update left out
@@ -2095,8 +2482,26 @@ def main() -> int:
         parser.error("--packages needs --upgrade-from <previous release's files> or --no-upgrade")
     if args.upgrade_from and not args.packages:
         parser.error("--upgrade-from updates to --packages")
+    if args.scenario and not args.packages:
+        parser.error("--scenario installs --packages")
     logs = args.logs or Path(tempfile.mkdtemp(prefix="haprion-install-test-"))
     chosen = list(DISTRIBUTIONS) if args.distribution == "all" else [args.distribution]
+    if args.scenario:
+        outcomes = {
+            f"{name} {args.scenario}": run_scenario(
+                args.scenario,
+                DISTRIBUTIONS[name],
+                args.packages.resolve(),
+                args.upgrade_from.resolve() if args.upgrade_from else None,
+                logs / f"{name}-{args.scenario}",
+                args.keep,
+            )
+            for name in chosen
+        }
+        print()
+        for name, passed in outcomes.items():
+            print(f"  {name}: {'PASSED' if passed else 'FAILED'}")
+        return 0 if all(outcomes.values()) else 1
     results = {
         name: run_one(
             DISTRIBUTIONS[name],

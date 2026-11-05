@@ -25,6 +25,7 @@ from typing import Any
 from unittest import mock
 
 from haprion import exit_codes
+from haprion.config import ConfigError
 
 from haprion_ui import api
 from haprion_ui.app import create_app
@@ -484,6 +485,14 @@ def _invoke(program: str, argv: list[str]) -> tuple[int, str, str]:
         mock.patch("subprocess.run", return_value=CompletedProcess([], 1, "", "")),
         mock.patch("sys.stdin", io.StringIO()),
         mock.patch("os.geteuid", return_value=1000),
+        #
+        # Not this machine's configuration: a call that gets as far as the runtime
+        # policy finds it unreadable, as it is on a host with none.
+        #
+        mock.patch(
+            "haprion.config._secure_yaml",
+            side_effect=ConfigError("no runtime policy here", exit_code=exit_codes.UNAVAILABLE),
+        ),
     ):
         try:
             returned = importlib.import_module(module).main(argv)

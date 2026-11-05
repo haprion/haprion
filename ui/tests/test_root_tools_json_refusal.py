@@ -174,7 +174,7 @@ class ADatabaseErrorIsToldApart(unittest.TestCase):
             mock.patch.object(
                 config,
                 "load",
-                return_value=SimpleNamespace(dns_profiles_public_key="k"),
+                return_value=SimpleNamespace(dns_profiles_public_key="k", management_writes=False),
             ),
             mock.patch.object(profile_apply, "read_public_key"),
             mock.patch.object(profile_apply, "load_environment"),

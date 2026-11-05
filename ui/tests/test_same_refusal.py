@@ -80,7 +80,7 @@ class ADocumentThatBreaksARuleIsRefusedByBoth(ChangesTestCase):
         self.assertEqual(
             (terminal.exception.exit_code, response.status_code), (exit_codes.REFUSED, 400)
         )
-        self.assertIn("not an object name", str(terminal.exception))
+        self.assertIn("not a usable object name", str(terminal.exception))
 
 
 def status_without(feature: str, *, answered: bool = True) -> dict[str, object]:

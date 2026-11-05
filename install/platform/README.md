@@ -196,7 +196,7 @@ always comes from a named delivery.
 **The schema starts at a baseline**, `0115`, one migration that makes all of
 it, numbered as the last of the migrations it holds. A database from before it
 is refused by `check-compatibility` rather than migrated: one from 0.99.0 to
-0.99.12 is updated to 0.99.13 first, and one from before 0.99 is made afresh.
+0.99.10 is updated to 0.99.13 first, and one from before 0.99 is made afresh.
 No migration has a
 downgrade, and `./migrate downgrade` is refused: a schema only goes forward.
 

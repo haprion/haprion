@@ -8180,7 +8180,7 @@ the migration when either is too old.
 Haprion 0.99.0 to 0.99.13 built one migration at a time and keeps the last one's number, so a
 database 0.99.13 left is on it already and an update from there changes nothing in the schema. A
 database from before is not migrated: the check refuses it before anything runs. One from 0.99.0 to
-0.99.12 is updated to 0.99.13 first ([Updating](install.md#updating)); one from before 0.99 is
+0.99.10 is updated to 0.99.13 first ([Updating](install.md#updating)); one from before 0.99 is
 installed afresh ([Removing](install.md#removing)). A schema is never taken
 back either. No migration has a downgrade, and `migrate downgrade` is refused; the way back from an
 update is [Rolling a release back](#rolling-a-release-back) or the dump taken before it.

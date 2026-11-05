@@ -112,7 +112,9 @@ if [[ ! -f "$SSHD_LISTEN" || -n "${STUCK:-}" ]]; then echo "LISTEN 0 4096 0.0.0.
     "ip": """#!/bin/bash
 case "$*" in
     *"route get"*) echo "192.0.2.5 dev eth0 src ${SOURCE:-192.0.2.11} uid 0" ;;
-    *"addr show"*) echo "2: eth0    inet 192.0.2.11/24 brd 192.0.2.255 scope global eth0" ;;
+    *"addr show"*)
+        echo "2: eth0    inet 192.0.2.11/24 brd 192.0.2.255 scope global eth0"
+        echo "2: eth0    inet 192.0.2.13/24 brd 192.0.2.255 scope global secondary eth0" ;;
 esac
 """,
     "sleep": "#!/bin/sh\nexit 0\n",
@@ -143,8 +145,11 @@ class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
                 f'SSHD_LISTEN="{self.drop_in}"',
                 function(script, "sshd_restart"),
                 'SSHD_LISTEN_BEFORE=""',
+                'SSHD_RESTARTED=""',
                 function(script, "sshd_put_back"),
                 function(script, "sshd_listen_file_stale"),
+                function(script, "sshd_listen_file_kept"),
+                function(script, "sshd_no_address"),
                 function(script, "sshd_off_the_virtual_address"),
                 "sshd_off_the_virtual_address",
             )
@@ -252,6 +257,43 @@ class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
         run = self.run_step(REFUSE="192.0.2.11")
         self.assertEqual(run.returncode, 1)
         self.assertIn("put back as they were", run.stderr)
+        self.assertEqual(self.drop_in.read_text(), text)
+        # sshd -t refused before any restart, and the file names nothing sshd can bind.
+        self.assertEqual(self.restarts(), [])
+
+    def test_a_stale_address_goes_and_the_operator_s_other_one_stays(self) -> None:
+        # B452 NN01: the route says .11; the manager reaches the node on .13.
+        self.drop_in.write_text("ListenAddress 192.0.2.99\nListenAddress 192.0.2.13\n")
+        run = self.run_step()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        written = self.drop_in.read_text()
+        self.assertIn("ListenAddress 192.0.2.13\n", written)
+        self.assertNotIn("192.0.2.99", written)
+        self.assertNotIn("192.0.2.11", written)
+        self.assertIn("applied  sshd listens on 192.0.2.13:22 only", run.stdout)
+
+    def test_a_stale_file_and_no_usable_new_address_is_left_and_the_step_goes_on(self) -> None:
+        # B452 NN02: the route ends on the virtual address, so there is nothing to write.
+        text = self.stale_file()
+        run = self.run_step(SOURCE="192.0.2.20")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("is the virtual address", run.stderr)
+        self.assertIn("is left as it is", run.stderr)
+        self.assertEqual(self.drop_in.read_text(), text)
+        self.assertEqual(self.restarts(), [])
+
+    def test_a_stale_file_and_an_arrival_address_the_node_lacks_is_left_too(self) -> None:
+        text = self.stale_file()
+        run = self.run_step(NODE_LISTEN_ADDRESS="192.0.2.98")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(self.drop_in.read_text(), text)
+        self.assertEqual(self.restarts(), [])
+
+    def test_a_stale_file_put_back_is_not_restarted_onto(self) -> None:
+        # B452 NN02: the old file names only an address the node lost; sshd is not restarted on it.
+        text = self.stale_file()
+        run = self.run_step(STUCK="1")
+        self.assertEqual(run.returncode, 1)
         self.assertEqual(self.drop_in.read_text(), text)
         self.assertEqual(self.restarts(), ["restart ssh.service"])
 

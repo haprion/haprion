@@ -811,14 +811,24 @@ sshd_restart() {
 # that back, never left without a ListenAddress it had.
 #
 SSHD_LISTEN_BEFORE=""
+SSHD_RESTARTED=""
 sshd_put_back() {
+    local named
     if [[ -n "${SSHD_LISTEN_BEFORE:-}" ]]; then
         printf '%s\n' "$SSHD_LISTEN_BEFORE" > "$SSHD_LISTEN"
-        sshd -t && sshd_restart || true
+        #
+        # sshd is restarted only if this run restarted it, and never onto a
+        # file whose every address is gone: it would have nothing to bind.
+        #
+        named="$(awk 'tolower($1) == "listenaddress"' "$SSHD_LISTEN" | wc -l)"
+        if [[ -n "$SSHD_RESTARTED" ]] \
+            && { [[ "$named" -eq 0 ]] || [[ "$(sshd_listen_file_stale | wc -l)" -lt "$named" ]]; }; then
+            sshd -t && sshd_restart || true
+        fi
         die "$1; ${SSHD_LISTEN} and sshd put back as they were"
     fi
     rm -f "$SSHD_LISTEN"
-    sshd -t && sshd_restart || true
+    [[ -z "$SSHD_RESTARTED" ]] || { sshd -t && sshd_restart || true; }
     die "$1; ${SSHD_LISTEN} removed and sshd put back as it was"
 }
 
@@ -840,8 +850,36 @@ sshd_listen_file_stale() {
     done < <(awk 'tolower($1) == "listenaddress" { print $2 }' "$SSHD_LISTEN")
 }
 
+#
+# The file's addresses that are not stale, as written, one per line. An
+# operator's second address stays; only the ones the node lost go.
+#
+sshd_listen_file_kept() {
+    local stale listed
+    stale="$(sshd_listen_file_stale)"
+    while read -r listed; do
+        [[ -n "$listed" ]] || continue
+        if [[ -n "$stale" ]] && grep -qxF "${listed%:*}" <<<"$stale"; then
+            continue
+        fi
+        echo "$listed"
+    done < <(awk 'tolower($1) == "listenaddress" { print $2 }' "$SSHD_LISTEN")
+}
+
+#
+# No address to put sshd on. With a file that names only addresses the node
+# lost, that is a warning and the file stays (sshd is out of reach there
+# already, and nothing here may take the rest of the step down with it);
+# with no file it is the step's failure.
+#
+sshd_no_address() {
+    [[ -n "$2" ]] || die "$1"
+    warn "$1; ${SSHD_LISTEN} is left as it is"
+}
+
 sshd_off_the_virtual_address() {
-    local sshd_settings manager_address own_address ssh_port listening_here stale
+    local sshd_settings manager_address own_address ssh_port listening_here stale kept
+    local -a chosen=()
     if ! command -v sshd >/dev/null; then
         warn "sshd is not installed: the management host reaches nodes over ssh"
     elif ! sshd_settings="$(sshd -T 2>/dev/null)"; then
@@ -851,41 +889,70 @@ sshd_off_the_virtual_address() {
             | grep -qE '^(0\.0\.0\.0|\[::\]):'; then
         log "  ok       sshd listens on chosen addresses only"
     else
+        kept=""
         if [[ -n "$stale" ]]; then
             log "  stale    ${SSHD_LISTEN} names $(tr '\n' ' ' <<<"${stale% }")- not an address this node can use"
             SSHD_LISTEN_BEFORE="$(cat "$SSHD_LISTEN")"
+            kept="$(sshd_listen_file_kept)"
         fi
-        if [[ -n "${NODE_LISTEN_ADDRESS:-}" ]]; then
-            own_address="$NODE_LISTEN_ADDRESS"
-        else
-            manager_address="$(getent ahostsv4 "$MANAGER_HOST" | awk 'NR == 1 { print $1 }')"
-            [[ -n "$manager_address" ]] || die "cannot resolve MANAGER_HOST ${MANAGER_HOST} to an IPv4 address"
-            own_address="$(ip -4 -o route get "$manager_address" \
-                | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
-            [[ -n "$own_address" ]] || die "no route to the management host ${manager_address}"
-        fi
-        [[ "$own_address" != "$(cluster_value VIP "$CLUSTER")" ]] \
-            || die "${own_address} is the virtual address; sshd cannot be put on it"
-        ip -4 -o addr show | grep -qF " inet ${own_address}/" \
-            || die "${own_address} is not an address of this node"
         ssh_port="$(awk '$1 == "port" { print $2; exit }' <<<"$sshd_settings")"
+        if [[ -n "$kept" ]]; then
+            #
+            # The operator's other addresses are good: the file keeps them and
+            # loses only the stale ones, whatever the route says.
+            #
+            mapfile -t chosen <<<"$kept"
+            own_address=""
+        else
+            if [[ -n "${NODE_LISTEN_ADDRESS:-}" ]]; then
+                own_address="$NODE_LISTEN_ADDRESS"
+            else
+                manager_address="$(getent ahostsv4 "$MANAGER_HOST" | awk 'NR == 1 { print $1 }')"
+                if [[ -z "$manager_address" ]]; then
+                    sshd_no_address "cannot resolve MANAGER_HOST ${MANAGER_HOST} to an IPv4 address" "$stale" && return 0
+                fi
+                own_address="$(ip -4 -o route get "$manager_address" \
+                    | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
+                if [[ -z "$own_address" ]]; then
+                    sshd_no_address "no route to the management host ${manager_address}" "$stale" && return 0
+                fi
+            fi
+            if [[ "$own_address" == "$(cluster_value VIP "$CLUSTER")" ]]; then
+                sshd_no_address "${own_address} is the virtual address; sshd cannot be put on it" "$stale" && return 0
+            fi
+            if ! ip -4 -o addr show | grep -qF " inet ${own_address}/"; then
+                sshd_no_address "${own_address} is not an address of this node" "$stale" && return 0
+            fi
+            chosen=("$own_address")
+        fi
+        local listed_lines="" entry want wanted=""
+        for entry in "${chosen[@]}"; do
+            listed_lines+="ListenAddress ${entry}"$'\n'
+        done
         install_file "$SSHD_LISTEN" root:root 644 "$(printf '%s\n' \
             "# Installed by install/04-node-prepare (B310)." \
             "# sshd on this node's own address, so the virtual address's ports stay free." \
-            "ListenAddress ${own_address}")"
-        sshd -t || sshd_put_back "sshd -t refused ListenAddress ${own_address}"
+            "${listed_lines%$'\n'}")"
+        sshd -t || sshd_put_back "sshd -t refused ListenAddress ${chosen[*]}"
+        SSHD_RESTARTED=yes
         sshd_restart || sshd_put_back "sshd did not restart"
-        listening_here=""
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            listening_here="$(ss -Hltn | awk -v a="${own_address}:${ssh_port}" '$4 == a')"
-            [[ -n "$listening_here" ]] && break
-            sleep 0.5
+        for entry in "${chosen[@]}"; do
+            want="${entry}"
+            [[ "$entry" == *:* ]] || want="${entry}:${ssh_port}"
+            wanted+="${want}, "
+            [[ "$entry" =~ ^[0-9]+(\.[0-9]+){3}(:[0-9]+)?$ ]] || continue
+            listening_here=""
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+                listening_here="$(ss -Hltn | awk -v a="${want}" '$4 == a')"
+                [[ -n "$listening_here" ]] && break
+                sleep 0.5
+            done
+            [[ -n "$listening_here" ]] || sshd_put_back "sshd does not listen on ${want}"
         done
-        [[ -n "$listening_here" ]] || sshd_put_back "sshd does not listen on ${own_address}:${ssh_port}"
         if ss -Hltn | awk -v p="${ssh_port}" '$4 == "0.0.0.0:" p || $4 == "[::]:" p' | grep -q .; then
             sshd_put_back "sshd still listens on every address: sshd_config names it itself"
         fi
-        log "  applied  sshd listens on ${own_address}:${ssh_port} only"
+        log "  applied  sshd listens on ${wanted%, } only"
     fi
 }
 

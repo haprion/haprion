@@ -651,6 +651,11 @@ def _record_gaps(
 #
 DATABASE_BUDGET_MARK = ".database-budget"
 DATABASE_BUDGET_MARK_SECONDS = 2 * 3600
+#
+# Root makes it (the timer runs as root); a file the collector's user, which
+# owns the directory, could have made says nothing (review 2026-11-05, U04).
+#
+DATABASE_BUDGET_MARK_OWNER = 0
 
 
 def _database_budget_held(config: CollectorConfig, *, now: datetime) -> bool:
@@ -663,6 +668,7 @@ def _database_budget_held(config: CollectorConfig, *, now: datetime) -> bool:
         return False
     return (
         stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == DATABASE_BUDGET_MARK_OWNER
         and 0 <= now.timestamp() - metadata.st_mtime <= DATABASE_BUDGET_MARK_SECONDS
     )
 

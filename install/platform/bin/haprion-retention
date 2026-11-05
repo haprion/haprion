@@ -563,15 +563,22 @@ traffic_budget() {
 
 #
 # The mark is made as root in the collector's directory, which the collector
-# owns: the old one is removed and the new one made with noclobber, so a link
-# put in its place is refused and not followed.
+# owns: it is written under another name and moved over the old one, a rename
+# that replaces whatever stands there - a link too - and follows none. The
+# collector accepts a mark only if root owns it.
 #
 database_budget_mark() {
-    local mark="${STAGING_DIRECTORY}/${DATABASE_BUDGET_MARK}"
+    local mark="${STAGING_DIRECTORY}/${DATABASE_BUDGET_MARK}" temporary
     [[ "$dry_run" -eq 0 && -d "$STAGING_DIRECTORY" ]] || return 0
-    rm -f -- "$mark" || warn "  cannot remove ${mark}"
-    if [[ "$1" == over ]]; then
-        (set -o noclobber; printf 'over\n' > "$mark") || warn "  cannot make ${mark}"
+    if [[ "$1" != over ]]; then
+        rm -f -- "$mark" || warn "  cannot remove ${mark}"
+        return 0
+    fi
+    temporary="$(mktemp -p "$STAGING_DIRECTORY" "${DATABASE_BUDGET_MARK}.XXXXXX")" \
+        || { warn "  cannot make ${mark}"; return 0; }
+    if ! { printf 'over\n' > "$temporary" && mv -fT -- "$temporary" "$mark"; }; then
+        rm -f -- "$temporary"
+        warn "  cannot make ${mark}"
     fi
 }
 

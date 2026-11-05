@@ -167,13 +167,19 @@ echo "1000000 1 900000"
 """
 
 
+MV_STUB = """#!/bin/sh
+echo "$@" >> "$RECORD.mv"
+exec /bin/mv "$@"
+"""
+
+
 class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
     """Review 2026-11-05, T05: the budget drops finished days only, so one day's flood
     stays over the volume's share until midnight. It says so to the collector, which
     stops importing into the day; PostgreSQL does not meet the volume's end first."""
 
     def run_budget(
-        self, held: int, *arguments: str, marker: str | None = None
+        self, held: int, *arguments: str, marker: str | None = None, link: bool = False
     ) -> tuple[subprocess.CompletedProcess[str], Path]:
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
@@ -182,6 +188,7 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
             ("psql", TODAY_ONLY_PSQL_STUB),
             ("sudo", SUDO_STUB),
             ("stat", STAT_STUB),
+            ("mv", MV_STUB),
         ):
             (root / name).write_text(stub)
             (root / name).chmod(0o755)
@@ -190,6 +197,9 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
         mark = staging / ".database-budget"
         if marker is not None:
             mark.write_text(marker)
+        if link:
+            (root / "elsewhere").write_text("untouched\n")
+            mark.symlink_to(root / "elsewhere")
         script = root / "haprion-retention"
         text = SCRIPT.read_text()
         for old, new in (
@@ -221,6 +231,29 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertTrue(mark.exists())
         self.assertIn("today", done.stderr)
+
+    def test_the_mark_is_made_aside_and_moved_over_the_old_one(self) -> None:
+        """Review 2026-11-05, U04: root writes into a directory the collector owns, so
+        nothing is written through a name the collector could have made a link."""
+
+        done, mark = self.run_budget(400_000, marker="old\n")
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(mark.read_text(), "over\n")
+        self.assertFalse(mark.is_symlink())
+        self.assertEqual(sorted(path.name for path in mark.parent.iterdir()), [mark.name])
+        moves = (mark.parent.parent / "record.mv").read_text().splitlines()
+        self.assertEqual(len(moves), 1, moves)
+        self.assertTrue(moves[0].startswith("-fT -- "), moves)
+        self.assertTrue(moves[0].endswith(f" {mark}"), moves)
+
+    def test_a_link_in_the_marks_place_is_replaced_not_followed(self) -> None:
+        done, mark = self.run_budget(400_000, link=True)
+
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertFalse(mark.is_symlink())
+        self.assertEqual(mark.read_text(), "over\n")
+        self.assertEqual((mark.parent.parent / "elsewhere").read_text(), "untouched\n")
 
     def test_under_the_share_the_mark_is_taken_away(self) -> None:
         done, mark = self.run_budget(100_000, marker="over\n")

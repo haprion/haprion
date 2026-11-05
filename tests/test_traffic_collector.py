@@ -154,6 +154,9 @@ class TrafficCollectorTests(unittest.TestCase):
         # No database and no node here: what a run imports and what it asks a
         # node's WAF journal are each the subject of tests that say so.
         #
+        owner = patch("haprion.traffic_collector.DATABASE_BUDGET_MARK_OWNER", os.getuid())
+        owner.start()
+        self.addCleanup(owner.stop)
         replaced: list[tuple[str, Any]] = [
             ("haprion.traffic_collector._ingest_database", lambda _config, **_held: (0, 0, {})),
             (
@@ -1082,6 +1085,15 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertTrue(traffic_collector._database_budget_held(self.config, now=NOW))
         (self.staging / ".database-budget").unlink()
         self.assertFalse(traffic_collector._database_budget_held(self.config, now=NOW))
+
+    def test_a_mark_that_root_does_not_own_is_none(self) -> None:
+        """Review 2026-11-05, U04: the retention runs as root; a file the collector's own
+        user (or anyone else) could have made says nothing."""
+
+        self.hold_mark()
+        with patch("haprion.traffic_collector.DATABASE_BUDGET_MARK_OWNER", os.getuid() + 1):
+            self.assertFalse(traffic_collector._database_budget_held(self.config, now=NOW))
+        self.assertTrue(traffic_collector._database_budget_held(self.config, now=NOW))
 
     def test_a_link_is_not_a_mark(self) -> None:
         elsewhere = self.staging / "elsewhere"

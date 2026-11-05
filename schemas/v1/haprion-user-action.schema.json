@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-user-action.schema.json",
+  "title": "haprion-user account commands JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "user_action" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/user_action_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/user_action_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "user_action_result": {
+      "description": "What one account command did to one account. `sessions_revoked` is the sessions it ended; `created` is false where `init-admin` found accounts already; `changed` is false where `role` found the role already given.",
+      "type": "object",
+      "required": ["action", "username"],
+      "properties": {
+        "action": { "enum": ["add", "init-admin", "delete", "break-glass", "reset", "disable", "enable", "unlock", "revoke", "role"] },
+        "username": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "role": { "enum": ["admin", "reader"] },
+        "break_glass": { "type": "boolean" },
+        "created": { "type": "boolean" },
+        "changed": { "type": "boolean" },
+        "sessions_revoked": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

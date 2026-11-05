@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_renew",
+  "cluster": null,
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "warnings": [],
+  "error": null,
+  "result": { "dry_run": false, "lineages": 2, "failed": [] }
+}

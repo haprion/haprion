@@ -15,6 +15,7 @@ from haprion import cert_issue, dns_profiles, dns_provider_catalog
 from haprion.cli import cert_renew
 from haprion.config import ConfigError, load_policy, load_runtime_config
 from haprion.dns_profile_keys import generate, render_private_key
+from tests.contract_schema import assert_contract
 from tests.test_cert_publish import Fixture, issue
 
 
@@ -287,6 +288,70 @@ class TheDistributionIsRedone(Fixture):
         renew.assert_not_called()
         self.assertEqual(code, 0)
         self.assertIn("would renew keeper.example (forced)", errors.getvalue())
+
+
+class TheAnswerIsADocumentWhenAsked(Fixture):
+    """K12: the timer's command answers `--json` in a contract, like the rest."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        issue(self.live / "keeper.example", "keeper.example")
+        self.policy = load_policy(self.write_config(self.keeper()), require_secure=False)
+        self.runtime = load_runtime_config(self.policy, require_secure=False)
+
+    def run_json(
+        self, *argv: str, ndes_failed: bool = False, root: bool = True
+    ) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch("os.geteuid", return_value=0 if root else 1000),
+            mock.patch.object(cert_renew, "load_policy", return_value=self.policy),
+            mock.patch.object(cert_renew, "load_runtime_config", return_value=self.runtime),
+            mock.patch.object(cert_renew, "RENEWAL_DIRECTORY", self.root / "absent"),
+            mock.patch.object(cert_renew, "renew_ndes", return_value=ndes_failed),
+            mock.patch.object(cert_renew, "redistribute", return_value=False),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            code = cert_renew.main([*argv, "--json"])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_pass_that_failed_nowhere_is_done(self) -> None:
+        code, out, _ = self.run_json()
+
+        answer = assert_contract("haprion-cert-renew", out)
+        self.assertEqual((code, answer["outcome"]), (0, "done"))
+        self.assertEqual(answer["result"], {"dry_run": False, "lineages": 0, "failed": []})
+
+    def test_a_pass_that_failed_says_where(self) -> None:
+        code, out, _ = self.run_json("--dry-run", ndes_failed=True)
+
+        answer = assert_contract("haprion-cert-renew", out)
+        self.assertEqual(
+            (code, answer["outcome"], answer["error"]["code"]), (1, "failed", "renewal_failed")
+        )
+        self.assertEqual(answer["result"], {"dry_run": True, "lineages": 0, "failed": ["ndes"]})
+
+    def test_a_caller_who_is_not_root_gets_a_document_and_the_not_root_exit(self) -> None:
+        code, out, _ = self.run_json(root=False)
+
+        answer = assert_contract("haprion-cert-renew", out)
+        self.assertEqual((code, answer["error"]["code"]), (77, "not_root"))
+
+    def test_a_policy_that_cannot_be_read_is_a_document(self) -> None:
+        out = io.StringIO()
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(
+                cert_renew, "load_policy", side_effect=ConfigError("no policy", exit_code=66)
+            ),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = cert_renew.main(["--json"])
+
+        answer = assert_contract("haprion-cert-renew", out.getvalue())
+        self.assertEqual((code, answer["outcome"]), (66, "failed"))
 
 
 if __name__ == "__main__":

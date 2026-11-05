@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "config_status",
+  "cluster": "alpha",
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "warnings": [],
+  "error": null,
+  "result": {
+    "published": { "state": "published", "version": "3" },
+    "saved": { "version": "3", "date": "2026-01-02 03:04", "comment": "Added shop" },
+    "saved_is_published": true,
+    "regeneration": { "outcome": "changed", "files_changed": 2, "objects": ["shop"] },
+    "unsent": [{ "path": "manual/extra.cfg", "kind": "new" }],
+    "interface_owned": []
+  }
+}

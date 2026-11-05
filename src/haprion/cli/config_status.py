@@ -33,8 +33,9 @@ from typing import Any, TextIO
 from haprion import exit_codes
 from haprion.cli.caller import config_path as _config_path
 from haprion.cli.caller import usage
-from haprion.envelope import new_request_id
+from haprion.envelope import envelope, failure, new_request_id
 from haprion.git_command import GitError
+from haprion.helper_protocol import write_document
 from haprion.regeneration import diff_from_dict
 from haprion.release_layout import parse_release_file
 from haprion.repo_health import PendingChange, describe_problem, is_repo_root, pending_changes
@@ -44,8 +45,9 @@ from haprion.version_history import current_version
 RELEASE_HELPER = "/opt/haprion/current/bin/haprion-published-release-helper"
 REGENERATION_HELPER = "/opt/haprion/current/bin/haprion-regeneration-helper"
 SUDO = "/usr/bin/sudo"
+ANSWERS_AS = "config_status"
 
-USAGE = "Usage:\n  haprion-config-status -c <cluster> [--diff]\n"
+USAGE = "Usage:\n  haprion-config-status -c <cluster> [--diff | --json]\n"
 
 #
 # What the manual path owns, and what the interface owns. `managed/` is written
@@ -124,16 +126,47 @@ def ask_regeneration(cluster_id: str) -> Mapping[str, Any] | None:
     return result if isinstance(result, dict) and "outcome" in result else None
 
 
-def _parse(argv: list[str]) -> tuple[str, bool]:
-    """The cluster, and whether the regeneration's diff is asked for."""
+def _parse(argv: list[str]) -> tuple[str, bool, bool]:
+    """The cluster, whether the regeneration's diff is asked for, and whether the answer is JSON."""
 
     rest = argv
     diff = False
+    as_json = False
     if len(rest) == 3 and rest[2] == "--diff":
         rest, diff = rest[:2], True
+    elif len(rest) == 3 and rest[2] == "--json":
+        rest, as_json = rest[:2], True
     if len(rest) != 2 or rest[0] not in ("-c", "--cluster"):
         usage(USAGE)
-    return rest[1], diff
+    return rest[1], diff, as_json
+
+
+def _regeneration(result: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The regeneration reading as the contract has it."""
+
+    if result is None:
+        return {"outcome": "unknown"}
+    outcome = result.get("outcome")
+    if outcome == UNREADABLE_OUTCOME:
+        return {"outcome": "unknown", "message": str(result.get("message"))}
+    if outcome == "refused":
+        return {"outcome": "refused", "message": str(result.get("message"))}
+    if outcome != "changed":
+        return {"outcome": "unchanged"}
+    return {
+        "outcome": "changed",
+        "files_changed": int(result.get("files_changed") or 0),
+        "objects": [str(item["name"]) for item in result.get("objects") or []],
+    }
+
+
+def _published_state(stamp: str | None) -> dict[str, Any]:
+    if stamp is None:
+        return {"state": "unreadable", "version": None}
+    fields = parse_release_file(stamp)
+    if fields.get("state") == "unpublished":
+        return {"state": "unpublished", "version": None}
+    return {"state": "published", "version": fields.get("version") or None}
 
 
 def regeneration_line(result: Mapping[str, Any] | None, cluster_id: str) -> str | None:
@@ -203,23 +236,67 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
-    cluster_id, show_diff = _parse(argv)
+    cluster_id, show_diff, as_json = _parse(argv)
+
+    def stopped(code: str, message: str, exit_code: int, *, said: str | None = None) -> int:
+        errors.write(f"{message if said is None else said}\n")
+        if as_json:
+            write_document(
+                writer,
+                failure(
+                    operation=ANSWERS_AS,
+                    cluster=cluster_id,
+                    request_id=new_request_id(),
+                    code=code,
+                    message=message,
+                    exit_code=exit_code,
+                ),
+                exit_code,
+            )
+        return exit_code
 
     repo = config_path(cluster_id)
 
     if not is_repo_root(repo):
-        errors.write(f"{describe_problem(cluster_id, repo)}\n")
-        return exit_codes.UNAVAILABLE
+        return stopped(
+            "dependency_unavailable", describe_problem(cluster_id, repo), exit_codes.UNAVAILABLE
+        )
 
     try:
         saved = current_version(repo)
         waiting = pending_changes(repo, *MANUAL_PATHS)
         interface_owned = pending_changes(repo, *INTERFACE_PATHS)
     except GitError as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return stopped("dependency_unavailable", str(exc), exc.exit_code, said=f"ERROR: {exc}")
 
-    published, published_hash = _published_line(read_published(cluster_id))
+    stamp = read_published(cluster_id)
+    published, published_hash = _published_line(stamp)
+
+    if as_json:
+        regenerated = read_regeneration(cluster_id) if published_hash else None
+        return write_document(
+            writer,
+            envelope(
+                operation=ANSWERS_AS,
+                outcome="done",
+                cluster=cluster_id,
+                result={
+                    "published": _published_state(stamp),
+                    "saved": {
+                        "version": str(saved.version),
+                        "date": saved.date,
+                        "comment": saved.comment,
+                    },
+                    "saved_is_published": (published_hash == saved.commit)
+                    if published_hash
+                    else None,
+                    "regeneration": _regeneration(regenerated),
+                    "unsent": [{"path": c.path, "kind": c.kind} for c in waiting],
+                    "interface_owned": [{"path": c.path, "kind": c.kind} for c in interface_owned],
+                },
+            ),
+            exit_codes.OK,
+        )
 
     writer.write(f"\nConfiguration - {cluster_id}\n\n")
     writer.write(f"  Published version:  {published}\n")

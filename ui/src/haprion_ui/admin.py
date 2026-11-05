@@ -41,6 +41,7 @@ from haprion.cli import arguments
 from haprion_ui import account_apply, auth, config, db, labels, tool_answer, users
 
 LIST_OPERATION = "user_list"
+ACTION_OPERATION = "user_action"
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
 
@@ -192,6 +193,15 @@ def _user_id(connection: psycopg.Connection[tuple[Any, ...]], username: str) -> 
     return int(row[0])
 
 
+def _said(args: argparse.Namespace, text: str, result: dict[str, Any]) -> int:
+    """What a verb did: the sentence, or with `--json` the contract's one document."""
+
+    if getattr(args, "json", False):
+        return tool_answer.done(ACTION_OPERATION, result)
+    print(text)
+    return 0
+
+
 def command_add(environment: Environment, args: argparse.Namespace) -> int:
     problem = users.name_problem(args.username, creating=True)
     if problem is not None:
@@ -212,8 +222,11 @@ def command_add(environment: Environment, args: argparse.Namespace) -> int:
         )
         connection.commit()
     kind = "break-glass " if break_glass else ""
-    print(f"created {kind}{args.username} with role {args.role}")
-    return 0
+    return _said(
+        args,
+        f"created {kind}{args.username} with role {args.role}",
+        {"action": "add", "username": args.username, "role": args.role, "break_glass": break_glass},
+    )
 
 
 FIRST_ADMIN = "admin"
@@ -226,7 +239,7 @@ def _any_account(connection: psycopg.Connection[tuple[Any, ...]]) -> bool:
     return row is not None and bool(row[0])
 
 
-def command_init_admin(environment: Environment, _: argparse.Namespace) -> int:
+def command_init_admin(environment: Environment, args: argparse.Namespace) -> int:
     """The installation's first account, when there is none (B196).
 
     Does nothing on an installation that has any account at all, so the
@@ -235,14 +248,24 @@ def command_init_admin(environment: Environment, _: argparse.Namespace) -> int:
     printed or kept anywhere else.
     """
 
+    def exists() -> int:
+        return _said(
+            args,
+            "accounts exist; no first account created",
+            {"action": "init-admin", "username": FIRST_ADMIN, "created": False},
+        )
+
     with connect(environment) as connection:
         if _any_account(connection):
-            print("accounts exist; no first account created")
-            return 0
+            return exists()
     #
-    # Asked outside any transaction, so no lock waits on a person typing.
+    # Asked outside any transaction, so no lock waits on a person typing. On
+    # stderr with `--json`, so that stdout holds the one document.
     #
-    print(f"The first account is {FIRST_ADMIN}, a break-glass admin. Choose its password.")
+    print(
+        f"The first account is {FIRST_ADMIN}, a break-glass admin. Choose its password.",
+        file=sys.stderr if getattr(args, "json", False) else sys.stdout,
+    )
     password = read_new_password()
     with connect(environment) as connection:
         with connection.cursor() as cursor:
@@ -252,8 +275,7 @@ def command_init_admin(environment: Environment, _: argparse.Namespace) -> int:
             #
             cursor.execute("select pg_advisory_xact_lock(hashtext('app_user_keep_an_admin'))")
         if _any_account(connection):
-            print("accounts exist; no first account created")
-            return 0
+            return exists()
         db.create_account(
             connection,
             username=FIRST_ADMIN,
@@ -263,8 +285,11 @@ def command_init_admin(environment: Environment, _: argparse.Namespace) -> int:
         )
         _audit(connection, "account_created", FIRST_ADMIN, role="admin", break_glass=True)
         connection.commit()
-    print(f"created break-glass {FIRST_ADMIN} with role admin")
-    return 0
+    return _said(
+        args,
+        f"created break-glass {FIRST_ADMIN} with role admin",
+        {"action": "init-admin", "username": FIRST_ADMIN, "created": True},
+    )
 
 
 def command_delete(environment: Environment, args: argparse.Namespace) -> int:
@@ -274,7 +299,12 @@ def command_delete(environment: Environment, args: argparse.Namespace) -> int:
     with connect(environment) as connection:
         user_id = _user_id(connection, args.username)
         if not args.yes:
-            print(f"would delete {args.username} and its sessions; repeat with --yes to do it")
+            message = f"would delete {args.username} and its sessions; repeat with --yes to do it"
+            if getattr(args, "json", False):
+                return tool_answer.refusal(
+                    args, ACTION_OPERATION, "bad_input", message, exit_codes.USAGE
+                )
+            print(message)
             return exit_codes.USAGE
         try:
             db.delete_account(connection, user_id=user_id)
@@ -282,8 +312,7 @@ def command_delete(environment: Environment, args: argparse.Namespace) -> int:
             raise guard_refusal(exc) from exc
         _audit(connection, "account_deleted", args.username)
         connection.commit()
-    print(f"deleted {args.username}")
-    return 0
+    return _said(args, f"deleted {args.username}", {"action": "delete", "username": args.username})
 
 
 def command_break_glass(environment: Environment, args: argparse.Namespace) -> int:
@@ -315,10 +344,19 @@ def command_break_glass(environment: Environment, args: argparse.Namespace) -> i
             sessions_revoked=ended,
         )
         connection.commit()
-    print(f"{args.username} is {'now' if break_glass else 'no longer'} a break-glass account")
+    text = f"{args.username} is {'now' if break_glass else 'no longer'} a break-glass account"
     if ended:
-        print(f"{labels.counted(ended, 'session')} revoked")
-    return 0
+        text += f"\n{labels.counted(ended, 'session')} revoked"
+    return _said(
+        args,
+        text,
+        {
+            "action": "break-glass",
+            "username": args.username,
+            "break_glass": break_glass,
+            "sessions_revoked": ended,
+        },
+    )
 
 
 def command_reset(environment: Environment, args: argparse.Namespace) -> int:
@@ -340,8 +378,11 @@ def command_reset(environment: Environment, args: argparse.Namespace) -> int:
         )
         _audit(connection, "password_reset", args.username, sessions_revoked=ended)
         connection.commit()
-    print(f"password reset for {args.username}; {labels.counted(ended, 'session')} revoked")
-    return 0
+    return _said(
+        args,
+        f"password reset for {args.username}; {labels.counted(ended, 'session')} revoked",
+        {"action": "reset", "username": args.username, "sessions_revoked": ended},
+    )
 
 
 def command_disable(environment: Environment, args: argparse.Namespace) -> int:
@@ -353,8 +394,11 @@ def command_disable(environment: Environment, args: argparse.Namespace) -> int:
             raise guard_refusal(exc) from exc
         _audit(connection, "account_disabled", args.username, sessions_revoked=ended)
         connection.commit()
-    print(f"disabled {args.username}; {labels.counted(ended, 'session')} revoked")
-    return 0
+    return _said(
+        args,
+        f"disabled {args.username}; {labels.counted(ended, 'session')} revoked",
+        {"action": "disable", "username": args.username, "sessions_revoked": ended},
+    )
 
 
 def command_enable(environment: Environment, args: argparse.Namespace) -> int:
@@ -366,8 +410,7 @@ def command_enable(environment: Environment, args: argparse.Namespace) -> int:
             raise guard_refusal(exc) from exc
         _audit(connection, "account_enabled", args.username)
         connection.commit()
-    print(f"enabled {args.username}")
-    return 0
+    return _said(args, f"enabled {args.username}", {"action": "enable", "username": args.username})
 
 
 def command_unlock(environment: Environment, args: argparse.Namespace) -> int:
@@ -395,8 +438,7 @@ def command_unlock(environment: Environment, args: argparse.Namespace) -> int:
         db.unlock_account(connection, username=name, actor=actor_name())
         _audit(connection, "throttle_cleared", name)
         connection.commit()
-    print(f"unlocked {name}")
-    return 0
+    return _said(args, f"unlocked {name}", {"action": "unlock", "username": name})
 
 
 def command_revoke(environment: Environment, args: argparse.Namespace) -> int:
@@ -405,8 +447,11 @@ def command_revoke(environment: Environment, args: argparse.Namespace) -> int:
         ended = db.revoke_sessions_for_user(connection, user_id)
         _audit(connection, "sessions_revoked", args.username, sessions_revoked=ended)
         connection.commit()
-    print(f"revoked {labels.counted(ended, 'session')} for {args.username}")
-    return 0
+    return _said(
+        args,
+        f"revoked {labels.counted(ended, 'session')} for {args.username}",
+        {"action": "revoke", "username": args.username, "sessions_revoked": ended},
+    )
 
 
 def command_role(environment: Environment, args: argparse.Namespace) -> int:
@@ -420,8 +465,11 @@ def command_role(environment: Environment, args: argparse.Namespace) -> int:
         if row is not None and row[1] != "local":
             raise refused(f"{args.username} signs in through the provider, which sets its role")
         if row is not None and row[0] == args.role:
-            print(f"{args.username} already has role {args.role}")
-            return 0
+            return _said(
+                args,
+                f"{args.username} already has role {args.role}",
+                {"action": "role", "username": args.username, "role": args.role, "changed": False},
+            )
         try:
             db.set_role(connection, user_id=user_id, role=args.role)
         except db.LastAdmin as exc:
@@ -434,8 +482,11 @@ def command_role(environment: Environment, args: argparse.Namespace) -> int:
             previous=row[0] if row else None,
         )
         connection.commit()
-    print(f"{args.username} now has role {args.role}")
-    return 0
+    return _said(
+        args,
+        f"{args.username} now has role {args.role}",
+        {"action": "role", "username": args.username, "role": args.role, "changed": True},
+    )
 
 
 def command_apply(environment: Environment, args: argparse.Namespace) -> int:
@@ -623,12 +674,17 @@ def build_parser() -> argparse.ArgumentParser:
     apply.add_argument("--prune", action="store_true", help="delete local accounts not listed")
     apply.add_argument("--check", action="store_true", help="say what would change; change nothing")
     apply.add_argument("--json", action="store_true")
+    for name, sub_parser in subcommands.choices.items():
+        if name not in {"list", "apply"}:
+            sub_parser.add_argument("--json", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    contract = {"apply": account_apply.OPERATION, "list": LIST_OPERATION}.get(args.command)
+    contract = {"apply": account_apply.OPERATION, "list": LIST_OPERATION}.get(
+        args.command, ACTION_OPERATION
+    )
     if os.geteuid() != 0:
         #
         # Refused here as well as by the database. Peer authentication would

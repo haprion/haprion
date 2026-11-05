@@ -523,6 +523,63 @@ def check_user_list_semantics(document: dict[str, object], path: Path) -> None:
         raise AssertionError(f"{path}: an account is listed once")
 
 
+def check_user_action_semantics(document: dict[str, object], path: Path) -> None:
+    """Each account command says the facts that make its answer mean something."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done account command says what it did")
+        return
+    assert isinstance(result, dict)
+    needs = {
+        "add": ("role", "break_glass"),
+        "role": ("role", "changed"),
+        "break-glass": ("break_glass", "sessions_revoked"),
+        "init-admin": ("created",),
+        "reset": ("sessions_revoked",),
+        "disable": ("sessions_revoked",),
+        "revoke": ("sessions_revoked",),
+    }
+    missing = [key for key in needs.get(str(result["action"]), ()) if key not in result]
+    if missing:
+        raise AssertionError(f"{path}: {result['action']} also says {', '.join(missing)}")
+
+
+def check_config_status_semantics(document: dict[str, object], path: Path) -> None:
+    """Whether the saved version is the published one is said only where one is published."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done status says what it holds")
+        return
+    assert isinstance(result, dict)
+    published = result["published"]
+    if (result["saved_is_published"] is None) != (published["state"] != "published"):
+        raise AssertionError(
+            f"{path}: saved_is_published is null exactly when nothing is published"
+        )
+    if (
+        result["regeneration"]["outcome"] == "changed"
+        and "files_changed" not in result["regeneration"]
+    ):
+        raise AssertionError(f"{path}: a changed regeneration counts its files")
+
+
+def check_cert_renew_semantics(document: dict[str, object], path: Path) -> None:
+    """A pass is done exactly when nothing in it failed."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done pass says what it ran")
+        return
+    assert isinstance(result, dict)
+    if (document["outcome"] == "done") != (not result["failed"]):
+        raise AssertionError(f"{path}: a pass is done exactly when nothing failed")
+
+
 def check_settings_show_semantics(document: dict[str, object], path: Path) -> None:
     """An address once; sign-in through the provider is on only for a verified provider."""
 
@@ -1357,6 +1414,9 @@ SEMANTIC_CHECKS = {
     "profiles_apply": check_profiles_apply_semantics,
     "user_list": check_user_list_semantics,
     "api_token": check_api_token_semantics,
+    "user_action": check_user_action_semantics,
+    "config_status": check_config_status_semantics,
+    "cert_renew": check_cert_renew_semantics,
     "settings_show": check_settings_show_semantics,
     "profiles_list": check_profiles_list_semantics,
     "export": check_export_semantics,
@@ -1444,6 +1504,14 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
             result["tokens"].append(deepcopy(result["tokens"][0]))
         else:
             invalid["outcome"] = "partial"
+    elif operation == "user_action":
+        result["action"] = "add"
+        result.pop("role", None)
+    elif operation == "config_status":
+        result["published"]["state"] = "unpublished"
+        result["saved_is_published"] = True
+    elif operation == "cert_renew":
+        result["failed"] = ["ndes"]
     elif operation == "settings_show":
         result["oidc"]["verified"] = False
     elif operation == "profiles_list":

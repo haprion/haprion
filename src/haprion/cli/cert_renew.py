@@ -11,6 +11,7 @@ environment from the registry's ``source.dns_profile`` binding.
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -40,8 +41,11 @@ from haprion.config import (
     load_policy,
     load_runtime_config,
 )
-from haprion.envelope import new_request_id
+from haprion.envelope import Message, envelope, failure, new_request_id
+from haprion.helper_protocol import config_error_code, write_document
 from haprion.ndes_state import request_is_pending
+
+ANSWERS_AS = "cert_renew"
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,6 +280,26 @@ def redistribute(
     return exit_code == exit_codes.FAILED
 
 
+def _stopped(args: argparse.Namespace, code: str, message: str, exit_code: int) -> int:
+    """Stopped before any pass: why on stderr, and with `--json` as the one document."""
+
+    print(f"ERROR: {message}", file=sys.stderr)
+    if args.json:
+        write_document(
+            sys.stdout,
+            failure(
+                operation=ANSWERS_AS,
+                cluster=None,
+                request_id=new_request_id(),
+                code=code,
+                message=message,
+                exit_code=exit_code,
+            ),
+            exit_code,
+        )
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = arguments.ArgumentParser(
         description="Renew every certbot lineage that is due, then every NDES certificate; "
@@ -283,6 +307,11 @@ def main(argv: list[str] | None = None) -> int:
         "what is still due, so a rollout that failed is made again."
     )
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY_PATH)
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="answer with one JSON document on stdout; the passes' own words stay on stderr",
+    )
     parser.add_argument("--certbot", help="certbot binary used by the upgrade gate")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--run-deploy-hooks", action="store_true")
@@ -303,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
-        parser.error("must run as root; run it with sudo")
+        return _stopped(args, "not_root", "must run as root; run it with sudo", exit_codes.NOT_ROOT)
     if any(not CERTIFICATE_ID.fullmatch(item) for item in args.acme_now):
         parser.error("--acme-now takes a certificate ID")
     if args.certbot is not None and not Path(args.certbot).is_absolute():
@@ -325,12 +354,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     except ConfigError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return exc.exit_code
+        return _stopped(args, config_error_code(exc.exit_code), str(exc), exc.exit_code)
 
+    where: list[str] = []
     failed = bool(renewals.problems)
     for lineage, problem in renewals.problems:
         print(f"ERROR: renewal of {lineage!r} could not be prepared: {problem}", file=sys.stderr)
+        where.append(f"certbot {lineage}")
     for invocation in renewals.commands:
         try:
             completed = subprocess.run(  # noqa: S603 - fixed argv plus validated lineage/path
@@ -345,9 +375,12 @@ def main(argv: list[str] | None = None) -> int:
             if output:
                 print(_scrub(output.rstrip(), invocation.redactions), file=sys.stderr)
             failed = failed or completed.returncode != 0
+            if completed.returncode != 0:
+                where.append(f"certbot {invocation.lineage}")
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"ERROR: renewal of {invocation.lineage!r} could not run: {exc}", file=sys.stderr)
             failed = True
+            where.append(f"certbot {invocation.lineage}")
     #
     # The forced renewal of one lineage (C9c): the same command as above with
     # `--force-renewal`, through the engine the interface's button uses.
@@ -371,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
             if isinstance(diagnostics, str) and diagnostics.strip():
                 print(diagnostics.rstrip(), file=sys.stderr)
             failed = True
+            where.append(f"acme {certificate_id}")
         else:
             print(
                 f"acme: {certificate_id}: renewed in {result.certbot_seconds:.0f}s; "
@@ -390,6 +424,8 @@ def main(argv: list[str] | None = None) -> int:
                     code, message = entry.error
                     print(f"ERROR: [{code}] {certificate_id}: {message}", file=sys.stderr)
             failed = failed or bool(result.publish.failed)
+            if result.publish.failed:
+                where.append(f"acme {certificate_id}")
     #
     # After certbot, not instead of it: a failure in one pass does not spare
     # the other, and the exit code says whether either had one.
@@ -404,7 +440,27 @@ def main(argv: list[str] | None = None) -> int:
     redo_failed = False
     if not (args.dry_run or args.acme_now or args.ndes_now):
         redo_failed = redistribute(policy, runtime)
-    return 1 if failed or ndes_failed or redo_failed else 0
+    if ndes_failed:
+        where.append("ndes")
+    if redo_failed:
+        where.append("distribution")
+    broken = failed or ndes_failed or redo_failed
+    if args.json:
+        summary = {"dry_run": args.dry_run, "lineages": len(renewals.commands), "failed": where}
+        write_document(
+            sys.stdout,
+            envelope(
+                operation=ANSWERS_AS,
+                outcome="failed" if broken else "done",
+                cluster=None,
+                result=summary,
+                error=Message("renewal_failed", f"failed: {', '.join(where) or 'see stderr'}")
+                if broken
+                else None,
+            ),
+            exit_codes.FAILED if broken else exit_codes.OK,
+        )
+    return exit_codes.FAILED if broken else exit_codes.OK
 
 
 if __name__ == "__main__":

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-config-status.schema.json",
+  "title": "haprion-config-status JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "config_status" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/config_status_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/config_status_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "kind"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "config_status_result": {
+      "description": "What a cluster's configuration holds that has not been sent, and what is published. `saved_is_published` is null where the published version could not be read or nothing is published. `regeneration` is whether a publish would change what runs: `unchanged`, `changed` (with `files_changed` and the `objects` it concerns), `refused` or `unknown` (not asked, or not readable; `message` says why).",
+      "type": "object",
+      "required": ["published", "saved", "saved_is_published", "regeneration", "unsent", "interface_owned"],
+      "properties": {
+        "published": {
+          "type": "object",
+          "required": ["state", "version"],
+          "properties": {
+            "state": { "enum": ["published", "unpublished", "unreadable"] },
+            "version": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "saved": {
+          "type": "object",
+          "required": ["version", "date", "comment"],
+          "properties": {
+            "version": { "type": "string" },
+            "date": { "type": "string" },
+            "comment": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "saved_is_published": { "type": ["boolean", "null"] },
+        "regeneration": {
+          "type": "object",
+          "required": ["outcome"],
+          "properties": {
+            "outcome": { "enum": ["unchanged", "changed", "refused", "unknown"] },
+            "files_changed": { "type": "integer", "minimum": 0 },
+            "objects": { "type": "array", "items": { "type": "string" } },
+            "message": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "unsent": { "$ref": "#/$defs/pending" },
+        "interface_owned": { "$ref": "#/$defs/pending" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

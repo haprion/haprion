@@ -64,6 +64,22 @@ READ_PROGRAMS = (
 )
 
 
+USER_VERBS = (
+    "add",
+    "init-admin",
+    "delete",
+    "break-glass",
+    "reset",
+    "disable",
+    "enable",
+    "unlock",
+    "revoke",
+    "list",
+    "role",
+    "apply",
+)
+
+
 @dataclass(frozen=True)
 class Command:
     """The terminal's way to the same thing; the first word is the program.
@@ -469,6 +485,17 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         self.assertEqual(sorted({entry.line for entry in entries if entry.schema in READS}), [])
         silent = sorted({entry.line for entry in entries if "--json" not in _help(entry.line)})
         self.assertEqual(silent, [])
+
+    def test_the_other_commands_a_script_runs_answer_json_too(self) -> None:
+        """K12: the contract says every command can; a script needs `unlock` and `revoke` as much as `apply`."""
+
+        lines = [
+            *(f"haprion-user {verb}" for verb in USER_VERBS),
+            "haprion-cert-renew",
+            "haprion-config-status",
+        ]
+
+        self.assertEqual(sorted(line for line in lines if "--json" not in _help(line)), [])
 
     def test_a_mistyped_call_leaves_stdout_empty(self) -> None:
         """K08: with `--json`, stdout holds a document or nothing - never the usage text.

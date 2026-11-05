@@ -23,6 +23,7 @@ from unittest import mock
 
 from haprion import regeneration
 from haprion.cli import config_status
+from tests.contract_schema import assert_contract
 
 COMMIT_TIME = "2026-01-02T03:04:05+00:00"
 
@@ -348,6 +349,66 @@ class WaitingChangeTests(StatusFixture):
         interface = shown.index("  Changes owned by the interface")
         self.assertLess(waiting, interface)
         self.assertNotIn("managed/generated.cfg", shown[waiting:interface])
+
+
+class JsonTests(StatusFixture):
+    """K12: the command answers in a contract when asked, like the rest."""
+
+    def test_a_clean_cluster_is_one_document(self) -> None:
+        code, shown, _ = self.run_status(
+            "-c", "alpha", "--json", published=stamp("alpha", 1, self.commit)
+        )
+
+        answer = assert_contract("haprion-config-status", shown)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            answer["result"],
+            {
+                "published": {"state": "published", "version": "1"},
+                "saved": {"version": "1", "date": "2026-01-02 03:04", "comment": "Initial"},
+                "saved_is_published": True,
+                "regeneration": {"outcome": "unchanged"},
+                "unsent": [],
+                "interface_owned": [],
+            },
+        )
+
+    def test_unsent_changes_and_a_saved_version_not_published_are_in_it(self) -> None:
+        (self.repo / "core/haproxy.cfg").write_text("global\n  daemon\n")
+        git(self.repo, "commit", "-qam", "Run as a daemon")
+        (self.repo / "manual/extra.cfg").write_text("x\n")
+        (self.repo / "managed/a.yaml").write_text("x: 1\n")
+
+        _, shown, _ = self.run_status(
+            "-c", "alpha", "--json", published=stamp("alpha", 1, self.commit)
+        )
+
+        result = assert_contract("haprion-config-status", shown)["result"]
+        self.assertFalse(result["saved_is_published"])
+        self.assertEqual([entry["path"] for entry in result["unsent"]], ["manual/extra.cfg"])
+        self.assertEqual([entry["path"] for entry in result["interface_owned"]], ["managed/a.yaml"])
+
+    def test_nothing_published_and_an_unreadable_reading_are_said(self) -> None:
+        _, shown, _ = self.run_status(
+            "-c", "alpha", "--json", published="schema=1\nstate=unpublished\n", regeneration=None
+        )
+        result = assert_contract("haprion-config-status", shown)["result"]
+        self.assertEqual(result["published"], {"state": "unpublished", "version": None})
+        self.assertIsNone(result["saved_is_published"])
+        self.assertEqual(result["regeneration"], {"outcome": "unknown"})
+
+    def test_a_path_that_is_not_a_repository_is_a_document(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        code = config_status.main(
+            ["-c", "alpha", "--json"],
+            stream_out=out,
+            stream_err=err,
+            config_path=lambda _cluster: Path(self.directory.name) / "nowhere",
+        )
+
+        answer = assert_contract("haprion-config-status", out.getvalue())
+        self.assertEqual((code, answer["error"]["code"]), (68, "dependency_unavailable"))
+        self.assertNotEqual(err.getvalue(), "")
 
 
 class FailureTests(StatusFixture):

@@ -18,6 +18,7 @@ from unittest import mock
 from haprion import exit_codes
 
 from haprion_ui import admin, db
+from tests.contract_schema import assert_contract
 
 LAST = "the last active admin cannot be demoted, disabled or deleted"
 
@@ -39,6 +40,8 @@ class Cursor:
     def fetchone(self) -> tuple[Any, ...] | None:
         if not self.found:
             return None
+        if "select username" in self.sql:
+            return ("ada",)
         if "select role, source" in self.sql:
             return ("admin", "local")
         return ("local",) if "select source" in self.sql else (1,)
@@ -142,3 +145,92 @@ class TheExits(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheJsonAnswers(unittest.TestCase):
+    """K12: every verb answers `--json` in the contract, as the list and the apply do."""
+
+    def say(self, argv: list[str], *, found: bool = True, **effects: Any) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            for patch in (
+                mock.patch("os.geteuid", return_value=0),
+                mock.patch.object(admin, "load_environment"),
+                mock.patch.object(admin, "connect", return_value=Connection(found)),
+                mock.patch.object(admin, "_audit"),
+                mock.patch.object(admin, "read_new_password", return_value="long enough pw"),
+                contextlib.redirect_stderr(io.StringIO()),
+                contextlib.redirect_stdout(out),
+            ):
+                stack.enter_context(patch)
+            for name, effect in effects.items():
+                stack.enter_context(mock.patch.object(db, name, **effect))
+            code = admin.main([*argv, "--json"])
+        return code, out.getvalue()
+
+    def test_each_verb_says_what_it_did(self) -> None:
+        for argv, effects, expected in (
+            (
+                ["add", "ada", "--role", "admin"],
+                {"create_account": {"return_value": True}},
+                {"action": "add", "username": "ada", "role": "admin", "break_glass": True},
+            ),
+            (
+                ["reset", "ada"],
+                {"renew_sign_in": {"return_value": 2}},
+                {"action": "reset", "username": "ada", "sessions_revoked": 2},
+            ),
+            (
+                ["disable", "ada"],
+                {"set_disabled": {"return_value": 1}},
+                {"action": "disable", "username": "ada", "sessions_revoked": 1},
+            ),
+            (
+                ["enable", "ada"],
+                {"set_disabled": {"return_value": 0}},
+                {"action": "enable", "username": "ada"},
+            ),
+            (
+                ["unlock", "ada"],
+                {"unlock_account": {"return_value": None}},
+                {"action": "unlock", "username": "ada"},
+            ),
+            (
+                ["revoke", "ada"],
+                {"revoke_sessions_for_user": {"return_value": 3}},
+                {"action": "revoke", "username": "ada", "sessions_revoked": 3},
+            ),
+            (
+                ["delete", "ada", "--yes"],
+                {"delete_account": {"return_value": None}},
+                {"action": "delete", "username": "ada"},
+            ),
+            (
+                ["break-glass", "ada", "--off"],
+                {"set_break_glass": {"return_value": 0}},
+                {
+                    "action": "break-glass",
+                    "username": "ada",
+                    "break_glass": False,
+                    "sessions_revoked": 0,
+                },
+            ),
+            (
+                ["role", "ada", "reader"],
+                {"set_role": {"return_value": None}},
+                {"action": "role", "username": "ada", "role": "reader", "changed": True},
+            ),
+        ):
+            with self.subTest(argv[0]):
+                code, out = self.say(argv, **effects)
+                self.assertEqual(code, 0, out)
+                self.assertEqual(assert_contract("haprion-user-action", out)["result"], expected)
+
+    def test_a_refusal_is_a_document_too(self) -> None:
+        code, out = self.say(["revoke", "ghost"], found=False)
+
+        answer = assert_contract("haprion-user-action", out)
+        self.assertEqual((code, answer["error"]["code"]), (exit_codes.NOT_FOUND, "not_found"))
+        code, out = self.say(["delete", "ada"])
+        answer = assert_contract("haprion-user-action", out)
+        self.assertEqual((code, answer["error"]["code"]), (exit_codes.USAGE, "bad_input"))

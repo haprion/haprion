@@ -193,6 +193,7 @@ haprion-objects -c alpha --show <name>
 haprion-deploy -c alpha
 ```
 
+`haprion-config-status -c <cluster> --json` answers the same in the contract's format.
 `haprion-config-status` also says whether publishing again would change what the nodes run. A new
 release of Haprion can generate other configuration from the same objects, and no version records
 that. The published version is generated again with the installed release, without publishing, and the
@@ -5015,8 +5016,9 @@ What they have in common:
 - **`--json`** prints one answer in the contract's format, called the envelope (`docs/CONTRACT.md`,
   `schemas/v1/`). It includes `changed` where the command decides it, also when the command stops early.
   The exit code follows the envelope's outcome: 0 for done, 69 for partly done, 75 for blocked, and a code
-  from the contract's *Exit codes* for a failure. `haprion-publish`, `haprion-user list`,
-  `haprion-settings show` and `haprion-profiles list` answer in it too.
+  from the contract's *Exit codes* for a failure. `haprion-publish`, every `haprion-user` command,
+  `haprion-settings show`, `haprion-profiles list`, `haprion-config-status` and `haprion-cert-renew`
+  answer in it too.
 - **Publishing is not deploying.** `haprion-objects apply`, `haprion-network apply` and
   `haprion-cluster-settings apply` publish a new version. `haprion-deploy` rolls it out - the same two
   steps *Publish & deploy* takes.

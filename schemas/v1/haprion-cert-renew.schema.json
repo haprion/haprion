@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-cert-renew.schema.json",
+  "title": "haprion-cert-renew JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "cert_renew" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/cert_renew_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/cert_renew_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "cert_renew_result": {
+      "description": "One renewal pass. `lineages` is the certbot lineages it ran; `failed` names each pass that failed: `certbot <lineage>`, `acme <id>`, `ndes` or `distribution`. The passes' own words are on stderr.",
+      "type": "object",
+      "required": ["dry_run", "lineages", "failed"],
+      "properties": {
+        "dry_run": { "type": "boolean" },
+        "lineages": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

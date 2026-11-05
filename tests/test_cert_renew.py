@@ -214,8 +214,8 @@ class TheDistributionIsRedone(Fixture):
 
         return cert_renew.redistribute(
             self.policy,
-            self.runtime,
             errors=errors or io.StringIO(),
+            require_secure=False,
             live=self.live,
             store=self.store,
             lock_path=self.lock,
@@ -239,6 +239,24 @@ class TheDistributionIsRedone(Fixture):
 
         self.assertTrue(self.redo(3, errors))
         self.assertIn("deploy alpha: exit 3", errors.getvalue())
+
+    def test_the_registry_is_read_again_after_certbot(self) -> None:
+        """Remove from... run while certbot worked is not undone (26-11-05, EE01)."""
+
+        # The pass was started with alpha; the registry now says beta.
+        self.write_config({"keeper.example": {"source": {"kind": "acme"}, "clusters": ["beta"]}})
+
+        self.assertFalse(self.redo(0))
+        self.assertEqual(self.deployed, ["beta"])
+
+    def test_a_registry_that_cannot_be_read_again_fails_the_pass(self) -> None:
+        errors = io.StringIO()
+        with mock.patch.object(
+            cert_renew, "load_runtime_config", side_effect=ConfigError("registry is broken")
+        ):
+            self.assertTrue(self.redo(0, errors))
+        self.assertIn("registry is broken", errors.getvalue())
+        self.assertEqual(self.deployed, [])
 
     def test_a_pass_with_nothing_due_asks_no_node(self) -> None:
         self.run_publish(self.policy_path, deployer=lambda _cluster_id: 0)

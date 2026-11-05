@@ -238,8 +238,8 @@ def renew_ndes(
 
 def redistribute(
     policy: PathPolicy,
-    runtime: RuntimeConfig,
     *,
+    require_secure: bool = True,
     errors: TextIO = sys.stderr,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
@@ -257,8 +257,17 @@ def redistribute(
     compared and written only when they differ, and a cluster is rolled out
     only when it was changed or the ledger (`cert_pending`) says an earlier
     run left it unconfirmed - so a day with nothing due asks no node.
+
+    The registry and the clusters are read here, not taken from the start of the
+    run: certbot may have worked for minutes, and a *Remove from...* made meanwhile
+    must not be put back (26-11-05, EE01).
     """
 
+    try:
+        runtime = load_runtime_config(policy, require_secure=require_secure)
+    except ConfigError as exc:
+        print(f"ERROR: distribution pass: {exc}", file=errors)
+        return True
     if runtime.registry is None:
         return False
     try:
@@ -452,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     #
     redo_failed = False
     if not (args.dry_run or args.acme_now or args.ndes_now):
-        redo_failed = redistribute(policy, runtime)
+        redo_failed = redistribute(policy)
     if ndes_failed:
         where.append("ndes")
     if redo_failed:

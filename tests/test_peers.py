@@ -77,6 +77,18 @@ class EachNodeHasOneAddress(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "node-a.example.com for node node-a.*zone"):
             peers.addresses(CLUSTER, lookup)  # type: ignore[arg-type]
 
+    def test_a_link_local_ipv6_address_is_refused_by_node(self) -> None:
+        # Review 26-11-05, XY03: it is unique only per interface, so the interface
+        # keepalived is given may be another one that carries it.
+        lookup = self.lookup(
+            {
+                "node-a.example.com": answer("fe80::1"),
+                "192.0.2.2": answer("192.0.2.2"),
+            }
+        )
+        with self.assertRaisesRegex(ConfigError, "node-a.example.com for node node-a.*global"):
+            peers.addresses(CLUSTER, lookup)  # type: ignore[arg-type]
+
     def test_an_address_is_written_in_its_plain_form(self) -> None:
         lookup = self.lookup(
             {

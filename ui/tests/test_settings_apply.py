@@ -275,6 +275,67 @@ class TheCheckAsksWhatTheRunAsks(unittest.TestCase):
         connection.rollback.assert_called()
 
 
+class TheCheckKeepsNoLockWhileItAsksTheProvider(unittest.TestCase):
+    """W07: Verify is a network call with a timeout, and the sign-in page reads the row."""
+
+    WANTED = {
+        "button_text": "Log in",
+        "enabled": True,
+        "interface_url": "https://mgr.example.com",
+    }
+
+    def run_check(self, ok: bool) -> tuple[list[str], str]:
+        events: list[str] = []
+
+        def verify(
+            _provider: db.OidcProvider, _redirect: str
+        ) -> tuple[bool, list[dict[str, Any]], str]:
+            events.append("verify")
+            return ok, [{"name": "discovery", "ok": ok, "message": "no answer"}], ""
+
+        def save(*_args: Any, **_kwargs: Any) -> int:
+            events.append("save")
+            return 0
+
+        said = ""
+        with (
+            mock.patch.object(
+                db, "oidc_provider", return_value=replace(stored_provider(), verified_revision=0)
+            ),
+            mock.patch.object(db, "save_oidc_provider", side_effect=save),
+            mock.patch.object(db, "set_oidc_enabled", return_value=0),
+            mock.patch.object(db, "record_audit_event"),
+            mock.patch.object(db, "record_oidc_verified", return_value=True),
+        ):
+            try:
+                settings_apply.apply_oidc(
+                    mock.Mock(),
+                    self.WANTED,
+                    actor="admin",
+                    check=True,
+                    public_key=None,
+                    replace_secret=False,
+                    piped_secret=None,
+                    verify=verify,
+                )
+            except settings_apply.ApplyError as error:
+                said = str(error)
+        return events, said
+
+    def test_the_provider_is_asked_before_the_row_is_written(self) -> None:
+        events, _ = self.run_check(ok=True)
+
+        self.assertEqual(events[:2], ["verify", "save"])
+
+    def test_a_failed_verify_says_the_settings_would_be_saved(self) -> None:
+        events, said = self.run_check(ok=False)
+
+        self.assertEqual(events[0], "verify")
+        self.assertIn("did not pass Verify", said)
+        self.assertNotIn("were saved", said)
+        self.assertIn("would be saved", said)
+
+
 class TheColoursSwitch(unittest.TestCase):
     """Review 26-10-30, E2 (B410): the switch is never locked, whatever the cluster count."""
 

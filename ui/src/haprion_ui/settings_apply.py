@@ -427,6 +427,22 @@ def apply_oidc(
         if not check:
             connection.commit()
 
+    #
+    # A check asks the provider before it writes a row. The run's Verify comes
+    # after the save, under the row's lock; the check's transaction is held to the
+    # end, so asking inside it would keep the sign-in page waiting for the
+    # provider's answer (W07).
+    #
+    asked_first = None
+    if (
+        check
+        and turn is True
+        and parsed is not None
+        and (fields or not current.verified)
+        and not (fields and on_after and current.enabled)
+    ):
+        asked_first = verify(replace(current, **parsed.settings) if fields else current, redirect)
+
     committed = False
     try:
         if turn is False:
@@ -471,7 +487,7 @@ def apply_oidc(
         if turn is True:
             stored = db.oidc_provider(connection) or current
             if not stored.verified:
-                ok, checks, trouble = verify(stored, redirect)
+                ok, checks, trouble = asked_first or verify(stored, redirect)
                 recorded = ok and db.record_oidc_verified(connection, revision=stored.revision)
                 db.record_audit_event(
                     connection,
@@ -489,7 +505,7 @@ def apply_oidc(
                 if not recorded:
                     raise ApplyError(
                         "oidc: the settings did not pass Verify, so sign-in through the provider "
-                        f"stays off{'; the settings were saved' if fields else ''}. "
+                        f"stays off{('; the settings would be saved' if check else '; the settings were saved') if fields else ''}. "
                         f"{_failed_verify(trouble, checks)}"
                     )
             answer["sessions_ended"] += _set_enabled(

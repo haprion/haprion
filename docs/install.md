@@ -146,8 +146,8 @@ so the manager must not be the newer of the two. When `apt list --upgradable` on
 the nodes first and the manager last ([Keeping HAProxy current](user-manual.md#keeping-haproxy-current)).
 
 An installation on Haprion 0.99.10 or older is updated to 0.99.13 first. Later releases begin their database schema
-where 0.99.11 to 0.99.13 left it, and refuse an older one before they change the database. The packages of 0.99.13 are on its
-[GitHub release](https://github.com/haprion/haprion/releases/tag/v0.99.13).
+where 0.99.11 to 0.99.13 left it, and refuse an older one before they change the database. The packages of 0.99.13
+are on its [GitHub release](https://github.com/haprion/haprion/releases/tag/v0.99.13).
 
 Do not add the repository to unattended-upgrades. An update is something you choose the moment for.
 

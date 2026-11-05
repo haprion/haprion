@@ -194,6 +194,43 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertFalse((self.repo / "managed/proxies/shop.yaml").exists())
             self.assertFalse(self.publish_path.exists())
 
+    def loose_objects(self) -> int:
+        return sum(1 for path in (self.repo / ".git/objects").rglob("*") if path.is_file())
+
+    def test_a_check_leaves_no_git_objects_behind(self) -> None:
+        """W06: the tree a check builds is thrown away with the rest of it."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            before = self.loose_objects()
+
+            code, document, _err = self.publish_objects(policy, self.request(check=True))
+
+            self.assertEqual((code, document["result"]["checked_only"]), (0, True))
+            self.assertEqual(self.loose_objects(), before)
+
+    def test_a_check_does_not_repair_what_a_stopped_publish_left(self) -> None:
+        """W06: it says why it stops; the publish itself writes the files out first."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            self.publish_objects(policy, self.request())
+            head = git(self.repo, "rev-parse", "HEAD")
+            git(self.repo, "reset", "--quiet", "--hard", "HEAD~1")
+            git(self.repo, "update-ref", git(self.repo, "symbolic-ref", "HEAD"), head)
+            left = git(self.repo, "status", "--porcelain")
+            self.assertNotEqual(left, "")
+
+            code, document, _err = self.publish_objects(
+                policy,
+                self.request(objects={"other": proxy("other", "other.example.com")}, check=True),
+            )
+
+            self.assertEqual((code, document["error"]["code"]), (75, "dirty_worktree"))
+            self.assertEqual(git(self.repo, "status", "--porcelain"), left)
+
     def test_a_check_refuses_what_the_publish_refuses(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))

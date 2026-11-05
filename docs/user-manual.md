@@ -236,7 +236,10 @@ the object `shop`.
   every object.
 - `--check` shows the difference and publishes nothing. It asks the publish everything the publish asks - the
   other objects, the certificates, the ports and features of the nodes, HAProxy's own check - and refuses
-  what the publish would refuse.
+  what the publish would refuse. It leaves nothing in the repository, and it does not write out the files
+  of an earlier publish that stopped halfway; it says so and stops, and the next publish finishes that first.
+  More than 64 objects are published, and so checked, in batches of 64, each against the version they all
+  start from, so a conflict between two batches shows only when they are published.
 - `--json` answers with `changed`.
 - Deploying stays a step of its own.
 

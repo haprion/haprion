@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
+import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -342,6 +344,17 @@ def _publish(
         # for a version some other request recorded and stopped on, when the
         # draft is exactly the version before it (review 26-10-30, E5).
         #
+        if change.check:
+            #
+            # A check changes nothing, and writing the files out is a change: it
+            # says what the publish would do first (W06).
+            #
+            return refuse(
+                "dirty_worktree",
+                "an earlier publish stopped before it wrote its files out. A publish writes them "
+                f"out and goes on; a check leaves them as they are. Publish before {words.doing}.",
+                exit_codes.BLOCKED,
+            )
         restore_worktree(repo, head)
         dirty = unsaved_changes(repo)
     if dirty:
@@ -354,20 +367,31 @@ def _publish(
     if head != change.expected_head and not retry:
         return refuse("expected_target_changed", words.moved, exit_codes.BLOCKED)
 
-    if retry:
-        snapshot = committed_snapshot(repo, head)
-        named: Mapping[str, Any] = {
-            **change.named,
-            **(change.on_retry() if change.on_retry else {}),
-        }
-    else:
-        try:
-            managed = change.apply(read_tree_files(repo, head))
-        except Refusal as exc:
-            return refuse(exc.code, str(exc), exc.exit_code)
-        named = dict(change.named)
-        snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
-    published_files = read_tree_files(repo, snapshot.tree)
+    #
+    # A check builds the candidate's tree in a directory of its own, so the
+    # repository keeps no objects for a version that was never made (W06).
+    #
+    scratch = Path(tempfile.mkdtemp(prefix="haprion-check-objects-")) if change.check else None
+    try:
+        if retry:
+            snapshot = committed_snapshot(repo, head)
+            named: Mapping[str, Any] = {
+                **change.named,
+                **(change.on_retry() if change.on_retry else {}),
+            }
+        else:
+            try:
+                managed = change.apply(read_tree_files(repo, head))
+            except Refusal as exc:
+                return refuse(exc.code, str(exc), exc.exit_code)
+            named = dict(change.named)
+            snapshot = build_candidate_tree(
+                repo, head, managed, prefixes=(MANAGED_PREFIX,), objects=scratch
+            )
+        published_files = read_tree_files(repo, snapshot.tree, objects=scratch)
+    finally:
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
     artifact = build_node_artifact(published_files)
     index = build_release_index(published_files)
 

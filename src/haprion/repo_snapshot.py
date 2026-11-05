@@ -22,6 +22,7 @@ staged behind.
 
 from __future__ import annotations
 
+import os
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -97,12 +98,24 @@ def first_parent(repo: Path, commit: str) -> str | None:
     return parents[1] if len(parents) == 2 else None
 
 
+def _quarantined(repo: Path, objects: Path) -> dict[str, str]:
+    """The environment that puts new objects in `objects` and still reads the repository's own."""
+
+    primary = _git(repo, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+    return {
+        **{name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
+        "GIT_OBJECT_DIRECTORY": str(objects),
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": primary.decode().strip(),
+    }
+
+
 def build_candidate_tree(
     repo: Path,
     base_commit: str,
     files: Mapping[str, bytes],
     *,
     prefixes: tuple[str, ...] = SNAPSHOT_PREFIXES,
+    objects: Path | None = None,
 ) -> Snapshot:
     """Write a tree that is `base_commit` with exactly `prefixes` replaced.
 
@@ -110,6 +123,10 @@ def build_candidate_tree(
     relative path. Paths outside the snapshot prefixes are refused rather than
     ignored: silently dropping part of what an operator asked to publish is the
     failure mode this whole path exists to prevent.
+
+    With `objects` the blobs and trees are written there and not into the
+    repository, for a candidate that is only looked at; `read_tree_files` is
+    given the same directory to read it.
     """
 
     if not prefixes or any(not prefix.endswith("/") for prefix in prefixes):
@@ -135,6 +152,14 @@ def build_candidate_tree(
             "GIT_CONFIG_KEY_0": "safe.directory",
             "GIT_CONFIG_VALUE_0": str(repo),
         }
+        if objects is not None:
+            quarantine = _quarantined(repo, objects)
+            env.update(
+                {
+                    n: quarantine[n]
+                    for n in ("GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+                }
+            )
         _git(repo, "read-tree", base_commit, env=env)
 
         #
@@ -193,7 +218,9 @@ def committed_snapshot(repo: Path, commit: str) -> Snapshot:
     )
 
 
-def read_tree_files(repo: Path, tree: str, paths: Sequence[str] = ()) -> dict[str, bytes]:
+def read_tree_files(
+    repo: Path, tree: str, paths: Sequence[str] = (), *, objects: Path | None = None
+) -> dict[str, bytes]:
     """Every file in `tree`, keyed by repository relative path.
 
     This is what the release artifact is derived from - the committed candidate,
@@ -203,10 +230,20 @@ def read_tree_files(repo: Path, tree: str, paths: Sequence[str] = ()) -> dict[st
     one file of a tree whose map files can run to megabytes (review 2026-10-03,
     K4). They are the caller's own constants, never a request's; a path that is
     not in the tree is simply absent from the answer.
+
+    `objects` is where a tree built with the same argument was written.
     """
 
+    env = _quarantined(repo, objects) if objects is not None else None
     listing = _git(
-        repo, "ls-tree", "-r", "-z", "--full-tree", tree, *(("--", *paths) if paths else ())
+        repo,
+        "ls-tree",
+        "-r",
+        "-z",
+        "--full-tree",
+        tree,
+        *(("--", *paths) if paths else ()),
+        env=env,
     ).decode()
     blobs: list[tuple[str, str]] = []
     for entry in listing.split("\0"):
@@ -227,7 +264,11 @@ def read_tree_files(repo: Path, tree: str, paths: Sequence[str] = ()) -> dict[st
     # file quietly holding its neighbour's bytes.
     #
     output = _git(
-        repo, "cat-file", "--batch", stdin="".join(f"{oid}\n" for _, oid in blobs).encode()
+        repo,
+        "cat-file",
+        "--batch",
+        stdin="".join(f"{oid}\n" for _, oid in blobs).encode(),
+        env=env,
     )
     files: dict[str, bytes] = {}
     position = 0

@@ -2210,11 +2210,11 @@ Why this order:
 - The node copies come last. They are the one layer that may be left behind. A node is asked by the
   certificate's name, so it needs no registry entry.
 
-The whole job holds the publisher's lock (`/run/haprion/locks/cert-publish.lock`), as issuing,
-publishing and target changes do. The renewal timer publishes outside the job queue. Without the lock,
-a renewal between the layers could put a still-registered certificate's material back, or leave a
-deleted one's node copies behind. Under the lock, the layers are one step as far as the renewal is
-concerned.
+The layers on the manager hold the publisher's lock (`/run/haprion/locks/cert-publish.lock`), as
+issuing, publishing and target changes do. The renewal timer publishes outside the job queue. Without
+the lock, a renewal between the layers could put a still-registered certificate's material back.
+Under the lock, the layers are one step as far as the renewal is concerned. The nodes are asked after
+the lock is released, so a slow or dead node does not hold up other certificate work.
 
 **A deletion can be run again.** Every layer can be repeated safely and reports `absent` where there
 was nothing to remove. A layer can fail: certbot refuses, a file cannot be removed, a node is

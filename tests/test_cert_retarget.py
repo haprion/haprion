@@ -244,6 +244,11 @@ class RemovingFromATarget(RetargetFixture):
             }
         )
 
+    def test_the_nodes_are_asked_without_the_certificate_lock(self) -> None:
+        self.retarget(self.policy_path, "remove", "example.com", clusters=("beta",))
+
+        self.assertEqual(self.lock_free_when_asked, [True, True])
+
     def test_the_cluster_leaves_the_entry_and_its_nodes_drop_the_copy(self) -> None:
         report = self.retarget(self.policy_path, "remove", "example.com", clusters=("beta",))
 

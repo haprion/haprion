@@ -70,6 +70,7 @@ class DeleteFixture(Fixture):
         self.node_calls: list[tuple[str, str]] = []
         self.node_verbs: list[str] = []
         self.node_answers: dict[str, tuple[int, str]] = {}
+        self.lock_free_when_asked: list[bool] = []
 
     def prepared(self, certificates: dict[str, dict[str, Any]]) -> Path:
         policy_path = self.write_config(KEEPERS | certificates)
@@ -116,9 +117,22 @@ class DeleteFixture(Fixture):
 
         self.node_verbs.append(verb)
         self.node_calls.append((host, certificate_id))
+        self.lock_free_when_asked.append(self.lock_is_free())
         if host in self.node_answers:
             return self.node_answers[host]
         return 0, f"[ts] Removed {certificate_id}.\n[ts] Done: 1 removed, 0 not present."
+
+    def lock_is_free(self) -> bool:
+        """Whether the certificate lock can be taken now, from another open file."""
+
+        handle = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        finally:
+            os.close(handle)
+        return True
 
     def nodes_have_nothing(self) -> None:
         for host in ("node-a.example.com", "node-b.example.com"):
@@ -463,8 +477,21 @@ class WhatIsLeftAndSaid(DeleteFixture):
         self.assertEqual(report.incomplete, ("one.example", "two.example"))
         self.assertEqual(report.outcomes[0].nodes[0].state, "unreachable")
 
+    def test_the_nodes_are_asked_without_the_certificate_lock(self) -> None:
+        """A slow or dead node must not hold every certificate operation (26-11-05, EE02)."""
+
+        policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        self.run_delete(policy_path, "example.com")
+        self.assertEqual(self.lock_free_when_asked, [True, True])
+
+        self.lock_free_when_asked.clear()
+        self.run_delete(policy_path, "example.com")  # by name: the registry no longer names it
+        self.assertEqual(self.lock_free_when_asked, [True] * 4)
+
     def test_a_node_that_did_not_answer_is_not_asked_again_by_the_rest_of_the_batch(self) -> None:
-        """Each question to a dead node costs its connect timeout, with the certificate lock held."""
+        """Each question to a dead node costs its connect timeout, for as long as it is asked."""
 
         policy_path = self.prepared(
             {

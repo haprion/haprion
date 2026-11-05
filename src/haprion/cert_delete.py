@@ -22,12 +22,13 @@ Four layers, in this order, for each certificate in the request:
 4. the copy on every node of every cluster the entry named, through the same
    trigger identity that pulls certificates there.
 
-The whole run holds the publisher's lock (`cert_publish.publish_lock`), like
-issue, publish and target do. The renewal timer publishes outside the job
+The layers on the manager hold the publisher's lock (`cert_publish.publish_lock`),
+like issue, publish and target do. The renewal timer publishes outside the job
 queue, and a renewal that ran between these layers would put the material
-of a still-registered certificate back - correctly, from its side - and
-leave the node copies of a deleted one behind. Under the lock the layers
-are one step as far as the publisher is concerned.
+of a still-registered certificate back - correctly, from its side. Under the
+lock the layers are one step as far as the publisher is concerned. The nodes
+are asked after the lock is released: a node that is slow or dead costs its
+timeout, and nothing the lock protects depends on the answer.
 
 Every layer is idempotent, and the run is meant to be repeated: a layer that
 fails is reported on the certificate's row and the entry stays, so the same
@@ -72,6 +73,7 @@ import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -569,7 +571,7 @@ def remove_node_copies(
 
     `unreachable` is shared by a batch: a node that did not answer is not asked
     again by the certificates after it. Each question to a dead node costs its
-    connect timeout, and the certificate lock is held for all of them.
+    connect timeout.
     """
 
     gone = unreachable if unreachable is not None else set()
@@ -607,6 +609,48 @@ def remove_node_copies(
     return tuple(copies)
 
 
+@dataclass(frozen=True)
+class NodeQuestion[Outcome]:
+    """What a certificate still has to ask its nodes, and how its row is made from the answers.
+
+    The layers on the manager are done under the certificate lock; the nodes
+    are asked after it is released (26-11-05, EE02): a node that is slow or
+    dead costs its timeout, and nothing the lock protects depends on the
+    answer, since the registry no longer names the certificate (or the cluster)
+    and the cluster's copy is gone.
+    """
+
+    certificate_id: str
+    clusters: Sequence[Cluster]
+    verb: str
+    finish: Callable[[tuple[NodeCopy, ...]], Outcome]
+
+
+def ask_the_nodes[Outcome](
+    items: Sequence[Outcome | NodeQuestion[Outcome]],
+    identity: DeployIdentity | None,
+    ask: NodeRemover,
+) -> list[Outcome]:
+    """Settle each question, in order, sharing the nodes that did not answer."""
+
+    unreachable: set[str] = set()
+    outcomes: list[Outcome] = []
+    for item in items:
+        if not isinstance(item, NodeQuestion):
+            outcomes.append(item)
+            continue
+        nodes = remove_node_copies(
+            item.clusters,
+            item.certificate_id,
+            identity,
+            ask,
+            verb=item.verb,
+            unreachable=unreachable,
+        )
+        outcomes.append(item.finish(nodes))
+    return outcomes
+
+
 def delete(
     certificate_ids: Sequence[str],
     policy: PathPolicy,
@@ -636,7 +680,7 @@ def delete(
         )
     try:
         with publish_lock(lock_path):
-            return _delete_locked(
+            pending = _delete_locked(
                 certificate_ids,
                 policy,
                 require_secure=require_secure,
@@ -649,6 +693,9 @@ def delete(
             )
     except LockError as exc:
         raise DeleteError(exc.code, str(exc), exit_code=exit_codes.REFUSED) from exc
+    return Report(
+        tuple(ask_the_nodes(pending, policy.cert_deploy_identity, node_remover)),
+    )
 
 
 def retire_displaced_interface(
@@ -711,7 +758,7 @@ def _delete_locked(
     lineage_remover: LineageRemover,
     node_remover: NodeRemover,
     guards_reader: GuardsReader,
-) -> Report:
+) -> list[CertificateOutcome | NodeQuestion[CertificateOutcome]]:
     registry_path = policy.certificate_registry
     assert registry_path is not None  # noqa: S101 - `delete` refused before taking the lock
     try:
@@ -720,8 +767,7 @@ def _delete_locked(
         raise DeleteError("dependency_unavailable", str(exc), exit_code=exc.exit_code) from exc
     guards = guards_reader(runtime, certificate_ids)
 
-    outcomes: list[CertificateOutcome] = []
-    unreachable: set[str] = set()
+    outcomes: list[CertificateOutcome | NodeQuestion[CertificateOutcome]] = []
     for certificate_id in certificate_ids:
         reason = refusal(certificate_id, runtime, guards)
         if reason is not None:
@@ -740,8 +786,6 @@ def _delete_locked(
                     store=store,
                     certbot=certbot,
                     lineage_remover=lineage_remover,
-                    node_remover=node_remover,
-                    unreachable=unreachable,
                 )
             )
             continue
@@ -813,15 +857,14 @@ def _delete_locked(
             )
 
         clusters = [runtime.clusters[c] for c in entry.clusters if c in runtime.clusters]
-        nodes = remove_node_copies(
-            clusters,
-            certificate_id,
-            policy.cert_deploy_identity,
-            node_remover,
-            verb=AUTHORITY_NODE_VERB if entry.source.kind == AUTHORITY else NODE_VERB,
-            unreachable=unreachable,
+        outcomes.append(
+            NodeQuestion(
+                certificate_id,
+                clusters,
+                AUTHORITY_NODE_VERB if entry.source.kind == AUTHORITY else NODE_VERB,
+                partial(_outcome, certificate_id, tuple(layers)),
+            )
         )
-        outcomes.append(_outcome(certificate_id, tuple(layers), nodes))
         #
         # The next certificate's guards must see this one gone.
         #
@@ -829,7 +872,7 @@ def _delete_locked(
             runtime = load_runtime_config(policy, require_secure=require_secure)
         except ConfigError as exc:
             raise DeleteError("dependency_unavailable", str(exc), exit_code=exc.exit_code) from exc
-    return Report(tuple(outcomes))
+    return outcomes
 
 
 def _outcome(
@@ -857,9 +900,7 @@ def _sweep(
     store: Path,
     certbot: str,
     lineage_remover: LineageRemover,
-    node_remover: NodeRemover,
-    unreachable: set[str],
-) -> CertificateOutcome:
+) -> NodeQuestion[CertificateOutcome]:
     """A certificate the registry no longer names: what is left of it, by name.
 
     The registry entry is the one layer that says where a certificate went,
@@ -906,21 +947,23 @@ def _sweep(
     request_layer = remove_request_state(policy, certificate_id)
     if request_layer is not None:
         layers.append(request_layer)
-    nodes = remove_node_copies(
-        [runtime.clusters[key] for key in sorted(runtime.clusters)],
-        certificate_id,
-        policy.cert_deploy_identity,
-        node_remover,
-        unreachable=unreachable,
-    )
-    nothing_left = all(layer.state == "absent" for layer in layers) and all(
-        copy.state == "absent" for copy in nodes
-    )
-    if nothing_left:
-        return CertificateOutcome(
-            certificate_id,
-            "refused",
-            "not in the registry, and nothing of it remains on the manager or the nodes",
-            NOT_REGISTERED,
+
+    def finish(nodes: tuple[NodeCopy, ...]) -> CertificateOutcome:
+        nothing_left = all(layer.state == "absent" for layer in layers) and all(
+            copy.state == "absent" for copy in nodes
         )
-    return _outcome(certificate_id, tuple(layers), nodes)
+        if nothing_left:
+            return CertificateOutcome(
+                certificate_id,
+                "refused",
+                "not in the registry, and nothing of it remains on the manager or the nodes",
+                NOT_REGISTERED,
+            )
+        return _outcome(certificate_id, tuple(layers), nodes)
+
+    return NodeQuestion(
+        certificate_id,
+        [runtime.clusters[key] for key in sorted(runtime.clusters)],
+        NODE_VERB,
+        finish,
+    )

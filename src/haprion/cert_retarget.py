@@ -61,10 +61,11 @@ from haprion.cert_delete import (
     Guards,
     Layer,
     NodeCopy,
+    NodeQuestion,
     NodeRemover,
     ask_node,
+    ask_the_nodes,
     read_guards,
-    remove_node_copies,
 )
 from haprion.cert_inventory import (
     IMPORT_STORE,
@@ -368,22 +369,22 @@ def retarget(
         return Report("add", tuple(outcomes), deployments)
 
     #
-    # Under the publisher's lock, like a deletion: a renewal that ran between
-    # the registry change and the node's removal would be fine from its side
-    # and leave nothing behind, but the lock makes the two one step.
+    # The registry and the manager's copies change under the publisher's lock,
+    # like a deletion; the nodes are asked after it is released, so a slow or
+    # dead node does not hold every other certificate operation.
     #
     try:
         with publish_lock(lock_path):
-            outcomes = _remove(
+            pending = _remove(
                 certificate_ids,
                 change,
                 policy,
                 require_secure=require_secure,
-                node_remover=node_remover,
                 guards_reader=guards_reader,
             )
     except PublishError as exc:
         raise RetargetError(exc.code, str(exc), exit_code=exit_codes.REFUSED) from exc
+    outcomes = ask_the_nodes(pending, policy.cert_deploy_identity, node_remover)
     return Report("remove", tuple(outcomes))
 
 
@@ -634,9 +635,8 @@ def _remove(
     policy: PathPolicy,
     *,
     require_secure: bool,
-    node_remover: NodeRemover,
     guards_reader: GuardsReader,
-) -> list[CertificateOutcome]:
+) -> list[CertificateOutcome | NodeQuestion[CertificateOutcome]]:
     registry_path = policy.certificate_registry
     assert registry_path is not None  # noqa: S101
     runtime = _load(policy, require_secure)
@@ -644,8 +644,7 @@ def _remove(
         guards = guards_reader(runtime, certificate_ids)
     except DeleteError as exc:
         raise RetargetError(exc.code, str(exc), exit_code=exc.exit_code) from exc
-    outcomes: list[CertificateOutcome] = []
-    unreachable: set[str] = set()
+    outcomes: list[CertificateOutcome | NodeQuestion[CertificateOutcome]] = []
     for certificate_id in certificate_ids:
         runtime = _load(policy, require_secure)
         found = _entry_or_refusal(certificate_id, runtime)
@@ -694,26 +693,33 @@ def _remove(
             )
             layers += (_unlink(copy),)
         clusters = [runtime.clusters[c] for c in dropped_clusters if c in runtime.clusters]
-        nodes = remove_node_copies(
-            clusters,
-            certificate_id,
-            policy.cert_deploy_identity,
-            node_remover,
-            verb=AUTHORITY_NODE_VERB if authority else NODE_VERB,
-            unreachable=unreachable,
-        )
-        complete = all(layer.state != "failed" for layer in layers) and all(
-            copy.state in {"removed", "absent"} for copy in nodes
-        )
-        outcomes.append(
-            CertificateOutcome(
+        abandoned = written.abandoned
+
+        def finish(
+            nodes: tuple[NodeCopy, ...],
+            certificate_id: str = certificate_id,
+            abandoned: tuple[str, ...] = abandoned,
+            layers: tuple[Layer, ...] = layers,
+        ) -> CertificateOutcome:
+            complete = all(layer.state != "failed" for layer in layers) and all(
+                copy.state in {"removed", "absent"} for copy in nodes
+            )
+            return CertificateOutcome(
                 certificate_id,
                 "changed" if complete else "incomplete",
                 "" if complete else "a copy was kept; see the rows, and run the removal again",
                 "",
-                abandoned=written.abandoned,
+                abandoned=abandoned,
                 layers=layers,
                 nodes=nodes,
+            )
+
+        outcomes.append(
+            NodeQuestion(
+                certificate_id,
+                clusters,
+                AUTHORITY_NODE_VERB if authority else NODE_VERB,
+                finish,
             )
         )
     return outcomes

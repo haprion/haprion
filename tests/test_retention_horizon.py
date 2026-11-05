@@ -311,3 +311,46 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TodaysBlockRangeIndexIsSummarized(unittest.TestCase):
+    """B472, R01: autosummarize queues 256 requests and drops the rest under a burst, so
+    every run summarizes the new ranges of today's index itself."""
+
+    def run_retention(self, *arguments: str) -> str:
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / "ui-admin.conf").write_text("DB_NAME=haprion\nDB_ROLE=haprion\n")
+        psql = root / "psql"
+        psql.write_text(PSQL_STUB)
+        psql.chmod(0o755)
+        script = root / "haprion-retention"
+        text = SCRIPT.read_text()
+        for old, new in (
+            ("CONFIG_DIRECTORY=/etc/haprion", f"CONFIG_DIRECTORY={root}"),
+            ('[[ $EUID -eq 0 ]] || die "run this with sudo"', ":"),
+        ):
+            self.assertIn(old, text)
+            text = text.replace(old, new)
+        script.write_text(text)
+        record = root / "record"
+        done = subprocess.run(
+            ["/bin/bash", str(script), "prune", *arguments],
+            capture_output=True,
+            text=True,
+            env={"PATH": f"{root}:/usr/bin:/bin", "RECORD": str(record)},
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return record.read_text().lower()
+
+    def test_a_run_summarizes_the_new_ranges_of_the_index_of_today(self) -> None:
+        statements = self.run_retention()
+
+        self.assertIn("brin_summarize_new_values(", statements)
+        self.assertIn("traffic_log_", statements.split("brin_summarize_new_values(")[1])
+        self.assertIn("_inserted", statements.split("brin_summarize_new_values(")[1])
+
+    def test_a_dry_run_summarizes_nothing(self) -> None:
+        self.assertNotIn("brin_summarize_new_values", self.run_retention("--dry-run"))

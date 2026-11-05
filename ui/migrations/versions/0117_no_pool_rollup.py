@@ -23,10 +23,11 @@ is a fraction of a btree's size. The index is made with `autosummarize`: a range
 is summarized when it is full, not when a vacuum sees it, and the last fifth of a
 day that is finished is never vacuumed (B469). `traffic_log_partition()` makes it
 for the days made from now on, and this makes it for the days that exist, as 0111
-did for the client index. The loop runs in the migration's one transaction, so
-the builds hold every day's writes until the migration commits, a few seconds at
-a million rows and more with more; the collector re-reads from its checkpoint,
-so a write waiting for it is only late.
+did for the client index; an index of that name that already exists is given the
+option. The loop runs in the migration's one transaction, so the builds hold
+every day's writes until the migration commits, a few seconds at a million rows
+and more with more; the collector re-reads from its checkpoint, so a write
+waiting for it is only late.
 
 `node_event_state` gains `since`, the time its row was last written (B455). A node
 that has not answered is `joining` only for the join timeout and two poller
@@ -114,6 +115,11 @@ begin
             'create index if not exists %I on %s using brin (inserted_at) '
             'with (autosummarize = on)',
             substring(child::text from '[^.]+$') || '_inserted', child
+        );
+        -- An index that was already there, made without the option, is given it too.
+        execute format(
+            'alter index if exists %I set (autosummarize = on)',
+            substring(child::text from '[^.]+$') || '_inserted'
         );
         -- A day that is full is never analyzed again by autovacuum.
         execute format('analyze %s', child);

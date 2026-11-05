@@ -492,6 +492,21 @@ traffic_partitions() {
     done
 }
 
+#
+# Autosummarize queues 256 requests and drops the rest under a burst, so the
+# ranges that fell out stay unsummarized until a vacuum. Today's index is the
+# only one still being written to; a run summarizes what it has not yet. The
+# role is the table owner, which the function requires.
+#
+traffic_summarize() {
+    [[ "$dry_run" -eq 0 ]] || return 0
+    [[ "$(psql_as -c "select to_regclass('public.traffic_log') is not null")" == "t" ]] || return 0
+    psql_as -c "select brin_summarize_new_values(
+                    to_regclass('traffic_log_' || to_char(current_date, 'YYYYMMDD') || '_inserted'))" \
+        >/dev/null
+    log "  traffic_log: today's insert-time index summarized"
+}
+
 traffic_tables_in() {
     local table list=""
     for table in "${TRAFFIC_TABLES[@]}"; do list+="${list:+, }'${table}'"; done
@@ -943,6 +958,7 @@ main() {
             #
             metric_partitions_prepare
             traffic_partitions
+            traffic_summarize
             waf_findings
             metric_hours
             if metrics_present; then

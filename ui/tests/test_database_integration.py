@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -2545,6 +2546,82 @@ class ARealDatabase(unittest.TestCase):
             plan = "\n".join(row[0] for row in cursor.fetchall())
             self.assertIn(f"{made}_inserted", plan)
             connection.rollback()
+
+    def test_an_index_that_exists_without_autosummarize_is_given_it_by_0117(self) -> None:
+        """B472, R01: `create index if not exists` leaves an index of the name as it was."""
+
+        path = Path(__file__).resolve().parents[1] / "migrations/versions/0117_no_pool_rollup.py"
+        spec = importlib.util.spec_from_file_location("migration_0117", path)
+        assert spec is not None and spec.loader is not None  # noqa: S101
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select traffic_log_partition(current_date + 41)")
+            made = _first(cursor)
+            cursor.execute(f'alter index "{made}_inserted" reset (autosummarize)')
+            cursor.execute(
+                "select reloptions from pg_class where relname = %s", (f"{made}_inserted",)
+            )
+            self.assertIsNone(_first(cursor))
+            cursor.execute(migration.EXISTING_PARTITIONS)
+            cursor.execute(
+                "select reloptions from pg_class where relname = %s", (f"{made}_inserted",)
+            )
+            self.assertEqual(_first(cursor), ["autosummarize=on"])
+            connection.rollback()
+
+    def test_retention_summarizes_the_index_of_today_as_its_own_role(self) -> None:
+        """B472, R01: autosummarize drops requests under a burst; the run catches up."""
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select traffic_log_partition(current_date)")
+            made = _first(cursor)
+            cursor.execute(f'alter index "{made}_inserted" reset (autosummarize)')
+            cursor.execute(
+                """insert into traffic_log
+                    (event_id, cluster, node, occurred_at, request_number, client, method, host,
+                     path, frontend, backend, server, status, request_time, queue_time,
+                     connect_time, response_time, total_time, bytes, inserted_at)
+                    select sha256(('summarize' || n)::bytea), 'summarize', 'node-a',
+                           current_date + n * interval '1 second', n, '192.0.2.10', 'GET',
+                           'service.example.com', '/', 'f', 'b', 's', 200, 0, 0, 1, 2, 3, 42,
+                           current_date + n * interval '1 second'
+                      from generate_series(1, 2000) as n"""
+            )
+            connection.commit()
+        try:
+            run = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+                [
+                    "/bin/bash",
+                    "-c",
+                    "dry_run=0; log() { :; }; "
+                    'psql_as() { psql -U "$DB_ROLE" -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 "$@"; }; '
+                    'eval "$(sed -n \'/^traffic_summarize() {/,/^}/p\' "$0")"; traffic_summarize',
+                    str(script),
+                ],
+                env={
+                    **os.environ,
+                    "DB_ROLE": os.environ["HAPRION_UI_TEST_MIGRATION_ROLE"],
+                    "DB_NAME": os.environ["HAPRION_UI_TEST_DATABASE_NAME"],
+                    "PGHOST": os.environ["HAPRION_UI_TEST_DATABASE_SOCKET"],
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(run.returncode, 0, run.stderr)
+            with self.connect() as connection, connection.cursor() as cursor:
+                # Nothing is left for a second look.
+                cursor.execute(
+                    "select brin_summarize_new_values(%s::regclass)", (f"{made}_inserted",)
+                )
+                self.assertEqual(_first(cursor), 0)
+        finally:
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute("delete from traffic_log where cluster = 'summarize'")
+                cursor.execute(f'alter index "{made}_inserted" set (autosummarize = on)')
+                connection.commit()
 
     def test_the_web_reads_the_traffic_log_through_a_view_and_holds_nothing_on_the_table(
         self,

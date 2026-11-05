@@ -813,6 +813,13 @@ def keepalived_state(keepalived: Any) -> str | None:
 # their own copy of these rules and had drifted apart: a stopped dnsdist was in
 # the helper's warnings and the CLI and on no page. A reader asks here.
 #
+#
+# What the status read says of a node that gave no answer in time: the node may
+# have been reached and its command still running, so it is not said to have
+# refused the connection.
+#
+NO_ANSWER = "SSH gave no answer within"
+
 WAF_ENGINE_STOPPED = "waf_engine_stopped"
 DNS_LISTENER_STOPPED = "dns_listener_stopped"
 COUNTERS_NOT_SHARED = "counters_not_shared"

@@ -42,6 +42,7 @@ from typing import Any
 from haprion import dnsdist_config, exit_codes, node_ssh
 from haprion.cluster_status import (
     DNS_LISTENER_STOPPED,
+    NO_ANSWER,
     WAF_ENGINE_STOPPED,
     addresses_current,
     forwarding_current,
@@ -530,7 +531,7 @@ def _node_result(
         entry["error"] = {
             "code": "ssh_unreachable",
             "message": (
-                f"SSH gave no answer within {STATUS_TIMEOUT_SECONDS} seconds"
+                f"{NO_ANSWER} {STATUS_TIMEOUT_SECONDS} seconds"
                 if response.exit_code == exit_codes.TIMED_OUT
                 else f"SSH failed with exit {response.exit_code}"
             ),

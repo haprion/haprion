@@ -52,3 +52,12 @@ def accent_class(index: int | None) -> str:
     """The class that draws the marker, for a template; empty without one."""
 
     return "" if index is None else f"cluster-accent-{index}"
+
+
+def card_link(cluster: str) -> str:
+    """The cluster's own card on the dashboard (`index.html`), not the top of it (04-03).
+
+    A cluster ID is a valid fragment as it is (`CLUSTER_ID`: letters, digits, hyphens).
+    """
+
+    return f"/#cluster-{cluster}"

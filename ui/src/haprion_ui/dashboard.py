@@ -427,7 +427,11 @@ def _node_view(
             management_host=management_host,
             label="Unreachable",
             tone="critical",
-            detail="Management connection failed",
+            detail=(
+                "No answer from the node"
+                if (_error_message(node) or "").startswith(cluster_status.NO_ANSWER)
+                else "Management connection failed"
+            ),
             keepalived="Unknown",
             vip="Unknown",
             version="—",

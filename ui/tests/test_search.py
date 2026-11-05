@@ -137,6 +137,8 @@ class TheRowsFromAReading(unittest.TestCase):
             {("", "lb-01"), ("Host", "lb-01.example.net")},
         )
         self.assertEqual([row.title for row in search_index.cluster_entries(["alpha"])], ["alpha"])
+        # A node's row opens the cluster's card, not the top of the dashboard.
+        self.assertEqual({row.href for row in nodes}, {"/#cluster-alpha"})
 
     def test_certificates_are_the_ones_the_certificates_page_lists(self) -> None:
         reading = demo.certificate_rows()[0]

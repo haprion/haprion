@@ -468,6 +468,21 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual((joining.online_nodes, joining.total_nodes), (1, 1))
         self.assertEqual(joining.node_tone, "healthy")
 
+    def test_a_node_that_gave_no_answer_in_time_is_not_said_to_refuse_the_connection(self) -> None:
+        status = reading("partial-unreachable.json")
+        for message, detail in (
+            ("SSH gave no answer within 60 seconds", "No answer from the node"),
+            ("SSH failed with exit 255", "Management connection failed"),
+        ):
+            with self.subTest(message=message):
+                nodes = [dict(entry) for entry in status.result["nodes"]]
+                nodes[1]["error"] = {"code": "ssh_unreachable", "message": message}
+                cluster = self.dashboard(
+                    replace(status, result={**status.result, "nodes": nodes})
+                ).clusters[0]
+                self.assertEqual(cluster.nodes[1].label, "Unreachable")
+                self.assertEqual(cluster.nodes[1].detail, detail)
+
     def test_a_cluster_with_a_node_not_read_is_not_behind(self) -> None:
         # D11-01: nothing is unpublished; one node has not been read.
         status = reading("partial-unreachable.json")

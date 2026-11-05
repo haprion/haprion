@@ -31,6 +31,7 @@ from haprion.node_package import short_version
 
 from haprion_ui import api_tokens, labels, moments
 from haprion_ui import jobs as jobs_module
+from haprion_ui.cluster_identity import card_link as cluster_card_link
 from haprion_ui.db import ApiToken, ClaimPause, Job, PackageWaiting
 
 type Severity = Literal["critical", "warning"]
@@ -69,13 +70,7 @@ MAINTENANCE_AHEAD = {"traffic_log": 31, "metric_frontend": 60}
 MAINTENANCE_UNFINISHED = timedelta(days=2)
 
 
-def card_link(cluster: str) -> str:
-    """The cluster's own card on the dashboard (`index.html`), not the top of it (04-03).
-
-    A cluster ID is a valid fragment as it is (`CLUSTER_ID`: letters, digits, hyphens).
-    """
-
-    return f"/#cluster-{cluster}"
+card_link = cluster_card_link
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,6 +23,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlencode
 
+from haprion_ui.cluster_identity import card_link
+
 #
 # Bounds a value can be written with, the same as the table's checks. A value
 # longer than this is not something anybody types into a search field.
@@ -246,7 +248,7 @@ def node_entries(cluster: str, result: Mapping[str, Any]) -> list[Entry]:
         name = _text(node.get("name"))
         if name:
             values = [("", name), ("Host", _text(node.get("mgmt_host")))]
-            rows += _entries(cluster, "status", "cluster", name, "/", values)
+            rows += _entries(cluster, "status", "cluster", name, card_link(cluster), values)
     return rows
 
 

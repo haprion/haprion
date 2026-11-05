@@ -24,8 +24,11 @@ from subprocess import CompletedProcess
 from typing import Any
 from unittest import mock
 
+from haprion import exit_codes
+
 from haprion_ui import api
 from haprion_ui.app import create_app
+from tests.contract_schema import assert_contract
 from tests.test_login import configuration
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -78,6 +81,86 @@ USER_VERBS = (
     "role",
     "apply",
 )
+
+
+#
+# A call each command refuses: well formed, so the command reads it, with a
+# value it cannot use. The gate runs it with `--json` and holds stdout to the
+# command's schema (K01, K07 and K12 passed every older check). A command added
+# to the tables needs its line here.
+#
+BAD_CLUSTER = ["-c", "Bad Cluster!"]
+REFUSED_CALLS: dict[str, list[str]] = {
+    "haprion-api-token add": ["add", "Bad Name!", "--level", "read"],
+    "haprion-api-token extend": ["extend", "no-such-token"],
+    "haprion-api-token remove": ["remove", "no-such-token"],
+    "haprion-api-token revoke": ["revoke", "no-such-token"],
+    "haprion-backup-schedule": [*BAD_CLUSTER, "--time", "03:00"],
+    "haprion-cert-delete": ["Bad ID!"],
+    "haprion-cert-import": ["--id", "Bad ID!", "--certificate", "/nonexistent.pem"],
+    "haprion-cert-issue": ["--domain", "Bad Name!", "--method", "dns-01"],
+    "haprion-cert-issue --renew": ["--domain", "Bad Name!", "--renew"],
+    "haprion-cert-publish --certificate": ["--certificate", "Bad ID!"],
+    "haprion-cert-receiver add": [
+        "add",
+        "Bad Name!",
+        "--transport",
+        "rsync",
+        "--public-key",
+        "/nonexistent.pub",
+    ],
+    "haprion-cert-receiver key": ["key", "Bad Name!", "--public-key", "/nonexistent.pub"],
+    "haprion-cert-receiver remove": ["remove", "Bad Name!"],
+    "haprion-cert-receiver secret": ["secret", "Bad Name!", "--show-password"],
+    "haprion-cert-scep --abandon": ["--id", "Bad ID!", "--abandon"],
+    "haprion-cert-scep --resume": ["--id", "Bad ID!", "--resume"],
+    "haprion-cert-target": ["add", "Bad ID!", "--cluster", "alpha"],
+    "haprion-cluster add": [
+        "add",
+        *BAD_CLUSTER,
+        "--vip",
+        "192.0.2.10",
+        "--node-path",
+        "/x",
+        "--host",
+        "node-a",
+    ],
+    "haprion-cluster remove": ["remove", *BAD_CLUSTER],
+    "haprion-cluster-settings apply": ["apply", *BAD_CLUSTER, "/nonexistent.yaml"],
+    "haprion-deploy": [*BAD_CLUSTER],
+    "haprion-ndes-server add": ["add", "not an address"],
+    "haprion-ndes-server remove": ["remove", "not an address"],
+    "haprion-network apply": ["apply", *BAD_CLUSTER, "/nonexistent.yaml"],
+    "haprion-node add": ["add", *BAD_CLUSTER, "--host", "node-a"],
+    "haprion-node host": ["host", *BAD_CLUSTER, "node-a", "--host", "node-b"],
+    "haprion-node remove": ["remove", *BAD_CLUSTER, "node-a"],
+    "haprion-node-restore discard": ["discard", "--run", "bad run"],
+    "haprion-node-restore prepare": [
+        "prepare",
+        *BAD_CLUSTER,
+        "--node",
+        "node-a",
+        "--archive",
+        "2026-01-01_00-00-00",
+        "--target",
+        "192.0.2.10",
+    ],
+    "haprion-node-restore preview": ["preview", "--run", "bad run"],
+    "haprion-node-restore run": ["run", "--run", "bad run", "--confirm", "node-a"],
+    "haprion-node-restore status": ["status", "--run", "bad run"],
+    "haprion-objects apply": ["apply", *BAD_CLUSTER, "/nonexistent"],
+    "haprion-objects remove": ["remove", *BAD_CLUSTER, "shop"],
+    "haprion-probe": [*BAD_CLUSTER, "-t", "192.0.2.10:80"],
+    "haprion-profiles apply": ["apply", "/nonexistent.yaml"],
+    "haprion-profiles remove": ["remove", "dns", "Bad Id!"],
+    "haprion-publish --regenerate": [*BAD_CLUSTER, "--regenerate"],
+    "haprion-revert": [*BAD_CLUSTER],
+    "haprion-server-state": [*BAD_CLUSTER, "-o", "shop", "drain", "192.0.2.10:80"],
+    "haprion-server-state unblock": [*BAD_CLUSTER, "-o", "shop", "unblock", "192.0.2.10"],
+    "haprion-settings apply": ["apply", "/nonexistent.yaml"],
+    "haprion-state-backup": [*BAD_CLUSTER],
+    "haprion-user apply": ["apply", "/nonexistent.yaml"],
+}
 
 
 @dataclass(frozen=True)
@@ -485,6 +568,26 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         self.assertEqual(sorted({entry.line for entry in entries if entry.schema in READS}), [])
         silent = sorted({entry.line for entry in entries if "--json" not in _help(entry.line)})
         self.assertEqual(silent, [])
+
+    def test_every_command_has_a_call_it_refuses(self) -> None:
+        self.assertEqual(sorted({command.line for command in _commands()} ^ set(REFUSED_CALLS)), [])
+
+    def test_a_refusal_is_the_one_document_the_contract_holds(self) -> None:
+        """K01, K07: bad input with `--json` gives stdout that validates against the command's schema.
+
+        The exit code is the outcome's: a document that says `blocked` exits 75,
+        and one that says `failed` exits with something else but 0.
+        """
+
+        for command in _commands():
+            with self.subTest(command.line):
+                code, out, _ = _invoke(
+                    command.line.split()[0], [*REFUSED_CALLS[command.line], "--json"]
+                )
+                document = assert_contract(command.schema, out)
+                self.assertNotEqual(code, 0)
+                self.assertFalse(document["ok"])
+                self.assertEqual(document["outcome"], exit_codes.outcome(code), document["error"])
 
     def test_the_other_commands_a_script_runs_answer_json_too(self) -> None:
         """K12: the contract says every command can; a script needs `unlock` and `revoke` as much as `apply`."""

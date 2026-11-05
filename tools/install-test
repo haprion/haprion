@@ -1110,6 +1110,36 @@ def schema_difference(updated: dict[str, str], new: dict[str, str]) -> list[str]
     return said
 
 
+PLATFORM_DATABASE_STEP = (
+    Path(__file__).resolve().parents[1] / "install/platform/02-platform-database"
+)
+PUBLIC_SCHEMA_STATEMENT = re.compile(
+    r"^(?:(?:revoke|grant) .* schema public .*|alter schema public .*);$", re.M
+)
+MIGRATION_ROLE_WORD = '"${DB_MIGRATION_ROLE}"'
+
+
+def public_schema_statements(owner: str, step: Path = PLATFORM_DATABASE_STEP) -> list[str]:
+    """What step 02 does to the schema `public`, read out of it, with `owner` for the migration role.
+
+    A new installation's database has these too (B441): left out of the
+    comparison database, the dump of the two differs in `SCHEMA: public` and
+    `ACL: SCHEMA public` on every real installation. They are read, not copied,
+    so that a step 02 written differently stops this rather than drops them.
+    """
+
+    found = PUBLIC_SCHEMA_STATEMENT.findall(step.read_text())
+    kinds = sorted(statement.split()[0] for statement in found)
+    if kinds != ["alter", "grant", "revoke"] or not any(
+        MIGRATION_ROLE_WORD in statement for statement in found
+    ):
+        raise SystemExit(
+            f"install-test: expected one revoke, one grant and one alter on schema public"
+            f" (owner {MIGRATION_ROLE_WORD}) in {step}, found {len(found)}: {found}"
+        )
+    return [statement.replace(MIGRATION_ROLE_WORD, f'"{owner}"') for statement in found]
+
+
 def package(directory: Path, pattern: str) -> Path:
     found = sorted(directory.glob(pattern))
     if len(found) != 1:
@@ -1939,6 +1969,18 @@ def run_upgrade(
         run.on("mgr", as_postgres + "psql -qtAX -c 'create database schema_check'")
         try:
             run.on("mgr", as_postgres + "psql -d schema_check -qtAX -c 'create extension pg_trgm'")
+            _, owner = run.on(
+                "mgr",
+                as_postgres  # noqa: S608 - a constant query, no input in it
+                + 'psql -d haprion -qtAX -c "select nspowner::regrole from pg_namespace'
+                " where nspname = 'public'\"",
+            )
+            statements = " ".join(public_schema_statements(owner.strip()))
+            run.on(
+                "mgr",
+                as_postgres
+                + f"psql -d schema_check -qtAX -v ON_ERROR_STOP=1 -c {shlex.quote(statements)}",
+            )
             python = (
                 f"$(readlink -f /opt/haprion-ui/releases/{shlex.quote(release)}/venv/bin/python)"
             )

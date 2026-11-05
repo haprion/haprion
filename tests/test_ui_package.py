@@ -383,6 +383,47 @@ class TheTree(unittest.TestCase):
         self.assertEqual(sorted(updated), ["ACL: COLUMN job.id", "TABLE: job"])
         self.assertEqual(tool.schema_difference(updated, new), [])
 
+    def test_what_the_install_test_reads_out_of_step_02_is_what_step_02_does(self) -> None:
+        """B441: the comparison database gets step 02's statements on `public`, not a copy."""
+
+        tool = self.install_test()
+        step = (BASE / "install/platform/02-platform-database").read_text()
+        statements = tool.public_schema_statements("haprion_migrate")
+
+        self.assertEqual(
+            statements,
+            [
+                "revoke all on schema public from public;",
+                "grant usage on schema public to app_web, app_worker, app_poller, app_collector;",
+                'alter schema public owner to "haprion_migrate";',
+            ],
+        )
+        for statement in statements[:2]:
+            self.assertIn(statement, step)
+        self.assertIn('alter schema public owner to "${DB_MIGRATION_ROLE}";', step)
+
+    def test_a_step_02_without_them_stops_the_install_test(self) -> None:
+        tool = self.install_test()
+        with tempfile.TemporaryDirectory() as raw:
+            step = Path(raw) / "02-platform-database"
+            step.write_text("revoke all on schema public from public;\n")
+            with self.assertRaises(SystemExit) as stopped:
+                tool.public_schema_statements("haprion_migrate", step)
+        self.assertIn("expected one revoke, one grant and one alter", str(stopped.exception))
+
+    def test_a_schema_grant_on_one_side_only_is_named(self) -> None:
+        tool = self.install_test()
+        frame = (
+            "--\n-- Name: SCHEMA public; Type: ACL; Schema: -; Owner: haprion_migrate\n--\n\n"
+            "GRANT USAGE ON SCHEMA public TO app_web;\n"
+        )
+        updated = tool.schema_entries(self.dump() + frame)
+        new = tool.schema_entries(self.dump())
+
+        self.assertEqual(
+            tool.schema_difference(updated, new), ["  only after the update: ACL: SCHEMA public"]
+        )
+
     def test_a_grant_or_a_table_that_differs_is_named(self) -> None:
         tool = self.install_test()
         updated = tool.schema_entries(self.dump())

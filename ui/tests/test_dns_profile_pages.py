@@ -549,10 +549,11 @@ class SavingAProfile(ProfileRouteTestCase):
             self.assertEqual(response.status_code, 303)
         self.assertEqual(len(self.created), 2)
 
-    def test_the_form_states_the_two_ways_for_netcup(self) -> None:
+    def test_the_netcup_form_has_no_note_and_the_labels_show_the_groups(self) -> None:
         page = self.writing_client().get("/dns-profiles/new?provider=netcup").text
-        self.assertIn("Give either all of Customer ID (legacy API)", page)
-        self.assertIn("or only CloudDNS API key", page)
+        self.assertNotIn("Give either", page)
+        self.assertIn("Customer ID (legacy API)", page)
+        self.assertIn("CloudDNS API key", page)
 
     def test_a_refusal_redraws_the_form_without_the_secret(self) -> None:
         response = self.post(self.writing_client(), **{"field.api_token": ""})

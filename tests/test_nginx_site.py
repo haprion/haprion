@@ -111,11 +111,86 @@ class TheSiteParses(unittest.TestCase):
 
     def test_only_a_sign_in_and_its_start_at_the_provider_are_limited(self) -> None:
         site = (TEMPLATE / "haprion.nginx.example").read_text()
-        self.assertIn("POST/login       $binary_remote_addr;", site)
-        self.assertIn("GET/login/oidc   $binary_remote_addr;", site)
+        self.assertIn("POST/login       $haprion_source;", site)
+        self.assertIn("GET/login/oidc   $haprion_source;", site)
         self.assertNotIn("callback", site.split("map $request_method$uri")[1].split("}")[0])
         self.assertIn('default          "";', site)
         self.assertIn("limit_req zone=haprion_sign_in", site)
+
+
+class TheSignInLimitCountsAnIpv6SourceAsItsPrefix(unittest.TestCase):
+    """Review 26-11-05, A06: the application counts a /64, so nginx must too -
+    else a host with one rotates through its addresses and fills the hashing
+    places with attempts that no limit has met. Asked of a running nginx with
+    the site's own map and zone, the client address coming as a trusted proxy
+    would give it."""
+
+    def setUp(self) -> None:
+        if not Path(NGINX).exists():
+            self.skipTest("nginx is not installed here")
+
+    def directives(self) -> str:
+        site = (TEMPLATE / "haprion.nginx.example").read_text()
+        found = [
+            re.search(pattern, site, re.MULTILINE | re.DOTALL)
+            for pattern in (
+                r"^map \$binary_remote_addr \$haprion_source \{.*?^\}\n",
+                r"^map \$request_method\$uri \$haprion_sign_in \{.*?^\}\n",
+                r"^limit_req_zone \$haprion_sign_in [^\n]*\n",
+            )
+        ]
+        self.assertNotIn(None, found, "the site has no per-prefix key for the sign-in limit")
+        return "".join(match.group(0) for match in found if match)
+
+    def test_one_prefix_is_one_bucket_and_an_ipv4_address_its_own(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            port = free_port()
+            (root / "nginx.conf").write_text(
+                f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
+                f"http {{\n  access_log off;\n{self.directives()}"
+                "  set_real_ip_from 127.0.0.1;\n  real_ip_header X-Forwarded-For;\n"
+                f"  server {{\n    listen 127.0.0.1:{port};\n"
+                "    location = /login {\n"
+                "      limit_req zone=haprion_sign_in;\n"
+                f"      limit_req_status 429;\n      root {root};\n    }}\n  }}\n}}\n"
+            )
+            server = subprocess.Popen(  # fixed binary, a file made above
+                [NGINX, "-p", raw, "-c", str(root / "nginx.conf"), "-g", "daemon off;"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                # Not 429 is let through: the file is not there, so nginx says 404.
+                answers = [
+                    self.post(port, address) == 429
+                    for address in (
+                        "2001:db8::1",
+                        "2001:db8::2",
+                        "2001:db8::ffff:ffff:ffff:ffff",
+                        "2001:db8:0:1::1",
+                        "192.0.2.1",
+                        "192.0.2.2",
+                        "192.0.2.1",
+                    )
+                ]
+            finally:
+                server.terminate()
+                server.wait(timeout=5)
+        #                    first  same /64 same /64 other /64 v4     other v4 v4 again
+        self.assertEqual(answers, [False, True, True, False, False, False, True])
+
+    def post(self, port: int, address: str) -> int:
+        for _ in range(50):
+            try:
+                connection = HTTPConnection("127.0.0.1", port, timeout=5)
+                connection.request("POST", "/login", headers={"X-Forwarded-For": address})
+                status = connection.getresponse().status
+                connection.close()
+                return status
+            except ConnectionRefusedError:
+                time.sleep(0.1)
+        self.fail("nginx did not listen")
 
 
 class AReceiversSecretIsWhatNginxChecks(unittest.TestCase):

@@ -1011,7 +1011,8 @@ through a list of names.
 Each account also has a budget of its own across all addresses: ten times the limit (`max_failures`) in
 the same window. It stops many addresses guessing at one name. An attempt refused by the throttle is not
 counted again, so one address that keeps trying cannot use up that budget for everyone else.
-`haprion-user unlock` clears both. An IPv6 address counts as its /64. *Settings -> Users* marks an account
+`haprion-user unlock` clears both. An IPv6 address counts as its /64, here and in the rate limit nginx puts in front of the
+sign-in. *Settings -> Users* marks an account
 *Locked* by this same rule, so a name the sign-in refuses is never shown as *Active*;
 `haprion-user list` shows it too (its STATE column, and `locked` in `--json`), reading the limit and window from the
 same configuration.

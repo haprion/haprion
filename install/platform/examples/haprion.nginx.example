@@ -11,6 +11,17 @@
 #
 
 #
+# The client as the application counts it: an IPv6 address is its first 64
+# bits, an IPv4 address itself. Counted per whole IPv6 address, one host with a
+# /64 had as many buckets as it liked and reached the application at full
+# speed (review 26-11-05, A06).
+#
+map $binary_remote_addr $haprion_source {
+    "~(?s)^(?<prefix>.{8}).{8}$"  $prefix;
+    default                       $binary_remote_addr;
+}
+
+#
 # Sign-in attempts, counted per client before the application spends an Argon2
 # on them (B305, security review S01). Only a POST to /login and the start of a
 # sign-in through the identity provider have a key; every other request maps
@@ -23,8 +34,8 @@
 #
 map $request_method$uri $haprion_sign_in {
     default          "";
-    POST/login       $binary_remote_addr;
-    GET/login/oidc   $binary_remote_addr;
+    POST/login       $haprion_source;
+    GET/login/oidc   $haprion_source;
 }
 limit_req_zone $haprion_sign_in zone=haprion_sign_in:1m rate=10r/m;
 

@@ -226,17 +226,28 @@ class ObjectPublicationTests(ObjectsPublishFixture):
                 for _ in range(1000):
                     pass
 
-            before = signal.getsignal(signal.SIGTERM)
-            with (
-                mock.patch.object(tempfile, "tempdir", temporary),
-                mock.patch.object(managed_helper, "build_candidate_tree", terminated),
-                self.assertRaises(SystemExit) as stopped,
-            ):
-                self.publish_objects(policy, self.request(check=True))
+            def not_handled(*_args: object) -> None:
+                raise AssertionError("TERM was not handled by the check")
+
+            #
+            # A handler of the test's own, so that a check that handles nothing
+            # fails this test instead of ending the whole run with a real TERM (N05).
+            #
+            before = signal.signal(signal.SIGTERM, not_handled)
+            try:
+                with (
+                    mock.patch.object(tempfile, "tempdir", temporary),
+                    mock.patch.object(managed_helper, "build_candidate_tree", terminated),
+                    self.assertRaises(SystemExit) as stopped,
+                ):
+                    self.publish_objects(policy, self.request(check=True))
+                after = signal.getsignal(signal.SIGTERM)
+            finally:
+                signal.signal(signal.SIGTERM, before)
 
             self.assertEqual(stopped.exception.code, 128 + signal.SIGTERM)
             self.assertEqual(self.check_objects(Path(temporary)), [])
-            self.assertEqual(signal.getsignal(signal.SIGTERM), before)
+            self.assertIs(after, not_handled)
 
     def test_the_next_check_removes_a_directory_a_killed_one_left(self) -> None:
         """Z03: KILL cannot be caught; an hour-old directory is removed, a fresh one is another check's."""

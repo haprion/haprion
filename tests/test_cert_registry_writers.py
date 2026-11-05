@@ -25,8 +25,8 @@ SOURCE = Path(__file__).resolve().parents[1] / "src" / "haprion"
 # tree and not in the text: `certificates[<id>] = ...`, the same through any
 # other name the mapping was given (`entries = document["certificates"]`),
 # `document["certificates"][<id>] = ...`, `.update(...)`, `.setdefault(...)`,
-# `.pop(...)`, `.clear()`, `.__setitem__(...)`, `del ...[<id>]`, `|=`,
-# and a mapping built by hand or rebuilt with `{**certificates, ...}`. The value
+# `.pop(...)` (a copy is excused for the one key it names), `.popitem()`, `.clear()`, `.__setitem__(...)`, `del ...[<id>]`, `|=`, `x = certificates | new`,
+# `dict(certificates, a=...)` and a mapping built by hand or rebuilt with `{**certificates, ...}`. The value
 # must be the builder's, except where it is a copy of an entry already on file
 # with one key changed; those sites are named below, by function, and tested
 # further down. Not followed: a dict comprehension, an entry passed as a
@@ -35,7 +35,7 @@ SOURCE = Path(__file__).resolve().parents[1] / "src" / "haprion"
 # `written_entry` or named (26-11-05, XX07).
 #
 KEY = "certificates"
-WRITING_METHODS = {"update", "setdefault", "pop", "clear", "__setitem__"}
+WRITING_METHODS = {"update", "setdefault", "pop", "popitem", "clear", "__setitem__"}
 COPIES = {
     # The loader building its read-only view of an entry, not writing one.
     ("config.py", "load_registry", "certificates[certificate_id]"),
@@ -47,7 +47,7 @@ COPIES = {
     ("cluster_definition.py", "_registry_with", "entry['clusters']"),
     ("cluster_definition.py", "_registry_without", "certificates[certificate]"),
     ("cluster_definition.py", "_registry_without", "entry['clusters']"),
-    ("cluster_definition.py", "_registry_without", "entry.pop()"),
+    ("cluster_definition.py", "_registry_without", "entry.pop('clusters')"),
 }
 
 
@@ -76,6 +76,19 @@ def _names_registry(node: ast.AST, names: set[str]) -> bool:
         ):
             return True
     return False
+
+
+def _is_mapping(node: ast.AST, names: set[str]) -> bool:
+    """Whether the operand is the mapping itself (a name, `x["certificates"]`, `{**x}`).
+
+    Not a set or a list made from something read out of it.
+    """
+
+    if isinstance(node, ast.Name):
+        return node.id in names
+    if isinstance(node, ast.Subscript):
+        return _is_key(node.slice) or _is_mapping(node.value, names)
+    return isinstance(node, ast.Dict) and _names_registry(node, names)
 
 
 def _own_nodes(scope: ast.AST) -> Iterator[ast.AST]:
@@ -157,7 +170,27 @@ def _write(node: ast.AST, names: set[str]) -> tuple[str, ast.AST | None] | None:
         and node.func.attr in WRITING_METHODS
         and _names_registry(node.func.value, names)
     ):
-        return f"{ast.unparse(node.func.value)}.{node.func.attr}()", None
+        # A `pop` is told apart by its key, so an exception covers that key only.
+        argument = ast.unparse(node.args[0]).replace('"', "'") if node.func.attr == "pop" else ""
+        return f"{ast.unparse(node.func.value)}.{node.func.attr}({argument})", None
+    if isinstance(node, ast.Assign):
+        value = node.value
+        union = (
+            isinstance(value, ast.BinOp)
+            and isinstance(value.op, ast.BitOr)
+            and (_is_mapping(value.left, names) or _is_mapping(value.right, names))
+        )
+        # `dict(certificates)` alone is a copy; with more it is a rebuilt mapping.
+        extended = (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "dict"
+            and bool(value.args)
+            and _names_registry(value.args[0], names)
+            and (len(value.args) > 1 or bool(value.keywords))
+        )
+        if union or extended:
+            return f"{ast.unparse(node.targets[0])} = {'|' if union else 'dict(...)'}", value
     if isinstance(node, ast.Dict) and any(
         key is None and _names_registry(value, names)
         for key, value in zip(node.keys, node.values, strict=True)
@@ -249,10 +282,29 @@ class TheWritersOfTheEntry(unittest.TestCase):
             "clear": "def f(document):\n    document['certificates'].clear()\n",
             "in-place union": "def f(certificates, new):\n    certificates |= new\n",
             "__setitem__": "def f(certificates):\n    certificates.__setitem__('a', {})\n",
+            "popitem": "def f(certificates):\n    certificates.popitem()\n",
+            "union": "def f(certificates, new):\n    certificates = certificates | new\n",
+            "dict with keywords": (
+                "def f(certificates, x):\n    certificates = dict(certificates, a=x)\n"
+            ),
         }
         for form, source in planted.items():
             with self.subTest(form=form):
                 self.assertTrue(unexpected(source, "planted.py"), form)
+
+    def test_the_copy_exception_covers_the_key_and_no_other_pop(self) -> None:
+        other = (
+            "def _registry_without(document, cid):\n"
+            "    entry = document['certificates'][cid]\n"
+            "    entry.pop('source')\n"
+        )
+        key = other.replace("'source'", "'clusters', None")
+
+        self.assertTrue(unexpected(other, "cluster_definition.py"))
+        self.assertEqual(
+            [t for _, _, t in unexpected(key, "cluster_definition.py")],
+            [],
+        )
 
     def test_the_builder_and_a_read_are_not_taken_for_a_writer(self) -> None:
         fine = (

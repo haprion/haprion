@@ -376,23 +376,43 @@ class CompatibilityMetadataTests(unittest.TestCase):
 
 
 class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
-    """B369: 0.99 is installed afresh; a 0.9 database is refused in so many words.
+    """A database from before the baseline is refused in so many words (B369, B436).
 
-    An `apt upgrade` from 0.9.2 reaches this through update-platform-release's
+    One from 0.9 is installed afresh; one on 0100 to 0114 is taken to 0115 by
+    0.99.13 first. An `apt upgrade` reaches this through update-platform-release's
     `check-compatibility --before-migration`, before anything is migrated.
     """
 
     def test_a_revision_before_the_baseline_is_refused_and_says_what_to_do(self) -> None:
         requirements = compatibility.load_requirements(MANIFEST)
+        self.assertEqual(requirements.database_baseline, "0115")
         said = compatibility.before_baseline(requirements, "0091")
         if said is None:
             self.fail("a database at 0091 was not refused")
-        self.assertIn("0091 is from before this release's baseline 0100", said)
+        self.assertIn("0091 is from before this release's baseline 0115", said)
         self.assertIn("installed afresh", said)
-        self.assertIsNone(compatibility.before_baseline(requirements, "0100"))
+        for revision in ("0100", "0114"):
+            with self.subTest(revision=revision):
+                said = compatibility.before_baseline(requirements, revision)
+                if said is None:
+                    self.fail(f"a database at {revision} was not refused")
+                self.assertIn("Upgrade to Haprion 0.99.13 first", said)
+                self.assertNotIn("afresh", said)
+        self.assertIsNone(compatibility.before_baseline(requirements, "0115"))
         self.assertIsNone(
             compatibility.before_baseline(replace(requirements, database_baseline=None), "0091")
         )
+
+    def test_the_carrier_of_a_baseline_ran_its_chain_to_it(self) -> None:
+        """The release named for a baseline is the one before it, at that head (B436)."""
+
+        previous = compatibility.load_requirements(PREVIOUS)
+        for baseline, (start, release) in compatibility.CHAIN_CARRIERS.items():
+            with self.subTest(baseline=baseline):
+                self.assertLess(start, baseline)
+                self.assertEqual(previous.database_head, baseline)
+                self.assertEqual(previous.database_baseline, start)
+                self.assertRegex(release, r"^\d+\.\d+\.\d+$")
 
     def test_a_baseline_past_the_head_is_refused(self) -> None:
         head = json.loads(MANIFEST.read_text())["requires"]["database_head"]
@@ -451,7 +471,7 @@ class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
                 )  # fmt: skip
         self.assertNotEqual(code, 0)
         self.assertIn("FAIL  schema revision", printed.getvalue())
-        self.assertIn("from before this release's baseline 0100", printed.getvalue())
+        self.assertIn("from before this release's baseline 0115", printed.getvalue())
         weighed.assert_not_called()
 
 
@@ -706,12 +726,12 @@ class RestoreSchemaCommandTests(unittest.TestCase):
         release_on_disk(root, "old", "0101", "0100")
         (root / "current").symlink_to(root / "releases" / current)
 
-    def test_a_dump_from_a_revision_the_release_no_longer_runs_on_is_migrated(self) -> None:
-        """The real manifest: the floor of what runs is the head, the baseline is where dumps start."""
+    def test_a_dump_from_before_the_real_baseline_goes_through_the_release_before(self) -> None:
+        """The real manifest: the baseline is the head, so a dump is at it or refused (B436)."""
 
         document = json.loads(MANIFEST.read_text())["requires"]
         head, baseline = document["database_head"], document["database_baseline"]
-        self.assertGreater(head, baseline)
+        self.assertEqual(head, baseline)
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             site = root / "releases" / "new/venv/lib/python3.12/site-packages/haprion_ui"
@@ -724,9 +744,11 @@ class RestoreSchemaCommandTests(unittest.TestCase):
             )
             (root / "current").symlink_to(root / "releases" / "new")
             self.assertEqual(self.ask(root, head), (0, f"same {head} new\n"))
-            for revision in ("0100", "0101", "0102"):
+            for revision in ("0100", "0114"):
                 with self.subTest(revision=revision):
-                    self.assertEqual(self.ask(root, revision), (0, f"migrate {head} new\n"))
+                    code, said = self.ask(root, revision)
+                    self.assertEqual(code, 1)
+                    self.assertIn("Upgrade to Haprion 0.99.13 first", said)
 
     def test_a_number_between_two_revisions_as_text_is_not_a_revision(self) -> None:
         """Review 26-10-30, R5: 01020 sorts between 0100 and 0103; no migration takes it."""

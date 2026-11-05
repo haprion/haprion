@@ -3242,7 +3242,8 @@ makes the database again from the dump, checks its privileges with `03-verify`, 
 and ends the sessions (`after-restore`), starts what it stopped, and replays the traffic log (below).
 A dump from before an update that changed the schema is migrated to the installed release's schema
 before that check; one the release cannot take, such as one from a newer release, is refused before
-anything stops.
+anything stops. So is a dump from before Haprion 0.99.13's schema, `0115`: read it back with 0.99.13 installed, then
+update ([Updating](install.md#updating)).
 
 If the restore fails after the stop, for example on a damaged dump, a failed migration or a full disk,
 the services stay stopped and the command says what failed. Correct it and run the same command again,
@@ -8028,7 +8029,7 @@ drop a table you do not own. Running a migration is a deliberate root action, ma
 `pg_ident.conf`.
 
 **Grants are per column and live with the table.** The grants for a table are in the migration that
-creates it - the baseline, `0100`, for every table there is today - so a column's permissions are
+creates it - the baseline, `0115`, for every table there is today - so a column's permissions are
 versioned with the column. They name contract roles -
 `app_web`, `app_worker`, `app_poller`, `app_collector` - never an account; the installation
 connects the accounts to those roles. Columns are listed one at a time, because a grant written for
@@ -8175,9 +8176,12 @@ sudo ./update-platform-release <release-id>
 The CLI and the node scripts stay separate installations. The command checks them and stops before
 the migration when either is too old.
 
-**The schema starts at a baseline.** Haprion 0.99 has one migration, `0100`, which makes the whole
-schema. A database from an earlier release is not migrated: the check refuses it before anything
-runs, and Haprion is installed afresh ([Removing](install.md#removing)). A schema is never taken
+**The schema starts at a baseline.** One migration, `0115`, makes the whole schema. It holds what
+Haprion 0.99.0 to 0.99.13 built one migration at a time and keeps the last one's number, so a
+database 0.99.13 left is on it already and an update from there changes nothing in the schema. A
+database from before is not migrated: the check refuses it before anything runs. One from 0.99.0 to
+0.99.12 is updated to 0.99.13 first ([Updating](install.md#updating)); one from before 0.99 is
+installed afresh ([Removing](install.md#removing)). A schema is never taken
 back either. No migration has a downgrade, and `migrate downgrade` is refused; the way back from an
 update is [Rolling a release back](#rolling-a-release-back) or the dump taken before it.
 

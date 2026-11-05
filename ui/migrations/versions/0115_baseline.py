@@ -1,21 +1,25 @@
-"""The schema, as one migration (B360, B369, 26-10-26).
+"""The schema, as one migration (B436, 26-11-05).
 
-Ninety-one migrations, 0001 to 0091, built this schema one change at a time,
-each with a downgrade. Haprion 0.99 is installed afresh rather than upgraded
-from them, and a schema is never downgraded (B360), so this one replaces them:
-the same tables, functions, triggers, grants and first rows, taken from what
-the ninety-one made and compared with it in a disposable cluster. They are in
-Git's history before this file, each with the reasoning behind its change.
+Sixteen migrations, the baseline 0100 and 0101 to 0115, built this schema; 0100
+had folded the ninety-one before it into one (B369). This one replaces the
+sixteen with the schema they leave - the same tables, functions, triggers,
+grants and first rows, taken from what they made and compared with it in a
+disposable cluster. They are in Git's history before this file, each with the
+reasoning behind its change.
 
-What differs from what they made, on purpose:
+It keeps their last number. A database 0.99.13 or earlier migrated to 0115
+stands on this schema already, so an upgrade from it runs nothing: there is no
+statement to run and no revision to rewrite, and a rollback to 0.99.13 finds
+the schema it ran on. The proof is in the release chain - the schema of a
+database upgraded from 0.99.13 and of a new installation are dumped and
+compared - and not in this file.
 
-- `job_operation_allowed` holds for every row. 0087 added it `not valid`, for
-  the jobs of three operations it retired; a new database has none.
-- The web holds no grant on `traffic_log` itself. 0083 left its column grants
-  for the interface from before `traffic_log_read`, which is what the web reads.
-
-Three checks are also written with one pair of parentheses fewer, which is how
-PostgreSQL prints what it was given; it reads them alike.
+What differs from what they made, on purpose: `throttle_key` gets a key of
+its own, made when the migration runs, as 0114 made one; the key is never part
+of the file. Everything else is as they left it, `job_operation_allowed` too:
+0109 added it `not valid`, for the `block_client` jobs it retired, which an
+upgraded database still holds. It is checked for every row written, and a new
+installation's schema is the same as an upgraded one's, to the letter.
 
 The rules the schema keeps are the grants, listed column by column beside each
 table, and what a role may not choose is a default or a trigger. The roles are
@@ -24,22 +28,23 @@ the four contract roles - `app_web`, `app_worker`, `app_poller`,
 (platform step 2). The migration role owns everything, and only root can be it.
 Each area below says what its roles may do and why.
 
-A database from before this revision is not upgraded: `check-compatibility`
-refuses it, and Haprion is installed afresh (install.md, *Removing*). A change
-from here on is a new migration after this one, and has no downgrade.
+A database before 0115 is not migrated here: `check-compatibility` refuses it.
+One from 0100 to 0114 is taken to 0115 by Haprion 0.99.13 first; one from
+before 0100 is installed afresh (install.md, *Removing*). A change from here on
+is a new migration after this one, and has no downgrade.
 """
 
 from __future__ import annotations
 
 from alembic import op
 
-revision = "0100"
+revision = "0115"
 down_revision = None
 branch_labels = None
 depends_on = None
 
 ROLLBACK_SAFE = False
-ROLLBACK_SAFE_BECAUSE = "the baseline: no release before it runs on this schema"
+ROLLBACK_SAFE_BECAUSE = "the baseline: the schema 0115 left, which no older release runs on"
 
 #
 # alembic makes `alembic_version` itself. The web reads the revision, and
@@ -71,10 +76,26 @@ GRANT SELECT(version_num) ON TABLE public.alembic_version TO app_web;
 # of what it ran. Old rows are removed by `haprion-retention`, as the
 # migration role.
 #
+# A name typed at a failed sign-in is sometimes a password, so a name no
+# account has is not kept. Two `before insert` triggers hold it for every role
+# that writes: `audit_event_blank_unknown_actor` leaves such a row without an
+# actor, and `login_attempt_digest_unknown_name` keeps the name only as a keyed
+# digest, so the count per typed name stays and the text does not.
+# `throttle_name` makes the digest, as a definer the web may call; its key is
+# the one row of `throttle_key`, which no application role can read.
+#
 # `oidc_provider` is one row. The web writes its settings and the sealed client
 # secret, which it cannot open; a trigger raises `revision` on every change, so
 # a Verify recorded against one revision says nothing about the next. A
 # sign-in in progress is a row of `oidc_login`, used once.
+#
+# `api_token` is who may call `/api/v1/`, at which level, until when; it keeps
+# the token's SHA-256, never the token. The web makes, extends and revokes
+# tokens, and what it may not do is held here: a life starts at `valid_from`,
+# the database's own clock, and is at most two years
+# (`api_token_extension`); a revocation is final
+# (`api_token_revocation_is_final`); only a revoked or expired token may be
+# deleted (`api_token_delete_only_ended`).
 #
 ACCOUNTS = r"""
 CREATE FUNCTION public.app_user_keep_an_admin() RETURNS trigger
@@ -105,6 +126,52 @@ CREATE FUNCTION public.app_user_touch() RETURNS trigger
     end;
     $$;
 
+CREATE FUNCTION public.throttle_name(typed text) RETURNS text
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+            select coalesce(
+                (select u.username_normalised from app_user u
+                  where u.username_normalised = lower(typed)),
+                chr(31) || substr(encode(
+                    sha256((select k.key from throttle_key k) || convert_to(lower(typed), 'UTF8')),
+                    'hex'), 1, 63))
+        $$;
+
+REVOKE ALL ON FUNCTION public.throttle_name(typed text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.throttle_name(typed text) TO app_web;
+
+CREATE FUNCTION public.audit_event_blank_unknown_actor() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+        begin
+            if new.action = 'login_failed' and new.actor is not null
+               and not exists (select 1 from app_user u
+                                where u.username_normalised = lower(new.actor)) then
+                new.actor := null;
+                new.detail := new.detail || '{"unknown_user": true}'::jsonb;
+            end if;
+            return new;
+        end
+        $$;
+
+REVOKE ALL ON FUNCTION public.audit_event_blank_unknown_actor() FROM PUBLIC;
+
+CREATE FUNCTION public.login_attempt_digest_unknown_name() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+        begin
+            if left(new.username_normalised, 1) <> chr(31) then
+                new.username_normalised := throttle_name(new.username_normalised);
+            end if;
+            return new;
+        end
+        $$;
+
+REVOKE ALL ON FUNCTION public.login_attempt_digest_unknown_name() FROM PUBLIC;
+
 CREATE FUNCTION public.oidc_provider_touch() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -124,6 +191,53 @@ begin
     return new;
 end;
 $$;
+
+CREATE FUNCTION public.api_token_extension() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        begin
+            if old.revoked_at is not null then
+                raise exception 'a revoked API token is not extended'
+                    using errcode = 'check_violation';
+            end if;
+            if new.expires_at <= statement_timestamp() then
+                raise exception 'an API token is extended to a date that has not passed'
+                    using errcode = 'check_violation';
+            end if;
+            if old.expires_at > statement_timestamp() and new.expires_at <= old.expires_at then
+                raise exception 'an API token in use is extended to a later date, never an earlier one'
+                    using errcode = 'check_violation';
+            end if;
+            new.valid_from := statement_timestamp();
+            return new;
+        end;
+        $$;
+
+CREATE FUNCTION public.api_token_revocation_is_final() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        begin
+            if old.revoked_at is not null
+               and (new.revoked_at is distinct from old.revoked_at
+                    or new.revoked_by is distinct from old.revoked_by) then
+                raise exception 'a revoked API token stays revoked'
+                    using errcode = 'check_violation';
+            end if;
+            return new;
+        end;
+        $$;
+
+CREATE FUNCTION public.api_token_delete_only_ended() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        begin
+            if old.revoked_at is null and old.expires_at > statement_timestamp() then
+                raise exception 'an API token in use is revoked before it is removed'
+                    using errcode = 'check_violation';
+            end if;
+            return old;
+        end;
+        $$;
 
 CREATE TABLE public.app_user (
     id bigint NOT NULL,
@@ -223,6 +337,7 @@ ALTER TABLE ONLY public.login_attempt
     ADD CONSTRAINT login_attempt_pkey PRIMARY KEY (id);
 CREATE INDEX login_attempt_at_idx ON public.login_attempt USING btree (at DESC);
 CREATE INDEX login_attempt_pair_idx ON public.login_attempt USING btree (username_normalised, client_ip, at DESC);
+CREATE TRIGGER login_attempt_digest_unknown_name BEFORE INSERT ON public.login_attempt FOR EACH ROW EXECUTE FUNCTION public.login_attempt_digest_unknown_name();
 GRANT SELECT(id) ON TABLE public.login_attempt TO app_web;
 GRANT SELECT(at) ON TABLE public.login_attempt TO app_web;
 GRANT SELECT(username_normalised),INSERT(username_normalised) ON TABLE public.login_attempt TO app_web;
@@ -253,6 +368,17 @@ GRANT SELECT(at) ON TABLE public.login_unlock TO app_web;
 GRANT SELECT(username_normalised),INSERT(username_normalised) ON TABLE public.login_unlock TO app_web;
 GRANT SELECT(actor),INSERT(actor) ON TABLE public.login_unlock TO app_web;
 
+CREATE TABLE public.throttle_key (
+    only_row boolean DEFAULT true NOT NULL,
+    key bytea NOT NULL,
+    CONSTRAINT throttle_key_one_row CHECK (only_row),
+    CONSTRAINT throttle_key_size CHECK ((octet_length(key) = 32))
+);
+ALTER TABLE ONLY public.throttle_key
+    ADD CONSTRAINT throttle_key_pkey PRIMARY KEY (only_row);
+INSERT INTO public.throttle_key (key)
+    VALUES (sha256(convert_to(gen_random_uuid()::text || gen_random_uuid()::text, 'UTF8')));
+
 CREATE TABLE public.oidc_provider (
     singleton boolean DEFAULT true NOT NULL,
     enabled boolean DEFAULT false NOT NULL,
@@ -278,7 +404,7 @@ CREATE TABLE public.oidc_provider (
     CONSTRAINT oidc_provider_auth_method CHECK ((auth_method = ANY (ARRAY['client_secret_basic'::text, 'client_secret_post'::text]))),
     CONSTRAINT oidc_provider_button_shape CHECK (((length(button_text) >= 1) AND (length(button_text) <= 64))),
     CONSTRAINT oidc_provider_ca_shape CHECK (((ca_pem IS NULL) OR ((length(ca_pem) >= 1) AND (length(ca_pem) <= 65536)))),
-    CONSTRAINT oidc_provider_claim_shape CHECK ((((length(username_claim) >= 1) AND (length(username_claim) <= 128)) AND ((length(groups_claim) >= 1) AND (length(groups_claim) <= 128)))),
+    CONSTRAINT oidc_provider_claim_shape CHECK (((length(username_claim) >= 1) AND (length(username_claim) <= 128) AND ((length(groups_claim) >= 1) AND (length(groups_claim) <= 128)))),
     CONSTRAINT oidc_provider_client_id_shape CHECK (((client_id IS NULL) OR ((length(client_id) >= 1) AND (length(client_id) <= 256)))),
     CONSTRAINT oidc_provider_enabled_complete CHECK (((NOT enabled) OR ((issuer IS NOT NULL) AND (client_id IS NOT NULL) AND (client_secret_sealed IS NOT NULL) AND ((admin_group IS NOT NULL) OR (reader_group IS NOT NULL)) AND (verified_revision IS NOT NULL) AND (verified_revision = revision)))),
     CONSTRAINT oidc_provider_group_shape CHECK ((((admin_group IS NULL) OR ((length(admin_group) >= 1) AND (length(admin_group) <= 256))) AND ((reader_group IS NULL) OR ((length(reader_group) >= 1) AND (length(reader_group) <= 256))))),
@@ -286,7 +412,7 @@ CREATE TABLE public.oidc_provider (
     CONSTRAINT oidc_provider_key_id_shape CHECK (((key_id IS NULL) OR ((length(key_id) >= 1) AND (length(key_id) <= 128)))),
     CONSTRAINT oidc_provider_local_login CHECK ((local_login = ANY (ARRAY['all'::text, 'break_glass_only'::text]))),
     CONSTRAINT oidc_provider_logout_mode CHECK ((logout_mode = ANY (ARRAY['app'::text, 'provider'::text]))),
-    CONSTRAINT oidc_provider_scopes_shape CHECK ((((length(scopes) >= 6) AND (length(scopes) <= 512)) AND (scopes ~ '(^| )openid( |$)'::text))),
+    CONSTRAINT oidc_provider_scopes_shape CHECK (((length(scopes) >= 6) AND (length(scopes) <= 512) AND (scopes ~ '(^| )openid( |$)'::text))),
     CONSTRAINT oidc_provider_secret_keyed CHECK (((client_secret_sealed IS NULL) = (key_id IS NULL))),
     CONSTRAINT oidc_provider_secret_shape CHECK (((client_secret_sealed IS NULL) OR (octet_length(client_secret_sealed) <= 4096))),
     CONSTRAINT oidc_provider_singleton CHECK (singleton),
@@ -368,6 +494,7 @@ CREATE INDEX audit_event_at_idx ON public.audit_event USING btree (at DESC);
 CREATE INDEX audit_event_certificate_takeout_idx ON public.audit_event USING btree (((detail ->> 'certificate'::text)), id DESC) WHERE (action = ANY (ARRAY['certificate_export'::text, 'certificate_download'::text]));
 CREATE INDEX audit_event_cluster_idx ON public.audit_event USING btree (cluster, at DESC);
 CREATE INDEX audit_event_request_idx ON public.audit_event USING btree (request_id);
+CREATE TRIGGER audit_event_blank_unknown_actor BEFORE INSERT ON public.audit_event FOR EACH ROW EXECUTE FUNCTION public.audit_event_blank_unknown_actor();
 GRANT SELECT(id) ON TABLE public.audit_event TO app_web;
 GRANT SELECT(at) ON TABLE public.audit_event TO app_web;
 GRANT SELECT(actor),INSERT(actor) ON TABLE public.audit_event TO app_web;
@@ -380,6 +507,69 @@ GRANT SELECT(request_id),INSERT(request_id) ON TABLE public.audit_event TO app_w
 GRANT INSERT(request_id) ON TABLE public.audit_event TO app_worker;
 GRANT SELECT(detail),INSERT(detail) ON TABLE public.audit_event TO app_web;
 GRANT INSERT(detail) ON TABLE public.audit_event TO app_worker;
+
+CREATE TABLE public.api_token (
+    id bigint NOT NULL,
+    name text NOT NULL,
+    level text NOT NULL,
+    clusters text[] DEFAULT '{}'::text[] NOT NULL,
+    objects text[] DEFAULT '{}'::text[] NOT NULL,
+    sources cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    token_hash bytea NOT NULL,
+    prefix text NOT NULL,
+    created_at timestamp with time zone DEFAULT statement_timestamp() NOT NULL,
+    created_by text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    revoked_by text,
+    last_used_at timestamp with time zone,
+    last_used_from inet,
+    valid_from timestamp with time zone DEFAULT statement_timestamp() NOT NULL,
+    CONSTRAINT api_token_block_names_objects CHECK (((level <> 'block'::text) OR (cardinality(objects) > 0))),
+    CONSTRAINT api_token_created_by_shape CHECK (((length(created_by) >= 1) AND (length(created_by) <= 128))),
+    CONSTRAINT api_token_hash_sha256 CHECK ((octet_length(token_hash) = 32)),
+    CONSTRAINT api_token_level_allowed CHECK ((level = ANY (ARRAY['read'::text, 'block'::text, 'write'::text]))),
+    CONSTRAINT api_token_lifetime CHECK (((expires_at > valid_from) AND (expires_at <= (valid_from + '2 years'::interval)))),
+    CONSTRAINT api_token_name_shape CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text)),
+    CONSTRAINT api_token_objects_only_to_block CHECK (((level = 'block'::text) OR (cardinality(objects) = 0))),
+    CONSTRAINT api_token_prefix_shape CHECK ((prefix ~ '^hap_[A-Za-z0-9_-]{8}$'::text)),
+    CONSTRAINT api_token_revoked_by_shape CHECK (((revoked_by IS NULL) OR ((length(revoked_by) >= 1) AND (length(revoked_by) <= 128)))),
+    CONSTRAINT api_token_revoked_by_whom CHECK (((revoked_at IS NULL) = (revoked_by IS NULL)))
+);
+ALTER TABLE public.api_token ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.api_token_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+ALTER TABLE ONLY public.api_token
+    ADD CONSTRAINT api_token_hash_unique UNIQUE (token_hash);
+ALTER TABLE ONLY public.api_token
+    ADD CONSTRAINT api_token_name_unique UNIQUE (name);
+ALTER TABLE ONLY public.api_token
+    ADD CONSTRAINT api_token_pkey PRIMARY KEY (id);
+CREATE TRIGGER api_token_delete_only_ended BEFORE DELETE ON public.api_token FOR EACH ROW EXECUTE FUNCTION public.api_token_delete_only_ended();
+CREATE TRIGGER api_token_extension BEFORE UPDATE OF expires_at ON public.api_token FOR EACH ROW EXECUTE FUNCTION public.api_token_extension();
+CREATE TRIGGER api_token_revocation_is_final BEFORE UPDATE OF revoked_at, revoked_by ON public.api_token FOR EACH ROW EXECUTE FUNCTION public.api_token_revocation_is_final();
+GRANT DELETE ON TABLE public.api_token TO app_web;
+GRANT SELECT(id) ON TABLE public.api_token TO app_web;
+GRANT SELECT(name),INSERT(name) ON TABLE public.api_token TO app_web;
+GRANT SELECT(level),INSERT(level) ON TABLE public.api_token TO app_web;
+GRANT SELECT(clusters),INSERT(clusters) ON TABLE public.api_token TO app_web;
+GRANT SELECT(objects),INSERT(objects) ON TABLE public.api_token TO app_web;
+GRANT SELECT(sources),INSERT(sources) ON TABLE public.api_token TO app_web;
+GRANT SELECT(token_hash),INSERT(token_hash) ON TABLE public.api_token TO app_web;
+GRANT SELECT(prefix),INSERT(prefix) ON TABLE public.api_token TO app_web;
+GRANT SELECT(created_at) ON TABLE public.api_token TO app_web;
+GRANT SELECT(created_by),INSERT(created_by) ON TABLE public.api_token TO app_web;
+GRANT SELECT(expires_at),INSERT(expires_at),UPDATE(expires_at) ON TABLE public.api_token TO app_web;
+GRANT SELECT(revoked_at),UPDATE(revoked_at) ON TABLE public.api_token TO app_web;
+GRANT SELECT(revoked_by),UPDATE(revoked_by) ON TABLE public.api_token TO app_web;
+GRANT SELECT(last_used_at),UPDATE(last_used_at) ON TABLE public.api_token TO app_web;
+GRANT SELECT(last_used_from),UPDATE(last_used_from) ON TABLE public.api_token TO app_web;
+GRANT SELECT(valid_from) ON TABLE public.api_token TO app_web;
 """
 
 
@@ -391,13 +581,16 @@ GRANT INSERT(detail) ON TABLE public.audit_event TO app_worker;
 # recognised. The state, the request ID and the timestamps are defaults, and
 # `payload_hash` is the database's own reading of the payload
 # (`job_payload_hash`), so a compromised web process cannot choose them or
-# claim another request's ID. The worker claims and finishes jobs and inserts
-# none. `job_operation_allowed` is the list of
-# what may be queued at all: a job row is what the worker runs as root.
+# claim another request's ID. A job queued through the API also keeps the
+# digest of the request that queued it (`request_digest`), so a retry is told
+# from another change after the state has moved. The worker claims and
+# finishes jobs and inserts none; the web reads when a claim's lease runs out,
+# never the claim's token. `job_operation_allowed` is the list of what may be
+# queued at all: a job row is what the worker runs as root.
 #
 # `job_claim_gate` pauses the worker's claims while a release restarts it; a
 # moment rather than a flag, so a release killed before clearing it does not
-# stop the queue for good. `hold_jobs_queued_before` holds the jobs queued
+# stop the queue for good. The web reads the pause and which release holds it. `hold_jobs_queued_before` holds the jobs queued
 # before the machine's last boot, which a restored manager would otherwise run
 # again, until an admin answers (`held_decision`, the web's alone).
 # `job_attention_evidence` names the jobs Needs attention reads - the newest
@@ -561,6 +754,7 @@ CREATE TABLE public.job (
     held_since timestamp with time zone,
     held_decision text,
     held_decided_by text,
+    request_digest bytea,
     CONSTRAINT job_attempts_not_negative CHECK ((attempts >= 0)),
     CONSTRAINT job_cluster_presence CHECK (((operation = ANY (ARRAY['cert_issue'::text, 'cert_publish'::text, 'cert_target'::text, 'dns_profile_apply'::text, 'cert_delete'::text, 'ndes_profile_apply'::text, 'cert_scep'::text, 'cert_receiver'::text, 'cert_import'::text, 'cert_request'::text])) = (cluster IS NULL))),
     CONSTRAINT job_cluster_shape CHECK (((cluster IS NULL) OR (cluster ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
@@ -569,6 +763,7 @@ CREATE TABLE public.job (
     CONSTRAINT job_held_decision CHECK ((held_decision = ANY (ARRAY['run'::text, 'discard'::text]))),
     CONSTRAINT job_held_decision_needs_hold CHECK (((held_decision IS NULL) OR (held_since IS NOT NULL))),
     CONSTRAINT job_outcome_allowed CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['done'::text, 'partial'::text, 'failed'::text, 'blocked'::text, 'unknown'::text])))),
+    CONSTRAINT job_request_digest_sha256 CHECK (((request_digest IS NULL) OR (octet_length(request_digest) = 32))),
     CONSTRAINT job_running_is_held CHECK (((state <> 'running'::text) OR ((claim_token IS NOT NULL) AND (lease_until IS NOT NULL) AND (worker_id IS NOT NULL) AND (started_at IS NOT NULL)))),
     CONSTRAINT job_state_allowed CHECK ((state = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'partial'::text, 'failed'::text, 'blocked'::text, 'unknown'::text]))),
     CONSTRAINT job_stderr_bounded CHECK (((stderr_excerpt IS NULL) OR (octet_length(stderr_excerpt) <= 65536)))
@@ -584,7 +779,7 @@ ALTER TABLE public.job ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 ALTER TABLE ONLY public.job
     ADD CONSTRAINT job_pkey PRIMARY KEY (id);
 ALTER TABLE public.job
-    ADD CONSTRAINT job_operation_allowed CHECK ((operation = ANY (ARRAY['backup_run'::text, 'backup_schedule'::text, 'cert_delete'::text, 'cert_deploy'::text, 'cert_import'::text, 'cert_issue'::text, 'cert_publish'::text, 'cert_receiver'::text, 'cert_request'::text, 'cert_scep'::text, 'cert_target'::text, 'changes_publish'::text, 'cluster_define'::text, 'cluster_node'::text, 'deploy'::text, 'dns_profile_apply'::text, 'dynamic_unblock'::text, 'ndes_profile_apply'::text, 'node_restore'::text, 'node_restore_discard'::text, 'node_restore_prepare'::text, 'node_restore_preview'::text, 'node_restore_status'::text, 'revert'::text, 'server_state'::text])));
+    ADD CONSTRAINT job_operation_allowed CHECK ((operation = ANY (ARRAY['backup_run'::text, 'backup_schedule'::text, 'cert_delete'::text, 'cert_deploy'::text, 'cert_import'::text, 'cert_issue'::text, 'cert_publish'::text, 'cert_receiver'::text, 'cert_request'::text, 'cert_scep'::text, 'cert_target'::text, 'changes_publish'::text, 'cluster_define'::text, 'cluster_node'::text, 'deploy'::text, 'dns_profile_apply'::text, 'dynamic_unblock'::text, 'ndes_profile_apply'::text, 'node_restore'::text, 'node_restore_discard'::text, 'node_restore_prepare'::text, 'node_restore_preview'::text, 'node_restore_status'::text, 'revert'::text, 'server_state'::text]))) NOT VALID;
 CREATE INDEX job_claimable_idx ON public.job USING btree (created_at, id) WHERE (state = 'pending'::text);
 CREATE INDEX job_cluster_idx ON public.job USING btree (cluster, created_at DESC);
 CREATE UNIQUE INDEX job_idempotency_key ON public.job USING btree (idempotency_key) WHERE (idempotency_key IS NOT NULL);
@@ -608,6 +803,7 @@ GRANT SELECT(state),UPDATE(state) ON TABLE public.job TO app_worker;
 GRANT SELECT(claim_token),UPDATE(claim_token) ON TABLE public.job TO app_worker;
 GRANT SELECT(worker_id),UPDATE(worker_id) ON TABLE public.job TO app_worker;
 GRANT SELECT(lease_until),UPDATE(lease_until) ON TABLE public.job TO app_worker;
+GRANT SELECT(lease_until) ON TABLE public.job TO app_web;
 GRANT SELECT(created_at) ON TABLE public.job TO app_web;
 GRANT SELECT(created_at) ON TABLE public.job TO app_worker;
 GRANT SELECT(started_at) ON TABLE public.job TO app_web;
@@ -634,6 +830,7 @@ GRANT SELECT(held_decision),UPDATE(held_decision) ON TABLE public.job TO app_web
 GRANT SELECT(held_decision) ON TABLE public.job TO app_worker;
 GRANT SELECT(held_decided_by),UPDATE(held_decided_by) ON TABLE public.job TO app_web;
 GRANT SELECT(held_decided_by) ON TABLE public.job TO app_worker;
+GRANT SELECT(request_digest),INSERT(request_digest) ON TABLE public.job TO app_web;
 
 CREATE TABLE public.job_claim_gate (
     only_row boolean DEFAULT true NOT NULL,
@@ -645,6 +842,8 @@ CREATE TABLE public.job_claim_gate (
 ALTER TABLE ONLY public.job_claim_gate
     ADD CONSTRAINT job_claim_gate_pkey PRIMARY KEY (only_row);
 GRANT SELECT(paused_until) ON TABLE public.job_claim_gate TO app_worker;
+GRANT SELECT(paused_until) ON TABLE public.job_claim_gate TO app_web;
+GRANT SELECT(paused_by) ON TABLE public.job_claim_gate TO app_web;
 INSERT INTO public.job_claim_gate (only_row) VALUES (true);
 
 CREATE TABLE public.attention_ack (
@@ -653,19 +852,25 @@ CREATE TABLE public.attention_ack (
     subject text NOT NULL,
     acknowledged_by text NOT NULL,
     acknowledged_at timestamp with time zone DEFAULT statement_timestamp() NOT NULL,
+    severity text DEFAULT ''::text NOT NULL,
+    variant text DEFAULT ''::text NOT NULL,
     CONSTRAINT attention_ack_acknowledged_by_check CHECK (((length(acknowledged_by) >= 1) AND (length(acknowledged_by) <= 64))),
     CONSTRAINT attention_ack_cluster_check CHECK ((length(cluster) <= 64)),
     CONSTRAINT attention_ack_kind_check CHECK (((length(kind) >= 1) AND (length(kind) <= 32))),
-    CONSTRAINT attention_ack_subject_check CHECK (((length(subject) >= 1) AND (length(subject) <= 256)))
+    CONSTRAINT attention_ack_severity_check CHECK ((length(severity) <= 16)),
+    CONSTRAINT attention_ack_subject_check CHECK (((length(subject) >= 1) AND (length(subject) <= 256))),
+    CONSTRAINT attention_ack_variant_check CHECK ((length(variant) <= 128))
 );
 ALTER TABLE ONLY public.attention_ack
-    ADD CONSTRAINT attention_ack_pkey PRIMARY KEY (kind, cluster, subject);
+    ADD CONSTRAINT attention_ack_pkey PRIMARY KEY (kind, cluster, subject, severity, variant);
 GRANT DELETE ON TABLE public.attention_ack TO app_web;
 GRANT SELECT(kind),INSERT(kind) ON TABLE public.attention_ack TO app_web;
 GRANT SELECT(cluster),INSERT(cluster) ON TABLE public.attention_ack TO app_web;
 GRANT SELECT(subject),INSERT(subject) ON TABLE public.attention_ack TO app_web;
 GRANT SELECT(acknowledged_by),INSERT(acknowledged_by) ON TABLE public.attention_ack TO app_web;
 GRANT SELECT(acknowledged_at) ON TABLE public.attention_ack TO app_web;
+GRANT SELECT(severity),INSERT(severity) ON TABLE public.attention_ack TO app_web;
+GRANT SELECT(variant),INSERT(variant) ON TABLE public.attention_ack TO app_web;
 
 CREATE TABLE public.node_event (
     id bigint NOT NULL,
@@ -738,6 +943,8 @@ GRANT SELECT(value),INSERT(value),UPDATE(value) ON TABLE public.node_event_state
 # cluster through, from which start, so a page can tell whether a reading was
 # taken after a job ended. The worker reads the version history, so that
 # recovery can tell after a restart whether a job's version was made.
+# `cluster_regeneration` is the engine's answer to whether publishing the
+# cluster again with the installed release would change what the nodes run.
 #
 READINGS = r"""
 CREATE FUNCTION public.cluster_status_observed_at() RETURNS trigger
@@ -811,6 +1018,15 @@ CREATE FUNCTION public.cluster_settings_observed_at() RETURNS trigger
         return new;
     end;
     $$;
+
+CREATE FUNCTION public.cluster_regeneration_observed_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        begin
+            new.observed_at := statement_timestamp();
+            return new;
+        end;
+        $$;
 
 CREATE FUNCTION public.cluster_list_observed_at() RETURNS trigger
     LANGUAGE plpgsql
@@ -1068,6 +1284,37 @@ GRANT SELECT(error),INSERT(error),UPDATE(error) ON TABLE public.cluster_settings
 GRANT SELECT(error) ON TABLE public.cluster_settings TO app_web;
 GRANT SELECT(poll_error),INSERT(poll_error),UPDATE(poll_error) ON TABLE public.cluster_settings TO app_poller;
 GRANT SELECT(poll_error) ON TABLE public.cluster_settings TO app_web;
+
+CREATE TABLE public.cluster_regeneration (
+    cluster text NOT NULL,
+    observed_at timestamp with time zone DEFAULT statement_timestamp() NOT NULL,
+    outcome text NOT NULL,
+    result jsonb NOT NULL,
+    warnings jsonb DEFAULT '[]'::jsonb NOT NULL,
+    error jsonb,
+    poll_error text,
+    CONSTRAINT cluster_regeneration_cluster_shape CHECK ((cluster ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT cluster_regeneration_is_object CHECK ((jsonb_typeof(result) = 'object'::text)),
+    CONSTRAINT cluster_regeneration_outcome_allowed CHECK ((outcome = ANY (ARRAY['done'::text, 'failed'::text, 'unavailable'::text]))),
+    CONSTRAINT cluster_regeneration_size CHECK ((octet_length((result)::text) <= 8388608))
+);
+ALTER TABLE ONLY public.cluster_regeneration
+    ADD CONSTRAINT cluster_regeneration_pkey PRIMARY KEY (cluster);
+CREATE TRIGGER cluster_regeneration_observed_at BEFORE UPDATE ON public.cluster_regeneration FOR EACH ROW EXECUTE FUNCTION public.cluster_regeneration_observed_at();
+GRANT SELECT(cluster),INSERT(cluster) ON TABLE public.cluster_regeneration TO app_poller;
+GRANT SELECT(cluster) ON TABLE public.cluster_regeneration TO app_web;
+GRANT SELECT(observed_at) ON TABLE public.cluster_regeneration TO app_poller;
+GRANT SELECT(observed_at) ON TABLE public.cluster_regeneration TO app_web;
+GRANT SELECT(outcome),INSERT(outcome),UPDATE(outcome) ON TABLE public.cluster_regeneration TO app_poller;
+GRANT SELECT(outcome) ON TABLE public.cluster_regeneration TO app_web;
+GRANT SELECT(result),INSERT(result),UPDATE(result) ON TABLE public.cluster_regeneration TO app_poller;
+GRANT SELECT(result) ON TABLE public.cluster_regeneration TO app_web;
+GRANT SELECT(warnings),INSERT(warnings),UPDATE(warnings) ON TABLE public.cluster_regeneration TO app_poller;
+GRANT SELECT(warnings) ON TABLE public.cluster_regeneration TO app_web;
+GRANT SELECT(error),INSERT(error),UPDATE(error) ON TABLE public.cluster_regeneration TO app_poller;
+GRANT SELECT(error) ON TABLE public.cluster_regeneration TO app_web;
+GRANT SELECT(poll_error),INSERT(poll_error),UPDATE(poll_error) ON TABLE public.cluster_regeneration TO app_poller;
+GRANT SELECT(poll_error) ON TABLE public.cluster_regeneration TO app_web;
 
 CREATE TABLE public.cluster_list (
     id smallint DEFAULT 1 NOT NULL,
@@ -1361,7 +1608,7 @@ CREATE TABLE public.dns_provider_profile (
     updated_at timestamp with time zone DEFAULT statement_timestamp() NOT NULL,
     updated_by text NOT NULL,
     CONSTRAINT dns_provider_profile_ciphertext_size CHECK (((octet_length(ciphertext) >= 48) AND (octet_length(ciphertext) <= 65536))),
-    CONSTRAINT dns_provider_profile_id_shape CHECK ((id ~ '^[a-z0-9][a-z0-9-]{0,31}$'::text)),
+    CONSTRAINT dns_provider_profile_id_shape CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,31}$'::text)),
     CONSTRAINT dns_provider_profile_key_shape CHECK ((key_id ~ '^[0-9a-f]{16}$'::text)),
     CONSTRAINT dns_provider_profile_name_shape CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80))),
     CONSTRAINT dns_provider_profile_provider_shape CHECK ((provider_id ~ '^[a-z][a-z0-9-]{0,31}$'::text)),
@@ -1404,7 +1651,7 @@ CREATE TABLE public.ndes_provider_profile (
     endpoint text DEFAULT ''::text NOT NULL,
     CONSTRAINT ndes_provider_profile_ciphertext_size CHECK (((octet_length(ciphertext) >= 48) AND (octet_length(ciphertext) <= 16384))),
     CONSTRAINT ndes_provider_profile_endpoint_shape CHECK (((endpoint = ''::text) OR ((endpoint ~ '^https://'::text) AND (char_length(endpoint) <= 2048)))),
-    CONSTRAINT ndes_provider_profile_id_shape CHECK ((id ~ '^[a-z0-9][a-z0-9-]{0,31}$'::text)),
+    CONSTRAINT ndes_provider_profile_id_shape CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,31}$'::text)),
     CONSTRAINT ndes_provider_profile_key_shape CHECK ((key_id ~ '^[0-9a-f]{16}$'::text)),
     CONSTRAINT ndes_provider_profile_name_shape CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80))),
     CONSTRAINT ndes_provider_profile_provider_shape CHECK ((provider_id = 'ndes'::text)),
@@ -1534,7 +1781,8 @@ INSERT INTO public.retention_run (completed_at) VALUES (now());
 # could fail the poller's insert.
 #
 # `metric_backend_alias` says that a renamed pool's earlier name belongs to its
-# card, written by the worker once the publish that renamed it is done.
+# card, written by the worker once the publish that renamed it is done, and
+# by the poller for a publish made outside the web.
 # `metric_rollup_state` is how far the hourly rollup has come.
 #
 METRICS = r"""
@@ -2312,20 +2560,25 @@ CREATE TABLE public.metric_backend_alias (
     renamed_at timestamp with time zone DEFAULT statement_timestamp() NOT NULL,
     reused_at timestamp with time zone,
     CONSTRAINT metric_backend_alias_cluster_shape CHECK ((cluster ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT metric_backend_alias_names CHECK ((((length(old_name) >= 1) AND (length(old_name) <= 128)) AND ((length(new_name) >= 1) AND (length(new_name) <= 128)) AND (old_name <> new_name)))
+    CONSTRAINT metric_backend_alias_names CHECK (((length(old_name) >= 1) AND (length(old_name) <= 128) AND ((length(new_name) >= 1) AND (length(new_name) <= 128)) AND (old_name <> new_name)))
 );
 ALTER TABLE ONLY public.metric_backend_alias
     ADD CONSTRAINT metric_backend_alias_pkey PRIMARY KEY (cluster, old_name);
 GRANT SELECT(cluster) ON TABLE public.metric_backend_alias TO app_web;
 GRANT SELECT(cluster),INSERT(cluster) ON TABLE public.metric_backend_alias TO app_worker;
+GRANT SELECT(cluster),INSERT(cluster) ON TABLE public.metric_backend_alias TO app_poller;
 GRANT SELECT(old_name) ON TABLE public.metric_backend_alias TO app_web;
 GRANT SELECT(old_name),INSERT(old_name) ON TABLE public.metric_backend_alias TO app_worker;
+GRANT SELECT(old_name),INSERT(old_name) ON TABLE public.metric_backend_alias TO app_poller;
 GRANT SELECT(new_name) ON TABLE public.metric_backend_alias TO app_web;
 GRANT SELECT(new_name),INSERT(new_name),UPDATE(new_name) ON TABLE public.metric_backend_alias TO app_worker;
+GRANT SELECT(new_name),INSERT(new_name),UPDATE(new_name) ON TABLE public.metric_backend_alias TO app_poller;
 GRANT SELECT(renamed_at) ON TABLE public.metric_backend_alias TO app_web;
 GRANT SELECT(renamed_at),UPDATE(renamed_at) ON TABLE public.metric_backend_alias TO app_worker;
+GRANT SELECT(renamed_at),UPDATE(renamed_at) ON TABLE public.metric_backend_alias TO app_poller;
 GRANT SELECT(reused_at) ON TABLE public.metric_backend_alias TO app_web;
 GRANT SELECT(reused_at),UPDATE(reused_at) ON TABLE public.metric_backend_alias TO app_worker;
+GRANT SELECT(reused_at),UPDATE(reused_at) ON TABLE public.metric_backend_alias TO app_poller;
 
 CREATE TABLE public.metric_rollup_state (
     rollup_name text NOT NULL,
@@ -2355,7 +2608,9 @@ INSERT INTO public.metric_rollup_state (rollup_name, complete_before)
 # table. With column grants alone PostgreSQL keeps the planner from the
 # statistics of the trigram index the search uses, and a search that finds
 # nothing read every row; a view's tables are checked as its owner. The view
-# names what the web may see, and a test holds it to that.
+# names what the web may see, and a test holds it to that. A client address
+# or network is searched through an index on `traffic_log_client_inet`, which
+# is null for text that is no address, so one bad row cannot stop a search.
 #
 # `waf_match` is one row per rule the engine matched on a request, with the
 # matched value, read only by the trigger that counts it into
@@ -2363,33 +2618,48 @@ INSERT INTO public.metric_rollup_state (rollup_name, complete_before)
 # reads. Those two are not partitioned, for the reason the metric sums are not.
 #
 TRAFFIC = r"""
+CREATE FUNCTION public.traffic_log_client_inet(client text) RETURNS inet
+    LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+    AS $$
+        begin
+            if pg_input_is_valid(client, 'inet') then
+                return host(client::inet)::inet;
+            end if;
+            return null;
+        end;
+        $$;
+
 CREATE FUNCTION public.traffic_log_partition(day date) RETURNS text
     LANGUAGE plpgsql
     AS $$
-    declare
-        partition text := format('traffic_log_%s', to_char(day, 'YYYYMMDD'));
-    begin
-        execute format(
-            'create table if not exists %I partition of traffic_log '
-            'for values from (%L) to (%L)',
-            partition, day, day + 1
-        );
-        execute format(
-            'create index if not exists %I on %I using gin '
-            '((host || '' '' || path || '' '' || backend) gin_trgm_ops)',
-            partition || '_search', partition
-        );
-        execute format(
-            'create index if not exists %I on %I (occurred_at) where rule <> ''''',
-            partition || '_rule', partition
-        );
-        execute format(
-            'create index if not exists %I on %I (cluster, occurred_at desc, request_number desc)',
-            partition || '_cluster', partition
-        );
-        return partition;
-    end;
-    $$;
+        declare
+            partition text := format('traffic_log_%s', to_char(day, 'YYYYMMDD'));
+        begin
+            execute format(
+                'create table if not exists %I partition of traffic_log '
+                'for values from (%L) to (%L)',
+                partition, day, day + 1
+            );
+            execute format(
+                'create index if not exists %I on %I using gin '
+                '((host || '' '' || path || '' '' || backend) gin_trgm_ops)',
+                partition || '_search', partition
+            );
+            execute format(
+                'create index if not exists %I on %I (occurred_at) where rule <> ''''',
+                partition || '_rule', partition
+            );
+            execute format(
+                'create index if not exists %I on %I (cluster, occurred_at desc, request_number desc)',
+                partition || '_cluster', partition
+            );
+            execute format(
+                'create index if not exists %I on %I (traffic_log_client_inet(client))',
+                partition || '_client', partition
+            );
+            return partition;
+        end;
+        $$;
 
 CREATE FUNCTION public.traffic_log_ignore_duplicate() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
@@ -2492,12 +2762,14 @@ CREATE TABLE public.traffic_log (
     waf_rules text DEFAULT ''::text NOT NULL,
     waf_score integer DEFAULT 0 NOT NULL,
     waf_id text DEFAULT ''::text NOT NULL,
+    termination text DEFAULT ''::text NOT NULL,
     CONSTRAINT traffic_log_bytes_range CHECK ((bytes >= 0)),
     CONSTRAINT traffic_log_cluster_shape CHECK ((cluster ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT traffic_log_event_id_shape CHECK ((octet_length(event_id) = 32)),
     CONSTRAINT traffic_log_node_shape CHECK ((node ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'::text)),
     CONSTRAINT traffic_log_rule_length CHECK ((char_length(rule) <= 160)),
     CONSTRAINT traffic_log_status_range CHECK (((status >= 0) AND (status <= 999))),
+    CONSTRAINT traffic_log_termination_shape CHECK ((termination ~ '^([A-Z-]{2})?$'::text)),
     CONSTRAINT traffic_log_waf_id_shape CHECK ((waf_id ~ '^([A-Za-z0-9_.-]{1,96})?$'::text)),
     CONSTRAINT traffic_log_waf_rules_form CHECK (((char_length(waf_rules) <= 1024) AND (waf_rules ~ '^([0-9]{6}(,[0-9]{6})*)?$'::text))),
     CONSTRAINT traffic_log_waf_score_range CHECK (((waf_score >= 0) AND (waf_score <= 100000)))
@@ -2529,6 +2801,7 @@ GRANT INSERT(rule) ON TABLE public.traffic_log TO app_collector;
 GRANT INSERT(waf_rules) ON TABLE public.traffic_log TO app_collector;
 GRANT INSERT(waf_score) ON TABLE public.traffic_log TO app_collector;
 GRANT INSERT(waf_id) ON TABLE public.traffic_log TO app_collector;
+GRANT INSERT(termination) ON TABLE public.traffic_log TO app_collector;
 SELECT public.traffic_log_partition(day::date)
   FROM generate_series(current_date - 6, current_date + 7, interval '1 day') AS day;
 
@@ -2554,7 +2827,9 @@ CREATE VIEW public.traffic_log_read AS
     rule,
     waf_rules,
     waf_score,
-    waf_id
+    waf_id,
+    termination,
+    event_id
    FROM public.traffic_log;
 GRANT SELECT ON TABLE public.traffic_log_read TO app_web;
 

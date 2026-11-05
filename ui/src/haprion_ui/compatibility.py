@@ -278,12 +278,28 @@ def installed_entry_points(document: Mapping[str, Any]) -> set[str]:
     return set(value)
 
 
+#
+# The release that carries the migrations a baseline folded, by the baseline,
+# with the oldest revision those migrations start from (B436). A database in
+# between is taken to the baseline by that release and upgraded on from there.
+# What came before 0100 is 0.9's, which is installed afresh (B369).
+#
+CHAIN_CARRIERS = {"0115": ("0100", "0.99.13")}
+
+
 def before_baseline(requirements: Requirements, revision: str) -> str | None:
     """Why a database at `revision` cannot be taken to this release at all, or None (B369)."""
 
     baseline = requirements.database_baseline
     if baseline is None or not is_digits(revision) or revision >= baseline:
         return None
+    carrier = CHAIN_CARRIERS.get(baseline)
+    if carrier is not None and revision >= carrier[0]:
+        return (
+            f"{revision} is from before this release's baseline {baseline}. Upgrade to "
+            f"Haprion {carrier[1]} first, which migrates the database to {baseline}, and "
+            "then to this release"
+        )
     return (
         f"{revision} is from before this release's baseline {baseline}. Haprion 0.99 and later "
         "are installed afresh, not upgraded from an earlier release: see docs/install.md, "

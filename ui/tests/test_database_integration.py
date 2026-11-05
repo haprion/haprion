@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -2291,7 +2290,7 @@ class ARealDatabase(unittest.TestCase):
             connection.rollback()
         self.assertEqual(taken, [(db.SIGN_IN_LOCKS, 2)])
         self.assertEqual((one_key, two_keys), (False, True))
-        # The last-admin guard keeps the one-key form, which 0100's trigger takes as
+        # The last-admin guard keeps the one-key form, which the baseline's trigger takes as
         # well, on a fixed name whose hash is neither singleton key.
         self.assertNotIn(kept, ((worker.WORKER_LOCK_KEY,), (poller.POLLER_LOCK_KEY,)))
 
@@ -4453,88 +4452,6 @@ class TheQueueNoLongerTakesABlockClient(unittest.TestCase):
                     "values ('block_client', 'alpha', '{}', %s)",
                     (uuid4(),),
                 )
-            connection.rollback()
-
-    def test_one_left_waiting_at_the_upgrade_does_not_stop_the_queue(self) -> None:
-        """A row the constraint refuses can never change state; 0109 ends it first."""
-
-        path = Path(__file__).parents[1] / "migrations/versions/0109_block_client_jobs_retired.py"
-        spec = importlib.util.spec_from_file_location("migration_0109", path)
-        if spec is None or spec.loader is None:
-            self.fail(f"{path} cannot be loaded")
-        migration = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(migration)
-        with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("alter table job drop constraint job_operation_allowed")
-            for state in ("pending", "running"):
-                cursor.execute(
-                    "insert into job (operation, cluster, payload, idempotency_key, state, "
-                    "claim_token, worker_id, lease_until, started_at) "
-                    "values ('block_client', %s, '{}', %s, %s, "
-                    "        gen_random_uuid(), 'w', now() + interval '1 hour', now())",
-                    (f"retired-{state}", uuid4(), state),
-                )
-            cursor.execute(migration.END_UNFINISHED)
-            cursor.execute(
-                "alter table job add constraint job_operation_allowed "
-                "check (operation <> 'block_client') not valid"
-            )
-            cursor.execute(
-                "select cluster, state, outcome from job "
-                " where operation = 'block_client' order by cluster"
-            )
-            ended = cursor.fetchall()
-            claimed = db.claim_job(connection, worker_id="test", lease_seconds=60)
-            connection.rollback()
-        self.assertEqual(
-            ended,
-            [("retired-pending", "failed", "failed"), ("retired-running", "unknown", "unknown")],
-        )
-        self.assertTrue(claimed is None or claimed.operation != "block_client")
-
-    def test_one_queued_by_an_old_web_after_0109_s_ending_is_ended_by_0110(self) -> None:
-        """0109's ending and its constraint are two statements; a row between them stands."""
-
-        path = Path(__file__).parents[1] / "migrations/versions/0110_job_request_digest.py"
-        spec = importlib.util.spec_from_file_location("migration_0110", path)
-        if spec is None or spec.loader is None:
-            self.fail(f"{path} cannot be loaded")
-        migration = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(migration)
-        recorded: list[str] = []
-        with mock.patch.object(migration.op, "execute", side_effect=recorded.append):
-            migration.upgrade()
-        # The update runs with the constraint out, and the constraint is back after it.
-        drop, ending, constraint = (
-            next(i for i, sql in enumerate(recorded) if needle in sql)
-            for needle in ("drop constraint job_operation_allowed", "update job", "not valid")
-        )
-        self.assertLess(drop, ending)
-        self.assertLess(ending, constraint)
-        with self.connect() as connection, connection.cursor() as cursor:
-            # What the database looks like after 0109: narrower constraint, not validated.
-            cursor.execute("alter table job drop constraint job_operation_allowed")
-            cursor.execute(
-                "insert into job (operation, cluster, payload, idempotency_key) "
-                "values ('block_client', 'straggler', '{}', %s)",
-                (uuid4(),),
-            )
-            cursor.execute(
-                "alter table job add constraint job_operation_allowed "
-                "check (operation <> 'block_client') not valid"
-            )
-            with self.assertRaises(psycopg.errors.CheckViolation):
-                cursor.execute(migration.END_UNFINISHED)
-            connection.rollback()
-            cursor.execute("alter table job drop constraint job_operation_allowed")
-            cursor.execute(
-                "insert into job (operation, cluster, payload, idempotency_key) "
-                "values ('block_client', 'straggler', '{}', %s)",
-                (uuid4(),),
-            )
-            cursor.execute(migration.END_UNFINISHED)
-            cursor.execute("select state from job where cluster = 'straggler'")
-            self.assertEqual(cursor.fetchall(), [("failed",)])
             connection.rollback()
 
 
@@ -10793,111 +10710,6 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         self.assertEqual(self.tokens(), [("kept", None), ("leaked", "restore")])
         self.assertEqual(list(stale.iterdir()), [])
 
-    def test_a_dump_from_before_the_tokens_is_restored_without_an_early_revocation(self) -> None:
-        """Review 26-10-31, P2-1: no api_token yet, so nothing to revoke until it is migrated."""
-
-        self.alembic("upgrade", "0106")
-        dump = self.directory / "before-the-tokens.dump"
-        subprocess.run(  # noqa: S603 - this cluster's pg_dump, fixed arguments
-            [f"{self.bindir}/pg_dump", "-h", self.socket, "-U", self.role, "-d", self.NAME,
-             "--format=custom", f"--file={dump}"],
-            check=True,
-        )  # fmt: skip
-        self.alembic("upgrade", "head")
-
-        done = self.restore(dump)
-
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertEqual(self.tokens(), [])
-
-    def test_a_token_made_before_0108_begins_its_life_when_it_was_made(self) -> None:
-        self.alembic("upgrade", "0107")
-        with self.scratch() as connection:
-            connection.execute(
-                "insert into api_token (name, level, token_hash, prefix, created_by, expires_at, "
-                "created_at) values ('older', 'read', %s, 'hap_abcdefgh', 'admin', "
-                "now() + interval '65 days', now() - interval '300 days')",
-                (b"o" * 32,),
-            )
-            connection.commit()
-
-        self.alembic("upgrade", "head")
-
-        with self.scratch() as connection:
-            row = connection.execute("select valid_from = created_at from api_token").fetchone()
-        self.assertEqual(row, (True,))
-
-    def test_a_name_typed_at_a_failed_sign_in_is_blanked_unless_an_account_has_it(self) -> None:
-        """0113: what a reader could search, filter and sort on is no longer stored."""
-
-        self.alembic("upgrade", "0112")
-        with self.scratch() as connection:
-            connection.execute(
-                "insert into app_user (username, password_hash, role) "
-                "values ('Operator', '$argon2id$placeholder', 'admin')"
-            )
-            insert = "insert into audit_event (actor, action, detail) values (%s, %s, %s::jsonb)"
-            connection.execute(insert, ("hunter2-pass", "login_failed", '{"reason": "rejected"}'))
-            connection.execute(insert, ("OPERATOR", "login_failed", '{"reason": "rejected"}'))
-            connection.execute(insert, ("hunter2-pass", "login", "{}"))
-            connection.commit()
-
-        self.alembic("upgrade", "head")
-
-        with self.scratch() as connection:
-            rows = connection.execute(
-                "select action, actor, detail from audit_event order by id"
-            ).fetchall()
-            searched = connection.execute(
-                "select count(*) from audit_event where actor ilike '%hunter2%' "
-                "and action = 'login_failed'"
-            ).fetchone()
-        self.assertEqual(
-            rows,
-            [
-                ("login_failed", None, {"reason": "rejected", "unknown_user": True}),
-                ("login_failed", "OPERATOR", {"reason": "rejected"}),
-                ("login", "hunter2-pass", {}),
-            ],
-        )
-        self.assertEqual(searched, (0,))
-
-    def test_a_name_typed_at_a_failed_sign_in_is_kept_as_a_digest_unless_an_account_has_it(
-        self,
-    ) -> None:
-        """0114: the throttle's rows no longer hold a name nobody has, and keep their count."""
-
-        self.alembic("upgrade", "0113")
-        with self.scratch() as connection:
-            connection.execute(
-                "insert into app_user (username, password_hash, role) "
-                "values ('Operator', '$argon2id$placeholder', 'admin')"
-            )
-            insert = (
-                "insert into login_attempt (username_normalised, client_ip, succeeded) "
-                "values (%s, '192.0.2.1', false)"
-            )
-            for name in ("operator", "hunter2-pass", "hunter2-pass", "?"):
-                connection.execute(insert, (name,))
-            connection.commit()
-
-        self.alembic("upgrade", "head")
-
-        with self.scratch() as connection:
-            rows = connection.execute(
-                "select username_normalised, count(*) from login_attempt group by 1 order by 1"
-            ).fetchall()
-            digest = connection.execute("select throttle_name('Hunter2-Pass')").fetchone()
-        stored = {name: count for name, count in rows}
-        self.assertEqual(stored.pop("operator"), 1)
-        self.assertEqual(sorted(stored.values()), [1, 2])
-        for name in stored:
-            self.assertTrue(name.startswith(chr(31)))
-            self.assertLessEqual(len(name), 64)
-            self.assertNotIn("hunter2", name)
-        self.assertIn(digest[0] if digest else None, stored)
-        self.assertEqual(stored[digest[0] if digest else ""], 2)
-
     def test_a_restore_run_again_after_a_failed_one_still_revokes_the_token_revoked_after_the_dump(
         self,
     ) -> None:
@@ -10939,14 +10751,29 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         self.assertEqual(rows, [("kept", None), ("leaked", "restore")])
         self.assertEqual(list((self.directory / "lib/database-restore").iterdir()), [])
 
-    def test_a_dump_at_0101_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
-        self.restored_from("0101", grants_differ="0101 already grants what 0102 does")
 
-    def test_a_dump_at_0102_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
-        self.restored_from("0102", grants_differ="0102 already grants what 0103 does")
+class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):
+    """A restore migrates a dump from any revision from the baseline to the head (B436).
 
-    def test_a_dump_at_0103_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
-        self.restored_from("0103", grants_differ="0103 already grants what 0104 does")
+    The baseline 0115 is the head, so no dump is migrated today and the restore's
+    migrating branch has no case. The next migration gives it one: a dump at
+    0115 restored under 0116 must be migrated, proved and held, and this fails
+    until `ADumpFromBeforeTheHead` says so with `restored_from` for every
+    revision between.
+    """
+
+    def test_each_revision_below_the_head_has_its_restore_test(self) -> None:
+        manifest = Path(__file__).resolve().parents[1] / "src/haprion_ui/compatibility.json"
+        required = json.loads(manifest.read_text())["requires"]
+        baseline, head = int(required["database_baseline"]), int(required["database_head"])
+        for revision in (f"{number:04d}" for number in range(baseline, head)):
+            with self.subTest(revision=revision):
+                method = getattr(
+                    ADumpFromBeforeTheHead,
+                    f"test_a_dump_at_{revision}_restored_under_the_head_is_migrated_proved_and_held",
+                    None,
+                )
+                self.assertIsNotNone(method, f"no restore test from a dump at {revision}")
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

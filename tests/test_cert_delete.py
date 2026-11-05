@@ -27,9 +27,10 @@ from haprion import cert_delete, exit_codes
 from haprion.cert_delete import Guards, delete, read_guards
 from haprion.cert_inventory import FULLCHAIN, PRIVKEY
 from haprion.cert_publish import publish_lock
+from haprion.certificates import read_reference
 from haprion.cli import cert_delete_helper
 from haprion.config import load_policy, load_runtime_config
-from tests.test_cert_publish import Fixture
+from tests.test_cert_publish import Fixture, issue
 from tests.test_proxy_model import with_lines
 
 #
@@ -462,11 +463,13 @@ class WhatIsLeftAndSaid(DeleteFixture):
         self.assertEqual(report.incomplete, ("one.example", "two.example"))
         self.assertEqual(report.outcomes[0].nodes[0].state, "unreachable")
 
-    def test_a_certbot_failure_keeps_the_lineage_row_and_the_rest_goes(self) -> None:
+    def test_a_certbot_failure_keeps_everything_so_the_cluster_still_deploys(self) -> None:
         policy_path = self.prepared(
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
         working = self.certbot
+        issue(self.live / "example.com", "example.com")
+        self.copy("example.com").write_bytes((self.live / "example.com" / FULLCHAIN).read_bytes())
         self.certbot = lambda command: (1, "certbot: No certificate found")  # type: ignore[method-assign]
         report = self.run_delete(policy_path, "example.com")
         (outcome,) = report.outcomes
@@ -474,7 +477,18 @@ class WhatIsLeftAndSaid(DeleteFixture):
         lineage = [layer for layer in outcome.layers if layer.name.startswith("lineage")][0]
         self.assertEqual(lineage.state, "failed")
         self.assertIn("No certificate found", lineage.detail)
-        self.assertFalse(self.copy("example.com").exists())
+        #
+        # The source goes first: a copy taken from the cluster while the
+        # registry still names it would leave `target_for` refusing every
+        # deploy of the cluster. Nothing else was touched, no node asked.
+        #
+        self.assertTrue(self.copy("example.com").exists())
+        self.assertEqual(outcome.nodes, ())
+        self.assertEqual(self.node_calls, [])
+        policy = load_policy(policy_path, require_secure=False)
+        directory = policy.certificate_directory("alpha")
+        assert directory is not None
+        read_reference(directory, "example.com")
         #
         # The entry stays, so the certificate is still there to delete again;
         # with certbot answering, the second run finishes it.

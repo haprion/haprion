@@ -724,20 +724,39 @@ def _delete_locked(
             )
             continue
 
+        #
+        # The source before the copies. A registry entry whose cluster file is
+        # gone makes `target_for` refuse every deploy of that cluster, so a
+        # source that cannot be removed (certbot failing, an import directory
+        # that will not go) must leave the copies, the registry and the nodes
+        # as they were; the cluster then deploys as before and the deletion is
+        # run again.
+        #
+        source_layer = remove_source(
+            entry.source.kind,
+            entry.source.lineage or certificate_id,
+            certificate_id,
+            certbot=certbot,
+            renewal_directory=renewal_directory,
+            store=store,
+            run=lineage_remover,
+        )
+        if source_layer.state not in {"removed", "absent"}:
+            outcomes.append(
+                _outcome(
+                    certificate_id,
+                    (
+                        source_layer,
+                        Layer("registry", "kept", "the source remains; run the deletion again"),
+                    ),
+                    (),
+                )
+            )
+            continue
         layers: list[Layer] = list(
             remove_material(entry.clusters, entry.receivers, certificate_id, runtime, policy)
         )
-        layers.append(
-            remove_source(
-                entry.source.kind,
-                entry.source.lineage or certificate_id,
-                certificate_id,
-                certbot=certbot,
-                renewal_directory=renewal_directory,
-                store=store,
-                run=lineage_remover,
-            )
-        )
+        layers.append(source_layer)
         request_layer = remove_request_state(policy, certificate_id)
         if request_layer is not None:
             layers.append(request_layer)

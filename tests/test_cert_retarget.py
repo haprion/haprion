@@ -20,8 +20,10 @@ import yaml
 from haprion import cert_registry, cert_retarget
 from haprion.cert_delete import Guards
 from haprion.cert_inventory import FULLCHAIN, PRIVKEY
+from haprion.cert_publish import PublishError
 from haprion.cert_retarget import Change, retarget
-from haprion.config import load_policy
+from haprion.certificates import target_for
+from haprion.config import load_policy, load_runtime_config
 from tests.test_cert_delete import DeleteFixture
 from tests.test_cert_publish import issue
 
@@ -181,6 +183,51 @@ class PublishingToMoreTargets(RetargetFixture):
         self.assertEqual(report.changed, ("example.com",))
         self.assertEqual(self.deployed, [])
         self.assertEqual(report.deployments, ())
+
+
+class WhatCannotBePublishedIsNotRegistered(RetargetFixture):
+    """A registry target without a file in its cluster's directory blocks every deploy of it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.policy_path = self.prepared(
+            {"old.example": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        for name in ("keeper-alpha.example", "keeper-beta.example"):
+            issue(self.live / name, name)
+        issue(self.live / "old.example", "old.example", days=3)
+        self.run_publish(self.policy_path, deployer=lambda _cluster_id: 0)
+
+    def beta_resolves(self) -> None:
+        policy = load_policy(self.policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+        directory = policy.certificate_directory("beta")
+        assert directory is not None
+        target_for(runtime.cluster("beta"), directory)
+
+    def test_a_certificate_the_publisher_refuses_is_not_added_to_the_registry(self) -> None:
+        before = (self.root / "certificates.yaml").read_bytes()
+
+        report = self.retarget(self.policy_path, "add", "old.example", clusters=("beta",))
+
+        self.assertEqual(report.refused, ("old.example",))
+        self.assertEqual(report.outcomes[0].code, "certificate_expiring")
+        self.assertEqual((self.root / "certificates.yaml").read_bytes(), before)
+        self.assertEqual(self.deployed, [])
+        self.beta_resolves()
+
+    def test_a_publication_that_fails_after_the_registry_took_the_cluster_back(self) -> None:
+        issue(self.live / "old.example", "old.example")
+        failing = PublishError("write_failed", "/srv/x: Read-only file system")
+
+        with mock.patch.object(cert_retarget, "publish", side_effect=failing):
+            report = self.retarget(self.policy_path, "add", "old.example", clusters=("beta",))
+
+        self.assertEqual(report.refused, ("old.example",))
+        self.assertEqual(report.outcomes[0].code, "write_failed")
+        self.assertIn("taken out of the registry", report.outcomes[0].reason)
+        self.assertEqual(self.targets("old.example")["clusters"], ["alpha"])
+        self.beta_resolves()
 
 
 class RemovingFromATarget(RetargetFixture):

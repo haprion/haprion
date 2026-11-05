@@ -78,6 +78,7 @@ from haprion.cert_publish import (
     prune_receiver_directory,
     publish,
     publish_lock,
+    read_material,
     roll_out,
 )
 from haprion.certificates import authority_path, certificate_path
@@ -463,6 +464,24 @@ def _add(
                 before_clusters, before_receivers = found
                 clusters = tuple(dict.fromkeys((*before_clusters, *change.clusters)))
                 receivers = tuple(dict.fromkeys((*before_receivers, *change.receivers)))
+                if (clusters, receivers) != (before_clusters, before_receivers):
+                    #
+                    # A target the registry names must be one the publisher can
+                    # fill: a cluster whose registry entry has no file in its
+                    # directory refuses every deploy of that cluster. The
+                    # material is read first, as `publish` does, and refused
+                    # here before the registry says anything.
+                    #
+                    # An unknown target is `set_targets`' refusal to word.
+                    #
+                    known_registry = runtime.registry
+                    assert known_registry is not None  # noqa: S101
+                    registered_entry = known_registry.certificates[certificate_id]
+                    known = all(c in runtime.clusters for c in clusters) and all(
+                        r in known_registry.receivers for r in receivers
+                    )
+                    if known and not registered_entry.interface:
+                        read_material(registered_entry, live=live, store=store, now=now)
                 written = cert_registry.set_targets(
                     registry_path,
                     certificate_id=certificate_id,
@@ -496,26 +515,33 @@ def _add(
                 now=now,
             )
         except PublishError as exc:
-            outcomes.append(
-                CertificateOutcome(
-                    certificate_id,
-                    "incomplete",
-                    f"registered but not published: {exc}",
-                    exc.code,
-                    added=written.added,
-                )
+            problem: tuple[str, str] = (exc.code, str(exc))
+        else:
+            failed = [entry for entry in report.certificates if entry.error]
+            problem = failed[0].error or ("publish_failed", "not published") if failed else ("", "")
+        if problem[0]:
+            code, message = problem
+            kept, taken_back = _take_back_unfilled(
+                certificate_id,
+                written.added,
+                change.clusters,
+                policy,
+                require_secure=require_secure,
+                lock_path=lock_path,
             )
-            continue
-        problems = [entry for entry in report.certificates if entry.error]
-        if problems:
-            code, message = problems[0].error or ("publish_failed", "not published")
+            registered.difference_update(taken_back)
+            if taken_back:
+                message += (
+                    f"; {', '.join(taken_back)} taken out of the registry again, "
+                    "because it holds no copy of the certificate"
+                )
             outcomes.append(
                 CertificateOutcome(
                     certificate_id,
-                    "incomplete",
-                    f"registered but not published: {message}",
+                    "incomplete" if kept else "refused",
+                    f"registered but not published: {message}" if kept else message,
                     code,
-                    added=written.added,
+                    added=kept,
                 )
             )
             continue
@@ -540,6 +566,66 @@ def _add(
                     locked=lambda: publish_lock(lock_path),
                 )
     return outcomes, tuple(touched)
+
+
+def _take_back_unfilled(
+    certificate_id: str,
+    added: tuple[str, ...],
+    asked: tuple[str, ...],
+    policy: PathPolicy,
+    *,
+    require_secure: bool,
+    lock_path: Path,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Take the clusters just added that hold no file out of the registry again.
+
+    A registry target without a file blocks every deploy of its cluster
+    (`certificates.target_for` resolves each name before the first node), so
+    "registered but not published" must not stand for a cluster. Receivers do
+    not block anything and stay. Returns what stays added and what was taken
+    back; a cluster whose take-back fails stays, and its row says so.
+    """
+
+    registry_path = policy.certificate_registry
+    assert registry_path is not None  # noqa: S101
+    try:
+        with publish_lock(lock_path):
+            runtime = _load(policy, require_secure)
+            assert runtime.registry is not None  # noqa: S101
+            entry = runtime.registry.certificates[certificate_id]
+            empty = tuple(
+                cluster_id
+                for cluster_id in added
+                if cluster_id in asked
+                and cluster_id in entry.clusters
+                and not _holds_copy(policy, entry, cluster_id)
+            )
+            if not empty:
+                return added, ()
+            cert_registry.set_targets(
+                registry_path,
+                certificate_id=certificate_id,
+                clusters=tuple(c for c in entry.clusters if c not in empty),
+                receivers=entry.receivers,
+                runtime=runtime,
+                formats=dict(entry.formats),
+                require_secure=require_secure,
+            )
+    except (cert_registry.RegistryError, PublishError, ConfigError, KeyError):
+        return added, ()
+    return tuple(a for a in added if a not in empty), empty
+
+
+def _holds_copy(policy: PathPolicy, entry: Any, cluster_id: str) -> bool:
+    directory = policy.certificate_directory(cluster_id)
+    if directory is None:
+        return False
+    path = (
+        authority_path(directory, entry.certificate_id)
+        if entry.source.kind == AUTHORITY
+        else certificate_path(directory, entry.certificate_id)
+    )
+    return path.exists()
 
 
 def _remove(

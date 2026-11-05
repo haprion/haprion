@@ -220,8 +220,9 @@ def read_reference(root: Path, identifier: str) -> CertificateRef:
         pem = path.read_text(encoding="ascii", errors="strict")
     except FileNotFoundError as exc:
         raise CertificateError(
-            f"certificate '{identifier}' is referenced by the cluster "
-            f"but is not present in the distribution directory"
+            f"certificate '{identifier}' is registered for the cluster but is not in its "
+            f"distribution directory; publish it, or remove it from the cluster "
+            f"(Remove from...)"
         ) from exc
     except OSError as exc:
         raise CertificateError(f"certificate '{identifier}' could not be read: {exc}") from exc

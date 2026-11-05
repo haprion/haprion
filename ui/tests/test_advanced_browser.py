@@ -75,7 +75,11 @@ class TheDialogInABrowser(DraftReading):
         )
         self.saved: list[dict[str, Any]] = []
         self.queued: list[dict[str, Any]] = []
-        for name, effect in (("save_change", self._save), ("queue_job", self._queue)):
+        for name, effect in (
+            ("save_change", self._save),
+            ("queue_job", self._queue),
+            ("lock_cluster_changes", lambda _connection, _cluster: None),
+        ):
             patch = mock.patch(f"haprion_ui.db.{name}", side_effect=effect)
             patch.start()
             self.addCleanup(patch.stop)

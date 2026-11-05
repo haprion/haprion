@@ -847,6 +847,91 @@ class ASocketHelperThatOutlivesItsClient(WorkerTestCase):
                     (finished,) = self.finished
                     self.assertEqual(finished["state"], "unknown")
 
+    BUSY = completed(
+        exit_code=exit_codes.BLOCKED,
+        stderr="ERROR: [helper_busy] the service was running another request and did not take"
+        " this one; nothing ran; ask again when it has finished\n",
+    )
+
+    def test_a_busy_service_that_never_saw_the_request_is_blocked_and_nothing_ran(self) -> None:
+        """Review 26-11-05, J02: the socket was held by another run, and `unknown` said "may have acted"."""
+
+        for operation in sorted(recovery.KEEPS_ANSWER):
+            with self.subTest(operation):
+                self.finished.clear()
+                self.receipts.reset_mock()
+                self.receipts.side_effect = None
+                self.receipts.return_value = answer_receipt.Receipt("absent")
+                job = claimed(operation=operation)
+                worker._conclude(
+                    self.connection,
+                    job,
+                    self.BUSY,
+                    worker._Lease(self.connection, job, None),
+                    worker=WORKER,
+                    connect=None,
+                    stopping=lambda: False,
+                )
+
+                (finished,) = self.finished
+                self.assertEqual((finished["state"], finished["outcome"]), ("blocked", "blocked"))
+                self.assertEqual(finished["result"]["error"]["code"], "helper_busy")
+                self.assertIn("nothing ran", finished["result"]["error"]["message"])
+
+    def test_a_busy_service_whose_receipt_says_otherwise_is_read_as_silence(self) -> None:
+        states: tuple[answer_receipt.State, ...] = ("running", "answered")
+        for state in states:
+            with self.subTest(receipt=state):
+                self.finished.clear()
+                self.receipts.side_effect = None
+                self.receipts.return_value = answer_receipt.Receipt(state)
+                job = self.add()
+                worker._conclude(
+                    self.connection,
+                    job,
+                    self.BUSY,
+                    worker._Lease(self.connection, job, None),
+                    worker=WORKER,
+                    connect=None,
+                    stopping=lambda: False,
+                )
+
+                self.assertEqual(self.finished, [])
+        states = ("unavailable", "silent")
+        for state in states:
+            with self.subTest(receipt=state):
+                self.finished.clear()
+                self.receipts.return_value = answer_receipt.Receipt(state)
+                job = self.add()
+                worker._conclude(
+                    self.connection,
+                    job,
+                    self.BUSY,
+                    worker._Lease(self.connection, job, None),
+                    worker=WORKER,
+                    connect=None,
+                    stopping=lambda: False,
+                )
+
+                (finished,) = self.finished
+                self.assertEqual(finished["state"], "unknown")
+
+    def test_the_busy_line_means_nothing_for_a_helper_run_through_sudo(self) -> None:
+        self.receipts.return_value = answer_receipt.Receipt("absent")
+        job = claimed()
+        worker._conclude(
+            self.connection,
+            job,
+            self.BUSY,
+            worker._Lease(self.connection, job, None),
+            worker=WORKER,
+            connect=None,
+            stopping=lambda: False,
+        )
+
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "unknown")
+
     def test_a_helper_run_through_sudo_is_not_waited_for(self) -> None:
         self.receipts.return_value = answer_receipt.Receipt("running")
         with mock.patch.object(execution, "run", return_value=self.SILENT):

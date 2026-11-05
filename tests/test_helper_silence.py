@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import socket
+import struct
 import tempfile
 import threading
 import unittest
@@ -49,6 +50,24 @@ class Silent:
     def close(self) -> None:
         for connection in self.held:
             connection.close()
+        self.server.close()
+
+
+class Busy:
+    """A socket unit past its `MaxConnections`: the connection is reset at once."""
+
+    def __init__(self, path: Path) -> None:
+        self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.server.bind(str(path))
+        self.server.listen(1)
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self) -> None:
+        connection, _ = self.server.accept()
+        connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        connection.close()
+
+    def close(self) -> None:
         self.server.close()
 
 
@@ -91,6 +110,24 @@ class AskedThenSilent(unittest.TestCase):
                 self.assertIn("[helper_silent]", err)
                 self.assertIn("outcome is unknown", err)
                 self.assertNotIn("Install", err)
+
+    def test_a_busy_socket_ends_blocked_with_a_line_that_says_nothing_ran(self) -> None:
+        """Reset before a byte came back: the service took nothing, and the worker may say so."""
+
+        for client, request in CLIENTS:
+            with self.subTest(client=client.__name__):
+                listener = Busy(self.path)
+                try:
+                    code, out, err = self.ask(client, request)
+                finally:
+                    listener.close()
+                    self.path.unlink()
+
+                self.assertEqual(code, exit_codes.BLOCKED)
+                self.assertEqual(out, "")
+                self.assertIn("[helper_busy]", err)
+                self.assertIn("nothing ran", err)
+                self.assertNotIn("outcome is unknown", err)
 
     def test_nothing_listening_is_still_a_failure_that_names_the_unit(self) -> None:
         """Not reached is not silent: nothing ran, and `failed` is true."""

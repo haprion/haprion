@@ -29,6 +29,11 @@ from haprion import exit_codes, helper_socket
 from haprion.envelope import failure
 from haprion.helper_protocol import MAX_REQUEST_BYTES, write_document
 
+HELPER_BUSY = (
+    "the service was running another request and did not take this one; nothing ran;"
+    " ask again when it has finished"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Service:
@@ -129,21 +134,25 @@ def run(
             timeout=timeout or service.timeout,
             what=service.what,
         )
-    except helper_socket.HelperBusy as exc:
-        if sent not in service.busy_answers:
-            errors.write(
-                f"ERROR: [helper_silent] {exc} It may still be working; its outcome is unknown.\n"
+    except helper_socket.HelperBusy:
+        #
+        # The socket takes its limit of connections at a time, and a run still
+        # going holds them. The service reset this one before it read a byte
+        # (measured 2026-09-26), so nothing was asked of anybody. A question
+        # that changes nothing answers "ask again" under its own code. Any
+        # other ends with a line and exit `BLOCKED`, and no document: the
+        # operations' schemas do not all carry `blocked`, and only the worker
+        # asks - it takes the line at its word when the request has no receipt
+        # either (`worker._conclude`), and otherwise as it takes silence.
+        #
+        if sent in service.busy_answers:
+            return answer(
+                "restore_busy",
+                "A restore step is still running; ask again when it has finished.",
+                exit_codes.BLOCKED,
             )
-            return exit_codes.FAILED
-        #
-        # The socket takes one connection at a time, and a run still going
-        # holds it. For a question that changes nothing, that is the answer.
-        #
-        return answer(
-            "restore_busy",
-            "A restore step is still running; ask again when it has finished.",
-            exit_codes.BLOCKED,
-        )
+        errors.write(f"ERROR: [helper_busy] {HELPER_BUSY}\n")
+        return exit_codes.BLOCKED
     except helper_socket.HelperSilent as exc:
         #
         # Asked, then silent: the root service carries on without this client

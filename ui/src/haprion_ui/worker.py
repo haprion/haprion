@@ -37,6 +37,7 @@ from uuid import UUID, uuid5
 
 import psycopg
 from haprion import answer_receipt, exit_codes
+from haprion.cli import socket_ask
 
 from haprion_ui import (
     answers,
@@ -485,6 +486,30 @@ def _no_result() -> dict[str, Any]:
             "message": "the operation ended without a result document and may have acted",
         }
     }
+
+
+def _helper_busy() -> dict[str, Any]:
+    return {"error": {"code": "helper_busy", "message": socket_ask.HELPER_BUSY}}
+
+
+def _turned_away_by_a_busy_helper(completed: execution.Completed, job: db.ClaimedJob) -> bool:
+    """Whether a socket helper's service reset this request before it took it up.
+
+    Its client says so (`[helper_busy]`, exit `blocked`, no document) when the
+    service reset the connection before a byte came back, because other
+    requests held the socket. Taken at its word only when the helper has no
+    receipt of this request either: every helper takes its receipt before it
+    does anything, so `absent` means nothing ran. A receipt that says `running`,
+    `answered` or anything else leaves the run as silence, as it was before.
+    """
+
+    return (
+        job.operation in recovery.KEEPS_ANSWER
+        and completed.exit_code == exit_codes.BLOCKED
+        and not completed.stdout.strip()
+        and "[helper_busy]" in completed.stderr
+        and answer_receipt.read(str(job.request_id)).state == "absent"
+    )
 
 
 def _unstorable() -> dict[str, Any]:
@@ -955,7 +980,13 @@ def _conclude(
         return
     if not (adopted or asked_before) and _answer_still_to_come(completed, envelope, job):
         return
-    state, outcome, result = _judge_run(completed, envelope)
+    state: str
+    outcome: str | None
+    result: dict[str, Any] | None
+    if not (adopted or asked_before) and _turned_away_by_a_busy_helper(completed, job):
+        state, outcome, result = "blocked", "blocked", _helper_busy()
+    else:
+        state, outcome, result = _judge_run(completed, envelope)
 
     exit_code = completed.exit_code
     stderr = completed.stderr

@@ -129,6 +129,12 @@ document.
 | 78 | `CONFIG` | `failed` | The installation lacks what the command needs: an identity, a registry, a section of the runtime policy |
 | 124 | `TIMED_OUT` | `failed` | The command ran out of its time |
 
+The clients of the root helpers' sockets are the one place `75` comes without a document. A service
+that resets a connection at once, because other requests hold its socket, has taken nothing up: the
+client ends `75` with `[helper_busy]` on stderr and writes nothing, since not every operation's schema
+carries `blocked`. The worker records `blocked` with the error code `helper_busy` when the helper has
+no receipt of the request either, and reads the line as silence (`unknown`) otherwise.
+
 ## Stable error codes
 
 Every command supports these common codes where applicable:

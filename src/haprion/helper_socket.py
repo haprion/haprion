@@ -56,7 +56,10 @@ class HelperBusy(HelperSilent):
     A socket unit with `MaxConnections` resets a connection past its limit
     straight away (measured 2026-09-26, systemd 259). Still a HelperSilent, so
     a caller that cannot tell this from a helper that died keeps treating it
-    as one; only a read-only question may take it to mean "ask again later".
+    as one. The socket clients (`cli.socket_ask`) take it to mean "ask again
+    later": a read-only question answers `restore_busy`, any other ends
+    `blocked` with a `[helper_busy]` line, which the worker believes only when
+    the helper has no receipt of the request.
     """
 
 

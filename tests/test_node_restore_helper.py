@@ -518,10 +518,12 @@ class Ask(unittest.TestCase):
         document = assert_contract("haprion-node-restore-status", output)
         self.assertEqual(document["error"]["code"], "restore_busy")
 
-    def test_a_busy_socket_stays_unknown_for_a_step_that_acts(self) -> None:
-        # Past the limit and dead look alike from here; only a question may guess.
+    def test_a_busy_socket_is_blocked_for_a_step_that_acts(self) -> None:
+        # Past the limit and dead look alike from here, so no document says
+        # `restore_busy`: the exit is `blocked` and the worker, which knows the
+        # request's receipt, decides.
         code, output = self.busy(DISCARD, {"run": RUN_ID})
-        self.assertEqual((code, output), (1, ""))
+        self.assertEqual((code, output), (75, ""))
 
     def test_a_step_is_bounded_by_its_session_not_by_systemd(self) -> None:
         # With Type=exec, TimeoutStartSec ends at the start; systemd does not

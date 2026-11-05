@@ -627,6 +627,14 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
             ],
         )
 
+    def test_a_node_whose_import_waits_for_the_database_budget_is_listed(self) -> None:
+        """Review 2026-11-05, T05: today's logs stay in the manager's copy, not in the database."""
+
+        self.assertEqual(
+            self.messages(self.freshness(import_paused=True), self.freshness(node="node-b")),
+            ["log import paused: the database is over its space budget until midnight UTC"],
+        )
+
     def test_a_node_being_joined_is_not_listed_until_the_join_has_had_its_time(self) -> None:
         from haprion_ui.traffic_logs import JOINING_SECONDS
 

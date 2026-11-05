@@ -3712,7 +3712,10 @@ oldest finished days of both tables while either is true:
 - less than a tenth of that volume is free.
 
 It never drops today or a day ahead, and it writes a warning to the timer's journal for each day it
-drops.
+drops. When today's partitions alone are still over the limit, it leaves a mark for the collector. Until the
+mark goes (the next hourly run finds them under the limit, or midnight passes), the collector keeps today's
+logs in its own copy and does not import them into the database, and the attention list says so. They are
+imported when there is room.
 
 The collector keeps its copy of the nodes' days within the same share of its own filesystem. It removes
 the oldest finished days first. While today alone is over the limit, it stops fetching from the nodes

@@ -155,7 +155,7 @@ class TrafficCollectorTests(unittest.TestCase):
         # node's WAF journal are each the subject of tests that say so.
         #
         replaced: list[tuple[str, Any]] = [
-            ("haprion.traffic_collector._ingest_database", lambda _config: (0, 0, {})),
+            ("haprion.traffic_collector._ingest_database", lambda _config, **_held: (0, 0, {})),
             (
                 "haprion.traffic_collector.ssh_fetch_waf",
                 lambda _config, node, cursor: no_waf(node, cursor),
@@ -967,6 +967,81 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual((meta_a["outcome"], meta_b["outcome"]), ("database", "ok"))
         self.assertIn("alpha/node-a: database import failed", stderr.getvalue())
 
+    def hold_mark(self, *, age: int = 0) -> Path:
+        mark = self.staging / ".database-budget"
+        mark.write_text("over\n")
+        stamp = NOW.timestamp() - age
+        os.utime(mark, (stamp, stamp))
+        return mark
+
+    def test_a_day_held_for_the_database_budget_is_not_imported_into(self) -> None:
+        """Review 2026-11-05, T05: today's partitions alone are over their share. The
+        part stays in staging, and the finished days are imported as before."""
+
+        today, yesterday = NOW.date(), NOW.date() - timedelta(days=1)
+        for day in (today, yesterday):
+            (self.staging / f"alpha--node-a--{day.isoformat()}.jsonl").write_bytes(
+                traffic_line(f"/{day}")
+            )
+        connection: Any = _Connection()
+        days = frozenset({f"{today:%Y%m%d}", f"{yesterday:%Y%m%d}"})
+        with (
+            patch("haprion.traffic_collector.psycopg.connect", return_value=connection),
+            patch("haprion.traffic_collector._database_days", return_value=days),
+            patch("haprion.traffic_collector._database_window", return_value=None),
+        ):
+            REAL_INGEST(self.config, hold_day=today)
+        self.assertEqual([row[8] for row in connection.rows], [f"/{yesterday}"])
+        with (
+            patch("haprion.traffic_collector.psycopg.connect", return_value=connection),
+            patch("haprion.traffic_collector._database_days", return_value=days),
+            patch("haprion.traffic_collector._database_window", return_value=None),
+        ):
+            REAL_INGEST(self.config)
+        self.assertEqual([row[8] for row in connection.rows][1:], [f"/{today}"])
+
+    def test_the_mark_the_retention_leaves_is_said_on_each_nodes_metadata(self) -> None:
+        self.hold_mark()
+        today = NOW.date().isoformat()
+        (self.staging / f"alpha--node-a--{today}.jsonl").write_bytes(traffic_line("/held"))
+        connection: Any = _Connection()
+        with (
+            patch("haprion.traffic_collector._ingest_database", REAL_INGEST),
+            patch("haprion.traffic_collector.psycopg.connect", return_value=connection),
+            patch(
+                "haprion.traffic_collector._database_days",
+                return_value=frozenset({f"{NOW:%Y%m%d}"}),
+            ),
+            patch("haprion.traffic_collector._database_window", return_value=None),
+            patch("haprion.traffic_collector._mirror_window", return_value=14),
+            redirect_stderr(StringIO()) as errors,
+        ):
+            code = collect(
+                self.config,
+                now=NOW,
+                fetch=lambda _t, wanted, offset: self.response(wanted, offset, b""),
+                fetch_waf_page=no_waf,
+            )
+        self.assertEqual(code, 0, errors.getvalue())
+        self.assertEqual(connection.rows, [])
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        self.assertTrue(meta["import_paused"])
+        self.assertIn("space budget", errors.getvalue())
+
+    def test_a_mark_older_than_two_hours_is_none(self) -> None:
+        self.hold_mark(age=3 * 3600)
+        self.assertFalse(traffic_collector._database_budget_held(self.config, now=NOW))
+        self.hold_mark(age=60)
+        self.assertTrue(traffic_collector._database_budget_held(self.config, now=NOW))
+        (self.staging / ".database-budget").unlink()
+        self.assertFalse(traffic_collector._database_budget_held(self.config, now=NOW))
+
+    def test_a_link_is_not_a_mark(self) -> None:
+        elsewhere = self.staging / "elsewhere"
+        elsewhere.write_text("over\n")
+        (self.staging / ".database-budget").symlink_to(elsewhere)
+        self.assertFalse(traffic_collector._database_budget_held(self.config, now=NOW))
+
     def test_a_rebuilt_day_is_imported_from_its_beginning(self) -> None:
         """Review 2026-10-30, E3: a node file replaced the same day by a longer
         one rebuilt the part from zero, but the import position stayed, so the
@@ -1027,7 +1102,7 @@ class TrafficCollectorTests(unittest.TestCase):
                 wanted, offset, line if wanted == NOW.date() and offset == 0 else b""
             )
 
-        def ingest(config: CollectorConfig) -> tuple[int, int, dict[NodeTarget, str]]:
+        def ingest(config: CollectorConfig, **_held: Any) -> tuple[int, int, dict[NodeTarget, str]]:
             for part in sorted(config.staging.glob("alpha--node-a--*.jsonl")):
                 imported.append(part.read_bytes())
             return 0, 0, {}

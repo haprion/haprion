@@ -155,6 +155,12 @@ class Freshness:
     #
     waf_outcome: str | None = None
     waf_last_success: datetime | None = None
+    #
+    # True while the database is over its share of its volume with today's
+    # partitions alone, and the collector keeps today's logs in its copy without
+    # importing them (review 2026-11-05, T05).
+    #
+    import_paused: bool = False
 
     def waf_failed(self) -> bool:
         return self.waf_outcome is not None and self.waf_outcome != "ok"
@@ -633,6 +639,7 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
         if isinstance(waf, str) and re.fullmatch(r"[a-z]{1,16}", waf) is not None
         else None,
         waf_last_success=_stamp(value.get("waf_last_success")),
+        import_paused=value.get("import_paused") is True,
     )
 
 

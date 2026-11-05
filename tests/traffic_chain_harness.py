@@ -487,8 +487,8 @@ class ChainTestCase(unittest.TestCase):
         before = {path: path.stat().st_mtime_ns for path in self.chain.mirror.iterdir()}
         database = self.chain.database
 
-        def ingest(config: CollectorConfig) -> tuple[int, int, dict[NodeTarget, str]]:
-            skipped, expired, failed = _ingest_database(config)
+        def ingest(config: CollectorConfig, **held: Any) -> tuple[int, int, dict[NodeTarget, str]]:
+            skipped, expired, failed = _ingest_database(config, **held)
             with database.lock:
                 database.skipped += skipped
             return skipped, expired, failed

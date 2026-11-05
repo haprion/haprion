@@ -106,6 +106,7 @@ def log_freshness_warnings(reading: traffic_logs.Reading, now: datetime) -> tupl
         for item in freshness
         if item[0].latest_attempt_failed()
         or item[0].waf_failed()
+        or item[0].import_paused
         or item[0].catching_up()
         or item[1] is None
         or item[1] > 300

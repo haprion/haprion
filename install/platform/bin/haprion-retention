@@ -381,6 +381,17 @@ TRAFFIC_SPACE_PERCENT=25
 TRAFFIC_FREE_PERCENT=10
 
 #
+# Where the collector reads whether today's partitions alone are over that
+# share (review 2026-11-05, T05). The budget drops finished days only, so one
+# day's flood stays over the share until midnight; the collector then stops
+# importing into the day, and PostgreSQL does not reach the end of its volume
+# first - there the sessions and the jobs live too. The mark is hourly, as the
+# timer is, and the collector takes one older than two hours for none.
+#
+STAGING_DIRECTORY=/var/lib/haprion-ui/logs/staging
+DATABASE_BUDGET_MARK=.database-budget
+
+#
 # Every partitioned table. PostgreSQL's autovacuum analyzes each partition but
 # never a partitioned parent, so the statistics a query over the whole table is
 # planned with go stale unless something runs ANALYZE on it (review 2026-10-03,
@@ -542,6 +553,26 @@ traffic_budget() {
         held=$((held - bytes))
         free=$((free + bytes))
     done
+    if (( held * 100 > capacity * TRAFFIC_SPACE_PERCENT || free * 100 < capacity * TRAFFIC_FREE_PERCENT )); then
+        warn "  today's traffic and WAF partitions alone are over their space budget: the collector stops importing into the day"
+        database_budget_mark over
+    else
+        database_budget_mark clear
+    fi
+}
+
+#
+# The mark is made as root in the collector's directory, which the collector
+# owns: the old one is removed and the new one made with noclobber, so a link
+# put in its place is refused and not followed.
+#
+database_budget_mark() {
+    local mark="${STAGING_DIRECTORY}/${DATABASE_BUDGET_MARK}"
+    [[ "$dry_run" -eq 0 && -d "$STAGING_DIRECTORY" ]] || return 0
+    rm -f -- "$mark" || warn "  cannot remove ${mark}"
+    if [[ "$1" == over ]]; then
+        (set -o noclobber; printf 'over\n' > "$mark") || warn "  cannot make ${mark}"
+    fi
 }
 
 #

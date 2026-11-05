@@ -402,6 +402,14 @@ class TrafficLogReadingTests(unittest.TestCase):
         self.meta("alpha", "node-a")
         self.assertFalse(read_freshness(self.root, ("alpha",)).nodes[0].waf_failed())
 
+    def test_import_paused_is_read_only_as_a_boolean(self) -> None:
+        self.meta("alpha", "node-a", import_paused=True)
+        self.assertTrue(read_freshness(self.root, ("alpha",)).nodes[0].import_paused)
+        self.meta("alpha", "node-a", import_paused="yes")
+        self.assertFalse(read_freshness(self.root, ("alpha",)).nodes[0].import_paused)
+        self.meta("alpha", "node-a")
+        self.assertFalse(read_freshness(self.root, ("alpha",)).nodes[0].import_paused)
+
     def test_unreadable_metadata_never_stops_the_page(self) -> None:
         (self.root / "alpha--node-a.meta.json").write_bytes(b"{ not json")
 
@@ -515,6 +523,23 @@ class TheTrafficLogPage(LoginTestCase):
         page = self.page(now=NOW)
         self.assertIn("the node's clock differs from the manager's", page)
         self.assertNotIn("failed (clock)", page)
+
+    def test_a_node_whose_import_is_held_for_the_database_budget_says_so(self) -> None:
+        self.meta_file = self.root / "alpha--node-a.meta.json"
+        self.meta_file.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt": NOW.isoformat(),
+                    "last_success": NOW.isoformat(),
+                    "outcome": "ok",
+                    "import_paused": True,
+                }
+            )
+        )
+        page = self.page(now=NOW)
+        self.assertIn("today's logs are not imported into the database", page)
+        self.assertIn("space budget", page)
 
     def test_a_journal_that_could_not_be_collected_is_in_the_log_warning(self) -> None:
         (self.root / "alpha--node-a.meta.json").write_text(

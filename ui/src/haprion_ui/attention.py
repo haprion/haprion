@@ -746,6 +746,19 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
                     link="/logs",
                 )
             )
+        if node.import_paused:
+            items.append(
+                Item(
+                    kind="logs",
+                    severity="warning",
+                    cluster=node.cluster,
+                    subject=node.node,
+                    message="log import paused: the database is over its space budget"
+                    " until midnight UTC",
+                    since=node.last_success,
+                    link="/logs",
+                )
+            )
         #
         # The WAF journal is read apart from the traffic log, and a node whose
         # traffic is current can still have no findings collected: an empty

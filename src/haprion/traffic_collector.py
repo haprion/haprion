@@ -558,12 +558,31 @@ def _write_meta(
         #
         "waf_outcome": earlier.get("waf_outcome"),
         "waf_last_success": earlier.get("waf_last_success"),
+        "import_paused": earlier.get("import_paused"),
     }
     _replace(path, _meta_document(document))
 
 
 def _meta_document(document: dict[str, Any]) -> bytes:
     return json.dumps(document, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
+
+
+def _amend_meta(config: CollectorConfig, target: NodeTarget, **fields: Any) -> None:
+    """Add what the run learned after the node's own metadata was written."""
+
+    path = _meta_path(config, target)
+    document = _previous(path)
+    if not document:
+        return
+    document.update(fields)
+    #
+    # Best effort: what the run learned is a note beside the outcome already
+    # written, and a disk that refuses it has failed the run in its own place.
+    #
+    try:
+        _replace(path, _meta_document(document))
+    except OSError as exc:
+        print(f"{target.cluster}/{target.node}: metadata: {exc}", file=sys.stderr)
 
 
 def _write_waf_outcome(
@@ -577,16 +596,35 @@ def _write_waf_outcome(
     (review 2026-11-05, T03).
     """
 
-    path = _meta_path(config, target)
-    document = _previous(path)
-    if not document:
-        return
-    document["waf_outcome"] = outcome
+    fields: dict[str, Any] = {"waf_outcome": outcome}
     if outcome == "ok":
-        document["waf_last_success"] = attempted.isoformat()
-    else:
-        document.setdefault("waf_last_success", None)
-    _replace(path, _meta_document(document))
+        fields["waf_last_success"] = attempted.isoformat()
+    elif "waf_last_success" not in _previous(_meta_path(config, target)):
+        fields["waf_last_success"] = None
+    _amend_meta(config, target, **fields)
+
+
+#
+# The mark `haprion-retention budget` leaves in staging while today's partitions
+# alone are over the database's share of its volume (review 2026-11-05, T05).
+# Made hourly; one older than this is from a timer that stopped, and none.
+#
+DATABASE_BUDGET_MARK = ".database-budget"
+DATABASE_BUDGET_MARK_SECONDS = 2 * 3600
+
+
+def _database_budget_held(config: CollectorConfig, *, now: datetime) -> bool:
+    """Whether the retention timer says today must not be imported into the database."""
+
+    path = config.staging / DATABASE_BUDGET_MARK
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and 0 <= now.timestamp() - metadata.st_mtime <= DATABASE_BUDGET_MARK_SECONDS
+    )
 
 
 def _failure_outcome(exc: CollectorError | OSError) -> str:
@@ -1291,9 +1329,11 @@ def _database_reason(exc: psycopg.Error) -> str:
 
 
 def _ingest_database(
-    config: CollectorConfig,
+    config: CollectorConfig, *, hold_day: date | None = None
 ) -> tuple[int, int, dict[NodeTarget, str]]:
     """Import every staging part, and answer what it skipped: records, parts, failed nodes.
+
+    The part of `hold_day` is left where it is, to be imported when there is room.
 
     A part that cannot be imported stops its own node and no other: the nodes
     after it in the list are imported as usual, and the failed node is answered
@@ -1314,6 +1354,8 @@ def _ingest_database(
                 prefix = f"{target.cluster}--{target.node}--"
                 for part in sorted(config.staging.glob(f"{prefix}*.jsonl")):
                     day = part.name[len(prefix) : -len(".jsonl")]
+                    if hold_day is not None and day == hold_day.isoformat():
+                        continue
                     if day.replace("-", "") not in days:
                         #
                         # The margin day the mirror keeps on purpose (see
@@ -1837,8 +1879,17 @@ def collect(
                 continue
             print(f"{target.cluster}/{target.node}: {run.problem}{note}", file=sys.stderr)
             failures += not joining
+        held_import = _database_budget_held(config, now=attempted)
+        if held_import:
+            print(
+                "database: today's partitions are over their space budget; "
+                "today's logs are not imported until midnight UTC",
+                file=sys.stderr,
+            )
         try:
-            skipped, expired, failed = _ingest_database(config)
+            skipped, expired, failed = _ingest_database(
+                config, hold_day=attempted.astimezone(UTC).date() if held_import else None
+            )
             for target, reason in failed.items():
                 print(f"{target.cluster}/{target.node}: {reason}", file=sys.stderr)
                 if target in mirrored:
@@ -1893,6 +1944,7 @@ def collect(
             if run.waf_problem is None and target in imported:
                 waf_outcome = "database"
             _write_waf_outcome(config, target, attempted=attempted, outcome=waf_outcome)
+            _amend_meta(config, target, import_paused=held_import)
         _retire(config, now=attempted, window=window)
         _retire_staging(config, now=attempted, window=window)
         return 1 if failures else 0

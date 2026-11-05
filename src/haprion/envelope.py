@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from haprion import exit_codes
+from haprion.config import CLUSTER_ID
 
 Outcome = Literal["done", "partial", "failed", "blocked"]
 
@@ -39,6 +40,13 @@ def envelope(
     warnings: tuple[Message, ...] = (),
     error: Message | None = None,
 ) -> dict[str, Any]:
+    #
+    # The contract names a cluster only once one is resolved: what a caller typed
+    # that is not a cluster ID is never echoed, and every command's early
+    # refusal gets this for free (K07, 26-11-05).
+    #
+    if cluster is not None and not CLUSTER_ID.fullmatch(cluster):
+        cluster = None
     if outcome == "done" and error is not None:
         raise ValueError("done cannot contain a top-level error")
     if outcome == "partial" and (not warnings or error is not None):

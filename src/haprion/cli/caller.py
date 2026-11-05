@@ -163,7 +163,7 @@ def looked_up(
                 writer or sys.stdout,
                 failure(
                     operation=operation,
-                    cluster=cluster_id,
+                    cluster=None,
                     request_id=new_request_id(),
                     code=config_error_code(exit_code),
                     message=f"cluster {cluster_id} could not be looked up",

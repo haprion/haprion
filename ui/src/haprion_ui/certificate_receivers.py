@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from haprion.cert_inventory import FULLCHAIN, PASSWORD_SUFFIX, PKCS12_SUFFIX, PRIVKEY
 from haprion.cert_receiver import HTTPS_PREFIX
 from haprion.config import RECEIVER_ID, RECEIVER_TRANSPORTS, check_allow_entries
 
@@ -246,8 +247,11 @@ def key_steps(receiver_id: str) -> tuple[Step, ...]:
 
 def _files(held: Held) -> tuple[str, ...]:
     if held.format == "pkcs12":
-        return (f"{held.certificate_id}.pfx", f"{held.certificate_id}.password")
-    return ("fullchain.pem", "privkey.pem")
+        return (
+            f"{held.certificate_id}{PKCS12_SUFFIX}",
+            f"{held.certificate_id}{PASSWORD_SUFFIX}",
+        )
+    return (FULLCHAIN, PRIVKEY)
 
 
 def password_step(identifier: str, host: str, password: str) -> Step:

@@ -25,7 +25,9 @@ trap 'rm -rf -- "$staging"; rm -f "${TARGET}/fullchain.pem.new" "${TARGET}/privk
 
 # The forced command already restricts this to one directory; the path names
 # which certificate inside it, which is the per-certificate layout.
-rsync -a -e "ssh -i ${IDENTITY} -o IdentitiesOnly=yes" \
+# Not -a: it would keep the manager's owner and group, and where no local account has
+# that name the numeric id is used - some other service's on this host.
+rsync -rt --no-owner --no-group -e "ssh -i ${IDENTITY} -o IdentitiesOnly=yes" \
     "${ACCOUNT}@${MANAGER}:${CERTIFICATE}/" "${staging}/"
 
 [ -s "${staging}/fullchain.pem" ] && [ -s "${staging}/privkey.pem" ] || {

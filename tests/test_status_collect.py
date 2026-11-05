@@ -636,3 +636,49 @@ class ANodeWithoutKeepalived(unittest.TestCase):
         self.assertEqual(self.state(a, b), "unknown")
         a = self.bare("node-a", ["192.0.2.11"])
         self.assertEqual(self.state(a, b, vip=None), "unknown")
+
+
+class EveryWarningCodeHasAReader(unittest.TestCase):
+    """D11-02: the helper wrote `dns_listener_stopped` and no page read it.
+
+    Every code the helper can put in an envelope's warnings is either a finding
+    `cluster_status` hands to `haprion-status` and the interface, or is listed
+    there with the reader it has. A new code that is neither fails here.
+    """
+
+    def written_codes(self) -> set[str]:
+        import ast
+
+        tree = ast.parse(Path(status_collect.__file__).read_text(encoding="utf-8"))
+        codes: set[str] = set()
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Message"):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "code":
+                    continue
+                value = keyword.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    codes.add(value.value)
+                elif isinstance(value, ast.Name):
+                    codes.add(str(getattr(status_collect, value.id)))
+                elif isinstance(value, ast.Attribute) and value.attr == "code":
+                    # A finding from `cluster_status`, whose codes are listed there.
+                    continue
+                else:
+                    self.fail(f"a warning code the test cannot read at line {value.lineno}")
+        return codes
+
+    def test_every_code_the_helper_writes_has_a_reader(self) -> None:
+        from haprion import cluster_status
+
+        known = set(cluster_status.FINDING_CODES) | set(
+            cluster_status.WARNING_CODES_WITH_OTHER_READER
+        )
+        written = self.written_codes()
+        self.assertEqual(
+            set(status_collect.ENGINE_WARNING),
+            {"waf_engine_stopped", "dns_listener_stopped"},
+        )
+        unread = written - known - {"status_unavailable"}
+        self.assertEqual(unread, set())

@@ -41,9 +41,12 @@ from typing import Any
 
 from haprion import dnsdist_config, exit_codes, node_ssh
 from haprion.cluster_status import (
+    DNS_LISTENER_STOPPED,
+    WAF_ENGINE_STOPPED,
     addresses_current,
     forwarding_current,
     ipvs_current,
+    node_findings,
     release_complete,
 )
 from haprion.config import DeployIdentity, Node
@@ -274,6 +277,14 @@ def read_dns_names(publish_path: Path, node_path: str) -> tuple[PublishedName, .
 
 
 DNS_SERVER_MOVED = "dns_server_moved"
+
+#
+# The helper's sentence for each engine finding `cluster_status` names.
+#
+ENGINE_WARNING = {
+    WAF_ENGINE_STOPPED: "the WAF engine is not running on {node}",
+    DNS_LISTENER_STOPPED: "dnsdist is not running on {node}",
+}
 
 
 def moved_message(name: PublishedName, now: str) -> str:
@@ -768,40 +779,26 @@ def collect(
         _owner_without_keepalived(results, vip)
     vip_state, owners, unknown = _vip_state(results)
     valid = sum(1 for entry in results if entry["status_ok"])
-    if waf_published:
-        #
-        # The release has rules and the node's engine is not running them:
-        # every WAF object there gets its `on_engine_error` - let through
-        # uninspected, or refused - and nothing else says so (review
-        # 2026-10-04 F3). A node that does not report the engine is one from
-        # before the field, which a release with rules never reaches (B231).
-        #
-        for entry in results:
-            engine = _mapping(_mapping(entry["status"]).get("waf_engine"))
-            if entry["status_ok"] and engine and engine.get("active") is not True:
-                warnings.append(
-                    Message(
-                        code="waf_engine_stopped",
-                        message=f"the WAF engine is not running on {entry['name']}",
-                        node=str(entry["name"]),
-                    )
+    #
+    # The release has rules, or a dns listener, and the node's engine is not
+    # running them: every WAF object there gets its `on_engine_error`, and
+    # while that node holds the VIP nothing answers on the dns listener. The
+    # rule is `cluster_status.node_findings`, the one the pages read (B455).
+    #
+    published = {
+        key: value
+        for key, value in (("waf_published", waf_published), ("dns_published", dns_published))
+        if value is not None
+    }
+    for entry in results:
+        for finding in node_findings(entry, published):
+            warnings.append(
+                Message(
+                    code=finding.code,
+                    message=ENGINE_WARNING[finding.code].format(node=entry["name"]),
+                    node=str(entry["name"]),
                 )
-
-    if dns_published:
-        #
-        # The release has a dns listener and the node's dnsdist is not
-        # serving it: while that node holds the VIP, nothing answers on it.
-        #
-        for entry in results:
-            listener = _mapping(_mapping(entry["status"]).get("dns_listener"))
-            if entry["status_ok"] and listener and listener.get("active") is not True:
-                warnings.append(
-                    Message(
-                        code="dns_listener_stopped",
-                        message=f"dnsdist is not running on {entry['name']}",
-                        node=str(entry["name"]),
-                    )
-                )
+            )
 
     if lookups is not None:
         thread, moved = lookups

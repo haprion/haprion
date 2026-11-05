@@ -30,6 +30,7 @@ from haprion.cluster_status import (
     StatusError,
     ahead_of,
     ahead_words,
+    counter_findings,
     forwarding_current,
     keepalived_state,
     parse_status,
@@ -278,6 +279,7 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
             if node.get("status_ok")
         },
     )
+    shared = counter_findings(result.get("nodes") or [])
     for node in result.get("nodes") or []:
         writer.write(f"{node['name']} ({node['mgmt_host']})\n")
         if not node["reachable"]:
@@ -327,6 +329,9 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         listener = _dns_listener_line(status.get("dns_listener"), summary.get("dns_published"))
         if listener is not None:
             writer.write(f"  DNS listener: {listener}\n")
+        counters = shared.get(str(node["name"]))
+        if counters is not None:
+            writer.write(f"  Peers:        {counters.detail}\n")
         ipvs = _ipvs_line(status)
         if ipvs is not None:
             writer.write(f"  Syslog IPVS:  {ipvs}\n")

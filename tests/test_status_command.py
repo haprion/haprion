@@ -1140,9 +1140,32 @@ class CallerTests(HelperFixture):
                     self.run_caller(argv, completed(""))
                 self.assertEqual(raised.exception.code, 64)
 
+    def peered(self, connected: bool) -> ReadNode:
+        def status_of(name: str, owner: bool, peer: str) -> str:
+            document = json.loads(node_status(name, owner=owner, release_hash=TARGET_HASH))
+            document["runtime"] = {"version": "3.2.9", "uptime_sec": 600}
+            document["peers"] = [{"name": peer, "connected": connected}]
+            return json.dumps(document)
 
-if __name__ == "__main__":
-    unittest.main()
+        return self.reader(
+            **{
+                "node-a": status_of("node-a", True, "node-b"),
+                "node-b": status_of("node-b", False, "node-a"),
+            }
+        )
+
+    def test_a_peer_not_connected_is_said(self) -> None:
+        _, out, _ = self.run_caller(
+            ["-c", "alpha"], completed(self.envelope(node_reader=self.peered(False)))
+        )
+        self.assertEqual(out.count("Peers:"), 2)
+        self.assertIn("Peers:        Counters not reaching node-b\n", out)
+
+    def test_connected_peers_say_nothing(self) -> None:
+        _, out, _ = self.run_caller(
+            ["-c", "alpha"], completed(self.envelope(node_reader=self.peered(True)))
+        )
+        self.assertNotIn("Peers:", out)
 
 
 class KeepalivedStateTests(unittest.TestCase):
@@ -1159,3 +1182,7 @@ class KeepalivedStateTests(unittest.TestCase):
         )
         self.assertIsNone(cluster_status.keepalived_state({"active": True, "state": None}))
         self.assertIsNone(cluster_status.keepalived_state(None))
+
+
+if __name__ == "__main__":
+    unittest.main()

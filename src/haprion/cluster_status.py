@@ -805,3 +805,134 @@ def keepalived_state(keepalived: Any) -> str | None:
         return "STOPPED"
     state = keepalived.get("state")
     return state if isinstance(state, str) and state else None
+
+
+#
+# What a node's reading says is wrong with it, once (B455). The status helper's
+# warnings, `haprion-status` and the interface's node badges each used to carry
+# their own copy of these rules and had drifted apart: a stopped dnsdist was in
+# the helper's warnings and the CLI and on no page. A reader asks here.
+#
+WAF_ENGINE_STOPPED = "waf_engine_stopped"
+DNS_LISTENER_STOPPED = "dns_listener_stopped"
+COUNTERS_NOT_SHARED = "counters_not_shared"
+
+#
+# Every code in this tuple is a finding `node_findings` or `counter_findings`
+# can return, and so one `haprion-status` and the interface both read.
+#
+FINDING_CODES = (WAF_ENGINE_STOPPED, DNS_LISTENER_STOPPED, COUNTERS_NOT_SHARED)
+
+#
+# The codes the status helper writes in its envelope's warnings that are not
+# findings, with the reader each has. The test that holds the helper and its
+# readers together asks for every code it can write to be in one list or the
+# other; a new code with no reader fails there.
+#
+WARNING_CODES_WITH_OTHER_READER = {
+    "ssh_unreachable": "the node's own entry (reachable false), shown as Unreachable",
+    "node_status_invalid": "the node's own entry (status_ok false), shown as Invalid status",
+    "node_status_invalid_json": "the node's own entry (status_ok false), shown as Invalid status",
+    "dns_server_moved": "the DNS object editor, which names the servers that moved",
+}
+
+#
+# How long after a reload a node's counters may still be on their way to the
+# other nodes before that is a warning (B270).
+#
+PEERS_SETTLE_SECONDS = 120
+
+
+@dataclass(frozen=True, slots=True)
+class Finding:
+    """One thing wrong with a node, as every reader words it."""
+
+    code: str
+    severity: str
+    label: str
+    detail: str
+
+
+def _engine_stopped(entry: Mapping[str, Any], key: str, published: object) -> bool:
+    """The release carries what the engine serves and the node's engine is not running it.
+
+    A node that does not report the engine is one from before the field, which
+    a release with rules never reaches (B231); it is not called stopped.
+    """
+
+    if published is not True or entry.get("status_ok") is not True:
+        return False
+    engine = _mapping(_mapping(entry.get("status")).get(key))
+    return bool(engine) and engine.get("active") is not True
+
+
+def node_findings(entry: Mapping[str, Any], summary: Mapping[str, Any]) -> tuple[Finding, ...]:
+    """What is wrong with one node that answered, from its own status and the cluster's summary.
+
+    Both engines are the same kind of fault: while one is stopped, what the
+    release serves through it is not served, and a stopped dnsdist on the node
+    that holds the VIP answers nothing at all (D11-02).
+    """
+
+    found = []
+    if _engine_stopped(entry, "waf_engine", summary.get("waf_published")):
+        found.append(
+            Finding(
+                WAF_ENGINE_STOPPED, "warning", "WAF engine stopped", "The WAF engine is not running"
+            )
+        )
+    if _engine_stopped(entry, "dns_listener", summary.get("dns_published")):
+        found.append(
+            Finding(
+                DNS_LISTENER_STOPPED, "warning", "DNS listener stopped", "dnsdist is not running"
+            )
+        )
+    return tuple(found)
+
+
+def counter_findings(entries: Sequence[object]) -> dict[str, Finding]:
+    """A node whose counters are not shared with the others, by node name (B270).
+
+    Only where the cluster shares at all - some node reports a peer. A node
+    that reports no peer while another does is in no `peer` line: its host name
+    is not its node name, or it runs a release from before sharing was turned
+    on. A node that reports a peer it is not connected to cannot reach it - the
+    port is closed between them, or the address has changed since the last
+    publish. A peer whose node did not answer is left out: that node is already
+    named as unreachable, and the counters not reaching it says nothing more
+    (26-11-03). Nothing is said until every node has run long enough for its
+    peers to connect after a reload (26-10-11).
+    """
+
+    nodes = [item for item in entries if isinstance(item, Mapping)]
+    unanswered = {_text(item.get("name")) for item in nodes if item.get("status_ok") is not True}
+    answered = [item for item in nodes if item.get("status_ok") is True]
+    reported = {
+        _text(item.get("name")): _mapping(item.get("status")).get("peers") for item in answered
+    }
+    if not any(isinstance(peers, list) and peers for peers in reported.values()):
+        return {}
+    uptimes = [
+        _mapping(_mapping(item.get("status")).get("runtime")).get("uptime_sec") for item in answered
+    ]
+    if any(isinstance(uptime, int) and uptime < PEERS_SETTLE_SECONDS for uptime in uptimes):
+        return {}
+    found: dict[str, Finding] = {}
+    for name, peers in reported.items():
+        if name is None or not isinstance(peers, list):
+            continue
+        if not peers:
+            detail = "Shares no counters with the other nodes"
+        else:
+            missing = [
+                _text(peer.get("name"))
+                for peer in peers
+                if isinstance(peer, Mapping)
+                and peer.get("connected") is not True
+                and _text(peer.get("name")) not in unanswered
+            ]
+            if not missing:
+                continue
+            detail = f"Counters not reaching {', '.join(str(peer) for peer in missing)}"
+        found[name] = Finding(COUNTERS_NOT_SHARED, "warning", "Counters not shared", detail)
+    return found

@@ -1852,7 +1852,8 @@ stays still gets the 503 (`deny`) or is served (`allow`). A query or alert outsi
 matches the prefix `waf-engine`.
 
 A node whose engine is not running, while the published release has rules, is marked *WAF engine stopped*
-on the dashboard. `haprion-status` shows the engine on each node, with a warning for that node.
+on the dashboard, and a node whose dnsdist is not running while the release has a DNS listener is marked
+*DNS listener stopped*. `haprion-status` shows both on each node, with a warning for that node.
 
 **The engine's log.** Each rule the engine matched is logged on the node, with the part of the request and
 the matched value, in the engine's own journal (`journalctl --namespace=haprion-waf -u coraza-spoa`). It is
@@ -4004,7 +4005,7 @@ own line by its host name, which has to be the node's name.
 The port has to be open between the nodes, both ways, and nowhere else. That firewall is the
 installation's. The traffic is not encrypted and carries client addresses and their counts. On the
 dashboard, a node whose counters do not reach another node, or that shares none while the others do,
-reads *Counters not shared* with the reason.
+reads *Counters not shared* with the reason; `haprion-status` prints the same reason on a `Peers:` line.
 
 **DNS objects are scraped from dnsdist.** In a cluster with the exporter and a DNS object, dnsdist also
 answers `GET /metrics` on port 9521 of each node's own address, for the same sources, and on loopback for

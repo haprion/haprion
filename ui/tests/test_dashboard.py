@@ -596,6 +596,30 @@ class HealthDerivation(unittest.TestCase):
                 self.assertEqual(cluster.nodes[1].label, "Online")
                 self.assertEqual(cluster.label, "Healthy")
 
+    def test_a_stopped_dnsdist_is_named_where_the_release_has_a_listener(self) -> None:
+        # D11-02: the helper warned, and no page read it.
+        status = reading("done-single-owner.json")
+        for published, active, label in (
+            (True, False, "DNS listener stopped"),
+            (True, True, "Online"),
+            (False, False, "Online"),
+            (None, False, "Online"),
+        ):
+            with self.subTest(published=published, active=active):
+                result = dict(status.result)
+                nodes = [dict(node) for node in result["nodes"]]
+                nodes[1]["status"] = {
+                    **nodes[1]["status"],
+                    "dns_listener": {"version": "2.1.2-1pdns", "active": active},
+                }
+                result["nodes"] = nodes
+                if published is not None:
+                    result["summary"] = {**result["summary"], "dns_published": published}
+                cluster = self.dashboard(replace(status, result=result)).clusters[0]
+                self.assertEqual(cluster.nodes[1].label, label)
+                self.assertEqual(cluster.nodes[0].label, "Online")
+                self.assertEqual(cluster.label, "Degraded" if label != "Online" else "Healthy")
+
     def test_version_drift_is_visible_without_calling_the_cluster_unhealthy(self) -> None:
         """Named for what it is, rather than as a fault.
 

@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from haprion import haproxy_versions, node_package, node_resources
+from haprion import cluster_status, haproxy_versions, node_package, node_resources
 from haprion.cluster_status import (
     BEHIND_RELEASE,
     BEHIND_STEPS,
@@ -672,73 +672,31 @@ def _empty_cluster(cluster: str, *, configured: bool) -> ClusterView:
     )
 
 
-#
-# How long after a reload a node's counters may still be on their way to the
-# other nodes before that is a warning (B270).
-#
-PEERS_SETTLE_SECONDS = 120
-
-
-def _with_shared_counters(
-    nodes: tuple[NodeView, ...], node_values: list[Any]
+def _with_findings(
+    nodes: tuple[NodeView, ...], node_values: list[Any], summary: Mapping[str, Any]
 ) -> tuple[NodeView, ...]:
-    """A node whose counters are not shared with the others, named (B270).
+    """A node that is otherwise healthy, named for the first thing `cluster_status` finds wrong with it.
 
-    Only where the cluster shares at all - some node reports a peer - and only
-    on a node that is otherwise healthy. A node that reports no peer while
-    another does is in no `peer` line: its host name is not its node name, or
-    it runs a release from before sharing was turned on. A node that reports a
-    peer it is not connected to cannot reach it - the port is closed between
-    them, or the address has changed since the last publish. A peer whose node
-    did not answer is left out: that node is already named as unreachable, and
-    the counters not reaching it says nothing more (26-11-03).
+    The rules are `haprion.cluster_status`'s, the ones `haprion-status` prints
+    from (B455). Only on a healthy node: a stopped HAProxy or a fault already
+    says more.
     """
 
-    unanswered = {
-        _text(value.get("name"))
-        for value in node_values
-        if isinstance(value, Mapping) and value.get("status_ok") is not True
+    by_name = {
+        _text(value.get("name")): value for value in node_values if isinstance(value, Mapping)
     }
-    reported = {
-        _text(value.get("name")): _mapping(value.get("status")).get("peers")
-        for value in node_values
-        if isinstance(value, Mapping) and value.get("status_ok") is True
-    }
-    if not any(isinstance(peers, list) and peers for peers in reported.values()):
-        return nodes
-    #
-    # A publish reloads the nodes one after the other, and each one's peers
-    # connect again only once both run the new configuration: the reading
-    # right after a deploy named both nodes as not reaching each other, and
-    # they were connected a minute later (26-10-11). Said only once every
-    # node has run long enough for that to be over.
-    #
-    uptimes = [
-        _mapping(_mapping(value.get("status")).get("runtime")).get("uptime_sec")
-        for value in node_values
-        if isinstance(value, Mapping) and value.get("status_ok") is True
-    ]
-    if any(isinstance(uptime, int) and uptime < PEERS_SETTLE_SECONDS for uptime in uptimes):
-        return nodes
-    detail: dict[str, str] = {}
-    for name, peers in reported.items():
-        if not isinstance(peers, list):
-            continue
-        if not peers:
-            detail[name] = "Shares no counters with the other nodes"
-            continue
-        missing = [
-            _text(peer.get("name"))
-            for peer in peers
-            if isinstance(peer, Mapping)
-            and peer.get("connected") is not True
-            and _text(peer.get("name")) not in unanswered
-        ]
-        if missing:
-            detail[name] = f"Counters not reaching {', '.join(missing)}"
+    shared = cluster_status.counter_findings(node_values)
+    named = {}
+    for node in nodes:
+        entry = by_name.get(node.name)
+        found = cluster_status.node_findings(entry, summary) if entry is not None else ()
+        if not found and node.name in shared:
+            found = (shared[node.name],)
+        if found:
+            named[node.name] = found[0]
     return tuple(
-        replace(node, label="Counters not shared", tone="warning", detail=detail[node.name])
-        if node.name in detail and node.tone == "healthy"
+        replace(node, label=named[node.name].label, tone="warning", detail=named[node.name].detail)
+        if node.name in named and node.tone == "healthy"
         else node
         for node in nodes
     )
@@ -799,33 +757,7 @@ def _cluster_view(
             )
             for node in nodes
         )
-        if summary.get("waf_published") is True:
-            #
-            # The release has WAF rules and this node's engine is not running
-            # them (review 2026-10-04 F3). Only on a node that is otherwise
-            # healthy: a stopped HAProxy or a fault already says more.
-            #
-            stopped = {
-                _text(value.get("name"))
-                for value in node_values
-                if isinstance(value, Mapping)
-                and value.get("status_ok") is True
-                and _mapping(_mapping(value.get("status")).get("waf_engine"))
-                and _mapping(_mapping(value.get("status")).get("waf_engine")).get("active")
-                is not True
-            }
-            nodes = tuple(
-                replace(
-                    node,
-                    label="WAF engine stopped",
-                    tone="warning",
-                    detail="The WAF engine is not running",
-                )
-                if node.name in stopped and node.tone == "healthy"
-                else node
-                for node in nodes
-            )
-        nodes = _with_shared_counters(nodes, node_values)
+        nodes = _with_findings(nodes, node_values, summary)
     stale = now - reading.observed_at > stale_after
 
     configured_nodes = summary.get("configured_nodes")

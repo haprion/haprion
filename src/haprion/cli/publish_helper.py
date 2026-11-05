@@ -36,7 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Protocol, TextIO
 
-from haprion import exit_codes, tls_policy, traffic_stream
+from haprion import exit_codes, release_checks
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     MAX_CANDIDATE_BYTES,
@@ -50,7 +50,8 @@ from haprion.candidate_validation import (
     validate_candidate,
     validate_in_sandbox,
 )
-from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
+from haprion.cli.helper_guard import guarded
+from haprion.cluster_lock import DEFAULT_LOCK_ROOT, hold
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     Cluster,
@@ -59,7 +60,6 @@ from haprion.config import (
     load_runtime_config,
 )
 from haprion.envelope import envelope, failure
-from haprion.git_command import GitError
 from haprion.helper_protocol import (
     HelperProtocolError,
     HelperRequest,
@@ -73,20 +73,16 @@ from haprion.release_install import (
     DEPLOYMENT_REQUIRED_AFTER_INSTALL,
     PUBLISH_GROUP,
     ChangeOwner,
-    InstallError,
     default_change_owner,
     install_release,
 )
 from haprion.release_layout import (
-    LayoutError,
     ReleaseMetadata,
     build_node_artifact,
     build_release_index,
 )
 from haprion.repo_snapshot import (
     SNAPSHOT_PREFIXES,
-    ConcurrentUpdate,
-    PublishError,
     build_candidate_tree,
     commit_and_swap,
     read_tree_files,
@@ -416,7 +412,7 @@ def main(
             exc.exit_code,
         )
 
-    try:
+    def under_the_lock() -> int:
         #
         # Everything that decides what gets written happens inside the cluster's
         # lock, the head included. Publishing used to take no lock at all: the
@@ -441,16 +437,8 @@ def main(
                 clock=clock,
                 refuse=refuse,
             )
-    except LockBusy as exc:
-        return refuse("operation_locked", str(exc), exc.exit_code)
-    except ConcurrentUpdate as exc:
-        return refuse("base_version_changed", str(exc), exc.exit_code)
-    except (InstallError, LayoutError) as exc:
-        return refuse("publish_incomplete", str(exc), exc.exit_code)
-    except PublishError as exc:
-        return refuse("publish_incomplete", str(exc), exc.exit_code)
-    except GitError as exc:
-        return refuse("internal_error", str(exc), exc.exit_code)
+
+    return guarded(refuse, under_the_lock, moved_code="base_version_changed")
 
 
 def _publish(
@@ -543,16 +531,11 @@ def _publish(
         if index_left_behind(repo, head):
             refresh_worktree_index(repo, head)
         current_files = read_tree_files(repo, snapshot.tree)
-        short = tls_policy.stick_counters_problem(
+        early = release_checks.before_the_sandbox(
             current_files, cluster=request.cluster, config_path=str(cluster.config_path)
         )
-        if short is not None:
-            return refuse("stick_counters_short", short, exit_codes.BLOCKED)
-        unreachable = traffic_stream.problem(
-            current_files, cluster=request.cluster, config_path=str(cluster.config_path)
-        )
-        if unreachable is not None:
-            return refuse("traffic_log_unreachable", unreachable, exit_codes.BLOCKED)
+        if early is not None:
+            return refuse(early.code, early.message, exit_codes.BLOCKED)
         #
         # A head whose release was never installed was never checked either: a
         # commit made by hand, a cluster's first version whose publish failed
@@ -569,13 +552,11 @@ def _publish(
         # The same policy as a change: an unchanged tree is how a retry
         # arrives, and it must not install what the first attempt refused.
         #
-        stale = tls_policy.core_defaults_problem(
-            current_files["core/haproxy.cfg"],
-            cluster=request.cluster,
-            config_path=str(cluster.config_path),
+        stale = release_checks.after_the_sandbox(
+            current_files, cluster=request.cluster, config_path=str(cluster.config_path)
         )
         if stale is not None:
-            return refuse("tls_defaults_stale", stale, exit_codes.BLOCKED)
+            return refuse(stale.code, stale.message, exit_codes.BLOCKED)
         installed = install_release(
             cluster.publish_path,
             node_path=cluster.node_path,
@@ -626,20 +607,14 @@ def _publish(
     # Before the sandbox, where HAProxy would refuse the same release in words
     # that name neither the file nor the line (`stick_counters_problem`).
     #
-    short = tls_policy.stick_counters_problem(
-        published_files, cluster=request.cluster, config_path=str(cluster.config_path)
-    )
-    if short is not None:
-        return refuse("stick_counters_short", short, exit_codes.BLOCKED)
-    #
     # And where HAProxy would start and serve while every traffic record went
-    # nowhere (`traffic_stream`).
+    # nowhere (`traffic_stream`). Both in `release_checks`.
     #
-    unreachable = traffic_stream.problem(
+    early = release_checks.before_the_sandbox(
         published_files, cluster=request.cluster, config_path=str(cluster.config_path)
     )
-    if unreachable is not None:
-        return refuse("traffic_log_unreachable", unreachable, exit_codes.BLOCKED)
+    if early is not None:
+        return refuse(early.code, early.message, exit_codes.BLOCKED)
 
     #
     # 4. Validation, in the sandbox, on exactly those bytes.
@@ -657,13 +632,11 @@ def _publish(
     # leaves no version behind that a retry would then find unchanged and
     # publish without asking again.
     #
-    stale = tls_policy.core_defaults_problem(
-        published_files["core/haproxy.cfg"],
-        cluster=request.cluster,
-        config_path=str(cluster.config_path),
+    stale = release_checks.after_the_sandbox(
+        published_files, cluster=request.cluster, config_path=str(cluster.config_path)
     )
     if stale is not None:
-        return refuse("tls_defaults_stale", stale, exit_codes.BLOCKED)
+        return refuse(stale.code, stale.message, exit_codes.BLOCKED)
 
     #
     # 5. Only now is a version recorded, and only if nobody moved the branch

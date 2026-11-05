@@ -50,8 +50,7 @@ from haprion import (
     geo,
     objects,
     peers,
-    tls_policy,
-    traffic_stream,
+    release_checks,
 )
 from haprion.config import Cluster, ConfigError
 from haprion.managed_network import location as network_location
@@ -390,16 +389,12 @@ def regenerate(
     #
     # The checks a publish makes on the bytes it would write, in its order.
     #
-    core = tree.get("core/haproxy.cfg")
-    where = {"cluster": cluster.cluster_id, "config_path": str(cluster.config_path)}
-    problem = (
-        tls_policy.stick_counters_problem(tree, **where)
-        or traffic_stream.problem(tree, **where)
-        or (tls_policy.core_defaults_problem(core, **where) if core is not None else None)
+    problem = release_checks.first(
+        tree, cluster=cluster.cluster_id, config_path=str(cluster.config_path)
     )
     if problem is not None:
         result["outcome"] = REFUSED
-        result["message"] = problem[:MAX_MESSAGE]
+        result["message"] = problem.message[:MAX_MESSAGE]
         result["causes"] = _causes(files, installed_crs)
         return result
     diff = artifact_diff(published, candidate, commit)

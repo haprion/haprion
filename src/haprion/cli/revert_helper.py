@@ -41,7 +41,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, TextIO
 
-from haprion import crs, exit_codes, geo, held_ports, node_publish
+from haprion import crs, exit_codes, geo, held_ports, node_publish, release_checks
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     VALIDATION_CERTIFICATE,
@@ -53,8 +53,9 @@ from haprion.candidate_validation import (
     validate_in_sandbox,
 )
 from haprion.cert_inventory import coverage_for
+from haprion.cli.helper_guard import guarded
 from haprion.cli.managed_helper import Refusal
-from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
+from haprion.cluster_lock import DEFAULT_LOCK_ROOT, hold
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     Cluster,
@@ -63,8 +64,7 @@ from haprion.config import (
     load_policy,
     load_runtime_config,
 )
-from haprion.envelope import envelope, failure
-from haprion.git_command import GitError
+from haprion.envelope import Message, envelope, failure
 from haprion.git_command import git as _git
 from haprion.held_ports import HeldPorts
 from haprion.helper_protocol import (
@@ -82,20 +82,16 @@ from haprion.release_install import (
     DEPLOYMENT_REQUIRED_AFTER_INSTALL,
     PUBLISH_GROUP,
     ChangeOwner,
-    InstallError,
     default_change_owner,
     install_release,
 )
 from haprion.release_layout import (
-    LayoutError,
     ReleaseMetadata,
     build_node_artifact,
     build_release_index,
 )
 from haprion.repo_health import unsaved_changes
 from haprion.repo_snapshot import (
-    ConcurrentUpdate,
-    PublishError,
     build_candidate_tree,
     commit_and_swap,
     read_tree_files,
@@ -122,6 +118,7 @@ OPERATION = "revert_version"
 REVERT_OPERATION = "revert"
 PARAMETERS = frozenset({"version", "expected_commit", "expected_head", "requested_by"})
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+WARNING_LENGTH = 1024  # the envelope schema's limit for a warning's message
 
 #
 # The message a reverted version is recorded under. Frozen: an operator reading
@@ -305,7 +302,7 @@ def main(
             exc.exit_code,
         )
 
-    try:
+    def under_the_lock() -> int:
         #
         # Everything that decides what gets written happens inside the cluster's
         # lock, and the checks are made again in here rather than carried in from
@@ -332,16 +329,28 @@ def main(
                 clock=clock,
                 refuse=refuse,
             )
-    except LockBusy as exc:
-        return refuse("operation_locked", str(exc), exc.exit_code)
-    except ConcurrentUpdate as exc:
-        return refuse("expected_target_changed", str(exc), exc.exit_code)
-    except (InstallError, LayoutError) as exc:
-        return refuse("publish_incomplete", str(exc), exc.exit_code)
-    except PublishError as exc:
-        return refuse("publish_incomplete", str(exc), exc.exit_code)
-    except GitError as exc:
-        return refuse("internal_error", str(exc), exc.exit_code)
+
+    return guarded(refuse, under_the_lock, moved_code="expected_target_changed")
+
+
+def _warnings(files: Mapping[str, bytes], *, cluster: Cluster) -> tuple[Message, ...]:
+    """What a publish of these files would have been refused for, said instead of refused.
+
+    A revert is not held to the core file's checks (the manual: going back to a
+    release that was good before must not depend on a file being current). The
+    checks still run on the bytes about to go out, so that a release the nodes
+    would serve wrongly - a cipher list that has drifted, a chroot the traffic
+    log cannot reach, too few stick counters - is said in the answer and not
+    discovered on a node. The envelope's own `warnings`, which a done answer
+    may carry; messages are cut to the schema's length.
+    """
+
+    return tuple(
+        Message(code=problem.code, message=problem.message[:WARNING_LENGTH])
+        for problem in release_checks.all_problems(
+            files, cluster=cluster.cluster_id, config_path=str(cluster.config_path)
+        )
+    )
 
 
 def _revert(
@@ -485,6 +494,8 @@ def _revert(
         ).tree
         target_files = read_tree_files(repo, target_tree)
 
+    warnings = _warnings(target_files, cluster=cluster)
+
     def sandboxed(artifact: Mapping[str, bytes]) -> int | None:
         """The refusal when the content is not valid for this cluster today, else None."""
 
@@ -565,6 +576,7 @@ def _revert(
                 outcome="done",
                 cluster=request.cluster,
                 request_id=request.request_id,
+                warnings=warnings,
                 result=_result(
                     changed=False,
                     #
@@ -646,6 +658,7 @@ def _revert(
             outcome="done",
             cluster=request.cluster,
             request_id=request.request_id,
+            warnings=warnings,
             result=_result(
                 changed=True,
                 deployment_required=DEPLOYMENT_REQUIRED_AFTER_INSTALL,

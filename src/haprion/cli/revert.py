@@ -162,6 +162,15 @@ def build_request(
     )
 
 
+def _say_warnings(writer: TextIO, document: dict[str, object]) -> None:
+    """What the revert went through but a publish of the same files would have stopped on."""
+
+    warnings = document.get("warnings")
+    for warning in warnings if isinstance(warnings, list) else ():
+        if isinstance(warning, dict) and isinstance(warning.get("message"), str):
+            writer.write(f"\nWARNING: {warning['message']}\n")
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -293,6 +302,7 @@ def main(
         return exit_codes.of_process(code, exit_codes.INTERNAL) or exit_codes.INTERNAL
 
     result = document.get("result") or {}
+    _say_warnings(writer, document)
     if not result.get("changed"):
         #
         # The helper found the chosen version's content already in place. It is

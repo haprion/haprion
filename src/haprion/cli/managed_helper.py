@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import advanced, exit_codes, tls_policy, traffic_stream
+from haprion import advanced, exit_codes, release_checks
 from haprion.candidate_validation import (
     VALIDATION_CERTIFICATE,
     SandboxValidator,
@@ -32,10 +32,10 @@ from haprion.candidate_validation import (
     read_validation_certificate,
     validate_candidate,
 )
-from haprion.cluster_lock import LockBusy, hold
+from haprion.cli.helper_guard import guarded
+from haprion.cluster_lock import hold
 from haprion.config import Cluster, ConfigError, PathPolicy, load_policy, load_runtime_config
 from haprion.envelope import envelope, failure
-from haprion.git_command import GitError
 from haprion.helper_protocol import (
     MAX_REQUEST_BYTES,
     HelperProtocolError,
@@ -51,19 +51,15 @@ from haprion.managed_publish import GENERATED_PREFIX, MANAGED_PREFIX
 from haprion.release_install import (
     DEPLOYMENT_REQUIRED_AFTER_INSTALL,
     ChangeOwner,
-    InstallError,
     install_release,
 )
 from haprion.release_layout import (
-    LayoutError,
     ReleaseMetadata,
     build_node_artifact,
     build_release_index,
 )
 from haprion.repo_health import unsaved_changes
 from haprion.repo_snapshot import (
-    ConcurrentUpdate,
-    PublishError,
     build_candidate_tree,
     commit_and_swap,
     committed_snapshot,
@@ -339,31 +335,21 @@ def _publish(
     # no version behind that a retry would then find unchanged and publish
     # without asking again.
     #
-    def stale() -> str | None:
-        return tls_policy.core_defaults_problem(
-            published_files["core/haproxy.cfg"],
-            cluster=request.cluster,
-            config_path=str(cluster.config_path),
+    def stale() -> release_checks.Problem | None:
+        return release_checks.after_the_sandbox(
+            published_files, cluster=request.cluster, config_path=str(cluster.config_path)
         )
 
     #
     # Before the sandbox, where HAProxy would refuse the same release in words
-    # that name neither the file nor the line (`stick_counters_problem`).
+    # that name neither the file nor the line, and where it would start and
+    # serve while every traffic record went nowhere (`release_checks`).
     #
-    short = tls_policy.stick_counters_problem(
+    early = release_checks.before_the_sandbox(
         published_files, cluster=request.cluster, config_path=str(cluster.config_path)
     )
-    if short is not None:
-        return refuse("stick_counters_short", short, exit_codes.BLOCKED)
-    #
-    # And where HAProxy would start and serve while every traffic record went
-    # nowhere (`traffic_stream`).
-    #
-    unreachable = traffic_stream.problem(
-        published_files, cluster=request.cluster, config_path=str(cluster.config_path)
-    )
-    if unreachable is not None:
-        return refuse("traffic_log_unreachable", unreachable, exit_codes.BLOCKED)
+    if early is not None:
+        return refuse(early.code, early.message, exit_codes.BLOCKED)
 
     def invalid() -> int | None:
         """The sandbox's verdict on the artifact, as a refusal; None when it passes."""
@@ -429,7 +415,7 @@ def _publish(
                 return refused
         problem = stale()
         if problem is not None:
-            return refuse("tls_defaults_stale", problem, exit_codes.BLOCKED)
+            return refuse(problem.code, problem.message, exit_codes.BLOCKED)
         metadata = ReleaseMetadata(
             cluster=request.cluster,
             version=count_versions(repo, head),
@@ -443,7 +429,7 @@ def _publish(
             return refused
         problem = stale()
         if problem is not None:
-            return refuse("tls_defaults_stale", problem, exit_codes.BLOCKED)
+            return refuse(problem.code, problem.message, exit_codes.BLOCKED)
 
         commit = commit_and_swap(
             repo,
@@ -568,7 +554,7 @@ def run(
             exc.exit_code,
         )
 
-    try:
+    def under_the_lock() -> int:
         with hold(request.cluster, operation=words.operation, root=lock_root):
             #
             # Built under the lock, where the certificate inventory it may read
@@ -590,18 +576,5 @@ def run(
                 clock=now or (lambda: datetime.now(UTC)),
                 refuse=refuse,
             )
-    except LockBusy as exc:
-        return refuse("operation_locked", str(exc), exc.exit_code)
-    except ConcurrentUpdate as exc:
-        return refuse("expected_target_changed", str(exc), exc.exit_code)
-    except (InstallError, LayoutError, PublishError) as exc:
-        return refuse("publish_incomplete", str(exc), exc.exit_code)
-    except ConfigError as exc:
-        #
-        # What the build read under the lock - the base's network, the
-        # certificate inventory - not the request, unless it says so; the
-        # request's own content is refused as a `Refusal` (review 26-10-24, 06-07).
-        #
-        return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
-    except GitError as exc:
-        return refuse("internal_error", str(exc), exc.exit_code)
+
+    return guarded(refuse, under_the_lock, moved_code="expected_target_changed")

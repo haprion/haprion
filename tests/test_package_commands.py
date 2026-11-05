@@ -78,6 +78,7 @@ ESSENTIAL = frozenset(
         "mktemp",
         "mv",
         "readlink",
+        "realpath",
         "rm",
         "rmdir",
         "runuser",

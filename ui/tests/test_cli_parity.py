@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from haprion_ui import api
 from haprion_ui.app import create_app
 from tests.test_login import configuration
 
@@ -33,6 +34,7 @@ SCHEMAS = ROOT / "schemas" / "v1"
 # The contracts that only read. A command whose answer is one of these shows a
 # setting; it does not say whether it changed one.
 #
+WRITES = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 READS = frozenset(
     {
         "haprion-cluster-settings",
@@ -72,6 +74,13 @@ class Gap:
 
 @dataclass(frozen=True)
 class NotASetting:
+    why: str
+
+
+@dataclass(frozen=True)
+class NoCounterpart:
+    """A write the engine has no command for, and none is planned: said, not hidden."""
+
     why: str
 
 
@@ -205,6 +214,78 @@ OPERATIONS: dict[str, Command | Gap | NotASetting] = {
 }
 
 
+#
+# What the API's write routes do in the terminal (B416, K03 26-11-05). The API
+# is the other way in beside the pages, so a write added there without its
+# command fails here like a page's. Object writes save a change in the
+# interface; the terminal's `apply` is the same document published at once.
+#
+API_PARITY: dict[str, Command | Gap | NotASetting | NoCounterpart] = {
+    "POST /clusters/{cluster}/objects": Command("haprion-objects apply", "haprion-objects-apply"),
+    "PUT /clusters/{cluster}/objects/{name}": Command(
+        "haprion-objects apply", "haprion-objects-apply"
+    ),
+    "DELETE /clusters/{cluster}/objects/{name}": Command(
+        "haprion-objects remove", "haprion-objects-apply"
+    ),
+    "POST /clusters/{cluster}/publish": NotASetting(
+        "publishes what was saved in the interface; the terminal's apply publishes at once (B293)"
+    ),
+    "POST /clusters/{cluster}/revert": Command("haprion-revert", "haprion-revert"),
+    "POST /clusters/{cluster}/deploy": Command("haprion-deploy", "haprion-deploy"),
+    "POST /certificates": Command("haprion-cert-issue", "haprion-cert-issue"),
+    "POST /certificates/{certificate_id}/renew": Command(
+        "haprion-cert-issue --renew", "haprion-cert-issue"
+    ),
+    "PUT /certificates/{certificate_id}/targets": Command(
+        "haprion-cert-target", "haprion-cert-target"
+    ),
+    "DELETE /certificates/{certificate_id}": Command("haprion-cert-delete", "haprion-cert-delete"),
+    "POST /clusters/{cluster}/objects/{name}/servers": Command(
+        "haprion-server-state", "haprion-server-state"
+    ),
+    "POST /clusters/{cluster}/objects/{name}/health-check": Command(
+        "haprion-probe", "haprion-probe"
+    ),
+    "DELETE /clusters/{cluster}/objects/{name}/blocks": Command(
+        "haprion-server-state unblock", "haprion-server-state"
+    ),
+    "POST /clusters/{cluster}/objects/{name}/blocks": NoCounterpart(
+        "the API exists for blocking tools (fail2ban, a firewall); the engine has no command that"
+        " places a block, only one that lifts it"
+    ),
+}
+
+
+def _api_writes() -> set[str]:
+    """The API's write routes as `METHOD /path` under its prefix, walked into the mounted app.
+
+    The pages are routers among routers; the API is an application mounted
+    beside them, which a walk of `app.routes` stops at (K03, 26-11-05).
+    """
+
+    app = create_app(replace(configuration(), management_writes=True))
+    found: set[str] = set()
+
+    def walk(routes: Any, prefix: str) -> None:
+        for route in routes:
+            router = getattr(route, "original_router", None)
+            if router is not None:
+                walk(router.routes, prefix)
+                continue
+            inner = getattr(route, "app", None)
+            if inner is not None and hasattr(inner, "routes") and not hasattr(route, "methods"):
+                walk(inner.routes, prefix + str(getattr(route, "path", "")))
+                continue
+            if prefix != api.PREFIX:
+                continue
+            for method in sorted((getattr(route, "methods", None) or set()) & WRITES):
+                found.add(f"{method} {route.path}")
+
+    walk(app.routes, "")
+    return found
+
+
 def _posted_routes() -> set[str]:
     app = create_app(replace(configuration(), management_writes=True))
     found: set[str] = set()
@@ -220,7 +301,7 @@ def _posted_routes() -> set[str]:
                 walk(inner.routes)
                 continue
             methods = getattr(route, "methods", None) or set()
-            if methods & {"POST", "PUT", "PATCH", "DELETE"}:
+            if methods & WRITES:
                 found.add(str(getattr(route, "path", "")))
 
     walk(app.routes)
@@ -291,6 +372,20 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         self.assertEqual(sorted(routes - listed), [], "a write with no terminal counterpart named")
         self.assertEqual(sorted(listed - routes), [], "listed here, but no such route")
 
+    def test_every_api_write_is_listed_once(self) -> None:
+        writes = _api_writes()
+
+        self.assertGreaterEqual(len(writes), 14, "the walk no longer reaches the mounted API")
+        self.assertEqual(sorted(writes - set(API_PARITY)), [], "an API write with no counterpart")
+        self.assertEqual(sorted(set(API_PARITY) - writes), [], "listed here, but no such route")
+
+    def test_the_writes_with_no_command_are_the_ones_said(self) -> None:
+        said = sorted(
+            route for route, entry in API_PARITY.items() if isinstance(entry, NoCounterpart)
+        )
+
+        self.assertEqual(said, ["POST /clusters/{cluster}/objects/{name}/blocks"])
+
     def test_every_queued_operation_is_listed_once(self) -> None:
         self.assertEqual(sorted(_queued_operations()), sorted(OPERATIONS))
 
@@ -298,7 +393,7 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         programs = _programs()
         named = {
             entry.line.split()[0]
-            for entry in (*PARITY.values(), *OPERATIONS.values())
+            for entry in (*PARITY.values(), *OPERATIONS.values(), *API_PARITY.values())
             if isinstance(entry, Command)
         }
 
@@ -314,7 +409,7 @@ class EveryWriteHasItsCommand(unittest.TestCase):
 
         entries = [
             entry
-            for entry in (*PARITY.values(), *OPERATIONS.values())
+            for entry in (*PARITY.values(), *OPERATIONS.values(), *API_PARITY.values())
             if isinstance(entry, Command)
         ]
         missing = sorted(
@@ -338,7 +433,7 @@ class EveryWriteHasItsCommand(unittest.TestCase):
 
         gaps = sorted(
             (entry.step, path)
-            for path, entry in (*PARITY.items(), *OPERATIONS.items())
+            for path, entry in (*PARITY.items(), *OPERATIONS.items(), *API_PARITY.items())
             if isinstance(entry, Gap)
         )
 

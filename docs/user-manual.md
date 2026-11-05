@@ -5497,6 +5497,9 @@ in the section linked.
   ([Syslog objects](#syslog-objects)).
 - **Two DNS objects cannot share an address and port.** dnsdist tells them apart by where a query arrives
   ([DNS objects](#dns-objects)).
+- **The terminal places no block by hand.** `haprion-server-state unblock` lifts one; an address is
+  blocked by hand only through the API, which exists for the tools that block
+  ([Blocking an address](#blocking-an-address)).
 - **The API does not call out.** It answers questions and says nothing on its own: no webhooks or events
   to other systems. A system that wants to know polls ([The API](#the-api)).
 - **The update check does not go through a proxy.** A manager that reaches the internet only through one

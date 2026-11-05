@@ -10,6 +10,7 @@ the same by the engine's publish and by the page's offer of it.
 
 from __future__ import annotations
 
+import ast
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,6 +24,24 @@ from haprion.held_ports import from_status
 from haprion_ui import health, waf
 from tests.test_api_changes import ChangesTestCase
 from tests.test_editor_page import SHOP
+
+ROOT = Path(__file__).resolve().parents[2]
+CHANGES_PUBLISH = ROOT / "src" / "haprion" / "cli" / "changes_publish.py"
+#
+# Every refusal the publishing helper makes, and who judges it. The terminal and
+# the web both send their documents to this helper, so what it refuses is refused
+# alike; what this list holds is that no refusal is added without being named
+# here, where it is decided whether the page and the API also judge it first
+# (W02, 26-11-05).
+#
+PUBLISH_REFUSALS: dict[str, str] = {
+    "changes_invalid": "an object, or the package as a whole: RULES above are what the terminal,"
+    " the page and the API judge before the helper; the ports, certificates and nodes are the"
+    " helper's alone",
+    "network_invalid": "the network document: the page and `network apply` both send it to the helper",
+    "settings_invalid": "the settings document: the page and `settings apply` both send it to the"
+    " helper",
+}
 
 NEW = SHOP.replace("shop", "console")
 RULES: dict[str, str] = {
@@ -81,6 +100,34 @@ class ADocumentThatBreaksARuleIsRefusedByBoth(ChangesTestCase):
             (terminal.exception.exit_code, response.status_code), (exit_codes.REFUSED, 400)
         )
         self.assertIn("not a usable object name", str(terminal.exception))
+
+
+def _helper_refusals() -> dict[str, str]:
+    """Each `Refusal("code", ...)` the helper raises, with the exit code it names."""
+
+    found: dict[str, str] = {}
+    for node in ast.walk(ast.parse(CHANGES_PUBLISH.read_text(encoding="utf-8"))):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Refusal"
+            and len(node.args) >= 3
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            found[str(node.args[0].value)] = ast.unparse(node.args[2])
+    return found
+
+
+class EveryRefusalOfThePublishIsNamed(unittest.TestCase):
+    def test_the_helper_refuses_only_what_is_named_here(self) -> None:
+        refusals = _helper_refusals()
+
+        self.assertEqual(sorted(set(refusals) ^ set(PUBLISH_REFUSALS)), [])
+
+    def test_every_refusal_is_the_one_class_the_terminal_and_the_api_report(self) -> None:
+        """The CLI's 65 and the API's `bad_input`: a refusal with another exit would be told apart."""
+
+        self.assertEqual(set(_helper_refusals().values()), {"exit_codes.REFUSED"})
 
 
 def status_without(feature: str, *, answered: bool = True) -> dict[str, object]:

@@ -1384,11 +1384,10 @@ def build_router(config: Config) -> APIRouter:
         shown = request.query_params.get("done")
         if said and shown in ("saved", "on", "off") and is_digits(ended) and int(ended[:6]) > 0:
             count = labels.counted(int(ended[:6]), "session")
-            said += (
-                f" {count} signed in through it ended."
-                if shown == "off"
-                else f" {count} of local accounts that are not break-glass ended."
-            )
+            said += {
+                "off": f" {count} signed in through it ended.",
+                "saved": f" {count} ended.",
+            }.get(shown, f" {count} of local accounts that are not break-glass ended.")
         return oidc_page(config, request, gate, provider, done=said)
 
     @router.post("/settings/oidc", response_class=HTMLResponse)

@@ -372,7 +372,9 @@ class LoginTestCase(unittest.TestCase):
             return self.provider_after_first
         return self.provider
 
-    def _account(self, _connection: object, username: str) -> Account | None:
+    def _account(
+        self, _connection: object, username: str, *, share_lock: bool = False
+    ) -> Account | None:
         return self.account if username.lower() == "operator" else None
 
     def _attempt(self, _c: object, *, username: str, client_ip: str, succeeded: bool) -> None:

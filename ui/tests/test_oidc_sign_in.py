@@ -110,7 +110,9 @@ class SigningInThroughTheProvider(LoginTestCase):
             mock.patch("haprion_ui.oidc_web.ask", side_effect=ask),
             mock.patch(
                 "haprion_ui.db.account_by_oidc",
-                side_effect=lambda _c, *, issuer, subject: self.by_identity.get((issuer, subject)),
+                side_effect=lambda _c, *, issuer, subject, share_lock=False: self.by_identity.get(
+                    (issuer, subject)
+                ),
             ),
             mock.patch("haprion_ui.db.create_oidc_account", side_effect=create),
             mock.patch(
@@ -172,6 +174,34 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(self.sessions, {})
         self.assertIn(True, self.provider_reads)
+
+    def test_a_provider_sign_in_in_flight_when_sign_in_turns_off_makes_no_session(self) -> None:
+        #
+        # Review 26-11-05, A01: the provider is read before the code exchange
+        # and turned off while it ran. The account step reads it again under a
+        # share lock, so it meets the off rule, or the off waits for it.
+        #
+        client = self.client()
+        state = self.go(client)
+        self.provider_after_first = replace(self.provider, enabled=False)
+        response = self.back(client, state)
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertIn("off", response.text)
+        self.assertEqual(self.sessions, {})
+        self.assertEqual(self.created, [])
+        self.assertIn(True, self.provider_reads)
+        self.assertEqual(self.audit_details[-1][1]["reason"], "oidc_off")
+
+    def test_a_provider_sign_in_in_flight_when_the_settings_change_makes_no_session(self) -> None:
+        client = self.client()
+        state = self.go(client)
+        self.provider_after_first = replace(self.provider, revision=self.provider.revision + 1)
+        response = self.back(client, state)
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertIn("sign-in settings changed", response.text)
+        self.assertEqual(self.sessions, {})
+        self.assertEqual(self.created, [])
+        self.assertEqual(self.audit_details[-1][1]["reason"], "oidc_changed")
 
     def test_held_back_reads_exactly_as_a_wrong_password(self) -> None:
         self.account = replace(self.account, break_glass=False)

@@ -545,12 +545,30 @@ def build_router(config: Config) -> APIRouter:
         #
         try:
             with request.app.state.pool.connection() as connection:
+                #
+                # The provider's rule again, first, under a share lock held to
+                # the commit: turning sign-in off or saving the settings
+                # updates that row and then ends the sessions, so either this
+                # sign-in sees that or that end sees the session made here. The
+                # rule read before the exchange (and the role worked out from
+                # it) is good only while the row is as it was (B402, A01).
+                #
+                current = db.oidc_provider(connection, share_lock=True)
+                if current is None or not current.enabled:
+                    raise OidcRefusal("Sign-in through the provider is off.", "oidc_off")
+                if current.revision != provider.revision:
+                    raise OidcRefusal(
+                        "The sign-in settings changed while you signed in. Try again.",
+                        "oidc_changed",
+                    )
                 refused = oidc_account_refusal(
                     connection, issuer=issuer, subject=subject, username=username
                 )
                 if refused is not None:
                     raise OidcRefusal(*refused)
-                account = db.account_by_oidc(connection, issuer=issuer, subject=subject)
+                account = db.account_by_oidc(
+                    connection, issuer=issuer, subject=subject, share_lock=True
+                )
                 if account is None:
                     # The check above found the name free; one taken in between is
                     # refused here by the insert.

@@ -71,19 +71,27 @@ class AuthenticatedSession:
     source: str = "local"
 
 
-def account_by_username(connection: Connection[Any], username: str) -> Account | None:
+def account_by_username(
+    connection: Connection[Any], username: str, *, share_lock: bool = False
+) -> Account | None:
     """Look an account up by the normalised name.
 
     The comparison uses the generated column rather than `lower(username)` in
     the predicate, so it reads the unique index and cannot disagree with the
     constraint that made the name unique in the first place.
+
+    `share_lock` holds the row until the transaction ends: a sign-in that
+    makes its session on what it read here is then waited for by a password
+    change or a disable, whose end of the sessions follows and so sees it
+    (review 26-11-05, A02).
     """
 
+    lock = " for share" if share_lock else ""
     with connection.cursor(row_factory=class_row(Account)) as cursor:
         cursor.execute(
-            "select id, username, role, disabled, password_hash, source, break_glass, oidc_issuer "
+            "select id, username, role, disabled, password_hash, source, break_glass, oidc_issuer "  # noqa: S608 - constant
             "  from app_user "
-            " where username_normalised = lower(%(username)s)",
+            f" where username_normalised = lower(%(username)s){lock}",
             {"username": username},
         )
         return cursor.fetchone()

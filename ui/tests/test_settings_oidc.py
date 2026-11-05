@@ -423,3 +423,9 @@ class SettingsOidc(LoginTestCase):
             "break-glass ended.",
             page,
         )
+
+    def test_saved_with_sessions_ended_says_only_that_they_ended(self) -> None:
+        # A new issuer ends the old one's sessions (review 26-11-05, A05); the
+        # rule chosen ends local ones. The sentence fits both.
+        page = self.admin().get("/settings/oidc?done=saved&ended=2").text
+        self.assertIn("Saved. 2 sessions ended.", page)

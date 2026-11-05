@@ -1088,8 +1088,9 @@ sessions** on the account does it at once.
 role its groups give. There is no list of such accounts to keep here, and none is made in advance. The
 account is bound to the issuer and the subject it first signed in with, not to its name. Changing the
 issuer - another provider, or the same provider's application under a new name - therefore leaves every
-such account bound to the old one, and sign-in says so. Remove those accounts under **Settings → Users**;
-each is made again at its next sign-in.
+such account bound to the old one, and sign-in says so. Saving a new issuer while sign-in through the
+provider is on signs those accounts out at once. Remove them under **Settings → Users**; each is made again
+at its next sign-in.
 
 #### Examples: three providers
 

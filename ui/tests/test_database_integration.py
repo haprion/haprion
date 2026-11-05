@@ -5368,6 +5368,77 @@ class AccountsFromTheWeb(unittest.TestCase):
             first.close()
             second.close()
 
+    def sign_in_then_change(self, read: Any, change: Any) -> tuple[int, bool]:
+        """A sign-in reads bob under a share lock and makes its session; `change`
+        runs on another connection meanwhile. Returns how many sessions the
+        change ended, and whether it had to wait for the sign-in."""
+
+        import threading
+
+        sign_in = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        other = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        ended: list[int] = []
+        try:
+            bob = read(sign_in)
+            if bob is None:
+                self.fail("no account")
+
+            def run() -> None:
+                ended.append(change(other, bob.id))
+                other.commit()
+
+            thread = threading.Thread(target=run)
+            thread.start()
+            thread.join(0.5)
+            waited = thread.is_alive()
+            db.create_session(
+                sign_in,
+                token_hash=auth.token_hash("made-meanwhile"),
+                user_id=bob.id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            sign_in.commit()
+            thread.join(5)
+            self.assertFalse(thread.is_alive())
+        finally:
+            sign_in.close()
+            other.close()
+        return ended[0], waited
+
+    def test_a_password_change_waits_for_a_sign_in_that_read_the_account(self) -> None:
+        """Review 26-11-05, A02: the session made with the old password survived the reset."""
+
+        ended, waited = self.sign_in_then_change(
+            lambda connection: db.account_by_username(connection, "bob", share_lock=True),
+            lambda connection, user_id: db.change_password(
+                connection, user_id=user_id, password_hash=self.HASH, keep=b""
+            ),
+        )
+        self.assertTrue(waited, "the change must wait for the sign-in")
+        self.assertEqual(ended, 1)
+
+    def test_a_disable_waits_for_a_sign_in_that_read_the_account(self) -> None:
+        ended, waited = self.sign_in_then_change(
+            lambda connection: db.account_by_username(connection, "bob", share_lock=True),
+            lambda connection, user_id: db.set_disabled(connection, user_id=user_id, disabled=True),
+        )
+        self.assertTrue(waited, "the change must wait for the sign-in")
+        self.assertEqual(ended, 1)
+
+    def test_a_disable_waits_for_a_provider_sign_in_that_read_the_account(self) -> None:
+        self.web(
+            "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
+            "values ('dora', 'reader', 'oidc', 'https://id.example/', 's1')"
+        )
+        ended, waited = self.sign_in_then_change(
+            lambda connection: db.account_by_oidc(
+                connection, issuer="https://id.example/", subject="s1", share_lock=True
+            ),
+            lambda connection, user_id: db.set_disabled(connection, user_id=user_id, disabled=True),
+        )
+        self.assertTrue(waited, "the change must wait for the sign-in")
+        self.assertEqual(ended, 1)
+
     def locked_from(self, connection: Any, name: str, address: str, limit: int = 10) -> bool:
         return db.login_locked(
             connection,
@@ -6282,6 +6353,111 @@ class TheProviderRowFromTheWeb(unittest.TestCase):
                 [revoked("sso-1"), revoked("sso-2"), revoked("local")], [True, True, False]
             )
             self.assertEqual(db.set_oidc_enabled(connection, enabled=False, actor="alice"), 0)
+
+    def turned_on(self, connection: psycopg.Connection) -> None:
+        db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")
+        db.record_oidc_verified(connection, revision=self.row(connection).revision)
+        db.set_oidc_enabled(connection, enabled=True, actor="alice")
+        connection.commit()
+
+    def test_off_waits_for_a_sign_in_that_read_the_rule_and_ends_its_session(self) -> None:
+        """Review 26-11-05, A01: the callback's session was made after the end and lived on."""
+
+        import threading
+
+        with self.web() as connection:
+            self.turned_on(connection)
+        sign_in, admin = self.web(), self.web()
+        ended: list[int] = []
+        try:
+            current = db.oidc_provider(sign_in, share_lock=True)
+            self.assertTrue(current is not None and current.enabled)
+
+            def turn_off() -> None:
+                ended.append(db.set_oidc_enabled(admin, enabled=False, actor="alice"))
+                admin.commit()
+
+            thread = threading.Thread(target=turn_off)
+            thread.start()
+            thread.join(0.5)
+            self.assertTrue(thread.is_alive(), "turning it off must wait for the sign-in")
+            db.create_oidc_account(
+                sign_in,
+                username="mallory",
+                role="admin",
+                issuer=self.SETTINGS["issuer"],
+                subject="s1",
+            )
+            account = db.account_by_oidc(sign_in, issuer=self.SETTINGS["issuer"], subject="s1")
+            if account is None:
+                self.fail("no account")
+            db.create_session(
+                sign_in,
+                token_hash=auth.token_hash("mallory"),
+                user_id=account.id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            sign_in.commit()
+            thread.join(5)
+        finally:
+            sign_in.close()
+            admin.close()
+        self.assertEqual(ended, [1])
+        self.assertEqual(self.live_sessions(), set())
+
+    def test_a_new_issuer_while_on_ends_the_old_issuers_sessions(self) -> None:
+        """Review 26-11-05, A05: its accounts cannot sign in again (B402's rule)."""
+
+        with self.web() as connection:
+            self.turned_on(connection)
+            for subject, token in (("s1", "old-1"), ("s2", "old-2")):
+                db.create_oidc_account(
+                    connection,
+                    username=f"user-{subject}",
+                    role="reader",
+                    issuer=self.SETTINGS["issuer"],
+                    subject=subject,
+                )
+                account = db.account_by_oidc(
+                    connection, issuer=self.SETTINGS["issuer"], subject=subject
+                )
+                if account is None:
+                    self.fail("no account")
+                db.create_session(
+                    connection,
+                    token_hash=auth.token_hash(token),
+                    user_id=account.id,
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                )
+            alice = db.account_by_username(connection, "alice")
+            if alice is None:
+                self.fail("no account")
+            db.create_session(
+                connection,
+                token_hash=auth.token_hash("local"),
+                user_id=alice.id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            connection.commit()
+
+            # The same issuer, other settings: nobody is turned away.
+            same = db.save_oidc_provider(
+                connection,
+                settings={**self.SETTINGS, "button_text": "Sign in"},
+                actor="alice",
+                verified=True,
+            )
+            self.assertEqual(same, 0)
+            other = db.save_oidc_provider(
+                connection,
+                settings={**self.SETTINGS, "issuer": "https://other.example.com/"},
+                actor="alice",
+                verified=True,
+            )
+            connection.commit()
+
+        self.assertEqual(other, 2)
+        self.assertEqual(self.live_sessions(), self.alive("alice", "local"))
 
     def add_sessions(self, tokens: dict[str, str]) -> None:
         """Accounts bob (local admin, not break-glass) and carol (local reader) with sessions."""

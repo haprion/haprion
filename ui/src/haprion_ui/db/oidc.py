@@ -109,8 +109,9 @@ def save_oidc_provider(
 
     Choosing the rule *break-glass accounts only* while sign-in through the
     provider is on ends the live sessions of the local accounts it turns away,
-    in the same transaction, and returns how many; `keep` is the session of
-    the admin who saved.
+    and a new issuer ends those of the accounts the old one signed in, in the
+    same transaction; the answer is how many. `keep` is the session of the
+    admin who saved.
     """
 
     unknown = set(settings) - set(OIDC_SETTINGS)
@@ -125,9 +126,20 @@ def save_oidc_provider(
                 "updated_by = %(actor)s",
                 {**settings, "actor": actor},
             )
+            ended = 0
+            if "issuer" in settings:
+                #
+                # While on, the old issuer's accounts cannot sign in again
+                # (`other_issuer`), so their sessions end now (A05, B402).
+                #
+                ended += end_sessions_where(
+                    cursor,
+                    "u.source = 'oidc' and (select enabled from oidc_provider) "
+                    "and u.oidc_issuer is distinct from (select issuer from oidc_provider)",
+                )
             if "local_login" in settings:
-                return end_locked_out_sessions(connection, keep=keep)
-            return 0
+                ended += end_locked_out_sessions(connection, keep=keep)
+            return ended
     except psycopg.errors.CheckViolation as error:
         raise ProviderRefused(
             "Sign-in through the provider is on; these settings did not pass Verify."
@@ -184,13 +196,18 @@ def set_oidc_enabled(
         ) from error
 
 
-def account_by_oidc(connection: Connection[Any], *, issuer: str, subject: str) -> Account | None:
-    """The account bound to this provider identity (B199: bound to `sub`, not the name)."""
+def account_by_oidc(
+    connection: Connection[Any], *, issuer: str, subject: str, share_lock: bool = False
+) -> Account | None:
+    """The account bound to this provider identity (B199: bound to `sub`, not the name).
+    `share_lock` holds the row to the end of the transaction, as for
+    `account_by_username`."""
 
+    lock = " for share" if share_lock else ""
     with connection.cursor(row_factory=class_row(Account)) as cursor:
         cursor.execute(
-            "select id, username, role, disabled, password_hash, source, break_glass, oidc_issuer "
-            "  from app_user where oidc_issuer = %(issuer)s and oidc_subject = %(subject)s",
+            "select id, username, role, disabled, password_hash, source, break_glass, oidc_issuer "  # noqa: S608 - constant
+            f"  from app_user where oidc_issuer = %(issuer)s and oidc_subject = %(subject)s{lock}",
             {"issuer": issuer, "subject": subject},
         )
         return cursor.fetchone()

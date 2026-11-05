@@ -515,6 +515,7 @@ class WhatIsLeftAndSaid(DeleteFixture):
         # 26-11-05, Q04: the copy stays because it is wanted; running it again would not remove it.
         reason = report.outcomes[0].reason
         self.assertIn("registry names", reason)
+        self.assertIn("remove it from the registry with a new run", reason)
         self.assertNotIn("run the deletion again", reason)
 
     def test_a_lock_held_by_another_operation_is_waited_for_once_per_run(self) -> None:
@@ -547,6 +548,7 @@ class WhatIsLeftAndSaid(DeleteFixture):
         self.assertEqual([n.state for n in nodes], ["removed", "kept", "kept", "kept"])
         for copy in nodes[1:]:
             self.assertIn("another certificate operation is running", copy.detail)
+            self.assertIn("run the deletion again", copy.detail)
             self.assertNotIn(str(self.lock), copy.detail)
             self.assertNotIn("/", copy.detail)
 

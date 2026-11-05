@@ -17,7 +17,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_registry, cert_retarget
+from haprion import cert_delete, cert_registry, cert_retarget
 from haprion.cert_delete import Guards
 from haprion.cert_inventory import FULLCHAIN, PRIVKEY
 from haprion.cert_publish import PublishError
@@ -333,7 +333,29 @@ class RemovingFromATarget(RetargetFixture):
         self.assertIn("named by the registry again", report.outcomes[0].nodes[1].detail)
         # 26-11-05, Q04: the copy stays because it is wanted; running it again would not remove it.
         self.assertIn("registry names", report.outcomes[0].reason)
+        self.assertIn("remove it from the registry with a new run", report.outcomes[0].reason)
         self.assertNotIn("run the removal again", report.outcomes[0].reason)
+
+    def test_a_lock_held_meanwhile_says_removal_and_not_deletion(self) -> None:
+        handle = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, handle)
+        real = self.node
+
+        def taking_the_lock_after_the_first(*args: Any) -> tuple[int, str]:
+            answer = real(*args)
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            return answer
+
+        with (
+            mock.patch.object(self, "node", taking_the_lock_after_the_first),
+            mock.patch.object(cert_delete, "RECHECK_WAIT_SECONDS", 1),
+        ):
+            report = self.retarget(self.policy_path, "remove", "example.com", clusters=("beta",))
+
+        kept = report.outcomes[0].nodes[1]
+        self.assertEqual(kept.state, "kept")
+        self.assertIn("run the removal again", kept.detail)
+        self.assertNotIn("deletion", kept.detail)
 
     def test_a_cluster_the_configuration_does_not_know_is_not_asked(self) -> None:
         report = self.retarget(self.policy_path, "remove", "shop.example", clusters=("gamma",))

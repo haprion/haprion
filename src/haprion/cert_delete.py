@@ -565,11 +565,15 @@ def ask_node(
 type NamedAgain = Callable[[str, str], bool]
 RECHECK_WAIT_SECONDS = 5
 NAMED_AGAIN = "named by the registry again; not removed"
-BUSY = "another certificate operation is running; run the removal again"
+BUSY = "another certificate operation is running; run the {action} again"
 
 
 def registry_names(
-    policy: PathPolicy, *, lock_path: Path = DEFAULT_LOCK_PATH, require_secure: bool = True
+    policy: PathPolicy,
+    *,
+    lock_path: Path = DEFAULT_LOCK_PATH,
+    require_secure: bool = True,
+    action: str = "removal",
 ) -> NamedAgain:
     """The check `remove_node_copies` makes before it asks a node (26-11-05, XX04).
 
@@ -579,19 +583,20 @@ def registry_names(
     """
 
     gave_up = False
+    busy = BUSY.format(action=action)
 
     def named(certificate_id: str, cluster_id: str) -> bool:
         # One wait per run: once the lock has not come free in time, the nodes
         # after are not made to wait for it again (26-11-05, Q03).
         nonlocal gave_up
         if gave_up:
-            raise LockError("operation_locked", BUSY)
+            raise LockError("operation_locked", busy)
         try:
             with publish_lock(lock_path, wait=RECHECK_WAIT_SECONDS):
                 runtime = load_runtime_config(policy, require_secure=require_secure)
         except LockError:
             gave_up = True
-            raise LockError("operation_locked", BUSY) from None
+            raise LockError("operation_locked", busy) from None
         registry = runtime.registry
         entry = registry.certificates.get(certificate_id) if registry is not None else None
         return entry is not None and cluster_id in entry.clusters
@@ -601,7 +606,7 @@ def registry_names(
 
 KEPT_AS_WANTED = (
     "a copy was kept because the registry names the certificate again; "
-    "take it out of the registry first if it should go"
+    "remove it from the registry with a new run if that is intended"
 )
 
 
@@ -789,7 +794,7 @@ def delete(
                 policy.cert_deploy_identity,
                 node_remover,
                 named_again=registry_names(
-                    policy, lock_path=lock_path, require_secure=require_secure
+                    policy, lock_path=lock_path, require_secure=require_secure, action="deletion"
                 ),
             )
         ),

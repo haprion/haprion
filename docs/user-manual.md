@@ -4584,6 +4584,15 @@ curl -sS -G https://mgr.example.com/api/v1/clusters/alpha/traffic \
      --data-urlencode "from=$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
+A request has the time its node accepted it (`time`), and reaches the database a minute or so later: hours
+later from a node that was behind after a flood or an outage (`nodes[].catching_up` says so). A client that
+polls with `from` set to the end of its last call therefore never sees a request that arrives after its time
+has passed. Such a client reads from a margin back instead (several minutes, and the time since the last call
+when a node is catching up), and drops what it has seen: a request is the same one by its `time`, `node` and
+`request_number`. A client that must have every request reads the syslog stream from an external receiver
+([Sending the traffic log elsewhere](#sending-the-traffic-log-elsewhere-and-metrics)), not the
+API.
+
 ```bash
 # How a job went
 curl -sS https://mgr.example.com/api/v1/jobs/1042 \

@@ -2544,6 +2544,10 @@ only once the new certificate has been checked. If the CA holds the request, the
 pending**, with the same *Resume enrollment* button, and the next pass resumes that request rather than
 asking again.
 
+The timer ends by publishing everything and rolling out what is still due, so a rollout that failed is made
+again. A cluster whose deploy was blocked (another deploy holds its lock, say) is reported as a warning
+and tried again at the next run; it does not make the timer fail.
+
 One record per certificate under `<state_root>/renewals/` says what the pass's last attempt did. The
 listing shows a failure as **Renewal failed**, with the CA's sentence, rather than letting the expiry
 date creep closer. The record is about the certificate the pass tried to renew. It ends when a new

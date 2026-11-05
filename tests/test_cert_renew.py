@@ -11,7 +11,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_issue, dns_profiles, dns_provider_catalog
+from haprion import cert_issue, dns_profiles, dns_provider_catalog, exit_codes
 from haprion.cli import cert_renew
 from haprion.config import ConfigError, load_policy, load_runtime_config
 from haprion.dns_profile_keys import generate, render_private_key
@@ -239,6 +239,19 @@ class TheDistributionIsRedone(Fixture):
 
         self.assertTrue(self.redo(3, errors))
         self.assertIn("deploy alpha: exit 3", errors.getvalue())
+
+    def test_a_deploy_that_was_blocked_is_not_a_failure_of_the_timer(self) -> None:
+        """A deploy holding the cluster lock stopped this one before it changed anything (EE04)."""
+
+        self.run_publish(self.policy_path, deployer=lambda _cluster_id: exit_codes.BLOCKED)
+        errors = io.StringIO()
+
+        self.assertFalse(self.redo(exit_codes.BLOCKED, errors))
+        self.assertIn("deploy alpha: blocked", errors.getvalue())
+        self.assertIn("WARNING", errors.getvalue())
+
+        self.assertFalse(self.redo(0), "the mark stood, so the next pass rolls it out")
+        self.assertEqual(self.deployed, ["alpha", "alpha"])
 
     def test_the_registry_is_read_again_after_certbot(self) -> None:
         """Remove from... run while certbot worked is not undone (26-11-05, EE01)."""

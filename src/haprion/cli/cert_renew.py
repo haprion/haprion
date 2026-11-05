@@ -31,7 +31,7 @@ from haprion.cert_issue import (
 )
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer, PublishError, publish
 from haprion.cli import arguments, cert_scep
-from haprion.cli.cert_publish import default_deployer, print_summary, result_envelope
+from haprion.cli.cert_publish import default_deployer, print_summary
 from haprion.config import (
     CERTIFICATE_ID,
     DEFAULT_POLICY_PATH,
@@ -285,8 +285,22 @@ def redistribute(
         return True
     if report.changed_clusters or report.deployments or report.failed or report.warnings:
         print_summary(report, errors)
-    _, exit_code = result_envelope(report, request_id=new_request_id())
-    return exit_code == exit_codes.FAILED
+    #
+    # A deploy that stopped on the cluster's lock or a safety check changed
+    # nothing, and the mark stands, so the next pass tries again: said, but not
+    # a failure of the timer (26-11-05, EE04). A rollout that went wrong is.
+    #
+    for deployment in report.deployments:
+        if deployment.exit_code == exit_codes.BLOCKED:
+            print(
+                f"WARNING: deploy {deployment.cluster}: blocked, nothing was changed; "
+                "the next pass tries again",
+                file=errors,
+            )
+    return bool(report.failed) or any(
+        deployment.exit_code not in (exit_codes.OK, exit_codes.BLOCKED)
+        for deployment in report.deployments
+    )
 
 
 def _stopped(args: argparse.Namespace, code: str, message: str, exit_code: int) -> int:

@@ -223,6 +223,11 @@ Coming from another load-balancer interface, a few choices here are deliberate a
   clusters of one to eight nodes - so it is one more machine to run. It is not in the traffic
   path: without it the nodes go on serving and keepalived still moves the virtual address, and
   what stops is changing anything ([what keeps working](docs/DISASTER-RECOVERY.md)).
+- **With node backups on, the nodes need no backup of their own.** The manager keeps each node's
+  configuration, keys and state as archives, and can restore a node from them onto an empty VM. So
+  there is little reason to back up the node VMs as well, unless you want to - which may save you a
+  backup licence or two. Back up the manager instead: the archives are kept there. An archive
+  restores Haprion, not the machine. Keep a routine of your own for making a new VM to restore onto.
 - **The nodes fetch; the manager never pushes.** Each key the manager holds on a node can run only
   one fixed command there. Configuration and certificates are always fetched by the node, which checks
   a release before it switches to it.

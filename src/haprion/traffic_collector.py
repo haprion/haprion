@@ -559,6 +559,7 @@ def _write_meta(
         "waf_outcome": earlier.get("waf_outcome"),
         "waf_last_success": earlier.get("waf_last_success"),
         "import_paused": earlier.get("import_paused"),
+        "gaps": earlier.get("gaps"),
     }
     _replace(path, _meta_document(document))
 
@@ -602,6 +603,45 @@ def _write_waf_outcome(
     elif "waf_last_success" not in _previous(_meta_path(config, target)):
         fields["waf_last_success"] = None
     _amend_meta(config, target, **fields)
+
+
+def _record_gaps(
+    config: CollectorConfig,
+    target: NodeTarget,
+    *,
+    window: int,
+    now: datetime,
+    skipped: dict[tuple[str, str, str], int],
+    lost: dict[tuple[str, str, str], int],
+) -> None:
+    """Keep, per day, what this node's log is missing that the run knows of.
+
+    `skipped` records the import stepped over (unreadable, or outside the days
+    the database holds) and `lost` bytes the budget removed before they were
+    imported. Added to what earlier runs found and dropped with their day, so
+    the log page can say there is a hole where the journal alone did (review
+    2026-11-05, T06).
+    """
+
+    earlier = _previous(_meta_path(config, target)).get("gaps")
+    gaps: dict[str, dict[str, int]] = {}
+    if isinstance(earlier, dict):
+        for day, entry in earlier.items():
+            if (
+                isinstance(day, str)
+                and isinstance(entry, dict)
+                and type(entry.get("skipped")) is int
+                and type(entry.get("lost")) is int
+            ):
+                gaps[day] = {"skipped": entry["skipped"], "lost": entry["lost"]}
+    oldest = (now.astimezone(UTC).date() - timedelta(days=window - 1)).isoformat()
+    for source, field in ((skipped, "skipped"), (lost, "lost")):
+        for (cluster, node, day), count in source.items():
+            if (cluster, node) == (target.cluster, target.node) and count:
+                gaps.setdefault(day, {"skipped": 0, "lost": 0})[field] += count
+    gaps = {day: entry for day, entry in sorted(gaps.items()) if day >= oldest}
+    if gaps != (earlier if isinstance(earlier, dict) else {}):
+        _amend_meta(config, target, gaps=gaps or None)
 
 
 #
@@ -817,7 +857,12 @@ def _over_budget(held: int, capacity: int, free: int) -> bool:
     return held > capacity * SPACE_SHARE or free < capacity * FREE_SHARE
 
 
-def _staging_budget(config: CollectorConfig, *, today: date) -> dict[tuple[str, str], str]:
+def _staging_budget(
+    config: CollectorConfig,
+    *,
+    today: date,
+    lost: dict[tuple[str, str, str], int] | None = None,
+) -> dict[tuple[str, str], str]:
     """Remove the oldest finished days' parts while staging is over its budget.
 
     Whole days, every node's at once, never today, and each with the marker
@@ -831,6 +876,9 @@ def _staging_budget(config: CollectorConfig, *, today: date) -> dict[tuple[str, 
     T02). The nodes held are the ones whose own parts are over their share of
     the budget (`share`); where nothing but the volume's free space is short,
     none can be told from the rest (`volume`).
+
+    `lost` is told, per node and day, how many bytes of a part were removed
+    that the database had not imported (review 2026-11-05, T06).
     """
 
     try:
@@ -861,7 +909,8 @@ def _staging_budget(config: CollectorConfig, *, today: date) -> dict[tuple[str, 
             break
         for part, size in sorted(days[day]):
             checkpoint = _database_checkpoint(config, part)
-            ingested = _checkpoint_offset(checkpoint, size=size) == size
+            imported = _checkpoint_offset(checkpoint, size=size)
+            ingested = imported == size
             _replace(part.with_name(part.name[: -len(".jsonl")] + ".done"), b"", 0o600)
             part.unlink()
             if checkpoint.exists() or checkpoint.is_symlink():
@@ -871,9 +920,12 @@ def _staging_budget(config: CollectorConfig, *, today: date) -> dict[tuple[str, 
             free += size
             cluster, _, rest = part.name.partition("--")
             held_by[(cluster, rest.partition("--")[0])] -= size
-            lost = "" if ingested else ", with records the database did not have yet"
+            if not ingested and lost is not None:
+                key = (cluster, rest.partition("--")[0], day)
+                lost[key] = lost.get(key, 0) + size - imported
+            said = "" if ingested else ", with records the database did not have yet"
             print(
-                f"{part.name}: removed before its time: the mirror is over its space budget{lost}",
+                f"{part.name}: removed before its time: the mirror is over its space budget{said}",
                 file=sys.stderr,
             )
     if not _over_budget(held, capacity, free):
@@ -1329,11 +1381,15 @@ def _database_reason(exc: psycopg.Error) -> str:
 
 
 def _ingest_database(
-    config: CollectorConfig, *, hold_day: date | None = None
+    config: CollectorConfig,
+    *,
+    hold_day: date | None = None,
+    counts: dict[tuple[str, str, str], int] | None = None,
 ) -> tuple[int, int, dict[NodeTarget, str]]:
     """Import every staging part, and answer what it skipped: records, parts, failed nodes.
 
     The part of `hold_day` is left where it is, to be imported when there is room.
+    `counts` is told how many records each node's day stepped over (T06).
 
     A part that cannot be imported stops its own node and no other: the nodes
     after it in the list are imported as usual, and the failed node is answered
@@ -1368,7 +1424,11 @@ def _ingest_database(
                             expired += 1
                         continue
                     try:
-                        skipped += _ingest_part(config, connection, target, part, window)
+                        stepped = _ingest_part(config, connection, target, part, window)
+                        skipped += stepped
+                        if counts is not None and stepped:
+                            key = (target.cluster, target.node, day)
+                            counts[key] = counts.get(key, 0) + stepped
                     except psycopg.Error as exc:
                         failed[target] = f"database import failed: {_database_reason(exc)}"
                     except CollectorError as exc:
@@ -1808,7 +1868,9 @@ def collect(
         selected = fetch or (lambda node, day, offset: ssh_fetch(config, node, day, offset))
         selected_waf = fetch_waf_page or (lambda node, cursor: ssh_fetch_waf(config, node, cursor))
 
-        paused = _staging_budget(config, today=attempted.astimezone(UTC).date())
+        lost_by: dict[tuple[str, str, str], int] = {}
+        skipped_by: dict[tuple[str, str, str], int] = {}
+        paused = _staging_budget(config, today=attempted.astimezone(UTC).date(), lost=lost_by)
 
         def one(target: NodeTarget) -> _NodeRun:
             problem = None
@@ -1888,7 +1950,9 @@ def collect(
             )
         try:
             skipped, expired, failed = _ingest_database(
-                config, hold_day=attempted.astimezone(UTC).date() if held_import else None
+                config,
+                hold_day=attempted.astimezone(UTC).date() if held_import else None,
+                counts=skipped_by,
             )
             for target, reason in failed.items():
                 print(f"{target.cluster}/{target.node}: {reason}", file=sys.stderr)
@@ -1945,6 +2009,9 @@ def collect(
                 waf_outcome = "database"
             _write_waf_outcome(config, target, attempted=attempted, outcome=waf_outcome)
             _amend_meta(config, target, import_paused=held_import)
+            _record_gaps(
+                config, target, window=window, now=attempted, skipped=skipped_by, lost=lost_by
+            )
         _retire(config, now=attempted, window=window)
         _retire_staging(config, now=attempted, window=window)
         return 1 if failures else 0

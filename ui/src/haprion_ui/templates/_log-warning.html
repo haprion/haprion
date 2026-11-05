@@ -43,8 +43,14 @@
           {%- if node.import_paused -%}
             {{ '; ' if traffic_issue }}today's logs are not imported into the database: it is over its space budget until midnight UTC
           {%- endif -%}
+          {%- if node.skipped_records() -%}
+            {{ '; ' if traffic_issue or node.import_paused }}{{ node.skipped_records() }} record{{ 's' if node.skipped_records() != 1 }} could not be imported ({{ node.gap_days() | join(', ') }})
+          {%- endif -%}
+          {%- if node.lost_days() -%}
+            {{ '; ' if traffic_issue or node.import_paused or node.skipped_records() }}records of {{ node.lost_days() | join(', ') }} were removed before they were imported
+          {%- endif -%}
           {%- if node.waf_failed() -%}
-            {{ '; ' if traffic_issue or node.import_paused }}WAF findings not collected ({{ node.waf_outcome }})
+            {{ '; ' if traffic_issue or node.import_paused or node.gaps }}WAF findings not collected ({{ node.waf_outcome }})
             {%- if waf_stale is not none %}, last collected
               {%- if waf_stale < 90 %} {{ waf_stale | round | int }} s ago
               {%- elif waf_stale < 5400 %} {{ (waf_stale / 60) | round | int }} min ago

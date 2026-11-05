@@ -1042,6 +1042,68 @@ class TrafficCollectorTests(unittest.TestCase):
         (self.staging / ".database-budget").symlink_to(elsewhere)
         self.assertFalse(traffic_collector._database_budget_held(self.config, now=NOW))
 
+    def test_what_the_import_steps_over_is_counted_per_node_and_day(self) -> None:
+        """Review 2026-11-05, T06: an unreadable record, or one outside the days
+        the database holds, was in the journal's line alone."""
+
+        today = NOW.date().isoformat()
+        part = self.staging / f"alpha--node-a--{today}.jsonl"
+        part.write_bytes(traffic_line("/ok") + b"not json\n" + traffic_line("/\ud800") + b"\n")
+        counts: dict[tuple[str, str, str], int] = {}
+        days = frozenset({f"{NOW:%Y%m%d}"})
+        with (
+            patch("haprion.traffic_collector.psycopg.connect", return_value=_Connection()),
+            patch("haprion.traffic_collector._database_days", return_value=days),
+            patch("haprion.traffic_collector._database_window", return_value=None),
+        ):
+            REAL_INGEST(self.config, counts=counts)
+        self.assertEqual(counts, {("alpha", "node-a", today): 3})
+
+    def test_a_day_removed_before_its_import_is_counted_in_bytes(self) -> None:
+        for node, imported in (("node-a", 0), ("node-b", 100)):
+            (self.staging / f"alpha--{node}--2026-09-05.jsonl").write_bytes(b"x" * 100)
+            (self.staging / f".alpha--{node}--2026-09-05.jsonl.database-offset").write_text(
+                f"{imported}\n"
+            )
+        other = NodeTarget("alpha", "node-b", "node-b.example.com")
+        configured = dataclasses.replace(self.config, nodes=(self.target, other))
+        lost: dict[tuple[str, str, str], int] = {}
+        with self.space(capacity=100, free=100), redirect_stderr(StringIO()):
+            traffic_collector._staging_budget(configured, today=NOW.date(), lost=lost)
+        self.assertEqual(lost, {("alpha", "node-a", "2026-09-05"): 100})
+
+    def test_the_counts_are_kept_per_day_added_up_and_age_out_with_their_day(self) -> None:
+        old = (NOW.date() - timedelta(days=RETENTION_DAYS + 2)).isoformat()
+        today = NOW.date().isoformat()
+
+        def run(counts: dict[tuple[str, str, str], int]) -> dict[str, Any]:
+            def ingest(_config: CollectorConfig, **held: Any) -> tuple[int, int, dict[Any, str]]:
+                held["counts"].update(counts)
+                return 0, 0, {}
+
+            with (
+                patch("haprion.traffic_collector._ingest_database", ingest),
+                patch("haprion.traffic_collector._mirror_window", return_value=RETENTION_DAYS),
+                redirect_stderr(StringIO()),
+            ):
+                collect(
+                    self.config,
+                    now=NOW,
+                    fetch=lambda _t, wanted, offset: self.response(wanted, offset, b""),
+                    fetch_waf_page=no_waf,
+                )
+            gaps: dict[str, Any] = json.loads(
+                (self.mirror / "alpha--node-a.meta.json").read_bytes()
+            )["gaps"]
+            return gaps
+
+        self.assertEqual(
+            run({("alpha", "node-a", today): 2, ("alpha", "node-a", old): 9}),
+            {today: {"skipped": 2, "lost": 0}},
+        )
+        self.assertEqual(run({("alpha", "node-a", today): 3}), {today: {"skipped": 5, "lost": 0}})
+        self.assertEqual(run({}), {today: {"skipped": 5, "lost": 0}})
+
     def test_a_rebuilt_day_is_imported_from_its_beginning(self) -> None:
         """Review 2026-10-30, E3: a node file replaced the same day by a longer
         one rebuilt the part from zero, but the import position stayed, so the

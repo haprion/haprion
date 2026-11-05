@@ -410,6 +410,24 @@ class TrafficLogReadingTests(unittest.TestCase):
         self.meta("alpha", "node-a")
         self.assertFalse(read_freshness(self.root, ("alpha",)).nodes[0].import_paused)
 
+    def test_the_gaps_are_read_as_counts_and_nothing_else_is_believed(self) -> None:
+        self.meta(
+            "alpha",
+            "node-a",
+            gaps={
+                "2026-09-07": {"skipped": 3, "lost": 0},
+                "2026-09-08": {"skipped": 2, "lost": 4096},
+                "not a day": {"skipped": 1, "lost": 1},
+                "2026-09-09": {"skipped": -1, "lost": "x"},
+            },
+        )
+        node = read_freshness(self.root, ("alpha",)).nodes[0]
+        self.assertEqual(node.skipped_records(), 5)
+        self.assertEqual(node.lost_days(), ("2026-09-08",))
+        self.meta("alpha", "node-a", gaps="nothing")
+        node = read_freshness(self.root, ("alpha",)).nodes[0]
+        self.assertEqual((node.skipped_records(), node.lost_days()), (0, ()))
+
     def test_unreadable_metadata_never_stops_the_page(self) -> None:
         (self.root / "alpha--node-a.meta.json").write_bytes(b"{ not json")
 
@@ -540,6 +558,29 @@ class TheTrafficLogPage(LoginTestCase):
         page = self.page(now=NOW)
         self.assertIn("today's logs are not imported into the database", page)
         self.assertIn("space budget", page)
+
+    def test_a_hole_the_collector_knows_of_is_in_the_log_warning(self) -> None:
+        """Review 2026-11-05, T06: skipped records and a day removed before its import
+        were in the collector's journal alone, and the page read as calm."""
+
+        (self.root / "alpha--node-a.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt": NOW.isoformat(),
+                    "last_success": NOW.isoformat(),
+                    "outcome": "ok",
+                    "gaps": {
+                        "2026-09-07": {"skipped": 3, "lost": 0},
+                        "2026-09-08": {"skipped": 2, "lost": 4096},
+                    },
+                }
+            )
+        )
+        page = self.page(now=NOW)
+        self.assertIn("5 records could not be imported", page)
+        self.assertIn("2026-09-08", page)
+        self.assertIn("removed before they were imported", page)
 
     def test_a_journal_that_could_not_be_collected_is_in_the_log_warning(self) -> None:
         (self.root / "alpha--node-a.meta.json").write_text(

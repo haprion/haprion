@@ -161,6 +161,21 @@ class Freshness:
     # importing them (review 2026-11-05, T05).
     #
     import_paused: bool = False
+    #
+    # What the collector knows its copy or the database is missing, per day:
+    # (day, records skipped, bytes removed before they were imported). Kept for
+    # as long as the day is (review 2026-11-05, T06).
+    #
+    gaps: tuple[tuple[str, int, int], ...] = ()
+
+    def skipped_records(self) -> int:
+        return sum(skipped for _day, skipped, _lost in self.gaps)
+
+    def lost_days(self) -> tuple[str, ...]:
+        return tuple(day for day, _skipped, lost in self.gaps if lost)
+
+    def gap_days(self) -> tuple[str, ...]:
+        return tuple(day for day, skipped, _lost in self.gaps if skipped)
 
     def waf_failed(self) -> bool:
         return self.waf_outcome is not None and self.waf_outcome != "ok"
@@ -640,7 +655,34 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
         else None,
         waf_last_success=_stamp(value.get("waf_last_success")),
         import_paused=value.get("import_paused") is True,
+        gaps=_gaps(value.get("gaps")),
     )
+
+
+_GAP_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _gaps(value: Any) -> tuple[tuple[str, int, int], ...]:
+    """The collector's per-day counts, kept to what has the form of one."""
+
+    if not isinstance(value, dict):
+        return ()
+    found: list[tuple[str, int, int]] = []
+    for day, entry in sorted(value.items())[:90]:
+        if not isinstance(day, str) or _GAP_DAY.fullmatch(day) is None:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        skipped, lost = entry.get("skipped"), entry.get("lost")
+        if (
+            type(skipped) is int
+            and type(lost) is int
+            and 0 <= skipped <= 2**62
+            and 0 <= lost <= 2**62
+            and (skipped or lost)
+        ):
+            found.append((day, skipped, lost))
+    return tuple(found)
 
 
 def _read_bounded(path: Path, *, maximum: int) -> bytes:

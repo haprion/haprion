@@ -2141,6 +2141,8 @@ way the page stores it, and applied by the same job.
   same file twice changes nothing once every profile is *In effect*. A profile that is not (*Apply
   failed*, *Not applied*) is applied again as it is stored.
 - A DNS profile keeps its provider. Another provider means another ID.
+- An ID is lower case. The file, `--replace` and `remove` read it the same way, trimmed and in lower case,
+  and refuse a name that cannot be an ID.
 - An NDES profile's `endpoint` must be a server confirmed on the manager
   ([Adding an NDES server](#adding-an-ndes-server)); the file is refused otherwise.
 - `--prune` removes the stored profiles of a kind the file lists but does not name. `remove` removes

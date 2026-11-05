@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from haprion import exit_codes
+
 from haprion_ui import db, profile_apply, tool_answer
 from haprion_ui.profile_apply import ApplyError, Change, Plan
 from tests.contract_schema import assert_contract
@@ -193,6 +195,45 @@ class AProfileThatIsNotInEffectIsAppliedAgain(unittest.TestCase):
 
         answer = assert_contract("haprion-profiles-apply", out.getvalue())
         self.assertEqual(answer["result"]["changes"][0]["action"], "apply")
+
+
+class AnIdIsTakenAsTheFileTakesIt(unittest.TestCase):
+    """K13: the file lower-cases an ID; `--replace` and `remove` did not."""
+
+    def test_replace_names_a_profile_the_way_the_file_lists_it(self) -> None:
+        wanted = profile_apply.Wanted(
+            profile_apply.DNS, "cf-main", "cloudflare", {"api_token": "t"}
+        )
+        rows = [stored("cf-main", 2)]
+        with self.assertRaises(Exception) as sealing:
+            profile_apply.plan(
+                {"dns_profiles": [wanted]},
+                {"dns_profiles": rows},
+                object(),  # type: ignore[arg-type]
+                replace=[" Cf-Main "],
+                prune=False,
+                servers=[],
+                standing=profile_apply.standing_of({"dns_profiles": rows}, {}, writes=True),
+            )
+
+        # Past the check that the file lists it, to sealing the new box.
+        self.assertNotIn("does not list", str(sealing.exception))
+
+    def test_a_name_that_cannot_be_an_id_is_refused_not_nothing_to_change(self) -> None:
+        for argv in (["remove", "dns", "Bad Id!"], ["remove", "ndes", ""]):
+            with self.subTest(argv):
+                args = profile_apply.build_parser().parse_args([*argv, "--json"])
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                    code = profile_apply.command_remove(args)
+
+                answer = assert_contract("haprion-profiles-apply", out.getvalue())
+                self.assertEqual((code, answer["error"]["code"]), (exit_codes.USAGE, "bad_input"))
+
+    def test_remove_takes_the_id_in_any_case(self) -> None:
+        args = profile_apply.build_parser().parse_args(["remove", "dns", " Cloudflare-Main "])
+
+        self.assertEqual(profile_apply.profile_id_of(args.profile), "cloudflare-main")
 
 
 if __name__ == "__main__":

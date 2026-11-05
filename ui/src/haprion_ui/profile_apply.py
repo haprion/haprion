@@ -50,7 +50,7 @@ from haprion import exit_codes, ndes_profiles, safe_yaml
 from haprion.cli import apply_common, arguments
 from haprion.config import load_policy
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
-from haprion.dns_profiles import ProfileError
+from haprion.dns_profiles import PROFILE_ID, ProfileError
 
 from haprion_ui import (
     config,
@@ -133,6 +133,12 @@ class Plan:
     unchanged: tuple[str, ...]
 
 
+def profile_id_of(text: str) -> str:
+    """An ID as the file takes it: trimmed and lower-cased (the pattern is lower case)."""
+
+    return text.strip().lower()
+
+
 def _text(value: object, where: str) -> str:
     if not isinstance(value, str):
         raise ApplyError(f"{where} must be text")
@@ -200,7 +206,7 @@ def read_file(path: Path) -> dict[str, list[Wanted]]:
                 raise ApplyError(
                     f"{where} has unknown {labels.noun(len(extra), 'field')}: {', '.join(extra)}"
                 )
-            profile_id = _text(entry.get("id"), f"{where} id").strip().lower()
+            profile_id = profile_id_of(_text(entry.get("id"), f"{where} id"))
             if profile_id in seen:
                 raise ApplyError(f"{where}: {profile_id} is listed twice")
             seen.add(profile_id)
@@ -321,7 +327,7 @@ def plan(
             )
     changes: list[Change] = []
     unchanged: list[str] = []
-    asked = set(replace)
+    asked = {profile_id_of(item) for item in replace}
     for section, wanted_list in found.items():
         rows = {row.id: row for row in stored.get(section, ())}
         taken = list(rows)
@@ -564,15 +570,25 @@ def command_remove(args: argparse.Namespace, *, sleep: Callable[[float], None] =
     """
 
     kind = DNS if args.kind == "dns" else NDES
+    profile = profile_id_of(args.profile)
+    if not PROFILE_ID.fullmatch(profile):
+        return tool_answer.refusal(
+            args,
+            OPERATION,
+            "bad_input",
+            f"{args.profile!r} is not a profile ID: lower-case letters, digits, dots, "
+            "dashes and underscores, at most 32 characters",
+            exit_codes.USAGE,
+        )
 
     with connect(load_environment()) as connection:
-        row = next((row for row in kind.listed(connection) if row.id == args.profile), None)
+        row = next((row for row in kind.listed(connection) if row.id == profile), None)
         connection.commit()
         if row is None:
             if args.json:
                 return tool_answer.done(OPERATION, summary(Plan((), ()), check=False, applied=[]))
             else:
-                print(f"no {kind.name} profile {args.profile}; nothing to change")
+                print(f"no {kind.name} profile {profile}; nothing to change")
             return 0
         change = Change(kind, row.id, "remove", row.revision)
         try:

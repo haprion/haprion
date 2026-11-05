@@ -70,6 +70,12 @@ class NodeView:
     package_note: str | None = None
     package_message: str | None = None
     #
+    # The host name the node reports is not the name Haprion knows it by
+    # (B447, N02). The node's deploy keeps working under the name in its
+    # node.conf, so nothing else says it; Needs attention's row does.
+    #
+    host_name_message: str | None = None
+    #
     # Why the node could not be read, in the words of the reading (a
     # hover): "SSH gave no answer within 60 seconds".
     #
@@ -449,6 +455,12 @@ def _node_view(
 
     status = _mapping(node["status"])
     prepare_pending = _mapping(status.get("preparation")).get("current") is False
+    reported_name = status.get("node")
+    host_name_message = (
+        f"the node reports the host name {reported_name}; Haprion knows it as {name}"
+        if isinstance(reported_name, str) and reported_name and reported_name != name
+        else None
+    )
     package_note, package_message = node_package_words(status.get("installation"), carried) or (
         None,
         None,
@@ -537,6 +549,7 @@ def _node_view(
             prepare_pending=prepare_pending,
             package_note=package_note,
             package_message=package_message,
+            host_name_message=host_name_message,
             package_version=_known_text(_mapping(status.get("installation")).get("version")),
         )
 
@@ -557,6 +570,7 @@ def _node_view(
         prepare_pending=prepare_pending,
         package_note=package_note,
         package_message=package_message,
+        host_name_message=host_name_message,
         release_number=_positive(release.get("version")),
         haproxy_version=_known_text(runtime.get("version")),
         package_version=_known_text(_mapping(status.get("installation")).get("version")),

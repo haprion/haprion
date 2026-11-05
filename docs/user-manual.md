@@ -4122,6 +4122,9 @@ box is not shown.
   behind the published version is not listed: that is a publish waiting for its deploy.
 - **A node to prepare again**, as a warning, when the preparation step its node package carries differs
   from the one last run on it: run `sudo haprion-node-prepare` on it ([Installing and changing node scripts](#installing-and-changing-node-scripts)).
+- **A node whose host name differs from its name**, as a warning: *the node reports the host name
+  lb-01-old; Haprion knows it as lb-01*. A renamed host keeps deploying under the name in its `node.conf`;
+  see *Changing a node's host* under [Adding and removing a node](#adding-and-removing-a-node) to move it to the new name.
 - **A node on another node package than the manager's**, as a warning: its `haprion-node` is older than
   the one the manager's release carries, or newer. Older: an upgrade has not reached the node yet, and
   `apt upgrade` on it clears it. Newer: the manager has not been updated yet, or its CLI was rolled back.
@@ -4262,7 +4265,7 @@ haprion_status_age_seconds{cluster="alpha"} 12
 haprion_status_age_seconds{cluster="beta"} 14
 ```
 
-`kind` is one of `api_token`, `backup`, `certificate`, `cluster`, `forwarding`, `job`, `logs`, `manager`, `node`,
+`kind` is one of `api_token`, `backup`, `certificate`, `cluster`, `forwarding`, `host_name`, `job`, `logs`, `manager`, `node`,
 `node_package`, `preparation`, `reading`, `regeneration`, `service`, `traffic_stream` and `waf`. Every kind and
 severity pair is present, even at 0, so an alert expression never meets a missing series.
 

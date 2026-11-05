@@ -226,6 +226,7 @@ PAGES = {
     "manager": "Dashboard",
     "preparation": "Dashboard",
     "node_package": "Dashboard",
+    "host_name": "Dashboard",
     "traffic_stream": "Dashboard",
     "api_token": "Settings",
     "regeneration": "Versions",
@@ -466,6 +467,18 @@ def from_dashboard(
                         cluster=cluster.cluster,
                         subject=node.name,
                         message=node.package_message,
+                        since=None,
+                        link=card_link(cluster.cluster),
+                    )
+                )
+            if node.host_name_message:
+                items.append(
+                    Item(
+                        kind="host_name",
+                        severity="warning",
+                        cluster=cluster.cluster,
+                        subject=node.name,
+                        message=node.host_name_message,
                         since=None,
                         link=card_link(cluster.cluster),
                     )
@@ -1230,7 +1243,9 @@ def unacknowledged(
 # that only a whole, fresh reading can say are done with (review 2026-10-30, E2).
 #
 READ_PER_CLUSTER = frozenset({"cluster", "service"})
-READ_PER_NODE = frozenset({"node", "preparation", "node_package", "forwarding", "traffic_stream"})
+READ_PER_NODE = frozenset(
+    {"node", "preparation", "node_package", "host_name", "forwarding", "traffic_stream"}
+)
 
 
 def held_through_gaps(

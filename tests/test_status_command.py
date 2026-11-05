@@ -821,6 +821,24 @@ class CallerTests(HelperFixture):
         )
         self.assertLess(out.index("node-b ("), out.index("Preparation:"))
 
+    def test_a_node_reporting_another_host_name_than_haprion_knows_is_named(self) -> None:
+        """B447 N02: the interface's Needs attention row, in the command."""
+
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET_HASH),
+                    "node-b": node_status("renamed-b", owner=False, release_hash=TARGET_HASH),
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertEqual(out.count("Host name:"), 1)
+        self.assertIn("Host name:    the node reports renamed-b; Haprion knows it as node-b", out)
+        self.assertLess(out.index("node-b ("), out.index("Host name:"))
+
     def test_the_ipvs_file_has_a_line_of_its_own(self) -> None:
         stale = dict(IPVS, installed_sha256="b2" * 32)
         outside = dict(IPVS, included=False)

@@ -47,6 +47,7 @@ def node(
     *,
     prepare_pending: bool = False,
     package_message: str | None = None,
+    host_name_message: str | None = None,
 ) -> Any:
     return SimpleNamespace(
         name=name,
@@ -55,6 +56,7 @@ def node(
         detail=detail,
         prepare_pending=prepare_pending,
         package_message=package_message,
+        host_name_message=host_name_message,
     )
 
 
@@ -353,6 +355,24 @@ class EachKindComesAndGoes(unittest.TestCase):
         )
         self.assertEqual(items[0].link, "/#cluster-alpha")
         self.assertNotEqual(items[1].key, items[2].key)
+
+    def test_a_node_with_another_host_name_than_haprion_knows_is_its_own_row(self) -> None:
+        """B447 N02: acknowledging a node that is down must not hide a renamed host."""
+
+        said = "the node reports the host name node-z; Haprion knows it as node-a"
+        items = attention.from_dashboard(
+            [
+                cluster(
+                    "alpha", nodes=(node("node-a", "healthy", "Online", host_name_message=said),)
+                )
+            ],
+            drift_label="Behind",
+        )
+        self.assertEqual(
+            [(item.kind, item.subject, item.severity, item.message) for item in items],
+            [("host_name", "node-a", "warning", said)],
+        )
+        self.assertEqual(items[0].link, "/#cluster-alpha")
 
     def test_a_node_on_another_node_package_than_the_managers_is_its_own_row(self) -> None:
         """26-10-29: which nodes an upgrade round has not reached yet."""

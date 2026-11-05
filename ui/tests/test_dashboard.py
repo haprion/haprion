@@ -203,6 +203,31 @@ class HealthDerivation(unittest.TestCase):
                 self.assertEqual(view.clusters[0].nodes[0].prepare_pending, pending)
                 self.assertFalse(view.clusters[0].nodes[1].prepare_pending)
 
+    def test_a_node_reporting_another_host_name_than_haprion_knows_it_by_says_so(self) -> None:
+        """B447 N02: a renamed host kept working, and nothing said it was no longer the node's name."""
+
+        status = reading("done-single-owner.json")
+        first = status.result["nodes"][0]["name"]
+        for reported, said in (
+            (
+                "renamed-host",
+                f"the node reports the host name renamed-host; Haprion knows it as {first}",
+            ),
+            (first, None),
+            (None, None),
+        ):
+            with self.subTest(reported=reported):
+                result = dict(status.result)
+                nodes = [dict(node) for node in result["nodes"]]
+                nodes[0]["status"] = dict(nodes[0]["status"])
+                if reported is None:
+                    nodes[0]["status"].pop("node", None)
+                else:
+                    nodes[0]["status"]["node"] = reported
+                result["nodes"] = nodes
+                view = self.dashboard(replace(status, result=result))
+                self.assertEqual(view.clusters[0].nodes[0].host_name_message, said)
+
     def test_a_joining_node_whose_command_fails_is_joining_not_invalid(self) -> None:
         """Review 26-10-30, R2: step 4 has no sudo in place yet, so the command exits 1."""
 

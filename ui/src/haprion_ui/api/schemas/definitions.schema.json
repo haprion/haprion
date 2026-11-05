@@ -132,6 +132,7 @@
             "manager",
             "preparation",
             "node_package",
+            "host_name",
             "traffic_stream",
             "api_token",
             "regeneration"

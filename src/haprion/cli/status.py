@@ -356,6 +356,11 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
                 "  Preparation:  step differs from the one last run here"
                 " - run  sudo haprion-node-prepare  on the node\n"
             )
+        reported = status.get("node")
+        if isinstance(reported, str) and reported and reported != node["name"]:
+            writer.write(
+                f"  Host name:    the node reports {reported}; Haprion knows it as {node['name']}\n"
+            )
         writer.write("\n")
 
     writer.write(f"VIP state:      {summary.get('vip_state')}\n")

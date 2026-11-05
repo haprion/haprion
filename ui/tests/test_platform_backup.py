@@ -405,6 +405,7 @@ class ADumpBeforeAMigration(unittest.TestCase):
             + function("write_dump", source)
             + function("keep_newest", source)
             + function("dump_before_restore", source)
+            + function("record_replaced", source)
             + (
                 f'if ! ( dump_before_restore "{chosen}" ); then echo FAILED; fi\n'
                 if inside_if
@@ -671,6 +672,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
         spelled: str = "{dump}",
         options: tuple[str, ...] = (),
         drain: int = 0,
+        stop_fails: str = "",
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         """One run; `remembered` and `state` are what the runs before it left.
 
@@ -724,7 +726,9 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 'die() { echo "ERROR: $*" >&2; exit 1; }\n'
                 'record() { echo "$*" >> "$CALLS"; }\n'
                 f'systemctl() {{ case "$1" in is-active) [[ " {active} " == *" $3 "* ]] ;;'
-                ' show) echo _haprion-collector ;; *) record "systemctl $*" ;; esac; }\n'
+                " show) echo _haprion-collector ;;"
+                ' stop) record "systemctl $*"; [[ "${STOP_FAILS:-}" != "$2" ]] ;;'
+                ' *) record "systemctl $*" ;; esac; }\n'
                 + (
                     "psql_scratch() { return 1; }\n"
                     if connections == "FAIL"
@@ -770,6 +774,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                         "stopped_before",
                         "remember_stopped",
                         "save_restore_tokens",
+                        "record_replaced",
                         "forget_restore_tokens",
                         "restore_set_is_kept",
                         "mark_restoring",
@@ -793,7 +798,7 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
-                env={**os.environ, "CALLS": str(calls)},
+                env={**os.environ, "CALLS": str(calls), "STOP_FAILS": stop_fails},
             )
             chosen = Path(f"{calls}.chosen")
             self.chosen = chosen.read_text().strip() if chosen.exists() else None
@@ -1096,6 +1101,24 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
             self.assertEqual(self.kept, "1:cc")
             self.assertNotIn("using the API tokens recorded", done.stdout)
 
+    def test_reading_the_tokens_again_keeps_the_note_of_the_dump_the_first_run_took(self) -> None:
+        """Review 2026-11-05 RR01: the half-made database was dumped over the real one's name."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw) / "state"
+            self.restore(active=self.ACTIVE, restored=False, state=state)
+            then = time.time() - 3 * 86400
+            os.utime(state / "tokens", (then, then))
+            done, said = self.restore(
+                active="", state=state, options=("--read-tokens-again",), reads=("cc",)
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertNotIn("dump-before-restore", said)
+            self.assertIn(
+                "kept in /dumps/before-restore/haprion-20261101-100000-before-stub.dump",
+                done.stdout,
+            )
+
     def test_running_jobs_are_waited_for_before_anything_is_stopped(self) -> None:
         """Review 2026-11-05 R09: a deploy running at the stop was lost with the worker."""
 
@@ -1137,6 +1160,20 @@ class TheDumpIsReadBackTheWholeWay(unittest.TestCase):
                 self.assertLess(said.index("drain resume"), first_start)
         done, said = self.restore(active=self.ACTIVE, restored=False)
         self.assertNotIn("drain resume", said)
+
+    def test_a_unit_that_will_not_stop_lifts_the_pause_and_starts_what_was_stopped(self) -> None:
+        """Review 2026-11-05 RR02: set -e left the pause and the stopped units behind."""
+
+        done, said = self.restore(active=self.ACTIVE, stop_fails="haprion-web.socket")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("haprion-web.socket could not be stopped; nothing was restored", done.stderr)
+        self.assertIn("drain resume", said)
+        self.assertFalse(any("pg_restore" in line for line in said))
+        self.assertIn("systemctl start haprion-traffic-collector.timer", said)
+        self.assertLess(
+            said.index("drain resume"),
+            said.index("systemctl start haprion-traffic-collector.timer"),
+        )
 
     def test_a_dump_that_does_not_exist_is_refused_by_its_own_path(self) -> None:
         done, said = self.restore(active=self.ACTIVE, spelled="{here}/none.dump")

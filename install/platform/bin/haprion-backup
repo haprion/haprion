@@ -352,11 +352,15 @@ dump_before_restore() {
     # Which dump holds the database this restore replaced, for the last line and
     # for a run again, which does not dump the half-made database over it.
     #
+    record_replaced "$target"
+}
+
+record_replaced() {
     install -d -o root -g root -m 700 "$RESTORE_STATE"
-    { ( umask 077 && printf '%s\n' "$target" >"${RESTORE_REPLACED}.partial" ); } \
-        || die "cannot record ${target} as the dump of the replaced database"
+    { ( umask 077 && printf '%s\n' "$1" >"${RESTORE_REPLACED}.partial" ); } \
+        || die "cannot record ${1} as the dump of the replaced database"
     mv -f -- "${RESTORE_REPLACED}.partial" "$RESTORE_REPLACED" \
-        || die "cannot record ${target} as the dump of the replaced database"
+        || die "cannot record ${1} as the dump of the replaced database"
 }
 
 #
@@ -905,7 +909,14 @@ do_restore() {
     # the set at the moment of the swap.
     #
     local -i recorded=0 age=0
+    local carried=""
     if (( reread )); then
+        #
+        # Only the token set is forgotten. The dump of the database the first
+        # run replaced stays named: the database now is half made, and a dump
+        # of it would take that name over.
+        #
+        [[ ! -e "$RESTORE_MARKER" || ! -s "$RESTORE_REPLACED" ]] || carried="$(<"$RESTORE_REPLACED")"
         forget_restore_tokens
         log "reading the API tokens from the database again, not from a restore that did not finish"
     fi
@@ -938,7 +949,12 @@ do_restore() {
     for unit in "${RESTORE_UNITS[@]}"; do
         if systemctl is-active --quiet "$unit"; then
             remember_stopped "${before[@]}" "${now[@]}" "$unit"
-            systemctl stop "$unit"
+            systemctl stop "$unit" || {
+                resume_claims
+                start_units "${now[@]}" "$unit"
+                remember_stopped "${before[@]}"
+                die "${unit} could not be stopped; nothing was restored${before[*]:+, and ${before[*]} stay stopped}"
+            }
             now+=("$unit")
             stopped+=("$unit")
             log "  stopped  ${unit}"
@@ -977,7 +993,10 @@ do_restore() {
     fi
 
     step_log "Dumping what is about to be replaced"
-    if (( reused )); then
+    if [[ -n "$carried" ]]; then
+        record_replaced "$carried"
+        log "  skipped  a run before this one already dumped the database it replaces"
+    elif (( reused )); then
         #
         # The database now is the dump's or a half-made one, and the first run
         # dumped the one that was replaced (review 2026-11-05, R01).

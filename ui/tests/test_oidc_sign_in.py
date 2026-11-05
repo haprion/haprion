@@ -65,6 +65,7 @@ class SigningInThroughTheProvider(LoginTestCase):
             "userinfo": "userinfo used",
         }
         self.by_identity: dict[tuple[str, str], Account] = {}
+        self.identity_reads: list[bool] = []
         self.created: list[dict[str, Any]] = []
         self.roles: list[tuple[int, str]] = []
         self.audit_details: list[tuple[str, dict[str, Any]]] = []
@@ -110,9 +111,7 @@ class SigningInThroughTheProvider(LoginTestCase):
             mock.patch("haprion_ui.oidc_web.ask", side_effect=ask),
             mock.patch(
                 "haprion_ui.db.account_by_oidc",
-                side_effect=lambda _c, *, issuer, subject, share_lock=False: self.by_identity.get(
-                    (issuer, subject)
-                ),
+                side_effect=self._by_identity,
             ),
             mock.patch("haprion_ui.db.create_oidc_account", side_effect=create),
             mock.patch(
@@ -123,6 +122,12 @@ class SigningInThroughTheProvider(LoginTestCase):
         ):
             patch.start()
             self.addCleanup(patch.stop)
+
+    def _by_identity(
+        self, _c: object, *, issuer: str, subject: str, share_lock: bool = False
+    ) -> Account | None:
+        self.identity_reads.append(share_lock)
+        return self.by_identity.get((issuer, subject))
 
     def go(self, client: TestClient) -> str:
         """Press the button; answer the state the provider was sent."""
@@ -191,6 +196,12 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.assertEqual(self.created, [])
         self.assertIn(True, self.provider_reads)
         self.assertEqual(self.audit_details[-1][1]["reason"], "oidc_off")
+
+    def test_the_account_step_reads_the_account_under_a_share_lock(self) -> None:
+        client = self.client()
+        state = self.go(client)
+        self.back(client, state)
+        self.assertIn(True, self.identity_reads)
 
     def test_a_provider_sign_in_in_flight_when_the_settings_change_makes_no_session(self) -> None:
         client = self.client()

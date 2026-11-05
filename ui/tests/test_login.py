@@ -194,6 +194,7 @@ class LoginTestCase(unittest.TestCase):
         self.provider: Any = None
         self.provider_after_first: Any = None  # what the locked read sees
         self.provider_reads: list[bool] = []
+        self.account_reads: list[bool] = []
         self.update_row: Any = None
         self.id_tokens: dict[bytes, str | None] = {}
 
@@ -375,6 +376,7 @@ class LoginTestCase(unittest.TestCase):
     def _account(
         self, _connection: object, username: str, *, share_lock: bool = False
     ) -> Account | None:
+        self.account_reads.append(share_lock)
         return self.account if username.lower() == "operator" else None
 
     def _attempt(self, _c: object, *, username: str, client_ip: str, succeeded: bool) -> None:
@@ -457,6 +459,14 @@ class SigningIn(LoginTestCase):
         self.assertIn(auth.SESSION_COOKIE, client.cookies)
         self.assertEqual(self.attempts[-1][2], True)
         self.assertIn("login", self.audit)
+
+    def test_the_account_is_read_again_under_a_share_lock_before_the_session(self) -> None:
+        #
+        # Review 26-11-05, AA01: a password change or reset waits for a sign-in
+        # that has read the account, so it cannot miss the session made here.
+        #
+        self.sign_in(self.client())
+        self.assertEqual(self.account_reads[-1], True)
 
     def test_the_cookie_is_httponly_secure_and_lax(self) -> None:
         client = self.client()

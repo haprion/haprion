@@ -188,7 +188,7 @@ def build_router(config: Config) -> APIRouter:
                 # Read again before the session is made: the account may have
                 # been disabled or its password changed while the hash ran.
                 #
-                current = db.account_by_username(connection, username)
+                current = db.account_by_username(connection, username, share_lock=True)
                 #
                 # And the provider's rule, under a share lock held to the
                 # commit: turning sign-in through the provider on updates that

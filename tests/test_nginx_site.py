@@ -143,6 +143,41 @@ class TheSignInLimitCountsAnIpv6SourceAsItsPrefix(unittest.TestCase):
         return "".join(match.group(0) for match in found if match)
 
     def test_one_prefix_is_one_bucket_and_an_ipv4_address_its_own(self) -> None:
+        answers = self.limited(
+            (
+                "2001:db8::1",
+                "2001:db8::2",
+                "2001:db8::ffff:ffff:ffff:ffff",
+                "2001:db8:0:1::1",
+                "192.0.2.1",
+                "192.0.2.2",
+                "192.0.2.1",
+            )
+        )
+        #                    first  same /64 same /64 other /64 v4     other v4 v4 again
+        self.assertEqual(answers, [False, True, True, False, False, False, True])
+
+    def test_an_ipv4_mapped_address_is_the_ipv4_address_it_carries(self) -> None:
+        #
+        # Review 26-11-05, AA02: a dual-stack proxy hands over `::ffff:a.b.c.d`.
+        # Cut to its first 64 bits every such client is one bucket, so two
+        # people signing in at once, or one attacker, shut out all of them. The
+        # application counts the IPv4 address (access.py, api/caller.py).
+        #
+        answers = self.limited(
+            (
+                "::ffff:192.0.2.1",
+                "::ffff:198.51.100.7",
+                "192.0.2.1",
+                "::ffff:192.0.2.2",
+                "192.0.2.3",
+                "::ffff:192.0.2.3",
+            )
+        )
+        #                    first  other v4 same v4 other v4 other v4 same v4
+        self.assertEqual(answers, [False, False, True, False, False, True])
+
+    def limited(self, addresses: tuple[str, ...]) -> list[bool]:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             port = free_port()
@@ -162,23 +197,10 @@ class TheSignInLimitCountsAnIpv6SourceAsItsPrefix(unittest.TestCase):
             )
             try:
                 # Not 429 is let through: the file is not there, so nginx says 404.
-                answers = [
-                    self.post(port, address) == 429
-                    for address in (
-                        "2001:db8::1",
-                        "2001:db8::2",
-                        "2001:db8::ffff:ffff:ffff:ffff",
-                        "2001:db8:0:1::1",
-                        "192.0.2.1",
-                        "192.0.2.2",
-                        "192.0.2.1",
-                    )
-                ]
+                return [self.post(port, address) == 429 for address in addresses]
             finally:
                 server.terminate()
                 server.wait(timeout=5)
-        #                    first  same /64 same /64 other /64 v4     other v4 v4 again
-        self.assertEqual(answers, [False, True, True, False, False, False, True])
 
     def post(self, port: int, address: str) -> int:
         for _ in range(50):

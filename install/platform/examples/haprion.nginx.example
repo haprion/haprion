@@ -14,11 +14,15 @@
 # The client as the application counts it: an IPv6 address is its first 64
 # bits, an IPv4 address itself. Counted per whole IPv6 address, one host with a
 # /64 had as many buckets as it liked and reached the application at full
-# speed (review 26-11-05, A06).
+# speed (review 26-11-05, A06). An IPv4-mapped address (::ffff:a.b.c.d, which
+# a dual-stack proxy hands over) is the IPv4 address a.b.c.d, as the
+# application counts it; cut to 64 bits every such client would share one
+# bucket (AA02).
 #
 map $binary_remote_addr $haprion_source {
-    "~(?s)^(?<prefix>.{8}).{8}$"  $prefix;
-    default                       $binary_remote_addr;
+    "~(?s)^\x00{10}\xff\xff(?<v4>.{4})$"  $v4;
+    "~(?s)^(?<prefix>.{8}).{8}$"           $prefix;
+    default                                $binary_remote_addr;
 }
 
 #

@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import re
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
@@ -45,24 +46,34 @@ def frozen() -> dict[str, str]:
 
 
 def shipped(root: Path) -> set[str] | None:
-    """`versions/<file>` of every migration in any `v*` tag, or None where there are no tags."""
+    """`versions/<file>` of every migration in any `v*` tag, or None where there are no tags.
 
-    def git(*arguments: str) -> str:
-        done = subprocess.run(  # noqa: S603 - git, fixed arguments
+    No git, or no tags, is None and the test says it skipped. A tag that is there
+    and cannot be read fails: a partial clone read as "nothing shipped" would pass
+    without looking (re-review H03).
+    """
+
+    def git(*arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - git, fixed arguments
             ["git", "-C", str(root), *arguments],  # noqa: S607
             capture_output=True,
             text=True,
             check=False,
         )
-        return done.stdout if done.returncode == 0 else ""
 
-    tags = git("tag", "--list", "v*").split()
+    if shutil.which("git") is None:
+        return None
+    listed = git("tag", "--list", "v*")
+    tags = listed.stdout.split() if listed.returncode == 0 else []
     if not tags:
         return None
     found: set[str] = set()
     for tag in tags:
         prefix = "ui/migrations/"
-        for name in git("ls-tree", "-r", "--name-only", tag, "--", f"{prefix}versions/").split():
+        tree = git("ls-tree", "-r", "--name-only", tag, "--", f"{prefix}versions/")
+        if tree.returncode != 0:
+            raise AssertionError(f"git ls-tree {tag} failed: {tree.stderr.strip()}")
+        for name in tree.stdout.split():
             if re.fullmatch(r"[0-9]{4}_[a-z0-9_]+\.py", name.rsplit("/", 1)[-1]):
                 found.add(name.removeprefix(prefix))
     return found

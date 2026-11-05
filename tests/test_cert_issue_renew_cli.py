@@ -51,3 +51,23 @@ class TheRenewFlag(unittest.TestCase):
 
         self.assertEqual((code, asked), (64, []))
         assert_contract("haprion-cert-issue", out)
+
+
+class TheSummary(unittest.TestCase):
+    def summary(self, *, renewed: bool) -> str:
+        result = mock.Mock(
+            renewed=renewed,
+            certbot_seconds=3.0,
+            total_seconds=4.0,
+            publish=mock.Mock(certificates=(), deployments=()),
+        )
+        result.request = mock.Mock(
+            certificate_id="example.com", domains=("example.com",), method="http"
+        )
+        out = io.StringIO()
+        cert_issue._summary(result, out)
+        return out.getvalue()
+
+    def test_a_renewal_says_renewed_and_an_issue_says_issued(self) -> None:
+        self.assertTrue(self.summary(renewed=True).startswith("renewed example.com "))
+        self.assertTrue(self.summary(renewed=False).startswith("issued example.com "))

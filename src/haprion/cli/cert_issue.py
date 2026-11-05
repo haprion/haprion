@@ -141,8 +141,9 @@ def _parse(
 
 
 def _summary(result: IssueResult, writer: TextIO) -> None:
+    verb = "renewed" if result.renewed else "issued"
     writer.write(
-        f"issued {result.request.certificate_id} ({', '.join(result.request.domains)}) "
+        f"{verb} {result.request.certificate_id} ({', '.join(result.request.domains)}) "
         f"via {result.request.method} in {result.certbot_seconds:.0f}s\n"
     )
     for entry in result.publish.certificates:

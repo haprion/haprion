@@ -816,6 +816,30 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
             jobs.unresolved_note(replace(alone, result={"result": {"unresolved_servers": []}}))
         )
 
+    def test_a_node_the_publish_could_not_ask_is_the_note(self) -> None:
+        """W05: said on the publish, also when it was deployed in the same job."""
+
+        alone = replace(
+            queued(operation="changes_publish", cluster="alpha"),
+            state="done",
+            outcome="done",
+            result={
+                "result": {
+                    "version": 7,
+                    "unchecked_nodes": ["node-b"],
+                    "unchecked_features": ["waf"],
+                }
+            },
+        )
+        deployed = replace(alone, result={"result": {"converged": True}, "publish": alone.result})
+        for job in (alone, deployed):
+            with self.subTest(embedded=job is deployed):
+                self.assertIn(
+                    "node-b did not answer, so the WAF engine could not be checked there",
+                    jobs.unchecked_note(job) or "",
+                )
+        self.assertIsNone(jobs.unchecked_note(replace(alone, result={"result": {"version": 7}})))
+
     def test_a_removal_deployed_in_its_job_is_read_beside_the_deploy(self) -> None:
         """B321: the job ends as its deploy ended, with the node change under `node`."""
 

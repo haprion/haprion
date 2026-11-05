@@ -9,7 +9,8 @@ anything is deployed.
 
 A node that does not answer is not a reason to stop a publish: the deploy's
 rollback still catches the collision, and a node that is down must not block
-every change to the cluster. Its ports are simply not checked there.
+every change to the cluster. Its ports are simply not checked there, and the
+publish says so when an object starts to need what only a node can have.
 
 The same reading says what each node that answered can serve: the WAF engine,
 dnsdist, the syslog objects' file. An object that needs one a node lacks is
@@ -18,7 +19,7 @@ refused here, for the terminal, the page and the API alike (K04, 26-11-05).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -38,6 +39,8 @@ class HeldPorts:
     held: Mapping[tuple[str, int], Holders] = field(default_factory=dict)
     lacking: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     """Per feature (`waf`, `dns`, `syslog`), the nodes that answered and cannot serve it."""
+    unchecked: tuple[str, ...] = ()
+    """The nodes nothing was read from - all of them when the reading failed altogether."""
 
 
 def from_status(status: ClusterStatus) -> HeldPorts:
@@ -63,15 +66,18 @@ def from_status(status: ClusterStatus) -> HeldPorts:
         if names:
             lacking[feature] = names
     return HeldPorts(
-        held={key: tuple(holders) for key, holders in sorted(held.items())}, lacking=lacking
+        held={key: tuple(holders) for key, holders in sorted(held.items())},
+        lacking=lacking,
+        unchecked=tuple(sorted(node.name for node in status.nodes if not node.status_ok)),
     )
 
 
 def read(policy: PathPolicy, cluster: Cluster) -> HeldPorts:
     """The nodes' answer, by the status identity the deploy reads them with."""
 
+    everyone = tuple(sorted(node.name for node in cluster.nodes))
     if policy.status_identity is None:
-        return HeldPorts()
+        return HeldPorts(unchecked=everyone)
     #
     # Imported here: the deploy helper is a command module, and the reading is
     # its `read_status` so a publish and a deploy ask the nodes one way.
@@ -81,7 +87,7 @@ def read(policy: PathPolicy, cluster: Cluster) -> HeldPorts:
     try:
         return from_status(read_status(cluster, policy.status_identity))
     except (StatusError, OSError):
-        return HeldPorts()
+        return HeldPorts(unchecked=everyone)
 
 
 def _joined(names: tuple[str, ...]) -> str:
@@ -101,6 +107,25 @@ def _needs(proxy: Proxy | None) -> frozenset[str]:
     return frozenset(found)
 
 
+def starting_needs(written: Proxy, stored: Proxy | None) -> frozenset[str]:
+    """What this object starts to need from the nodes: the part of `_needs` it did not need before."""
+
+    return _needs(written) - _needs(stored)
+
+
+FEATURES = {"waf": "the WAF engine", "dns": "dnsdist", "syslog": "the syslog file's include"}
+
+
+def unchecked_warning(nodes: Sequence[str], features: Sequence[str]) -> str:
+    """What is said when an object starts to need a feature and a node was not asked."""
+
+    wanted = [FEATURES[feature] for feature in features if feature in FEATURES]
+    return (
+        f"{_joined(tuple(nodes))} did not answer, so {_joined(tuple(wanted))} could not be "
+        "checked there; the deploy refuses the release on a node that lacks it"
+    )
+
+
 def node_refusal(held: HeldPorts, name: str, written: Proxy, stored: Proxy | None) -> str:
     """Why this object may not be published for the nodes that answered; empty when it may.
 
@@ -110,7 +135,7 @@ def node_refusal(held: HeldPorts, name: str, written: Proxy, stored: Proxy | Non
     (see the top of this module).
     """
 
-    starting = _needs(written) - _needs(stored)
+    starting = starting_needs(written, stored)
     if "waf" in starting and (nodes := held.lacking.get("waf")):
         return (
             f"The WAF engine is not installed on {_joined(nodes)}, so {name} cannot start using it."

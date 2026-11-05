@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from haprion import exit_codes, node_enrollment, server_names
+from haprion import exit_codes, held_ports, node_enrollment, server_names
 from haprion.deploy_run import (
     CERTIFICATES_NOT_DEPLOYED,
     TRAFFIC_STREAM_NEXT_COMMAND,
@@ -1021,6 +1021,24 @@ def unresolved_note(job: Job) -> str | None:
     return ". ".join(said) + "." if said else None
 
 
+def unchecked_note(job: Job) -> str | None:
+    """Nodes the publish could not ask about what an object now needs (W05), in the engine's words."""
+
+    if job.operation != "changes_publish" or not isinstance(job.result, dict):
+        return None
+    envelope = publish_answer(job.result)
+    body = envelope.get("result") if envelope is not None else None
+    if not isinstance(body, dict):
+        return None
+    nodes, features = body.get("unchecked_nodes"), body.get("unchecked_features")
+    if not isinstance(nodes, list) or not isinstance(features, list) or not nodes:
+        return None
+    return (
+        held_ports.unchecked_warning([str(name) for name in nodes], [str(f) for f in features])
+        + "."
+    )
+
+
 #
 # What to look at before trying again, for a job whose outcome is unknown
 # (review 2026-10-20, V1). The answer never came, so the operation may have
@@ -1253,7 +1271,7 @@ def _view(
                 unknown_note(job)
                 or deletion_note(job)
                 or publication_note(job)
-                or unresolved_note(job)
+                or " ".join(note for note in (unresolved_note(job), unchecked_note(job)) if note)
                 or distribution_note(job),
             )
             if text

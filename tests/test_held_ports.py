@@ -17,13 +17,14 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion.cluster_status import parse_status
+from haprion.cluster_status import StatusError, parse_status
 from haprion.config import Vip
 from haprion.generate import GeneratorError, generate
-from haprion.held_ports import HeldPorts, from_status, node_refusal
+from haprion.held_ports import HeldPorts, from_status, node_refusal, read, unchecked_warning
 from haprion.proxy_model import load_proxy
 from tests.test_changes_publish_objects import ObjectsPublishFixture, proxy
 from tests.test_publish_helper import git
@@ -219,10 +220,6 @@ class ThePublishAsksTheNodes(ObjectsPublishFixture):
         return git(self.repo, "rev-parse", "HEAD")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def node_that_serves(**withheld: bool) -> dict[str, Any]:
     """A status that carries the WAF engine, dnsdist and the syslog include, less what is withheld."""
 
@@ -312,6 +309,70 @@ class AnObjectIsHeldToWhatTheNodesServe(unittest.TestCase):
         )
 
 
+class ThePublishSaysWhatItCouldNotCheck(ObjectsPublishFixture):
+    """W05: a node that has not answered is not a refusal, and not silence."""
+
+    def publish_with(self, held: HeldPorts, document: str) -> tuple[int, Any]:
+        with tempfile.TemporaryDirectory() as raw, mock.patch("haprion.held_ports.read") as read:
+            read.return_value = held
+            policy = self.runtime(Path(raw))
+            self.seed()
+            code, answer, _ = self.publish_objects(
+                policy, self.request(objects={"agent": document})
+            )
+            return code, answer
+
+    def test_a_node_not_asked_is_named_when_an_object_starts_to_need_the_engine(self) -> None:
+        waf = proxy("agent", "agent.example.com").replace("routes:", "waf: {}\nroutes:")
+
+        code, answer = self.publish_with(HeldPorts(unchecked=("node-b",)), waf)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["result"]["unchecked_nodes"], ["node-b"])
+        self.assertEqual(answer["result"]["unchecked_features"], ["waf"])
+
+    def test_nothing_is_said_when_the_object_needs_nothing_of_the_nodes(self) -> None:
+        code, answer = self.publish_with(
+            HeldPorts(unchecked=("node-b",)), proxy("agent", "agent.example.com")
+        )
+
+        self.assertEqual(code, 0)
+        self.assertNotIn("unchecked_nodes", answer["result"])
+
+    def test_the_words_name_the_nodes_and_what_was_not_checked(self) -> None:
+        said = unchecked_warning(("node-a", "node-b"), ("waf", "syslog"))
+
+        self.assertEqual(
+            said,
+            "node-a and node-b did not answer, so the WAF engine and the syslog file's include "
+            "could not be checked there; the deploy refuses the release on a node that lacks it",
+        )
+
+
+class TheReadingSaysWhoWasNotAsked(unittest.TestCase):
+    cluster = SimpleNamespace(
+        nodes=(SimpleNamespace(name="node-b"), SimpleNamespace(name="node-a"))
+    )
+
+    def test_a_node_that_gave_no_answer_is_unchecked(self) -> None:
+        self.assertEqual(
+            from_status(two_nodes(node_that_serves(), answered=False)).unchecked, ("node-b",)
+        )
+        self.assertEqual(from_status(two_nodes(node_that_serves())).unchecked, ())
+
+    def test_a_reading_that_failed_leaves_every_node_unchecked(self) -> None:
+        policy = SimpleNamespace(status_identity=object())
+        with mock.patch("haprion.cli.deploy_helper.read_status", side_effect=StatusError("no key")):
+            held = read(policy, self.cluster)  # type: ignore[arg-type]
+
+        self.assertEqual(held.unchecked, ("node-a", "node-b"))
+
+    def test_no_identity_to_ask_with_leaves_every_node_unchecked(self) -> None:
+        held = read(SimpleNamespace(status_identity=None), self.cluster)  # type: ignore[arg-type]
+
+        self.assertEqual(held.unchecked, ("node-a", "node-b"))
+
+
 class ThePublishRefusesWhatANodeCannotServe(ObjectsPublishFixture):
     def head(self) -> str:
         return git(self.repo, "rev-parse", "HEAD")
@@ -362,4 +423,8 @@ backends:
         code, answer, _, _ = self.publish_lacking(waf, agent=waf)
 
         self.assertNotIn("not installed on node-b", json.dumps(answer))
-        self.assertIn(code, (0, 65))
+        self.assertEqual(code, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

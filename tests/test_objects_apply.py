@@ -35,6 +35,7 @@ class Fakes:
         self.head = head
         self.published: list[dict[str, Any]] = []
         self.refuse: dict[str, Any] | None = None
+        self.unchecked = False
 
     def read(self, cluster: str, request_id: str) -> subprocess.CompletedProcess[str]:
         answer = {
@@ -63,6 +64,9 @@ class Fakes:
             answer = {"operation": changes_publish.OPERATION, "result": None, "error": self.refuse}
             return subprocess.CompletedProcess([], 65, json.dumps(answer), "")
         parameters = sent["parameters"]
+        unchecked = (
+            {"unchecked_nodes": ["node-b"], "unchecked_features": ["waf"]} if self.unchecked else {}
+        )
         if parameters["expected_head"] != self.head:
             answer = {
                 "operation": changes_publish.OPERATION,
@@ -82,6 +86,7 @@ class Fakes:
                     "checked_only": True,
                     "version": 10,
                     "hash": self.head,
+                    **unchecked,
                 },
                 "error": None,
             }
@@ -99,6 +104,7 @@ class Fakes:
                 "deployment_required": True,
                 "version": 10 + len(self.published),
                 "hash": self.head,
+                **unchecked,
             },
             "error": None,
         }
@@ -180,6 +186,25 @@ class ObjectsFromFiles(unittest.TestCase):
         )
         result = assert_contract("haprion-objects-apply", answer)["result"]
         self.assertEqual(len(result["check_tls_mismatches"]), 1)
+
+    def test_a_node_that_was_not_asked_is_a_warning_in_the_text_and_in_the_document(self) -> None:
+        """W05: the publish could not check the nodes for what the object now needs."""
+
+        self.write("shop", document("shop"))
+
+        def unchecked() -> Fakes:
+            fakes = Fakes({})
+            fakes.unchecked = True
+            return fakes
+
+        _, out, _ = self.run_cli(unchecked(), "apply", "-c", "alpha", str(self.root))
+        _, answer, _ = self.run_cli(unchecked(), "apply", "-c", "alpha", str(self.root), "--json")
+
+        self.assertIn("WARNING: node-b did not answer, so the WAF engine could not be checked", out)
+        result = assert_contract("haprion-objects-apply", answer)["result"]
+        self.assertEqual(
+            (result["unchecked_nodes"], result["unchecked_features"]), (["node-b"], ["waf"])
+        )
 
     def test_the_same_files_again_change_nothing(self) -> None:
         fakes = Fakes({"shop": document("shop")})

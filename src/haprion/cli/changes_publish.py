@@ -355,17 +355,24 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             # lacks is refused here, as the page and the API refuse it, and not
             # by that node's deploy.
             #
+            starting: set[str] = set()
             for name, document in sorted(objects.items()):
                 if document is None:
                     continue
-                said = held_ports.node_refusal(
-                    held,
-                    name,
-                    load_written(name, document),
-                    _stored(base_files, name),
-                )
+                written = load_written(name, document)
+                stored = _stored(base_files, name)
+                said = held_ports.node_refusal(held, name, written, stored)
                 if said:
                     raise Refusal("changes_invalid", said, exit_codes.REFUSED)
+                starting |= held_ports.starting_needs(written, stored)
+            #
+            # Not a refusal, but not silence either: a node that has not answered
+            # may come up without what an object now needs, and every later release
+            # is then refused there until the object changes (W05).
+            #
+            if starting and held.unchecked:
+                named["unchecked_nodes"] = list(held.unchecked)
+                named["unchecked_features"] = sorted(starting)
             try:
                 files = managed_files(
                     base_files,

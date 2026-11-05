@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import check_policy, exit_codes, labels, server_names
+from haprion import check_policy, exit_codes, held_ports, labels, server_names
 from haprion.cli import arguments, changes_publish
 from haprion.cli.apply_common import (
     PartlyDone,
@@ -328,7 +328,18 @@ def _summary(
         # too: the editor's warning (26-11-03), in the same words.
         #
         "check_tls_mismatches": _tls_mismatches(plan),
+        #
+        # Nodes that were not asked what an object now needs from them (W05).
+        #
+        "unchecked_nodes": _unchecked(versions, checked, "unchecked_nodes"),
+        "unchecked_features": _unchecked(versions, checked, "unchecked_features"),
     }
+
+
+def _unchecked(
+    versions: Sequence[Mapping[str, Any]], checked: Sequence[Mapping[str, Any]], key: str
+) -> list[str]:
+    return sorted({str(name) for v in (*versions, *checked) for name in v.get(key) or ()})
 
 
 def _tls_mismatches(plan: Plan) -> list[str]:
@@ -362,6 +373,14 @@ def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO
         writer.write(f"WARNING: {server_names.warning(name)}\n")
     for sentence in summary["check_tls_mismatches"]:
         writer.write(f"WARNING: {sentence}\n")
+    if summary["unchecked_nodes"]:
+        writer.write(
+            "WARNING: "
+            + held_ports.unchecked_warning(
+                summary["unchecked_nodes"], summary["unchecked_features"]
+            )
+            + "\n"
+        )
     if summary["deployment_required"]:
         writer.write(f"Deploy it with: haprion-deploy -c {cluster}\n")
 

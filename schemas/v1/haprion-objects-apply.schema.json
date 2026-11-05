@@ -49,6 +49,16 @@
           "maxItems": 256,
           "items": { "type": "string", "minLength": 1, "maxLength": 253 }
         },
+        "unchecked_nodes": {
+          "description": "The nodes that did not answer when an applied object started to need what only a node can have. A warning.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 253 }
+        },
+        "unchecked_features": {
+          "description": "What those nodes were not asked: waf, dns or syslog.",
+          "type": "array",
+          "items": { "enum": ["waf", "dns", "syslog"] }
+        },
         "check_tls_mismatches": {
           "description": "The applied objects' pools whose health check and traffic disagree about TLS on the same port, one sentence each. A warning.",
           "type": "array",

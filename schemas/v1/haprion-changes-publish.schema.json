@@ -33,7 +33,32 @@
         "network": { "type": "boolean" },
         "settings": { "type": "boolean" },
         "regenerate": { "description": "True when the request asked for the generated layer to be made again with the installed product; absent from an older release.", "type": "boolean" },
-        "unresolved_servers": {
+        "checked_only": {
+     "description": "True for a check: everything was asked and nothing was written, so no version or release exists for it.",
+     "type": "boolean"
+    },
+    "unchecked_nodes": {
+     "description": "The nodes that did not answer, when an object starts to need what only a node can have; every node when the reading failed. A warning.",
+     "type": "array",
+     "maxItems": 64,
+     "items": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253
+     }
+    },
+    "unchecked_features": {
+     "description": "What those nodes were not asked: waf, dns or syslog.",
+     "type": "array",
+     "items": {
+      "enum": [
+       "waf",
+       "dns",
+       "syslog"
+      ]
+     }
+    },
+    "unresolved_servers": {
           "description": "Finding 72: the published objects' server names the manager cannot resolve. A warning; a node that cannot resolve one either stops the deploy.",
           "type": "array",
           "maxItems": 256,

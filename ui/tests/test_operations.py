@@ -29,6 +29,7 @@ from haprion import (
     state_backup,
 )
 from haprion import cert_publish as cert_publish_model
+from haprion.candidate_validation import CLIENT_SECONDS, RUNTIME_SECONDS
 from haprion.cli import (
     backup_job_ask,
     backup_job_helper,
@@ -45,7 +46,7 @@ from haprion.cli import (
 )
 from haprion.status_collect import STATUS_TIMEOUT_SECONDS
 
-from haprion_ui import answers, jobs, operations, recovery, worker
+from haprion_ui import answers, job_wait, jobs, operations, recovery, worker
 
 REQUEST = uuid4()
 
@@ -1421,6 +1422,11 @@ class NoWorkerIsNotSaidOfAHelperStillAtWork(unittest.TestCase):
     # scan - is local work of seconds.
     #
     LOCAL = 120
+    #
+    # The node change's publish: up to three sandboxed checks in turn, each up
+    # to its client's wait (B475).
+    #
+    CHECKS = 3 * CLIENT_SECONDS
 
     def longest_runs(self) -> dict[str, tuple[float, float]]:
         """By operation: the helper's longest run and its client's wait, in seconds."""
@@ -1432,10 +1438,16 @@ class NoWorkerIsNotSaidOfAHelperStillAtWork(unittest.TestCase):
         restore = node_restore_ask.TIMEOUT_SECONDS
         return {
             # The registry's lock, then each of its two nodes joined and read.
-            "cluster_define": (cert_lock.LOCK_WAIT_SECONDS + 2 * (join + status), node),
+            "cluster_define": (
+                cert_lock.LOCK_WAIT_SECONDS + 2 * (join + status) + self.CHECKS,
+                node,
+            ),
             # A change left unfinished takes the registry's lock; the cluster
             # is read, and the node joined and read.
-            "cluster_node": (cert_lock.LOCK_WAIT_SECONDS + status + join + status, node),
+            "cluster_node": (
+                cert_lock.LOCK_WAIT_SECONDS + status + join + status + self.CHECKS,
+                node,
+            ),
             # The cluster read; the target inspected, applied and given its
             # network; the rollback timer waited out (`_run`) and the files put
             # back: four sessions.
@@ -1478,3 +1490,22 @@ class NoWorkerIsNotSaidOfAHelperStillAtWork(unittest.TestCase):
                 self.assertLess(
                     longest + worker.LEASE_SECONDS + worker.IDLE_SECONDS + self.LOCAL, after
                 )
+
+
+class EveryLayerAboveTheSandboxHoldsItsLimit(unittest.TestCase):
+    """B475: 10 000 heavy objects take 28.6 s to check; nothing may cut a check short."""
+
+    #
+    # A publish runs up to three sandboxed checks in turn: HAProxy's, the WAF
+    # engine's and dnsdist's.
+    #
+    CHECKS = 3
+
+    def test_the_unit_ends_before_its_client_gives_up(self) -> None:
+        self.assertLess(RUNTIME_SECONDS, CLIENT_SECONDS)
+
+    def test_the_worker_s_job_outlasts_the_checks(self) -> None:
+        self.assertLess(self.CHECKS * CLIENT_SECONDS, operations.TIMEOUT_SECONDS)
+
+    def test_what_waits_for_a_publishing_job_outlasts_the_checks(self) -> None:
+        self.assertLess(self.CHECKS * CLIENT_SECONDS, job_wait.WAIT_SECONDS)

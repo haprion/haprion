@@ -15,7 +15,12 @@ from typing import Any
 
 from haprion_ui import db
 
-WAIT_SECONDS = 120.0
+#
+# A job that publishes waits on up to three sandboxed checks in turn (HAProxy's,
+# the WAF engine's, dnsdist's), each up to `CLIENT_SECONDS` since B475, before
+# it installs anything: 120 s ended this wait inside a check of a large cluster.
+#
+WAIT_SECONDS = 300.0
 
 
 def finished(

@@ -132,8 +132,18 @@ DEFAULT_RUN_ROOT = Path("/run/haprion-validation")
 # shorter, so systemd ends it before the caller gives up - how much memory and
 # how many tasks it may use, and how much of its output is kept (S07).
 #
-CLIENT_SECONDS = 30
-RUNTIME_SECONDS = 25
+# Sized for the product's decided scale of 10 000 objects (B475), measured
+# 26-11-05 with haproxy 3.4.7 on two cores: 10 000 light objects take 5 s and
+# 0.5 GB for a candidate of 17.8 MiB; 10 000 heavy ones (four host names, six
+# routes, ten servers) 28.6 s and 0.97 GB for 34 MiB. Time grows roughly with
+# the square of the candidate, memory linearly. The derived caps (DERIVED_LIMITS:
+# 32 768 files, 128 MiB) allow more than was measured, and time is then the
+# first wall. The client waits 15 s past the unit, which ends first. Every
+# layer that waits for a check holds these (`tests/test_candidate_validation`,
+# `ui/tests/test_operations`): the worker's job, 900 s, and what waits for a job.
+#
+CLIENT_SECONDS = 75
+RUNTIME_SECONDS = 60
 MEMORY_MAX = "256M"
 #
 # The WAF engine compiles the rule set once for each object that has `waf`

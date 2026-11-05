@@ -340,6 +340,12 @@ class TheSandboxedCheckIsBounded(unittest.TestCase):
         self.assertIn(f"RuntimeMaxSec={candidate_validation.RUNTIME_SECONDS}", command)
         self.assertLess(candidate_validation.RUNTIME_SECONDS, candidate_validation.CLIENT_SECONDS)
 
+    def test_the_time_limits_hold_ten_thousand_heavy_objects(self) -> None:
+        """B475: 28.6 s measured for 34 MiB; the unit gets twice that, the client 15 s more."""
+
+        self.assertEqual(candidate_validation.RUNTIME_SECONDS, 60)
+        self.assertEqual(candidate_validation.CLIENT_SECONDS, 75)
+
     def test_every_check_is_limited_in_memory_and_tasks(self) -> None:
         """S07: measured 26-10-15; the largest check used 44 MB and four tasks."""
 

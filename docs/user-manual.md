@@ -8726,8 +8726,12 @@ what it was measured to use, with room above:
 
 The worker's limit covers the root helpers sudo starts inside it. A service that passes its limit
 is stopped rather than swapped, and web, worker and poller start again. A candidate's checks run in
-units of their own: HAProxy's and dnsdist's in 256 MB; the WAF engine's in 128 MB plus 6 MB for
-each object with `waf` - never less than 256 MB, at most half the manager's memory.
+units of their own: dnsdist's in 256 MB; HAProxy's in 64 MB plus 40 MB for each MiB of the
+candidate, the WAF engine's in 128 MB plus 6 MB for each object with `waf` - each never less than
+256 MB and at most half the manager's memory. A check may run 60 seconds before it is stopped. At
+10 000 objects HAProxy's check took 5 seconds and 0.5 GB for the lightest objects measured and 29
+seconds and 1 GB for the heaviest; the time grows faster than the size, so time is the first limit a
+larger configuration reaches.
 
 ##### The poller
 

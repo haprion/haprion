@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -422,6 +423,28 @@ class TheJoin(unittest.TestCase):
         self.assertIn("haprion-node-join", self.keys.read_text())
         self.assertTrue((self.join_dir / "join_key").exists())
         self.assertFalse((self.join_dir / "joined").exists())
+
+    def test_a_step_that_outlives_the_limit_is_ended_with_everything_it_started(self) -> None:
+        # B447 N04: killing only bash left an apt-get running beside the retry.
+        pids = self.root / "child.pid"
+        self.step.write_text(f"#!/bin/sh\nsleep 60 &\necho $! > {pids}\nwait\n")
+        self.step.chmod(0o755)
+        stdin = io.TextIOWrapper(io.BytesIO(json.dumps(document()).encode()))
+        with (
+            mock.patch.object(JOIN, "TIMEOUT", 1),
+            mock.patch.object(JOIN.sys, "stdin", stdin),
+            mock.patch.object(JOIN.sys, "stdout", io.TextIOWrapper(io.BytesIO())),
+            mock.patch.object(JOIN.sys, "stderr", io.StringIO()),
+        ):
+            code = JOIN.main()
+        self.assertEqual(code, 75)
+        child = int(pids.read_text())
+        for _ in range(50):
+            if not Path(f"/proc/{child}").exists():
+                break
+            time.sleep(0.1)
+        self.assertFalse(Path(f"/proc/{child}").exists(), "the step's child is still running")
+        self.assertTrue((self.join_dir / "join_key").exists())
 
 
 if __name__ == "__main__":

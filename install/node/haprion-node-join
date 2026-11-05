@@ -25,10 +25,12 @@ again until it expires; what it said is on stderr and in the log.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +43,8 @@ LOG = Path(os.environ.get("JOIN_LOG", "/var/log/haprion-node/join.log"))
 STATUS = os.environ.get("NODE_STATUS", "/usr/sbin/haprion-node-status")
 MAX_DOCUMENT = 64 * 1024
 TIMEOUT = 840
+# How long step 4's process group has to end after SIGTERM before it is killed.
+GRACE = 10
 
 # The engine's patterns (config.py), held to them by a test.
 CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
@@ -152,6 +156,18 @@ def answers(document: object, manager: str, listen: str | None = None) -> tuple[
     return "\n".join(lines) + "\n", cluster
 
 
+def end_group(step: subprocess.Popen[bytes]) -> None:
+    """Step 4 and every process it started, asked to stop and then made to."""
+    try:
+        os.killpg(step.pid, signal.SIGTERM)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            step.wait(timeout=GRACE)
+        os.killpg(step.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    step.wait()
+
+
 def main() -> int:
     if os.geteuid() != 0:
         print("haprion-node-join: run as root, through the join key", file=sys.stderr)
@@ -179,17 +195,22 @@ def main() -> int:
     with LOG.open("ab") as log:
         log.write(f"\n### join of cluster {cluster} from {manager}\n".encode())
         log.flush()
+        #
+        # Its own session, so that the limit ends everything step 4 started: an
+        # apt-get waiting on the lock outlived bash and ran beside the retry
+        # (B447, N04). SIGTERM first, so that the step's own cleanup can run.
+        #
+        step = subprocess.Popen(  # noqa: S603 - step 4 of this package, with checked answers
+            [str(INSTALL / "04-node-prepare"), str(answers_file), cluster],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
         try:
-            done = subprocess.run(  # noqa: S603 - step 4 of this package, with checked answers
-                [str(INSTALL / "04-node-prepare"), str(answers_file), cluster],
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                timeout=TIMEOUT,
-                check=False,
-            )
-            code = done.returncode
+            code = step.wait(timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
+            end_group(step)
             code = 124
     if code != 0:
         tail = LOG.read_text(errors="replace").splitlines()[-30:]

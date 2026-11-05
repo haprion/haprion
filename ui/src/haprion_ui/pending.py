@@ -234,11 +234,18 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
     rows: list[PendingRow] = []
     objects: dict[str, str | None] = {}
     published = {view.name for view in state.stored}
+    #
+    # The name a row replaces, if the version still has it. A rename saved
+    # again after its own publish carries the old name on, and a removal of a
+    # name that is not there is refused by the engine every time (XX06).
+    #
+    replaced = {row.id: row.replaces if row.replaces in published else None for row in saved}
     for row in saved:
         moved = object_moved(state, row)
+        replaces = replaced[row.id]
         objects[row.object_id] = None if row.deleted else row.yaml
-        if row.replaces and not row.deleted:
-            objects.setdefault(row.replaces, None)
+        if replaces and not row.deleted:
+            objects.setdefault(replaces, None)
         rows.append(
             PendingRow(
                 kind="object",
@@ -246,8 +253,8 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
                 what=(
                     "Removal"
                     if row.deleted
-                    else f"Renamed from {row.replaces}"
-                    if row.replaces
+                    else f"Renamed from {replaces}"
+                    if replaces
                     else "Changed"
                     if row.object_id in published
                     else "New"
@@ -312,7 +319,7 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
             if row.deleted:
                 continue
             more, new = backend_renames(
-                state.stored, row.object_id, row.yaml, row.replaces or row.object_id
+                state.stored, row.object_id, row.yaml, replaced[row.id] or row.object_id
             )
             renamed.update(more)
             introduced.extend(name for name in new if name not in introduced)
@@ -326,11 +333,14 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
             {"id": str(change.id), "revision": change.revision}
             for change in sorted(changes.values(), key=lambda change: change.kind)
         ]
+    clashes = _rename_clashes(saved, replaced)
     stale = [row.name for row in rows if row.stale and not row.moved]
     changed = [row.name for row in rows if row.moved]
     problem = (
         "The stored proxies have not been read yet."
         if head is None
+        else f"{clashes[0]}. Discard one of them before publishing."
+        if clashes
         else f"{', '.join(changed)} {'was' if len(changed) == 1 else 'were'} changed by a "
         f"publish after the changes were saved. Open {'it' if len(changed) == 1 else 'each'} "
         "to save over that or discard the changes."
@@ -353,6 +363,29 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
         problem=problem,
         lagging=tuple(lagging),
     )
+
+
+def _rename_clashes(
+    saved: Sequence[db.ProxyDraft], replaced: Mapping[Any, str | None]
+) -> list[str]:
+    """Saved renames that cannot go out together, said one by one (XX05).
+
+    A name renamed twice, or renamed and also changed, would be published as
+    the new object beside the old one with the old name's removal lost. The
+    editor refuses to write such a pair; this stops one that is already saved,
+    or that came in by another way.
+    """
+
+    kept = [row for row in saved if not row.deleted]
+    names = {row.object_id for row in kept}
+    said: list[str] = []
+    for old in sorted({name for row in kept if (name := replaced[row.id])}):
+        new = sorted(row.object_id for row in kept if replaced[row.id] == old)
+        if old in names:
+            said.append(f"{old} is renamed to {new[0]} and also has saved changes of its own")
+        elif len(new) > 1:
+            said.append(f"{old} is renamed to both {' and '.join(new)}")
+    return said
 
 
 def _network_changes(

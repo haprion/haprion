@@ -81,6 +81,7 @@ from haprion_ui.saved_work import (
     ObjectWork,
     saved_network_rows,
     settled_draft,
+    settled_drafts,
     settled_work,
 )
 from haprion_ui.templates import TEMPLATES
@@ -1030,6 +1031,13 @@ def editor_submit(
         (row.replaces for row in (work.draft, work.saved) if row is not None and row.replaces),
         None,
     )
+    #
+    # Only a name that is still published can be replaced. A row saved again
+    # after its own publish carried the old name on, and a publish that
+    # removes a name the version does not have is refused every time.
+    #
+    if replaces is not None and not any(view.name == replaces for view in state.stored):
+        replaces = None
     if renaming:
         if work.saved is not None and form.action == "draft":
             #
@@ -1226,6 +1234,16 @@ def save_object_change(
         raise ValueError("the stored proxies have not been read yet")
     # Whoever calls, what is saved is held to what a write may be (15-06).
     load_written(new_object_id or object_id, document.encode())
+    if replaces is not None and not any(view.name == replaces for view in state.stored):
+        replaces = None
+    clash = rename_clash(
+        settled_drafts(connection, cluster, state_reading(state)),
+        key=object_id,
+        target=new_object_id or object_id,
+        replaces=replaces,
+    )
+    if clash:
+        raise db.DraftConflict(clash)
     return db.save_change(
         connection,
         cluster=cluster,
@@ -1240,6 +1258,39 @@ def save_object_change(
         saved_revision=saved_revision,
         draft_revision=draft_revision,
     )
+
+
+def rename_clash(
+    rows: Iterable[db.ProxyDraft], *, key: str, target: str, replaces: str | None
+) -> str:
+    """Why a saved change cannot be written beside the saved renames, or an empty string (XX05).
+
+    A rename is a new object and the removal of the old name, carried by the
+    one row. A second row for the old name - another tab, another person, the
+    API - would be published beside it, and the publish would add the old name
+    back or lose its removal. Said as a conflict, with the name to open,
+    because the other work is somebody's intention and neither is dropped.
+    """
+
+    saved = [row for row in rows if row.stage == db.SAVED and not row.deleted]
+    for row in saved:
+        if row.replaces == key and row.object_id != key:
+            return (
+                f"{key} is being renamed to {row.object_id} in saved changes; "
+                f"open {row.object_id} to change it"
+            )
+    if replaces is not None:
+        for row in saved:
+            if row.object_id in (key, target):
+                continue
+            if row.object_id == replaces:
+                return (
+                    f"{replaces} has saved changes of its own, so {target} cannot take its "
+                    "place; publish or discard those first"
+                )
+            if row.replaces == replaces:
+                return f"{replaces} is already being renamed to {row.object_id} in saved changes"
+    return ""
 
 
 def save_removal(

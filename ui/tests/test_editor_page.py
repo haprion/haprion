@@ -122,8 +122,13 @@ class EditorTestCase(LoginTestCase):
         self.discarded: list[tuple[str, str, int]] = []
         self.backend_renames: list[dict[str, Any]] = []
         self.draft: ProxyDraft | None = None
+        self.others: list[ProxyDraft] = []
         self.conflict = False
         for target, side_effect in (
+            (
+                "cluster_drafts",
+                lambda _c, _cluster: [*([self.draft] if self.draft else []), *self.others],
+            ),
             ("cluster_objects", lambda _c, **_kw: [OBJECTS]),
             ("cluster_networks", lambda _c, **_kw: [NETWORK]),
             ("cluster_settings", lambda _c, **_kw: [SETTINGS]),
@@ -1977,6 +1982,54 @@ class SavedChangesAndDrafts(EditorTestCase):
         self.assertEqual(answer.status_code, 400)
         self.assertIn("can only change with Save", answer.text)
         self.assertEqual((self.saved, self.renamed), ([], []))
+
+    def test_a_change_of_a_name_a_saved_rename_leaves_is_refused(self) -> None:
+        """Review 26-11-05, XX05: saved in another tab, it would be published beside the rename."""
+
+        self.others = [
+            self.row(
+                "saved", 1, object_id="bazaar", yaml=SHOP.replace("shop", "bazaar"), replaces="shop"
+            )
+        ]
+        client = self.editor()
+
+        for fields in ({}, {"name": "emporium"}):
+            with self.subTest(fields=fields):
+                answer = self.submit(client, "/proxies/alpha/shop/edit", action="save", **fields)
+
+                self.assertEqual(answer.status_code, 409)
+                self.assertIn("shop is being renamed to bazaar in saved changes", answer.text)
+        self.assertEqual(self.changes, [])
+
+    def test_a_rename_of_a_name_with_saved_changes_of_its_own_is_refused(self) -> None:
+        self.others = [self.row("saved", 1, object_id="shop")]
+        self.draft = self.row(
+            "saved", 1, object_id="console", yaml=SHOP.replace("shop", "console"), replaces="shop"
+        )
+        client = self.editor()
+
+        answer = self.submit(
+            client, "/proxies/alpha/console/edit", action="save", name="console", saved_revision="1"
+        )
+
+        self.assertEqual(answer.status_code, 409)
+        self.assertIn("shop has saved changes of its own", answer.text)
+        self.assertEqual(self.changes, [])
+
+    def test_a_saved_rename_of_a_name_no_longer_published_replaces_nothing(self) -> None:
+        """Review 26-11-05, XX06: saved again after its publish, the row kept a name that is gone."""
+
+        self.draft = self.row(
+            "saved", 4, object_id="bazaar", yaml=SHOP.replace("shop", "bazaar"), replaces="gone"
+        )
+        client = self.editor()
+
+        answer = self.submit(
+            client, "/proxies/alpha/bazaar/edit", action="save", name="bazaar", saved_revision="4"
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertIsNone(self.changes[0]["replaces"])
 
     def test_discard_without_a_draft_discards_the_saved_change(self) -> None:
         self.draft = self.row("saved", 2)

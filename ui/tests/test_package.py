@@ -207,6 +207,49 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertEqual(sorted(objects), ["bazaar", "shop"])
         self.assertIsNone(objects["shop"])
 
+    def test_a_rename_of_a_name_that_is_gone_publishes_the_new_one_alone(self) -> None:
+        """Review 26-11-05, XX06: `gone: None` was refused by the engine every time."""
+
+        self.rows = [row("bazaar", replaces="gone", base_document="")]
+        client = self.editor()
+
+        text = self.page(client)
+        answer = self.publish(client)
+
+        self.assertNotIn("Renamed from gone", text)
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(sorted(self.queued[0]["payload"]["objects"]), ["bazaar"])
+
+    def test_a_rename_and_a_change_of_the_old_name_are_not_published_together(self) -> None:
+        """Review 26-11-05, XX05: the removal of the old name was lost, and both went out."""
+
+        self.rows = [
+            row("bazaar", replaces="shop"),
+            row("shop", id=UUID("22222222-2222-4222-8222-222222222222")),
+        ]
+        client = self.editor()
+
+        text = self.page(client)
+        answer = self.publish(client)
+
+        self.assertIn("shop is renamed to bazaar and also has saved changes of its own", text)
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(self.queued, [])
+
+    def test_two_renames_of_one_name_are_not_published_together(self) -> None:
+        self.rows = [
+            row("bazaar", replaces="shop"),
+            row("emporium", replaces="shop", id=UUID("22222222-2222-4222-8222-222222222222")),
+        ]
+        client = self.editor()
+
+        text = self.page(client)
+        answer = self.publish(client)
+
+        self.assertIn("shop is renamed to both bazaar and emporium", text)
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(self.queued, [])
+
     def test_a_renamed_pool_travels_with_the_publish(self) -> None:
         """B250/B253: the card under the new name keeps the old one's history."""
 

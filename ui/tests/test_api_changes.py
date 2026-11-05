@@ -334,13 +334,13 @@ class ReplacingAnObject(ChangesTestCase):
             self.assertEqual(by_api[key], by_page[key], key)
 
     def test_a_saved_change_is_replaced_at_its_revision_and_keeps_what_it_replaces(self) -> None:
-        self.rows = [saved_row(replaces="storefront")]
+        self.rows = [saved_row(object_id="console", yaml=SECOND, replaces="shop")]
         response = self.send(
-            "PUT", "/clusters/alpha/objects/shop", body=SHOP.replace("8080", "9091")
+            "PUT", "/clusters/alpha/objects/console", body=SECOND.replace("8080", "9091")
         )
         self.assertEqual(response.status_code, 200)
         (written,) = self.changes
-        self.assertEqual((written["saved_revision"], written["replaces"]), (3, "storefront"))
+        self.assertEqual((written["saved_revision"], written["replaces"]), (3, "shop"))
         self.assertEqual(response.json()["result"]["revision"], 4)
 
     def test_if_match_must_name_the_revision_that_is_saved(self) -> None:

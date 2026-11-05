@@ -417,7 +417,7 @@ providers:
   name: DirectAdmin
   tier: community
   package: certbot-dns-directadmin
-  plugin: directadmin
+  plugin: dns-directadmin
   adapter: ini
   delivery: flag:credentials
   documentation: https://pypi.org/project/certbot-dns-directadmin/
@@ -429,19 +429,19 @@ providers:
     kind: text
     required: true
     secret: false
-    key: directadmin_url
+    key: dns_directadmin_url
   - id: username
     label: Username
     kind: text
     required: true
     secret: false
-    key: directadmin_username
+    key: dns_directadmin_username
   - id: password
     label: Password
     kind: text
     required: true
     secret: true
-    key: directadmin_password
+    key: dns_directadmin_password
 - id: dnsimple
   name: DNSimple
   tier: core

@@ -87,6 +87,23 @@ class TheFormModule(unittest.TestCase):
                 self.assertIn(expected, str(caught.exception))
                 self.assertNotIn(GUARD, str(caught.exception))
 
+    def test_netcup_takes_the_legacy_trio_or_the_clouddns_key(self) -> None:
+        trio = {"customer_id": "123456", "api_key": "key-example", "api_password": "pw-example"}
+        key = {"api_v1_key": "clouddns-example"}
+        for label, values in (
+            ("nothing", {}),
+            ("half a trio", {"customer_id": "123456", "api_key": "key-example"}),
+            ("the trio and the key", {**trio, **key}),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaises(dns_profile_form.FormProblem) as caught:
+                    self.seal(provider_id="netcup", values=values)
+                text = str(caught.exception)
+                self.assertTrue(text.startswith("Give either all of Customer ID"), text)
+                self.assertIn("or only CloudDNS API key", text)
+        for values in (trio, key):
+            self.seal(provider_id="netcup", values=values)
+
     def test_a_taken_id_is_refused_for_a_new_profile_only(self) -> None:
         form = dns_profile_form.ProfileForm(
             profile_id="cf-main", provider_id="cloudflare", values={"api_token": "t"}
@@ -384,7 +401,7 @@ class ThePages(ProfileRouteTestCase):
         client = self.writing_client()
         first = client.get("/dns-profiles/new").text
         self.assertIn('<option value="cloudflare"', first)
-        self.assertIn("80 providers", first)
+        self.assertIn(f"{len(dns_profile_form.providers())} providers", first)
         self.assertNotIn('name="field.', first)
 
         second = client.get("/dns-profiles/new?provider=rfc2136").text
@@ -500,6 +517,42 @@ class SavingAProfile(ProfileRouteTestCase):
             page,
         )
         self.assertNotIn('href="/jobs"', page.split("<main")[1])
+
+    def test_netcup_cannot_be_saved_without_a_working_way_in(self) -> None:
+        client = self.writing_client()
+        base = {"provider_id": "netcup", "profile_id": "nc-main", "field.api_token": ""}
+        for values in (
+            {},
+            {"field.customer_id": "123456", "field.api_key": "key-example"},
+            {
+                "field.customer_id": "1",
+                "field.api_key": "k",
+                "field.api_password": "p",
+                "field.api_v1_key": "v",
+            },
+        ):
+            response = self.post(client, **base, **values)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Give either all of Customer ID", response.text)
+        self.assertEqual((self.created, self.queued), ([], []))
+        for number, values in enumerate(
+            (
+                {"field.customer_id": "1", "field.api_key": "k", "field.api_password": "p"},
+                {"field.api_v1_key": "clouddns-example"},
+            )
+        ):
+            response = self.post(
+                client,
+                **{**base, "profile_id": f"nc-{number}", "idempotency_key": str(uuid4())},
+                **values,
+            )
+            self.assertEqual(response.status_code, 303)
+        self.assertEqual(len(self.created), 2)
+
+    def test_the_form_states_the_two_ways_for_netcup(self) -> None:
+        page = self.writing_client().get("/dns-profiles/new?provider=netcup").text
+        self.assertIn("Give either all of Customer ID (legacy API)", page)
+        self.assertIn("or only CloudDNS API key", page)
 
     def test_a_refusal_redraws_the_form_without_the_secret(self) -> None:
         response = self.post(self.writing_client(), **{"field.api_token": ""})

@@ -80,6 +80,9 @@
       {% if chosen.exactly_one_of %}
       <p class="table-note">Give exactly one of: {% for field in chosen.fields if field.id in chosen.exactly_one_of %}{{ field.label }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>
       {% endif %}
+      {% if chosen.exactly_one_of_sets %}
+      <p class="table-note">Give either {{ ways_in }}.</p>
+      {% endif %}
     </div>
     <div class="editor-actions editor-submit">
       <p class="table-note">Saving seals the values and queues one apply job; the profile is in effect when the job is done. Use a token scoped to the zones it needs where the provider offers one.</p>

@@ -185,6 +185,8 @@ def _sentence(chosen: DNSProvider, message: str) -> str:
             field.label for field in chosen.fields if field.id in chosen.exactly_one_of
         )
         return f"Give exactly one of: {labels}."
+    if message.startswith("give either "):
+        return message[0].upper() + message[1:] + "."
     return message
 
 

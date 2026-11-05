@@ -16,6 +16,7 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from haprion import ndes_server_socket
+from haprion.dns_provider_catalog import ways_in
 from haprion.ndes_servers import NdesServerError
 
 from haprion_ui import (
@@ -408,6 +409,7 @@ def build_router(config: Config) -> APIRouter:
                 "verification_label": (
                     dns_profile_form.verification_label(chosen) if chosen else ""
                 ),
+                "ways_in": ways_in(chosen) if chosen else "",
                 "providers": dns_profile_form.providers(),
                 "existing": existing,
                 "public_key": read_dns_public_key(config),

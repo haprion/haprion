@@ -76,6 +76,7 @@ def main(
     args = _parser().parse_args(argv)
     cluster = str(args.cluster)
     path = Path(args.file)
+    found: str | None = None  # the document names a cluster once it is found (W10)
     try:
         try:
             text = path.read_bytes()
@@ -88,6 +89,7 @@ def main(
         except ConfigError as exc:
             raise Refused("settings_invalid", f"{path}: {exc}") from exc
         reading = answer_of(run_helper(cluster, new_request_id()), READ_OPERATION)
+        found = cluster
         head = reading.get("head")
         if not isinstance(head, str):
             raise Refused(
@@ -114,7 +116,7 @@ def main(
             versions = [] if args.check else [answered]
     except Refused as refused:
         if args.json:
-            write_document(writer, envelope(OPERATION, cluster, None, refused), refused.exit_code)
+            write_document(writer, envelope(OPERATION, found, None, refused), refused.exit_code)
         else:
             errors.write(refused.report())
         return refused.exit_code

@@ -85,7 +85,9 @@ def unreadable(path: object, error: OSError) -> Refused:
     return Refused(unreadable_code(error), f"{path}: {error.strerror}", exit_codes.NOT_FOUND)
 
 
-def envelope(operation: str, cluster: str, result: Any, error: Refused | None) -> dict[str, Any]:
+def envelope(
+    operation: str, cluster: str | None, result: Any, error: Refused | None
+) -> dict[str, Any]:
     """The command's one document: `done` with its result, or the refusal it stopped at.
 
     Built by `haprion.envelope`, as every helper's is; the outcome of a refusal

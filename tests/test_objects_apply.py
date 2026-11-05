@@ -206,6 +206,21 @@ class ObjectsFromFiles(unittest.TestCase):
             (result["unchecked_nodes"], result["unchecked_features"]), (["node-b"], ["waf"])
         )
 
+    def test_a_document_before_the_cluster_was_found_names_none(self) -> None:
+        """W10: a file that cannot be read says nothing about a cluster; a refusal after the lookup does."""
+
+        _, out, _ = self.run_cli(
+            Fakes({}), "apply", "-c", "alpha", str(self.root / "gone"), "--json"
+        )
+        before = assert_contract("haprion-objects-apply", out)
+        self.write("shop", document("shop"))
+        fakes = Fakes({})
+        fakes.refuse = {"code": "changes_invalid", "message": "no"}
+        _, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
+        after = assert_contract("haprion-objects-apply", out)
+
+        self.assertEqual((before["cluster"], after["cluster"]), (None, "alpha"))
+
     def test_the_same_files_again_change_nothing(self) -> None:
         fakes = Fakes({"shop": document("shop")})
         self.write("shop", document("shop"))

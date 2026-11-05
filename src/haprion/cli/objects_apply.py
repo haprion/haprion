@@ -398,6 +398,11 @@ def main(
     errors: TextIO = stream_err or sys.stderr
     args = _parser(command).parse_args(argv)
     cluster = str(args.cluster)
+    #
+    # The document names a cluster once the engine has found it, not before: a
+    # file that cannot be read says nothing about a cluster (W10).
+    #
+    found: str | None = None
     try:
         wanted = read_files(args.targets) if command == "apply" else {}
         if command == "apply" and not wanted and args.prune:
@@ -406,6 +411,7 @@ def main(
                 "no object files found, and --prune would remove every object; nothing was changed",
             )
         head, current = stored(answer_of(run_helper(cluster, new_request_id()), "objects"))
+        found = cluster
         plan = (
             plan_apply(wanted, current, prune=args.prune)
             if command == "apply"
@@ -440,7 +446,7 @@ def main(
         return stopped.exit_code
     except Refused as refused:
         if args.json:
-            write_document(writer, envelope(OPERATION, cluster, None, refused), refused.exit_code)
+            write_document(writer, envelope(OPERATION, found, None, refused), refused.exit_code)
         else:
             errors.write(refused.report())
         return refused.exit_code

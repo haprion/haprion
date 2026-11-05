@@ -153,11 +153,12 @@ class TheNetworkFromAFile(NetworkPublishFixture):
             path.write_text(as_json)
             asked: list[bool] = []
             publish = self.publish_network
-            with mock.patch.object(
-                self,
-                "publish_network",
-                side_effect=lambda *a, **k: asked.append(True) or publish(*a, **k),
-            ):
+
+            def watched(*args: Any, **kwargs: Any) -> Any:
+                asked.append(True)
+                return publish(*args, **kwargs)
+
+            with mock.patch.object(self, "publish_network", side_effect=watched):
                 code, out, _ = self.run_apply(policy, path, "--check", "--json")
 
             answer = assert_contract("haprion-network-apply", out)
@@ -245,6 +246,7 @@ class TheNetworkFromAFile(NetworkPublishFixture):
 
             self.assertEqual(code, 66)
             self.assertEqual(json.loads(out)["error"]["code"], "not_found")
+            self.assertIsNone(json.loads(out)["cluster"], "no cluster has been looked up (W10)")
 
     def test_a_derived_network_has_nothing_to_change(self) -> None:
         with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:

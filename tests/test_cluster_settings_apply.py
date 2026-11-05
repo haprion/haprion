@@ -111,10 +111,9 @@ class TheSettingsFromAFile(unittest.TestCase):
         code, out, published = self.run_apply("metrics: {port: x}\n", "--json")
 
         self.assertEqual((code, published), (65, []))
-        self.assertEqual(
-            assert_contract("haprion-cluster-settings-apply", out)["error"]["code"],
-            "settings_invalid",
-        )
+        answer = assert_contract("haprion-cluster-settings-apply", out)
+        self.assertEqual(answer["error"]["code"], "settings_invalid")
+        self.assertIsNone(answer["cluster"], "no cluster has been looked up yet (W10)")
 
 
 class TheSettingsAsText(unittest.TestCase):

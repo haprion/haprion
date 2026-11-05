@@ -81,9 +81,11 @@ def main(
     args = _parser().parse_args(argv)
     cluster = str(args.cluster)
     path = Path(args.file)
+    found: str | None = None  # the document names a cluster once it is found (W10)
     try:
         wanted = read_file(path)
         reading = answer_of(run_helper(cluster, new_request_id()), "network")
+        found = cluster
         if reading.get("origin") != "repository":
             raise Refused(
                 "network_not_managed",
@@ -152,7 +154,7 @@ def main(
             versions = [] if args.check else [answered]
     except Refused as refused:
         if args.json:
-            write_document(writer, envelope(OPERATION, cluster, None, refused), refused.exit_code)
+            write_document(writer, envelope(OPERATION, found, None, refused), refused.exit_code)
         else:
             errors.write(refused.report())
         return refused.exit_code

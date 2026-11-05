@@ -999,7 +999,7 @@ time something fails. The API does not return them.
   web service cannot change the second.
 - **CSRF tokens are derived from the session token**, not stored. Making one requires the cookie, which a
   form posted from another site can make a browser send but cannot read. The login form itself is
-  protected the same way, by a short-lived cookie that is only sent to `/login`.
+  protected the same way, by a short-lived cookie set by the sign-in form.
 - **A new token on every login**, so nothing a browser held before signing in is still valid after.
 
 *Details:* the clocks are set under `[session]` in `ui.toml`: `inactivity_minutes` (default 600) and
@@ -1014,11 +1014,15 @@ through a list of names.
 Each account also has a budget of its own across all addresses: ten times the limit (`max_failures`) in
 the same window. It stops many addresses guessing at one name. An attempt refused by the throttle is not
 counted again, so one address that keeps trying cannot use up that budget for everyone else.
-`haprion-user unlock` clears both. An IPv6 address counts as its /64, here and in the rate limit nginx puts in front of the
-sign-in. *Settings -> Users* marks an account
-*Locked* by this same rule, so a name the sign-in refuses is never shown as *Active*;
-`haprion-user list` shows it too (its STATE column, and `locked` in `--json`), reading the limit and window from the
-same configuration.
+`haprion-user unlock` clears both. An IPv6 address counts as its /64, here and in the rate limit nginx
+puts in front of the sign-in. *Settings -> Users* marks an account *Locked* by this same rule, so a name
+the sign-in refuses is never shown as *Active*; `haprion-user list` shows it too (its STATE column, and
+`locked` in `--json`), reading the limit and window from the same configuration.
+
+A known name can be locked by anyone who reaches the sign-in page from enough addresses, and `admin` is
+the name every installation starts with. `unlock` is the way back in. The break-glass account is better
+not called `admin`: make one under a name of your own (`haprion-user add <name> --role admin`), then
+`haprion-user delete admin --yes`.
 
 The web service can add and read sign-in attempts, but cannot change or delete them. A counter the web
 process could reset would be a lock whose key is kept behind the door. An unlock therefore deletes
@@ -1039,7 +1043,8 @@ will not parse is counted as loopback, rather than becoming an unthrottled bucke
 Every sign-in, failure, sign-out and account change is written to the audit trail, in the same transaction
 as the thing it describes. The login page, on the other hand, says one and the same sentence for every
 kind of failure. An unknown account, a wrong password, a disabled account and a throttled address cannot
-be told apart from outside, and each takes the same amount of time.
+be told apart from outside. The first three take the same time; a throttled attempt is answered without
+the password hash, which tells nothing about who has an account.
 
 ### Signing in through an OpenID Connect provider
 

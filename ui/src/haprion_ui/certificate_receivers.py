@@ -282,6 +282,26 @@ def _pair_check(certificate: str, key: str) -> str:
     )
 
 
+def windows_pair_check(directory: str) -> str:
+    """PowerShell that stops the block when the key does not belong to the certificate.
+
+    `CreateFromPemFile` pairs them and throws when they do not match, which is
+    the Linux lines' `_pair_check` (E04). It is PowerShell 7's; Windows
+    PowerShell 5.1 lacks it, and there the pair goes unchecked with a warning
+    rather than the commands failing for everyone on it.
+    """
+
+    cert = f"{WINDOWS_CERT_DIR}\\{directory}\\fullchain.pem"
+    key = f"{WINDOWS_CERT_DIR}\\{directory}\\privkey.pem"
+    x509 = "[System.Security.Cryptography.X509Certificates.X509Certificate2]"
+    return (
+        f"if ({x509}.GetMethod('CreateFromPemFile', [type[]]@([string], [string]))) {{ "
+        f"{x509}::CreateFromPemFile('{cert}', '{key}').Dispose() }} "
+        "else { Write-Warning 'The certificate and key were not checked as a pair: "
+        "that needs PowerShell 7.' }"
+    )
+
+
 def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
     """The commands this receiver's host runs, one block per certificate it holds.
 
@@ -346,6 +366,11 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                             f"--cacert {WINDOWS_CERT_DIR}\\manager-ui.pem "
                             f"-o {WINDOWS_CERT_DIR}\\{held.certificate_id}\\{name} {url}",
                             windows_check("curl"),
+                            *(
+                                (windows_pair_check(held.certificate_id),)
+                                if name == "privkey.pem"
+                                else ()
+                            ),
                         ),
                     )
                 )
@@ -388,6 +413,7 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                         f'@"\n{windows_gets}\n"@ | sftp -b - -i {WINDOWS_KEY_FILE} '
                         f"-o IdentitiesOnly=yes {row.owner}@{host}",
                         windows_check("sftp"),
+                        *((windows_pair_check(directory),) if held.format != "pkcs12" else ()),
                     ),
                 )
             )

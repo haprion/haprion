@@ -19,7 +19,9 @@ All of them are written to be run from a timer. Some properties are worth keepin
 - **The pair is checked before it is installed.** `fullchain.pem` and `privkey.pem` are two files
   and two renames on the manager, so a fetch can catch the moment between them. The three `fetch-`
   scripts verify that the key belongs to the certificate and do nothing if it does not - the next
-  run gets a consistent pair. `install-pkcs12.ps1` imports one PKCS#12 file, which carries both.
+  run gets a consistent pair. The Windows commands the interface shows do the same with PowerShell 7's
+  `X509Certificate2.CreateFromPemFile`; Windows PowerShell 5.1 has none and warns that the pair was not
+  checked. `install-pkcs12.ps1` imports one PKCS#12 file, which carries both.
 - **Nothing is restarted unless something changed.** The `fetch-` scripts compare with `cmp`, and
   `install-pkcs12.ps1` compares the certificate's thumbprint, so a run that fetched the same
   certificate is silent and costs nothing.

@@ -233,6 +233,31 @@ class WhatTheHostRuns(unittest.TestCase):
                 self.assertNotRegex(posix, r"get /\S+ fullchain")
                 self.assertNotIn("C:\\certs\\fullchain.pem", windows)
 
+    def test_a_pem_pair_is_checked_on_windows_as_it_is_on_linux(self) -> None:
+        """Review 26-11-05, E04: a fetch between the publisher's two renames installed a mismatch."""
+
+        for transport, allow in (("sftp", ()), ("https", ("192.0.2.9/32",))):
+            with self.subTest(transport):
+                (row,) = self.rows(
+                    record(
+                        "lb-02.example.net",
+                        transport=transport,
+                        allow=allow,
+                        certificates=("app.example.com",),
+                    )
+                )
+                steps = certificate_receivers.fetch_steps(row, "mgr.example.net")
+                checking = [s for s in steps if "CreateFromPemFile" in s.windows_command]
+                self.assertEqual(len(checking), 1)
+                command = checking[0].windows_command
+                self.assertIn("'C:\\certs\\app.example.com\\fullchain.pem'", command)
+                self.assertIn("'C:\\certs\\app.example.com\\privkey.pem'", command)
+                self.assertTrue(command.startswith("& {"))
+                self.assertTrue(command.endswith("}"))
+        (pfx,) = self.rows(record("lb-01", transport="sftp", certificates=("app.example.com",)))
+        (step,) = certificate_receivers.fetch_steps(pfx, "mgr.example.net")
+        self.assertNotIn("CreateFromPemFile", step.windows_command)
+
     def test_sftp_checks_the_pair_under_a_private_umask_and_leaves_pkcs12_alone(self) -> None:
         (pem,) = self.rows(
             record("lb-02.example.net", transport="sftp", certificates=("app.example.com",))

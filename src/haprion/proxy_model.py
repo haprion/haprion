@@ -364,6 +364,12 @@ HEADER_NAME = re.compile(r"^[!&*+.^_|~0-9A-Za-z-]{1,64}$")
 # single quote in the value would end the string early.
 #
 FORBIDDEN_IN_VALUE = ("\r", "\n", "\0", "'")
+#
+# Every control character, a tab included (B450, X05): RFC 9110 does not allow
+# most of them in a field value, and the generator refuses all of them in what
+# it writes, so a value with one is refused where it is saved.
+#
+CONTROL_IN_VALUE = re.compile(r"[\x00-\x1f\x7f]")
 
 #
 # The headers the cluster decides and an object may not touch. They are written
@@ -1851,8 +1857,14 @@ def _redirect(value: Any, location: str) -> Redirect | None:
     target = data.get("location")
     if not isinstance(target, str) or not target.startswith(("http://", "https://")):
         raise ModelError(f"{location}.location must be an absolute http or https URL")
-    if any(character in target for character in FORBIDDEN_IN_VALUE) or " " in target:
-        raise ModelError(f"{location}.location may not contain spaces, quotes or line breaks")
+    if (
+        any(character in target for character in FORBIDDEN_IN_VALUE)
+        or " " in target
+        or CONTROL_IN_VALUE.search(target)
+    ):
+        raise ModelError(
+            f"{location}.location may not contain spaces, quotes, line breaks or control characters"
+        )
     status = data.get("status", REDIRECT_STATUS[0])
     if status not in REDIRECT_STATUS:
         raise ModelError(
@@ -2520,9 +2532,11 @@ def _header_pairs(value: Any, location: str) -> tuple[tuple[str, str], ...]:
             raise ModelError(
                 f"{location}.{name} must be between 1 and {MAX_HEADER_VALUE} characters"
             )
-        if any(character in text for character in FORBIDDEN_IN_VALUE):
+        if any(character in text for character in FORBIDDEN_IN_VALUE) or CONTROL_IN_VALUE.search(
+            text
+        ):
             raise ModelError(
-                f"{location}.{name} may not contain line breaks, NUL or a single quote"
+                f"{location}.{name} may not contain line breaks, control characters or a single quote"
             )
         pairs.append((name, text))
     return tuple(pairs)
@@ -2931,8 +2945,10 @@ def _header_condition(value: Any, location: str) -> HeaderCondition | None:
     text = str(content)
     if not text or len(text) > MAX_HEADER_VALUE:
         raise ModelError(f"{location}.{match} must be between 1 and {MAX_HEADER_VALUE} characters")
-    if any(character in text for character in FORBIDDEN_IN_VALUE):
-        raise ModelError(f"{location}.{match} may not contain line breaks, NUL or a single quote")
+    if any(character in text for character in FORBIDDEN_IN_VALUE) or CONTROL_IN_VALUE.search(text):
+        raise ModelError(
+            f"{location}.{match} may not contain line breaks, control characters or a single quote"
+        )
     return HeaderCondition(name=name, match=match, value=text)
 
 

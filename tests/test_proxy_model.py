@@ -1324,6 +1324,38 @@ class EditingTheHeadersThatPassThrough(unittest.TestCase):
 
         self.assertIn("location", str(raised.exception))
 
+    def test_a_control_character_is_refused_in_a_header_value_and_a_redirect(self) -> None:
+        # B450, X05: only CR, LF and NUL were. A tab is refused too, as the generator
+        # holds every modelled value to no control character at all.
+        for character in ("\\x0b", "\\x1b", "\\x7f", "\\t"):
+            with self.subTest(character):
+                value = f'"a{character}b"'
+                with self.assertRaises(ModelError) as raised:
+                    load_proxy("shop", self.headers(f"  request:\n    set:\n      X-Ctl: {value}"))
+                self.assertIn("control", str(raised.exception))
+                with self.assertRaises(ModelError):
+                    load_proxy(
+                        "shop",
+                        with_lines(
+                            (
+                                "  - path: /\n    backend: web\n",
+                                "  - path: /old\n    redirect:\n"
+                                f'      location: "https://example.com/{character}x"\n',
+                            )
+                        ),
+                    )
+                with self.assertRaises(ModelError):
+                    load_proxy(
+                        "shop",
+                        with_lines(
+                            (
+                                "routes:",
+                                "deny_rules:\n  - name: a\n    header: "
+                                f"{{name: X-A, equals: {value}}}\nroutes:",
+                            )
+                        ),
+                    )
+
     def test_a_value_yaml_read_as_a_boolean_says_so(self) -> None:
         with self.assertRaises(ModelError) as raised:
             load_proxy("shop", self.headers("  request:\n    set:\n      X-Trace: yes"))

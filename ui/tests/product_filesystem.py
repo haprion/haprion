@@ -24,10 +24,13 @@ PRODUCT_ROOTS = (
     "/run/haprion",
     "/var/lib/haprion",
     "/srv",
+    "/run/lock",
+    "/etc/letsencrypt",
 )
 
 #
-# The os functions that take a path first (and, for a rename, a second).
+# The os functions that take a path first (and, for a rename, a second). Those
+# the platform does not have are left out by name below.
 #
 ONE_PATH = (
     "stat",
@@ -45,6 +48,13 @@ ONE_PATH = (
     "utime",
     "readlink",
     "truncate",
+    "statvfs",
+    "lchown",
+    "mkfifo",
+    "setxattr",
+    "getxattr",
+    "listxattr",
+    "removexattr",
 )
 TWO_PATHS = ("rename", "replace", "symlink", "link")
 
@@ -56,11 +66,11 @@ def _moved(scratch: Path, path: Any) -> Any:
         text = os.fspath(path)
     except TypeError:
         return path
-    if isinstance(text, bytes):
-        return path
+    wanted = os.fsdecode(text)
     for root in PRODUCT_ROOTS:
-        if text == root or text.startswith(root + "/") or text.startswith(root + "-"):
-            return str(scratch) + text
+        if wanted == root or wanted.startswith(root + "/") or wanted.startswith(root + "-"):
+            moved = str(scratch) + wanted
+            return os.fsencode(moved) if isinstance(text, bytes) else moved
     return path
 
 
@@ -79,6 +89,8 @@ def product_directories(scratch: Path) -> Iterator[None]:
 
     patches = []
     for name in ONE_PATH:
+        if not hasattr(os, name):
+            continue
         patches.append(mock.patch.object(os, name, _wrapped(scratch, getattr(os, name), False)))
     for name in TWO_PATHS:
         patches.append(mock.patch.object(os, name, _wrapped(scratch, getattr(os, name), True)))

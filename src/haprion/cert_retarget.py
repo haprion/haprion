@@ -66,6 +66,7 @@ from haprion.cert_delete import (
     ask_node,
     ask_the_nodes,
     read_guards,
+    registry_names,
 )
 from haprion.cert_inventory import (
     IMPORT_STORE,
@@ -384,7 +385,12 @@ def retarget(
             )
     except PublishError as exc:
         raise RetargetError(exc.code, str(exc), exit_code=exit_codes.REFUSED) from exc
-    outcomes = ask_the_nodes(pending, policy.cert_deploy_identity, node_remover)
+    outcomes = ask_the_nodes(
+        pending,
+        policy.cert_deploy_identity,
+        node_remover,
+        named_again=registry_names(policy, lock_path=lock_path, require_secure=require_secure),
+    )
     return Report("remove", tuple(outcomes))
 
 

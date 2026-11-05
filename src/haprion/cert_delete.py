@@ -558,6 +558,34 @@ def ask_node(
     return completed.returncode, output
 
 
+#
+# Whether the registry names a certificate on a cluster, read under the
+# certificate lock: the answer to "may this node's copy still go?".
+#
+type NamedAgain = Callable[[str, str], bool]
+RECHECK_WAIT_SECONDS = 5
+
+
+def registry_names(
+    policy: PathPolicy, *, lock_path: Path = DEFAULT_LOCK_PATH, require_secure: bool = True
+) -> NamedAgain:
+    """The check `remove_node_copies` makes before it asks a node (26-11-05, XX04).
+
+    The nodes are asked with the lock released, so a certificate imported again
+    or a cluster added again in between would lose the copy it was just given.
+    The lock is held only for the reading, not for the question.
+    """
+
+    def named(certificate_id: str, cluster_id: str) -> bool:
+        with publish_lock(lock_path, wait=RECHECK_WAIT_SECONDS):
+            runtime = load_runtime_config(policy, require_secure=require_secure)
+        registry = runtime.registry
+        entry = registry.certificates.get(certificate_id) if registry is not None else None
+        return entry is not None and cluster_id in entry.clusters
+
+    return named
+
+
 def remove_node_copies(
     clusters: Sequence[Cluster],
     certificate_id: str,
@@ -566,12 +594,14 @@ def remove_node_copies(
     *,
     verb: str = NODE_VERB,
     unreachable: set[str] | None = None,
+    named_again: NamedAgain | None = None,
 ) -> tuple[NodeCopy, ...]:
     """Layer four, node by node. A refusal is a kept copy, reported and asked again next run.
 
     `unreachable` is shared by a batch: a node that did not answer is not asked
     again by the certificates after it. Each question to a dead node costs its
-    connect timeout.
+    connect timeout. `named_again` is asked before each node: a copy the registry
+    wants again is kept.
     """
 
     gone = unreachable if unreachable is not None else set()
@@ -595,6 +625,29 @@ def remove_node_copies(
                     )
                 )
                 continue
+            if named_again is not None:
+                try:
+                    wanted = named_again(certificate_id, cluster.cluster_id)
+                except (LockError, ConfigError, OSError) as exc:
+                    copies.append(
+                        NodeCopy(
+                            cluster.cluster_id,
+                            node.name,
+                            "kept",
+                            f"the registry could not be checked: {exc}",
+                        )
+                    )
+                    continue
+                if wanted:
+                    copies.append(
+                        NodeCopy(
+                            cluster.cluster_id,
+                            node.name,
+                            "kept",
+                            "named by the registry again; not removed",
+                        )
+                    )
+                    continue
             code, output = ask(identity, node.mgmt_host, verb, certificate_id)
             if code == 0:
                 had_copy = NODE_REMOVED_LINE.format(certificate_id=certificate_id) in output
@@ -630,6 +683,8 @@ def ask_the_nodes[Outcome](
     items: Sequence[Outcome | NodeQuestion[Outcome]],
     identity: DeployIdentity | None,
     ask: NodeRemover,
+    *,
+    named_again: NamedAgain | None = None,
 ) -> list[Outcome]:
     """Settle each question, in order, sharing the nodes that did not answer."""
 
@@ -646,6 +701,7 @@ def ask_the_nodes[Outcome](
             ask,
             verb=item.verb,
             unreachable=unreachable,
+            named_again=named_again,
         )
         outcomes.append(item.finish(nodes))
     return outcomes
@@ -694,7 +750,16 @@ def delete(
     except LockError as exc:
         raise DeleteError(exc.code, str(exc), exit_code=exit_codes.REFUSED) from exc
     return Report(
-        tuple(ask_the_nodes(pending, policy.cert_deploy_identity, node_remover)),
+        tuple(
+            ask_the_nodes(
+                pending,
+                policy.cert_deploy_identity,
+                node_remover,
+                named_again=registry_names(
+                    policy, lock_path=lock_path, require_secure=require_secure
+                ),
+            )
+        ),
     )
 
 

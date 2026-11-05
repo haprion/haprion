@@ -311,6 +311,27 @@ class RemovingFromATarget(RetargetFixture):
         )
         self.assertEqual(self.targets("example.com")["clusters"], ["alpha"])
 
+    def test_a_cluster_the_registry_names_again_meanwhile_loses_no_copy(self) -> None:
+        """26-11-05, XX04: the registry is looked at before each node is asked."""
+
+        registry = self.root / "certificates.yaml"
+        named = registry.read_text(encoding="utf-8")
+        real = self.node
+
+        def naming_it_again(*args: Any) -> tuple[int, str]:
+            answer = real(*args)
+            registry.write_text(named, encoding="utf-8")
+            registry.chmod(0o640)
+            return answer
+
+        with mock.patch.object(self, "node", naming_it_again):
+            report = self.retarget(self.policy_path, "remove", "example.com", clusters=("beta",))
+
+        self.assertEqual(self.node_calls, [("node-a.example.com", "example.com")])
+        self.assertEqual(report.incomplete, ("example.com",))
+        self.assertEqual([n.state for n in report.outcomes[0].nodes], ["removed", "kept"])
+        self.assertIn("named by the registry again", report.outcomes[0].nodes[1].detail)
+
     def test_a_cluster_the_configuration_does_not_know_is_not_asked(self) -> None:
         report = self.retarget(self.policy_path, "remove", "shop.example", clusters=("gamma",))
 

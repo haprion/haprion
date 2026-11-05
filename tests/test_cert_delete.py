@@ -490,6 +490,29 @@ class WhatIsLeftAndSaid(DeleteFixture):
         self.run_delete(policy_path, "example.com")  # by name: the registry no longer names it
         self.assertEqual(self.lock_free_when_asked, [True] * 4)
 
+    def test_a_certificate_imported_again_meanwhile_loses_no_copy(self) -> None:
+        """26-11-05, XX04: the registry is looked at before each node is asked."""
+
+        policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        registry = self.root / "certificates.yaml"
+        named = registry.read_text(encoding="utf-8")
+        real = self.node
+
+        def naming_it_again(*args: Any) -> tuple[int, str]:
+            answer = real(*args)
+            registry.write_text(named, encoding="utf-8")
+            registry.chmod(0o640)
+            return answer
+
+        with unittest.mock.patch.object(self, "node", naming_it_again):
+            report = self.run_delete(policy_path, "example.com")
+
+        self.assertEqual(len(self.node_calls), 1)
+        self.assertEqual(report.incomplete, ("example.com",))
+        self.assertEqual([n.state for n in report.outcomes[0].nodes], ["removed", "kept"])
+
     def test_a_node_that_did_not_answer_is_not_asked_again_by_the_rest_of_the_batch(self) -> None:
         """Each question to a dead node costs its connect timeout, for as long as it is asked."""
 

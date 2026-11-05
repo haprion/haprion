@@ -345,11 +345,7 @@ and never a job that still shows a profile's or a draft's state. The audit trail
 is kept for two years and the nodes' own events for 90 days: the job rows are the
 queue's working copy, the audit trail the record of what happened.
 
-It also creates metric partitions, writes the hourly pool rollup and only then
-prunes raw metric partitions. Revision `0021` records the continuously completed
-rollup boundary, and pool raw data is retained until the boundary plus a safety
-day proves it replaceable. `report` shows the boundary without changing it.
-Listener metrics have no rollup and retain their fixed seven days.
+It also creates metric partitions and prunes raw metric partitions after seven days.
 
 The metrics page reads windows longer than a day from per-hour sums
 (`metric_frontend_hour_delta`, `metric_backend_hour_delta`, revision `0055`),

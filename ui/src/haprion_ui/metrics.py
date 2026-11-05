@@ -910,7 +910,7 @@ def bucketed(
     **Traffic is shared out over the time it covers, not dropped on one
     bucket.** A reading answers for the stretch since the previous one, and
     that stretch does not have to be one bucket: the poller runs on its own
-    period, a poll can be late, and a long window reads hourly rollup rows into
+    period, a poll can be late, and a long window reads hourly sums into
     six-hour buckets. Attributing the whole count to the bucket the reading
     lands in leaves its neighbours at zero and draws a spike beside a hole,
     both invented. Splitting it by overlap keeps the total and puts it where
@@ -2105,9 +2105,7 @@ def backend_traffic(
 # The windows the object page offers, and the bucket each one is drawn at.
 # Chosen so every window lands between roughly sixty and a hundred and eighty
 # points: fewer and the shape is a guess, more and they are narrower than the
-# line is thick. The 10-minute and 1-hour widths are deliberately the phase's
-# own rollup resolutions - the same arithmetic will read a rollup table when
-# one exists, and the raw rows are what answers until then.
+# line is thick.
 #
 @dataclass(frozen=True, slots=True)
 class Window:

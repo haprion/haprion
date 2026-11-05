@@ -4047,7 +4047,7 @@ class TheMetricTablesKeepWhatTheReaderReads(unittest.TestCase):
         )
 
     def test_the_tables_store_exactly_what_the_reader_keeps(self) -> None:
-        for table in ("metric_frontend", "metric_backend_member", "metric_backend_hour"):
+        for table in ("metric_frontend", "metric_backend_member"):
             with self.subTest(table=table):
                 self.assertEqual(tuple(self.counters(table)), METRIC_COUNTERS)
         names = [name for name, *_ in self.columns("metric_backend_member")]
@@ -4090,7 +4090,6 @@ class TheMetricTablesKeepWhatTheReaderReads(unittest.TestCase):
             for table, key in (
                 ("metric_frontend", "RANGE (observed_at)"),
                 ("metric_backend_member", "RANGE (observed_at)"),
-                ("metric_backend_hour", "RANGE (bucket_at)"),
             ):
                 cursor.execute("select pg_get_partkeydef(%s::regclass)", (table,))
                 self.assertEqual(_first(cursor), key)
@@ -4120,8 +4119,7 @@ class TheMetricTablesKeepWhatTheReaderReads(unittest.TestCase):
             cursor.execute(
                 "select table_name, column_name, grantee, privilege_type"
                 "  from information_schema.column_privileges"
-                " where table_name in ('metric_frontend', 'metric_backend_member',"
-                "                      'metric_backend_hour', 'metric_rollup_state')"
+                " where table_name in ('metric_frontend', 'metric_backend_member')"
                 "   and grantee like 'app\\_%%'"
             )
             granted = set(cursor.fetchall())
@@ -4137,21 +4135,24 @@ class TheMetricTablesKeepWhatTheReaderReads(unittest.TestCase):
         self.assertEqual({(g, k) for _t, _c, g, k in writes}, {("app_poller", "INSERT")})
         self.assertEqual({t for t, *_ in writes}, {"metric_frontend", "metric_backend_member"})
         self.assertNotIn("observed_at", {c for _t, c, *_ in writes})
-        self.assertEqual(
-            {(c, g) for t, c, g, _k in granted if t == "metric_rollup_state"},
-            {("rollup_name", "app_web"), ("complete_before", "app_web")},
-        )
 
-    def test_a_rollup_row_is_an_hour_with_its_reading_and_its_floor(self) -> None:
-        names = {name for name, *_ in self.columns("metric_backend_hour")}
-        self.assertLessEqual({"uptime_sec", "floor_uptime_sec", "bucket_at"}, names)
+    def test_there_is_no_hourly_pool_rollup(self) -> None:
+        """0117: nothing read it, and the retention command rolled it up every night for a year.
+
+        The cards read the hourly sums (`*_hour_delta`, 31 days) and the raw
+        samples (7 days).
+        """
+
         with self.connect() as connection, connection.cursor() as cursor:
+            for table in ("metric_backend_hour", "metric_rollup_state"):
+                cursor.execute("select to_regclass(%s)", (table,))
+                self.assertIsNone(_first(cursor), table)
+            cursor.execute("select count(*) from pg_proc where proname = 'metric_month_partition'")
+            self.assertEqual(_first(cursor), 0)
             cursor.execute(
-                "select pg_get_constraintdef(oid) from pg_constraint"
-                " where conrelid = 'metric_backend_hour'::regclass and contype = 'c'"
+                "select count(*) from pg_class where relname like 'metric\\_backend\\_hour\\_2%'"
             )
-            checks = " ".join(row[0] for row in cursor.fetchall())
-        self.assertIn("date_trunc('hour'::text, bucket_at)", checks)
+            self.assertEqual(_first(cursor), 0, "a monthly partition of the rollup is left behind")
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
@@ -7254,7 +7255,7 @@ class AnUnchangedObjectsListing(unittest.TestCase):
 class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
     """Migration 0048: the figures summed from stored differences, against the old pairing.
 
-    The old queries are kept verbatim in `metric_totals_reference`. Both run
+    The old queries are kept in `metric_totals_reference`. Both run
     over the same rows - a restart, a counter that goes backwards without one,
     an unknown counter, a frontend whose holder moves and one whose ownership
     is unknown - and must agree exactly, for ranges inside the raw rows and
@@ -7285,9 +7286,6 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
             while day <= cls.now.date() + timedelta(days=1):
                 cursor.execute("select metric_partition('metric_backend_member', %s::date)", (day,))
                 cursor.execute("select metric_partition('metric_frontend', %s::date)", (day,))
-                cursor.execute(
-                    "select metric_month_partition('metric_backend_hour', %s::date)", (day,)
-                )
                 day += timedelta(days=1)
             cls._backend(cursor)
             cls._frontend(cursor)
@@ -7321,7 +7319,6 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
     @classmethod
     def _backend(cls, cursor: psycopg.Cursor[Any]) -> None:
         for node in ("a", "b"):
-            hours: dict[datetime, tuple[datetime, int, int, int | None]] = {}
             for at, uptime, total in cls._readings(node):
                 if at >= cls.raw_from - timedelta(hours=3):
                     cursor.execute(
@@ -7340,29 +7337,6 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
                             1,
                         ),
                     )
-                bucket = at.replace(minute=0, second=0)
-                if bucket < cls.raw_from:
-                    floor = min(uptime, hours[bucket][2]) if bucket in hours else uptime
-                    hours[bucket] = (at, uptime, floor, total)
-            for bucket, (at, uptime, floor, total) in hours.items():
-                cursor.execute(
-                    "insert into metric_backend_hour (cluster, node, backend, member, bucket_at, "
-                    "observed_at, uptime_sec, floor_uptime_sec, req_tot, hrsp_2xx, hrsp_5xx, econ) "
-                    "values (%s, %s, %s, 'BACKEND', %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        cls.CLUSTER,
-                        node,
-                        cls.BACKEND,
-                        bucket,
-                        at,
-                        uptime,
-                        floor,
-                        total,
-                        None if total is None else total - total // 7,
-                        None if total is None else total // 9,
-                        1,
-                    ),
-                )
 
     @classmethod
     def _frontend(cls, cursor: psycopg.Cursor[Any]) -> None:
@@ -7558,9 +7532,6 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
             while day <= cls.now.date() + timedelta(days=1):
                 cursor.execute("select metric_partition('metric_backend_member', %s::date)", (day,))
                 cursor.execute("select metric_partition('metric_frontend', %s::date)", (day,))
-                cursor.execute(
-                    "select metric_month_partition('metric_backend_hour', %s::date)", (day,)
-                )
                 day += timedelta(days=1)
             cls._backend(cursor, cls.GROWN)
             cls._frontend(cursor)
@@ -11047,11 +11018,14 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
     def test_a_dump_at_0115_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0115", grants_differ="0115 still grants the worker UPDATE (held_since)")
 
+    def test_a_dump_at_0116_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0116", grants_differ="0116 still grants the web SELECT on the rollup")
+
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):
     """A restore migrates a dump from any revision from the baseline to the head (B436).
 
-    A dump at 0115 restored under 0116 must be migrated, proved and held, and
+    A dump at 0115 or 0116 restored under the head must be migrated, proved and held, and
     this fails until `ADumpFromBeforeTheHead` says so with `restored_from` for
     every revision between the baseline and the head.
     """

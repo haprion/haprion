@@ -4,28 +4,20 @@ The readers now sum differences stored when each sample is written (0048), and
 over long windows the hourly sums of those differences (0055). These are the
 reads they replaced, verbatim, so the database integration test can run both
 over the same rows - restarts, counters that go backwards, a frontend whose
-holder moves, a window across the raw/rollup boundary - and require the same
-answer to the last digit.
+holder moves - and require the same answer to the last digit. The backend's read
+had a second half, one reading per hour from a rollup that has since been
+retired (0117); it is left out here, and the ranges the test names read raw rows.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Any
+from psycopg import sql
 
-from psycopg import Connection, sql
-
-from haprion_ui import db, metrics
+from haprion_ui import metrics
 
 
 def backend_totals() -> sql.Composed:
-    """Aggregate cumulative counters before drawing resolution can touch them.
-
-    The recent or not-yet-rolled-up half reads every raw sample. The completed
-    older half can only read the finest history that still exists, which is one
-    cumulative reading per hour. The two are split on `observed_at`, so the
-    boundary reading cannot occur in both halves.
-    """
+    """Aggregate cumulative counters before drawing resolution can touch them: every raw sample."""
 
     names = tuple(name for name, _label in metrics.CARD_COUNTERS)
     columns = sql.SQL(", ").join(sql.Identifier(name) for name in names)
@@ -64,14 +56,6 @@ def backend_totals() -> sql.Composed:
         "     where cluster = %(cluster)s and backend = %(backend)s "
         "       and member = %(member)s and observed_at >= %(since)s "
         "       and observed_at >= %(raw_from)s and observed_at <= %(until)s "
-        "    union all "
-        "    select observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
-        "      from metric_backend_hour "
-        "     where cluster = %(cluster)s and backend = %(backend)s "
-        "       and member = %(member)s "
-        "       and bucket_at >= date_trunc('hour', %(since)s) "
-        "       and bucket_at < %(raw_from)s and observed_at >= %(since)s "
-        "       and observed_at < %(raw_from)s and observed_at <= %(until)s"
         "), paired as ("
         "    select observed_at as ended_at, "
         "           lag(observed_at) over ordered as started_at, "
@@ -191,75 +175,3 @@ def frontend_totals(
             else "cluster = %(cluster)s and frontend = %(frontend)s"
         ),
     )
-
-
-def _rolled_up() -> sql.Composed:
-    """The hourly rollup, in the same shape the bucketed raw query returns (before 0055)."""
-
-    columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
-    return sql.SQL(
-        "select bucket_at as at, observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
-        "  from metric_backend_hour "
-        " where cluster = %(cluster)s and backend = %(backend)s "
-        "   and member = %(member)s and bucket_at >= date_trunc('hour', %(since)s) "
-        "   and bucket_at < %(raw_from)s and observed_at >= %(since)s "
-        "   and observed_at < %(raw_from)s and observed_at <= %(until)s "
-        " order by bucket_at, node"
-    ).format(columns=columns)
-
-
-def backend_series(
-    connection: Connection[Any],
-    *,
-    cluster: str,
-    backend: str,
-    since: datetime,
-    until: datetime,
-    width: timedelta,
-    raw_from: datetime,
-    member: str = "BACKEND",
-) -> list[metrics.Interval]:
-    """`db.read_backend_series` before 0055: the rollup paired here, then the raw rows.
-
-    `raw_from` is what `_backend_history_boundary` decided; the test passes
-    where its raw rows begin.
-    """
-
-    arguments: dict[str, Any] = {
-        "cluster": cluster,
-        "backend": backend,
-        "member": member,
-        "since": since,
-        "width": width,
-        "raw_from": raw_from,
-        "until": until,
-        "after": since,
-    }
-    found: list[metrics.Interval] = []
-    with connection.cursor() as cursor:
-        if since < raw_from:
-            cursor.execute(_rolled_up(), arguments)
-            hours = [
-                metrics.Sample(
-                    observed_at=row[1],
-                    member=member,
-                    uptime_sec=row[2],
-                    floor_uptime_sec=row[3],
-                    node=row[4],
-                    counters=dict(zip(metrics.METRIC_COUNTERS, row[5:], strict=True)),
-                )
-                for row in cursor.fetchall()
-            ]
-            found.extend(metrics.intervals(hours))
-            if hours:
-                arguments["after"] = max(sample.observed_at for sample in hours)
-        cursor.execute(
-            db._bucketed_changes(
-                "metric_backend_member",
-                sql.SQL("cluster = %(cluster)s and backend = %(backend)s and member = %(member)s"),
-            ),
-            arguments,
-        )
-        found.extend(db._changed_intervals(cursor.fetchall(), db.BACKEND_DELTAS))
-    found.sort(key=lambda interval: (interval.ended_at, interval.started_at))
-    return found

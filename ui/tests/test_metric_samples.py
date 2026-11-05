@@ -234,12 +234,6 @@ class TheThreeCounterLists(unittest.TestCase):
     def test_the_node_reads_exactly_what_the_reader_keeps(self) -> None:
         self.assertEqual(_tuple_named(NODE_SCRIPT.read_text(), "COUNTER_COLUMNS"), METRIC_COUNTERS)
 
-    def test_the_retention_command_rolls_up_exactly_those(self) -> None:
-        """The fourth copy, and a shell script cannot import the other three."""
-
-        listed = RETENTION.read_text().split('METRIC_COUNTERS="', 1)[1].split('"', 1)[0]
-        self.assertEqual(tuple(name.strip() for name in listed.split(",")), METRIC_COUNTERS)
-
 
 class TheDnsCounterLists(unittest.TestCase):
     """dnsdist's counters (Fas 19a B4): the node's names, the reader's columns, the migration's."""
@@ -401,41 +395,41 @@ class WhetherTheCountersWereKept(unittest.TestCase):
         self.assertEqual(runtime["shared_counters"]["type"], ["boolean", "null"])
 
 
-class WhatTheRollupPromises(unittest.TestCase):
-    """A rollup row is a bucketed reading, not an hour's delta.
+class WhatTheRetentionDoesWithTheMetricSamples(unittest.TestCase):
+    """There is no pool rollup (0117): the raw samples are kept for their week and go by age alone.
 
-    Same shape as what the raw query returns, so one difference-and-restart
-    implementation serves both and the only thing a longer window changes is
-    which table answers.
+    The rollup was one reading per pool and hour for a year, which nothing
+    read; the cards read the hourly sums, which the database keeps by itself.
     """
 
     def setUp(self) -> None:
         self.script = RETENTION.read_text()
 
-    def test_an_hour_that_exists_is_never_recomputed(self) -> None:
-        """It would be rebuilt from rows that may since have been dropped."""
+    def test_the_command_names_no_rollup(self) -> None:
+        for pattern in (
+            r"metric_backend_hour\b",
+            r"metric_rollup_state",
+            r"metric_month_partition",
+            r"METRIC_ROLLUP",
+            r"METRIC_COUNTERS",
+            r"rollup_state_present",
+            r"(?m)^rollup\(\)",
+        ):
+            with self.subTest(pattern=pattern):
+                self.assertNotRegex(self.script, pattern)
 
-        self.assertIn("on conflict do nothing", self.script)
+    def test_the_pool_samples_go_by_age_alone(self) -> None:
+        """What waited for the rollup's boundary is expired as the listener samples are."""
 
-    def test_the_rollup_runs_before_the_pruning(self) -> None:
-        """It reads rows the pruning removes; reversed, it would make a gap."""
-
-        prune = self.script.split("        prune)\n", 1)[1]
-        self.assertLess(prune.index("rollup\n"), prune.index("metric_partitions_prune\n"))
-
-    def test_rows_and_completion_advance_in_one_statement(self) -> None:
-        rollup = self.script.split("\nrollup() {", 1)[1].split("\n}\n", 1)[0]
-        statement = rollup.split("<<SQL", 1)[1].split("\nSQL", 1)[0]
-        self.assertIn("insert into ${METRIC_ROLLUP_TABLE}", statement)
-        self.assertIn("insert into metric_rollup_state", statement)
-
-    def test_backend_raw_data_is_gated_by_completion_and_a_safety_day(self) -> None:
         predicate = self.script.split("metric_partitions_expired() {", 1)[1].split("\n}", 1)[0]
-        self.assertIn(
-            'if [[ "$table" == "metric_backend_member" ]] && rollup_state_present', predicate
-        )
-        self.assertIn("complete_before - make_interval", predicate)
-        self.assertIn("METRIC_ROLLUP_SAFETY_DAYS", predicate)
+        self.assertNotIn("complete_before", predicate)
+        self.assertNotIn('metric_backend_member" ]]', predicate)
+        self.assertIn("METRIC_KEEP_DAYS", predicate)
+
+    def test_the_prune_drops_partitions_without_a_rollup_before_it(self) -> None:
+        prune = self.script.split("        prune)\n", 1)[1]
+        self.assertIn("metric_partitions_prune", prune)
+        self.assertNotIn("rollup", prune.split("statistics")[0])
 
     def test_it_calls_only_helpers_it_defines(self) -> None:
         """The command is standalone; it does not source the installer's lib.
@@ -451,13 +445,6 @@ class WhatTheRollupPromises(unittest.TestCase):
         undefined = called - defined - set(re.findall(r"^([a-z_]+)\(\)", self.script, re.MULTILINE))
         self.assertEqual(undefined & {"step", "fail", "need_root", "require_vars"}, set())
 
-    def test_the_global_command_still_serves_an_environment_on_revision_0020(self) -> None:
-        """One installed script serves databases migrated at different times."""
-
-        rollup = self.script.split("\nrollup() {", 1)[1].split("\n}\n", 1)[0]
-        self.assertIn("elif rollup_state_present; then", rollup)
-        self.assertIn("completion boundary unavailable", rollup)
-
     def test_a_successful_run_is_quiet(self) -> None:
         """Keeping the horizon idempotent costs one NOTICE per existing partition.
 
@@ -467,14 +454,6 @@ class WhatTheRollupPromises(unittest.TestCase):
         """
 
         self.assertIn("client_min_messages=warning", self.script)
-
-    def test_the_lag_leaves_room_for_missed_runs(self) -> None:
-        """An hour becomes eligible days before its samples are dropped."""
-
-        lag = int(self.script.split("METRIC_ROLLUP_LAG_DAYS=", 1)[1].split("\n", 1)[0])
-        keep = int(self.script.split("METRIC_KEEP_DAYS=", 1)[1].split("\n", 1)[0])
-        self.assertGreaterEqual(lag, 1)
-        self.assertGreater(keep - lag, 3)
 
 
 class WhatTheRetentionCommandKeeps(unittest.TestCase):
@@ -515,13 +494,8 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
     def test_a_dry_run_neither_creates_nor_drops(self) -> None:
         prepare = self.script.split("\nmetric_partitions_prepare() {", 1)[1].split("\n}\n", 1)[0]
         prune = self.script.split("\nmetric_partitions_prune() {", 1)[1].split("\n}\n", 1)[0]
-        rollup = self.script.split("\nrollup() {", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('if [[ "$dry_run" -eq 1 ]]; then', prepare)
         self.assertIn('if [[ "$dry_run" -eq 1 ]]; then', prune)
-        self.assertLess(
-            rollup.index('if [[ "$dry_run" -eq 1 ]]; then'),
-            rollup.index("metric_month_partition("),
-        )
 
     def test_an_unmigrated_environment_still_gets_its_jobs_pruned(self) -> None:
         """One script, several environments, and they sit at different migrations.

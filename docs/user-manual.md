@@ -3787,23 +3787,12 @@ rows the prune removes.
 **Metric history.** The same command also maintains the metric tables, in this order:
 
 1. it creates the metric tables' future partitions (one partition holds one day);
-2. it writes the pools' hourly rollup;
-3. it removes expired partitions.
+2. it removes expired partitions: the raw samples of listeners and pools are kept for seven days.
 
-The rollup and its completion boundary (`metric_rollup_state`) are written by one SQL statement, so a
-failed statement advances neither. Only then may raw pool partitions be dropped, and only when their
-complete day is at least one more day behind that boundary. Listener metrics have no rollup, and keep
-their fixed seven days of raw samples.
-
-The rollup keeps one reading per pool and hour for a year. The interface does not read it. Windows
-longer than a day are read from per-hour sums of the samples' stored differences, which a trigger keeps
-up to date as samples arrive, for frontends and pools alike. The command deletes those sums when they
-are older than 31 days, one more than the longest window. `report` still prints the rollup boundary,
-because it decides when raw pool partitions may go.
-
-The timer is daily because that normally keeps the completed boundary six days ahead of the seven-day
-raw retention. The explicit boundary is what keeps a longer outage correct; the schedule is not taken
-as proof that the work finished.
+Windows longer than a day are read from per-hour sums of the samples' stored differences, which a trigger
+keeps up to date as samples arrive, for frontends and pools alike. The command deletes those sums when
+they are older than 31 days, one more than the longest window. There is no longer history than that:
+the metrics cards offer at most 30 days, and a longer interval would need a reader of its own.
 
 ## Traffic logs and metrics
 
@@ -8230,8 +8219,9 @@ the migration when either is too old.
 
 **The schema starts at a baseline.** One migration, `0115`, makes the whole schema. It holds what
 Haprion 0.99.0 to 0.99.13 built one migration at a time and keeps the last one's number, so a
-database 0.99.13 left is on it already. An update from there runs only `0116`, which takes from the worker
-one privilege it never used (a dump is taken first, as for any migration). A
+database 0.99.13 left is on it already. An update from there runs `0116`, which takes from the worker
+one privilege it never used, and `0117`, which takes away the hourly pool rollup nothing read (a dump is
+taken first, as for any migration). A
 database from before is not migrated: the check refuses it before anything runs. One from 0.99.0 to
 0.99.10 is updated to 0.99.13 first ([Updating](install.md#updating)); one from before 0.99 is
 installed afresh ([Removing](install.md#removing)). A schema is never taken

@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily pruning and hourly rollup for Haprion
+Description=Daily pruning for Haprion
 
 [Timer]
 # After the daily dump rather than before it, so the newest dump still holds the
@@ -7,15 +7,8 @@ Description=Daily pruning and hourly rollup for Haprion
 # them back out of a backup for the sake of half an hour is not a trade worth
 # making.
 #
-# Daily rather than weekly, and the reason is the rollup rather than the prune.
-# The reader normally changes to hourly history at seven days, while the rollup
-# stops a day short of the present. Daily therefore leaves six days of normal
-# slack. A stored completion boundary protects longer outages: readers remain
-# on raw rows beyond it and those rows cannot be pruned as if time proved the
-# rollup had succeeded.
-#
-# The prune is unaffected by the change: it removes what is older than a week,
-# so running it more often removes the same rows a little sooner.
+# Daily rather than weekly: it removes what is older than a week, so running it
+# more often removes the same rows a little sooner.
 OnCalendar=*-*-* 03:30:00
 # Persistent so a machine that was off at 03:30 catches up when it comes back,
 # rather than skipping a day and then removing twice as much unannounced.

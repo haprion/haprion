@@ -91,9 +91,9 @@ class Requirements:
     rollback_safe_from: str | None = None
     #
     # The revision this release's migrations begin at (B369): every migration
-    # before it was folded into it. A database older than it is from an
-    # installation from before the baseline, which is installed afresh rather
-    # than migrated - there is nothing here that would carry it across. None in
+    # before it was folded into it. A database older than it is refused;
+    # CHAIN_CARRIERS names the release that takes one from 0100 or later to the
+    # baseline, and one older still is installed afresh (B441). None in
     # metadata from before the baseline.
     #
     database_baseline: str | None = None
@@ -298,7 +298,17 @@ def before_baseline(
     """
 
     baseline = requirements.database_baseline
-    if baseline is None or not is_digits(revision) or revision >= baseline:
+    #
+    # A revision of another length than the baseline's is no revision of this
+    # chain ("01020" sorts below "0115" as text): it passes, and the check after
+    # this one names it.
+    #
+    if (
+        baseline is None
+        or not is_digits(revision)
+        or len(revision) != len(baseline)
+        or revision >= baseline
+    ):
         return None
     carrier = CHAIN_CARRIERS.get(baseline)
     if carrier is not None and revision >= carrier[0] and restore:

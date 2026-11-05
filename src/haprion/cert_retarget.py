@@ -724,13 +724,26 @@ def _remove(
             certificate_id: str = certificate_id,
             abandoned: tuple[str, ...] = abandoned,
             layers: tuple[Layer, ...] = layers,
+            dropped_clusters: tuple[str, ...] = dropped_clusters,
+            dropped_receivers: tuple[str, ...] = dropped_receivers,
         ) -> CertificateOutcome:
             complete = all(layer.state != "failed" for layer in layers) and all(
                 copy.state in {"removed", "absent"} for copy in nodes
             )
+            #
+            # Nothing was dropped from the registry and no layer or node had
+            # a copy: the removal found nothing to remove (26-11-05, Q02).
+            #
+            nothing_there = (
+                complete
+                and not dropped_clusters
+                and not dropped_receivers
+                and all(layer.state == "absent" for layer in layers)
+                and all(copy.state == "absent" for copy in nodes)
+            )
             return CertificateOutcome(
                 certificate_id,
-                "changed" if complete else "incomplete",
+                "unchanged" if nothing_there else "changed" if complete else "incomplete",
                 "" if complete else "a copy was kept; see the rows, and run the removal again",
                 "",
                 abandoned=abandoned,

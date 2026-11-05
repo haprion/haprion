@@ -396,6 +396,16 @@ class RemovingFromATarget(RetargetFixture):
             [("node-a.example.com", "shop.example"), ("node-b.example.com", "shop.example")],
         )
 
+    def test_a_cluster_with_no_copy_anywhere_is_unchanged(self) -> None:
+        """26-11-05, Q02: every node answers `absent`, so nothing was removed."""
+
+        self.nodes_have_nothing()
+        report = self.retarget(self.policy_path, "remove", "shop.example", clusters=("beta",))
+
+        self.assertEqual(report.unchanged, ("shop.example",))
+        self.assertEqual([n.state for n in report.outcomes[0].nodes], ["absent", "absent"])
+        self.assertEqual(len(self.node_calls), 2)
+
 
 class WhatRemovalRefuses(RetargetFixture):
     """The deletion's guards, scoped to the dropped cluster."""

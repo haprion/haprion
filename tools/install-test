@@ -1128,6 +1128,13 @@ def public_schema_statements(owner: str, step: Path = PLATFORM_DATABASE_STEP) ->
     so that a step 02 written differently stops this rather than drops them.
     """
 
+    #
+    # The role's own name, as `pg_get_userbyid` gives it - not `regrole`, which
+    # quotes `_haprion-migrate` for its hyphen, and quoted again here would be
+    # no name at all (B441, re-review H01).
+    #
+    if not owner or '"' in owner or "\n" in owner:
+        raise SystemExit(f"install-test: {owner!r} is not a role name to own schema public")
     found = PUBLIC_SCHEMA_STATEMENT.findall(step.read_text())
     kinds = sorted(statement.split()[0] for statement in found)
     if kinds != ["alter", "grant", "revoke"] or not any(
@@ -1972,8 +1979,8 @@ def run_upgrade(
             _, owner = run.on(
                 "mgr",
                 as_postgres  # noqa: S608 - a constant query, no input in it
-                + 'psql -d haprion -qtAX -c "select nspowner::regrole from pg_namespace'
-                " where nspname = 'public'\"",
+                + 'psql -d haprion -qtAX -c "select pg_get_userbyid(nspowner) from pg_namespace'
+                " where nspname = 'public'\" 2>/dev/null",
             )
             statements = " ".join(public_schema_statements(owner.strip()))
             run.on(

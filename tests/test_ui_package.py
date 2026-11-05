@@ -388,16 +388,19 @@ class TheTree(unittest.TestCase):
 
         tool = self.install_test()
         step = (BASE / "install/platform/02-platform-database").read_text()
-        statements = tool.public_schema_statements("haprion_migrate")
+        statements = tool.public_schema_statements("_haprion-migrate")
 
         self.assertEqual(
             statements,
             [
                 "revoke all on schema public from public;",
                 "grant usage on schema public to app_web, app_worker, app_poller, app_collector;",
-                'alter schema public owner to "haprion_migrate";',
+                'alter schema public owner to "_haprion-migrate";',
             ],
         )
+        for quoted in ('"_haprion-migrate"', "", "a\nb"):
+            with self.subTest(owner=quoted), self.assertRaises(SystemExit):
+                tool.public_schema_statements(quoted)
         for statement in statements[:2]:
             self.assertIn(statement, step)
         self.assertIn('alter schema public owner to "${DB_MIGRATION_ROLE}";', step)

@@ -626,25 +626,25 @@ providers:
     kind: text
     required: true
     secret: false
-    key: edgedns_host
+    key: host
   - id: client_token
     label: Client token
     kind: text
     required: true
     secret: true
-    key: edgedns_client_token
+    key: client_token
   - id: client_secret
     label: Client secret
     kind: text
     required: true
     secret: true
-    key: edgedns_client_secret
+    key: client_secret
   - id: access_token
     label: Access token
     kind: text
     required: true
     secret: true
-    key: edgedns_access_token
+    key: access_token
 - id: eurodns
   name: EuroDNS
   tier: community
